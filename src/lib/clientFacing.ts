@@ -48,7 +48,7 @@ export function isClientFacingDeployment(): boolean {
  *
  * Deliberately NOT here (business features a client workspace runs itself):
  * templates and the template builder, branding/white-label, settings, user
- * management, the portal admin pages, data import and automation.
+ * management, the portal admin pages and automation.
  */
 export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // Integration credential management (Supabase secrets, API keys) and the
@@ -84,6 +84,15 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   '/admin/reclassify-property',
   '/admin/aml-v3-cutover',
   '/admin/aml-integration-health',
+
+  // ── WIP cherry-pick candidates ────────────────────────────────────────────
+  // Each entry below landed as its OWN commit while the client-facing surface
+  // is being perfected, so any one can be kept or dropped independently
+  // (`git revert <sha>` removes the entry together with its test). Once the
+  // picks settle, the survivors fold into the list above.
+
+  // CSV upload into cache tables and directories — ops data loading.
+  '/data-import',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

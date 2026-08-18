@@ -131,3 +131,13 @@ describe('against the navigation registry', () => {
     expect(allItems.filter((item) => !isPathVisibleInDeployment(item.url, false))).toEqual([]);
   });
 });
+
+/**
+ * WIP cherry-pick candidates — one `it` per candidate commit, so reverting a
+ * commit removes its expectation together with its list entry.
+ */
+describe('WIP cherry-pick candidates', () => {
+  it('hides Data Import', () => {
+    expect(isDeveloperToolPath('/data-import')).toBe(true);
+  });
+});

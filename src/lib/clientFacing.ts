@@ -124,6 +124,18 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // report templates is a workspace feature; building them is authoring.
   '/admin/template-builder',
 
+  // Administration of the three partner portals, the client portal's own
+  // configuration, and user/role provisioning. Hidden together because they
+  // are the same decision: whether this workspace administers its own
+  // network and seats, or the operator does it for them. The PORTALS
+  // themselves (/finance, /solicitor, /builder, /client) are untouched —
+  // partners keep signing in; only the admin consoles go.
+  '/admin/finance-portal',
+  '/admin/solicitor-portal',
+  '/admin/builder-portal',
+  '/portal-config',
+  '/admin/users',
+
   // Aurixa's commercial surfaces. Billing exposes the plan/add-on economics
   // and the token ledger; Support and Feedback both hand off to Aurixa's OWN
   // portal carrying workspace and user identity, which is the prime's

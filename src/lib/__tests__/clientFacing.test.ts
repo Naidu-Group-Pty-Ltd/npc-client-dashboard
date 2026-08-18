@@ -59,7 +59,6 @@ describe('isDeveloperToolPath', () => {
       '/clients',
       '/settings',
       '/templates',
-      '/admin/users',
       '/admin/aml',
     ]) {
       expect(isDeveloperToolPath(path), path).toBe(false);
@@ -115,8 +114,6 @@ describe('against the navigation registry', () => {
       'Templates',
       'Branding',
       'Settings',
-      'User Management',
-      'Client Portal',
     ]) {
       expect(visibleTitles, title).toContain(title);
     }
@@ -163,10 +160,23 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/qa/market/some-slug')).toBe(false);
   });
 
-  it('hides the finance portal health diagnostics but not its admin siblings', () => {
+  it('hides the finance portal health diagnostics', () => {
+    // Its admin siblings are hidden too once the portal-admin candidate
+    // lands; reverting that one leaves this entry standing on its own.
     expect(isDeveloperToolPath('/admin/finance-portal/health')).toBe(true);
-    expect(isDeveloperToolPath('/admin/finance-portal')).toBe(false);
-    expect(isDeveloperToolPath('/admin/finance-portal/commissions')).toBe(false);
+  });
+
+  it('hides the portal admin consoles and user provisioning, not the portals', () => {
+    expect(isDeveloperToolPath('/admin/finance-portal')).toBe(true);
+    expect(isDeveloperToolPath('/admin/solicitor-portal')).toBe(true);
+    expect(isDeveloperToolPath('/admin/builder-portal')).toBe(true);
+    expect(isDeveloperToolPath('/portal-config')).toBe(true);
+    expect(isDeveloperToolPath('/admin/users')).toBe(true);
+    // The portals people actually sign in to are untouched.
+    expect(isDeveloperToolPath('/finance')).toBe(false);
+    expect(isDeveloperToolPath('/solicitor')).toBe(false);
+    expect(isDeveloperToolPath('/builder')).toBe(false);
+    expect(isDeveloperToolPath('/client')).toBe(false);
   });
 
   it('hides the template authoring cluster while Templates management stays', () => {

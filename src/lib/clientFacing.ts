@@ -99,6 +99,10 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
 
   // Figma template manager, raw compiled_schema JSON included.
   '/admin/figma-templates',
+
+  // Audit trail with raw metadata JSON viewers and export. A workspace may
+  // want its own audit visibility — this one is the likeliest to be dropped.
+  '/admin/activity-logs',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

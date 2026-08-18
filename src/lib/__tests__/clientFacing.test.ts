@@ -148,4 +148,8 @@ describe('WIP cherry-pick candidates', () => {
   it('hides the Figma Templates admin', () => {
     expect(isDeveloperToolPath('/admin/figma-templates')).toBe(true);
   });
+
+  it('hides Activity Logs', () => {
+    expect(isDeveloperToolPath('/admin/activity-logs')).toBe(true);
+  });
 });

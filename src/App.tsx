@@ -45,10 +45,15 @@ const Settings = lazyWithRetry(() => import("./pages/Settings"));
 const UserGuide = lazyWithRetry(() => import("./pages/UserGuide"));
 const Feedback = lazyWithRetry(() => import("./pages/Feedback"));
 const Support = lazyWithRetry(() => import("./pages/Support"));
-import DataImport from './pages/DataImport';
-import Monitoring from './pages/Monitoring';
-import QualityAssurance from './pages/QualityAssurance';
-import ErrorLogs from './pages/ErrorLogs';
+// Lazy like every other route. These four were static imports, which put
+// their whole module graph in the entry chunk — shipped to, and downloaded
+// by, every visitor on first paint even though all four are operator tools
+// this deployment hides. Nothing else changes: lazyWithRetry is what the
+// rest of the routes already use, and Suspense is already above them.
+const DataImport = lazyWithRetry(() => import('./pages/DataImport'));
+const Monitoring = lazyWithRetry(() => import('./pages/Monitoring'));
+const QualityAssurance = lazyWithRetry(() => import('./pages/QualityAssurance'));
+const ErrorLogs = lazyWithRetry(() => import('./pages/ErrorLogs'));
 import Automation from './pages/Automation';
 import EmailCopilot from './pages/EmailCopilot';
 import CallLogs from './pages/CallLogs';

@@ -96,6 +96,9 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
 
   // Depreciation comparables reference-data curation.
   '/admin/depreciation-comps',
+
+  // Figma template manager, raw compiled_schema JSON included.
+  '/admin/figma-templates',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

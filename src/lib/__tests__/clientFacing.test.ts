@@ -144,4 +144,8 @@ describe('WIP cherry-pick candidates', () => {
   it('hides the Depreciation Comps admin', () => {
     expect(isDeveloperToolPath('/admin/depreciation-comps')).toBe(true);
   });
+
+  it('hides the Figma Templates admin', () => {
+    expect(isDeveloperToolPath('/admin/figma-templates')).toBe(true);
+  });
 });

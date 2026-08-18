@@ -47,7 +47,7 @@ export function isClientFacingDeployment(): boolean {
  * trailing slash — a test enforces both.
  *
  * Deliberately NOT here (business features a client workspace runs itself):
- * templates and the template builder, branding/white-label, settings, user
+ * the Templates management page, branding/white-label, settings, user
  * management, the portal admin pages and automation.
  */
 export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
@@ -118,6 +118,11 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // Cross-portal drift/orphan/staleness diagnostics. The rest of the finance
   // portal admin stays — this is the one engineering page among them.
   '/admin/finance-portal/health',
+
+  // The template AUTHORING cluster: visual builder, converter, brand systems.
+  // The Templates management page (/templates) stays — choosing and managing
+  // report templates is a workspace feature; building them is authoring.
+  '/admin/template-builder',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

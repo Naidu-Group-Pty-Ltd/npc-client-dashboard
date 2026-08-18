@@ -61,7 +61,6 @@ describe('isDeveloperToolPath', () => {
       '/settings',
       '/templates',
       '/admin/users',
-      '/admin/template-builder',
       '/admin/aml',
     ]) {
       expect(isDeveloperToolPath(path), path).toBe(false);
@@ -116,7 +115,6 @@ describe('against the navigation registry', () => {
       'Clients',
       'Billing & Usage',
       'Templates',
-      'Template Builder',
       'Branding',
       'Settings',
       'User Management',
@@ -172,5 +170,13 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/admin/finance-portal/health')).toBe(true);
     expect(isDeveloperToolPath('/admin/finance-portal')).toBe(false);
     expect(isDeveloperToolPath('/admin/finance-portal/commissions')).toBe(false);
+  });
+
+  it('hides the template authoring cluster while Templates management stays', () => {
+    expect(isDeveloperToolPath('/admin/template-builder')).toBe(true);
+    expect(isDeveloperToolPath('/admin/template-builder/converter')).toBe(true);
+    expect(isDeveloperToolPath('/admin/template-builder/brand-systems')).toBe(true);
+    expect(isDeveloperToolPath('/admin/template-builder/some-id')).toBe(true);
+    expect(isDeveloperToolPath('/templates')).toBe(false);
   });
 });

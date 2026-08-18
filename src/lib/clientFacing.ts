@@ -124,6 +124,12 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // report templates is a workspace feature; building them is authoring.
   '/admin/template-builder',
 
+  // The whole Auto Report Generation page, not just its Airtable Sync card
+  // (which the base gate already hides): the master switch and the
+  // per-criteria generation switches decide when the platform spends model
+  // budget on a report.
+  '/automation',
+
   // AML launch/rollout operations. The compliance workspace itself stays —
   // an MLRO's obligations do not pause for a deployment mode — this is the
   // one tab that manages the rollout rather than the obligation. AmlLayout

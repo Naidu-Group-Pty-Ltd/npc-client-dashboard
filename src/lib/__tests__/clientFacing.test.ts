@@ -180,6 +180,10 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/templates')).toBe(false);
   });
 
+  it('hides the whole Automation page', () => {
+    expect(isDeveloperToolPath('/automation')).toBe(true);
+  });
+
   it('hides AML launch operations while the compliance workspace stays', () => {
     expect(isDeveloperToolPath('/admin/aml/launch-ops')).toBe(true);
     expect(isDeveloperToolPath('/admin/aml')).toBe(false);

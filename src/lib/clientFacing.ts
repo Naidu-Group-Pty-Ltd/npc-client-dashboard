@@ -114,6 +114,10 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // /qa/market/:slug) live outside the dashboard layout and must keep working.
   '/qa/subscriptions',
   '/qa/digests',
+
+  // Cross-portal drift/orphan/staleness diagnostics. The rest of the finance
+  // portal admin stays — this is the one engineering page among them.
+  '/admin/finance-portal/health',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

@@ -167,4 +167,10 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/qa/shared/some-token')).toBe(false);
     expect(isDeveloperToolPath('/qa/market/some-slug')).toBe(false);
   });
+
+  it('hides the finance portal health diagnostics but not its admin siblings', () => {
+    expect(isDeveloperToolPath('/admin/finance-portal/health')).toBe(true);
+    expect(isDeveloperToolPath('/admin/finance-portal')).toBe(false);
+    expect(isDeveloperToolPath('/admin/finance-portal/commissions')).toBe(false);
+  });
 });

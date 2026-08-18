@@ -152,4 +152,12 @@ describe('WIP cherry-pick candidates', () => {
   it('hides Activity Logs', () => {
     expect(isDeveloperToolPath('/admin/activity-logs')).toBe(true);
   });
+
+  it('hides the Aurixa agent internals but not unrelated paths', () => {
+    expect(isDeveloperToolPath('/agent/memories')).toBe(true);
+    expect(isDeveloperToolPath('/agent/plans')).toBe(true);
+    expect(isDeveloperToolPath('/agent/skills')).toBe(true);
+    expect(isDeveloperToolPath('/agent-insights')).toBe(true);
+    expect(isDeveloperToolPath('/agents')).toBe(false);
+  });
 });

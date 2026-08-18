@@ -103,6 +103,11 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // Audit trail with raw metadata JSON viewers and export. A workspace may
   // want its own audit visibility — this one is the likeliest to be dropped.
   '/admin/activity-logs',
+
+  // Aurixa agent internals: memory store, plans, skills, insights. The chat
+  // widget itself stays — these are the pages behind it.
+  '/agent',
+  '/agent-insights',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

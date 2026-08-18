@@ -58,6 +58,13 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
+    // A literal, unlike isClientFacingDeployment() which is a function call
+    // the bundler cannot see through. Inlining it as `true`/`false` lets
+    // Rollup fold the branch and DROP the dynamic import behind it, so a
+    // hidden page's chunk is never emitted rather than merely unreachable.
+    __CLIENT_FACING__: JSON.stringify(
+      process.env.VITE_CLIENT_FACING === "true" || process.env.VITE_CLIENT_FACING === "1",
+    ),
   },
   plugins: [
     // Inert unless run with `--mode staging` AND the local staging variables

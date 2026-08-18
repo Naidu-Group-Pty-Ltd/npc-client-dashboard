@@ -191,6 +191,13 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/automation')).toBe(true);
   });
 
+  it('hides the two unguarded URL-only routes without touching /reports', () => {
+    expect(isDeveloperToolPath('/commissions')).toBe(true);
+    expect(isDeveloperToolPath('/reports/analytics')).toBe(true);
+    expect(isDeveloperToolPath('/reports')).toBe(false);
+    expect(isDeveloperToolPath('/reports/some-id')).toBe(false);
+  });
+
   it('hides the Aurixa commercial surfaces', () => {
     expect(isDeveloperToolPath('/billing')).toBe(true);
     expect(isDeveloperToolPath('/billing/usage')).toBe(true);

@@ -124,6 +124,16 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // report templates is a workspace feature; building them is authoring.
   '/admin/template-builder',
 
+  // Two routes that are reachable by URL only — neither is in the navigation
+  // registry and NEITHER CARRIES A ModuleGuard, so today they are the only
+  // dashboard pages with no entitlement or permission check in front of them
+  // at all. /commissions is partner commission data; /reports/analytics is
+  // cross-workspace report analytics. (The missing guards are a defect in
+  // both builds; this entry closes the client-facing half of it. /reports
+  // itself is unaffected — the entry is the exact child path.)
+  '/commissions',
+  '/reports/analytics',
+
   // Administration of the three partner portals, the client portal's own
   // configuration, and user/role provisioning. Hidden together because they
   // are the same decision: whether this workspace administers its own

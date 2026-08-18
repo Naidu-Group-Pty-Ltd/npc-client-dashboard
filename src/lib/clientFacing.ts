@@ -124,6 +124,15 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // report templates is a workspace feature; building them is authoring.
   '/admin/template-builder',
 
+  // Aurixa's commercial surfaces. Billing exposes the plan/add-on economics
+  // and the token ledger; Support and Feedback both hand off to Aurixa's OWN
+  // portal carrying workspace and user identity, which is the prime's
+  // relationship with its customer rather than this workspace's own.
+  // (/billing also covers the legacy /billing/usage redirect.)
+  '/billing',
+  '/support',
+  '/feedback',
+
   // The whole Auto Report Generation page, not just its Airtable Sync card
   // (which the base gate already hides): the master switch and the
   // per-criteria generation switches decide when the platform spends model

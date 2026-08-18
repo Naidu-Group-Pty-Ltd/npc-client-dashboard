@@ -57,7 +57,6 @@ describe('isDeveloperToolPath', () => {
       '/reports',
       '/call-logs',
       '/clients',
-      '/billing',
       '/settings',
       '/templates',
       '/admin/users',
@@ -113,13 +112,11 @@ describe('against the navigation registry', () => {
       'Reports',
       'Call Logs',
       'Clients',
-      'Billing & Usage',
       'Templates',
       'Branding',
       'Settings',
       'User Management',
       'Client Portal',
-      'Support',
     ]) {
       expect(visibleTitles, title).toContain(title);
     }
@@ -182,6 +179,13 @@ describe('WIP cherry-pick candidates', () => {
 
   it('hides the whole Automation page', () => {
     expect(isDeveloperToolPath('/automation')).toBe(true);
+  });
+
+  it('hides the Aurixa commercial surfaces', () => {
+    expect(isDeveloperToolPath('/billing')).toBe(true);
+    expect(isDeveloperToolPath('/billing/usage')).toBe(true);
+    expect(isDeveloperToolPath('/support')).toBe(true);
+    expect(isDeveloperToolPath('/feedback')).toBe(true);
   });
 
   it('hides AML launch operations while the compliance workspace stays', () => {

@@ -58,12 +58,31 @@ it renders, always through `isClientFacingDeployment()`:
 ## Deliberately NOT hidden
 
 Business features a client workspace runs itself, whatever group the sidebar
-files them under: Templates and the Template Builder, Branding/White-label,
-Settings, User Management, the portal admin pages, Data Import, the
-report-generation switches on `/automation`, Activity Logs, and the AML
-workspace (role-gated on its own axis). Superadmin-only cards that already
-hide themselves by role (entitlement diagnostics, Mission Control key) keep
-that behaviour — the operator debugging a client workspace still needs them.
+files them under: the Templates management page, Branding/White-label,
+Settings, User Management, the portal admin pages, the report-generation
+switches on `/automation`, and the AML compliance workspace (role-gated on
+its own axis). Superadmin-only cards that already hide themselves by role
+(entitlement diagnostics, Mission Control key) keep that behaviour — the
+operator debugging a client workspace still needs them.
+
+## WIP cherry-pick candidates
+
+While the client-facing surface is being perfected, this branch also carries
+a menu of borderline surfaces, **one commit each**, so any can be kept or
+dropped independently (`git revert <sha>` removes the entry together with its
+test — the PR description lists the shas):
+
+- Data Import, Depreciation Comps admin, Figma Templates admin, Activity
+  Logs, the Aurixa agent internals (`/agent/*`, `/agent-insights`), the
+  Market Q&A ops pages, the finance portal health diagnostics, the template
+  authoring cluster (`/admin/template-builder/*`) and AML Launch Operations
+  — path-list entries in the marked candidates section of
+  `CLIENT_FACING_HIDDEN_PATHS`.
+- The Market News "Test AI route" shortcut, the live model badges/chips, and
+  the AML "Seed pre-commencement" button — component-level gates.
+
+Once the picks settle, the survivors fold into the main list above and this
+section goes away.
 
 ## Adding to (or trimming) the list
 

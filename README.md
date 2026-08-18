@@ -16,9 +16,14 @@ Two things to hold onto:
   **Property Intake Master** intake pipeline — that runs server-side and never
   depended on the UI being visible.
 - **This repo carries (almost) no code of its own.** Features and fixes land in
-  `npc-property-dashbord` first and are pulled over. The only deliberate
+  `npc-property-dashbord` first and are pulled over. The deliberate
   divergence is the pin in `vite.config.ts`
-  (`process.env.VITE_CLIENT_FACING ??= "true"`) and this README.
+  (`process.env.VITE_CLIENT_FACING ??= "true"`) and this README — plus, while
+  the surface is **work in progress**, a menu of cherry-pickable candidate
+  hides carried one commit each (see the open PR and the "WIP cherry-pick
+  candidates" section of `docs/CLIENT_FACING_MODE.md`). Once the picks
+  settle, the surviving hides land upstream and this repo returns to
+  pin-and-README divergence only.
 
 The full design — the one hidden-path list, the route gate, the page-level
 gates, what is deliberately *not* hidden — is in

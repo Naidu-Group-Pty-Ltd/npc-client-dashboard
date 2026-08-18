@@ -75,14 +75,45 @@ test — the PR description lists the shas):
 - Data Import, Depreciation Comps admin, Figma Templates admin, Activity
   Logs, the Aurixa agent internals (`/agent/*`, `/agent-insights`), the
   Market Q&A ops pages, the finance portal health diagnostics, the template
-  authoring cluster (`/admin/template-builder/*`) and AML Launch Operations
-  — path-list entries in the marked candidates section of
-  `CLIENT_FACING_HIDDEN_PATHS`.
-- The Market News "Test AI route" shortcut, the live model badges/chips, and
-  the AML "Seed pre-commencement" button — component-level gates.
+  authoring cluster (`/admin/template-builder/*`), AML Launch Operations,
+  the whole Automation page, Billing/Support/Feedback, the portal admin
+  consoles + user provisioning, and the two unguarded routes
+  (`/commissions`, `/reports/analytics`) — path-list entries in the marked
+  candidates section of `CLIENT_FACING_HIDDEN_PATHS`.
+- The Market News "Test AI route" shortcut, the live model badges/chips, the
+  AML "Seed pre-commencement" button, and the three commercial banners —
+  component-level gates.
 
 Once the picks settle, the survivors fold into the main list above and this
 section goes away.
+
+## Bundle trimming (not visibility)
+
+Three changes reduce what is *shipped*, rather than what is *shown*. They are
+separate commits from the hides, and the first two help the internal build too:
+
+- **Four operator pages were static imports** in `App.tsx` while every other
+  route is lazy, so they sat in the entry chunk and downloaded on first paint
+  for everyone. Now `lazyWithRetry`: entry chunk 4,680.82 → 4,559.79 kB.
+- **Two constants were written into source**, and therefore into every build's
+  bundle: two real staff mobiles in `CleanupTestCalls`, and a hardcoded
+  project ref that pointed the Integrations help link at the *prime's*
+  Supabase dashboard. Both now come from the environment.
+- **Five route chunks are no longer built at all** in a client-facing build —
+  Integrations, Workflow Playground, Model Hub, Cloudflare, API Usage. Hiding
+  a route does not stop its chunk being served, and these carry the vendor and
+  infrastructure vocabulary (the 143-entry registry with its Supabase secret
+  names, the model roster, billing internals). The `__CLIENT_FACING__`
+  build-time define inlines as a literal so Rollup drops the `import()`.
+  **Use the define only to keep a module out of the bundle**;
+  `isClientFacingDeployment()` remains the API for conditional rendering,
+  because it is testable and the define is not.
+
+Still shipping the prime's URL: **31 source files hardcode**
+`https://dduzbchuswwbefdunfct.supabase.co` (`useAuth`, the portal hooks and
+libs, `integrations/supabase/client.ts`, …). That is a blocker for pointing
+this repo at its own backend — see `BACKEND_PROVISIONING.md` — and wants a
+dedicated upstream change.
 
 ## Adding to (or trimming) the list
 

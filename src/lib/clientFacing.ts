@@ -108,6 +108,12 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // widget itself stays — these are the pages behind it.
   '/agent',
   '/agent-insights',
+
+  // Market Q&A subscription/digest operations. Deliberately the two exact
+  // pages and never a bare '/qa' — the public share links (/qa/shared/:token,
+  // /qa/market/:slug) live outside the dashboard layout and must keep working.
+  '/qa/subscriptions',
+  '/qa/digests',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

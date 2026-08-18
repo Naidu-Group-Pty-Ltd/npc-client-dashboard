@@ -160,4 +160,11 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/agent-insights')).toBe(true);
     expect(isDeveloperToolPath('/agents')).toBe(false);
   });
+
+  it('hides the Market Q&A ops pages while public share links stay', () => {
+    expect(isDeveloperToolPath('/qa/subscriptions')).toBe(true);
+    expect(isDeveloperToolPath('/qa/digests')).toBe(true);
+    expect(isDeveloperToolPath('/qa/shared/some-token')).toBe(false);
+    expect(isDeveloperToolPath('/qa/market/some-slug')).toBe(false);
+  });
 });

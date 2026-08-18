@@ -179,4 +179,11 @@ describe('WIP cherry-pick candidates', () => {
     expect(isDeveloperToolPath('/admin/template-builder/some-id')).toBe(true);
     expect(isDeveloperToolPath('/templates')).toBe(false);
   });
+
+  it('hides AML launch operations while the compliance workspace stays', () => {
+    expect(isDeveloperToolPath('/admin/aml/launch-ops')).toBe(true);
+    expect(isDeveloperToolPath('/admin/aml')).toBe(false);
+    expect(isDeveloperToolPath('/admin/aml/cases')).toBe(false);
+    expect(isDeveloperToolPath('/admin/aml/configuration')).toBe(false);
+  });
 });

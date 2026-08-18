@@ -123,6 +123,12 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
   // The Templates management page (/templates) stays — choosing and managing
   // report templates is a workspace feature; building them is authoring.
   '/admin/template-builder',
+
+  // AML launch/rollout operations. The compliance workspace itself stays —
+  // an MLRO's obligations do not pause for a deployment mode — this is the
+  // one tab that manages the rollout rather than the obligation. AmlLayout
+  // filters its nav from this same list.
+  '/admin/aml/launch-ops',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

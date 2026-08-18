@@ -140,4 +140,8 @@ describe('WIP cherry-pick candidates', () => {
   it('hides Data Import', () => {
     expect(isDeveloperToolPath('/data-import')).toBe(true);
   });
+
+  it('hides the Depreciation Comps admin', () => {
+    expect(isDeveloperToolPath('/admin/depreciation-comps')).toBe(true);
+  });
 });

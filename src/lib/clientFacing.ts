@@ -93,6 +93,9 @@ export const CLIENT_FACING_HIDDEN_PATHS: readonly string[] = [
 
   // CSV upload into cache tables and directories — ops data loading.
   '/data-import',
+
+  // Depreciation comparables reference-data curation.
+  '/admin/depreciation-comps',
 ];
 
 /** Whether a pathname belongs to the developer tooling listed above. */

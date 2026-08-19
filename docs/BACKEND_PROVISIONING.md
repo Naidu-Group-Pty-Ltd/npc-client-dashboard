@@ -41,21 +41,48 @@ throwaway string. **Nobody knows that password — set one before use** (update
 | Schemas (`public`, `aml`) | 2 | 2 | done |
 | Enum types | 94 | 94 | **complete** |
 | Extensions | 9 | 8 (+`pg_graphql`) | **complete** |
-| Tables | **528** | 641 | 82% |
-| RLS enabled | **528 / 528** | — | **complete (deny-all)** |
+| Tables | **528** | **641** | **113 MISSING** |
+| RLS enabled | 528 / 528 | — | complete on what exists (deny-all) |
 | RLS policies | 0 | 1,149 | not started |
-| Functions (app) | 0 | 604 | not started |
-| Indexes | 2 | 2,135 | not started |
+| Functions (app) | 0 | 491 | not started |
+| Indexes | 2 | 2,136 | not started |
 | Constraints | 2 | 2,560 | not started |
 | Triggers | 0 | 472 | not started |
-| Views / matviews | 0 | 14 | not started |
+| Views | 0 | 13 | not started |
 | Storage buckets | 0 | 32 | not started |
-| Edge functions | 0 | 424 | not started |
+| Edge functions | 0 | 423 | not started |
+| Vendor secrets | 0 | — | not started |
+
+### The 113 missing tables, and why the earlier run said it was fine
+
+They are one clean alphabetical run — `partner_agreements`, then everything
+from `pdf_import_golden_runs` to `workflows`. Nothing about them is special;
+they were simply in the batches that never landed.
+
+**The run reported "528 tables applied, zero failures" because it verified
+that every statement it SENT applied without error. It never asked whether
+what it sent was everything.** Reconciling 528 against the prime's 641 was
+one query, and it was not run. That is the whole defect, and it is why
+`scripts/clone-backend/01-transfer-schema.sql` reconciles every stage
+against the prime and records `reconciled = false` rather than trusting a
+clean apply.
 
 **RLS is enabled on every table with no policies**, which is deny-all. That is
 the correct posture for an empty shell: nothing can read or write through the
 anon/authenticated roles, and only the service role (which bypasses RLS) can
 reach it. Do not load data before the policies land.
+
+## How to finish it — `scripts/clone-backend/`
+
+The transfer is now two scripts, because the two halves of a Supabase project
+are reachable by different means. **Read
+[`scripts/clone-backend/README.md`](../scripts/clone-backend/README.md).**
+The channel is proven: the clone's Postgres reaches the prime's pooler at
+`aws-1-ap-southeast-1.pooler.supabase.com:5432` (it answers
+`password authentication failed`, so only the credential is missing), and the
+Management API is reachable over 443 for the 423 edge functions and the
+vendor secrets. Neither path carries a definition through an agent's context,
+which is what truncated the first attempt.
 
 ## How it was built, and why it stopped where it did
 

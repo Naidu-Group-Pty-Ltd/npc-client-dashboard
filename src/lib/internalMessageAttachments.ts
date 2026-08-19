@@ -28,6 +28,7 @@
  */
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { SUPABASE_URL } from '@/integrations/supabase/env';
 
 export const INTERNAL_ATTACHMENT_BUCKET = 'internal-message-attachments';
 /** Every format is allowed — the server does the safety screening. */
@@ -152,20 +153,18 @@ function putWithProgress(opts: {
   });
 }
 
-/**
- * The project URL, matching how the rest of this app resolves it.
+/*
+ * The project URL now comes from `@/integrations/supabase/env`, which is the
+ * only module that resolves it.
  *
- * The fallback below used to read `import.meta.env.VITE_SUPABASE_URL`. There is
- * no `.env` in this repo — only `.env.example` — and every other module that
- * needs this URL hardcodes it as a constant for exactly that reason. When the
- * variable is undefined at build time the expression collapses to `''`, so the
- * "fallback" produced a RELATIVE url and the upload PUT went to the app's own
- * origin, which answers with HTML. A fallback that cannot work is worse than no
- * fallback: it turns a recoverable hiccup into a confusing failure.
+ * This file used to read `import.meta.env.VITE_SUPABASE_URL` inline with an
+ * empty-string fallback, and that is worth remembering: when the variable was
+ * undefined at build time the expression collapsed to `''`, so the "fallback"
+ * produced a RELATIVE url and the upload PUT went to the app's own origin,
+ * which answers with HTML. A fallback that cannot work is worse than no
+ * fallback. The shared module never yields an empty string — it falls back to a
+ * real project URL and strips any trailing slash — so that failure mode is gone.
  */
-const SUPABASE_URL =
-  ((import.meta.env.VITE_SUPABASE_URL as string | undefined) || 'https://dduzbchuswwbefdunfct.supabase.co')
-    .replace(/\/$/, '');
 
 function ticketUrl(ticket: UploadTicket): string {
   if (ticket.signed_url && /^https?:\/\//i.test(ticket.signed_url)) return ticket.signed_url;

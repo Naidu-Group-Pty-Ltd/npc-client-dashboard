@@ -11,9 +11,8 @@ import { ListChecks, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/integrations/supabase/env';
 
-const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
 
 type Step = { id: string; label: string; description: string | null; owner: 'client'|'broker'|'shared'; status: string; category: string };
 type FileBlock = { id: string; title: string; steps: Step[]; completed: number; total: number };

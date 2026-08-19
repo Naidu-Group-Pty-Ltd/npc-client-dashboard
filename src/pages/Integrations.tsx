@@ -56,6 +56,7 @@ import { PlannedIntegrations } from '@/components/integrations/PlannedIntegratio
 import { BrandMark } from '@/components/integrations/BrandMark';
 import { getBrandProfile } from '@/lib/integrations/brandProfiles';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import { SUPABASE_PROJECT_REF } from '@/integrations/supabase/env';
 import {
   INTEGRATIONS,
   INTEGRATION_CATEGORIES,
@@ -114,9 +115,7 @@ const integrations: IntegrationConfig[] = INTEGRATIONS;
  * page — the literal named the prime's project, so every deployment sent
  * its operator to the prime's dashboard, and the ref shipped in the bundle.
  */
-const supabaseProjectRef = (
-  (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_SUPABASE_PROJECT_ID ?? ''
-).trim();
+const supabaseProjectRef = SUPABASE_PROJECT_REF ?? '';
 const supabaseFunctionSettingsUrl = supabaseProjectRef
   ? `https://supabase.com/dashboard/project/${supabaseProjectRef}/settings/functions`
   : 'https://supabase.com/dashboard/projects';

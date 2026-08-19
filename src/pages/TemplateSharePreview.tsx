@@ -10,6 +10,7 @@ import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { parseTemplate, type ReportTemplate } from '@/lib/reportTemplate/templateSchema';
 import { DEFAULT_SAMPLE_DATA_PRESET } from '@/lib/reportTemplate/sampleDataPresets';
 import { Button } from '@/components/ui/button';
+import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/integrations/supabase/env';
 
 export default function TemplateSharePreview() {
   const { token } = useParams<{ token: string }>();
@@ -21,9 +22,11 @@ export default function TemplateSharePreview() {
 
   useEffect(() => {
     if (!token) return;
-    const projectId = (import.meta as any).env?.VITE_SUPABASE_PROJECT_ID;
-    const url = `https://${projectId}.supabase.co/functions/v1/template-share?token=${encodeURIComponent(token)}`;
-    fetch(url, { headers: { apikey: (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY } })
+    // Built from the resolved project rather than from VITE_SUPABASE_PROJECT_ID,
+    // which is a THIRD name for the same project and free to disagree with the
+    // other two: unset, this line fetched `https://undefined.supabase.co/...`.
+    const url = `${SUPABASE_URL}/functions/v1/template-share?token=${encodeURIComponent(token)}`;
+    fetch(url, { headers: { apikey: SUPABASE_ANON_KEY } })
       .then(async (r) => {
         const json = await r.json();
         if (!r.ok) throw new Error(json?.error || `HTTP ${r.status}`);

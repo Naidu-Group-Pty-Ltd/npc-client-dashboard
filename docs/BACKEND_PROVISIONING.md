@@ -112,13 +112,43 @@ end $$;
 
 Expect exactly two notices: `custom_users = 1` and `user_roles = 1`.
 
-## Still blocking the switch-over
+## Pointing the app at it (the wiring is done)
 
-**31 source files hardcode `https://dduzbchuswwbefdunfct.supabase.co`**
-(`useAuth`, the portal hooks and libs, `integrations/supabase/client.ts`, …).
-Until those read from `VITE_SUPABASE_URL`, pointing this repo at its own
-backend cannot work no matter how complete the schema is. That is the next
-change to make, and it belongs upstream.
+**This used to be impossible for a reason that had nothing to do with the
+schema**: 31 source files wrote `https://dduzbchuswwbefdunfct.supabase.co` and
+its publishable key into their own module scope, so setting
+`VITE_SUPABASE_URL` moved nothing — almost every caller ignored it and dialled
+the prime directly. All 31 now import from `src/integrations/supabase/env.ts`.
 
-`.env.example` therefore still points at the prime, with this project's
-coordinates commented out.
+The switch-over is therefore the two variables and nothing else:
+
+```sh
+VITE_SUPABASE_URL="https://plisdzywzleljorrphxv.supabase.co"
+VITE_SUPABASE_PUBLISHABLE_KEY="<the anon key — .env.example carries it>"
+```
+
+Verified end to end: a build with both set carries `plisdzywzleljorrphxv` in
+five chunks and reaches the prime's constants through no live path; a build
+with neither is byte-for-byte the old behaviour.
+
+Three rules that module enforces, each of which was a live defect:
+
+- **The URL and the key are a matched pair.** The anon key is a JWT whose `ref`
+  claim names its project, so a URL from one and a key from another
+  authenticate to nothing. Set both or neither — a half-configured environment
+  uses *both* built-in defaults rather than mixing them, and says so on the
+  console. Supplying a genuinely mismatched pair is honoured and warned about
+  by ref, because that is a configuration error and should read as one.
+- **The fallback is never empty.** `internalMessageAttachments.ts` read
+  `VITE_SUPABASE_URL ?? ''`, which made the upload PUT relative — it went to
+  the app's own origin and got HTML back.
+- **The project ref is derived, never named a third time.**
+  `VITE_SUPABASE_PROJECT_ID` was a third spelling of the same project, free to
+  disagree with the other two; unset, `TemplateSharePreview` fetched
+  `https://undefined.supabase.co/functions/v1/template-share`. Nothing live
+  reads it now — `SUPABASE_PROJECT_REF` comes off the resolved URL.
+
+`.env.example` still points at the prime, with this project's pair commented
+out directly beneath it. **Do not uncomment it yet** — the shell has no
+policies, functions or edge functions, so an app pointed at it can read and
+write nothing. Finish the schema first.

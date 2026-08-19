@@ -105,6 +105,7 @@ import { BranchedFromIndicator } from '@/components/report-qa/BranchedFromIndica
 import { PinnedAnswersStrip } from '@/components/report-qa/PinnedAnswersStrip';
 import { ShareConversationDialog } from '@/components/report-qa/ShareConversationDialog';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/integrations/supabase/env';
 
 interface UploadProgress {
   fileName: string;
@@ -1381,9 +1382,9 @@ export default function ReportQA() {
     setStreamingToolInvocations([]);
 
     try {
-      // Use streaming for better UX
-      const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
-      const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
+      // Use streaming for better UX. URL and key come from the shared module
+      // (see @/integrations/supabase/env) rather than being inlined here.
+      const SUPABASE_KEY = SUPABASE_ANON_KEY;
 
       // Ground retrieval and fallback context only in the reports selected for this chat.
       const reportsToUse = selectedReports;

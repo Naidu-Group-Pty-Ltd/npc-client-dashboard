@@ -86,13 +86,21 @@ describe('dedicated attachment transport', () => {
 
 describe('the upload URL fallback can actually resolve', () => {
   it('does not collapse to a relative URL when the env var is absent', () => {
-    // There is no `.env` in this repo, only `.env.example`, and every other
-    // module hardcodes the project URL for exactly that reason. The fallback
-    // used to be `import.meta.env.VITE_SUPABASE_URL ?? ''`, which produced a
-    // relative path — so the upload PUT went to the app's own origin and got
-    // HTML back. A fallback that cannot work is worse than none.
-    expect(client).not.toMatch(/VITE_SUPABASE_URL as string \| undefined\)\?\.replace\(\/\\\/\$\/, ''\) \?\? ''/);
-    expect(client).toMatch(/\|\|\s*'https:\/\/[a-z0-9]+\.supabase\.co'/);
+    // The fallback used to be `import.meta.env.VITE_SUPABASE_URL ?? ''`, read
+    // inline in this module, which produced a relative path — so the upload PUT
+    // went to the app's own origin and got HTML back. A fallback that cannot
+    // work is worse than none.
+    //
+    // The URL now comes from the ONE resolver, which never yields an empty
+    // string (src/integrations/supabase/env.ts, and its own unit tests pin
+    // that). So the assertion is that this module does not resolve the project
+    // for itself — reading the variable here is how the bug returns.
+    expect(client).toContain("from '@/integrations/supabase/env'");
+    expect(client).toMatch(/import \{[^}]*\bSUPABASE_URL\b[^}]*\} from '@\/integrations\/supabase\/env'/);
+    // No inline read of the variable, with or without an empty-string fallback.
+    const code = client.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+    expect(code).not.toMatch(/import\.meta\.env/);
+    expect(code).not.toMatch(/VITE_SUPABASE_URL/);
   });
 
   it('still prefers the signed URL the server minted', () => {

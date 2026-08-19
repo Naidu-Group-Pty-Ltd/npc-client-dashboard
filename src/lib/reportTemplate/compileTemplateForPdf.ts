@@ -41,17 +41,19 @@ import { preloadImagesWithReport } from './imagePreloader';
 import { renderTemplateToHtml, type HtmlRenderOptions } from './htmlRenderer';
 import { resolvePageOutputPolicy } from './rendering/pdfImportPagePolicy';
 import type { Page, ReportTemplate } from './templateSchema';
+import { SUPABASE_URL } from '@/integrations/supabase/env';
 
 /**
  * The origin the render boundary admits.
  *
- * Hardcoded like `secureInvoke.ts` and `integrations/supabase/client.ts`, and
- * for the reason those two record: the repo ships no `.env`, `vite.config.ts`
- * declares no fallback, and the one call site that read
- * `import.meta.env.VITE_SUPABASE_PROJECT_ID` compiled into a request to
- * `https://undefined.supabase.co` in every build but the hosting one.
+ * Resolved by `integrations/supabase/env.ts` — the one module that decides
+ * which project this build talks to — rather than composed here from
+ * `import.meta.env.VITE_SUPABASE_PROJECT_ID`. That variable is a THIRD name
+ * for the same project alongside the URL and the key, and the one call site
+ * that read it compiled into a request to `https://undefined.supabase.co` in
+ * every build but the hosting one. Never rebuild this origin from parts.
  */
-const RENDER_PROJECT_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
+const RENDER_PROJECT_URL = SUPABASE_URL;
 
 export interface CompiledTemplatePdfHtml {
   html: string;

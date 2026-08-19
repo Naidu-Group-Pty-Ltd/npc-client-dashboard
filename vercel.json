@@ -1,16 +1,31 @@
 {
+    "$schema": "https://openapi.vercel.sh/vercel.json",
     "services": {
         "frontend": {
             "root": ".",
             "framework": "vite"
         },
         "aml-verification-service": {
-            "root": "services/aml-verification-service"
+            "root": "services/aml-verification-service",
+            "runtime": "container",
+            "entrypoint": "Dockerfile",
+            "routes": [
+                {
+                    "src": "/api/(.*)",
+                    "transforms": [
+                        {
+                            "type": "request.path",
+                            "op": "set",
+                            "args": "/$1"
+                        }
+                    ]
+                }
+            ]
         }
     },
     "rewrites": [
         {
-            "source": "/api(/.*)?",
+            "source": "/api/(.*)",
             "destination": {
                 "type": "service",
                 "service": "aml-verification-service"

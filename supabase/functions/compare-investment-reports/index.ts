@@ -15,12 +15,17 @@ const corsHeaders = {
  *
  * The same discipline `generate-investment-report` keeps with
  * `SECTION_LOOP_BUDGET_MS`, for the same reason: an edge invocation is cut off
- * without warning, and a run that is killed teaches its caller nothing. The
- * browser gives this call 150s; 120s here leaves the auth, four reads, the
- * insert and the response comfortably inside that, and a retry is started only
- * when one the size of the last still fits.
+ * without warning, and a run that is killed teaches its caller nothing.
+ *
+ * The binding ceiling is this function's own `request_timeout = 120` in
+ * `supabase/config.toml` — tighter than the 150s the browser allows — and the
+ * budget is measured from the top of the HANDLER, which the metering wrapper
+ * reaches about 4.5s into the request (auth, the reserve, the price lookup).
+ * 105s therefore leaves roughly ten seconds for the insert and the response.
+ * Raising it to fill the gap would trade a partial answer, stored and disclosed,
+ * for an invocation killed with nothing written at all.
  */
-const ANALYSIS_BUDGET_MS = 120_000;
+const ANALYSIS_BUDGET_MS = 105_000;
 
 /**
  * How many times to ask.

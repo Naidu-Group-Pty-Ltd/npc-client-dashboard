@@ -23,6 +23,7 @@ import { SwitchConfigModal } from '@/components/automation/SwitchConfigModal';
 import { GenerationLogModal } from '@/components/automation/GenerationLogModal';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import { isClientFacingDeployment } from '@/lib/clientFacing';
 
 interface AutoReportSwitch {
   id: string;
@@ -60,6 +61,11 @@ export interface SwitchCriteria {
 
 const Automation = () => {
   const { canEdit, canDelete } = useModulePermissions('automation');
+  // The sync card pokes the Airtable intake pipeline directly (dry run, sync
+  // now, a destructive queue clear). Client-facing deployments keep the
+  // report-generation switches and drop the pipeline controls — the pipeline
+  // itself runs server-side and is untouched by hiding them.
+  const showPipelineControls = !isClientFacingDeployment();
   const [masterEnabled, setMasterEnabled] = useState(false);
   const [switches, setSwitches] = useState<AutoReportSwitch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -310,6 +316,7 @@ const Automation = () => {
         </DashboardThemeFrame>
 
         {/* Airtable Sync Controls */}
+        {showPipelineControls && (
         <Card className="relative overflow-hidden rounded-3xl border border-info/25 bg-[radial-gradient(circle_at_top_left,hsl(var(--info)/0.14),transparent_34%),linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--background)/0.86)_58%,hsl(var(--info)/0.06))] shadow-[0_18px_52px_rgba(15,23,42,0.08)] ring-1 ring-white/45 dark:border-info/20 dark:ring-white/10 dark:shadow-black/25">
           <CardContent className="p-4 sm:p-5">
             <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -396,6 +403,7 @@ const Automation = () => {
             </div>
           </CardContent>
         </Card>
+        )}
 
         {/* Master Switch Card */}
         <Card className={masterEnabled ? 'relative overflow-hidden rounded-3xl border-success/35 bg-[radial-gradient(circle_at_top_left,hsl(var(--success)/0.16),transparent_34%),linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--background)/0.86)_58%,hsl(var(--success)/0.08))] shadow-[0_18px_52px_rgba(15,23,42,0.08)] ring-1 ring-white/45 dark:border-success/20 dark:ring-white/10 dark:shadow-black/25' : 'relative overflow-hidden rounded-3xl border-border/70 bg-[radial-gradient(circle_at_top_left,hsl(var(--muted)/0.42),transparent_34%),linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--background)/0.88)_58%,hsl(var(--muted)/0.18))] shadow-[0_18px_52px_rgba(15,23,42,0.07)] ring-1 ring-white/45 dark:border-white/10 dark:ring-white/10 dark:shadow-black/25'}>

@@ -45,10 +45,15 @@ const Settings = lazyWithRetry(() => import("./pages/Settings"));
 const UserGuide = lazyWithRetry(() => import("./pages/UserGuide"));
 const Feedback = lazyWithRetry(() => import("./pages/Feedback"));
 const Support = lazyWithRetry(() => import("./pages/Support"));
-import DataImport from './pages/DataImport';
-import Monitoring from './pages/Monitoring';
-import QualityAssurance from './pages/QualityAssurance';
-import ErrorLogs from './pages/ErrorLogs';
+// Lazy like every other route. These four were static imports, which put
+// their whole module graph in the entry chunk — shipped to, and downloaded
+// by, every visitor on first paint even though all four are operator tools
+// this deployment hides. Nothing else changes: lazyWithRetry is what the
+// rest of the routes already use, and Suspense is already above them.
+const DataImport = lazyWithRetry(() => import('./pages/DataImport'));
+const Monitoring = lazyWithRetry(() => import('./pages/Monitoring'));
+const QualityAssurance = lazyWithRetry(() => import('./pages/QualityAssurance'));
+const ErrorLogs = lazyWithRetry(() => import('./pages/ErrorLogs'));
 import Automation from './pages/Automation';
 import EmailCopilot from './pages/EmailCopilot';
 import CallLogs from './pages/CallLogs';
@@ -117,15 +122,40 @@ const SharedMarketQAAnswer = lazyWithRetry(() => import("./pages/qa/SharedMarket
 const MarketQASubscriptions = lazyWithRetry(() => import("./pages/qa/MarketQASubscriptions"));
 const MarketQADigests = lazyWithRetry(() => import("./pages/qa/MarketQADigests"));
 
-const Integrations = lazyWithRetry(() => import("./pages/Integrations"));
-const WorkflowPlayground = lazyWithRetry(() => import("./pages/WorkflowPlayground"));
+/**
+ * A route whose MODULE must not exist in a client-facing build.
+ *
+ * Hiding a route stops it being reached; it does not stop its chunk being
+ * built and served. These five carry the deployment's vendor and
+ * infrastructure vocabulary — the 143-entry integration registry with its
+ * Supabase secret names, the workflow vendor catalog, the model roster, the
+ * Cloudflare surface and the API-usage/billing internals — so for them the
+ * chunk itself is the leak.
+ *
+ * `__CLIENT_FACING__` is a build-time literal, so Rollup folds the ternary
+ * and drops the `import()` behind it: no chunk is emitted at all. The
+ * placeholder never renders — ClientFacingGate answers these paths before
+ * the element does — it exists so the route stays type-valid.
+ */
+const RouteExcludedFromBuild = () => null;
+
+const Integrations = __CLIENT_FACING__
+  ? RouteExcludedFromBuild
+  : lazyWithRetry(() => import("./pages/Integrations"));
+const WorkflowPlayground = __CLIENT_FACING__
+  ? RouteExcludedFromBuild
+  : lazyWithRetry(() => import("./pages/WorkflowPlayground"));
 const MarketingAnalytics = lazyWithRetry(() => import("./pages/MarketingAnalytics"));
-const CloudflareManagement = lazyWithRetry(() => import("./pages/CloudflareManagement"));
+const CloudflareManagement = __CLIENT_FACING__
+  ? RouteExcludedFromBuild
+  : lazyWithRetry(() => import("./pages/CloudflareManagement"));
 const ClientManagement = lazyWithRetry(() => import("./pages/ClientManagement"));
 const ClientTracker = lazyWithRetry(() => import("./pages/ClientTracker"));
 const PortfolioReports = lazyWithRetry(() => import("./pages/PortfolioReports"));
 const ReportRequests = lazyWithRetry(() => import("./pages/ReportRequests"));
-const ApiUsage = lazyWithRetry(() => import("./pages/ApiUsage"));
+const ApiUsage = __CLIENT_FACING__
+  ? RouteExcludedFromBuild
+  : lazyWithRetry(() => import("./pages/ApiUsage"));
 const DealPipeline = lazyWithRetry(() => import("./pages/DealPipeline"));
 const RemindersHub = lazyWithRetry(() => import("./pages/RemindersHub"));
 const Checklists = lazyWithRetry(() => import("./pages/Checklists"));
@@ -140,7 +170,9 @@ const PublicPartnerConsent = lazyWithRetry(() => import("./pages/PublicPartnerCo
 const GamePlan = lazyWithRetry(() => import("./pages/GamePlan"));
 const Commissions = lazyWithRetry(() => import("./pages/Commissions"));
 const ReportsAnalytics = lazyWithRetry(() => import("./pages/ReportsAnalytics"));
-const ModelHub = lazyWithRetry(() => import("./pages/ModelHub"));
+const ModelHub = __CLIENT_FACING__
+  ? RouteExcludedFromBuild
+  : lazyWithRetry(() => import("./pages/ModelHub"));
 const Billing = lazyWithRetry(() => import("./pages/Billing"));
 const TokenAuditLog = lazyWithRetry(() => import("./pages/TokenAuditLog"));
 const CommercialIndustrial = lazyWithRetry(() => import("./pages/commercial/CommercialIndustrial"));

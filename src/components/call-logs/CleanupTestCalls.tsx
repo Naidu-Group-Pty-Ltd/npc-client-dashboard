@@ -22,11 +22,23 @@ import {
 import { Trash2, Loader2, Plus, X, Settings2, ShieldAlert, FlaskConical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Default test phone numbers
-const DEFAULT_TEST_NUMBERS = [
-  '+61433005110',
-  '+61489084599',
-];
+/**
+ * Test phone numbers, from the environment rather than from source.
+ *
+ * These were two real staff mobiles written into this file, which meant they
+ * shipped inside the JavaScript bundle of every build — readable by anyone
+ * who opened the app, including client-facing deployments where the control
+ * itself is hidden (hiding a button does not unship the module it lives in).
+ * Set VITE_TEST_CALL_NUMBERS as a comma-separated list on internal builds;
+ * the default is empty, and the operator can still add numbers by hand in
+ * the popover as before.
+ */
+const DEFAULT_TEST_NUMBERS: string[] = (
+  (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_TEST_CALL_NUMBERS ?? ''
+)
+  .split(',')
+  .map((n) => n.trim())
+  .filter(Boolean);
 
 
 const utilityControl =

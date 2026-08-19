@@ -4,6 +4,7 @@ import {
   NAVIGATION_ITEMS,
   type NavItemDef,
 } from '@/lib/navigation/registry';
+import { isClientFacingDeployment, isPathVisibleInDeployment } from '@/lib/clientFacing';
 import { useCapabilityResolver } from './useCapability';
 
 /**
@@ -15,17 +16,23 @@ import { useCapabilityResolver } from './useCapability';
  * emptied sidebar at startup) and ADMIN navigation stays hidden (fail closed
  * — matching the pre-registry behaviour). Excluded premium modules are
  * REMOVED, not rendered disabled.
+ *
+ * A client-facing deployment additionally removes developer/operator tooling
+ * by the item's URL — the same list ClientFacingGate refuses to route to, so
+ * the two cannot disagree.
  */
 export function useNavigationVisibility() {
   const { resolve } = useCapabilityResolver();
+  const clientFacing = isClientFacingDeployment();
 
   return useMemo(() => {
     const isNavItemVisible = (item: NavItemDef): boolean => {
+      if (!isPathVisibleInDeployment(item.url, clientFacing)) return false;
       const decision = resolve(item.moduleKey);
       return decision.enabled || decision.status === 'loading';
     };
     const isAdminItemVisible = (item: NavItemDef): boolean =>
-      resolve(item.moduleKey).enabled;
+      isPathVisibleInDeployment(item.url, clientFacing) && resolve(item.moduleKey).enabled;
 
     return {
       isNavItemVisible,
@@ -37,5 +44,5 @@ export function useNavigationVisibility() {
       paletteNavItems: NAVIGATION_ITEMS.filter(isNavItemVisible),
       paletteAdminItems: ADMIN_NAVIGATION_ITEMS.filter(isAdminItemVisible),
     };
-  }, [resolve]);
+  }, [resolve, clientFacing]);
 }

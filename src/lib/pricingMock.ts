@@ -40,6 +40,8 @@
  * unrecognised URL through would break it in the expensive direction.
  */
 
+import { isClientFacingDeployment } from "@/lib/clientFacing";
+
 /** The storefront that hosts the mock page. */
 export const AURIXA_STOREFRONT_ORIGIN = "https://www.aurixasystems.com.au";
 
@@ -155,6 +157,12 @@ export function setPricingMockEnabled(on: boolean): void {
  * toggle takes effect on the next click instead of the next reload.
  */
 export function isPricingMockEnabled(): boolean {
+  // A client-facing deployment never routes a purchase at test prices: the
+  // sweep protection above is for internal builds, and out there the failure
+  // worth preventing inverts — a shared `?pricingMock=1` link would let a
+  // client buy any tier for a dollar. The build flag and the stored toggle
+  // are both overridden, not just the banner.
+  if (isClientFacingDeployment()) return false;
   if (pricingMockEnabledByBuild()) return true;
   try {
     return window.localStorage.getItem(PRICING_MOCK_STORAGE_KEY) === "1";

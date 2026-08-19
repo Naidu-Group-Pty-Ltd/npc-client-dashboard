@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { isClientFacingDeployment } from '@/lib/clientFacing';
 import { useAgentModel, subscribeAgentPulse, getAgentPulse } from '@/hooks/useAgentModels';
 import {
   Tooltip,
@@ -29,7 +30,18 @@ export type LiveModelBadgeProps = {
   className?: string;
 };
 
-export function LiveModelBadge({
+/**
+ * On a client-facing deployment the badge names internal agent slots and the
+ * model roster behind them — Model Hub vocabulary the deployment hides — so
+ * the whole affordance disappears. Wrapped here (before any hook runs) so
+ * every call site is covered without edits.
+ */
+export function LiveModelBadge(props: LiveModelBadgeProps) {
+  if (isClientFacingDeployment()) return null;
+  return <LiveModelBadgeInner {...props} />;
+}
+
+function LiveModelBadgeInner({
   agentKey,
   showSlot = false,
   size = 'md',

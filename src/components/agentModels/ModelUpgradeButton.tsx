@@ -11,6 +11,7 @@ import { Link } from 'react-router-dom';
 import { Settings2 } from 'lucide-react';
 import { Button, type ButtonProps } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { isClientFacingDeployment, isPathVisibleInDeployment } from '@/lib/clientFacing';
 import type { AgentSurfaceId } from '@/lib/agentModels/agentKeys';
 import { AGENT_SURFACES } from '@/lib/agentModels/agentKeys';
 
@@ -33,6 +34,11 @@ export function ModelUpgradeButton({
   size = 'sm',
   ...rest
 }: ModelUpgradeButtonProps) {
+  // Every destination this button has is inside the Model Hub; when the
+  // deployment hides that route, an affordance that deep-links into it is a
+  // dead end, so it disappears with the page.
+  if (!isPathVisibleInDeployment('/model-hub', isClientFacingDeployment())) return null;
+
   const surface = surfaceId ? AGENT_SURFACES[surfaceId] : null;
   const primaryKey = agentKey ?? surface?.slots[0]?.key;
   const allKeys = includeAllSlots && surface ? surface.slots.map((s) => s.key).join(',') : null;

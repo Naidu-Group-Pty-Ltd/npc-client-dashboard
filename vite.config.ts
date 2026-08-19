@@ -6,6 +6,14 @@ import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
 import { inlineXlsxPlugin } from "./vite-inline-xlsx";
 import { stagingTargetPlugin } from "./vite-staging-target";
 
+// npc-client-dashboard IS the client-facing deployment — the mode is this
+// repository's identity, not a per-deploy setting, so it is pinned here
+// rather than left to an env file nobody commits (.env is gitignored by
+// SECR-001). An explicitly exported VITE_CLIENT_FACING still wins, so an
+// operator can build an internal-console bundle from this repo when needed.
+// See src/lib/clientFacing.ts and docs/CLIENT_FACING_MODE.md.
+process.env.VITE_CLIENT_FACING ??= "true";
+
 // Identifies the deployed build. `version.json` carries the same value, so a
 // tab can tell whether it is running the current bundle or a cached older one
 // (see src/lib/buildVersion.ts). Commit sha when available, timestamp otherwise.
@@ -50,6 +58,13 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
+    // A literal, unlike isClientFacingDeployment() which is a function call
+    // the bundler cannot see through. Inlining it as `true`/`false` lets
+    // Rollup fold the branch and DROP the dynamic import behind it, so a
+    // hidden page's chunk is never emitted rather than merely unreachable.
+    __CLIENT_FACING__: JSON.stringify(
+      process.env.VITE_CLIENT_FACING === "true" || process.env.VITE_CLIENT_FACING === "1",
+    ),
   },
   plugins: [
     // Inert unless run with `--mode staging` AND the local staging variables

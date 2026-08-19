@@ -29,6 +29,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useWhiteLabel } from "@/contexts/WhiteLabelContext";
 import { ComparisonScoreMigration } from "@/components/admin/ComparisonScoreMigration";
+import { isClientFacingDeployment } from "@/lib/clientFacing";
 import { ProfileCredentials } from "@/components/settings/ProfileCredentials";
 import { FinanceAgentContacts } from "@/components/settings/FinanceAgentContacts";
 import { PushNotificationToggle } from "@/components/settings/PushNotificationToggle";
@@ -421,8 +422,8 @@ export default function Settings() {
       {/* Finance Agent Contacts */}
       <FinanceAgentContacts />
 
-      {/* Comparison Score Migration */}
-      <ComparisonScoreMigration />
+      {/* Comparison Score Migration — a run-once data-repair tool, internal console only */}
+      {!isClientFacingDeployment() && <ComparisonScoreMigration />}
 
       {/* Builder Stock in the Property Marketplace (superadmin only — card hides itself otherwise) */}
       <BuilderStockMarketplaceCard />

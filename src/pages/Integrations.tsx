@@ -108,6 +108,20 @@ const brandIdFor = (integrationId: string) => BRAND_ID_OVERRIDES[integrationId] 
 
 const integrations: IntegrationConfig[] = INTEGRATIONS;
 
+/**
+ * Where to add the SUPABASE_ACCESS_TOKEN secret. Derived from the project
+ * this build actually talks to rather than a project ref typed into the
+ * page — the literal named the prime's project, so every deployment sent
+ * its operator to the prime's dashboard, and the ref shipped in the bundle.
+ */
+const supabaseProjectRef = (
+  (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_SUPABASE_PROJECT_ID ?? ''
+).trim();
+const supabaseFunctionSettingsUrl = supabaseProjectRef
+  ? `https://supabase.com/dashboard/project/${supabaseProjectRef}/settings/functions`
+  : 'https://supabase.com/dashboard/projects';
+
+
 
 interface SupabaseSecretStatus {
   configured: boolean;
@@ -783,7 +797,7 @@ export default function Integrations() {
             <span className="font-medium">Supabase Access Token Required:</span> To sync API keys to Supabase secrets,
             add a <code className="bg-muted px-1 rounded">SUPABASE_ACCESS_TOKEN</code> secret in your{' '}
             <a
-              href="https://supabase.com/dashboard/project/dduzbchuswwbefdunfct/settings/functions"
+              href={supabaseFunctionSettingsUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-sm text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"

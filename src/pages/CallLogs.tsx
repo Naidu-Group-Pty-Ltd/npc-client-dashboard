@@ -67,6 +67,7 @@ import {
   Ban
 } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { isClientFacingDeployment } from '@/lib/clientFacing';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { callLogBadgeTone } from '@/components/call-logs/badgeStyles';
@@ -187,6 +188,9 @@ interface CallStats {
 const CallLogs = () => {
   const { toast } = useToast();
   const isMobile = useIsMobile();
+  // Test-number cleanup and the contact-name backfill are operator tooling; a
+  // client-facing deployment keeps the call log itself and drops them.
+  const showInternalCallTools = !isClientFacingDeployment();
   const { canEdit: canEditCalls, canDelete: canDeleteCalls } = useModulePermissions('call_logs');
   const { fetchCallLogs, fetchCall } = useSecureCallLogs();
   const recordingPlayerRef = useRef<CallRecordingPlayerHandle>(null);
@@ -549,8 +553,8 @@ const CallLogs = () => {
         <DashboardThemeFrame variant="toolbar" className="w-full border-primary/10 bg-background/45 shadow-inner shadow-sm dark:shadow-black/10 lg:w-auto lg:justify-end">
           <div className="flex flex-1 flex-wrap items-center gap-2 lg:flex-none lg:justify-end">
           {!isMobile && <WeeklyReportConfig triggerClassName={premiumReportAction} />}
-          {!isMobile && <CleanupTestCalls onComplete={fetchCalls} testNumbersButtonClassName={premiumUtilityAction} flushButtonClassName={premiumDangerAction} />}
-          {!isMobile && <CleanupContactNames onComplete={fetchCalls} triggerClassName={premiumQualityAction} />}
+          {!isMobile && showInternalCallTools && <CleanupTestCalls onComplete={fetchCalls} testNumbersButtonClassName={premiumUtilityAction} flushButtonClassName={premiumDangerAction} />}
+          {!isMobile && showInternalCallTools && <CleanupContactNames onComplete={fetchCalls} triggerClassName={premiumQualityAction} />}
           {!isMobile && <CallAlerts calls={filteredCalls} triggerClassName={premiumAlertAction} />}
           <CallLogsExport calls={filteredCalls} stats={stats} triggerClassName={premiumSecondaryAction} />
           <Button onClick={fetchCalls} variant="outline" size="sm" className={cn("gap-2", premiumSecondaryAction)}>

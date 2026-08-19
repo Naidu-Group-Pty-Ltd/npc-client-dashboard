@@ -29,6 +29,7 @@ import { chartDataService } from '@/services/chartDataService';
 import { toast } from 'sonner';
 import { generateOverviewSnapshotPDF } from '@/components/overview/OverviewSnapshotPDF';
 import { cn } from '@/lib/utils';
+import { isClientFacingDeployment } from '@/lib/clientFacing';
 import {
   BarChart,
   Bar,
@@ -264,6 +265,8 @@ export default function Overview() {
   // operational core (quick actions, ops snapshot, reminders).
   const { resolve: resolveOverviewCapability } = useCapabilityResolver();
   const marketplaceEnabled = resolveOverviewCapability('module.property_marketplace').enabled;
+  // The integrity panel is a validation/debug widget — internal console only.
+  const showDataIntegrityPanel = marketplaceEnabled && !isClientFacingDeployment();
   const commercialEnabled = resolveOverviewCapability('module.commercial_industrial').enabled;
   const marketNewsEnabled = resolveOverviewCapability('module.market_news_feed').enabled;
   const generatedReportsEnabled = resolveOverviewCapability('module.generated_reports').enabled;
@@ -724,9 +727,9 @@ export default function Overview() {
 
       <OverviewSection eyebrow="Operational reminders and validation" title="Workflow control" description="Current follow-ups and data consistency checks remain close to the executive metrics." icon={<ShieldCheck className="h-4 w-4" />}>
         {/* Upcoming Reminders & (marketplace-only) Data Integrity Panel */}
-        <div className={cn('grid min-w-0 gap-4 animate-fade-in [&_.rounded-lg]:rounded-xl [&_.border]:border-border/70 [&_.bg-muted\/50]:bg-muted/35', marketplaceEnabled && 'lg:grid-cols-2')}>
+        <div className={cn('grid min-w-0 gap-4 animate-fade-in [&_.rounded-lg]:rounded-xl [&_.border]:border-border/70 [&_.bg-muted\/50]:bg-muted/35', showDataIntegrityPanel && 'lg:grid-cols-2')}>
           <UpcomingRemindersWidget />
-          {marketplaceEnabled && <DataIntegrityPanel dashboardData={recentListings} className={PREMIUM_CARD} />}
+          {showDataIntegrityPanel && <DataIntegrityPanel dashboardData={recentListings} className={PREMIUM_CARD} />}
         </div>
       </OverviewSection>
 

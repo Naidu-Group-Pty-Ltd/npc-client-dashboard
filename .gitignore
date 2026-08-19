@@ -68,3 +68,4 @@ ds-bundle/
 # Vapi clone kit runtime state (ids only, but session-local)
 docs/integrations/vapi/clone-kit/clone-state.json
 docs/integrations/vapi/clone-kit/url-map.json
+supabase/.temp/

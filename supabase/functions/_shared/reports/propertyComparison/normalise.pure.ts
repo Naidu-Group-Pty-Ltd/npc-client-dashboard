@@ -65,7 +65,8 @@ import type {
   ScaledScore,
   SourceShape,
 } from './payload.pure.ts';
-import { canonicalSection, COMPARISON_SECTIONS, salvageTruncatedJson } from './salvage.pure.ts';
+import { COMPARISON_SECTIONS } from './salvage.pure.ts';
+import { readStoredAnalysis } from './storedAnalysis.pure.ts';
 
 /** The producer accepts 2–5; more than this is a data fault, not a comparison. */
 export const MAX_PROPERTIES = 12;
@@ -537,67 +538,20 @@ export interface BuildComparisonInput {
 }
 
 /** Which of the seven structured columns carry anything. */
-const STRUCTURED_COLUMNS = [
-  'rankings',
-  'financial_comparison',
-  'location_comparison',
-  'risk_comparison',
-  'investor_matches',
-  'recommendations',
-  'red_flags',
-] as const;
-
 export function buildPropertyComparison(input: BuildComparisonInput): PropertyComparison {
   const row = input.row;
 
   // ── Which shape, decided once ─────────────────────────────────────────────
-  const hasColumns = STRUCTURED_COLUMNS.some((c) => {
-    const v = row[c];
-    return v !== null && v !== undefined && (!Array.isArray(v) || v.length > 0);
-  });
-
-  let shape: SourceShape = 'columns';
-  let source: Record<string, unknown>;
-  let provenance: Provenance;
-
-  if (hasColumns) {
-    source = {
-      executiveSummary: row.executive_summary,
-      rankings: row.rankings,
-      financialComparison: row.financial_comparison,
-      locationComparison: row.location_comparison,
-      riskComparison: row.risk_comparison,
-      investorMatches: row.investor_matches,
-      recommendations: row.recommendations,
-      redFlags: row.red_flags,
-    };
-    // Nothing is reported missing on this path. A null column is ordinary
-    // absence — the analysis had nothing to say — not a record that was cut off,
-    // and the document drops the section silently as the other three formats do.
-    provenance = { shape, recovered: [], missing: [], truncated: false };
-  } else {
-    const salvaged = salvageTruncatedJson(
-      typeof row.executive_summary === 'string' ? row.executive_summary : null,
-    );
-    if (!salvaged || !salvaged.recovered.length) {
-      throw new ComparisonPayloadError(
-        salvaged?.reason
-          || 'the comparison holds no structured sections and no readable stored response',
-      );
-    }
-    shape = 'salvaged';
-    // `finalRecommendation` is the producer's other name for the same section.
-    source = { ...salvaged.value };
-    if (source.finalRecommendation && !source.recommendations) {
-      source.recommendations = source.finalRecommendation;
-    }
-    provenance = {
-      shape,
-      recovered: salvaged.recovered.map(canonicalSection),
-      missing: salvaged.missing,
-      truncated: salvaged.truncated,
-    };
-  }
+  // `readStoredAnalysis` is that decision, and it is shared with the on-screen
+  // viewer. Two readers of these rows disagreeing is not hypothetical: the
+  // viewer used to try `JSON.parse` on the blob and print the cleaned string on
+  // failure, so a row this route read correctly rendered as 16 KB of raw JSON on
+  // the screen beside it.
+  const stored = readStoredAnalysis(row);
+  if (stored.error) throw new ComparisonPayloadError(stored.error);
+  const source = stored.sections;
+  const provenance: Provenance = stored.provenance;
+  const shape: SourceShape = provenance.shape;
 
   // ── The properties, and the pointers into them ────────────────────────────
   const rawRankings = Array.isArray(source.rankings) ? source.rankings : [];

@@ -48,6 +48,25 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+## The security check on the login pages (Turnstile)
+Read [`docs/security/TURNSTILE.md`](./docs/security/TURNSTILE.md) before touching
+`TurnstileWidget`, `_shared/publicAbuseControls.ts`'s `verifyTurnstile`, or the
+sitekey. Five login pages disable Sign In until the widget issues a token, so a
+Turnstile that will not render is the front door shut — and the widget used to
+**discard Cloudflare's error code**, rendering all eleven documented failures as
+"check your ad/script blocker" beside a retry button. That advice is right for
+one of them; for `110200` the script loaded fine and Cloudflare refused the
+HOSTNAME, which no visitor can retry away.
+
+Two rules bite. **Turnstile takes a hostname and its subdomains, never a
+wildcard**, so a per-deployment URL (`<project>-<hash>-<team>.vercel.app` is a
+sibling, not a subdomain) can never be allow-listed — such a build needs its own
+widget via `VITE_TURNSTILE_SITE_KEY`, whose `TURNSTILE_SECRET_KEY` must be the
+same widget's or the token passes the page and fails siteverify. And **the
+server fails OPEN while the client fails CLOSED**: `verifyTurnstile` admits a
+request with no token unless `REQUIRE_TURNSTILE=true`, so a Cloudflare
+misconfiguration presents as a total outage rather than as reduced protection.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's

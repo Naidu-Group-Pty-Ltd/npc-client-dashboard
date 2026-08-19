@@ -89,10 +89,22 @@ jobs:
             exit 1
           fi
 
+      - name: Require an explicit target project
+        env:
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          # Fail closed — see deploy-supabase-functions.yml. This defaulted to
+          # the prime's ref, so a mirror of this repo applied ITS migrations to
+          # the prime's production database.
+          if [ -z "${PROJECT_REF:-}" ]; then
+            echo '::error title=No target project::Repository variable SUPABASE_PROJECT_REF is not set. Set it to THIS deployment'"'"'s own project ref before applying a migration.'
+            exit 1
+          fi
+
       - name: Apply
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'dduzbchuswwbefdunfct' }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           FILE: ${{ inputs.file }}
           RECORD_VERSION: ${{ inputs.record_version }}
           TUPLES_PER_CHUNK: ${{ inputs.tuples_per_chunk }}

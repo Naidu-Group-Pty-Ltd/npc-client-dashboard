@@ -109,11 +109,13 @@ separate commits from the hides, and the first two help the internal build too:
   `isClientFacingDeployment()` remains the API for conditional rendering,
   because it is testable and the define is not.
 
-Still shipping the prime's URL: **31 source files hardcode**
-`https://dduzbchuswwbefdunfct.supabase.co` (`useAuth`, the portal hooks and
-libs, `integrations/supabase/client.ts`, …). That is a blocker for pointing
-this repo at its own backend — see `BACKEND_PROVISIONING.md` — and wants a
-dedicated upstream change.
+- **The project this build talks to is now a setting**, and it never was: 31
+  source files wrote `https://dduzbchuswwbefdunfct.supabase.co` and its
+  publishable key into their own module scope, so `VITE_SUPABASE_URL` moved
+  nothing. All 31 now import from `src/integrations/supabase/env.ts`, the one
+  module that resolves it. A build that sets neither variable behaves exactly
+  as before — the prime is still the built-in fallback — so this is a no-op
+  upstream and a switch here. See `BACKEND_PROVISIONING.md`.
 
 ## Adding to (or trimming) the list
 

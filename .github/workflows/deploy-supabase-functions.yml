@@ -152,7 +152,7 @@ jobs:
             echo '   ```sh'
             echo '   supabase login'
             for fn in ${{ steps.changed.outputs.list }}; do
-              echo "   supabase functions deploy $fn --project-ref dduzbchuswwbefdunfct"
+              echo "   supabase functions deploy $fn --project-ref \$SUPABASE_PROJECT_REF"
             done
             echo '   ```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -168,9 +168,18 @@ jobs:
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'dduzbchuswwbefdunfct' }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
         run: |
           set -euo pipefail
+          # Fail closed. This variable used to default to the prime's project
+          # ref, which meant a mirror of this repo deployed ITS functions into
+          # the prime's production on every push to main. There is no safe
+          # default for "which project" — an unset variable is a question, not
+          # a licence to guess.
+          if [ -z "${PROJECT_REF:-}" ]; then
+            echo '::error title=No target project::Repository variable SUPABASE_PROJECT_REF is not set, so there is no project to deploy to. Set it in Settings → Secrets and variables → Actions → Variables to THIS deployment'"'"'s own project ref. It must never be another deployment'"'"'s.'
+            exit 1
+          fi
           failed=''
           for fn in ${{ steps.changed.outputs.list }}; do
             echo "::group::$fn"
@@ -245,10 +254,14 @@ jobs:
       - name: Verify the deployed CORS contract
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
         env:
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || 'dduzbchuswwbefdunfct' }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
           ORIGIN: ${{ vars.CORS_VERIFY_ORIGIN || 'https://command-centre.npcservices.com.au' }}
         run: |
           set -uo pipefail
+          if [ -z "${PROJECT_REF:-}" ]; then
+            echo '::error title=No target project::SUPABASE_PROJECT_REF is not set — nothing to verify against.'
+            exit 1
+          fi
           bad=''
           checked=0
           for fn in ${{ steps.changed.outputs.list }}; do

@@ -1,4 +1,8 @@
-project_id = "dduzbchuswwbefdunfct"
+# This repository's OWN Supabase project. It must never name the prime's
+# (dduzbchuswwbefdunfct): `rotate-internal-edge-secret` and
+# `aml-sanctions-refresh` both resolve their target by reading this line, so
+# a prime ref here points this repo's automation at the prime's production.
+project_id = "plisdzywzleljorrphxv"
 
 [functions.aml-cases]
 verify_jwt = false

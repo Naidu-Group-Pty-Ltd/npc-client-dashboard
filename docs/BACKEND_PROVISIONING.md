@@ -1,119 +1,172 @@
-# Dedicated backend provisioning — run log (WIP)
+# Dedicated backend — state of the shell
 
-The client-facing dashboard should run on its **own** Supabase backend rather
-than sharing the prime's (`dduzbchuswwbefdunfct`). This records an execution
-of Aurixa Mission Control's clone-backend pipeline against a fresh project,
-and — as requested — **every error the channel surfaced**. It is WIP: the
-project exists but is **not yet a usable backend** (see blockers).
+The client-facing dashboard is to run on its **own** Supabase backend rather
+than sharing the prime's production project (`dduzbchuswwbefdunfct`). This
+records what that backend currently is, how it was built, and exactly what is
+left. It is WIP.
 
-## What was created
+## The headline: there is no live data on it
+
+**Verified by scanning every table**: 528 tables scanned, and the total number
+of rows in the entire database is **2** — one `custom_users` row and its one
+`user_roles` row, which together are the single superadmin. `auth.users` is 0,
+`storage.objects` is 0, `storage.buckets` is 0.
+
+No production data was ever copied, and none can have been: every statement
+executed against this project was **DDL** (structure). No `INSERT`, `COPY` or
+`SELECT INTO` ever moved a row out of the prime. Client PII, AML records and
+financial data never left the prime's project.
 
 | | |
 | --- | --- |
-| Supabase project ref | `plisdzywzleljorrphxv` |
-| Project name | `aurixa-clone-npc-client-dashboard` |
+| Project ref | `plisdzywzleljorrphxv` |
 | URL | `https://plisdzywzleljorrphxv.supabase.co` |
-| Org | `nchuigmqbfcdhdgplrxq` (Xenochrome 3) |
-| Region | `ap-southeast-2` (Sydney) |
-| Status | `ACTIVE_HEALTHY`, **public schema empty (0 tables)** |
+| Org / region | Xenochrome 3 · `ap-southeast-2` (Sydney) |
+| Status | `ACTIVE_HEALTHY` |
+| **Rows in database** | **2 (the superadmin only)** |
 
-The anon/publishable keys were retrieved but are **not** committed here or
-wired into the app: pointing the client at an empty backend is worse than
-sharing the prime, so the live env stays on the prime until a schema clone
-actually succeeds.
+### The single superadmin
 
-## Channel used
+`custom_users` (the dashboard's own auth table) holds one row:
+`username=admin`, `email=admin@npcservices.com.au`, `role=super_admin`,
+`is_active=true`, with a bcrypt `password_hash` generated from a random
+throwaway string. **Nobody knows that password — set one before use** (update
+`password_hash` with `crypt('<new>', gen_salt('bf',10))`). A matching
+`user_roles` row carries `role='superadmin'`.
 
-Mission Control's real pipeline
-(`src/server/backend-provisioning.server.ts::provisionCloneBackend`) could
-**not** be invoked directly from this session — see blocker #1. Its steps were
-executed instead through the session's authorized **Supabase Management API**
-connection, which is the same API the pipeline calls
-(`https://api.supabase.com/v1`, `POST /database/query`). Steps followed in
-order: org-capacity preflight → create project → wait healthy → retrieve keys
-→ enforce required extensions → replay prime migrations.
+## What the shell contains
 
-## Errors encountered (all of them)
+| Object | On the clone | On the prime | State |
+| --- | --- | --- | --- |
+| Schemas (`public`, `aml`) | 2 | 2 | done |
+| Enum types | 94 | 94 | **complete** |
+| Extensions | 9 | 8 (+`pg_graphql`) | **complete** |
+| Tables | **528** | 641 | 82% |
+| RLS enabled | **528 / 528** | — | **complete (deny-all)** |
+| RLS policies | 0 | 1,149 | not started |
+| Functions (app) | 0 | 604 | not started |
+| Indexes | 2 | 2,135 | not started |
+| Constraints | 2 | 2,560 | not started |
+| Triggers | 0 | 472 | not started |
+| Views / matviews | 0 | 14 | not started |
+| Storage buckets | 0 | 32 | not started |
+| Edge functions | 0 | 424 | not started |
 
-1. **Mission Control cannot run in this session (environmental).** The
-   pipeline needs its own operator secrets — `SB_MGMT_API_TOKEN`, `SB_ORG_ID`
-   (`backend-provisioning.server.ts`) — plus a GitHub App to read the prime
-   repo (`fetchPrimeBackendSnapshot` pulls migration blobs over the GitHub
-   API). None are present here. Substituted the session's Management API +
-   the local repo checkout.
+**RLS is enabled on every table with no policies**, which is deny-all. That is
+the correct posture for an empty shell: nothing can read or write through the
+anon/authenticated roles, and only the service role (which bypasses RLS) can
+reach it. Do not load data before the policies land.
 
-2. **`REQUIRED_EXTENSIONS` names a non-existent extension.** The list is
-   `["pgcrypto","pg_net","pg_cron","pg_graphql","vault"]`, but Postgres has no
-   extension named `vault` — Supabase ships it as **`supabase_vault`**.
-   `create extension if not exists vault` errors with
-   `extension "vault" is not available`. `enforceRequiredExtensions` is
-   non-fatal per extension, so the pipeline would log it and continue with
-   vault **not installed** — anything vault-backed (e.g. cron auth secrets)
-   then fails downstream. Installed `supabase_vault` explicitly here; the
-   other four installed cleanly.
+## How it was built, and why it stopped where it did
 
-3. **The clone halts on migration #1 — the repo is not a self-contained
-   schema.** This is the load-bearing blocker. `applyPrimeMigrations` sorts
-   the repo's `supabase/migrations/*.sql` by filename and applies each in
-   order, halting on the first failure (`break; // schema state beyond this
-   point is undefined`), after which `provisionCloneBackend` throws. The
-   earliest file, `20250124120000_fix_client_data_rls_policies.sql`, begins:
+The migration replay in Mission Control's clone pipeline **cannot** build this
+schema — the repo's own migration history assumes base tables that no migration
+in the repo creates, so it fails on file #1 (`relation "client_activities" does
+not exist`), and the repo has drifted from the prime's ledger (949 repo files
+vs 853 tracked; 546 live tables materialised out of band).
 
-   ```sql
-   DROP POLICY IF EXISTS "Allow all access to client_activities" ON client_activities;
-   ```
+So the schema was rebuilt by **introspecting the live prime read-only** and
+replaying generated DDL through the Supabase Management API. That works — 94/94
+enums and 528 tables applied with zero failures — but the DDL has to pass
+through the agent's context in ~50 KB batches, and at that size batches
+reliably lose their largest statements (three separate repair passes were
+needed). It is the wrong tool for the remaining volume.
 
-   `IF EXISTS` guards the *policy*, not the *table*, so on an empty database
-   this is:
+## Before you transfer the schema — read this
 
-   ```
-   ERROR: 42P01: relation "client_activities" does not exist
-   ```
+Finishing the schema is where backend isolation is most likely to be lost
+silently. **Do not replay the repo's migrations here**: 28 of them call
+`net.http_post` against the prime's URL hardcoded, and 22 embed the prime's anon
+JWT inline, so replaying installs cron jobs on THIS database that call the
+PRIME's edge functions on a schedule. The ledger here has 0 rows today, so none
+has ever run.
 
-   Reproduced exactly against `plisdzywzleljorrphxv`. The migration history
-   assumes base tables that **no migration in the repo creates**.
+`pg_dump --schema-only` is much safer — the prime's live functions resolve their
+URL from the vault and embed no credentials — but four of them still fall back
+to the prime's URL when the vault is empty, which is exactly this project's
+state. `bootstrap_cron_vault`, `dispatch_web_push_on_notification`,
+`dispatch_web_push_for_portal_notification` and
+`invoke_pdf_parse_recover_stuck_jobs` must be re-pointed before anything is
+scheduled. Full detail, and the probes that verify it:
+[`BACKEND_ISOLATION.md`](./BACKEND_ISOLATION.md).
 
-4. **Repo ↔ prime ledger drift confirms the cause.** The live prime
-   (`dduzbchuswwbefdunfct`) has **546 public tables** but its migration ledger
-   holds **853** entries, earliest version `20250827053832`. The repo ships
-   **949** migration files, earliest `20250124120000` — i.e. the repo carries
-   ~96 files the prime never tracked, and its oldest files *predate* the
-   prime's ledger entirely. The base schema (`client_activities` et al.) was
-   materialized out-of-band (Lovable dashboard / an untracked bootstrap), so
-   it cannot be rebuilt by replaying the repo. **A migration replay cannot
-   clone this prime; a live schema dump (`pg_dump --schema-only`) is the
-   correct source.**
+## Finishing it properly (2 minutes, needs the DB password)
 
-5. **Migration corpus exceeds single-call transport anyway.** 949 files /
-   **158 MB**, of which four template-library seeds are **37–41 MB each**. The
-   Management API query endpoint (and the MCP `apply_migration` tool) apply one
-   migration per call as one statement; these four exceed the per-request
-   payload ceiling, so even with #3 fixed they can't be shipped whole. They
-   are data seeds, best loaded by `COPY`/`pg_restore`, not `apply_migration`.
+The rest wants `pg_dump`, which produces a byte-exact schema including the
+things catalog introspection cannot reproduce (comments, grants/ownership,
+storage parameters, collations, sequence ownership, partition attachments).
+From a machine with network access to both projects and the **prime's database
+password** (Supabase dashboard → Settings → Database):
 
-6. **Mission Control's own backend is out of token scope (registration
-   blocked).** MC records clones in `clones` / `clone_backends` on project
-   `fgpvagejkaeqedcwvbte` (its `.env`). That project is **not** in this
-   session's Supabase org (`nchuigmqbfcdhdgplrxq` holds only Aurixa Systems,
-   Lazarus and the NPC prime), and `get_project` on it returns
-   `You do not have permission to perform this action`. So this run could not
-   be registered as a `clone_backends` row; it lives only in this doc.
+```sh
+# 1. Dump the prime's schema only — no data, ever.
+pg_dump "postgresql://postgres:<PRIME_PW>@db.dduzbchuswwbefdunfct.supabase.co:5432/postgres" \
+  --schema-only --no-owner --no-privileges \
+  --schema=public --schema=aml \
+  -f prime-schema.sql
 
-7. **Local tooling gaps (minor).** Direct Postgres (`psql` 5432 to
-   `db.*.supabase.co` and the pooler) is not reachable from this sandbox
-   (connections time out), so DB work went via the Management API only; and
-   two attempts to script bulk-SQL transport were declined by the environment's
-   command classifier. Neither changes the outcome — #3/#4 are the real wall.
+# 2. Apply it to the empty clone (drop what is there first for a clean run).
+psql "postgresql://postgres:<CLONE_PW>@db.plisdzywzleljorrphxv.supabase.co:5432/postgres" \
+  -c 'drop schema public cascade; create schema public; drop schema if exists aml cascade;' \
+  -f prime-schema.sql
+```
 
-## What a working clone needs next (not done here)
+`--schema-only` is what keeps this a shell: it emits structure and never a row.
+Re-seed the superadmin afterwards, and re-run the row-count check below.
 
-- Dump the **live prime** schema (`pg_dump --schema-only` from
-  `dduzbchuswwbefdunfct`) and apply that as the base, instead of replaying
-  repo migrations from zero; then layer any repo migrations newer than the
-  dump.
-- Load the four large template-library seeds via `COPY`/`pg_restore`.
-- Fix `REQUIRED_EXTENSIONS` in the prime repo (`vault` → `supabase_vault`).
-- Replicate storage buckets, `[auth]` config, `pg_cron` schedule, realtime
-  publication and secret shells (later pipeline steps, not reached).
-- Wire `VITE_SUPABASE_*` to the new project and register a `clone_backends`
-  row once the schema is real.
+### The check that proves it is still a shell
+
+```sql
+do $$
+declare r record; c bigint;
+begin
+  for r in select schemaname, tablename from pg_tables
+           where schemaname in ('public','aml') loop
+    execute format('select count(*) from %I.%I', r.schemaname, r.tablename) into c;
+    if c > 0 then raise notice '% .% = %', r.schemaname, r.tablename, c; end if;
+  end loop;
+end $$;
+```
+
+Expect exactly two notices: `custom_users = 1` and `user_roles = 1`.
+
+## Pointing the app at it (the wiring is done)
+
+**This used to be impossible for a reason that had nothing to do with the
+schema**: 31 source files wrote `https://dduzbchuswwbefdunfct.supabase.co` and
+its publishable key into their own module scope, so setting
+`VITE_SUPABASE_URL` moved nothing — almost every caller ignored it and dialled
+the prime directly. All 31 now import from `src/integrations/supabase/env.ts`.
+
+The switch-over is therefore the two variables and nothing else:
+
+```sh
+VITE_SUPABASE_URL="https://plisdzywzleljorrphxv.supabase.co"
+VITE_SUPABASE_PUBLISHABLE_KEY="<the anon key — .env.example carries it>"
+```
+
+Verified end to end: a build with both set carries `plisdzywzleljorrphxv` in
+five chunks and reaches the prime's constants through no live path; a build
+with neither is byte-for-byte the old behaviour.
+
+Three rules that module enforces, each of which was a live defect:
+
+- **The URL and the key are a matched pair.** The anon key is a JWT whose `ref`
+  claim names its project, so a URL from one and a key from another
+  authenticate to nothing. Set both or neither — a half-configured environment
+  uses *both* built-in defaults rather than mixing them, and says so on the
+  console. Supplying a genuinely mismatched pair is honoured and warned about
+  by ref, because that is a configuration error and should read as one.
+- **The fallback is never empty.** `internalMessageAttachments.ts` read
+  `VITE_SUPABASE_URL ?? ''`, which made the upload PUT relative — it went to
+  the app's own origin and got HTML back.
+- **The project ref is derived, never named a third time.**
+  `VITE_SUPABASE_PROJECT_ID` was a third spelling of the same project, free to
+  disagree with the other two; unset, `TemplateSharePreview` fetched
+  `https://undefined.supabase.co/functions/v1/template-share`. Nothing live
+  reads it now — `SUPABASE_PROJECT_REF` comes off the resolved URL.
+
+`.env.example` still points at the prime, with this project's pair commented
+out directly beneath it. **Do not uncomment it yet** — the shell has no
+policies, functions or edge functions, so an app pointed at it can read and
+write nothing. Finish the schema first.

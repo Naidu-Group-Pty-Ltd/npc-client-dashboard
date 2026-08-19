@@ -82,6 +82,13 @@ Both the PDF and the on-screen viewer print that raw blob as "Executive Summary"
 prose: `ComparisonViewer.parseIfNeeded` (`:68–90`) strips the fence, tries
 `JSON.parse`, and **returns the cleaned string on failure**.
 
+> **Both halves of F8 are fixed — see §12 at the end of this document.** The
+> producer no longer asks for a ten-section document under a flat 12,000-token
+> ceiling and no longer stores an unreadable response as a success, and the
+> viewer now takes the same reading of a stored row that the render route does.
+> The figures above are the record as it was measured, and the damaged rows are
+> still in the table: salvage remains a read-time view and nothing is backfilled.
+
 **F9 — `finalScore` is on two scales, and the newest row uses the older one.**
 17 comparisons score 0–100 (41 → 88.5); 6 score 0–10 (0 → 9.2). Not a fixed legacy
 tail: the 0–10 group runs to **2026-07-23, the most recent comparison in the
@@ -508,3 +515,127 @@ blank.
 | --- | --- |
 | `comparisonProjection.spec.ts` | the restatement keeps the score with its denominator, says "no clear winner" rather than pointing at a property that was never named, reads back a truncated record, and never publishes a half-written ranking row — asserted by cutting a fixture at every step |
 | `comparisonCatalogue.spec.ts` | 50 masters across 10 families, slugs disjoint from the other three catalogues, nothing bound outside `comparison`, four ranking variants at one position covering counts 2–5, exactly one rendering per count, and every bound score paired with its `outOf` in the template source |
+
+---
+
+## 12. The producer — where the two shapes came from, and why there are no longer three
+
+Sections 1–11 describe reading these rows. This one is about writing them, and it
+is the one that had to change: on **2026-08-19** a comparison came out of
+`compare-investment-reports` holding an executive summary and nothing else — no
+ranking, no scorecard, no recommendation — and the function returned **200** with
+`success: true`.
+
+### What the record said
+
+53 rows, of which **30 have all seven structured columns NULL**. That is not a
+legacy tail: the three most recent comparisons in the table are all in it, and
+they are three *different* failures, each stored as a success.
+
+| Rows | What came back | Old outcome |
+| --- | --- | --- |
+| 25 | cut off mid-token, 8 of them still inside an unclosed ` ```json ` fence | raw blob in `executive_summary`, columns NULL |
+| 4 | closes its own brace and still does not parse — `]` where `}` belongs, at line 225 of 251 | same |
+| 1 | parsed, and carried `executiveSummary` alone | **prose** in `executive_summary`, columns NULL |
+
+The first two are Shape B and §3 reads them. **The third is neither shape.**
+`salvageTruncatedJson` returns `null` for text that is not JSON, and the columns
+path needs a column, so `render-property-comparison-pdf` refuses it and the
+viewer shows one tab with a paragraph in it. It is the only row in the table that
+no reader in this repository can render.
+
+### Three causes, each sufficient on its own
+
+**The output budget was shared with the model's reasoning.** `report_comparison`
+is assigned `google/gemini-2.5-pro` in `agent_model_assignments`; `max_tokens` on
+an OpenAI-compatible gateway is the *whole* output allowance, and a 2.5-series
+model spends thousands of it thinking before it writes a character. The request
+asked for a flat `maxTokens: 12000` regardless of size. The damage tracks the
+property count exactly — 0 of 7 two-property comparisons, 16 of 17 five-property
+ones — which is the signature of a ceiling, not of a model that could not answer.
+
+**Nothing asked for JSON except the prose.** No `response_format` was sent at
+all. The system prompt says "respond with ONLY valid JSON … no ```json wrappers";
+8 stored rows carry one anyway, and 4 more balance their brackets by count and
+not by type.
+
+**Every outcome was stored as a success.** The `catch` wrote the raw text to
+`executive_summary`, left the columns NULL and returned 200; and the *success*
+path had no check of its own, so a response that parsed and carried one section
+was written the same way a complete one was. Nothing retried, nothing warned, and
+`token_audit_log` committed the charge on all of them.
+
+### What it does now
+
+`_shared/reports/propertyComparison/analysisRequest.pure.ts` carries the request
+and the reading; the edge function is the loop around it.
+
+- **The room is fitted to the job.** `comparisonOutputTokens` scales with the
+  property count, from the measured length of a complete response plus a
+  reasoning allowance on top of it rather than inside it. The two errors are not
+  symmetric — headroom the model does not use costs nothing, because billing and
+  latency both follow the answer's length and not the ceiling, while too little
+  costs the document and the 75 seconds spent on it.
+- **The shape is asked for as a schema.** `COMPARISON_ANALYSIS_SCHEMA` mirrors
+  the prompt's literal, and a spec asserts its top-level keys are
+  `COMPARISON_SECTIONS` — the same list the salvager reports `missing` against
+  and the normaliser reads. Three descriptions of one shape drifting apart is how
+  `investorMatches` came to be written by every comparison and rendered by none.
+- **The ask degrades rather than failing.** `json_schema` → `json_object` →
+  nothing, one rung at a time, dropped only on a 4xx whose body names the field
+  (never on a 429, a 402 or a 5xx — weakening the guarantee for a capacity
+  problem would quietly degrade every later call), and dropped once more when a
+  rung returns something unusable, because a gateway that accepts a
+  `response_format` it cannot honour is indistinguishable from a bad answer. The
+  worst case of an unsupported schema is therefore the old behaviour, never the
+  loss of the comparison.
+- **A parse is not an analysis.** `readAnalysisResponse` returns `complete`,
+  `partial` or `unusable`, and a payload without at least two ranked properties
+  is `unusable` however cleanly it parsed. Every chapter of the document is built
+  from the ranking.
+- **A failed attempt is retried, inside the invocation.** Up to three, stopped by
+  a 120s wall-clock budget that starts another attempt only when one the size of
+  the last still fits — the discipline `generate-investment-report` keeps with
+  `SECTION_LOOP_BUDGET_MS`, and for the same reason: a run that is killed teaches
+  its caller nothing. `preferReading` keeps the best attempt, so a retry that
+  comes back worse never replaces what is already in hand.
+- **What is stored is always one of the two shapes.** A response that parsed
+  whole is written to the columns, and a section it had nothing to say about is
+  ordinary absence, dropped silently as the other formats do. A response that did
+  **not** parse whole is stored as the model's own text with the columns NULL —
+  Shape B, which §3 reads and which makes the document name what it lost. A
+  parsed fragment with NULL columns is never written again.
+- **An unusable answer is a failure, and free.** The route returns
+  `success: false` with a 502, which `decideMeteringOutcome` reads as a release:
+  the reservation is refunded, nothing is stored, and no phantom appears in the
+  library. A partial answer still commits, because the caller received a
+  document — and the response carries `incomplete`, `missingSections` and
+  `recoveredSections` so the browser can say so. Deliberately **not**
+  `isComplete: false`: the metering wrapper reads that as "one chunk of a longer
+  run landed" and would hold the reservation open forever.
+
+### One reader, not three
+
+`readStoredAnalysis` (`storedAnalysis.pure.ts`) is the shape decision, lifted out
+of `buildPropertyComparison` unchanged and now shared with the screen.
+
+This is the rule §11 states for the projection, applied to the same rows: every
+hard question about this record has one right answer and several wrong ones that
+still render, so a second reader disagrees with the first eventually and the
+disagreement surfaces as a client's document rather than as a test failure. It
+already had. `ComparisonViewer.parseIfNeeded` tried `JSON.parse` on the stored
+text and **returned the cleaned string when it failed**, so all 30 damaged rows
+rendered as 16 KB of raw JSON on screen under the heading "Executive Summary",
+with every tab reading "No … data available" — beside a download button whose
+PDF read the same row correctly. The viewer now takes the same reading, shows
+the sections that survived, and states which ones were never saved. The record
+is not backfilled: salvage stays a read-time view, exactly as §3 requires.
+
+### Not touched
+
+`compare-cash-flow-reports` shares the shape of the old model call and is **not**
+in this state: it asks for a far smaller schema under `maxTokens: 4000`, and on a
+parse failure it returns a 500 rather than storing a row. Its fence regex has the
+same flaw, and it cannot bite — a response short enough to be fenced whole is
+matched, and one that was cut off would not parse either way. The legacy PDF path
+(§8) stays as it was, for the reasons recorded there.

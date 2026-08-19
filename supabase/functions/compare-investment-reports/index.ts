@@ -10,6 +10,28 @@ const corsHeaders = {
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
+/**
+ * Wall-clock room for the model, inside the invocation around it.
+ *
+ * The same discipline `generate-investment-report` keeps with
+ * `SECTION_LOOP_BUDGET_MS`, for the same reason: an edge invocation is cut off
+ * without warning, and a run that is killed teaches its caller nothing. The
+ * browser gives this call 150s; 120s here leaves the auth, four reads, the
+ * insert and the response comfortably inside that, and a retry is started only
+ * when one the size of the last still fits.
+ */
+const ANALYSIS_BUDGET_MS = 120_000;
+
+/**
+ * How many times to ask.
+ *
+ * A response that is not an analysis is stochastic, so asking again is the
+ * remedy — but the budget above is the real limit: at three properties a single
+ * attempt has been observed at 75s, so in practice this bound is reached only on
+ * the small, fast comparisons where a retry is free.
+ */
+const MAX_ANALYSIS_ATTEMPTS = 3;
+
 type ComparableReportType = 'compass' | 'financial' | 'strategic' | 'snapshot' | 'briefing';
 const comparableReportTypes = new Set<ComparableReportType>(['compass', 'financial', 'strategic', 'snapshot', 'briefing']);
 
@@ -467,7 +489,27 @@ Format your response as valid JSON with this structure:
   }
 }`;
 
-    // Call Lovable AI
+    // ── Ask the model, and read what came back ────────────────────────────
+    //
+    // Three things used to go wrong here, and each one alone left a client with
+    // a report missing nine of its ten sections — 30 of the 53 stored
+    // comparisons, including the most recent.
+    //
+    //  * The budget was a flat `maxTokens: 12000` shared with the model's own
+    //    reasoning. `report_comparison` is assigned a thinking model, which
+    //    spends thousands of that allowance before it writes a character, so the
+    //    answer was cut off. The damage tracked the property count exactly — 0
+    //    of 7 two-property comparisons, 16 of 17 five-property ones — which is
+    //    an output ceiling, not a model that could not answer.
+    //  * Nothing asked for JSON except the prose. 8 stored rows still carry a
+    //    fence and 4 close their own brace and still do not parse.
+    //  * Every one of those outcomes was stored as a success: 200,
+    //    `success: true`, seven NULL columns, no retry and nothing said.
+    //
+    // The shape is now asked for as a schema, the room is fitted to the job, a
+    // response that is not an analysis is a failed attempt rather than a stored
+    // document, and what is stored is always one of the two shapes the readers
+    // know. `analysisRequest.pure.ts` carries the reasoning for each.
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       console.error('LOVABLE_API_KEY not configured');
@@ -477,135 +519,207 @@ Format your response as valid JSON with this structure:
       );
     }
 
-    console.log('Calling Lovable AI for comparison analysis...');
+    const { callLLMRaw } = await import('../_shared/llmRouter.ts');
+    const { resolvePrompt } = await import('../_shared/engine-prompts.ts');
+    const {
+      comparisonOutputTokens,
+      nextRung,
+      preferReading,
+      readAnalysisResponse,
+      responseFormatFor,
+      rungRejected,
+    } = await import('../_shared/reports/propertyComparison/analysisRequest.pure.ts');
+    type Rung = 'json_schema' | 'json_object' | 'none';
+    type Reading = ReturnType<typeof readAnalysisResponse>;
 
-    const maxRetries = 2;
-    let lastError: string = '';
-    let aiData: any = null;
+    const systemPrompt = (await resolvePrompt('comparison.report_system')).text;
+    const outputTokens = comparisonOutputTokens(reports.length);
+    const deadlineAt = startTime + ANALYSIS_BUDGET_MS;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    console.log(
+      `Calling the comparison model for ${reports.length} properties `
+      + `(up to ${outputTokens} output tokens, ${Math.round(ANALYSIS_BUDGET_MS / 1000)}s budget)...`
+    );
+
+    let rung: Rung = 'json_schema';
+    let best: Reading | null = null;
+    let bestText = '';
+    let attempts = 0;
+    let lastError = '';
+
+    // Bounded three ways — attempts, the wall clock, and the ladder — so the
+    // loop cannot fail to end and cannot outlive the invocation around it.
+    while (attempts < MAX_ANALYSIS_ATTEMPTS && Date.now() < deadlineAt) {
+      const attemptStartedAt = Date.now();
+      const remainingMs = deadlineAt - attemptStartedAt;
+
+      let aiResponse: Awaited<ReturnType<typeof callLLMRaw>>;
       try {
-        const { callLLMRaw } = await import('../_shared/llmRouter.ts');
-        const aiResponse = await callLLMRaw({
+        aiResponse = await callLLMRaw({
           agentKey: 'report_comparison',
           messages: [
-            {
-              role: 'system',
-              content: (await (await import('../_shared/engine-prompts.ts')).resolvePrompt('comparison.report_system')).text,
-            },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: prompt },
           ],
           temperature: 0.7,
-          maxTokens: 12000,
+          // The model, its temperature and its reasoning effort stay the
+          // operator's, from `agent_model_assignments`. Only the room the answer
+          // needs is decided here, because only this side knows how much of a
+          // document is being asked for.
+          maxTokens: outputTokens,
+          responseFormat: responseFormatFor(rung),
+          // A hung provider must not eat the invocation: the guard that would
+          // have caught it has to run inside the time it is guarding. The floor
+          // wins when the budget is nearly spent — a timeout shorter than the
+          // shortest useful call aborts a request that was going to succeed, and
+          // the overrun it allows is bounded by the floor itself.
+          timeoutMs: Math.max(20_000, remainingMs),
+          deadlineAt,
         });
-        // Router handles its own internal timeouts/fallbacks; abort no longer needed
-        const timeoutId = 0 as any; const controller = { abort: () => {} } as any;
+      } catch (fetchErr) {
+        lastError = fetchErr instanceof Error ? fetchErr.message : 'Unknown fetch error';
+        console.error(`[comparison] provider call threw (attempt ${attempts + 1}):`, lastError);
+        attempts += 1;
+        if (attempts >= MAX_ANALYSIS_ATTEMPTS || Date.now() >= deadlineAt) break;
+        continue;
+      }
 
-        clearTimeout(timeoutId);
+      if (!aiResponse.ok) {
+        const errorText = await aiResponse.text();
 
-        if (!aiResponse.ok) {
-          const errorText = await aiResponse.text();
-          console.error(`Lovable AI error (attempt ${attempt + 1}):`, aiResponse.status, errorText);
-          
-          if (aiResponse.status === 429) {
-            if (attempt < maxRetries) {
-              console.log(`Rate limited, retrying in ${(attempt + 1) * 3}s...`);
-              await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
-              continue;
-            }
-            return new Response(
-              JSON.stringify({ error: 'Rate limit exceeded. Please wait a moment and try again.' }),
-              { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        // A provider that cannot do this response_format is a fact about the
+        // provider, not about the request: drop one rung of the guarantee and
+        // ask again. It does not spend an attempt, because nothing was
+        // generated. Capacity, credit and health are deliberately excluded —
+        // weakening the schema for a 429 would quietly degrade every later call.
+        if (rungRejected(aiResponse.status, errorText)) {
+          const next = nextRung(rung);
+          if (next) {
+            console.warn(
+              `[comparison] provider refused response_format '${rung}' `
+              + `(${aiResponse.status}); falling back to '${next}'`
             );
-          }
-          
-          if (aiResponse.status === 402) {
-            return new Response(
-              JSON.stringify({ error: 'AI credits exhausted. Please add credits to your Lovable workspace.' }),
-              { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-            );
-          }
-          
-          lastError = errorText;
-          if (attempt < maxRetries) {
-            console.log(`AI error, retrying (attempt ${attempt + 2})...`);
-            await new Promise(r => setTimeout(r, 2000));
+            rung = next;
             continue;
           }
-          
+        }
+
+        if (aiResponse.status === 429) {
+          attempts += 1;
+          const backoffMs = attempts * 3000;
+          if (attempts < MAX_ANALYSIS_ATTEMPTS && Date.now() + backoffMs < deadlineAt) {
+            console.log(`[comparison] rate limited, retrying in ${backoffMs / 1000}s...`);
+            await new Promise((r) => setTimeout(r, backoffMs));
+            continue;
+          }
           return new Response(
-            JSON.stringify({ error: 'AI analysis failed after retries', details: lastError }),
-            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            JSON.stringify({ success: false, error: 'Rate limit exceeded. Please wait a moment and try again.' }),
+            { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
 
-        aiData = await aiResponse.json();
-        break; // Success
-      } catch (fetchErr) {
-        const errMsg = fetchErr instanceof Error ? fetchErr.message : 'Unknown fetch error';
-        console.error(`Fetch error (attempt ${attempt + 1}):`, errMsg);
-        lastError = errMsg;
-        
-        if (errMsg.includes('aborted')) {
-          lastError = 'AI request timed out after 2 minutes. Try reducing the number of properties or using "quick" analysis depth.';
+        if (aiResponse.status === 402) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'AI credits exhausted. Please add credits to your Lovable workspace.' }),
+            { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
         }
-        
-        if (attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
+
+        lastError = errorText;
+        console.error(`[comparison] provider error (attempt ${attempts + 1}):`, aiResponse.status, errorText);
+        attempts += 1;
+        if (attempts >= MAX_ANALYSIS_ATTEMPTS || Date.now() >= deadlineAt) break;
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+
+      attempts += 1;
+      const aiData = await aiResponse.json();
+      const analysisText = aiData?.choices?.[0]?.message?.content;
+      const reading = readAnalysisResponse(analysisText);
+      if (preferReading(best, reading) === reading) {
+        best = reading;
+        bestText = typeof analysisText === 'string' ? analysisText : '';
+      }
+
+      if (reading.status === 'complete') break;
+
+      lastError = reading.reason
+        || `the model returned ${reading.present.length} of ${reading.present.length + reading.missing.length} sections`;
+      console.warn(
+        `[comparison] attempt ${attempts} was ${reading.status}: ${lastError}`
+        + (reading.missing.length ? ` (missing: ${reading.missing.join(', ')})` : '')
+      );
+
+      // A rung that produced nothing usable is suspect. Some gateways accept a
+      // `response_format` they cannot actually honour and answer anyway, and
+      // that failure is indistinguishable from a bad answer — so weaken the ask
+      // before spending another attempt on it. The worst case of an unsupported
+      // schema is then the behaviour this function had before, never the loss of
+      // the comparison itself.
+      if (reading.status === 'unusable') {
+        const next = nextRung(rung);
+        if (next) {
+          console.warn(`[comparison] nothing usable under response_format '${rung}'; weakening to '${next}'`);
+          rung = next;
         }
-        
-        return new Response(
-          JSON.stringify({ error: `Failed to reach AI service: ${lastError}` }),
-          { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+      }
+
+      // Only start another attempt if one of this size still fits. A retry the
+      // invocation cannot finish returns nothing at all, which is worse than the
+      // partial answer already in hand.
+      const attemptMs = Date.now() - attemptStartedAt;
+      if (Date.now() + attemptMs >= deadlineAt) {
+        console.warn('[comparison] no room in the budget for another attempt; keeping the best answer so far');
+        break;
       }
     }
 
-    if (!aiData) {
+    // Nothing usable came back. Return a failure rather than storing a row that
+    // says a comparison exists: `decideMeteringOutcome` releases the reservation
+    // on a body like this, so a comparison that could not be produced costs the
+    // caller nothing — and no phantom appears in the library.
+    if (!best || best.status === 'unusable') {
+      const why = best?.reason || lastError || 'the model did not return a usable comparison';
+      console.error('[comparison] no usable analysis after', attempts, 'attempt(s):', why);
       return new Response(
-        JSON.stringify({ error: 'AI analysis failed after all retries' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({
+          success: false,
+          error: `The comparison could not be produced: ${why}. Please try again.`,
+        }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const analysisText = aiData.choices[0].message.content;
+    const analysis = best.analysis as Record<string, any>;
 
-    // Parse JSON response
-    let analysis;
-    try {
-      // Extract JSON from markdown code blocks if present
-      let jsonString = analysisText;
-      
-      // Remove markdown code block wrappers
-      const jsonMatch = analysisText.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
-      if (jsonMatch) {
-        jsonString = jsonMatch[1];
-      }
-      
-      // Parse the JSON
-      analysis = JSON.parse(jsonString);
-      
-      // Clean up any remaining markdown artifacts in text fields
-      if (analysis.executiveSummary && typeof analysis.executiveSummary === 'string') {
-        // Remove any JSON formatting artifacts
-        analysis.executiveSummary = analysis.executiveSummary
-          .replace(/^```json\s*\n/, '')
-          .replace(/\n```$/, '')
-          .replace(/\\n/g, '\n')
-          .trim();
-      }
-      
-      console.log('Successfully parsed AI analysis');
-    } catch (parseError) {
-      console.error('Failed to parse AI response:', parseError);
-      console.error('Raw response:', analysisText);
-      
-      // Store raw text if JSON parsing fails
-      analysis = {
-        executiveSummary: analysisText.replace(/```json\s*\n|\n```/g, '').trim(),
-        rawResponse: true
-      };
+    // ── Which shape this row is stored in ─────────────────────────────────
+    //
+    // There are two, and the readers — `normalise.pure.ts` for the typeset PDF,
+    // the viewer, the legacy formatter — decide between them by looking at the
+    // columns. A row that is neither is what made the newest comparison in the
+    // table unreadable by all three, so the choice is made here, once.
+    //
+    //   columns  the response parsed whole. A section that is absent is
+    //            ordinary absence — the analysis had nothing to say — and the
+    //            document drops it silently, as the other formats do.
+    //   raw      the response did not parse whole. The model's own text is kept
+    //            intact so `salvage.pure.ts` can read it back, and the document
+    //            names what was lost rather than quietly printing less.
+    //
+    // Never a parsed fragment with NULL columns: that is neither shape, and it
+    // is what one attempt in three produced.
+    const storeRaw = best.status === 'partial' && best.truncated && bestText.trim() !== '';
+    if (storeRaw) {
+      console.warn(
+        `[comparison] storing the raw response for recovery — read back `
+        + `${best.present.length} section(s), missing: ${best.missing.join(', ') || 'none'}`
+      );
+    } else {
+      console.log(
+        `[comparison] analysis ${best.status} — ${best.present.length} section(s) stored`
+        + (best.missing.length ? `, absent: ${best.missing.join(', ')}` : '')
+      );
     }
 
     const processingTime = Date.now() - startTime;
@@ -624,14 +738,22 @@ Format your response as valid JSON with this structure:
         report_title: reportTitle,
         comparison_type: comparisonType,
         structure_version: 1,
-        executive_summary: analysis.executiveSummary,
-        rankings: analysis.rankings,
-        financial_comparison: analysis.financialComparison,
-        location_comparison: analysis.locationComparison,
-        risk_comparison: analysis.riskComparison,
-        investor_matches: analysis.investorMatches,
-        recommendations: analysis.finalRecommendation,
-        red_flags: analysis.redFlags,
+        // On the raw path every structured column stays NULL on purpose: that is
+        // what tells `normalise.pure.ts` to salvage `executive_summary` and
+        // report what it could not read, instead of printing a shorter document
+        // and calling it whole.
+        executive_summary: storeRaw
+          ? bestText
+          : (typeof analysis.executiveSummary === 'string' ? analysis.executiveSummary.trim() : null),
+        rankings: storeRaw ? null : analysis.rankings,
+        financial_comparison: storeRaw ? null : analysis.financialComparison,
+        location_comparison: storeRaw ? null : analysis.locationComparison,
+        risk_comparison: storeRaw ? null : analysis.riskComparison,
+        investor_matches: storeRaw ? null : analysis.investorMatches,
+        // The producer names this section two ways; `readAnalysisResponse` has
+        // already folded `finalRecommendation` into the name the column uses.
+        recommendations: storeRaw ? null : analysis.recommendations,
+        red_flags: storeRaw ? null : analysis.redFlags,
         analysis_depth: analysisDepth,
         investor_profile: investorProfile,
         created_by: userId,
@@ -654,12 +776,23 @@ Format your response as valid JSON with this structure:
 
     console.log(`Comparison completed in ${processingTime}ms`);
 
+    // `incomplete` / `missingSections` rather than `isComplete: false`: the
+    // metering wrapper reads that flag as "one chunk of a longer run landed" and
+    // HOLDS the reservation open. This run is over either way, so it commits —
+    // the caller received a document, and the only question the browser still
+    // has is whether to say a section is absent.
     return new Response(
       JSON.stringify({
         success: true,
         comparisonId: comparisonData?.id,
         propertyCount: reports.length,
         analysis,
+        ...(best.status === 'complete' ? {} : {
+          incomplete: true,
+          missingSections: best.missing,
+          recoveredSections: best.present,
+          truncated: best.truncated,
+        }),
         processingTimeMs: processingTime
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

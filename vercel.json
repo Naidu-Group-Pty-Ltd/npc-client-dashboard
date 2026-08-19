@@ -3,8 +3,7 @@
     "services": {
         "frontend": {
             "root": ".",
-            "framework": "vite",
-            "installCommand": "npm ci --no-audit --no-fund"
+            "framework": "vite"
         },
         "aml-verification-service": {
             "root": "services/aml-verification-service",

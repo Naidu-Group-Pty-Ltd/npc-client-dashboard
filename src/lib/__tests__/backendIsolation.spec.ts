@@ -25,6 +25,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
@@ -80,6 +81,25 @@ describe('no workflow can act on a foreign project', () => {
         /if \[ -z "\$\{PROJECT_REF:-\}" \]; then/,
       );
     }
+  });
+});
+
+describe('no checked-in CLI state points at another project', () => {
+  it('supabase/.temp is not committed', () => {
+    // It was, and it held {"ref":"dduzbchuswwbefdunfct"} — the supabase CLI's
+    // link file, naming the PRIME. Any bare `supabase ...` run in this repo
+    // would have defaulted to the prime's project regardless of config.toml.
+    const tracked = execSync('git ls-files supabase/.temp', { cwd: REPO_ROOT })
+      .toString().trim();
+    expect(tracked, `tracked CLI state: ${tracked}`).toBe('');
+  });
+
+  it('no tracked file outside tests names the prime as a project ref', () => {
+    const hits = execSync(
+      `git grep -l '"ref":"${FOREIGN_PROJECT_REF}"' -- . ':!*__tests__*' || true`,
+      { cwd: REPO_ROOT },
+    ).toString().trim();
+    expect(hits, `files naming the prime as a ref: ${hits}`).toBe('');
   });
 });
 

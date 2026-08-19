@@ -112,3 +112,42 @@ quietly produce different verdicts on the two sides of the wire.
 - Bind to loopback and reach it over a private network or tunnel. It handles
   biometric data and has no business being publicly routable.
 - No volumes. Nothing is persisted.
+- The port is `8080` unless `$PORT` names another one. Nothing else in the
+  service reads it; the host does.
+
+### On Vercel
+
+The repository's `vercel.json` declares this directory as a service. It is built
+as a **container** — `"runtime": "container"`, `"entrypoint": "Dockerfile"` —
+and deliberately not with Vercel's Python/FastAPI runtime, which is what its
+framework detection reaches for on its own.
+
+That runtime installs `requirements.txt` and nothing else. `tesseract` is a
+system package, so `/doc/mrz` would have no binary to call, and the ONNX weights
+are fetched by `scripts/fetch_models.sh` at **image build** time, so `/models`
+would be empty and both face endpoints would raise `ModelUnavailable`. The
+service would boot, answer, and report `degraded` — which is the state the
+go-live runbook (`docs/aml/kyc-go-live-runbook.md`) requires you to keep the IDV
+provider inactive through. Giving the Python runtime the entrypoint it asks for
+buys a build that succeeds and a service that cannot verify anybody.
+
+Two things the deployment needs that are not in this repository:
+
+- **`PORT=8080` in the project's environment variables.** Vercel routes to port
+  `80` by default, and this container cannot bind it — it runs unprivileged.
+- **The `AML_SERVICE_TOKEN` secret.** On Vercel the `/api/*` route is public
+  (the Supabase Edge Functions call it from outside Vercel's network), so the
+  shared secret is the whole of the access control. The service failing closed
+  without it is what keeps an unconfigured deployment from being an open face
+  comparison endpoint.
+
+Public requests arrive as `/api/face/compare`; a `request.path` transform in the
+service's own `routes` strips the prefix, so the container still sees
+`/face/compare`, `/doc/mrz`, `/face/liveness` and `/healthz`. Those paths are
+the service's contract with the Edge Function and with `docker compose` — do not
+move them into the app to suit one host's URL layout.
+
+One thing to weigh rather than assume: a container function scales to zero after
+five idle minutes, so the first request after a quiet spell pays for loading
+SFace and YuNet. The runbook asks for a persistent container, and scale-to-zero
+compute is not one.

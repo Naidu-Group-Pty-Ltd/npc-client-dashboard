@@ -72,6 +72,24 @@ through the agent's context in ~50 KB batches, and at that size batches
 reliably lose their largest statements (three separate repair passes were
 needed). It is the wrong tool for the remaining volume.
 
+## Before you transfer the schema — read this
+
+Finishing the schema is where backend isolation is most likely to be lost
+silently. **Do not replay the repo's migrations here**: 28 of them call
+`net.http_post` against the prime's URL hardcoded, and 22 embed the prime's anon
+JWT inline, so replaying installs cron jobs on THIS database that call the
+PRIME's edge functions on a schedule. The ledger here has 0 rows today, so none
+has ever run.
+
+`pg_dump --schema-only` is much safer — the prime's live functions resolve their
+URL from the vault and embed no credentials — but four of them still fall back
+to the prime's URL when the vault is empty, which is exactly this project's
+state. `bootstrap_cron_vault`, `dispatch_web_push_on_notification`,
+`dispatch_web_push_for_portal_notification` and
+`invoke_pdf_parse_recover_stuck_jobs` must be re-pointed before anything is
+scheduled. Full detail, and the probes that verify it:
+[`BACKEND_ISOLATION.md`](./BACKEND_ISOLATION.md).
+
 ## Finishing it properly (2 minutes, needs the DB password)
 
 The rest wants `pg_dump`, which produces a byte-exact schema including the

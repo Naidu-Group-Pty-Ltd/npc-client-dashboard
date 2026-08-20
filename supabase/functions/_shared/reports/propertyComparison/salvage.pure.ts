@@ -3,10 +3,19 @@
  *
  * ## What happened, and to how much of the record
  *
- * `compare-investment-reports` asks a model for ten sections of JSON with a
- * 12,000-token ceiling. For two properties that fits. For five it does not: the
- * response stops mid-token, `JSON.parse` throws, and the `catch` stores the raw
- * string into `executive_summary` leaving all seven structured columns NULL.
+ * `compare-investment-reports` asked a model for ten sections of JSON with a
+ * flat 12,000-token ceiling shared with that model's own reasoning. For two
+ * properties that fits. For five it does not: the response stops mid-token,
+ * `JSON.parse` throws, and the `catch` stored the raw string into
+ * `executive_summary` leaving all seven structured columns NULL.
+ *
+ * **The producer no longer does that** — `analysisRequest.pure.ts` scales the
+ * budget with the property count, asks for the shape as a schema, and retries a
+ * response that is not an analysis. This module is not thereby obsolete: it is
+ * the read-time view of the 30 rows already in the table, and it is still what
+ * the producer stores against when an answer does come back cut off, because a
+ * partial answer read honestly beats a shorter document printed as though it
+ * were whole.
  *
  * The damage tracks the property count exactly — 0 of 7 two-property comparisons,
  * 16 of 17 five-property ones — and comes to **27 of 50 rows**. Of those 27,
@@ -117,7 +126,7 @@ export function looksLikeRawJson(raw: string | null | undefined): boolean {
  * fence-like sequence that appears inside a string value, corrupting a document
  * that was otherwise fine.
  */
-function stripFence(raw: string): string {
+export function stripFence(raw: string): string {
   let s = raw.replace(/^\uFEFF/, '').trim();
   s = s.replace(/^```[ \t]*(?:json)?[ \t]*\r?\n/, '');
   s = s.replace(/\r?\n[ \t]*```[ \t]*$/, '');

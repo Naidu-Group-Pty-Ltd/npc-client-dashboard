@@ -4,7 +4,9 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Trophy, TrendingUp, MapPin, AlertTriangle, Target } from 'lucide-react';
+import { Trophy, TrendingUp, MapPin, AlertTriangle, Target, FileWarning } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { readStoredAnalysis, section } from '@/lib/reports/propertyComparison/storedAnalysis.pure';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
 import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
@@ -20,6 +22,7 @@ interface ComparisonViewerProps {
     report_title?: string;
     executive_summary: string | null;
     rankings: any;
+    investor_matches?: any;
     financial_comparison: any;
     location_comparison: any;
     risk_comparison: any;
@@ -65,32 +68,6 @@ export function ComparisonViewer({ isOpen, onClose, comparison }: ComparisonView
     }
   };
 
-  // Parse JSON strings if needed and clean up any markdown/JSON artifacts
-  const parseIfNeeded = (data: any) => {
-    if (!data) return data;
-    if (typeof data === 'string') {
-      let cleaned = data
-        .replace(/^```json\s*\n?/, '')
-        .replace(/\n?```$/, '')
-        .replace(/^```\s*\n?/, '')
-        .replace(/\\n/g, '\n')
-        .replace(/\\"/g, '"')
-        .trim();
-      
-      // Try to parse as JSON if it looks like JSON
-      if (cleaned.startsWith('{') || cleaned.startsWith('[')) {
-        try {
-          return JSON.parse(cleaned);
-        } catch {
-          // If JSON parsing fails, return the cleaned string
-          return cleaned;
-        }
-      }
-      return cleaned;
-    }
-    return data;
-  };
-
   // Format text content for display (converts to readable paragraphs)
   const formatText = (text: string): string[] => {
     if (!text) return [];
@@ -100,17 +77,35 @@ export function ComparisonViewer({ isOpen, onClose, comparison }: ComparisonView
       .filter(para => para.length > 0);
   };
 
-  const rankings = parseIfNeeded(comparison.rankings);
-  const financialComparison = parseIfNeeded(comparison.financial_comparison);
-  const locationComparison = parseIfNeeded(comparison.location_comparison);
-  const riskComparison = parseIfNeeded(comparison.risk_comparison);
-  const recommendations = parseIfNeeded(comparison.recommendations);
-  const redFlags = parseIfNeeded(comparison.red_flags);
-  
-  // Clean up executive summary separately
-  const cleanExecutiveSummary = comparison.executive_summary 
-    ? parseIfNeeded(comparison.executive_summary)
-    : null;
+  // ── What this row actually holds ──────────────────────────────────────────
+  //
+  // 30 of the 53 stored comparisons have all seven structured columns NULL and
+  // the model's whole raw response sitting in `executive_summary`. This screen
+  // used to try `JSON.parse` on that and **return the cleaned string on
+  // failure**, so those rows rendered as 16 KB of raw JSON under the heading
+  // "Executive Summary", with every tab reading "No … data available" — while
+  // the typeset PDF beside them read the same rows correctly.
+  //
+  // `readStoredAnalysis` is the decision the render route makes, shared rather
+  // than re-implemented, so the two can no longer disagree about what the model
+  // said. It never repairs, so a section is shown whole or reported absent.
+  const stored = readStoredAnalysis(comparison as unknown as Record<string, unknown>);
+  const { provenance } = stored;
+
+  const rankings = section(stored, 'rankings') as any;
+  const financialComparison = section(stored, 'financialComparison') as any;
+  const locationComparison = section(stored, 'locationComparison') as any;
+  const riskComparison = section(stored, 'riskComparison') as any;
+  const recommendations = section(stored, 'recommendations') as any;
+  const redFlags = section(stored, 'redFlags') as any;
+
+  const summary = section(stored, 'executiveSummary');
+  const cleanExecutiveSummary = typeof summary === 'string' ? summary : null;
+
+  // Only worth saying on the salvaged path. On the columns path a section the
+  // analysis had nothing to say about is ordinary absence, and announcing it
+  // would turn every complete comparison into a warning.
+  const recordIncomplete = provenance.shape === 'salvaged' && provenance.missing.length > 0;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -142,6 +137,35 @@ export function ComparisonViewer({ isOpen, onClose, comparison }: ComparisonView
 
         <div className="flex-1 overflow-y-auto min-h-0 pr-4">
           <div className="space-y-6 pb-4">
+            {/*
+              What the record does not hold, said first. On a cut-off analysis a
+              reader who is not told simply reads a shorter report — and the one
+              section truncation eats first is the one that answers "which should
+              I buy".
+            */}
+            {stored.error ? (
+              <Alert variant="destructive">
+                <FileWarning className="h-4 w-4" />
+                <AlertTitle>This comparison could not be read</AlertTitle>
+                <AlertDescription>
+                  The saved analysis holds no readable sections — {stored.error}. Re-run the
+                  comparison to produce it again.
+                </AlertDescription>
+              </Alert>
+            ) : recordIncomplete ? (
+              <Alert>
+                <FileWarning className="h-4 w-4" />
+                <AlertTitle>Part of this analysis was not saved</AlertTitle>
+                <AlertDescription>
+                  The model's response was cut off before it finished, so{' '}
+                  {provenance.missing.length} of {provenance.missing.length + provenance.recovered.length}{' '}
+                  sections were never stored: {provenance.missing.join(', ')}. Everything shown below
+                  was recovered from the saved response and is what the model wrote. Re-run the
+                  comparison to produce the missing sections.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
             {/* Executive Summary */}
             {cleanExecutiveSummary && (
               <Card>

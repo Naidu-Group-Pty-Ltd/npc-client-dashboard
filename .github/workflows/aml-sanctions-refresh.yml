@@ -50,10 +50,30 @@ jobs:
         with:
           persist-credentials: false
 
+      # Node 22, deliberately, while every other workflow here pins 20.
+      #
+      # `@supabase/supabase-js` constructs a `RealtimeClient` inside
+      # `createClient` and that constructor demands a NATIVE WebSocket, which
+      # arrived in Node 22. On 20 the loader dies before it has read a single
+      # byte of any list:
+      #
+      #     Error: Node.js detected but native WebSocket not found.
+      #       at createClient (@supabase/supabase-js)
+      #       at main (scripts/aml/load-sanctions-lists.mjs:201)
+      #
+      # This never surfaced because the job died one step earlier, at the
+      # missing-credential check, on every run this workflow has ever had. The
+      # secret was added on 2026-08-19 and the very next run failed here, in
+      # zero seconds — the third independent fault in a refresh that has never
+      # once completed.
+      #
+      # The loader uses no realtime feature whatsoever; the requirement comes
+      # from the client constructor, so it cannot be avoided by not
+      # subscribing to anything.
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

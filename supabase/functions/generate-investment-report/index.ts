@@ -2340,7 +2340,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // Suburb mode: Suburb name followed by postcode and/or state
       // Examples: "Bondi, 2026, NSW" or "Bondi NSW 2026" or "Bondi, NSW"
       analysisMode = 'suburb';
-      const parts = propertyAddress.split(',').map(p => p.trim());
+      const parts = propertyAddress.split(',').map((p: string) => p.trim());
       detectedSuburb = parts[0];
       
       // Require both postcode and state for suburb to avoid ambiguity
@@ -2549,8 +2549,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         const serviceNames = ['domain', 'demographics', 'economics', 'seifaData', 'crimeStatistics', 'employmentData', 'climateData'];
         const serviceName = serviceNames[index];
         
-        if (result.status === 'fulfilled' && result.value.success && result.value.data) {
-          enhancedData = { ...enhancedData, [serviceName === 'domain' ? 'domainData' : serviceName]: result.value.data };
+        // The settled union mixes ServiceResult<any> with a bare error shape that
+        // carries no `data`, so read the payload through the widened result — the
+        // truthiness check below is what actually decides whether it is present.
+        const fulfilled = result.status === 'fulfilled'
+          ? (result.value as ServiceResult<any>)
+          : null;
+        if (fulfilled && fulfilled.success && fulfilled.data) {
+          enhancedData = { ...enhancedData, [serviceName === 'domain' ? 'domainData' : serviceName]: fulfilled.data };
           successCount++;
         } else {
           failCount++;

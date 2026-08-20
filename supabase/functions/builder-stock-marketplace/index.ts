@@ -35,6 +35,9 @@ import {
 import {
   isDisplayableSourceImage, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
+import {
+  servableDerivativeFor,
+} from '../_shared/builderStock/sanitizedDerivative.pure.ts';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -239,11 +242,42 @@ Deno.serve(async (req) => {
       if (image.external_url && !image.storage_path) {
         return json({ success: true, url: image.external_url, external: true });
       }
+
+      /**
+       * THE FROZEN DERIVATIVE, WHEN THERE IS ONE — NEVER A REPAIR AT REQUEST
+       * TIME.
+       *
+       * Where the builder laid a promotional graphic over their own photograph,
+       * the repair ran once, in the settler, and the result is an object in the
+       * bucket. This endpoint reads a record and signs a path; it decodes
+       * nothing, calls no model and generates nothing. A card that triggered a
+       * repair would repair the same picture on every render, spend a vendor
+       * key every time, and hand two viewers two different images.
+       *
+       * `servableDerivativeFor` is the same call the card's own filter makes,
+       * so the two cannot disagree about which object this is. It resolves only
+       * while the record still names the SHA-256 the row holds, so a replaced
+       * original falls back to the original — which the gate above has already
+       * decided is displayable.
+       */
+      const derivative = servableDerivativeFor(image.source_detail);
+      const bucket = derivative?.storage_bucket
+        || image.storage_bucket || STOCK_IMAGE_BUCKET;
+      const path = derivative?.storage_path || image.storage_path;
+
       const { data: signed, error } = await supabase.storage
-        .from(image.storage_bucket || STOCK_IMAGE_BUCKET)
-        .createSignedUrl(image.storage_path, IMAGE_URL_TTL_SECONDS);
+        .from(bucket)
+        .createSignedUrl(path, IMAGE_URL_TTL_SECONDS);
       if (error || !signed?.signedUrl) return json({ error: 'The image could not be prepared' }, 502);
-      return json({ success: true, url: signed.signedUrl, expires_in: IMAGE_URL_TTL_SECONDS });
+      return json({
+        success: true,
+        url: signed.signedUrl,
+        expires_in: IMAGE_URL_TTL_SECONDS,
+        // Disclosed rather than hidden: a repaired photograph is the builder's
+        // own picture with an overlay removed, and a surface that wants to say
+        // so can.
+        sanitized: derivative ? derivative.transformation : null,
+      });
     }
 
     if (operation === 'search_clients') {

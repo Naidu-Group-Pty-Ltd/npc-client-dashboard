@@ -960,3 +960,90 @@ describe('review & submit — submission', () => {
     expect(screen.getByRole('button', { name: /Send updated information/ })).toBeDisabled();
   });
 });
+
+/**
+ * The political-exposure question.
+ *
+ * It was two radio buttons under "Are you a Politically Exposed Person
+ * (PEP)?" and nothing else. A customer who has never met the term answers
+ * "no" to a phrase they do not know — and the definition they were never
+ * shown covers immediate FAMILY MEMBERS and CLOSE ASSOCIATES, which is
+ * exactly what that question never reaches. A "yes" was no more useful: no
+ * office, no jurisdiction, no relationship, so the MLRO had to go back to
+ * the customer for what should have been asked once.
+ *
+ * The stored answer is still `pep: 'yes' | 'no'`, so nothing about the
+ * screening policy that reads it changes.
+ */
+describe('the political-exposure declaration', () => {
+  const openPersonal = async (payload: Record<string, unknown> = {}) => {
+    getQuestionnaire.mockResolvedValue({
+      response: { payload, status: 'draft', updated_at: null },
+    });
+    render(<PortalAml />);
+    await waitFor(() => expect(pill('Personal details')).toBeTruthy());
+    fireEvent.click(pill('Personal details'));
+    await waitFor(() => expect(screen.getByText(/prominent public position/i)).toBeTruthy());
+  };
+  const lastSaved = () => saveQuestionnaire.mock.calls.at(-1)![2] as Record<string, unknown>;
+  const saveDraft = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveQuestionnaire).toHaveBeenCalled());
+  };
+
+  it('asks a question the customer can actually answer', async () => {
+    await openPersonal();
+    // The three limbs of the definition, in plain words, before the answer.
+    const explainer = screen.getByText(/senior role in government/i).textContent!;
+    expect(explainer).toMatch(/immediate family member/i);
+    expect(explainer).toMatch(/close business or personal\s+associate/i);
+    // And it says what answering yes actually means for them.
+    expect(explainer).toMatch(/does not affect your\s+purchase/i);
+  });
+
+  it('asks nothing further while the answer is no', async () => {
+    await openPersonal({ pep: 'no' });
+    expect(screen.queryByText(/What is the position or office\?/i)).toBeNull();
+  });
+
+  it('collects the position, the jurisdiction and the relationship on a yes', async () => {
+    await openPersonal({ pep: 'yes' });
+    expect(screen.getByText(/Who holds the position\?/i)).toBeTruthy();
+    expect(screen.getByText(/What is the position or office\?/i)).toBeTruthy();
+    expect(screen.getByText(/In which country or jurisdiction\?/i)).toBeTruthy();
+  });
+
+  it('saves the detail beside the answer, not instead of it', async () => {
+    await openPersonal({ pep: 'yes', pep_relationship: 'family_member' });
+    fireEvent.change(screen.getByPlaceholderText(/Member of Parliament/i), {
+      target: { value: 'Judge of the Federal Court' },
+    });
+    await saveDraft();
+    expect(lastSaved()).toMatchObject({
+      pep: 'yes', pep_relationship: 'family_member',
+      pep_role: 'Judge of the Federal Court',
+    });
+  });
+
+  it('drops the detail when the customer corrects the answer to no', async () => {
+    /*
+     * A field nobody can see is still a field that saves. Without the prune,
+     * an office the customer typed and then withdrew would have stayed in
+     * the payload, in the submission snapshot, and in front of the MLRO — an
+     * answer nobody gave, presented as one they did.
+     */
+    await openPersonal({
+      pep: 'yes', pep_relationship: 'self', pep_role: 'Judge', pep_country: 'Australia',
+      full_name: 'Rugesh Naidu',
+    });
+    fireEvent.click(screen.getAllByRole('radio', { name: /^No$/ })[0]);
+    await saveDraft();
+    const saved = lastSaved();
+    expect(saved.pep).toBe('no');
+    expect(saved).not.toHaveProperty('pep_role');
+    expect(saved).not.toHaveProperty('pep_country');
+    expect(saved).not.toHaveProperty('pep_relationship');
+    // and nothing else on the section is disturbed
+    expect(saved.full_name).toBe('Rugesh Naidu');
+  });
+});

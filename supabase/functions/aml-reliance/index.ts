@@ -32,6 +32,8 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+// `aml.cases` has no tenant_id column. See `_shared/aml/caseTenant.ts`.
+import { tenantForCase } from "../_shared/aml/caseTenant.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import {
@@ -1400,10 +1402,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!caseId) return jr({ error: "case_id is required" }, 400);
 
         const { data: caseRow } = await admin.schema("aml").from("cases")
-          .select("id, tenant_id, subject_type, status, service_gate_status")
+          .select("id, subject_type, status, service_gate_status")
           .eq("id", caseId).maybeSingle();
         if (!caseRow) return jr({ error: "Case not found" }, 404);
-        const caseTenant = caseRow.tenant_id ?? "default";
+        const caseTenant = tenantForCase(String(caseRow.id));
 
         // Current, non-superseded attestation — the exact version distribution
         // pins to (§15). Never taken from the body.
@@ -2083,8 +2085,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
         {
           const { data: caseRowForLink } = await admin.schema("aml").from("cases")
-            .select("id, tenant_id, subject_type").eq("id", caseId).maybeSingle();
-          const caseTenant = caseRowForLink?.tenant_id ?? "default";
+            .select("id, subject_type").eq("id", caseId).maybeSingle();
+          const caseTenant = tenantForCase(String(caseId));
           let linkRows: any[] = [];
           if (partnerOrgRow) {
             const { data: links } = await admin.schema("aml").from("partner_case_links")
@@ -2426,7 +2428,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (purpose.length < 10) return jr({ error: "purpose must be at least 10 characters — record why this organisation may access this matter" }, 400);
 
         const { data: caseRow } = await admin.schema("aml").from("cases")
-          .select("id, client_id, purchase_file_id, tenant_id").eq("id", caseId).maybeSingle();
+          .select("id, client_id, purchase_file_id").eq("id", caseId).maybeSingle();
         if (!caseRow) return jr({ error: "Case not found" }, 404);
         const { data: org } = await admin.schema("aml").from("partner_organisations")
           .select("id, status, legal_name").eq("id", orgId).maybeSingle();
@@ -2456,7 +2458,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         const { data: link, error } = await admin.schema("aml").from("partner_case_links").insert({
-          tenant_id: caseRow.tenant_id ?? "default",
+          tenant_id: tenantForCase(String(caseRow.id)),
           case_id: caseId,
           client_id: caseRow.client_id ?? null,
           purchase_file_id: pfId,

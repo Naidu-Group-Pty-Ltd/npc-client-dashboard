@@ -82,6 +82,17 @@ export const DECODABLE_CONTAINERS: readonly string[] = [
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',
 ];
 
+/** Which decoder reads this container. One answer, used by both callers. */
+async function decodeRaster(bytes: Uint8Array): Promise<DecodedRaster | null> {
+  return isPng(bytes)
+    ? await decodePng(bytes)
+    : isJpeg(bytes)
+      ? decodeJpeg(bytes)
+      : isGif(bytes)
+        ? await decodeGif(bytes)
+        : decodeWebpRaster(bytes);
+}
+
 export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeResult> {
   if (!bytes?.length) return { ok: false, reason: 'failed' };
   if (bytes.length > MAX_DECODE_BYTES) return { ok: false, reason: 'failed' };
@@ -90,13 +101,8 @@ export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeRe
   if (!supported) return { ok: false, reason: 'unsupported' };
 
   try {
-    const thumbnail = isPng(bytes)
-      ? await decodePng(bytes)
-      : isJpeg(bytes)
-        ? decodeJpeg(bytes)
-        : isGif(bytes)
-          ? await decodeGif(bytes)
-          : decodeWebpThumbnail(bytes);
+    const raster = await decodeRaster(bytes);
+    const thumbnail = raster && box(raster.width, raster.height, raster.read);
     return thumbnail ? { ok: true, thumbnail } : { ok: false, reason: 'failed' };
   } catch {
     return { ok: false, reason: 'failed' };
@@ -112,14 +118,35 @@ export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeRe
  * second downscaler, and every threshold in the classifier is fitted against
  * this one.
  */
-function decodeWebpThumbnail(bytes: Uint8Array): Thumbnail | null {
+function decodeWebpRaster(bytes: Uint8Array): DecodedRaster | null {
   const raster = decodeWebp(bytes, { maxPixels: MAX_DECODE_PIXELS });
   if (!raster) return null;
   const { width, height, pixels } = raster;
-  return box(width, height, (x, y) => {
+  return { width, height, read: (x, y) => {
     const at = (y * width + x) * 3;
     return [pixels[at], pixels[at + 1], pixels[at + 2]];
-  });
+  } };
+}
+
+/**
+ * The picture at the size the builder supplied it.
+ *
+ * For the sanitizer, which has to hand back a photograph a client will look at
+ * — a 400px reduction of a 1200px render would be a visible downgrade dressed
+ * up as a fix. It goes through the SAME decoder dispatch and the same `read`
+ * the measurement uses, so the pixels a verdict was formed about and the pixels
+ * that get repaired are the same pixels.
+ */
+export async function decodeFullRaster(bytes: Uint8Array): Promise<FullRaster | null> {
+  if (!bytes?.length) return null;
+  if (bytes.length > MAX_DECODE_BYTES) return null;
+  if (!(isPng(bytes) || isJpeg(bytes) || isGif(bytes) || isWebp(bytes))) return null;
+  try {
+    const raster = await decodeRaster(bytes);
+    return raster ? materialise(raster) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The thumbnail alone, for callers that only need the pixels. */
@@ -143,7 +170,7 @@ const isWebp = (b: Uint8Array) =>
 
 const CHANNELS: Record<number, number> = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
 
-async function decodePng(bytes: Uint8Array): Promise<Thumbnail | null> {
+async function decodePng(bytes: Uint8Array): Promise<DecodedRaster | null> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let offset = 8;
   let width = 0;
@@ -274,7 +301,7 @@ async function decodePng(bytes: Uint8Array): Promise<Thumbnail | null> {
     return [s(0), s(1), s(2)];
   };
 
-  return box(width, height, read);
+  return { width, height, read };
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +385,7 @@ interface JpegComponent {
  * from the coefficients every scan contributed to. That is also the only way
  * progressive CAN be decoded: its scans each carry a slice of the same blocks.
  */
-function decodeJpeg(bytes: Uint8Array): Thumbnail | null {
+function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
   const dcTables: Record<number, HuffTable> = {};
   const acTables: Record<number, HuffTable> = {};
   const quantisers: Record<number, Int32Array> = {};
@@ -744,7 +771,7 @@ function frameOf() {
 function reconstruct(
   frame: NonNullable<ReturnType<typeof frameOf>>,
   quantisers: Record<number, Int32Array>,
-): Thumbnail | null {
+): DecodedRaster | null {
   const block = new Int32Array(64);
   const spatial = new Uint8Array(64);
   const planes = frame.components.map((component) => {
@@ -788,7 +815,7 @@ function reconstruct(
     ];
   };
 
-  return box(frame.width, frame.height, read);
+  return { width: frame.width, height: frame.height, read };
 }
 
 const clamp = (value: number) => value < 0 ? 0 : value > 255 ? 255 : value;
@@ -804,7 +831,7 @@ const clamp = (value: number) => value < 0 ? 0 : value > 255 ? 255 : value;
  * its opening frame, and measuring one frame answers the question. Interlaced
  * frames are handled, because a GIF saved for the web often is.
  */
-async function decodeGif(bytes: Uint8Array): Promise<Thumbnail | null> {
+async function decodeGif(bytes: Uint8Array): Promise<DecodedRaster | null> {
   if (bytes.length < 14) return null;
   const screenWidth = bytes[6] | (bytes[7] << 8);
   const screenHeight = bytes[8] | (bytes[9] << 8);
@@ -884,10 +911,10 @@ async function decodeGif(bytes: Uint8Array): Promise<Thumbnail | null> {
       }
     }
 
-    return box(screenWidth, screenHeight, (x, y) => {
+    return { width: screenWidth, height: screenHeight, read: (x, y) => {
       const from = (y * screenWidth + x) * 3;
       return [canvas[from], canvas[from + 1], canvas[from + 2]];
-    });
+    } };
   }
   return null;
 }
@@ -989,6 +1016,46 @@ function firstOf(prefix: Int32Array, suffix: Uint8Array, code: number): number {
  * Averaging rather than sampling, so a one-pixel line cannot masquerade as a
  * flat region and a dithered gradient cannot masquerade as texture.
  */
+/**
+ * A decoded picture, before anyone decides how big they want it.
+ *
+ * Every decoder below already reconstructs the FULL image and then reduces it —
+ * `read(x, y)` is the full-resolution pixel. Returning that instead of the
+ * reduction is what lets one caller measure a thumbnail and another rebuild the
+ * picture at the size the builder supplied, off ONE decode and one set of
+ * bytes. Two decoders would be two opinions about the same file.
+ */
+export interface DecodedRaster {
+  width: number;
+  height: number;
+  read: (x: number, y: number) => [number, number, number];
+}
+
+/** The picture at the size it was supplied, as RGB triples. */
+export interface FullRaster {
+  width: number;
+  height: number;
+  /** RGB triples, row-major, no padding. */
+  pixels: Uint8Array;
+}
+
+function materialise(raster: DecodedRaster): FullRaster | null {
+  const { width, height, read } = raster;
+  if (width <= 0 || height <= 0) return null;
+  if (width * height > MAX_DECODE_PIXELS) return null;
+  const pixels = new Uint8Array(width * height * 3);
+  let at = 0;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = read(x, y);
+      pixels[at++] = r;
+      pixels[at++] = g;
+      pixels[at++] = b;
+    }
+  }
+  return { width, height, pixels };
+}
+
 function box(
   width: number,
   height: number,

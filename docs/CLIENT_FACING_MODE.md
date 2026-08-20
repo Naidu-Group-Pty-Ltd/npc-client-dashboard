@@ -117,6 +117,37 @@ separate commits from the hides, and the first two help the internal build too:
   as before — the prime is still the built-in fallback — so this is a no-op
   upstream and a switch here. See `BACKEND_PROVISIONING.md`.
 
+## Which Supabase project the build talks to
+
+A second deployment usually wants a second backend, and that used not to be
+possible for a reason unrelated to this mode: **31 source files wrote
+`https://dduzbchuswwbefdunfct.supabase.co` and its publishable key into their
+own module scope** — `useAuth`, `secureInvoke`, `integrations/supabase/client`,
+every portal hook and lib — so setting `VITE_SUPABASE_URL` moved nothing.
+
+All 31 now import from `src/integrations/supabase/env.ts`, the one module that
+resolves it. A build that sets neither variable is byte-for-byte the old
+behaviour, so this changed nothing about the internal console.
+
+Three rules that module enforces, each of which was a live defect:
+
+- **The URL and the key are a matched pair.** The anon key is a JWT whose `ref`
+  claim names its project, so a URL from one and a key from another
+  authenticate to nothing. Set both or neither — a half-configured environment
+  uses *both* built-in defaults rather than mixing them, and says so on the
+  console. A genuinely mismatched pair is honoured and warned about by ref,
+  because that is a configuration error and should read as one.
+- **The fallback is never empty.** `internalMessageAttachments.ts` read
+  `VITE_SUPABASE_URL ?? ''`, which made the upload PUT relative — it went to
+  the app's own origin and got HTML back.
+- **The project ref is derived, never named a third time.**
+  `VITE_SUPABASE_PROJECT_ID` was a third spelling of the same project, free to
+  disagree with the other two; unset, `TemplateSharePreview` fetched
+  `https://undefined.supabase.co/functions/v1/template-share`. Nothing live
+  reads it now — `SUPABASE_PROJECT_REF` comes off the resolved URL, and the
+  Integrations page's "Supabase dashboard" link is built from it rather than
+  sending every deployment's operator to the prime's project.
+
 ## Adding to (or trimming) the list
 
 Edit `CLIENT_FACING_HIDDEN_PATHS` — nav and routing follow together.

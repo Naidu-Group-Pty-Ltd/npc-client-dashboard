@@ -24,12 +24,14 @@ import { deriveScreeningNextAction } from "../../../supabase/functions/_shared/a
 const repo = join(__dirname, "../../..");
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
+// Kept as a plain record rather than `as never`: the fixture is spread below,
+// and nothing can be spread from `never`. Each call site casts instead.
 const FIX = {
   key: "fix_provider", label: "Open screening configuration",
   headline: "Screening cannot run yet",
   detail: "The screening provider and its sanctions data must be restored.",
   owner: "administrator",
-} as never;
+} as Record<string, unknown>;
 
 const OUTSIDE = {
   classification: "outside_perimeter" as const, classified: true,
@@ -46,7 +48,7 @@ const INSIDE_RECORDED = {
 
 describe("4, 14, 16. a stale fix_provider never reaches configuration", () => {
   it("converts it to classify_perimeter when nobody has decided", () => {
-    const a = resolveScreeningNextAction(FIX, null)!;
+    const a = resolveScreeningNextAction(FIX as never, null)!;
     expect(a.key).toBe("classify_perimeter");
     expect(a.label).toBe("Classify sanctions screening requirement");
     expect(a.detail).toMatch(/before changing screening configuration/i);
@@ -62,19 +64,19 @@ describe("4, 14, 16. a stale fix_provider never reaches configuration", () => {
       { classification: "designated_service", reason_code: null,
         scopes_excluded: [], recorded_by_label: null, recorded_at: null },
     ] as never[]) {
-      expect(resolveScreeningNextAction(FIX, perimeter)!.key).toBe("classify_perimeter");
+      expect(resolveScreeningNextAction(FIX as never, perimeter)!.key).toBe("classify_perimeter");
     }
   });
 
   it("17. leaves it alone once INSIDE is explicitly recorded", () => {
-    expect(resolveScreeningNextAction(FIX, INSIDE_RECORDED as never)).toBe(FIX);
-    expect(resolveScreeningNextAction(FIX, {
+    expect(resolveScreeningNextAction(FIX as never, INSIDE_RECORDED as never)).toBe(FIX);
+    expect(resolveScreeningNextAction(FIX as never, {
       ...INSIDE_RECORDED, classified: undefined,
     } as never)).toBe(FIX);
   });
 
   it("leaves it alone for a recorded outside finding", () => {
-    expect(resolveScreeningNextAction(FIX, OUTSIDE as never)).toBe(FIX);
+    expect(resolveScreeningNextAction(FIX as never, OUTSIDE as never)).toBe(FIX);
   });
 
   it("touches no other action", () => {
@@ -119,7 +121,7 @@ describe("5, 18. the guard changes the ASK, never the truth", () => {
     expect(perimeterIsClassified(null)).toBe(false);
     expect(perimeterIsClassified(undefined)).toBe(false);
     expect(perimeterIsClassified({} as never)).toBe(false);
-    const a = resolveScreeningNextAction(FIX, null)!;
+    const a = resolveScreeningNextAction(FIX as never, null)!;
     expect(a.key).toBe("classify_perimeter");
     expect(JSON.stringify(a)).not.toMatch(/not_required|exempt|clear/i);
   });

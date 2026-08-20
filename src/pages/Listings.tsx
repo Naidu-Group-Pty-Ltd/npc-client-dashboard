@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, HardHat, List, Table2, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, HardHat, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -41,6 +41,7 @@ const BuilderStockTab = lazyWithRetry(
 const EMPTY_LISTINGS: PropertyListing[] = [];
 import {
   DEFAULT_LISTING_FILTERS,
+  activeListingFilterCount,
   listingHasPhotos,
   matchesListingFilters,
   type ListingFilterState,
@@ -81,6 +82,17 @@ const LISTINGS_SECONDARY_ACTION = 'min-h-10 rounded-full border-border/70 bg-car
 const LISTINGS_CHIP_ACTION = 'h-9 rounded-full px-3.5 text-xs font-semibold shadow-sm transition-all duration-200 focus-visible:ring-2 focus-visible:ring-brand-400/45 focus-visible:ring-offset-2 active:translate-y-0 disabled:translate-y-0 disabled:opacity-60';
 const LISTINGS_CHIP_INACTIVE = 'border-border/70 bg-background/80 text-muted-foreground hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-50/70 hover:text-brand-700 dark:border-white/10 dark:bg-background/45 dark:hover:bg-brand-400/10 dark:hover:text-brand-200';
 const LISTINGS_CHIP_ACTIVE = 'border-brand-400/70 bg-gradient-to-r from-brand-500 to-brand-500 text-foreground dark:text-white shadow-[0_10px_24px_rgba(245,158,11,0.28)] hover:-translate-y-0.5 hover:from-brand-500 hover:to-brand-400 hover:text-white dark:border-brand-300/60';
+/**
+ * The marketplace's two sources are the first decision a reader makes, so they
+ * are stated as labelled cards rather than as two more pills in a pill bar —
+ * the previous treatment was visually identical to the view switcher below it.
+ */
+const LISTINGS_SECTION_SWITCHER = 'grid w-full grid-cols-1 gap-2 rounded-[1.5rem] border border-border/60 bg-card/70 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_12px_34px_rgba(15,23,42,0.07)] backdrop-blur sm:w-auto sm:grid-cols-2 dark:border-white/10 dark:bg-background/40 dark:shadow-black/25';
+const LISTINGS_SECTION_TAB = 'group flex min-h-[3.75rem] min-w-0 items-center gap-3 rounded-[1.15rem] border px-4 py-2.5 text-left transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 sm:min-w-[15rem]';
+const LISTINGS_SECTION_TAB_ACTIVE = 'border-primary/45 bg-background shadow-[0_10px_26px_rgba(15,23,42,0.12)] ring-1 ring-primary/20 dark:bg-background dark:shadow-black/35';
+const LISTINGS_SECTION_TAB_INACTIVE = 'border-transparent bg-transparent hover:-translate-y-0.5 hover:border-border/60 hover:bg-background/70 dark:hover:bg-white/[0.05]';
+const LISTINGS_SECTION_TAB_ICON = 'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/50 text-muted-foreground transition-colors duration-200 dark:border-white/10 dark:bg-white/[0.04]';
+const LISTINGS_SECTION_TAB_ICON_ACTIVE = 'border-primary/35 bg-primary/12 text-primary shadow-[0_8px_20px_rgba(245,158,11,0.18)]';
 const LISTINGS_VIEW_SWITCHER = 'inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/45 p-1 shadow-inner dark:border-white/10 dark:bg-white/[0.04]';
 const LISTINGS_VIEW_CONTROL = 'h-9 rounded-full px-3 text-xs font-bold tracking-[0.01em] transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 disabled:cursor-default';
 const LISTINGS_VIEW_CONTROL_ACTIVE = 'border-primary/45 bg-background text-foreground shadow-[0_8px_22px_rgba(15,23,42,0.10)] ring-1 ring-primary/20 dark:bg-background dark:shadow-black/30';
@@ -163,11 +175,12 @@ function parseListingsUrlState(params: URLSearchParams): {
     }
   }
   const search = params.get('q');
+  // Only the two views the marketplace offers are honoured. A link pinning the
+  // retired `list`/`table` views resolves to the default rather than to a view
+  // with no control to leave it by.
   const viewRaw = params.get('view');
-  const view =
-    viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' || viewRaw === 'gallery'
-      ? viewRaw
-      : null;
+  const view = viewRaw === 'map' || viewRaw === 'gallery' ? viewRaw : null;
+
   if (search !== null) hasAny = true;
   if (view !== null) hasAny = true;
   return { filters, search, view, hasAny };
@@ -288,6 +301,79 @@ const ListingsLoadingSkeleton = ({ isMobile }: { isMobile: boolean }) => (
  */
 type MarketplaceTab = 'listings' | 'builder_stock';
 
+const MARKETPLACE_SECTIONS: ReadonlyArray<{
+  id: MarketplaceTab;
+  label: string;
+  description: string;
+  icon: ElementType;
+}> = [
+  { id: 'listings', label: 'Listings', description: 'Off-market and on-market intake', icon: Building2 },
+  { id: 'builder_stock', label: 'Builder Stock', description: 'Builder and developer opportunities', icon: HardHat },
+];
+
+/**
+ * The section switcher, rendered *inside* the Property Marketplace header so
+ * the two sections read as parts of one page rather than as a strip floating
+ * above it.
+ */
+function MarketplaceSectionTabs({
+  tab,
+  onChange,
+}: {
+  tab: MarketplaceTab;
+  onChange: (next: MarketplaceTab) => void;
+}) {
+  return (
+    <div className="mt-5 border-t border-border/50 pt-4 dark:border-white/10">
+      <div className="mb-2.5 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/70">
+        <Layers className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+        Marketplace sections
+      </div>
+      <div
+        className={LISTINGS_SECTION_SWITCHER}
+        role="tablist"
+        aria-label="Property Marketplace sections"
+      >
+        {MARKETPLACE_SECTIONS.map((section) => {
+          const isActive = tab === section.id;
+          return (
+            <button
+              key={section.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onChange(section.id)}
+              className={cn(
+                LISTINGS_SECTION_TAB,
+                'relative overflow-hidden',
+                isActive ? LISTINGS_SECTION_TAB_ACTIVE : LISTINGS_SECTION_TAB_INACTIVE,
+              )}
+            >
+              {isActive && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-gradient-to-r from-transparent via-primary to-transparent"
+                />
+              )}
+              <span className={cn(LISTINGS_SECTION_TAB_ICON, isActive && LISTINGS_SECTION_TAB_ICON_ACTIVE)}>
+                <section.icon className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span className="min-w-0 text-left">
+                <span className="block truncate text-sm font-bold tracking-[-0.01em] text-foreground">
+                  {section.label}
+                </span>
+                <span className="block truncate text-xs font-medium text-muted-foreground">
+                  {section.description}
+                </span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function Listings() {
   const { enabled: builderStockEnabled } = useBuilderStockMarketplaceFlag();
   const [tab, setTab] = useState<MarketplaceTab>('listings');
@@ -301,58 +387,46 @@ export default function Listings() {
 
   if (!builderStockEnabled) return <ListingsMarketplace />;
 
-  return (
-    <div className="space-y-0">
-      <div className={cn(LISTINGS_SHELL, 'pb-0 pt-3')}>
-        <div className={LISTINGS_VIEW_SWITCHER} role="tablist" aria-label="Property Marketplace sections">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            role="tab"
-            aria-selected={tab === 'listings'}
-            onClick={() => setTab('listings')}
-            className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5',
-              tab === 'listings' ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
-          >
-            <Building2 className="h-4 w-4" />
-            Listings
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            role="tab"
-            aria-selected={tab === 'builder_stock'}
-            onClick={() => setTab('builder_stock')}
-            className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5',
-              tab === 'builder_stock' ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
-          >
-            <HardHat className="h-4 w-4" />
-            Builder Stock
-          </Button>
-        </div>
-      </div>
+  const sectionTabs = <MarketplaceSectionTabs tab={tab} onChange={setTab} />;
 
-      {tab === 'listings' ? <ListingsMarketplace /> : (
-        <div className={cn(LISTINGS_SHELL, 'space-y-5 md:space-y-7')}>
-          <ErrorBoundary>
-            <Suspense fallback={<Skeleton className="h-72 rounded-2xl" />}>
-              <BuilderStockTab />
-            </Suspense>
-          </ErrorBoundary>
+  if (tab === 'listings') return <ListingsMarketplace sectionTabs={sectionTabs} />;
+
+  return (
+    <div className={cn(LISTINGS_SHELL, 'space-y-5 md:space-y-7')}>
+      <section
+        className={`${LISTINGS_SECTION_SURFACE} relative overflow-hidden bg-gradient-to-br from-card/95 via-card/80 to-primary/5 dark:from-background/80 dark:via-background/55 dark:to-primary/10`}
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/45 to-transparent" />
+        <div className="min-w-0 max-w-3xl">
+          <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/15 bg-primary/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/90 shadow-sm dark:border-primary/20 dark:bg-primary/10">
+            <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
+            Property Intelligence
+          </div>
+          <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Property Marketplace</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">
+            Off-Market · On Market · Builder Opportunities
+          </p>
         </div>
-      )}
+        {sectionTabs}
+      </section>
+
+      <ErrorBoundary>
+        <Suspense fallback={<Skeleton className="h-72 rounded-2xl" />}>
+          <BuilderStockTab />
+        </Suspense>
+      </ErrorBoundary>
     </div>
   );
 }
 
-function ListingsMarketplace() {
+
+function ListingsMarketplace({ sectionTabs }: { sectionTabs?: ReactNode } = {}) {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
   const isMobile = useIsMobile();
-  const defaultViewMode: ListingsViewMode = isMobile ? 'list' : 'table';
+  // Gallery on every breakpoint: the marketplace offers Gallery and Map only.
+  const defaultViewMode: ListingsViewMode = 'gallery';
 
   // Snapshot URL state once at mount so we can hydrate filters/search/view before
   // React writes anything back to the address bar.
@@ -444,12 +518,6 @@ function ListingsMarketplace() {
   const { prefs, update: updatePrefs, recordLastUsed, effectiveScope, effectiveTier } = useReportPreferences();
   // Per-row pending scope/tier choice in the picker (controlled)
 
-  useEffect(() => {
-    // Only auto-switch on breakpoint change when the URL isn't pinning a view.
-    if (!initialUrlState.view) {
-      setViewMode(isMobile ? 'list' : 'table');
-    }
-  }, [isMobile, initialUrlState.view]);
 
   // Sync global search with local search when component mounts or global search changes
   useEffect(() => {
@@ -685,13 +753,10 @@ function ListingsMarketplace() {
     setFilters({ ...DEFAULT_FILTERS });
   };
 
-  const hasActiveFilters = Object.entries(filters).some(([key, value]) => {
-    if (typeof value === 'boolean') return value;
-    if (['propertyType', 'suburb', 'state', 'zipCode', 'sourceHost', 'agencyName'].includes(key)) {
-      return value !== '' && value !== 'all';
-    }
-    return value !== '';
-  });
+  // Same authority the filter panels count with, so the page and the badge can
+  // never disagree about whether anything is narrowing the set.
+  const activeFilterCount = activeListingFilterCount(filters);
+  const hasActiveFilters = activeFilterCount > 0;
   const hasSearchQuery = searchQuery.trim().length > 0;
   // Photos are resolved once for the filtered set and shared by every view, so
   // switching list ↔ table ↔ map re-uses the same signed URLs instead of asking
@@ -773,7 +838,8 @@ function ListingsMarketplace() {
 
     return (
       <div className={`${LISTINGS_SHELL} space-y-5 md:space-y-7`}>
-        <div className={`${LISTINGS_SECTION_SURFACE} flex items-center justify-between gap-4`}>
+        <div className={LISTINGS_SECTION_SURFACE}>
+          <div className="flex items-center justify-between gap-4">
           <div>
             <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground/90">
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
@@ -786,6 +852,8 @@ function ListingsMarketplace() {
             <RefreshCw className="h-4 w-4" />
             Retry
           </Button>
+          </div>
+          {sectionTabs}
         </div>
 
         <ListingsStatePanel
@@ -829,29 +897,9 @@ function ListingsMarketplace() {
             </div>
 
 
+            {/* Gallery and Map only. The list and table views are retired: the
+                gallery is the browsing surface and the map is the spatial one. */}
             <div className={LISTINGS_VIEW_SWITCHER} role="group" aria-label="Listing view mode">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                aria-pressed={showListView}
-                onClick={() => setViewMode('list')}
-                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showListView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
-              >
-                <List className="h-4 w-4" />
-                List
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                aria-pressed={showTableView}
-                onClick={() => setViewMode('table')}
-                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showTableView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
-              >
-                <Table2 className="h-4 w-4" />
-                Table
-              </Button>
               <Button
                 type="button"
                 size="sm"
@@ -899,6 +947,7 @@ function ListingsMarketplace() {
             </Button>
           </div>
         </div>
+        {sectionTabs}
       </section>
 
       {/* Search and Filters */}

@@ -61,6 +61,7 @@ import { spawnSync } from 'node:child_process';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const functionsDir = join(root, 'supabase', 'functions');
 const BASELINE_PATH = join(root, 'supabase', 'functions-registry', 'edge-typecheck-baseline.json');
+const KNOWN_MISSING_PATH = join(root, 'supabase', 'functions-registry', 'edge-missing-names.txt');
 
 /**
  * A type-check-only import map, repairing one broken upstream declaration.
@@ -229,7 +230,48 @@ const LOAD_FATAL = new Map([
   ['TS2307', 'module cannot be resolved — nothing to load'],
   ['TS2451', 'block-scoped redeclaration — SyntaxError at parse'],
   ['TS2459', 'name is declared locally by that module but not exported — SyntaxError at load'],
+  /*
+   * A name that does not exist is a ReferenceError the moment the line runs.
+   *
+   * The module LOADS, so this is not a boot failure — which is exactly what
+   * makes it worse than one. A boot failure is total and obvious; this ships
+   * a function that serves every other operation perfectly and throws a 500
+   * on one branch, and only when somebody exercises that branch.
+   *
+   * It is here because it happened. `defer_pep_determination` called
+   * `appendCaseEvent`; the function in that file is `appendEvent`. It reached
+   * production, and the operator saw "the server refused it" with nothing to
+   * act on. A count-based baseline can absorb that — the file simply gains an
+   * error — so the class is excluded from banking rather than trusted to a
+   * number.
+   *
+   * These are never legitimate debt. There is no such thing as a
+   * deliberately-undefined identifier on a live code path.
+   */
+  ['TS2304', 'name does not exist — ReferenceError the moment that line runs'],
+  ['TS2552', 'name does not exist — ReferenceError the moment that line runs'],
 ]);
+
+/**
+ * Undefined identifiers that already existed when this class was promoted to
+ * fatal, frozen so that existing debt stays visible without blocking, and a
+ * NEW one cannot land.
+ *
+ * The same ratchet the count baseline uses, keyed differently: a count can
+ * absorb a swapped-in defect (one goes, one arrives, the number holds), and
+ * for this class that means shipping a guaranteed 500. So each occurrence is
+ * named.
+ *
+ * Every entry here is a live defect on some code path — several of them in
+ * authorisation helpers — and each belongs to the programme that owns that
+ * function. Shortening this list is always an improvement.
+ *
+ * `EdgeRuntime` is the exception and is NOT debt: it is a real global the
+ * Supabase Edge Runtime provides and Deno's type declarations do not know
+ * about, so it is listed here rather than "fixed".
+ */
+const KNOWN_MISSING_NAMES = new Set(readFileSync(KNOWN_MISSING_PATH, 'utf8')
+  .split('\n').map((l) => l.replace(/#.*$/, '').trim()).filter(Boolean));
 
 /** `at file:///…/supabase/functions/<name>/…` — the file an error was reported in. */
 const AT_FILE = /at file:\/\/(\S+?):\d+:\d+/g;
@@ -243,10 +285,17 @@ for (const block of plain.split(/(?=^TS\d+ \[ERROR\])/m)) {
   counts.set(file, (counts.get(file) ?? 0) + 1);
   const code = block.match(/^(TS\d+) \[ERROR\]/)[1];
   if (LOAD_FATAL.has(code)) {
+    const message = block.split('\n')[0].replace(/^TS\d+ \[ERROR\]:\s*/, '').trim();
+    // Keyed by FILE and IDENTIFIER, never by line: a line number moves with
+    // every edit above it, so a positional key would either churn constantly
+    // or, worse, silently start covering a different defect.
+    const name = message.match(/Cannot find name '([^']+)'/)?.[1] ?? null;
+    const key = name ? `${file}::${name}` : null;
+    if (key && KNOWN_MISSING_NAMES.has(key)) continue;
     fatal.push({
       code,
       where: `${file}:${at[0].match(/:(\d+:\d+)$/)[1]}`,
-      message: block.split('\n')[0].replace(/^TS\d+ \[ERROR\]:\s*/, '').trim(),
+      message,
     });
   }
 }
@@ -254,9 +303,9 @@ for (const block of plain.split(/(?=^TS\d+ \[ERROR\])/m)) {
 // Before `--update`, so a fatal error can never be banked as backlog.
 if (fatal.length) {
   console.error(
-    `\nEdge Function type-check FAILED — ${fatal.length} diagnostic(s) that stop a function booting.\n`
-    + 'These are not type debt and are never baselined: the module is unloadable, so every\n'
-    + 'request to the function answers BOOT_ERROR.\n',
+    `\nEdge Function type-check FAILED — ${fatal.length} diagnostic(s) that break a function at runtime.\n`
+    + 'These are not type debt and are never baselined: the module either cannot load at all,\n'
+    + 'or names an identifier that does not exist and throws the moment that line runs.\n',
   );
   for (const { code, where, message } of fatal) {
     console.error(` - ${where}\n     ${code}: ${message}\n     why fatal: ${LOAD_FATAL.get(code)}`);

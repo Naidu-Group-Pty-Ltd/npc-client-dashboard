@@ -19,7 +19,6 @@ import {
   TEMPLATE_NEUTRALITY_NOTICE,
   TEMPLATE_NEUTRALITY_SHORT,
   TEMPLATE_RESOURCE_INTRO,
-  WORKFLOW_RETIRED_NOTICE,
   agreementTemplate,
 } from '@/lib/agreements';
 
@@ -196,9 +195,15 @@ describe('the position is stated, not implied', () => {
     expect(TEMPLATE_RESOURCE_INTRO).toMatch(/directly between you and the other party/i);
   });
 
-  it('explains the retirement to whoever lands on an old link', () => {
-    expect(WORKFLOW_RETIRED_NOTICE).toMatch(/retired/i);
-    expect(WORKFLOW_RETIRED_NOTICE).toMatch(/templates are still here/i);
+  it('no longer opens the desk by explaining what the page used to be', () => {
+    // `WORKFLOW_RETIRED_NOTICE` was removed at the product owner's direction:
+    // an explanation of a change has an expiry, and until then it is the first
+    // thing every routine visitor reads before the thing they came for. This
+    // asserts it is gone rather than merely unrendered, so it cannot come back
+    // as somebody's fix for a problem that was considered and closed.
+    expect(read('supabase/functions/_shared/agreements/templateResource.pure.ts'))
+      .not.toContain('export const WORKFLOW_RETIRED_NOTICE');
+    expect(read('src/pages/AgreementTemplates.tsx')).not.toContain('WORKFLOW_RETIRED_NOTICE');
   });
 
   it('renders the notice above the downloads, not beneath them', () => {
@@ -241,5 +246,25 @@ describe('old links land somewhere honest', () => {
     // looks like an inbox.
     expect(read('src/components/finance-portal/FinancePortalLayout.tsx'))
       .not.toContain("label: 'Agreements'");
+  });
+
+  it('gives the desk a way out that survives a redirected arrival', () => {
+    // The four routes above land here by `replace`, and the desk has no
+    // sidebar entry (`paletteOnly`), so a bare `navigate(-1)` would step back
+    // to whatever preceded the old bookmark — usually out of the product.
+    const page = read('src/pages/AgreementTemplates.tsx');
+    expect(page).toContain('navigateBack');
+    expect(page).not.toMatch(/navigate\(\s*-1\s*\)/);
+    expect(read('src/lib/navigation/registry.ts')).toContain("url: '/partner-agreements'");
+  });
+
+  it('no longer calls the destination the Agreement Centre', () => {
+    // The admin page's link is the main in-app way in. It described the
+    // destination as where issuing and executing happen, which it is not.
+    const admin = read('src/pages/admin/FinancePortalAdmin.tsx');
+    const at = admin.indexOf('to="/partner-agreements"');
+    expect(at).toBeGreaterThan(-1);
+    expect(admin.slice(at, at + 200)).not.toContain('Agreement Centre');
+    expect(admin.slice(at, at + 200)).toContain('Agreement Templates');
   });
 });

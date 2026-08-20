@@ -15,6 +15,8 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+// `aml.cases` has no tenant_id column. See `_shared/aml/caseTenant.ts`.
+import { tenantForCase } from "../_shared/aml/caseTenant.ts";
 import {
   partyScreeningOutstanding,
   pepControlsRequired,
@@ -378,10 +380,10 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
  */
 async function tenantCaseAccess(admin: any, userId: string, caseId: string) {
   const { data: caseRow } = await admin.schema("aml").from("cases")
-    .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
+    .select("id, service_gate_status").eq("id", caseId).maybeSingle();
   if (!caseRow) return null;
 
-  const tenantId = String(caseRow.tenant_id || "default");
+  const tenantId = tenantForCase(String(caseRow.id));
   const [{ data: roleRows }, { data: isSuperadmin }] = await Promise.all([
     admin.schema("aml").from("role_assignments")
       .select("role").eq("user_id", userId).eq("tenant_id", tenantId).is("revoked_at", null),
@@ -466,8 +468,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       // Resolve tenant policy for this case
       const { data: caseRow } = await admin.schema("aml").from("cases")
-        .select("id, tenant_id, status").eq("id", caseId).maybeSingle();
-      const tenantId = (caseRow?.tenant_id as string) || "default";
+        .select("id, status").eq("id", caseId).maybeSingle();
+      const tenantId = tenantForCase(caseId);
       const { data: tenant } = await admin.schema("aml").from("tenant_settings")
         .select("risk_program_version, straight_through_config").eq("tenant_id", tenantId).maybeSingle();
       const programVersion = (tenant?.risk_program_version as string) || "v1";
@@ -622,10 +624,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const { data: existing } = await admin.schema("aml").from("risk_overrides")
         .select("id, case_id").eq("id", override_id).maybeSingle();
       if (!existing) return jr({ error: "Override not found" }, 404);
-      const { data: caseTenant } = await admin.schema("aml").from("cases")
-        .select("tenant_id").eq("id", existing.case_id).maybeSingle();
       const { data: tenantPolicy } = await admin.schema("aml").from("tenant_settings")
-        .select("risk_program_version").eq("tenant_id", (caseTenant?.tenant_id as string) || "default").maybeSingle();
+        .select("risk_program_version")
+        .eq("tenant_id", tenantForCase(String(existing.case_id))).maybeSingle();
       const overridePolicyVersion = (tenantPolicy?.risk_program_version as string) || "v1";
       const { data, error } = await admin.schema("aml").from("risk_overrides").update({
         status, reviewer_id: userId, reviewer_note: reviewer_note ?? null, decided_at: new Date().toISOString(),
@@ -667,7 +668,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         admin.schema("aml").from("risk_overrides").select("*").eq("case_id", case_id).eq("status", "approved"),
       ]);
 
-      const tenantId = (caseRow?.tenant_id as string) || "default";
+      const tenantId = tenantForCase(String(case_id));
       const { data: tenant } = await admin.schema("aml").from("tenant_settings")
         .select("risk_program_version").eq("tenant_id", tenantId).maybeSingle();
       const programVersion = (tenant?.risk_program_version as string) || (ass?.program_version as string) || "v1";
@@ -818,11 +819,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       // compare resolved_at against determined_at).
       let approvedDeterminationIds: string[] = [];
       if (approval.kind === "pep_service_approval") {
-        const { data: caseTenant } = await admin.schema("aml").from("cases")
-          .select("tenant_id").eq("id", approval.case_id).maybeSingle();
         const { data: designation } = await admin.schema("aml").from("senior_manager_designations")
           .select("id").eq("user_id", userId)
-          .eq("tenant_id", (caseTenant?.tenant_id as string) || "default")
+          .eq("tenant_id", tenantForCase(String(approval.case_id)))
           .is("revoked_at", null).limit(1).maybeSingle();
         if (!designation) {
           return jr({
@@ -1027,7 +1026,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       const caseRow = access.caseRow;
       const { data: tenant } = await admin.schema("aml").from("tenant_settings")
-        .select("risk_program_version").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
+        .select("risk_program_version")
+        .eq("tenant_id", tenantForCase(String(caseRow.id))).maybeSingle();
       const gatePolicyVersion = (tenant?.risk_program_version as string) || "v1";
 
       const [{ data: latestDec }, { data: openConds }, { data: latestAss }] = await Promise.all([

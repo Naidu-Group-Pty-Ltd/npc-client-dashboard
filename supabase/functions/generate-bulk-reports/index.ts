@@ -120,7 +120,11 @@ const __bulkReportHandler = async (req: Request): Promise<Response> => {
 
     // Background drain. Cron resume worker will pick up anything left over.
     const workerId = `initial-${job.id.slice(0, 8)}`;
-    EdgeRuntime.waitUntil(
+    // EdgeRuntime is supplied by the Supabase Deno runtime, not by the type
+    // graph the gate checks against — reach it off globalThis rather than
+    // suppressing the diagnostic, so a missing runtime degrades to awaiting
+    // nothing instead of throwing.
+    (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime?.waitUntil(
       drainJob(supabase, job.id, finalUserId, workerId).catch(err =>
         console.error(`[generate-bulk-reports] drain failed for ${job.id}:`, err),
       ),

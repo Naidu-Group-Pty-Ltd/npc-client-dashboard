@@ -14,7 +14,7 @@ import { useListingImages } from '@/hooks/useListingImages';
 import { useListingRecord } from '@/hooks/useListingRecord';
 import { useEnrichListing } from '@/hooks/useEnrichListing';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
-import { useOrderedImages } from '@/hooks/useOrderedImages';
+import { useListingGallery } from '@/hooks/useListingGallery';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 import { propertyDataService } from '@/services/propertyDataService';
 import { displayPrice, formatLocality } from '@/lib/listingDisplay';
@@ -73,7 +73,7 @@ export default function ListingDetail() {
 
   // Ordered once here and handed to both the hero and the lightbox, so the
   // index the hero reports on expand opens the same slide in the lightbox.
-  const { images: orderedImages } = useOrderedImages(listing ? images[listing.id] : undefined);
+  const { images: orderedImages } = useListingGallery(listing ? images[listing.id] : undefined);
 
   // Comparison drawn from the corpus already in memory. It is only offered when
   // the reader came from the grid — computing it would otherwise mean loading

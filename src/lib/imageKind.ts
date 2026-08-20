@@ -1,73 +1,64 @@
 /**
- * Telling a floor plan from a photograph by looking at it.
+ * The browser's half of the visual assessment.
  *
- * The URL heuristic in `listingImageOrder.pure` catches assets that are named
- * honestly. Most of this corpus is not: the harvested CDN paths are content
- * hashes (`phimg.reapit.website/<sha1>`), so nothing in the URL says what the
- * bytes are. But the bytes themselves are unambiguous — a floor plan is a line
- * drawing on a white ground with flat fills, and a photograph of a property is
- * almost never mostly white with almost no colour.
+ * **The judgement itself is not here.** It lives in
+ * `supabase/functions/_shared/listingImageVision.pure.ts`, because the server
+ * makes the same call at harvest time and two implementations of "is this a
+ * floor plan" would drift the moment either was tuned. This module is only the
+ * part a browser does differently: turning a URL into a 64×64 RGBA square with
+ * a canvas.
  *
- * So: draw the image small on a canvas and measure two fractions —
- * near-white pixels and genuinely colourful pixels. The decision rule is
- * deliberately biased: misreading a plan as a photo leaves it in the front of
- * the carousel (yesterday's behaviour), misreading a photo as a plan buries it
- * at the back. The second mistake is worse, so the thresholds demand strong
- * evidence before calling something a plan.
+ * ## What it is still for, now the server analyses too
  *
- * Results are cached by URL-without-query — signed URLs rotate hourly, the
- * bytes behind them do not.
+ * The server's verdict is stored on the row and arrives with the image, so a
+ * card is correct on its first paint. This fills the gaps:
+ *
+ * - a photograph harvested before the analyser reached it,
+ * - a deployment where the analysis migration has not been applied,
+ * - and the natural dimensions, which tell a 150 × 150 agent headshot from a
+ *   room.
+ *
+ * When the server has already answered, `useListingGallery` prefers its answer
+ * and this never runs for that image.
+ *
+ * Results are cached by URL-without-query — signed URLs rotate hourly, the bytes
+ * behind them do not.
  */
 
-export type ImageKind = 'photo' | 'floorplan' | 'unknown';
+import {
+  ANALYSIS_SIZE,
+  analyseRgba,
+  classifyVisual,
+  visualFeatures,
+  visualSignature,
+  type VisualFeatures,
+  type VisualKind,
+} from '../../supabase/functions/_shared/listingImageVision.pure';
 
-export interface ImagePixelStats {
-  /** Fraction of sampled pixels that are near-white (paper ground). */
-  whiteFraction: number;
-  /** Fraction of sampled pixels with real chroma (sky, brick, lawn, water). */
-  colorfulFraction: number;
+export type { VisualFeatures, VisualKind };
+
+/** `unknown` is what a decode that failed says, and it means "no evidence". */
+export type ImageKind = VisualKind | 'unknown';
+
+/** Re-exported so callers and tests reach one implementation. */
+export { classifyVisual, visualFeatures, visualSignature };
+
+/** Everything one decode establishes. */
+export interface ImageInspection {
+  kind: ImageKind;
+  /** 16 hex characters, or null when the pixels could not be read. */
+  signature: string | null;
+  /** Natural pixel dimensions, or null. */
+  width: number | null;
+  height: number | null;
 }
 
-/**
- * The decision, pure so it can be tested against synthetic distributions.
- *
- * A plan drawn on white with beige/green fills sits around 0.45–0.8 white and
- * modest colour; photographs of properties rarely exceed ~0.35 white — even a
- * white render against an overcast sky carries colour from ground and
- * landscaping. The overlap zone deliberately resolves to 'photo'.
- */
-export function decideImageKind(stats: ImagePixelStats): Exclude<ImageKind, 'unknown'> {
-  if (stats.whiteFraction >= 0.62) return 'floorplan';
-  if (stats.whiteFraction >= 0.45 && stats.colorfulFraction <= 0.3) return 'floorplan';
-  return 'photo';
-}
+const UNREADABLE: ImageInspection = { kind: 'unknown', signature: null, width: null, height: null };
 
-/** Sampled statistics from decoded pixels. Exported for the canvas path only. */
-export function statsFromPixels(data: Uint8ClampedArray): ImagePixelStats {
-  let white = 0;
-  let colorful = 0;
-  const pixels = data.length / 4;
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    if (r >= 232 && g >= 232 && b >= 232) {
-      white += 1;
-      continue;
-    }
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    // Saturation on bright-enough pixels; dark line-work counts as neither.
-    if (max > 60 && max - min > 0.28 * max) colorful += 1;
-  }
-  return { whiteFraction: white / pixels, colorfulFraction: colorful / pixels };
-}
-
-const SAMPLE_SIZE = 48;
 const LOAD_TIMEOUT_MS = 10_000;
 const MAX_CONCURRENT = 3;
 
-const cache = new Map<string, ImageKind>();
+const cache = new Map<string, ImageInspection>();
 let inFlight = 0;
 const waiters: Array<() => void> = [];
 
@@ -111,14 +102,17 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Classify one image URL. Never throws; anything that cannot be decoded and
- * measured is 'unknown', which downstream treats as a photograph.
+ * Look at one image URL.
+ *
+ * Never throws; anything that cannot be decoded and measured comes back
+ * `UNREADABLE`, whose `kind` is 'unknown' (treated downstream as an ordinary
+ * photograph) and whose signature is null (which never merges anything).
  */
-export async function classifyImageUrl(url: string): Promise<ImageKind> {
+export async function inspectImageUrl(url: string): Promise<ImageInspection> {
   const key = cacheKey(url);
   const hit = cache.get(key);
   if (hit) return hit;
-  if (typeof document === 'undefined' || typeof Image === 'undefined') return 'unknown';
+  if (typeof document === 'undefined' || typeof Image === 'undefined') return UNREADABLE;
 
   await acquireSlot();
   try {
@@ -128,24 +122,39 @@ export async function classifyImageUrl(url: string): Promise<ImageKind> {
 
     const img = await loadImage(url);
     const canvas = document.createElement('canvas');
-    canvas.width = SAMPLE_SIZE;
-    canvas.height = SAMPLE_SIZE;
+    canvas.width = ANALYSIS_SIZE;
+    canvas.height = ANALYSIS_SIZE;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return 'unknown';
-    ctx.drawImage(img, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
-    const kind = decideImageKind(
-      statsFromPixels(ctx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data),
+    if (!ctx) return UNREADABLE;
+    ctx.drawImage(img, 0, 0, ANALYSIS_SIZE, ANALYSIS_SIZE);
+    const pixels = ctx.getImageData(0, 0, ANALYSIS_SIZE, ANALYSIS_SIZE).data;
+    const analysis = analyseRgba(
+      pixels,
+      img.naturalWidth || ANALYSIS_SIZE,
+      img.naturalHeight || ANALYSIS_SIZE,
+      ANALYSIS_SIZE,
     );
-    cache.set(key, kind);
-    return kind;
+    const inspection: ImageInspection = {
+      kind: analysis.kind,
+      signature: analysis.signature,
+      width: img.naturalWidth || null,
+      height: img.naturalHeight || null,
+    };
+    cache.set(key, inspection);
+    return inspection;
   } catch {
     // Tainted canvas, network failure, decode failure — no verdict, and no
     // caching of the non-verdict: a transient failure should not condemn the
     // URL to permanent ignorance within the session.
-    return 'unknown';
+    return UNREADABLE;
   } finally {
     releaseSlot();
   }
+}
+
+/** Just the plan/photo verdict, for callers that want nothing else. */
+export async function classifyImageUrl(url: string): Promise<ImageKind> {
+  return (await inspectImageUrl(url)).kind;
 }
 
 /** Test seam. */
@@ -154,6 +163,10 @@ export function clearImageKindCache(): void {
 }
 
 /** Test seam: lets tests preload verdicts without canvas machinery. */
-export function primeImageKind(url: string, kind: ImageKind): void {
-  cache.set(cacheKey(url), kind);
+export function primeImageKind(
+  url: string,
+  kind: ImageKind,
+  extra: Partial<ImageInspection> = {},
+): void {
+  cache.set(cacheKey(url), { ...UNREADABLE, ...extra, kind });
 }

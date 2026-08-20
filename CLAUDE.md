@@ -43,6 +43,55 @@ before touching `Sender Email`/`Sender Name`, the contact fallback in
 also records the one rule that keeps biting: an address on our side of the pipeline is never
 the answer, in any column.
 
+Photographs are a separate concern from intake, and the one place a listing can
+contradict itself on screen. Read
+[`IMAGE_LIBRARY.md`](./docs/listings/IMAGE_LIBRARY.md) before touching
+`_shared/listingImage*.pure.ts`, `signStoredImages`, `harvestListing` or
+`useListingGallery`. **`imageIdentity` answers "same URL"; a gallery needs "same
+picture"**, and the two diverge constantly — 240 of 4,807 stored rows were a
+second copy of a photograph the same listing already held, one listing carrying
+35 rows of four pictures. De-duplication is three layers (checksum → asset key →
+perceptual signature), absent evidence never merges, and the guarantee is
+enforced on the **read** path as well as the write path, because the table will
+always accumulate copies and a repair migration has to be dispatched by hand.
+
+**The server looks at the photographs now, and that is the point.** Visual
+classification used to run only in a browser, only after the card had drawn — so
+the most consequential decision here, *which image leads a listing*, was taken
+with no visual information at all: 6 of 16 sampled heroes were floor plans, 5 of
+those served from opaque Google Drive ids no URL rule can read.
+`listingImageVision.pure.ts` is the one implementation of that judgement, its
+thresholds are measured (21 labelled production images, 21 correct), and the
+verdict is stored so every surface gets it before the first paint. Decoding is
+**budgeted, not counted** — ~116 ms of CPU each against an Edge Function's
+allowance — and the decoder import is lazy so `resolve` pays nothing.
+
+The other half is a question no single image can answer: **is this photograph
+even of this property?** 3,035 of 4,841 rows are a picture some other listing
+also holds and 279 of 471 listings LED with one. `listing_image_reuse` answers
+it and `bandOf` demotes it.
+
+Three rules bite. An asset key is **only ever compared within one listing**,
+which is what makes its filename rule safe. Ordering **demotes and never
+promotes** — a filename-hint version of "pick the best photo" promoted an agency
+logo over the photograph on two real listings, because a logo lockup is called a
+*main* lockup. And **demotion is a sort, never a filter**: a listing whose whole
+gallery is shared, or is entirely furniture, keeps every image in its own order,
+which is why nothing here can blank a card.
+
+One property can also arrive as several records. Read
+[`DUPLICATE_RECORDS.md`](./docs/listings/DUPLICATE_RECORDS.md) before touching
+`_shared/listingDuplicates.pure.ts` or `propertyDataService.buildResult`: the
+marketplace was showing **148 listings for 107 properties** because the intake
+scenario re-processes a message it has already written — `14 Yillowra St` exists
+four times, three minutes apart, from one forwarded newsletter. `airtable-proxy`
+has always TAGGED duplicates and deliberately removed none, leaving the decision
+to the client, and no client ever made it. The rule that makes it is **address +
+price + type + beds + land**, and the constraint is that **an address with no
+street number is never a key** — eleven different City Beach properties share
+one, because their street numbers never got extracted, and merging on address
+alone deletes nine real listings.
+
 Column names for that table live in `_shared/airtableIntakeFields.pure.ts` and nowhere else.
 Airtable returns `undefined` for a column that does not exist exactly as it does for one
 that is empty, so a mistyped name is invisible — that file's header records what that cost
@@ -127,6 +176,30 @@ percentages — and getting it wrong renders a plausible number rather than an
 error; both are pinned by tests. And **readiness is not a second opinion**:
 blocking is exactly what the report route refuses, everything else is disclosed.
 
+## The sanctions register itself
+Read [`docs/aml/SANCTIONS_LIST_LOADING.md`](./docs/aml/SANCTIONS_LIST_LOADING.md)
+before touching `scripts/aml/load-sanctions-lists.mjs`, the
+`ingest_sanctions_list` operation or the refresh workflow. `aml.sanctions_entries`
+was empty from the day the platform was built, for **three** independent
+reasons, and each one on its own explained it: the refresh has never had the
+repository secret it needs to write; DFAT answers a scripted client with a 403;
+and the prune step **failed every load it was part of** — on a mutation,
+PostgREST resolves the columns inside a logical `or=(…)` against the RETURNING
+projection rather than the table, so `.delete().or('sync_id…').select('id')`
+answers `42703 column … does not exist` while the same filter on a GET
+succeeds. That third one is the one that would have survived fixing the first:
+the loader records the run as failed, and the provider fails closed on a
+required list whose latest attempt failed — a complete, current list in the
+table and every screening refusing to run.
+
+Two rules bite. **Freshness of the load is not currency of the data** —
+`assessListRecency` reads the file's own Control Dates, because every other
+control measures when we synced and a four-year-old file uploaded today passes
+all of them. And **normalisation is server-side, always**: names are indexed
+with the same function the screening query uses, so a browser that normalised
+differently writes entries no query can ever match, which looks exactly like a
+list that works.
+
 ## AML screening execution
 Read [`docs/aml/SCREENING_EXECUTION.md`](./docs/aml/SCREENING_EXECUTION.md)
 before touching `cross-portal-outbox-worker/screeningConsumer.ts`, the inline
@@ -167,6 +240,160 @@ test double emulated `.or()` with a regex, so code and test agreed while only
 the server disagreed, and a contract test now fails any interpolated filter.
 And **production never runs the simulator and never screens against an empty
 or stale list** — refusal is visible, a confident clear against nothing is not.
+
+## Stage 5 — the screening resolution centre
+Read [`docs/aml/STAGE_5_SCREENING_RESOLUTION.md`](./docs/aml/STAGE_5_SCREENING_RESOLUTION.md)
+before touching `ScreeningStageCard`, `screeningResolution.pure.ts`,
+`screeningNextAction.ts`, `AmlContextActionPanel` or `deriveScreeningNextAction`.
+Stage 5 had every fact it needed and no arrangement of them, so this is
+orchestration — no new screening system, determination store or journey status.
+
+Three rules carry it. **Obligation, method and outcome are different
+questions**: `not_required` is an obligation, `no match` is an outcome, and an
+unavailable provider is a method — collapsing them into one badge is how "not
+required" came to read as "clear", and a test asserts the two vocabularies
+share no value. **A closed case is a retained record, not a stage in
+progress** — it leads with that and offers only the authorised reopen, held on
+both sides because they deploy separately, and a FINDING still outranks the
+lifecycle. And **one blockage can have two lawful routes**: a blocked required
+screening offers the MLRO a manual route and keeps the administrator's repair
+named as the alternative, so neither role holds a status with no step and the
+broken automation is never papered over.
+
+The contradictory screen behind it was **data disagreeing with itself**:
+`reopen_case` moved the legacy `status` and left the canonical `case_stage`
+and `closed_at`, while `transition` had always synced all three. It now syncs
+them too — and still never touches `service_gate_status`, because
+`STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
+
+## Stage 5 — the guided path
+Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)
+before touching `screeningSteps.pure.ts`, `ScreeningPathCard`,
+`pepDeclaration.pure.ts` or the political-exposure question in the client
+portal. Stage 5 had every fact it needed and no ORDER: on the reported case the
+whole screen reduced to one act, and "Record PEP determination" appeared four
+times in four sets of words while everything else was already settled. The path
+arranges the same server-decided facts as numbered steps with one of them open.
+
+Four rules carry it. It **derives nothing new** — every obligation, method and
+outcome comes from `buildDeterminationRows`. **`not_required` is not `done`**:
+a step nobody owes settles the path, renders `—` rather than a tick, and says
+nobody was screened and nobody was cleared. **The server owns "what next"** —
+`next_action` decides the open step whatever the local ordering would say. And
+**a candidate is not a finding**: `path.finding` is a confirmed match alone.
+
+The customer's own political-exposure answer now travels to the person who has
+to decide (`pep_declaration` on the stage sync), because it previously existed
+only as `personal_details.pep` in the policy's material inputs. **A declaration
+is evidence and never a determination** — the stored answer is still `yes`/`no`
+so no policy reads anything new, an unanswered question reads as unanswered
+rather than as a "no", and a corrected answer's detail is pruned at the write
+boundary. `record_pep` was also missing from the reviewer-or-MLRO list, so an
+analyst was offered a button `record_pep_determination` answers with 403.
+
+## The PEP determination — what it rests on
+Read [`docs/aml/PEP_DETERMINATION_EVIDENCE.md`](./docs/aml/PEP_DETERMINATION_EVIDENCE.md)
+before touching `_shared/aml/pepEvidence.pure.ts`, `pepSearchLinks.pure.ts`,
+`PepDeterminationDialog` or the `record_pep_determination` /
+`defer_pep_determination` operations. Sanctions is a **match against a
+register**; a PEP determination is a **conclusion a person reaches** on
+reasonable grounds, and there is no register that settles it — so the record
+has to show the sources checked, what was searched and what came back. The old
+flow was a prompt with two free-text boxes that had already chosen the answer
+before it opened.
+
+Three rules carry it. **A sanctions register is not a PEP source** — the
+dialog's own worked example was the DFAT consolidated list, and absence from a
+sanctions register is not evidence that somebody is not politically exposed;
+the asymmetry is why a HIT is surfaced as a signal while a MISS says nothing,
+and `sanctionsSignalForPep` is deliberately silent for "screened, no match".
+**One rule, rendered and enforced** — `assessPepEvidence` is the module the
+dialog renders from and the edge function enforces, so what an operator is
+asked for and what the server accepts cannot become two standards; above the
+statutory floor it requires one source independent of the customer and a
+recorded result for every source searched. And **a deferral is not a third
+outcome**: `defer_pep_determination` writes no determination row, stamps the
+event `determination_recorded: false` and leaves Stage 5 open, because forcing
+an operator to pick "not a PEP" to close a dialog is how an unfounded
+conclusion gets written down.
+
+The assisted search **builds URLs and nothing else** — no request, no result,
+no decision. Nothing in it can return "no match", because a partial index
+reporting "no match" is the confident-clear-against-nothing failure this
+platform has already had once. What the public sources do not reach (foreign
+office holders, family and close associates, somebody who has left a post) is
+rendered beside them every time. `holds_position_currently` is an attribute of
+the determination and never a softer outcome: leaving office is a risk
+assessment, not an expiry date.
+
+## `aml.cases` has no `tenant_id` column
+Read [`docs/aml/CASE_TENANT_COLUMN.md`](./docs/aml/CASE_TENANT_COLUMN.md)
+before adding any `.select()` against `aml.cases` or touching
+`_shared/aml/caseTenant.ts`. Eighteen call sites across five edge functions
+selected a column the table has never had; PostgREST answers **42703**, the
+discarded `error` leaves `data` null, and twelve handlers then reported
+**"Case not found"** about a case the operator had open. That is why
+`pep_determinations` was EMPTY from the day it was created, why Stage 5's
+"Record PEP determination" appeared to do nothing, and why the rail said
+"monitoring summary could not be read".
+
+Three rules. **Never name a column the table does not have** — `readCase()`
+throws on `tenant_id` where a developer sees it, and a contract test scans
+every function. **A read that FAILED is not a row that is ABSENT**: a missing
+case is 404 and final, a failed read is 503 and worth retrying, so `CaseRead`
+carries `failed` separately from `row`. And **the tenant is a property of the
+deployment** — every `tenant_id` in the schema is `default`, which is exactly
+why `cases` has no such column; `tenantForCase()` is the one place that knows
+it.
+
+**An identifier that does not exist is never type debt.**
+`defer_pep_determination` called `appendCaseEvent` when the helper is
+`appendEvent` — the module LOADS, serves every other operation, and throws a
+ReferenceError on one branch. A count baseline can absorb that (one goes, one
+arrives, the number holds), so `TS2304`/`TS2552` are now fatal in
+`check-edge-functions.mjs` and the pre-existing occurrences are frozen in
+`edge-missing-names.txt`, keyed by file and identifier rather than by line.
+
+## The public office-holder index
+Read [`docs/aml/PEP_OFFICEHOLDER_INDEX.md`](./docs/aml/PEP_OFFICEHOLDER_INDEX.md)
+before touching `_shared/aml/pepOfficeholderIndex.pure.ts`,
+`scripts/aml/load-pep-officeholders.mjs`, the `search_pep_officeholders`
+operation or `PepOfficeholderIndexPanel`. It is the second register this
+platform loads and **not the same kind of thing as the first**: a sanctions
+match is an outcome, an index hit is a lead.
+
+**A hit is a candidate; a miss is nothing** — and the worse failure is not the
+empty reading but the OVERSTATED one. The first load walked a subclass tree
+from an entity that is itself an office, wrote 1,254 people across two, and
+the product told operators it covered ministers, judges and every state.
+Offices are found by jurisdiction (`P1001`) now, coverage prose carries no
+numbers at all (a test asserts it), and everything countable is measured by
+the loader into `pep_officeholder_syncs.detail` and rendered from there.
+`pep_type` is left NULL because the AUSTRAC category belongs to the
+determination, not the index. The endpoint also fails by lying — 200 with the
+JSON cut off at its own 60s limit — so the query groups server-side, reads
+offices in batches, and names an unparseable body a truncated download.
+
+No public source lists every
+prominent public function and none lists family members or close associates,
+so the danger is also the EMPTY reading — zero rows for somebody the index never
+covered looks exactly like zero rows for somebody who holds no office, which
+is the shape `sanctions_entries` already shipped once. So `searchVerdict` has
+four readings and a test asserts none can be paraphrased into a clearance;
+**coverage travels with every result including the empty one**; an index that
+never loaded or whose latest load FAILED reads as `unavailable` rather than as
+no candidates; and a database fault answers 503 rather than "nothing found".
+
+Two more rules. **The index is never the source** — every row carries a
+`confirm_url`, the panel says the source is collaboratively edited, and
+`candidateToMethodDraft` leaves `result` EMPTY so the operator writes what they
+saw when they confirmed it against the official register. And **normalisation
+is server-side, always**: `normalised_names` uses the same `normaliseName` the
+query does, imported rather than re-implemented, and a row with no searchable
+tokens is refused by the loader and by a column constraint. The loader repeats
+every rule the sanctions loader learned the hard way — refuse a zero-entry
+parse, treat a shrink as a truncated download, name `sync_id` in the prune's
+RETURNING projection, and pin Node 22.
 
 ## AML screening scope
 Read [`docs/aml/SCREENING_SCOPE.md`](./docs/aml/SCREENING_SCOPE.md) before

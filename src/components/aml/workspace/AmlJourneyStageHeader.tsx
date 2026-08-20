@@ -43,6 +43,29 @@ export interface AmlJourneyStageHeaderProps {
   stage: AmlJourneyStage;
   totalStages: number;
   onOpenSection: (section: AmlWorkspaceSection) => void;
+  /**
+   * Perform the stage's primary action, when it names one.
+   *
+   * The button used to do nothing but `onOpenSection`, and a stage's own
+   * primary action usually points at the section the stage OPENS ON — so
+   * from the place it is most often pressed it navigated to where the
+   * operator already was and nothing happened at all. A CTA that names a
+   * specific act ("Ask the client for something", "Record PEP
+   * determination") has to perform it.
+   *
+   * Optional: without a handler, or for an action nothing routes, this falls
+   * back to the navigation it always did.
+   */
+  onPerform?: (action: NonNullable<AmlJourneyStage["primaryAction"]>) => void;
+  /**
+   * Whether the stage's own surface below already carries the action and the
+   * progress reading.
+   *
+   * Set for Stage 5, whose numbered path owns both. It suppresses the repeat
+   * here rather than in the path, because the path is the surface an operator
+   * works in and the header is the surface they orient by.
+   */
+  deferToSurfaceBelow?: boolean;
   className?: string;
 }
 
@@ -50,7 +73,9 @@ export function AmlJourneyStageHeader({
   stage,
   totalStages,
   onOpenSection,
+  onPerform,
   className,
+  deferToSurfaceBelow = false,
 }: AmlJourneyStageHeaderProps) {
   const readinessTotal = stage.completedItems.length + stage.outstandingItems.length;
 
@@ -58,8 +83,14 @@ export function AmlJourneyStageHeader({
     <header className={cn("space-y-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
+          {/*
+            "Viewing", because this is the stage the OPERATOR has open — not
+            the case's own position, which the rail reports separately. Both
+            were called "stage", which is how an open Stage 5 beside a
+            10-of-10 position read as a contradiction.
+          */}
           <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Stage {stage.number} of {totalStages}
+            Viewing · Stage {stage.number} of {totalStages}
           </p>
           <h2 className="mt-0.5 text-lg font-semibold tracking-tight sm:text-xl">{stage.label}</h2>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{stage.purpose}</p>
@@ -134,14 +165,35 @@ export function AmlJourneyStageHeader({
         </ul>
       )}
 
+      {/*
+        ── The act, and the count, are said ONCE on a screen ──────────
+        Stage 5 renders a numbered path that owns the same action and keeps
+        its own progress. Before this, one screen carried the act three times
+        — this header, the path's open step, and the right rail — in three
+        sets of words, plus TWO different progress readings ("2 of 3 items on
+        this stage complete" beside "3 of 5 settled"). Both counts were true
+        and they counted different things, which is worse than either alone.
+
+        So when the surface below owns the action, this header states where
+        the stage is and stops. Nothing is hidden that is not being said
+        better a few centimetres further down; on every other stage, which
+        has no such surface, the header behaves exactly as it did.
+      */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {stage.primaryAction && (
-          <Button size="sm" onClick={() => onOpenSection(stage.primaryAction!.section)}>
+        {stage.primaryAction && !deferToSurfaceBelow && (
+          <Button
+            size="sm"
+            onClick={() => {
+              const action = stage.primaryAction!;
+              if (onPerform) onPerform(action);
+              else onOpenSection(action.section);
+            }}
+          >
             {stage.primaryAction.label}
             <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
           </Button>
         )}
-        {readinessTotal > 0 && (
+        {readinessTotal > 0 && !deferToSurfaceBelow && (
           <p className="text-xs text-muted-foreground" aria-live="polite">
             {stage.completedItems.length} of {readinessTotal} item
             {readinessTotal === 1 ? "" : "s"} on this stage complete

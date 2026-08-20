@@ -39,7 +39,7 @@ export async function encodePng(
 ): Promise<Uint8Array | null> {
   const { width, height, components } = input;
   if (width <= 0 || height <= 0) return null;
-  if (components !== 1 && components !== 3) return null;
+  if (components !== 1 && components !== 3 && components !== 4) return null;
   if (pixels.length < width * height * components) return null;
 
   const rowBytes = width * components;
@@ -55,7 +55,7 @@ export async function encodePng(
   view.setUint32(0, width);
   view.setUint32(4, height);
   header[8] = 8;                              // bit depth
-  header[9] = components === 3 ? 2 : 0;       // colour type: truecolour or grey
+  header[9] = components === 4 ? 6 : components === 3 ? 2 : 0; // RGBA / RGB / grey
   header[10] = 0; header[11] = 0; header[12] = 0;
 
   return concat([

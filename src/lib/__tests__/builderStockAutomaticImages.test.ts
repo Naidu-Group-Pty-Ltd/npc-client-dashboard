@@ -40,6 +40,7 @@ import {
 import { SOURCE_ANCHOR_HEADER } from '../../../supabase/functions/_shared/builderStock/sourceAssets.pure';
 import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderStock/sourceImages';
 import { MARKETPLACE_ELIGIBILITY_VERSION } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
+import { SANITIZATION_VERSION } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import {
   runSettlementTick, settleUploadSourceImages, uploadsNeedingSettlement,
   type SettlementCandidate,
@@ -462,6 +463,7 @@ describe('settlement brings existing sources up to the current rules', () => {
     created_at: '2026-08-01T00:00:00Z',
     source_images_settled_version: null,
     marketplace_eligibility_settled_version: null,
+    image_sanitization_settled_version: null,
     ...over,
   }]);
 
@@ -475,13 +477,14 @@ describe('settlement brings existing sources up to the current rules', () => {
       uploads: uploads({
         source_images_settled_version: PROVENANCE_VERSION,
         marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+        image_sanitization_settled_version: SANITIZATION_VERSION,
       }),
     });
     expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([]);
   });
 
   /**
-   * The two markers are separate questions and either one alone is unfinished
+   * The THREE markers are separate questions and any one alone is unfinished
    * work. An upload whose sources were re-read under the current provenance
    * rules has still never had its pictures JUDGED, and until they are, its
    * cards show nothing — so the sweep has to keep picking it up.
@@ -498,6 +501,35 @@ describe('settlement brings existing sources up to the current rules', () => {
       uploads: uploads({
         source_images_settled_version: PROVENANCE_VERSION,
         marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION - 1,
+        image_sanitization_settled_version: SANITIZATION_VERSION,
+      }),
+    });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
+  });
+
+  /**
+   * And the third, which is the newest: a picture the display gate refused for
+   * carrying a laid-over graphic can have the graphic taken off, and an upload
+   * that has never been offered to that repair is outstanding however current
+   * its other two markers are.
+   */
+  it('and one whose images have never been offered to the overlay repair', async () => {
+    const db = fakeDb({
+      uploads: uploads({
+        source_images_settled_version: PROVENANCE_VERSION,
+        marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+        image_sanitization_settled_version: null,
+      }),
+    });
+    expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
+  });
+
+  it('and one repaired by an older overlay algorithm', async () => {
+    const db = fakeDb({
+      uploads: uploads({
+        source_images_settled_version: PROVENANCE_VERSION,
+        marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+        image_sanitization_settled_version: SANITIZATION_VERSION - 1,
       }),
     });
     expect(await uploadsNeedingSettlement(db, { organisationId: ORG })).toEqual([UPLOAD]);
@@ -629,7 +661,7 @@ describe('Y — one tick of the settlement sweep', () => {
     }));
 
   const settles = async (candidate: SettlementCandidate) => ({
-    uploadId: candidate.id, settled: true,
+    uploadId: candidate.id, settled: true, eligibilitySettled: true,
   });
 
   it('stops once a tick\'s worth of uploads have been settled', async () => {
@@ -661,7 +693,7 @@ describe('Y — one tick of the settlement sweep', () => {
       async (candidate) => {
         seen.push(candidate.id);
         const stuck = ['upload-1', 'upload-2', 'upload-3'].includes(candidate.id);
-        return { uploadId: candidate.id, settled: !stuck };
+        return { uploadId: candidate.id, settled: !stuck, eligibilitySettled: !stuck };
       },
     );
     expect(outcome.settled).toBe(3);
@@ -681,7 +713,7 @@ describe('Y — one tick of the settlement sweep', () => {
       async (candidate) => {
         seen.push(candidate.id);
         clock += 10;
-        return { uploadId: candidate.id, settled: false };
+        return { uploadId: candidate.id, settled: false, eligibilitySettled: false };
       },
     );
     expect(outcome.settled).toBe(0);

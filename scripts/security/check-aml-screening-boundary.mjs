@@ -54,8 +54,54 @@ assert.doesNotMatch(pepOp, /\.update\(\{ superseded_at/,
   "supersession must be the migration trigger's job (atomic), not an app-side update");
 assert.match(pepOp, /concurrent_determination/,
   "a concurrent duplicate current determination must surface as a conflict");
-assert.match(pepOp, /At least one method\/source/,
+/*
+ * The evidence rule moved into `_shared/aml/pepEvidence.pure.ts`, which the
+ * dialog renders from and this endpoint enforces — one module, so what an
+ * operator is asked for and what the server accepts cannot become two
+ * standards. The literal that used to be asserted here lived in the handler.
+ *
+ * `assessPepEvidence` refuses a determination with no sources, one resting
+ * only on the customer's own declaration, one whose searched source recorded
+ * no result, and one naming a SANCTIONS register as a source of political-
+ * exposure information. A guess is still not a determination.
+ */
+assert.match(pepOp, /normalisePepMethods/,
+  "recorded methods must be normalised before they are judged");
+assert.match(pepOp, /assessPepEvidence/,
+  "a determination's evidence must be judged by the shared contract");
+assert.match(pepOp, /pep_evidence_insufficient/,
+  "a determination whose evidence does not reach the standard must be refused");
+
+const evidence = readFileSync(
+  "supabase/functions/_shared/aml/pepEvidence.pure.ts", "utf8");
+assert.match(evidence, /Record at least one source that was checked/,
   "a determination without recorded methods must be refused");
+assert.match(evidence, /At least one source independent of the customer/,
+  "the customer's own declaration can never be the whole of the evidence");
+assert.match(evidence, /namesSanctionsRegister/,
+  "a sanctions register must be refused as a source of PEP information");
+
+/* ── Deferral: a method, never a third outcome ───────────────────────────── */
+const deferOp = slice(cases, "case 'defer_pep_determination'", "default:");
+assert.match(deferOp, /roles\.has\('reviewer'\) \|\| roles\.has\('mlro'\)/,
+  "defer_pep_determination must require reviewer or MLRO");
+assert.match(deferOp, /determination_recorded: false/,
+  "a deferral must state in the record that no determination was reached");
+assert.doesNotMatch(deferOp, /from\('pep_determinations'\)\.insert/,
+  "a deferral must write no determination row — it is not a third outcome");
+
+/* ── The office-holder index can surface a candidate, never a clearance ──── */
+const indexOp = slice(cases, "case 'search_pep_officeholders'", "case 'defer_pep_determination'");
+assert.match(indexOp, /roles\.has\('reviewer'\) \|\| roles\.has\('mlro'\)/,
+  "search_pep_officeholders must require reviewer or MLRO");
+assert.match(indexOp, /party_screening_subject_id does not belong to this case/,
+  "the searched identity must be derived from the case, never asserted");
+assert.match(indexOp, /searchVerdict/,
+  "the search must return the shared verdict, so coverage travels with it");
+assert.match(indexOp, /pep_index_search_failed/,
+  "a search fault must be a technical condition, never an empty result");
+assert.doesNotMatch(indexOp, /\.insert\(/,
+  "searching the index must write nothing");
 
 /* ── Senior manager: explicit designation, MLRO-managed, linked approvals ── */
 const designate = slice(risk, 'op === "designate_senior_manager"', 'op === "revoke_senior_manager"');

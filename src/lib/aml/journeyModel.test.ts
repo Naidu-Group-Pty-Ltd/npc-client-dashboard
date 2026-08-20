@@ -79,7 +79,16 @@ const settled = (over: Partial<AmlWorkspaceFacts> = {}): AmlWorkspaceFacts => ({
   activation: { model: "A", event: "Signed engagement letter", activated_at: "2026-08-01T00:00:00Z" },
   consent: { satisfied: true, outstanding: [] },
   identity: { checks: [{ party_label: "Sarah Williams", status: "passed" }] },
-  screening: { subjects: [{ screened_name: "Sarah Williams", state: "completed", matches: [] }] },
+  // A settled case is settled on BOTH Stage 5 obligations: screened, and a
+  // PEP determination recorded. Modelling only the first made "settled" mean
+  // "half of Stage 5".
+  screening: {
+    subjects: [{
+      screened_name: "Sarah Williams", state: "completed", matches: [],
+      pep_determination: { result: "not_pep" },
+    }],
+    pepRequired: true,
+  },
   documents: { requirements: [{ label: "Passport", required: true, status: "accepted" }] },
   ownership: { links: [] },
   funding: { sources: [{ verified: true, source_type: "salary" }] },

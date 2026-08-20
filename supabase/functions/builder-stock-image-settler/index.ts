@@ -16,7 +16,7 @@
  * job unschedules itself. Nothing here is on a read path and nothing runs when
  * there is no work.
  *
- * IT NOW CARRIES TWO KINDS OF WORK, UNDER TWO MARKERS. Provenance
+ * IT NOW CARRIES THREE KINDS OF WORK, UNDER THREE MARKERS. Provenance
  * (`source_images_settled_version`) is where a row's bytes came from and what
  * the source designated them as. Marketplace display eligibility
  * (`marketplace_eligibility_settled_version`) is whether the picture itself may
@@ -28,11 +28,22 @@
  * fourth question existed is behind on the second one — which is what makes
  * this the thing that repairs production, with nobody pressing anything.
  *
- * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the display verdict
- * inside their `source_detail`, the `primary_image_id` those rows earn, and the
- * two settlement markers. THE STORED IMAGE IS NEVER REWRITTEN: eligibility
- * re-READS each object to measure it, and no byte of any picture is altered,
- * cropped, blurred or replaced by anything. No stock item is created or
+ * AND A THIRD: THE OVERLAY REPAIR (`image_sanitization_settled_version`). Where
+ * the display gate refused a picture for carrying a promotional graphic laid
+ * over it, the graphic is taken off the builder's OWN file and the result is
+ * stored once, beside the original, as a versioned derivative. It is on its own
+ * marker for the same reason the other two are: a better repair must not
+ * re-fetch every source, and a better classifier must not re-run every repair.
+ * It is by far the most expensive of the three and is capped hardest.
+ *
+ * WHAT IT MAY WRITE. `builder_stock_item_images` rows, the display verdict and
+ * the derivative record inside their `source_detail`, sanitized derivative
+ * objects in the image bucket, the `primary_image_id` those rows earn, and the
+ * three settlement markers. NO STORED IMAGE IS EVER REWRITTEN: eligibility
+ * re-READS each object to measure it, and the overlay repair writes a NEW
+ * object and leaves the builder's file, its hashes and its provenance exactly
+ * as they are. No picture is replaced by another picture — not a map, not a
+ * street view, not a search result, not stock imagery, not another property. No stock item is created or
  * deleted; no price, availability, configuration, status, selection, builder or
  * project/unit linkage is touched. Those guarantees are `repairSourceImages.ts`'s
  * and are not restated here — this only decides WHICH uploads it runs for.
@@ -47,11 +58,13 @@ import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 import { internalErrorResponse } from '../_shared/errorResponse.ts';
 import {
-  readEligibilityTarget, readOutstandingUploads, runSettlementTick,
-  settleUploadSourceImages,
-  ELIGIBILITY_SETTLED_VERSION_COLUMN, SETTLED_VERSION_COLUMN,
+  readEligibilityTarget, readOutstandingUploads, readSanitizationTarget,
+  readSettlementReadiness, runSettlementTick, settleUploadSourceImages,
+  ELIGIBILITY_SETTLED_VERSION_COLUMN, SANITIZATION_SETTLED_VERSION_COLUMN,
+  SETTLED_VERSION_COLUMN,
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
+import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -126,18 +139,53 @@ Deno.serve(async (req: Request) => {
      * this build's constant — see `readEligibilityTarget`, which is what makes
      * a later classifier bump wake production rather than change nothing.
      */
+    /*
+     * THE SCHEMA THIS NEEDS, CHECKED BEFORE ANYTHING ELSE.
+     *
+     * Edge functions ship automatically when `main` moves; migrations here are
+     * dispatched by hand, one file at a time. So the display gate can be live
+     * for days before the columns that let this clear it exist — and when that
+     * happened, every marketplace card went blank while this function reported
+     * `success: true` with `skipped: 'marker_unavailable'`, because a missing
+     * column and an empty queue looked identical to it.
+     *
+     * A missing schema is an operational failure with a name now. It answers
+     * 503 and says which piece is absent, so the deployment is visibly
+     * incomplete rather than quietly finished.
+     */
+    const readiness = await readSettlementReadiness(supabase);
+    if (!readiness.ready) {
+      console.error('[builder-stock-image-settler] settlement schema not deployed', {
+        phase: 'deployment_readiness',
+        missing: readiness.missing,
+        remedy: 'apply supabase/migrations/*_builder_stock_*settlement*.sql, '
+          + '*_builder_stock_eligibility_target_version.sql and '
+          + '*_builder_stock_terminal_negative_provenance.sql and '
+          + '*_builder_stock_image_sanitization_settlement.sql',
+      });
+      return json({
+        success: false,
+        error: 'settlement_schema_unavailable',
+        deploymentReady: false,
+        missing: readiness.missing,
+      }, 503);
+    }
+
     const eligibilityTarget = await readEligibilityTarget(supabase);
+    const sanitizationTarget = await readSanitizationTarget(supabase);
     const queue = await readOutstandingUploads(supabase, {
-      limit: MAX_QUEUE_ROWS, eligibilityTarget,
+      limit: MAX_QUEUE_ROWS, eligibilityTarget, sanitizationTarget,
     });
 
     if (queue.unavailable) {
-      // The columns are missing: the migration has not applied yet. Nothing to
-      // do, and saying so is better than sweeping every source every tick.
-      console.warn('[builder-stock-image-settler] uploads not readable', {
+      // Readiness passed a moment ago, so this is a live read fault rather than
+      // a missing column. Either way it is not an empty queue.
+      console.error('[builder-stock-image-settler] upload queue unreadable', {
         phase: 'settlement_scan',
       });
-      return json({ success: true, settled: 0, remaining: 0, skipped: 'marker_unavailable' });
+      return json({
+        success: false, error: 'upload_queue_unreadable', deploymentReady: true,
+      }, 503);
     }
 
     const outstanding = queue.rows;
@@ -145,7 +193,8 @@ Deno.serve(async (req: Request) => {
     if (!outstanding.length) {
       // Quiet path. The migration's job unschedules itself on this.
       return json({
-        success: true, settled: 0, remaining: 0, complete: true, eligibilityTarget,
+        success: true, settled: 0, remaining: 0, complete: true,
+        deploymentReady: true, eligibilityTarget, sanitizationTarget,
       });
     }
 
@@ -157,35 +206,21 @@ Deno.serve(async (req: Request) => {
      * the queue behind it — and a rule inside a `Deno.serve` handler is a rule
      * nothing can test.
      */
-    const { attempted, settled, organisations } = await runSettlementTick(
-      outstanding.map((row): SettlementCandidate => ({
-        id: String(row.id),
-        organisation_id: String(row.organisation_id),
-        needsProvenance:
-          Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
-        needsEligibility:
-          Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
-      })),
-      { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
-      (candidate) => settleUploadSourceImages(supabase, {
-        organisationId: candidate.organisation_id,
-        uploadId: candidate.id,
-        deadlineAt,
-        needsProvenance: candidate.needsProvenance,
-        needsEligibility: candidate.needsEligibility,
-      }),
-    );
+    const candidates = outstanding.map((row): SettlementCandidate => ({
+      id: String(row.id),
+      organisation_id: String(row.organisation_id),
+      needsProvenance:
+        Number(row[SETTLED_VERSION_COLUMN] ?? 0) < PROVENANCE_VERSION,
+      needsEligibility:
+        Number(row[ELIGIBILITY_SETTLED_VERSION_COLUMN] ?? 0) < eligibilityTarget,
+      needsSanitization:
+        Number(row[SANITIZATION_SETTLED_VERSION_COLUMN] ?? 0) < sanitizationTarget,
+    }));
 
-    /**
-     * Every organisation this tick TOUCHED gets its primaries settled.
-     *
-     * A property whose source no longer designates an image must END this run
-     * with no primary rather than the one it had under the old rules — and that
-     * is true of properties the sweep never re-read, which is why it is applied
-     * per organisation rather than per upload. The tick reports the ones it
-     * actually reached rather than the ones it planned to.
-     */
-    for (const organisationId of organisations) {
+    const enforced = new Set<string>();
+    const enforce = async (organisationId: string) => {
+      if (enforced.has(organisationId)) return;
+      enforced.add(organisationId);
       try {
         await enforceStrictPrimaryImages(supabase, organisationId);
       } catch (enforceError) {
@@ -196,7 +231,72 @@ Deno.serve(async (req: Request) => {
             .slice(0, 200),
         });
       }
+    };
+
+    /**
+     * ENFORCE BEFORE SETTLING, for organisations whose verdicts are already in.
+     *
+     * Enforcement is a handful of queries and it is the step that decides what
+     * a card may draw; settlement decodes images and re-fetches source
+     * documents, and the edge worker kills the invocation on its RESOURCE
+     * limit long before the wall-clock budget below is reached. Every
+     * production tick returned 546, which meant the loop after the settlement
+     * tick was never arrived at: upload f7e0d4d1 held a complete set of
+     * verdicts and its organisation's stale pointers went on not being
+     * rewritten, one per tick at best.
+     *
+     * An upload still in the queue for its PROVENANCE half has nothing
+     * outstanding that enforcement reads, so running it first is not running it
+     * early. The `needsEligibility === false` test is the same licence
+     * `eligibilitySettled` gives below — a finished sweep, banked on an earlier
+     * pass — and `enforceStrictPrimaryImages` still skips any item holding an
+     * unjudged candidate.
+     */
+    for (const candidate of candidates) {
+      if (!candidate.needsEligibility) await enforce(candidate.organisation_id);
     }
+
+    /*
+     * ONE overlay-repair allowance for the whole tick, not one per upload.
+     *
+     * A repair is a full-resolution decode plus a reconstruction or up to four
+     * model calls; the worker's resource limit is what kills this function, and
+     * it kills it long before the wall clock above expires. Six uploads each
+     * spending their own allowance is twelve of them and a 546 with nothing
+     * written — which is the failure this whole settlement programme exists
+     * because of. The budget is shared, so the tick spends it once.
+     */
+    const repairBudget = newRepairBudget();
+
+    const { attempted, settled, organisations } = await runSettlementTick(
+      candidates,
+      { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
+      (candidate) => settleUploadSourceImages(supabase, {
+        organisationId: candidate.organisation_id,
+        uploadId: candidate.id,
+        deadlineAt,
+        needsProvenance: candidate.needsProvenance,
+        needsEligibility: candidate.needsEligibility,
+        needsSanitization: candidate.needsSanitization,
+        repairBudget,
+      }),
+    );
+
+    /**
+     * And every organisation whose eligibility sweep finished DURING this tick,
+     * which the pass above could not have known about.
+     *
+     * A property whose source no longer designates a displayable image must END
+     * this run with no primary rather than the one it had under the old rules,
+     * and that is true of properties the sweep never re-read, which is why it
+     * is applied per organisation rather than per upload. What it must NOT do
+     * is decide on evidence that was never gathered: `runSettlementTick`
+     * collects an organisation only where the eligibility sweep actually
+     * completed, and `enforceStrictPrimaryImages` skips any item still holding
+     * an unjudged candidate. Between them, an unfinished backfill cannot clear
+     * the pointer of a property whose picture is about to be approved.
+     */
+    for (const organisationId of organisations) await enforce(organisationId);
 
     const remaining = Math.max(0, outstanding.length - settled);
     console.log('[builder-stock-image-settler] tick', {

@@ -25,8 +25,11 @@
  *    junk image measured came in under 3,879 bytes and the smallest genuine
  *    photograph was 6,517, so the two populations do not overlap.
  *
- * Pure: no Deno, no DOM, no imports.
+ * Pure: no Deno, no DOM. Its one import is the URL decoder, for the reason
+ * below.
  */
+
+import { decodedUrlHaystack } from './listingImageAsset.pure.ts';
 
 /**
  * Path fragments that mark an image as furniture, matched as substrings.
@@ -88,6 +91,36 @@ const CHROME_PATH_HINTS = [
   'dummy',
   '/ui/',
   '/chrome/',
+  /* -- Added after the ProfileFace incident ------------------------------ */
+  // The AWS Serverless Image Handler encodes `{"bucket":…,"key":…}` as base64,
+  // so none of the hints above could see the path. Decoded, one listing's
+  // twelve "photographs" included `ProfileFace/Andrew-Turley.jpg` twice (150 px
+  // and 100 px), `ProfileFace/Scott-Rawlings.jpg` twice, `ProfileFace/Leah-Panos.jpg`
+  // and `uploaded/SuburbReports-Homepage_BG.jpg`. See `looksLikeChromeUrl`.
+  'profileface',
+  'profile-face',
+  'profilephoto',
+  'profile-photo',
+  'agentimage',
+  'agent-image',
+  'suburbreport',
+  'homepage_bg',
+  'homepage-bg',
+  // A path segment that *starts* `team-` is a staff portrait — `team-scott-colour.jpg`
+  // was promoted into a hero slot by the visual classifier, which is right that
+  // it is a photograph and has no way to know it is a photograph of the agent.
+  // Anchored to a segment boundary so a street name containing the letters
+  // cannot match.
+  '/team-',
+  '/team_',
+  // Stock libraries. A listing whose "photograph" carries one of these is
+  // showing somebody else's picture of somewhere else.
+  'unsplash',
+  'shutterstock',
+  'istockphoto',
+  'gettyimages',
+  'stock-photo',
+  'stockphoto',
 ];
 
 /**
@@ -135,6 +168,14 @@ function filenameStem(pathname: string): string {
  * Errs towards keeping: a stale photograph on a card is a much smaller failure
  * than a missing one, and the size test downstream catches most of what slips
  * through here.
+ *
+ * The hints are matched against the **decoded** URL, not the literal one. A
+ * growing share of agency CDNs base64-encode the source path into a segment
+ * (`d1x91xybjdkplh.cloudfront.net/eyJidWNrZXQiOiAi…`), which made every hint
+ * above unreachable — a whole class of furniture became invisible to a filter
+ * that had the right word in its list. `decodedUrlHaystack` opens those
+ * segments up; for an ordinary URL it returns the same string this used to
+ * build, so nothing that was caught before stops being caught.
  */
 export function looksLikeChromeUrl(url: string): boolean {
   let parsed: URL;
@@ -144,7 +185,7 @@ export function looksLikeChromeUrl(url: string): boolean {
     return false;
   }
 
-  const haystack = `${parsed.hostname}${parsed.pathname}`.toLowerCase();
+  const haystack = decodedUrlHaystack(url);
   if (CHROME_PATH_HINTS.some((hint) => haystack.includes(hint))) return true;
   if (BARE_DIMENSION_PATH.test(parsed.pathname)) return true;
   if (UI_ICON_STEMS.has(filenameStem(parsed.pathname))) return true;

@@ -584,7 +584,20 @@ describe("monitoring and ongoing CDD (Phase 10, §12.9 + §18)", () => {
     const branch = monSource.slice(
       monSource.indexOf('op === "schedule_periodic_review"'),
       monSource.indexOf('op === "record_trigger_review"'));
-    expect(branch).toContain("hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)");
+    /*
+     * This used to pin `hasTenantAccess(caseRow.tenant_id, …)` — an
+     * expression that could never work. `aml.cases` has no `tenant_id`
+     * column, so the select answered 42703, the discarded error left the row
+     * null, and the handler reported "Case not found". The test asserted the
+     * presence of a call that always failed.
+     *
+     * The tenant is now resolved by `_shared/aml/caseTenant.ts`. The
+     * authorisation itself is unchanged: the tenant-scoped AML role RPCs are
+     * still the only thing that can grant access.
+     */
+    expect(branch).toContain("hasTenantAccess(tenantForCase(");
+    expect(branch).toContain("WRITE_ROLES");
+    expect(branch).not.toContain("caseRow.tenant_id");
     expect(branch).toContain("reviewIntervalMonths(caseRow)");
     expect(monSource).toContain("DEFAULT_REVIEW_INTERVALS");
   });
@@ -601,7 +614,8 @@ describe("monitoring and ongoing CDD (Phase 10, §12.9 + §18)", () => {
         : monSource.indexOf(`op === "${nextOperation}"`);
       const following = monSource.indexOf('if (op ===', start + 1);
       const branch = monSource.slice(start, following === -1 ? undefined : following);
-      expect(branch).toContain("hasTenantAccess(caseRow.tenant_id");
+      expect(branch).toContain("hasTenantAccess(tenantForCase(");
+      expect(branch).not.toContain("caseRow.tenant_id");
     }
   });
 

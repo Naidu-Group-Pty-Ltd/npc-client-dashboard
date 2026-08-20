@@ -115,6 +115,23 @@ interface PreGenerationOverridesProps {
   externalBuildingInsurance?: number;
   externalPropertyManagementPercent?: number;
   externalConstructionYear?: number;
+  // Consolidated primary property details (owned by the parent generator so
+  // scraping / PDF parsing / stored data remain the single source of truth)
+  externalPropertyType?: string;
+  onPropertyTypeChange?: (value: string) => void;
+  beds?: string;
+  onBedsChange?: (value: string) => void;
+  baths?: string;
+  onBathsChange?: (value: string) => void;
+  onPurchasePriceChange?: (value: string) => void;
+  onWeeklyRentChange?: (value: string) => void;
+  onCarSpacesChange?: (value: string) => void;
+  onLandSizeChange?: (value: string) => void;
+  onBuildSizeChange?: (value: string) => void;
+  onLandPriceChange?: (value: string) => void;
+  onBuildPriceChange?: (value: string) => void;
+  /** Hide the in-panel build type selector when the host page already owns it. */
+  hideBuildTypeSelector?: boolean;
 }
 
 export function PreGenerationOverrides({ 
@@ -136,7 +153,21 @@ export function PreGenerationOverrides({
   externalBodyCorporateFees,
   externalBuildingInsurance,
   externalPropertyManagementPercent,
-  externalConstructionYear
+  externalConstructionYear,
+  externalPropertyType,
+  onPropertyTypeChange,
+  beds,
+  onBedsChange,
+  baths,
+  onBathsChange,
+  onPurchasePriceChange,
+  onWeeklyRentChange,
+  onCarSpacesChange,
+  onLandSizeChange,
+  onBuildSizeChange,
+  onLandPriceChange,
+  onBuildPriceChange,
+  hideBuildTypeSelector = false
 }: PreGenerationOverridesProps) {
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -163,19 +194,27 @@ export function PreGenerationOverrides({
     });
   }, []);
   
-  // Build type selection
+  // Build type selection. The property-type choice now lives ONCE at the top of
+  // the Reports page, so this panel only ever reads it. `onBuildTypeChange` is
+  // retained for callers that still want to drive the selection from here.
   const [internalBuildType, setInternalBuildType] = useState<BuildType>(externalBuildType || 'existing_property');
   const buildType = externalBuildType !== undefined ? externalBuildType : internalBuildType;
-  
-  const handleBuildTypeChange = (value: BuildType) => {
+
+  const handleBuildTypeChange = useCallback((value: BuildType) => {
     setInternalBuildType(value);
-    if (onBuildTypeChange) {
-      onBuildTypeChange(value);
-    }
-  };
+    onBuildTypeChange?.(value);
+  }, [onBuildTypeChange]);
+
   
-  // Property type for expense estimation
-  const [propertyType, setPropertyType] = useState<string>('house');
+  // Property type for expense estimation. When the parent owns it (the report
+  // generator does, because scraping and PDF parsing write it), the parent value
+  // wins and edits are pushed straight back up — one source of truth.
+  const [internalPropertyType, setInternalPropertyType] = useState<string>('house');
+  const propertyType = externalPropertyType !== undefined ? externalPropertyType : internalPropertyType;
+  const setPropertyType = useCallback((value: string) => {
+    setInternalPropertyType(value);
+    onPropertyTypeChange?.(value);
+  }, [onPropertyTypeChange]);
   
   // Core property values
   const [purchasePrice, setPurchasePrice] = useState<string>('');
@@ -589,6 +628,43 @@ export function PreGenerationOverrides({
     }
   }, [propertyAddress, buildType, landPrice, buildPrice, purchasePrice, weeklyRent, propertyType, toast]);
 
+  /**
+   * Shared-field writers. These fields are also held by the report generator
+   * (they feed the generation payload, validation and the scrape/parse fill),
+   * so an edit inside the Property step updates BOTH copies — the panel keeps
+   * its local string state and the parent is notified immediately, rather than
+   * relying on the debounced onDataChange round-trip which cannot express a
+   * cleared field.
+   */
+  const writePurchasePrice = useCallback((value: string) => {
+    setPurchasePrice(value);
+    onPurchasePriceChange?.(value);
+  }, [onPurchasePriceChange]);
+  const writeWeeklyRent = useCallback((value: string) => {
+    setWeeklyRent(value);
+    onWeeklyRentChange?.(value);
+  }, [onWeeklyRentChange]);
+  const writeCarSpaces = useCallback((value: string) => {
+    setCarSpaces(value);
+    onCarSpacesChange?.(value);
+  }, [onCarSpacesChange]);
+  const writeLandSizeSqm = useCallback((value: string) => {
+    setLandSizeSqm(value);
+    onLandSizeChange?.(value);
+  }, [onLandSizeChange]);
+  const writeBuildSizeSqm = useCallback((value: string) => {
+    setBuildSizeSqm(value);
+    onBuildSizeChange?.(value);
+  }, [onBuildSizeChange]);
+  const writeLandPrice = useCallback((value: string) => {
+    setLandPrice(value);
+    onLandPriceChange?.(value);
+  }, [onLandPriceChange]);
+  const writeBuildPrice = useCallback((value: string) => {
+    setBuildPrice(value);
+    onBuildPriceChange?.(value);
+  }, [onBuildPriceChange]);
+
   // Notify parent of data changes
   useEffect(() => {
     const data: PreGenerationData = {
@@ -727,22 +803,29 @@ export function PreGenerationOverrides({
               <PropertyTab
                 buildType={buildType}
                 onBuildTypeChange={handleBuildTypeChange}
+                showBuildTypeSelector={!hideBuildTypeSelector}
                 purchasePrice={purchasePrice}
-                setPurchasePrice={setPurchasePrice}
+                setPurchasePrice={writePurchasePrice}
                 propertyValue={propertyValue}
                 setPropertyValue={setPropertyValue}
                 landPrice={landPrice}
-                setLandPrice={setLandPrice}
+                setLandPrice={writeLandPrice}
                 buildPrice={buildPrice}
-                setBuildPrice={setBuildPrice}
+                setBuildPrice={writeBuildPrice}
+                weeklyRent={weeklyRent}
+                setWeeklyRent={writeWeeklyRent}
+                beds={beds}
+                setBeds={onBedsChange}
+                baths={baths}
+                setBaths={onBathsChange}
                 propertyType={propertyType}
                 setPropertyType={setPropertyType}
                 carSpaces={carSpaces}
-                setCarSpaces={setCarSpaces}
+                setCarSpaces={writeCarSpaces}
                 landSizeSqm={landSizeSqm}
-                setLandSizeSqm={setLandSizeSqm}
+                setLandSizeSqm={writeLandSizeSqm}
                 buildSizeSqm={buildSizeSqm}
-                setBuildSizeSqm={setBuildSizeSqm}
+                setBuildSizeSqm={writeBuildSizeSqm}
                 zoningCode={zoningCode}
                 setZoningCode={setZoningCode}
                 zoningDescription={zoningDescription}

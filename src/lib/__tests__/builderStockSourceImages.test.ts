@@ -17,7 +17,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { CLEAN_VERDICT, cleanPicture, jpegOf, pngOf } from './fixtures/builderStockPictures';
+import {
+  ANNOTATED_VERDICT, CLEAN_VERDICT, cleanPicture, jpegOf, pngOf,
+} from './fixtures/builderStockPictures';
 
 import {
   attributeDocumentMedia, sniffImageContentType, sourceImageObjectPath,
@@ -39,8 +41,9 @@ import {
   chooseAndStorePrimaryImage, isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import { repairSourceImagesForUpload } from '../../../supabase/functions/_shared/builderStock/repairSourceImages';
+import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderStock/sourceImages';
 import {
-  roleDetail, roleFromStructuralContainer,
+  roleDetail, roleFromStructuralContainer, secondaryRole,
 } from '../../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
 
 /**
@@ -190,6 +193,12 @@ function fakeDb(seed: {
   items?: FakeRow[];
   uploads?: FakeRow[];
   objects?: Record<string, Uint8Array>;
+  /**
+   * Make one table's updates fail, so a persistence fault can be exercised.
+   * A settlement that cannot write down what it learned must not let its
+   * caller record the upload as finished.
+   */
+  failUpdatesOn?: string;
 } = {}) {
   const tables: Record<string, FakeRow[]> = {
     builder_stock_item_images: [...(seed.images ?? [])],
@@ -249,6 +258,11 @@ function fakeDb(seed: {
           const builder: any = {
             eq(column: string, value: unknown) { filters.push(['eq', column, value]); return builder; },
             then(resolve: (value: unknown) => unknown, reject?: unknown) {
+              if (seed.failUpdatesOn === table) {
+                return Promise.resolve({
+                  data: null, error: { message: 'update refused' },
+                }).then(resolve, reject as never);
+              }
               for (const row of tables[table] ?? []) {
                 if (matches(row, filters)) Object.assign(row, patch);
               }
@@ -790,6 +804,206 @@ describe('repairing stock that is already imported', () => {
       .some((row: FakeRow) => row.id === 'google-101')).toBe(true);
   });
 
+  /*
+   * TEST AR — the sweep has to CONVERGE, and for hours it did not.
+   *
+   * `storeSourceImages` fetches, validates, hashes and re-uploads every asset
+   * unconditionally. The row-asset branch had neither of the guards the package
+   * branch has, so every tick began at the first row and spent the whole worker
+   * allowance re-storing pictures that were already at the current version.
+   * Production upload f7e0d4d1 sat at 13 of 25 for hours: not slow, nil.
+   */
+  describe('and the repair converges instead of redoing itself', () => {
+    const manyCsv = [
+      'Reference,Development,Lot,Package Price,Photo',
+      ...Array.from({ length: 6 }, (_, i) =>
+        `NPC-2${i},Riverbank,2${i},640000,https://builder.example/img/lot-2${i}.jpg`),
+    ].join('\r\n');
+
+    const manyUpload = {
+      ...upload, id: 'upload-many',
+      storage_path: 'stock-lists/org-a/upload-many/stock.csv',
+    };
+
+    const manyItems = Array.from({ length: 6 }, (_, i) => ({
+      id: `item-2${i}`, organisation_id: 'org-a', lifecycle_status: 'active',
+      external_reference: `NPC-2${i}`, development_name: 'Riverbank',
+      project_name: null, unit_number: null, lot_number: `2${i}`,
+      primary_image_id: null,
+    }));
+
+    /** A property already re-derived under the current rules. */
+    const settledImage = (index: number) => ({
+      id: `settled-2${index}`,
+      stock_item_id: `item-2${index}`,
+      organisation_id: 'org-a',
+      source_stage: 'uploaded_document',
+      source_reference: `https://builder.example/img/lot-2${index}.jpg`,
+      processing_status: 'ready',
+      verification_status: 'source_supplied',
+      position: 0,
+      storage_path: `s/lot-2${index}.jpg`,
+      source_detail: { ...PRIMARY_ROLE_DETAIL, provenance_version: PROVENANCE_VERSION },
+    });
+
+    it('does not re-fetch a property already at the current provenance version', async () => {
+      // Four of the six are already current; only two have work outstanding.
+      const db = fakeDb({
+        uploads: [manyUpload],
+        items: manyItems,
+        images: [0, 1, 2, 3].map(settledImage),
+        objects: { [manyUpload.storage_path]: new TextEncoder().encode(manyCsv) },
+      });
+
+      const fetched: string[] = [];
+      const outcome = await repairSourceImagesForUpload(
+        db, { organisationId: 'org-a', uploadId: 'upload-many' },
+        {
+          fetchImage: async (url: string) => {
+            fetched.push(url);
+            return { bytes: pngBytes(), finalUrl: url };
+          },
+        },
+      );
+
+      expect(outcome.rowsRead).toBe(6);
+      // The four already current were not downloaded again...
+      expect(fetched).toEqual([
+        'https://builder.example/img/lot-24.jpg',
+        'https://builder.example/img/lot-25.jpg',
+      ]);
+      // ...and the run finished, because there was nothing left to do.
+      expect(outcome.incomplete).toBe(false);
+    });
+
+    /*
+     * The other half of the same rule. Skipping the DOWNLOAD must not skip the
+     * PROOF: attribution comes from the row, which this run re-read from the
+     * builder's own stored source, so an image it deliberately did not re-fetch
+     * is not an image it failed to prove. Demoting those would empty exactly the
+     * cards the repair exists to fill.
+     */
+    it('still proves a skipped property, so nothing is demoted for being current', async () => {
+      const db = fakeDb({
+        uploads: [manyUpload],
+        items: manyItems,
+        images: [0, 1, 2, 3, 4, 5].map(settledImage),
+        objects: { [manyUpload.storage_path]: new TextEncoder().encode(manyCsv) },
+      });
+
+      const outcome = await repairSourceImagesForUpload(
+        db, { organisationId: 'org-a', uploadId: 'upload-many' },
+        { fetchImage: async () => { throw new Error('nothing should be fetched'); } },
+      );
+
+      expect(outcome.demoted).toBe(0);
+      expect(outcome.incomplete).toBe(false);
+      for (const row of db.tables.builder_stock_item_images) {
+        expect(row.processing_status).toBe('ready');
+      }
+    });
+
+    /*
+     * And a run that cannot finish stops ITSELF rather than being killed. The
+     * wall clock never fired in production — the work is CPU-bound and the edge
+     * worker's resource limit hit first, which returns no response, writes no
+     * marker and logs nothing. A count is the bound that holds.
+     */
+    it('stops at the work cap and reports incomplete rather than running on', async () => {
+      const wideCsv = [
+        'Reference,Development,Lot,Package Price,Photo',
+        ...Array.from({ length: 20 }, (_, i) =>
+          `NPC-3${i},Riverbank,3${i},640000,https://builder.example/img/lot-3${i}.jpg`),
+      ].join('\r\n');
+      const wideUpload = {
+        ...upload, id: 'upload-wide',
+        storage_path: 'stock-lists/org-a/upload-wide/stock.csv',
+      };
+      const db = fakeDb({
+        uploads: [wideUpload],
+        items: Array.from({ length: 20 }, (_, i) => ({
+          id: `item-3${i}`, organisation_id: 'org-a', lifecycle_status: 'active',
+          external_reference: `NPC-3${i}`, development_name: 'Riverbank',
+          project_name: null, unit_number: null, lot_number: `3${i}`,
+          primary_image_id: null,
+        })),
+        objects: { [wideUpload.storage_path]: new TextEncoder().encode(wideCsv) },
+      });
+
+      let fetches = 0;
+      const outcome = await repairSourceImagesForUpload(
+        db, { organisationId: 'org-a', uploadId: 'upload-wide' },
+        {
+          fetchImage: async (url: string) => {
+            fetches += 1;
+            return { bytes: pngBytes(), finalUrl: url };
+          },
+        },
+      );
+
+      expect(outcome.incomplete).toBe(true);
+      // Bounded, and bounded by the CAP rather than by the row count.
+      expect(fetches).toBe(4);
+      expect(fetches).toBeLessThan(20);
+    });
+
+    /*
+     * The property that matters most: repeated ticks REACH THE END. Each run
+     * permanently retires what it reached, so the queue drains instead of the
+     * same first rows being re-done for ever.
+     */
+    it('drains a backlog larger than one run over successive ticks', async () => {
+      const wideCsv = [
+        'Reference,Development,Lot,Package Price,Photo',
+        ...Array.from({ length: 20 }, (_, i) =>
+          `NPC-4${i},Riverbank,4${i},640000,https://builder.example/img/lot-4${i}.jpg`),
+      ].join('\r\n');
+      const wideUpload = {
+        ...upload, id: 'upload-drain',
+        storage_path: 'stock-lists/org-a/upload-drain/stock.csv',
+      };
+      const db = fakeDb({
+        uploads: [wideUpload],
+        items: Array.from({ length: 20 }, (_, i) => ({
+          id: `item-4${i}`, organisation_id: 'org-a', lifecycle_status: 'active',
+          external_reference: `NPC-4${i}`, development_name: 'Riverbank',
+          project_name: null, unit_number: null, lot_number: `4${i}`,
+          primary_image_id: null,
+        })),
+        objects: { [wideUpload.storage_path]: new TextEncoder().encode(wideCsv) },
+      });
+
+      const perTick: number[] = [];
+      let ticks = 0;
+      let outcome = { incomplete: true } as { incomplete: boolean };
+      while (outcome.incomplete && ticks < 10) {
+        ticks += 1;
+        let fetches = 0;
+        outcome = await repairSourceImagesForUpload(
+          db, { organisationId: 'org-a', uploadId: 'upload-drain' },
+          {
+            fetchImage: async (url: string) => {
+              fetches += 1;
+              return { bytes: pngBytes(), finalUrl: url };
+            },
+          },
+        );
+        perTick.push(fetches);
+      }
+
+      // It ENDS, and in the number of ticks the cap implies — not the 10 the
+      // loop would allow, and never the "for ever" this replaces.
+      expect(outcome.incomplete).toBe(false);
+      expect(ticks).toBe(5);
+      expect(perTick).toEqual([4, 4, 4, 4, 4]);
+      // Every property ended up with its builder image.
+      const stored = db.tables.builder_stock_item_images.filter(
+        (row: FakeRow) => row.source_stage === 'uploaded_document'
+          && row.processing_status === 'ready');
+      expect(stored).toHaveLength(20);
+    });
+  });
+
   it('cannot attach one builder\'s source image to another builder\'s stock', async () => {
     const db = fakeDb({
       uploads: [upload],
@@ -998,5 +1212,549 @@ describe('repairing stock that is already imported', () => {
       organisationId: 'org-b', uploadId: 'upload-1',
     });
     expect(outcome.error).toBe('That source could not be found.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TESTS A–L — a package that was READ and named nothing is a finished answer
+//
+// The repair had three outcomes for a linked package and wrote down only one.
+// "Read it, and it names no image for this property" is knowledge, and throwing
+// it away is what made the sweep immortal: it could not tell an answered
+// property from an unlooked-at one, so it re-fetched and re-parsed the same
+// Drive document every five minutes. Production upload f7e0d4d1 is 70 rows, 13
+// already current and the rest already answered — `rows_read: 70, matched: 13,
+// images_stored: 0`, for ever.
+// ---------------------------------------------------------------------------
+
+describe('a package that named no image is not read again', () => {
+  const FOLDER_A = 'https://drive.google.com/drive/folders/folder-aaa';
+  const FOLDER_B = 'https://drive.google.com/drive/folders/folder-bbb';
+
+  /** A Drive folder listing that loads and names one unrelated document. */
+  const listingHtml = (name: string) =>
+    `<html><script>window['_DRIVE_ivd'] = '`
+    + JSON.stringify([[['doc-1', 'x', name, 'application/pdf']]])
+        .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    + `';</script></html>`;
+
+  const upload = {
+    id: 'upload-pkg', organisation_id: 'org-a', source_type: 'file',
+    source_url: null, final_url: null, original_filename: 'stock.csv',
+    storage_bucket: 'builder-stock-lists',
+    storage_path: 'stock-lists/org-a/upload-pkg/stock.csv',
+    deleted_at: null,
+  };
+
+  const csvFor = (rows: Array<{ ref: string; lot: string; pkg: string }>) => [
+    'Reference,Development,Lot,Package Price,Complete Package Pack',
+    ...rows.map((r) => `${r.ref},Riverbank,${r.lot},640000,${r.pkg}`),
+  ].join('\r\n');
+
+  const itemFor = (ref: string, lot: string, extra: FakeRow = {}) => ({
+    id: `item-${ref}`, organisation_id: 'org-a', lifecycle_status: 'active',
+    external_reference: ref, development_name: 'Riverbank',
+    project_name: null, unit_number: null, lot_number: lot,
+    primary_image_id: null, ...extra,
+  });
+
+  /**
+   * A world where the folder loads and names a document for nobody. The
+   * package is READ — the listing costs a fetch — and answers "nothing here".
+   */
+  const readableButEmpty = () => {
+    const fetched: string[] = [];
+    return {
+      fetched,
+      fetchPackage: async (url: string) => {
+        fetched.push(url);
+        return {
+          bytes: new TextEncoder().encode(listingHtml('Someone Elses Brochure.pdf')),
+          finalUrl: url,
+        };
+      },
+    };
+  };
+
+  const run = (db: unknown, deps: Record<string, unknown>) =>
+    repairSourceImagesForUpload(
+      db as never, { organisationId: 'org-a', uploadId: 'upload-pkg' }, deps as never);
+
+  // ── B ────────────────────────────────────────────────────────────────────
+  it('B — records a terminal negative result when the package names no image', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1')],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+    });
+    const drive = readableButEmpty();
+
+    const outcome = await run(db, { fetchPackage: drive.fetchPackage });
+
+    expect(outcome.packageNotIdentified).toBe(1);
+    expect(outcome.imagesStored).toBe(0);
+    // The package WAS read — this is an answer, not an assumption.
+    expect(drive.fetched.length).toBeGreaterThan(0);
+
+    const item = db.tables.builder_stock_items[0];
+    expect(item.source_provenance_result).toMatchObject({
+      result: 'no_deterministic_image',
+      provenance_version: PROVENANCE_VERSION,
+      package_reference: FOLDER_A,
+    });
+    // Nothing was invented to show: no image row exists for this property.
+    expect(db.tables.builder_stock_item_images).toHaveLength(0);
+    // And the pass reached the end, so the caller may write the marker.
+    expect(outcome.incomplete).toBe(false);
+  });
+
+  // ── C ────────────────────────────────────────────────────────────────────
+  it('C — does not fetch or parse that package again on the next tick', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1')],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+    });
+
+    const first = readableButEmpty();
+    await run(db, { fetchPackage: first.fetchPackage });
+    expect(first.fetched.length).toBeGreaterThan(0);
+
+    // Second tick, same everything. The answer is already banked.
+    const second = readableButEmpty();
+    const outcome = await run(db, { fetchPackage: second.fetchPackage });
+
+    expect(second.fetched).toEqual([]);
+    expect(outcome.packageAlreadyAnswered).toBe(1);
+    expect(outcome.incomplete).toBe(false);
+  });
+
+  // ── D ────────────────────────────────────────────────────────────────────
+  it('D — a PROVENANCE_VERSION bump re-opens the question', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      // An answer banked by the PREVIOUS version of the extractor.
+      items: [itemFor('NPC-1', '1', {
+        source_provenance_result: {
+          result: 'no_deterministic_image',
+          provenance_version: PROVENANCE_VERSION - 1,
+          package_reference: FOLDER_A,
+          source_anchor: null,
+          detail: 'nothing found',
+          checked_at: '2026-01-01T00:00:00.000Z',
+        },
+      })],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+    });
+    const drive = readableButEmpty();
+
+    const outcome = await run(db, { fetchPackage: drive.fetchPackage });
+
+    // A better extractor may find what the old one could not, so it looks.
+    expect(drive.fetched.length).toBeGreaterThan(0);
+    expect(outcome.packageAlreadyAnswered).toBe(0);
+    expect(db.tables.builder_stock_items[0].source_provenance_result)
+      .toMatchObject({ provenance_version: PROVENANCE_VERSION });
+  });
+
+  // ── E ────────────────────────────────────────────────────────────────────
+  it('E — a changed package is checked, and the old answer does not suppress it', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1', {
+        source_provenance_result: {
+          result: 'no_deterministic_image',
+          provenance_version: PROVENANCE_VERSION,
+          package_reference: FOLDER_A,
+          source_anchor: null,
+          detail: 'nothing found',
+          checked_at: '2026-01-01T00:00:00.000Z',
+        },
+      })],
+      // The builder has swapped the row's package for a different one.
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_B }])),
+      },
+    });
+    const drive = readableButEmpty();
+
+    const outcome = await run(db, { fetchPackage: drive.fetchPackage });
+
+    expect(drive.fetched.length).toBeGreaterThan(0);
+    expect(outcome.packageAlreadyAnswered).toBe(0);
+    // The banked answer now names the package actually checked.
+    expect(db.tables.builder_stock_items[0].source_provenance_result)
+      .toMatchObject({ package_reference: FOLDER_B });
+  });
+
+  // ── F ────────────────────────────────────────────────────────────────────
+  it('F — a package that cannot be read writes NO answer and stays retryable', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1')],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+    });
+
+    // A folder behind a sign-in wall lists nothing.
+    const outcome = await run(db, {
+      fetchPackage: async (url: string) => ({
+        bytes: new TextEncoder().encode('<html>Sign in</html>'), finalUrl: url,
+      }),
+    });
+
+    expect(outcome.packageUnreachable).toBe(1);
+    // "We could not look" is not "there is nothing to find".
+    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    expect(outcome.incomplete).toBe(true);
+  });
+
+  // ── G ────────────────────────────────────────────────────────────────────
+  it('G — a parser or runtime failure writes NO answer and stays retryable', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1')],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+    });
+
+    const outcome = await run(db, {
+      fetchPackage: async () => { throw new Error('parser exploded'); },
+    });
+
+    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    expect(outcome.incomplete).toBe(true);
+  });
+
+  // ── H ────────────────────────────────────────────────────────────────────
+  it('H — a failed write does not let the upload be marked settled', async () => {
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1')],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+      failUpdatesOn: 'builder_stock_items',
+    });
+    const drive = readableButEmpty();
+
+    const outcome = await run(db, { fetchPackage: drive.fetchPackage });
+
+    // The answer was reached and could not be persisted, so as far as anything
+    // reading this property is concerned it was never reached.
+    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    expect(outcome.incomplete).toBe(true);
+  });
+
+  // ── J ────────────────────────────────────────────────────────────────────
+  //
+  // The production shape, to scale: 70 rows, 13 already holding a current
+  // image, 57 whose packages read successfully and name nothing. Before the
+  // terminal answer this ran for ever; the assertion is that it ENDS, and ends
+  // without ever exceeding the per-run work bound that the edge worker's CPU
+  // limit forced.
+  it('J — 70 rows, 13 current, 57 answered: converges and never exceeds the bound', async () => {
+    const rows = Array.from({ length: 70 }, (_, i) => ({
+      ref: `NPC-${i}`, lot: `${i}`, pkg: FOLDER_A,
+    }));
+    const current = rows.slice(0, 13);
+
+    const db = fakeDb({
+      uploads: [upload],
+      items: rows.map((r) => itemFor(r.ref, r.lot)),
+      // The 13 that already hold a current builder image.
+      images: current.map((r) => ({
+        id: `img-${r.ref}`, stock_item_id: `item-${r.ref}`, organisation_id: 'org-a',
+        source_stage: 'uploaded_document', source_reference: `ref-${r.ref}`,
+        processing_status: 'ready', verification_status: 'source_supplied',
+        position: 0, storage_path: `s/${r.ref}.jpg`,
+        source_detail: { ...PRIMARY_ROLE_DETAIL, provenance_version: PROVENANCE_VERSION },
+      })),
+      objects: { [upload.storage_path]: new TextEncoder().encode(csvFor(rows)) },
+    });
+
+    const perTick: number[] = [];
+    let ticks = 0;
+    let outcome = { incomplete: true } as { incomplete: boolean };
+    while (outcome.incomplete && ticks < 200) {
+      ticks += 1;
+      const drive = readableButEmpty();
+      outcome = await run(db, { fetchPackage: drive.fetchPackage });
+      // One listing serves every row in a tick, so count properties answered.
+      perTick.push((outcome as unknown as { packageNotIdentified: number }).packageNotIdentified);
+    }
+
+    // It ENDS. That is the whole point.
+    expect(outcome.incomplete).toBe(false);
+    // And never did more per run than the CPU bound allows.
+    // A package recovery parses a whole PDF, so it carries the tighter of the
+    // two bounds: four in one invocation is what still logged `CPU Time
+    // exceeded` in production after 44 of these rows had been answered.
+    for (const answered of perTick) expect(answered).toBeLessThanOrEqual(1);
+    // It took a tick per outstanding package and no more — the banked answers
+    // are what stop it re-reading, so the count is the backlog, not a loop.
+    expect(ticks).toBe(57);
+    // Every one of the 57 is now a banked answer, and none of the 13 was touched.
+    const answeredRows = db.tables.builder_stock_items
+      .filter((row: FakeRow) => row.source_provenance_result);
+    expect(answeredRows).toHaveLength(57);
+    expect(db.tables.builder_stock_item_images).toHaveLength(13);
+  });
+
+  // ── A ────────────────────────────────────────────────────────────────────
+  //
+  // The other half of the rule: an answer of "there IS a picture" must not
+  // leave a "there is none" behind it. A direct file link is used so the whole
+  // extractor runs — find, fetch, read the cover, take the picture — rather
+  // than a stub standing in for it.
+  it('A — a recovered package image stores the image and leaves no negative result', async () => {
+    const FILE_LINK = 'https://drive.google.com/file/d/doc-lot-7-aaaa/view';
+    const LABEL_LOT = '7';
+    const jpeg = (() => {
+      const bytes = new Uint8Array(160_000);
+      bytes.set([0xff, 0xd8, 0xff, 0xe0], 0);
+      bytes.fill(0x42, 4, bytes.length - 2);
+      bytes.set([0xff, 0xd9], bytes.length - 2);
+      return bytes;
+    })();
+    const cat = (parts: Array<Uint8Array | string>) => {
+      const enc = new TextEncoder();
+      const chunks = parts.map((part) => typeof part === 'string' ? enc.encode(part) : part);
+      const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+      let at = 0;
+      for (const chunk of chunks) { out.set(chunk, at); at += chunk.length; }
+      return out;
+    };
+    const draw = 'q 516 0 0 290 40 480 cm /Im0 Do Q';
+    const packageBytes = cat([
+      '%PDF-1.4\n',
+      '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n',
+      '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n',
+      '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox [0 0 595 842]'
+        + '/Resources<</XObject<</Im0 4 0 R>>>>/Contents 5 0 R>>endobj\n',
+      `4 0 obj<</Type/XObject/Subtype/Image/Width 1700/Height 956/Filter/DCTDecode/Length ${jpeg.length}>>stream\n`,
+      jpeg,
+      '\nendstream\nendobj\n',
+      `5 0 obj<</Length ${draw.length}>>stream\n${draw}\nendstream\nendobj\n`,
+      'trailer<</Root 1 0 R>>\n%%EOF\n',
+    ]);
+
+    const db = fakeDb({
+      uploads: [upload],
+      // It starts holding a STALE answer, so the clearing is exercised too.
+      items: [itemFor('NPC-7', LABEL_LOT, {
+        source_provenance_result: {
+          result: 'no_deterministic_image',
+          provenance_version: PROVENANCE_VERSION - 1,
+          package_reference: FILE_LINK,
+          source_anchor: null,
+          detail: 'an older extractor found nothing',
+          checked_at: '2026-01-01T00:00:00.000Z',
+        },
+      })],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-7', lot: LABEL_LOT, pkg: FILE_LINK }])),
+      },
+    });
+
+    const outcome = await run(db, {
+      fetchPackage: async (url: string) => ({ bytes: packageBytes, finalUrl: url }),
+      // The cover names this property, which is what admits the picture.
+      // The same cover shape the package fixtures use: the row's own label,
+      // then the package information that makes it a cover rather than a page.
+      readPageTexts: async () => [
+        'Lot 7\nFIXED PRICE CONTRACT\n$640,000\nLand Size 350 m2\n4 bed 2 bath 2 car',
+      ],
+    });
+
+    expect(outcome.fromPackage).toBe(1);
+    expect(outcome.imagesStored).toBe(1);
+    expect(outcome.packageNotIdentified).toBe(0);
+    // The stale answer is gone rather than sitting beside the picture.
+    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeNull();
+    expect(outcome.incomplete).toBe(false);
+  });
+
+  // ── I ────────────────────────────────────────────────────────────────────
+  it('I — a mix of current images, banked answers and fresh answers completes', async () => {
+    const rows = [
+      { ref: 'NPC-A', lot: '1', pkg: FOLDER_A },
+      { ref: 'NPC-B', lot: '2', pkg: FOLDER_A },
+      { ref: 'NPC-C', lot: '3', pkg: FOLDER_A },
+    ];
+    const db = fakeDb({
+      uploads: [upload],
+      items: [
+        itemFor('NPC-A', '1'),
+        // Already answered at the current version.
+        itemFor('NPC-B', '2', {
+          source_provenance_result: {
+            result: 'no_deterministic_image',
+            provenance_version: PROVENANCE_VERSION,
+            package_reference: FOLDER_A,
+            source_anchor: null,
+            detail: 'nothing found',
+            checked_at: '2026-01-01T00:00:00.000Z',
+          },
+        }),
+        itemFor('NPC-C', '3'),
+      ],
+      // Already holds a current image.
+      images: [{
+        id: 'img-C', stock_item_id: 'item-NPC-C', organisation_id: 'org-a',
+        source_stage: 'uploaded_document', source_reference: 'ref-C',
+        processing_status: 'ready', verification_status: 'source_supplied',
+        position: 0, storage_path: 's/c.jpg',
+        source_detail: { ...PRIMARY_ROLE_DETAIL, provenance_version: PROVENANCE_VERSION },
+      }],
+      objects: { [upload.storage_path]: new TextEncoder().encode(csvFor(rows)) },
+    });
+    const drive = readableButEmpty();
+
+    const outcome = await run(db, { fetchPackage: drive.fetchPackage });
+
+    expect(outcome.incomplete).toBe(false);
+    expect(outcome.packageAlreadyAnswered).toBe(1);
+    expect(outcome.packageNotIdentified).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHAT THE CARD ACTUALLY SHOWS
+//
+// The settlement machinery is not the requirement. The requirement is that a
+// clean builder photograph of THIS property appears, an ugly marketing tile
+// does not, and nothing else is ever substituted for either. These assert the
+// outcome the Marketplace renders, through the same predicate the card and the
+// bytes endpoint both use.
+// ---------------------------------------------------------------------------
+
+describe('what the Builder Stock card displays', () => {
+  const sourceImage = (over: FakeRow = {}): FakeRow => ({
+    id: 'img', stock_item_id: 'item-1', organisation_id: 'org-a',
+    source_stage: 'uploaded_document', verification_status: 'source_supplied',
+    processing_status: 'ready', storage_path: 's/img.jpg', position: 0,
+    source_detail: { ...PRIMARY_ROLE_DETAIL },
+    ...over,
+  });
+
+  /** A verdict the classifier actually produced, not a hand-written literal. */
+  const cleanDetail = { ...roleDetail(PRIMARY_ASSET_ROLE), ...CLEAN_VERDICT };
+  // The classifier's OWN verdict on an annotated picture, not a literal: a
+  // hand-written 'ineligible' would pass these tests even if the classifier
+  // stopped producing one.
+  const rejectedDetail = { ...roleDetail(PRIMARY_ASSET_ROLE), ...ANNOTATED_VERDICT };
+
+  // ── 1 ────────────────────────────────────────────────────────────────────
+  it('1 — a clean exact builder primary displays', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({ id: 'clean', source_detail: cleanDetail })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('clean');
+  });
+
+  // ── 3 ────────────────────────────────────────────────────────────────────
+  //
+  // Rejecting the tile must not blank a property that HAS a clean primary. The
+  // clean one is chosen because it is a source-designated primary in its own
+  // right, never because it was the only thing left standing.
+  it('3 — a rejected marketing tile does not hide a separate clean primary', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: 'tile' }],
+      images: [
+        sourceImage({ id: 'tile', position: 0, source_detail: rejectedDetail }),
+        sourceImage({ id: 'clean', position: 1, source_detail: cleanDetail }),
+      ],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('clean');
+  });
+
+  // ── 4 ────────────────────────────────────────────────────────────────────
+  it('4 — a rejected tile beside only an interior leaves the card blank', async () => {
+    // `roleFromStructuralContainer` is the constructor for "the source SAYS
+    // this is the hero", so it always yields primary_property — an interior is
+    // a secondary role, which is exactly why it can never reach a card.
+    const interior = {
+      ...roleDetail(secondaryRole('interior', 'a gallery photograph of a bedroom')),
+      ...CLEAN_VERDICT,
+    };
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: 'tile' }],
+      images: [
+        sourceImage({ id: 'tile', position: 0, source_detail: rejectedDetail }),
+        // Perfectly clean, perfectly useless: it is not this property's hero.
+        sourceImage({ id: 'interior', position: 1, source_detail: interior }),
+      ],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
+  });
+
+  // ── 5 ────────────────────────────────────────────────────────────────────
+  it('5 — a clean facade carrying a small builder mark still displays', async () => {
+    // The real Cloverton cover: a corner "HOUSE & LAND" mark and a footer
+    // disclaimer strip. Normal presentation, not a marketing tile.
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({ id: 'marked', source_detail: cleanDetail })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('marked');
+  });
+
+  // ── 7 ────────────────────────────────────────────────────────────────────
+  it('7 — an image belonging to another property is never shown here', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({
+        id: 'other-house', stock_item_id: 'item-2', source_detail: cleanDetail,
+      })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+  });
+
+  // ── 6 ────────────────────────────────────────────────────────────────────
+  it('6 — an unjudged candidate is not displayed', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({
+        id: 'unjudged',
+        // Role proven, verdict never reached. Fail closed.
+        source_detail: { ...roleDetail(PRIMARY_ASSET_ROLE) },
+      })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+  });
+
+  // ── 8 ────────────────────────────────────────────────────────────────────
+  //
+  // The builder replaces the tile with a clean render. Nobody presses anything:
+  // the new verdict is written by the ordinary sweep and the pointer follows.
+  it('8 — when the source stops being a tile, the card fills automatically', async () => {
+    const db = fakeDb({
+      items: [{ id: 'item-1', primary_image_id: null }],
+      images: [sourceImage({ id: 'was-a-tile', source_detail: rejectedDetail })],
+    });
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBeNull();
+
+    // The same row, re-assessed after the builder swapped the artwork.
+    db.tables.builder_stock_item_images[0].source_detail = cleanDetail;
+    expect(await chooseAndStorePrimaryImage(db, 'item-1')).toBe('was-a-tile');
   });
 });

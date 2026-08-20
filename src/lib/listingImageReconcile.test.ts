@@ -6,6 +6,7 @@ import {
   type HeldImage,
   type Reconciliation,
 } from '../../supabase/functions/_shared/listingImageReconcile.pure';
+import { canonicalAssetKey } from '../../supabase/functions/_shared/listingImageAsset.pure';
 import { imageIdentity, type ImageCandidate, type ImageOrigin } from '@/lib/listingImages';
 
 /**
@@ -187,6 +188,28 @@ describe('isHarvestDue', () => {
       isHarvestDue({
         candidates: SCRAPED.map((u) => candidate(u)),
         stored,
+        refreshAfter: NOW + 86_400_000,
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+
+  it('is not due for a rendition of a photograph already held', () => {
+    // `stored` carries each held row's asset key as well as its identity. The
+    // agency now serves the large copy of a shot we hold the medium copy of;
+    // that is not a missing photograph. Answering "due" here puts the listing
+    // in a state it can never leave — the harvest adopts the sibling it
+    // already has, stores no new identity, and the next pass asks again.
+    const base = 'https://images.listonce.com.au/custom';
+    const tail = 'listings/26-moscript-street-campbells-creek-vic-3451/728/01909728_img_01.jpg';
+    const heldMedium = new Set([
+      imageIdentity(candidate(`${base}/m/${tail}`)),
+      canonicalAssetKey(`${base}/m/${tail}`),
+    ]);
+    expect(
+      isHarvestDue({
+        candidates: [candidate(`${base}/l/${tail}`)],
+        stored: heldMedium,
         refreshAfter: NOW + 86_400_000,
         now: NOW,
       }),

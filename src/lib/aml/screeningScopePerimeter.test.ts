@@ -788,8 +788,19 @@ describe("there is one rule, not two", () => {
     expect(sync).toMatch(/scopes: ALL_SCREENING_SCOPES\.map/);
     expect(sync).toMatch(/reason_code: scope\[k\]\.reasonCode/);
     expect(sync).toMatch(/provider_relevant: providerRelevant/);
+    /*
+     * The card now renders the rows `buildDeterminationRows` arranges, and
+     * that module reads `sync.scopes` — the SERVER's per-scope decision —
+     * rather than deriving one. Same guarantee, one indirection: the
+     * assertion follows the code to where the reading happens.
+     */
+    const rows = read("src/lib/aml/screeningResolution.pure.ts");
+    expect(rows).toMatch(/\(sync\.scopes \?\? \[\]\)\.map/);
+    expect(rows).toMatch(/not required/);
+    // And the browser still reaches no conclusion of its own about what is
+    // owed: the obligation comes from `sc.required` and nothing else.
+    expect(rows).toMatch(/sc\.required \? "required" : "not_required"/);
     const card = read("src/components/aml/ScreeningStageCard.tsx");
-    expect(card).toMatch(/\(sync\.scopes \?\? \[\]\)\.map/);
-    expect(card).toMatch(/not required/);
+    expect(card).toMatch(/buildDeterminationRows\(/);
   });
 });

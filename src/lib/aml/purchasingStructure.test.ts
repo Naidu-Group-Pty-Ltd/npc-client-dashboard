@@ -141,11 +141,24 @@ describe('the server applies the same rule at the write boundary', () => {
     join(process.cwd(), 'supabase/functions/aml-client-portal/index.ts'), 'utf8');
 
   it('prunes purchasing_structure on save, whichever client sent it', () => {
-    // The row is what an analyst reads and what `submit_for_review` freezes, so
-    // the guarantee cannot rest on the browser having pruned first.
-    expect(source).toContain('purchasingStructure.pure.ts');
-    expect(source).toMatch(
-      /body\.section === 'purchasing_structure'\s*\?\s*prunePurchasingStructure\(/);
+    /*
+     * The row is what an analyst reads and what `submit_for_review` freezes,
+     * so the guarantee cannot rest on the browser having pruned first.
+     *
+     * The prune moved from the call site into `questionnaireValidation.ts`
+     * when the political-exposure declaration gained one too: that file is
+     * the write boundary, and `aml-client-portal/index.ts` is held to a
+     * contract that no line of its code may mention PEP, screening, risk or
+     * sanctions. What matters here is unchanged — every save goes through a
+     * prune the browser cannot skip.
+     */
+    expect(source).toMatch(/normaliseQuestionnaireSection\(\s*body\.section/);
+    const boundary = readFileSync(
+      join(process.cwd(),
+        'supabase/functions/aml-client-portal/questionnaireValidation.ts'), 'utf8');
+    expect(boundary).toContain('purchasingStructure.pure.ts');
+    expect(boundary).toMatch(
+      /section === 'purchasing_structure'\) return prunePurchasingStructure\(payload\)/);
   });
 
   it('keeps the staff ownership vocabulary out of the portal function', () => {

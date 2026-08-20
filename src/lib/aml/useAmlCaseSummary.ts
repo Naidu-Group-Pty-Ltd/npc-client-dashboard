@@ -134,7 +134,19 @@ const soft = <T>(run: () => Promise<T>): Promise<T | null> => {
 export function useAmlCaseSummary(
   caseRow: AmlWorkspaceCaseFacts | null,
   openClientRequests: number | undefined,
-  options: { enabled?: boolean; canReadMatter?: boolean; clientId?: string | null } = {},
+  options: {
+    enabled?: boolean; canReadMatter?: boolean; clientId?: string | null;
+    /**
+     * Whether a PEP determination is owed, from the server's recorded scope
+     * decision (`sync_screening_stage`). Passed in rather than re-fetched:
+     * the workspace already holds that read, and a second copy of an
+     * idempotent compliance read is a second thing to keep in step.
+     *
+     * `null`/absent means unread, which the journey reading treats as OWED.
+     * An unread obligation is not an absent one.
+     */
+    pepRequired?: boolean | null;
+  } = {},
 ): AmlCaseSummaryResult {
   const enabled = options.enabled !== false;
   const canReadMatter = options.canReadMatter === true;
@@ -224,6 +236,12 @@ export function useAmlCaseSummary(
 
       setEvidence({
         identity: checks ? { checks: checks.checks ?? [] } : null,
+        /*
+         * `pep_determination` rides along on each subject — the operation has
+         * always returned it and the journey reading simply never asked. The
+         * scope decision is read separately below, so "is a PEP determination
+         * owed" and "has one been made" stay different questions.
+         */
         screening: screening ? { subjects: screening.subjects ?? [] } : null,
         monitoring: monitoring?.monitoring ?? null,
         gate: gate?.gate ?? null,
@@ -296,7 +314,9 @@ export function useAmlCaseSummary(
       caseRow: caseRow ?? fallbackCase,
       openClientRequests,
       identity: evidence.identity,
-      screening: evidence.screening,
+      screening: evidence.screening
+        ? { ...evidence.screening, pepRequired: options.pepRequired ?? null }
+        : null,
       monitoring: evidence.monitoring,
       gate: evidence.gate,
       documents: evidence.documents,
@@ -310,7 +330,7 @@ export function useAmlCaseSummary(
       passport: evidence.passport,
     }),
     // `fallbackCase` is a constant literal, so it is intentionally not a dep.
-    [caseRow, openClientRequests, evidence],
+    [caseRow, openClientRequests, evidence, options.pepRequired],
   );
 
   const summary = useMemo(() => deriveAmlWorkspaceSummary(facts), [facts]);

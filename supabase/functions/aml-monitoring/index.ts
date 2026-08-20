@@ -16,6 +16,9 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+// `aml.cases` has no tenant_id column; the tenant is a property of the
+// deployment. See `_shared/aml/caseTenant.ts` for what that cost.
+import { tenantForCase } from "../_shared/aml/caseTenant.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
@@ -360,10 +363,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       let next_review_at: string | null = null;
       if (data?.case_id && data.classification === "periodic" && data.status === "complete") {
         const { data: caseRow } = await aml.from("cases")
-          .select("id, tenant_id, risk_rating, monitoring_status").eq("id", data.case_id).maybeSingle();
+          .select("id, risk_rating, monitoring_status").eq("id", data.case_id).maybeSingle();
         if (caseRow && caseRow.monitoring_status !== "ended") {
           const { data: tenant } = await aml.from("tenant_settings")
-            .select("review_interval_config").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
+            .select("review_interval_config").eq("tenant_id", tenantForCase(String(caseRow.id))).maybeSingle();
           const defaults: Record<string, number> = { prohibited: 3, high: 12, medium: 24, low: 36, unrated: 12 };
           const cfg = { ...defaults, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
           const months = Number(cfg[String(caseRow.risk_rating ?? "") || "unrated"] ?? 12) || 12;
@@ -421,7 +424,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     async function reviewIntervalMonths(caseRow: any): Promise<number> {
       const { data: tenant } = await aml.from("tenant_settings")
-        .select("review_interval_config").eq("tenant_id", (caseRow?.tenant_id as string) || "default").maybeSingle();
+        .select("review_interval_config")
+        .eq("tenant_id", tenantForCase(String(caseRow?.id ?? ""))).maybeSingle();
       const cfg = { ...DEFAULT_REVIEW_INTERVALS, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
       const rating = String(caseRow?.risk_rating ?? "") || "unrated";
       const months = Number(cfg[rating] ?? cfg.unrated ?? 12);
@@ -438,9 +442,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, tenant_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, client_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
         return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
       }
@@ -477,9 +481,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
       if (detail.length < 10) return jr({ error: "detail must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, client_id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
         return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
       }
@@ -510,9 +514,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .select("id, case_id").eq("id", id).maybeSingle();
       if (!existing) return jr({ error: "Review not found" }, 404);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+        .select("id").eq("id", existing.case_id).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       const { data, error } = await aml.from("existing_customer_reviews")
         .update({ assigned_to: assignee, status: body.status ? String(body.status) : "in_progress" })
         .eq("id", id).select("*").single();
@@ -539,9 +543,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .select("id, case_id, due_at, original_due_at, extension_count, classification, status").eq("id", id).maybeSingle();
       if (!existing) return jr({ error: "Review not found" }, 404);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+        .select("id").eq("id", existing.case_id).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (!OPEN_REVIEW_STATUSES.includes(String(existing.status))) {
         return jr({ error: "Only an open review can have its deadline extended" }, 400);
       }
@@ -582,10 +586,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (Number.isNaN(endedAt.getTime())) return jr({ error: "ended_at must be a valid date" }, 400);
 
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id, REVIEW_ROLES)) return jr({ error: "Reviewer/MLRO required" }, 403);
-      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), REVIEW_ROLES)) return jr({ error: "Reviewer/MLRO required" }, 403);
+      const tenantIsMlro = await hasTenantAccess(tenantForCase(String(caseRow.id)), ["mlro"]);
       if (caseRow.monitoring_status === "ended") return jr({ error: "The relationship is already recorded as ended" }, 400);
 
       // Outstanding regulatory work must be resolved before the relationship
@@ -638,15 +642,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
       if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
+      const tenantIsMlro = await hasTenantAccess(tenantForCase(String(caseRow.id)), ["mlro"]);
       // Reinstating monitoring on an ended relationship reverses a regulatory
       // record — MLRO only.
       if (caseRow.monitoring_status === "ended" && !tenantIsMlro) {
         return jr({ error: "Only the MLRO can reinstate monitoring on an ended relationship" }, 403);
       }
-      if (caseRow.monitoring_status !== "ended" && !await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) {
+      if (caseRow.monitoring_status !== "ended" && !await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) {
         return jr({ error: "Insufficient permissions" }, 403);
       }
 
@@ -671,11 +675,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const nowIso = new Date().toISOString();
       const caseRes = await aml.from("cases").select(
-          "id, risk_rating, tenant_id, monitoring_status, monitoring_status_reason, relationship_ended_at, relationship_end_reason, next_periodic_review_at, last_periodic_review_at",
+          "id, risk_rating, monitoring_status, monitoring_status_reason, relationship_ended_at, relationship_end_reason, next_periodic_review_at, last_periodic_review_at",
         ).eq("id", caseId).maybeSingle();
       const caseRow = caseRes.data;
       if (!caseRow) return jr({ error: "Case not found" }, 404);
-      if (!await hasTenantAccess(caseRow.tenant_id)) return jr({ error: "AML role required for case tenant" }, 403);
+      if (!await hasTenantAccess(tenantForCase(String(caseRow.id)))) return jr({ error: "AML role required for case tenant" }, 403);
       const [reviewsRes, alertsRes, eddRes, screenRes, partyScrRes, pepRes] = await Promise.all([
         aml.from("existing_customer_reviews").select("*").eq("case_id", caseId)
           .order("due_at", { ascending: true, nullsFirst: false }).limit(50),

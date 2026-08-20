@@ -15,6 +15,7 @@ const queuePartyScreening = vi.fn();
 const runOptionalScreening = vi.fn();
 const adjudicatePartyScreening = vi.fn();
 const recordPepDetermination = vi.fn();
+const deferPepDetermination = vi.fn();
 
 vi.mock("@/lib/aml/amlCasesApi", () => ({
   amlCasesApi: {
@@ -23,6 +24,7 @@ vi.mock("@/lib/aml/amlCasesApi", () => ({
     runOptionalScreening: (...a: unknown[]) => runOptionalScreening(...a),
     adjudicatePartyScreening: (...a: unknown[]) => adjudicatePartyScreening(...a),
     recordPepDetermination: (...a: unknown[]) => recordPepDetermination(...a),
+    deferPepDetermination: (...a: unknown[]) => deferPepDetermination(...a),
   },
 }));
 const toast = vi.fn();
@@ -195,26 +197,171 @@ describe("PartyScreeningPanel — canonical candidate adjudication", () => {
 });
 
 describe("PartyScreeningPanel — PEP determination", () => {
-  it("flags an outstanding PEP determination and records a not-PEP with methods and rationale", async () => {
-    recordPepDetermination.mockResolvedValue({ determination: { id: "x" } });
+  /*
+   * The panel offers ONE control, because there is one act. Two buttons
+   * labelled with the two answers picked the conclusion before the evidence
+   * was looked at, which is the wrong way round for a determination.
+   */
+  it("flags an outstanding PEP determination and offers one control, not an answer", async () => {
     renderPanel();
     expect(await screen.findByText(/determination outstanding/i)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /not a pep/i }));
-    fireEvent.change(await screen.findByLabelText(/sources and methods/i), {
-      target: { value: "DFAT consolidated list — case screening\nPublic register search" },
+    expect(screen.getByRole("button", { name: /record pep determination/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^not a pep$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /record not-pep/i })).toBeNull();
+  });
+
+  it("records a not-PEP through the evidence dialog, with structured sources", async () => {
+    recordPepDetermination.mockResolvedValue({ determination: { id: "x" } });
+    renderPanel();
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /record pep determination/i }));
+
+    // The dialog opens with no outcome chosen — the answer is picked after
+    // the sources, not by the way in.
+    expect(await screen.findByText(/record the pep determination/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /add a source/i }));
+    fireEvent.change(screen.getByLabelText(/^source 1$/i), {
+      target: { value: "Australian Government Directory" },
     });
-    fireEvent.change(screen.getByLabelText(/why the conclusion is reasonable/i), {
+    fireEvent.change(screen.getByLabelText(/^searched or reference 1$/i), {
+      target: { value: "Pat Example" },
+    });
+    fireEvent.change(screen.getByLabelText(/^what came back 1$/i), {
+      target: { value: "No entry for this name" },
+    });
+    fireEvent.click(screen.getByRole(
+      "radio", { name: /not a politically exposed person/i }));
+    fireEvent.change(screen.getByLabelText(/why you are satisfied on reasonable grounds/i), {
       target: { value: "No public office found in any consulted source." },
     });
     fireEvent.click(screen.getByRole("button", { name: /record determination/i }));
+
     await waitFor(() => expect(recordPepDetermination).toHaveBeenCalled());
     const payload = recordPepDetermination.mock.calls[0][0] as Record<string, unknown>;
     expect(payload.result).toBe("not_pep");
-    expect(payload.methods).toEqual([
-      { source: "DFAT consolidated list — case screening" },
-      { source: "Public register search" },
-    ]);
+    expect(payload.party_screening_subject_id).toBe(subject().id);
+    expect(payload.methods).toEqual([{
+      kind: "open_source",
+      source: "Australian Government Directory",
+      reference: "Pat Example",
+      result: "No entry for this name",
+      note: null,
+    }]);
     expect(payload.rationale).toBe("No public office found in any consulted source.");
+  });
+
+  /*
+   * The defect this dialog was built for. The old flow's own example of a
+   * source was the DFAT consolidated list, which is a targeted financial
+   * sanctions register: absence from it is not evidence that somebody is not
+   * politically exposed, so a determination resting on it rests on nothing.
+   */
+  it("refuses a sanctions register as the source of a PEP determination", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /record pep determination/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /add a source/i }));
+    fireEvent.change(screen.getByLabelText(/^source 1$/i), {
+      target: { value: "DFAT consolidated list — screened via case screening" },
+    });
+    fireEvent.change(screen.getByLabelText(/^what came back 1$/i), {
+      target: { value: "no match" },
+    });
+    fireEvent.click(screen.getByRole(
+      "radio", { name: /not a politically exposed person/i }));
+    fireEvent.change(screen.getByLabelText(/why you are satisfied on reasonable grounds/i), {
+      target: { value: "Nothing found against the sanctions register." },
+    });
+
+    expect(screen.getAllByText(/is a sanctions register/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole(
+      "button", { name: /record determination/i })).toBeDisabled();
+    expect(recordPepDetermination).not.toHaveBeenCalled();
+  });
+
+  /*
+   * A tick on a step that is not settled is worse than no tick: it is the
+   * product telling an operator they are done. Step 2 read its state off the
+   * live verdict, which carries only an "outcome" error until an outcome is
+   * picked — so it showed a green tick with nothing in it but the customer's
+   * own declaration, which can never satisfy the independent-source rule.
+   */
+  it("does not tick the sources step for a declaration that cannot stand alone", async () => {
+    renderPanel({
+      pepDeclaration: {
+        answered: true, answer: "no", complete: true,
+        summary: "The customer answered no to the political-exposure question.",
+        relationship: null, role: null, country: null,
+      },
+    });
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /record pep determination/i }));
+    await screen.findByText(/check the sources/i);
+
+    // The seeded declaration is one method, and it is not enough.
+    const step = screen.getByText(/check the sources/i).closest("div")?.parentElement;
+    expect(step?.textContent).toContain("Check the sources");
+    // The step number renders instead of the tick until an independent
+    // source with a recorded result is present.
+    expect(screen.getByText("2")).toBeTruthy();
+  });
+
+  /*
+   * The customer's own answer is the thing being tested. It is evidence
+   * towards the determination and can never be the whole of one — so the
+   * dialog seeds it as a source, and refuses to let it stand alone.
+   */
+  it("will not accept the customer's declaration as the only source", async () => {
+    renderPanel({
+      pepDeclaration: {
+        answered: true, answer: "no", complete: true,
+        summary: "The customer answered no to the political-exposure question.",
+        relationship: null, role: null, country: null,
+      },
+    });
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /record pep determination/i }));
+    // Seeded, so the operator does not retype it.
+    expect(await screen.findByDisplayValue(
+      /the customer's declaration in the client portal/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole(
+      "radio", { name: /not a politically exposed person/i }));
+    fireEvent.change(screen.getByLabelText(/why you are satisfied on reasonable grounds/i), {
+      target: { value: "The customer answered no to the question." },
+    });
+
+    expect(screen.getAllByText(/independent of the customer/i).length)
+      .toBeGreaterThan(0);
+    expect(screen.getByRole(
+      "button", { name: /record determination/i })).toBeDisabled();
+    expect(recordPepDetermination).not.toHaveBeenCalled();
+  });
+
+  /*
+   * "Cannot determine yet" is not a third outcome — it writes no
+   * determination. Forcing an operator to pick "not a PEP" to close a dialog
+   * is exactly how an unfounded conclusion gets written down.
+   */
+  it("defers without writing a determination", async () => {
+    deferPepDetermination.mockResolvedValue({ deferred: true });
+    renderPanel();
+    fireEvent.click(await screen.findByRole(
+      "button", { name: /record pep determination/i }));
+    fireEvent.click(await screen.findByRole(
+      "radio", { name: /cannot determine yet/i }));
+    fireEvent.click(await screen.findByRole(
+      "radio", { name: /identity could not be confirmed/i }));
+    fireEvent.change(screen.getByLabelText(/what is needed/i), {
+      target: { value: "Date of birth, to separate them from a same-named MP." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /record what is needed/i }));
+
+    await waitFor(() => expect(deferPepDetermination).toHaveBeenCalled());
+    expect(recordPepDetermination).not.toHaveBeenCalled();
+    const payload = deferPepDetermination.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.reason).toBe("identity_ambiguous");
   });
 
   it("shows a recorded PEP determination instead of the outstanding flag", async () => {

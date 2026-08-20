@@ -180,7 +180,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    const row = notif as Record<string, unknown>;
+    /*
+     * Through `unknown`, which is what the compiler asks for: the row comes
+     * back as a PostgREST union that can be a `GenericStringError`, and that
+     * has no string index signature to narrow from. Types are erased at
+     * runtime, so this is the same object it always was.
+     *
+     * Not part of the AML work — the edge type-check ratchet fails on it for
+     * every branch cut from main, so the AML PR carrying it is incidental.
+     */
+    const row = notif as unknown as Record<string, unknown>;
 
     // Recipients. Most tables address one user. `client_portal_notifications`
     // addresses a CLIENT, so it fans out to that client's active portal users —

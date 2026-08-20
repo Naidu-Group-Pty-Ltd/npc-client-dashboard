@@ -267,9 +267,27 @@ async function main() {
           // `neq` alone would never match a NULL sync_id — SQL inequality
           // against NULL is NULL, not true — so any row that predates sync
           // tracking would match forever and never be prunable.
+          //
+          // `sync_id` MUST be in the returning projection. On a MUTATION,
+          // PostgREST resolves the columns named inside a logical `or=(…)`
+          // against the RETURNING projection rather than against the table,
+          // so `.or('sync_id…').select('id')` answers
+          //
+          //     42703  column sanctions_entries.sync_id does not exist
+          //
+          // on a table that plainly has the column — the identical filter on
+          // a GET succeeds, and the same `.neq` outside an `or()` succeeds.
+          // Measured against production on 2026-08-19, after 3,846 DFAT
+          // entries had already been written by the upserts above.
+          //
+          // This is not cosmetic. The catch below records the whole load as
+          // FAILED, and the screening provider fails closed on a required
+          // list whose latest attempt failed — so every future refresh would
+          // have gone red at the last step and left screening refusing to
+          // run, with a complete and current list sitting in the table.
           const { data: removed, error: pruneErr } = await admin.schema('aml').from('sanctions_entries')
             .delete().eq('list_code', list)
-            .or(`sync_id.is.null,sync_id.neq.${sync.id}`).select('id');
+            .or(`sync_id.is.null,sync_id.neq.${sync.id}`).select('id, sync_id');
           if (pruneErr) throw pruneErr;
           pruned = (removed ?? []).length;
           if (pruned) console.log(`  pruned ${pruned} entr${pruned === 1 ? 'y' : 'ies'} no longer on the list`);

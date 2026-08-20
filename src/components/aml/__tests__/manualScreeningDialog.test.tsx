@@ -388,7 +388,10 @@ describe("PartyScreeningPanel — sanctions not required, provider down, MLRO", 
 
     // PEP: untouched, still its own outstanding obligation.
     expect(screen.getByText(/determination outstanding/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /not a pep/i })).toBeTruthy();
+    // ONE control, which opens the determination rather than answering it.
+    expect(screen.getByRole(
+      "button", { name: /record pep determination/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^not a pep$/i })).toBeNull();
     expect(screen.getByRole("button", { name: /record pep/i })).toBeTruthy();
   });
 
@@ -580,5 +583,165 @@ describe("PartyScreeningPanel — sanctions not required, provider down, MLRO", 
     renderPanel({ isMlro: true });
     expect(await screen.findByText(/reached by manual MLRO screening/i)).toBeTruthy();
     expect(screen.getByText(/last screened/i)).toBeTruthy();
+  });
+});
+
+/**
+ * The dialog's SHAPE — the fast guard under the real-browser one.
+ *
+ * `tests-e2e/manual-screening-dialog/dialogViewports.e2e.ts` measures the
+ * rendered boxes in Chromium, which is the only thing that can prove the
+ * dialog is usable at 1366x768. These assertions are the cheap half: they run
+ * on every CI push and catch the structure regressing — the footer sliding
+ * back inside the scroll region, the width collapsing to a narrow column —
+ * without waiting for a browser.
+ *
+ * They are deliberately about STRUCTURE, never about pixels. A class list
+ * cannot tell you a dialog fits on a screen, and pretending otherwise is how
+ * the original defect passed review.
+ */
+describe("ManualScreeningDialog — header, scrolling body, fixed footer", () => {
+  const dialogEl = () => screen.getByRole("dialog");
+  const bodyEl = () => document.querySelector('[data-testid="manual-screening-body"]')!;
+  const footerEl = () => document.querySelector('[data-testid="manual-screening-footer"]')!;
+
+  it("is no longer a 672px column", () => {
+    renderDialog();
+    expect(dialogEl().className).not.toMatch(/\bmax-w-2xl\b/);
+    expect(dialogEl().className).toMatch(/sm:w-\[min\(1100px,94vw\)\]/);
+    expect(dialogEl().className).toMatch(/sm:max-w-none/);
+  });
+
+  it("does not scroll as one column — the dialog itself clips", () => {
+    renderDialog();
+    expect(dialogEl().className).toMatch(/\boverflow-hidden\b/);
+    expect(dialogEl().className).not.toMatch(/\boverflow-y-auto\b/);
+    expect(dialogEl().className).toMatch(/\bflex flex-col\b/);
+  });
+
+  it("gives the body its own scroll region that can actually shrink", () => {
+    renderDialog();
+    // `min-h-0` is the half people leave out: without it a flex child refuses
+    // to shrink below its content and the footer is pushed off the screen.
+    expect(bodyEl().className).toMatch(/\bmin-h-0\b/);
+    expect(bodyEl().className).toMatch(/\bflex-1\b/);
+    expect(bodyEl().className).toMatch(/\boverflow-y-auto\b/);
+  });
+
+  it("keeps the footer OUTSIDE the scrolling body", () => {
+    renderDialog();
+    expect(bodyEl().contains(footerEl())).toBe(false);
+    expect(footerEl().className).toMatch(/\bshrink-0\b/);
+  });
+
+  it("keeps the header outside it too", () => {
+    renderDialog();
+    const header = document.querySelector('[data-testid="manual-screening-header"]')!;
+    expect(bodyEl().contains(header)).toBe(false);
+    expect(header.className).toMatch(/\bshrink-0\b/);
+  });
+
+  it("the footer holds both actions and the reason a submission is refused", () => {
+    renderDialog();
+    const footer = footerEl();
+    expect(footer.textContent).toMatch(/cancel/i);
+    expect(footer.textContent).toMatch(/record manual screening/i);
+    // Disabled with nothing filled in, and the reason is right there.
+    expect(submitButton()).toBeDisabled();
+    expect(footer.textContent).toMatch(/at least one source that was actually checked/i);
+  });
+
+  it("bounds its height in dvh so mobile browser chrome cannot hide the footer", () => {
+    renderDialog();
+    expect(dialogEl().className).toMatch(/max-h-\[95dvh\]/);
+    expect(dialogEl().className).toMatch(/sm:max-h-\[90dvh\]/);
+  });
+
+  it("lays the four outcomes out in two columns on desktop, one on mobile", () => {
+    renderDialog();
+    const grid = document.querySelector('[data-testid="manual-outcome-grid"]')!;
+    expect(grid.className).toMatch(/\bgrid\b/);
+    expect(grid.className).toMatch(/sm:grid-cols-2/);
+    // No UNPREFIXED column count: a bare `grid-cols-2` would force two
+    // columns onto a phone. (The browser test measures the collapse itself.)
+    expect(grid.className.split(/\s+/)).not.toContain("grid-cols-2");
+    expect(grid.querySelectorAll('[role="radio"]')).toHaveLength(4);
+  });
+
+  it("splits the evidence across two columns on a wide screen", () => {
+    renderDialog();
+    const grid = document.querySelector('[data-testid="manual-evidence-grid"]')!;
+    expect(grid.className).toMatch(/lg:grid-cols-\[minmax\(0,1\.35fr\)_minmax\(0,1fr\)\]/);
+  });
+
+  it("lays a source row out as a grid rather than a stack", () => {
+    renderDialog();
+    const row = document.querySelector('[data-testid="manual-source-row"]')!;
+    expect(row.className).toMatch(/\bgrid\b/);
+    expect(row.className).toMatch(/sm:grid-cols-2/);
+    // All four fields still there.
+    expect(screen.getByLabelText(/source 1 type/i)).toBeTruthy();
+    expect(screen.getByLabelText(/source 1 name/i)).toBeTruthy();
+    expect(screen.getByLabelText(/source 1 reference/i)).toBeTruthy();
+    expect(screen.getByLabelText(/source 1 searched at/i)).toBeTruthy();
+  });
+
+  it("lays candidate fields out as a grid, with every field kept", () => {
+    renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: /^possible match/i }));
+    const row = document.querySelector('[data-testid="manual-candidate-row"]')!;
+    expect(row.className).toMatch(/sm:grid-cols-2/);
+    for (const field of [/listed name/i, /candidate 1 list$/i, /jurisdiction/i, /candidate 1 reference/i, /basis/i]) {
+      expect(screen.getByLabelText(field)).toBeTruthy();
+    }
+  });
+
+  it("lays the unable reasons out in two columns and drops the evidence fields", () => {
+    renderDialog();
+    fireEvent.click(screen.getByRole("radio", { name: /^unable to complete/i }));
+    const grid = document.querySelector('[data-testid="manual-unable-grid"]')!;
+    expect(grid.className).toMatch(/sm:grid-cols-2/);
+    expect(document.querySelector('[data-testid="manual-source-row"]')).toBeNull();
+    expect(screen.queryByLabelText(/names actually searched/i)).toBeNull();
+    // The footer is unchanged by the branch.
+    expect(footerEl().textContent).toMatch(/record manual screening/i);
+  });
+
+  it("keeps the scope select, and the PEP distinction with it", () => {
+    renderDialog();
+    expect(screen.getByLabelText(/screened/i)).toBeTruthy();
+    expect(dialogEl().textContent).toMatch(/obligation is unchanged/i);
+  });
+
+  it("still refuses a duplicate submission while one is in flight", async () => {
+    let release: (v: unknown) => void = () => {};
+    recordManualScreening.mockImplementationOnce(
+      () => new Promise((res) => { release = res; }));
+    renderDialog();
+    fillEvidence();
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(submitButton()).toBeDisabled());
+    fireEvent.click(submitButton());
+    fireEvent.click(submitButton());
+    expect(recordManualScreening).toHaveBeenCalledTimes(1);
+    release({
+      check: { id: "c1" }, outcome: "no_match",
+      policy_required: true, voluntary: false, satisfies_obligation: true,
+    });
+  });
+
+  it("does not let the busy dialog be dismissed out from under a request", async () => {
+    let release: (v: unknown) => void = () => {};
+    recordManualScreening.mockImplementationOnce(
+      () => new Promise((res) => { release = res; }));
+    const { onOpenChange } = renderDialog();
+    fillEvidence();
+    fireEvent.click(submitButton());
+    await waitFor(() => expect(screen.getByRole("button", { name: /^cancel$/i })).toBeDisabled());
+    release({
+      check: { id: "c1" }, outcome: "no_match",
+      policy_required: true, voluntary: false, satisfies_obligation: true,
+    });
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   });
 });

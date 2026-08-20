@@ -225,7 +225,14 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     setup();
     await screen.findByRole("heading", { name: "Avery Client" });
     expect(screen.getByText("Live position")).toBeInTheDocument();
-    expect(screen.getByText("Case is at")).toBeInTheDocument();
+    /*
+     * Two rows, two questions, and neither is called simply "stage" any more.
+     * "Case is at" sat beside "Case stage" and the pair read as a
+     * contradiction — a 10-of-10 position next to a Closed lifecycle next to
+     * an open Stage 5. Each now says which question it answers.
+     */
+    expect(screen.getByText("Journey position")).toBeInTheDocument();
+    expect(screen.getByText("Case lifecycle")).toBeInTheDocument();
     expect(screen.getByText("Service gate")).toBeInTheDocument();
     expect(screen.getByText("Stage readiness")).toBeInTheDocument();
     // A readiness count is never a clearance, and the rail says so.

@@ -48,7 +48,23 @@ export type ReopenReissue =
 export interface CaseReopenFacts {
   caseId: string;
   caseReference: string;
+  /** The legacy `cases.status` dimension. */
   status: string;
+  /**
+   * The CANONICAL `cases.case_stage` dimension.
+   *
+   * Both are views of one lifecycle and a case is closed if EITHER says so.
+   * That is not belt-and-braces, it is the fix for a measured production
+   * state: `reopen_case` used to move `status` and leave `case_stage`, so a
+   * case could sit at `case_stage='closed'` with `status='kyc_complete'` —
+   * and then this refused to reopen it ("not closed, so there is nothing to
+   * reopen") while every other surface, correctly, called it closed. The
+   * operator was shown the one action that could resolve the case and it was
+   * the one action that could not run.
+   *
+   * Absent means "not supplied", never "not closed".
+   */
+  caseStage?: string | null;
   serviceGateStatus: string | null;
   /** Consents already accepted, with the version they were accepted against. */
   consents: Array<{ kind: string; version: string | null }>;
@@ -97,7 +113,11 @@ export function planCaseReopen(facts: CaseReopenFacts): CaseReopenPlan {
     staleConsents: [], notRestored: [], summary: "",
   };
 
-  if (facts.status !== "closed") {
+  // Closed on EITHER dimension. Reopening a case that only one of them calls
+  // closed is exactly how the two are brought back into agreement, so
+  // refusing on a disagreement leaves the record stuck in it for ever.
+  const closed = facts.status === "closed" || facts.caseStage === "closed";
+  if (!closed) {
     return {
       ...base, code: "not_closed",
       summary: `${facts.caseReference} is not closed, so there is nothing to reopen.`,

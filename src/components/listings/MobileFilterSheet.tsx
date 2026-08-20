@@ -14,8 +14,10 @@ import { getFullStateName } from '@/lib/states';
 import {
   DEFAULT_LISTING_FILTERS,
   LISTED_WITHIN_OPTIONS,
+  activeListingFilterCount,
   type ListingFilterState as FilterState,
 } from '@/lib/listingFilters';
+
 import { useState } from 'react';
 import { SearchableSelect } from '@/components/shared/SearchableSelect';
 
@@ -40,13 +42,10 @@ export function MobileFilterSheet({ filters, setFilters, uniqueValues }: MobileF
   const [isOpen, setIsOpen] = useState(false);
   const [localFilters, setLocalFilters] = useState(filters);
 
-  const activeFilterCount = Object.entries(filters).filter(([key, value]) => {
-    if (typeof value === 'boolean') return value;
-    if (['propertyType', 'suburb', 'state', 'zipCode', 'sourceHost', 'agencyName'].includes(key)) {
-      return value !== '' && value !== 'all';
-    }
-    return value !== '';
-  }).length;
+  // Counted by the one authority both panels share, so the badge can only ever
+  // name filters that are actually narrowing the set.
+  const activeFilterCount = activeListingFilterCount(filters);
+
 
   const handleOpen = (open: boolean) => {
     if (open) {

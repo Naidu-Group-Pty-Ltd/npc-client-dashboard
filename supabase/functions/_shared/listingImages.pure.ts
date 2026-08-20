@@ -23,6 +23,8 @@
 
 import { orderImagesPhotosFirst } from './listingImageOrder.pure.ts';
 import { looksLikeChromeUrl } from './listingImageChrome.pure.ts';
+import { dedupeListingImages, selectListingGallery } from './listingImageSelection.pure.ts';
+import type { VisualKind } from './listingImageVision.pure.ts';
 
 /** Where a candidate came from, best-quality origin first. */
 export type ImageOrigin = 'airtable' | 'listing_url' | 'scraped' | 'street_view';
@@ -303,6 +305,17 @@ export function normaliseImageCandidates(
  * harvest writes and what `pickHeroImage` reads, so the kerb stays the hero
  * forever. Sorting by origin first fixes that, and the sort is stable, so
  * within a single origin the agent's own ordering is untouched.
+ *
+ * It is also where **renditions collapse**, and that placement is deliberate:
+ * every path that produces a candidate list goes through here — the Airtable
+ * projection, the browser's resolve payload, the enrichment harvest — so one
+ * photograph offered as `/custom/m/…` and `/custom/l/…` is one candidate for
+ * all of them. `normaliseImageCandidates` cannot do it, because its contract is
+ * to preserve the source's own ordering and it is called once per column; the
+ * duplicate only becomes visible when the columns are merged. Collapsing here
+ * also means the `MAX_IMAGES_PER_LISTING` cap counts photographs rather than
+ * copies: a listing whose page emitted three sizes of every shot used to
+ * harvest four pictures and now harvests twelve.
  */
 export function orderCandidatesForDisplay(candidates: ImageCandidate[]): ImageCandidate[] {
   const byOrigin = candidates
@@ -312,7 +325,7 @@ export function orderCandidatesForDisplay(candidates: ImageCandidate[]): ImageCa
       return rank !== 0 ? rank : a.index - b.index;
     })
     .map((entry) => entry.candidate);
-  return orderImagesPhotosFirst(byOrigin, (candidate) => candidate.url);
+  return dedupeListingImages(orderImagesPhotosFirst(byOrigin, (candidate) => candidate.url));
 }
 
 /**
@@ -413,21 +426,41 @@ export interface StoredListingImage {
   origin: ImageOrigin;
   width: number | null;
   height: number | null;
+  /**
+   * Size of the stored bytes. Carried so the client can tell a photograph from
+   * a thumbnail without downloading it — see `listingImageSelection.pure.ts`.
+   */
+  bytes?: number | null;
+  /**
+   * What the server saw when it decoded this image, if it has.
+   *
+   * Sent so a card is right on its first paint. The browser can reach the same
+   * verdict itself, but only after decoding the image — and on a page of 148
+   * cards it never finishes.
+   */
+  kind?: VisualKind | null;
   /** Epoch ms the signed URL stops working. */
   expiresAt: number;
 }
 
 /**
- * The image to lead with: lowest position wins, ties broken by origin quality.
- * Street View is only ever a hero when nothing else exists — it is a picture of
- * a location, not of the property.
+ * The image to lead with.
+ *
+ * Lowest position wins, ties broken by origin quality — but the set is banded
+ * first, so an agent's headshot or a floor plan at position 0 does not take the
+ * slot from the photograph behind it. Street View is only ever a hero when
+ * nothing else exists: it is a picture of a location, not of the property.
  */
 export function pickHeroImage(images: StoredListingImage[]): StoredListingImage | null {
   if (images.length === 0) return null;
-  return [...images].sort((a, b) => {
+  const editorial = [...images].sort((a, b) => {
     if (a.position !== b.position) return a.position - b.position;
     return IMAGE_ORIGIN_RANK[a.origin] - IMAGE_ORIGIN_RANK[b.origin];
-  })[0];
+  });
+  // `selectListingGallery` preserves the order it is given, so handing it the
+  // editorial order and taking the head is "the first image the agent chose
+  // that is not furniture, a plan, or a copy of another one".
+  return selectListingGallery(editorial).images[0] ?? editorial[0];
 }
 
 /** Signed URLs expire; treat one as unusable slightly early to avoid a race. */

@@ -266,17 +266,15 @@ export default function FinancePortalAdmin() {
             <UserPlus className="h-4 w-4" />
             New Finance Contact
           </Button>
-          {/* The Agreement Centre lives here, with the rest of the partner
-              tooling — highlighted because issuing and executing agreements is
-              the highest-stakes action on this page. */}
-          <Button
-            asChild
-            variant="outline"
-            className="min-h-10 flex-1 gap-2 rounded-xl border-primary/40 bg-primary/10 text-primary shadow-md shadow-primary/10 ring-2 ring-primary/20 transition-all hover:-translate-y-0.5 hover:bg-primary/15 hover:shadow-lg hover:shadow-primary/20 focus-visible:ring-primary/40 sm:flex-none"
-          >
+          {/* The agreement templates live here, with the rest of the partner
+              tooling. This used to be the Agreement Centre and was highlighted
+              as the highest-stakes action on the page, because issuing and
+              executing an agreement happened behind it. Neither is true now —
+              it is a download desk, and it sits with its peers. */}
+          <Button variant="outline" asChild className="min-h-10 flex-1 gap-2 rounded-xl border-border/70 bg-card/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary/10 hover:text-primary focus-visible:ring-primary/40 sm:flex-none">
             <Link to="/partner-agreements">
               <FileSignature className="h-4 w-4" />
-              Agreement Centre
+              Agreement Templates
             </Link>
           </Button>
           <Button variant="outline" asChild className="min-h-10 flex-1 gap-2 rounded-xl border-border/70 bg-card/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-primary/10 hover:text-primary focus-visible:ring-primary/40 sm:flex-none">

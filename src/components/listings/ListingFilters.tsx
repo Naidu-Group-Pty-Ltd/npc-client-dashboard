@@ -23,8 +23,10 @@ import { getFullStateName } from '@/lib/states';
 import {
   DEFAULT_LISTING_FILTERS,
   LISTED_WITHIN_OPTIONS,
+  activeListingFilterCount,
   type ListingFilterState as FilterState,
 } from '@/lib/listingFilters';
+
 
 
 interface ListingFiltersProps {
@@ -47,13 +49,13 @@ export function ListingFilters({ filters, setFilters, uniqueValues }: ListingFil
   const [isOpen, setIsOpen] = useState(false);
   const [localFilters, setLocalFilters] = useState(filters);
 
-  const activeFilterCount = Object.entries(filters).filter(([key, value]) => {
-    if (typeof value === 'boolean') return value;
-    if (['propertyType', 'suburb', 'state', 'zipCode', 'sourceHost', 'agencyName'].includes(key)) {
-      return value !== '' && value !== 'all';
-    }
-    return value !== '';
-  }).length;
+  // One authority for "how many filters are narrowing this set" — see
+  // `activeListingFilterCount`. The previous inline count treated every
+  // categorical default of `'all'` outside a short whitelist as a live filter,
+  // so `status`, `listedWithinDays`, `intent`, `sector`, `packageType` and
+  // `sourceType` contributed a permanent phantom 6 on a page with nothing set.
+  const activeFilterCount = activeListingFilterCount(filters);
+
 
   const handleOpen = (open: boolean) => {
     if (open) {

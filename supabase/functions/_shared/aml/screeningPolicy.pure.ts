@@ -702,7 +702,22 @@ export type ScreeningNextActionKey =
   | "record_pep"
   | "await_provider_result"
   | "screening_stalled"
-  | "escalate";
+  | "escalate"
+  /**
+   * The case is closed. The AML/CTF journey is not progressing, so the only
+   * thing that resumes it is an explicit, reason-bearing reopen — never an
+   * ordinary status advance.
+   */
+  | "reopen_case"
+  /**
+   * A required screening the provider cannot perform, which the MLRO can.
+   *
+   * This exists because "provider unavailable" was a dead end: correct, owned
+   * by an administrator, and leaving an MLRO who could lawfully complete the
+   * check with nothing to press. It is a METHOD, so it appears only where a
+   * screening is genuinely required and genuinely blocked.
+   */
+  | "complete_manually";
 
 /**
  * How long a queued request may sit before "running" stops being true.
@@ -715,13 +730,35 @@ export type ScreeningNextActionKey =
  */
 export const SCREENING_STALL_SECONDS = 300;
 
+export type ScreeningActionOwner =
+  "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+
 export interface ScreeningNextAction {
   key: ScreeningNextActionKey;
   /** The button an operator presses, or null when there is nothing to press. */
   label: string | null;
   headline: string;
   detail: string;
-  owner: "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+  owner: ScreeningActionOwner;
+  /**
+   * A SECOND legitimate route to the same blockage, owned by a different role.
+   *
+   * One blockage can have two lawful answers — an administrator restores the
+   * provider, or the MLRO performs the check by hand — and which is "primary"
+   * depends on who is looking. Both routes are decided HERE, so the browser
+   * chooses an order rather than inventing a route; and because both are
+   * present, neither role is ever left with a status and no next step.
+   *
+   * Never a way round an obligation: an alternative is a different METHOD of
+   * discharging it, and nothing here can make one unnecessary.
+   */
+  alternative?: {
+    key: ScreeningNextActionKey;
+    label: string;
+    headline: string;
+    detail: string;
+    owner: ScreeningActionOwner;
+  } | null;
 }
 
 /**
@@ -793,6 +830,21 @@ export interface NextActionInput {
    * assuming its absence.
    */
   perimeterClassified?: boolean;
+  /**
+   * Whether the CASE is closed, from the canonical lifecycle dimension.
+   *
+   * Defaults false so an older caller behaves exactly as before. A closed
+   * case is a retained record: its evidence stays readable and, where the
+   * compliance architecture allows, recordable — but the journey is not
+   * progressing, and offering the stage's ordinary next step implies it is.
+   */
+  caseClosed?: boolean;
+  /**
+   * Whether a manual MLRO screening could discharge a blocked required
+   * screening. Defaults false: the alternative route is offered by supplying
+   * the fact, never by assuming it.
+   */
+  manualAvailable?: boolean;
   /** `error_category` from the most relevant failed subject, if any. */
   errorCategory?: string | null;
   /**
@@ -826,6 +878,31 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
       headline: "A confirmed match is recorded",
       detail: "This case must be escalated to the AML/CTF Compliance Officer. It must " +
         "not proceed to service on this stage's completion.",
+      owner: "reviewer",
+    };
+  }
+  /*
+   * ── A closed case is not a stage in progress ───────────────────────
+   *
+   * Placed AFTER the two findings deliberately. A possible or confirmed match
+   * is a FACT about a customer and does not stop being one because the file
+   * was closed; those still lead. Everything below this point is a step in a
+   * journey, and a closed case has no journey to step through — offering
+   * "Run screening" or "Record PEP determinations" there tells an operator the
+   * case is progressing when it is not.
+   *
+   * The action is an explicit reopen, never an ordinary status advance: the
+   * two are different decisions and only one of them carries a reason.
+   */
+  if (input.caseClosed === true) {
+    return {
+      key: "reopen_case", label: "Reopen case to resume AML/CTF",
+      headline: "This case is closed",
+      detail: "The AML/CTF record is retained for compliance purposes and its evidence " +
+        "stays readable. The journey is not progressing. If the customer relationship " +
+        "is now proceeding, reopen the case — reopening restores the ability to WORK " +
+        "the case and never approves the service, revives a terminated gate or restores " +
+        "a revoked passport.",
       owner: "reviewer",
     };
   }
@@ -880,13 +957,33 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
     };
   }
   if (!input.providerReady && input.anyUnscreened) {
-    return {
-      key: "fix_provider", label: "Open screening configuration",
-      headline: "Screening cannot run yet",
+    /*
+     * Two lawful routes, and the operator must never be left holding only the
+     * one they cannot take. The administrator restores the provider; the MLRO
+     * completes the required screening by hand against current published
+     * sources. Both are returned, so neither role sees a dead end — and the
+     * broken automation stays named rather than being papered over by the
+     * existence of a manual route.
+     */
+    const fixProvider = {
+      key: "fix_provider" as const, label: "Open screening configuration",
+      headline: "Automated screening cannot run yet",
       detail: "The screening provider and its sanctions data must be restored before " +
-        "any check can execute. No client action is required.",
-      owner: "administrator",
+        "any automated check can execute. No client action is required.",
+      owner: "administrator" as const,
     };
+    const manually = {
+      key: "complete_manually" as const, label: "Complete sanctions screening manually",
+      headline: "Complete the required screening manually",
+      detail: "The automated method is unavailable, so the required screening has not " +
+        "been performed. The MLRO may carry it out against current published sources " +
+        "and record it with the sources checked, the names searched and a rationale. " +
+        "Recording it manually discharges the obligation; it never removes it.",
+      owner: "reviewer" as const,
+    };
+    return input.manualAvailable === true
+      ? { ...manually, alternative: fixProvider }
+      : { ...fixProvider, alternative: null };
   }
   if (input.anyProcessing) {
     const age = input.oldestQueuedSeconds;
@@ -916,18 +1013,31 @@ export function deriveScreeningNextAction(input: NextActionInput): ScreeningNext
     // clear — so it is named, owned, and given the step that clears it.
     const detail = SCREENING_ERROR_DETAIL[input.errorCategory]
       ?? "The check could not complete. An error is never a clear result.";
-    return {
-      key: "fix_provider",
-      label: input.errorCategory === "list_data_unavailable"
-        || input.errorCategory === "provider_not_configured"
-        || input.errorCategory === "provider_misconfigured"
-        ? "Open screening configuration"
-        : "Retry screening",
-      headline: "Screening could not complete",
+    const configFault = input.errorCategory === "list_data_unavailable"
+      || input.errorCategory === "provider_not_configured"
+      || input.errorCategory === "provider_misconfigured";
+    const technical = {
+      key: "fix_provider" as const,
+      label: configFault ? "Open screening configuration" : "Retry screening",
+      headline: "Automated screening could not complete",
       detail,
-      owner: input.errorCategory === "timeout" || input.errorCategory === "provider_unavailable"
-        ? "analyst" : "administrator",
+      owner: (input.errorCategory === "timeout"
+        || input.errorCategory === "provider_unavailable"
+        ? "analyst" : "administrator") as ScreeningActionOwner,
     };
+    // A failure that a person can complete by hand is not a dead end either.
+    // The technical fault stays owned and named as the alternative.
+    return input.manualAvailable === true
+      ? {
+        key: "complete_manually", label: "Complete sanctions screening manually",
+        headline: "Complete the required screening manually",
+        detail: `${detail} The MLRO may complete the required screening manually against ` +
+          "current published sources in the meantime; it is recorded with the sources " +
+          "checked, the names searched and a rationale.",
+        owner: "reviewer",
+        alternative: technical,
+      }
+      : { ...technical, alternative: null };
   }
   if (input.anyUnscreened) {
     return {

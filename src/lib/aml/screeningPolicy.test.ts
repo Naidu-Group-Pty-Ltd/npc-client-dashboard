@@ -483,7 +483,9 @@ describe("a failed check says what failed and who fixes it", () => {
     // The production state: `aml.sanctions_entries` is empty, so a check
     // would be screening against nothing.
     const a = deriveScreeningNextAction(failed("list_data_unavailable"));
-    expect(a.headline).toBe("Screening could not complete");
+    // Named as the AUTOMATED method failing: the obligation is untouched by
+    // it, and a second method may still be able to discharge it.
+    expect(a.headline).toBe("Automated screening could not complete");
     expect(a.detail).toMatch(/never been loaded/);
     expect(a.detail).toMatch(/AML › Verification/);
     expect(a.detail).toMatch(/No client action is required/i);

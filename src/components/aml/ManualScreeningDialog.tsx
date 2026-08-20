@@ -27,14 +27,31 @@
  * to a different bar: it asserts the screening could NOT be concluded, which
  * is the opposite of a claim about the customer. It carries a reason code,
  * it satisfies nothing, and the obligation stays outstanding.
+ *
+ * ── Why the layout is owned here rather than inherited ────────────────
+ * The shared `DialogContent` is a `grid gap-4` that is `max-w-lg` and
+ * `sm:overflow-visible`. Widening it with `max-w-2xl` and putting
+ * `overflow-y-auto` back on the whole element — which is what this dialog did
+ * — produces the worst of both: a 672px column on a 1920px screen, and a
+ * single scroll region containing the header, the form AND the footer. On a
+ * 1366x768 display the form is roughly three viewports tall, so the submit
+ * button sits about two screens below the fold and an operator has to zoom
+ * the browser out to work the form at all. Browser zoom is not an input
+ * method for a compliance workflow.
+ *
+ * So this uses the primitive's `bareLayout` escape hatch — which exists for
+ * exactly this — and owns three areas: a header and a footer that do not
+ * scroll, and a body between them that does (`flex-1 min-h-0`). The width is
+ * `min(1100px, 94vw)`, and the form goes multi-column at `lg` so the width is
+ * actually used rather than being a wider version of the same tall column.
+ * Nothing about what is collected, required or sent changes.
  */
 import { useMemo, useState } from "react";
 import { ClipboardCheck, Loader2, Plus, X } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,31 +70,33 @@ import {
 import {
   UNABLE_REASON_TEXT,
   planManualScreening,
+  type ManualScreeningRejection,
 } from "../../../supabase/functions/_shared/aml/manualScreening.pure";
+
 
 const OUTCOMES: Array<{ value: AmlManualOutcome; label: string; detail: string }> = [
   {
     value: "no_match",
     label: "No match",
-    detail: "The searches were performed and the party does not appear. This discharges "
-      + "the screening obligation, so it carries the full evidence record.",
+    detail: "The searches ran and the party does not appear. Discharges the "
+      + "obligation, so it carries the full evidence record.",
   },
   {
     value: "possible_match",
     label: "Possible match",
-    detail: "A candidate needs adjudicating. It goes to the same reviewer/MLRO "
-      + "adjudication an automated candidate goes to.",
+    detail: "A candidate needs adjudicating, through the same path an "
+      + "automated candidate takes.",
   },
   {
     value: "confirmed_match",
     label: "Confirmed match",
-    detail: "The listed party is this party. Recorded as a confirmed match on the case.",
+    detail: "The listed party is this party. Recorded as a confirmed match.",
   },
   {
     value: "unable_to_complete",
     label: "Unable to complete",
-    detail: "The screening could not be concluded. Nothing is asserted about the "
-      + "party and the obligation stays outstanding.",
+    detail: "It could not be concluded. Nothing is asserted about the party "
+      + "and the obligation stays outstanding.",
   },
 ];
 
@@ -164,7 +183,11 @@ export function ManualScreeningDialog({
     rationale, unableReason, candidates: parsedCandidates,
   }), [outcome, parsedSources, parsedNames, rationale, unableReason, parsedCandidates]);
 
-  const rejection = plan.ok ? null : plan;
+  // Cast rather than narrow: the app typecheck runs with `strict` off, where
+  // the `ok: true` / `ok: false` discriminant does not narrow this union, so
+  // reading `message` off the false branch has to be stated explicitly.
+  const rejection = plan.ok ? null : (plan as ManualScreeningRejection);
+
 
   const isUnable = outcome === "unable_to_complete";
   const isMatch = outcome === "possible_match" || outcome === "confirmed_match";
@@ -206,250 +229,360 @@ export function ManualScreeningDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Record a manual screening</DialogTitle>
-          <DialogDescription>
-            {subject.screened_name} — a screening you performed yourself, against sources you
-            name. This is a different way of carrying out the screening, not a way of
-            standing it down: the case's obligation is unchanged by anything recorded here.
-          </DialogDescription>
+      {/*
+        `bareLayout` drops the shared grid + overflow treatment so this dialog
+        owns its own box. Three areas: a header and footer that stay put, and
+        a body that scrolls between them.
+      */}
+      <DialogContent
+        bareLayout
+        className={[
+          "flex flex-col overflow-hidden",
+          // Narrow: a near-full-height sheet, single column.
+          "inset-x-0 bottom-0 top-auto w-full max-h-[95dvh] rounded-t-2xl border-x-0 border-b-0",
+          "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+          // Desktop: centred, and WIDE. 1100px is the point at which the
+          // evidence grid stops crowding; 94vw keeps it inside a 1280 or
+          // 1366 viewport with the scrim still visible around it.
+          "sm:inset-auto sm:left-1/2 sm:top-1/2 sm:bottom-auto",
+          "sm:-translate-x-1/2 sm:-translate-y-1/2",
+          "sm:w-[min(1100px,94vw)] sm:max-w-none sm:max-h-[90dvh] sm:rounded-lg sm:border",
+          "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95",
+        ].join(" ")}
+      >
+        {/* ── 1. Header — never scrolls ───────────────────────────────── */}
+        <DialogHeader
+          data-testid="manual-screening-header"
+          className="shrink-0 space-y-0 border-b border-border/60 px-5 py-3.5 pr-14 text-left sm:px-6"
+        >
+          {/*
+            `sm:flex-nowrap` keeps the scope select on the header's right at
+            desktop widths instead of wrapping onto its own row — worth ~40px
+            of height, which is 40px the form gets back.
+          */}
+          <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 sm:flex-nowrap">
+            <div className="min-w-0">
+              <DialogTitle className="text-base">Record a manual screening</DialogTitle>
+              <DialogDescription className="mt-0.5 text-xs">
+                <span className="font-medium text-foreground">{subject.screened_name}</span>
+                {" · manual screening · MLRO. "}
+                {/*
+                  The compliance point still has to be on the page — choosing
+                  to screen by hand is a statement about METHOD — but it is one
+                  line here rather than the four-line paragraph that used to
+                  push the form down.
+                */}
+                A different way of carrying the screening out, not a way of standing it
+                down: the case&rsquo;s obligation is unchanged by anything recorded here.
+              </DialogDescription>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Label htmlFor="manual-scope" className="text-xs text-muted-foreground">
+                Screened
+              </Label>
+              <Select value={scope} onValueChange={(v) => setScope(v as typeof scope)}>
+                <SelectTrigger id="manual-scope" className="h-9 w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCOPES.map((x) => <SelectItem key={x.value} value={x.value}>{x.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </DialogHeader>
 
-        <div className="space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="manual-scope">What was screened</Label>
-            <Select value={scope} onValueChange={(v) => setScope(v as typeof scope)}>
-              <SelectTrigger id="manual-scope"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {SCOPES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              A PEP conclusion is recorded as a PEP determination, not here, so that there is
-              only ever one answer to whether this party is a PEP.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label>What you concluded</Label>
-            <RadioGroup
-              value={outcome}
-              onValueChange={(v) => setOutcome(v as AmlManualOutcome)}
-              className="space-y-2"
-            >
-              {OUTCOMES.map((o) => (
-                <label
-                  key={o.value}
-                  htmlFor={`manual-outcome-${o.value}`}
-                  className="flex cursor-pointer gap-3 rounded-md border border-border/60 p-3"
-                >
-                  <RadioGroupItem value={o.value} id={`manual-outcome-${o.value}`} className="mt-0.5" />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium">{o.label}</span>
-                    <span className="block text-xs text-muted-foreground">{o.detail}</span>
-                  </span>
-                </label>
-              ))}
-            </RadioGroup>
-          </div>
-
-          {isUnable ? (
-            <div className="space-y-2">
-              <Label>Why it could not be concluded</Label>
+        {/* ── 2. Body — the only scroll region ────────────────────────── */}
+        <div
+          data-testid="manual-screening-body"
+          className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6"
+        >
+          <div className="space-y-5">
+            <section aria-labelledby="manual-outcome-heading" className="space-y-2">
+              <h3 id="manual-outcome-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Outcome
+              </h3>
+              {/*
+                Four full-width stacked cards were most of the dialog's height.
+                Two columns on desktop, one on a narrow screen. The controls
+                and their labels are unchanged, so keyboard behaviour is too.
+              */}
               <RadioGroup
-                value={unableReason}
-                onValueChange={(v) => setUnableReason(v as AmlManualUnableReason)}
-                className="space-y-2"
+                value={outcome}
+                onValueChange={(v) => setOutcome(v as AmlManualOutcome)}
+                data-testid="manual-outcome-grid"
+                className="grid gap-2 sm:grid-cols-2"
               >
-                {(Object.keys(UNABLE_REASON_TEXT) as AmlManualUnableReason[]).map((r) => (
+                {OUTCOMES.map((o) => (
                   <label
-                    key={r}
-                    htmlFor={`manual-unable-${r}`}
-                    className="flex cursor-pointer gap-3 rounded-md border border-border/60 p-3"
+                    key={o.value}
+                    htmlFor={`manual-outcome-${o.value}`}
+                    className="flex cursor-pointer gap-2.5 rounded-md border border-border/60 p-2.5
+                      has-[:checked]:border-primary/60 has-[:checked]:bg-primary/5"
                   >
-                    <RadioGroupItem value={r} id={`manual-unable-${r}`} className="mt-0.5" />
+                    <RadioGroupItem value={o.value} id={`manual-outcome-${o.value}`} className="mt-0.5" />
                     <span className="min-w-0">
-                      <span className="block text-sm font-medium">{r.replace(/_/g, " ")}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {UNABLE_REASON_TEXT[r]}
+                      <span className="block text-sm font-medium leading-tight">{o.label}</span>
+                      <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                        {o.detail}
                       </span>
                     </span>
                   </label>
                 ))}
               </RadioGroup>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="manual-names">Names actually searched</Label>
-                <Textarea
-                  id="manual-names" rows={3} value={names}
-                  onChange={(e) => setNames(e.target.value)}
-                  placeholder="One per line — the legal name and any alias or transliteration searched."
-                />
-                <p className="text-xs text-muted-foreground">
-                  {parsedNames.length} name{parsedNames.length === 1 ? "" : "s"} recorded.
-                </p>
-              </div>
+            </section>
 
-              <div className="space-y-2">
-                <Label>Sources actually checked</Label>
-                {sources.map((s, i) => (
-                  <div key={i} className="grid gap-2 rounded-md border border-border/60 p-3 sm:grid-cols-2">
-                    <Select
-                      value={s.source_type}
-                      onValueChange={(v) => setSources((prev) =>
-                        prev.map((row, j) => j === i ? { ...row, source_type: v } : row))}
-                    >
-                      <SelectTrigger aria-label={`Source ${i + 1} type`}><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {SOURCE_TYPES.map((t) =>
-                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      aria-label={`Source ${i + 1} name`}
-                      placeholder="Which source, e.g. DFAT Consolidated List"
-                      value={s.source_name}
-                      onChange={(e) => setSources((prev) =>
-                        prev.map((row, j) => j === i ? { ...row, source_name: e.target.value } : row))}
-                    />
-                    <Input
-                      aria-label={`Source ${i + 1} reference`}
-                      placeholder="Reference, URL or list version"
-                      value={s.source_reference}
-                      onChange={(e) => setSources((prev) =>
-                        prev.map((row, j) => j === i ? { ...row, source_reference: e.target.value } : row))}
-                    />
-                    <div className="flex items-center gap-2">
-                      <Input
-                        aria-label={`Source ${i + 1} searched at`}
-                        placeholder="When searched (optional)"
-                        value={s.searched_at}
-                        onChange={(e) => setSources((prev) =>
-                          prev.map((row, j) => j === i ? { ...row, searched_at: e.target.value } : row))}
-                      />
-                      {sources.length > 1 && (
-                        <Button
-                          type="button" size="icon" variant="ghost"
-                          aria-label={`Remove source ${i + 1}`}
-                          onClick={() => setSources((prev) => prev.filter((_, j) => j !== i))}
-                        >
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                <Button
-                  type="button" size="sm" variant="outline"
-                  onClick={() => setSources((prev) => [...prev, emptySource()])}
+            {isUnable ? (
+              <section aria-labelledby="manual-unable-heading" className="space-y-2">
+                <h3 id="manual-unable-heading" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Why it could not be concluded
+                </h3>
+                <RadioGroup
+                  value={unableReason}
+                  onValueChange={(v) => setUnableReason(v as AmlManualUnableReason)}
+                  data-testid="manual-unable-grid"
+                  className="grid gap-2 sm:grid-cols-2"
                 >
-                  <Plus className="mr-1.5 h-3.5 w-3.5" /> Add another source
-                </Button>
-              </div>
-            </>
-          )}
+                  {(Object.keys(UNABLE_REASON_TEXT) as AmlManualUnableReason[]).map((r) => (
+                    <label
+                      key={r}
+                      htmlFor={`manual-unable-${r}`}
+                      className="flex cursor-pointer gap-2.5 rounded-md border border-border/60 p-2.5
+                        has-[:checked]:border-primary/60 has-[:checked]:bg-primary/5"
+                    >
+                      <RadioGroupItem value={r} id={`manual-unable-${r}`} className="mt-0.5" />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-medium leading-tight">
+                          {r.replace(/_/g, " ")}
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                          {UNABLE_REASON_TEXT[r]}
+                        </span>
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+                <div className="pt-1">
+                  <Label htmlFor="manual-rationale">What was attempted (optional)</Label>
+                  <Textarea
+                    id="manual-rationale" rows={3} value={rationale}
+                    onChange={(e) => setRationale(e.target.value)}
+                    className="mt-1.5"
+                    placeholder="What was searched, and what stopped it concluding."
+                  />
+                </div>
+              </section>
+            ) : (
+              <section
+                aria-labelledby="manual-evidence-heading"
+                data-testid="manual-evidence-grid"
+                className="grid gap-x-6 gap-y-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]"
+              >
+                <h3 id="manual-evidence-heading" className="sr-only">Evidence</h3>
 
-          {isMatch && (
-            <div className="space-y-2">
-              <Label>What matched</Label>
-              {candidates.map((c, i) => (
-                <div key={i} className="grid gap-2 rounded-md border border-border/60 p-3 sm:grid-cols-2">
-                  <Input
-                    aria-label={`Candidate ${i + 1} listed name`}
-                    placeholder="The listed name that matched"
-                    value={c.matchedName}
-                    onChange={(e) => setCandidates((prev) =>
-                      prev.map((row, j) => j === i ? { ...row, matchedName: e.target.value } : row))}
-                  />
-                  <Input
-                    aria-label={`Candidate ${i + 1} list`}
-                    placeholder="Which list"
-                    value={c.listName}
-                    onChange={(e) => setCandidates((prev) =>
-                      prev.map((row, j) => j === i ? { ...row, listName: e.target.value } : row))}
-                  />
-                  <Input
-                    aria-label={`Candidate ${i + 1} jurisdiction`}
-                    placeholder="Jurisdiction"
-                    value={c.jurisdiction}
-                    onChange={(e) => setCandidates((prev) =>
-                      prev.map((row, j) => j === i ? { ...row, jurisdiction: e.target.value } : row))}
-                  />
-                  <Input
-                    aria-label={`Candidate ${i + 1} reference`}
-                    placeholder="Listing reference"
-                    value={c.reference}
-                    onChange={(e) => setCandidates((prev) =>
-                      prev.map((row, j) => j === i ? { ...row, reference: e.target.value } : row))}
-                  />
-                  <div className="sm:col-span-2 flex items-center gap-2">
-                    <Input
-                      aria-label={`Candidate ${i + 1} basis`}
-                      placeholder="What matched — name, date of birth, address…"
-                      value={c.matchBasis}
-                      onChange={(e) => setCandidates((prev) =>
-                        prev.map((row, j) => j === i ? { ...row, matchBasis: e.target.value } : row))}
+                {/* Left: what was actually searched, and where. */}
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="manual-names">Names actually searched</Label>
+                    <Textarea
+                      id="manual-names" rows={2} value={names}
+                      onChange={(e) => setNames(e.target.value)}
+                      className="mt-1.5"
+                      placeholder="One per line — the legal name and any alias or transliteration searched."
                     />
-                    {candidates.length > 1 && (
-                      <Button
-                        type="button" size="icon" variant="ghost"
-                        aria-label={`Remove candidate ${i + 1}`}
-                        onClick={() => setCandidates((prev) => prev.filter((_, j) => j !== i))}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {parsedNames.length} name{parsedNames.length === 1 ? "" : "s"} recorded.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Sources actually checked</Label>
+                    {sources.map((src, i) => (
+                      <div
+                        key={i}
+                        data-testid="manual-source-row"
+                        className="grid gap-2 rounded-md border border-border/60 p-2.5 sm:grid-cols-2"
                       >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    )}
+                        <Select
+                          value={src.source_type}
+                          onValueChange={(v) => setSources((prev) =>
+                            prev.map((row, j) => j === i ? { ...row, source_type: v } : row))}
+                        >
+                          <SelectTrigger aria-label={`Source ${i + 1} type`} className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {SOURCE_TYPES.map((t) =>
+                              <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          className="h-9"
+                          aria-label={`Source ${i + 1} name`}
+                          placeholder="Which source, e.g. DFAT Consolidated List"
+                          value={src.source_name}
+                          onChange={(e) => setSources((prev) =>
+                            prev.map((row, j) => j === i ? { ...row, source_name: e.target.value } : row))}
+                        />
+                        <Input
+                          className="h-9"
+                          aria-label={`Source ${i + 1} reference`}
+                          placeholder="Reference, URL or list version"
+                          value={src.source_reference}
+                          onChange={(e) => setSources((prev) =>
+                            prev.map((row, j) => j === i ? { ...row, source_reference: e.target.value } : row))}
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <Input
+                            className="h-9"
+                            aria-label={`Source ${i + 1} searched at`}
+                            placeholder="When searched (optional)"
+                            value={src.searched_at}
+                            onChange={(e) => setSources((prev) =>
+                              prev.map((row, j) => j === i ? { ...row, searched_at: e.target.value } : row))}
+                          />
+                          {sources.length > 1 && (
+                            <Button
+                              type="button" size="icon" variant="ghost" className="h-9 w-9 shrink-0"
+                              aria-label={`Remove source ${i + 1}`}
+                              onClick={() => setSources((prev) => prev.filter((_, j) => j !== i))}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    <Button
+                      type="button" size="sm" variant="outline"
+                      onClick={() => setSources((prev) => [...prev, emptySource()])}
+                    >
+                      <Plus className="mr-1.5 h-3.5 w-3.5" /> Add another source
+                    </Button>
                   </div>
                 </div>
-              ))}
-              <Button
-                type="button" size="sm" variant="outline"
-                onClick={() => setCandidates((prev) => [...prev, emptyCandidate()])}
-              >
-                <Plus className="mr-1.5 h-3.5 w-3.5" /> Add another candidate
-              </Button>
-            </div>
-          )}
 
-          <div className="space-y-2">
-            <Label htmlFor="manual-rationale">
-              {isUnable ? "What was attempted (optional)" : "Why the conclusion is reasonable"}
-            </Label>
-            <Textarea
-              id="manual-rationale" rows={4} value={rationale}
-              onChange={(e) => setRationale(e.target.value)}
-              placeholder={isUnable
-                ? "What was searched, and what stopped it concluding."
-                : "How the searches were run and why the result follows from them."}
-            />
+                {/* Right: the reasoning, and what matched when something did. */}
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="manual-rationale">Why the conclusion is reasonable</Label>
+                    <Textarea
+                      id="manual-rationale" rows={isMatch ? 4 : 7} value={rationale}
+                      onChange={(e) => setRationale(e.target.value)}
+                      className="mt-1.5"
+                      placeholder="How the searches were run and why the result follows from them."
+                    />
+                  </div>
+
+                  {isMatch && (
+                    <div className="space-y-2">
+                      <Label>What matched</Label>
+                      {candidates.map((c, i) => (
+                        <div
+                          key={i}
+                          data-testid="manual-candidate-row"
+                          className="grid gap-2 rounded-md border border-border/60 p-2.5 sm:grid-cols-2"
+                        >
+                          <Input
+                            className="h-9"
+                            aria-label={`Candidate ${i + 1} listed name`}
+                            placeholder="The listed name that matched"
+                            value={c.matchedName}
+                            onChange={(e) => setCandidates((prev) =>
+                              prev.map((row, j) => j === i ? { ...row, matchedName: e.target.value } : row))}
+                          />
+                          <Input
+                            className="h-9"
+                            aria-label={`Candidate ${i + 1} list`}
+                            placeholder="Which list"
+                            value={c.listName}
+                            onChange={(e) => setCandidates((prev) =>
+                              prev.map((row, j) => j === i ? { ...row, listName: e.target.value } : row))}
+                          />
+                          <Input
+                            className="h-9"
+                            aria-label={`Candidate ${i + 1} jurisdiction`}
+                            placeholder="Jurisdiction"
+                            value={c.jurisdiction}
+                            onChange={(e) => setCandidates((prev) =>
+                              prev.map((row, j) => j === i ? { ...row, jurisdiction: e.target.value } : row))}
+                          />
+                          <Input
+                            className="h-9"
+                            aria-label={`Candidate ${i + 1} reference`}
+                            placeholder="Listing reference"
+                            value={c.reference}
+                            onChange={(e) => setCandidates((prev) =>
+                              prev.map((row, j) => j === i ? { ...row, reference: e.target.value } : row))}
+                          />
+                          <div className="flex items-center gap-1.5 sm:col-span-2">
+                            <Input
+                              className="h-9"
+                              aria-label={`Candidate ${i + 1} basis`}
+                              placeholder="What matched — name, date of birth, address…"
+                              value={c.matchBasis}
+                              onChange={(e) => setCandidates((prev) =>
+                                prev.map((row, j) => j === i ? { ...row, matchBasis: e.target.value } : row))}
+                            />
+                            {candidates.length > 1 && (
+                              <Button
+                                type="button" size="icon" variant="ghost" className="h-9 w-9 shrink-0"
+                                aria-label={`Remove candidate ${i + 1}`}
+                                onClick={() => setCandidates((prev) => prev.filter((_, j) => j !== i))}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      <Button
+                        type="button" size="sm" variant="outline"
+                        onClick={() => setCandidates((prev) => [...prev, emptyCandidate()])}
+                      >
+                        <Plus className="mr-1.5 h-3.5 w-3.5" /> Add another candidate
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
           </div>
-
-          {rejection && (
-            <p className="text-xs text-destructive" role="status">{rejection.message}</p>
-          )}
-          {plan.ok && (
-            <p className="text-xs text-muted-foreground" role="status">
-              {plan.satisfiesObligation
-                ? "This will be recorded as a completed screening, performed by you."
-                : "This does not discharge the screening obligation."}
-              {" "}
-              <Badge variant="outline" className="ml-1">recorded as manual</Badge>
-            </p>
-          )}
         </div>
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-          <Button onClick={() => void submit()} disabled={busy || !plan.ok}>
-            {busy
-              ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-              : <ClipboardCheck className="mr-1.5 h-4 w-4" />}
-            Record manual screening
-          </Button>
-        </DialogFooter>
+        {/*
+          ── 3. Footer — never scrolls ────────────────────────────────────
+          The reason a submission is refused sits HERE, beside the disabled
+          button, because that is where somebody looks when the button will
+          not press. It used to be at the bottom of the scrolling column,
+          which on a 1366x768 screen meant hunting for it.
+        */}
+        <div
+          data-testid="manual-screening-footer"
+          className="flex shrink-0 flex-col gap-2 border-t border-border/60 px-5 py-3
+            sm:flex-row sm:items-center sm:justify-between sm:px-6"
+        >
+          <p
+            role="status"
+            className={`min-w-0 text-xs ${plan.ok ? "text-muted-foreground" : "text-destructive"}`}
+          >
+            {plan.ok
+              ? (plan.satisfiesObligation
+                ? "Will be recorded as a completed screening, performed by you."
+                : "This does not discharge the screening obligation.")
+              : rejection?.message}
+
+          </p>
+          <div className="flex shrink-0 items-center justify-end gap-2">
+            <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+            <Button onClick={() => void submit()} disabled={busy || !plan.ok}>
+              {busy
+                ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                : <ClipboardCheck className="mr-1.5 h-4 w-4" />}
+              Record manual screening
+            </Button>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

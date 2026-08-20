@@ -111,6 +111,9 @@
     "https://deno.land/x/djwt@v3.0.2/util.ts": "5cb264d2125c553678e11446bcfa0494025d120e3f59d0a3ab38f6800def697d",
     "https://esm.sh/@supabase/supabase-js@2.111.0": "276104e20b7318fac2be1c67eb9be93f4280f5ec9f2fc5ac7b32e1f0ed6f31ba",
     "https://esm.sh/@supabase/supabase-js@2.55.0": "c91e56ab271414ea191edd3fc9da73863bdde4fb95c0e9465faddd5db3c6a026",
-    "https://esm.sh/bcryptjs@2.4.3": "49851f367e562ad6e108c851ced8948944ea392fd46e576f7fdb1eb9e1ffddf0"
+    "https://esm.sh/bcryptjs@2.4.3": "49851f367e562ad6e108c851ced8948944ea392fd46e576f7fdb1eb9e1ffddf0",
+    "https://esm.sh/jszip@3.10.1": "0428be12429bcc51e7067c0f35e99e09b65db0f40843497cf9c23f1bdfff27c3",
+    "https://esm.sh/unpdf@0.12.1": "fbffa8cb0799e760249fb47326cc2134abda5e15d1f71e2dc20c1594217aaad6",
+    "https://esm.sh/xlsx@0.18.5": "feaad96c2697fd87d8d2cbf00030869f6f3cb87afc6f58c92602f1e33309dc03"
   }
 }

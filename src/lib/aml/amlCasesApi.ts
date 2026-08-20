@@ -1,6 +1,9 @@
 import { invokeSecureFunction } from "@/lib/secureInvoke";
 
 import { invokeAmlFunction } from "./invokeAmlFunction";
+import type { PepDeclarationReading } from "./pepDeclaration";
+import type { PepDeferralReason, PepSourceKind } from "./pepEvidence";
+import type { PepIndexCoverage, PepIndexVerdict } from "./pepOfficeholderIndex";
 
 /** What a reset returns, whether it ran or was refused. */
 export interface AmlClientResetResult {
@@ -468,10 +471,66 @@ export const amlCasesApi = {
     pep_type?: "foreign" | "domestic" | "international_organisation";
     pep_relationship?: "self" | "family_member" | "close_associate";
     position_held?: string; jurisdiction?: string; holds_position_currently?: boolean;
-    methods: Array<{ source: string; reference?: string; note?: string }>;
+    /*
+     * Structured rows, not free text. The server already stored `methods` as
+     * jsonb with a reference and a note per source; the old dialog collapsed
+     * every source into one textarea and sent `{ source }` alone, throwing
+     * away the two fields that make a check reconstructable later. `kind` and
+     * `result` complete it: what sort of source, and what came back.
+     */
+    methods: Array<{
+      kind?: PepSourceKind; source: string;
+      reference?: string | null; result?: string | null; note?: string | null;
+    }>;
     rationale: string; review_months?: number;
   }) =>
     invoke<{ determination: AmlPepDetermination }>({ op: "record_pep_determination", ...payload }),
+
+  /**
+   * Record that a determination cannot be reached yet.
+   *
+   * Deliberately NOT a third `result`: nothing is written to
+   * `pep_determinations`, the scope stays outstanding and Stage 5 stays
+   * blocked. What is recorded is what was checked, why it did not settle the
+   * question, and what is needed.
+   */
+  /**
+   * Search the public office-holder index for one party.
+   *
+   * Returns the verdict, the candidates and the index's own COVERAGE — the
+   * three together, always. A caller that renders "0 candidates" without the
+   * coverage beside it has turned a partial index into a clearance, which is
+   * the one thing this index must never be able to say.
+   */
+  /**
+   * What the office-holder index holds, WITHOUT searching it.
+   *
+   * The coverage used to be reachable only as a side-effect of a search, so
+   * an operator could not tell whether the index was loaded until after they
+   * had relied on it. This is the reading that belongs on the step itself.
+   */
+  pepOfficeholderIndexStatus: () =>
+    invoke<{ coverage: PepIndexCoverage[]; usable: boolean }>(
+      { op: "pep_officeholder_index_status" }),
+
+  searchPepOfficeholders: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+  }) =>
+    invoke<PepIndexVerdict>({ op: "search_pep_officeholders", ...payload }),
+
+  deferPepDetermination: (payload: {
+    case_id: string;
+    party_screening_subject_id?: string | null;
+    reason: PepDeferralReason;
+    needed: string;
+    methods: Array<{
+      kind?: PepSourceKind; source: string;
+      reference?: string | null; result?: string | null; note?: string | null;
+    }>;
+  }) =>
+    invoke<{ deferred: boolean; subject_name: string }>(
+      { op: "defer_pep_determination", ...payload }),
 };
 
 export interface AmlReconciliationItem {
@@ -526,15 +585,39 @@ export interface AmlScreeningPolicyDecision {
   summary: string;
 }
 
+export type AmlScreeningActionOwner =
+  "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+
+export type AmlScreeningNextActionKey =
+  "none" | "await_submission" | "classify_perimeter" | "fix_provider"
+  | "enrol_subjects" | "run_screening"
+  | "adjudicate_match" | "record_pep" | "await_provider_result" | "screening_stalled"
+  | "escalate"
+  /** A closed case resumes by an explicit reopen, never a status advance. */
+  | "reopen_case"
+  /** A required screening the provider cannot do and the MLRO can. */
+  | "complete_manually";
+
 export interface AmlScreeningNextAction {
-  key: "none" | "await_submission" | "classify_perimeter" | "fix_provider"
-    | "enrol_subjects" | "run_screening"
-    | "adjudicate_match" | "record_pep" | "await_provider_result" | "screening_stalled"
-    | "escalate";
+  key: AmlScreeningNextActionKey;
   label: string | null;
   headline: string;
   detail: string;
-  owner: "system" | "analyst" | "reviewer" | "administrator" | "client" | "none";
+  owner: AmlScreeningActionOwner;
+  /**
+   * The other lawful route to the same blockage, owned by another role.
+   *
+   * Decided by the server alongside the primary, so the browser only chooses
+   * which to show first. An alternative is a different METHOD of discharging
+   * an obligation and never a way round one.
+   */
+  alternative?: {
+    key: AmlScreeningNextActionKey;
+    label: string;
+    headline: string;
+    detail: string;
+    owner: AmlScreeningActionOwner;
+  } | null;
 }
 
 /** One scope's obligation, exactly as `aml.case_screening_scopes` holds it. */
@@ -580,6 +663,21 @@ export interface AmlScreeningStageSync {
   next_action: AmlScreeningNextAction;
   decision_recorded: boolean;
   scope_changed: AmlScreeningScopeKey[];
+  /**
+   * The case's canonical lifecycle, reported so Stage 5 can present a
+   * retained record as one. Absent on a server that predates it, which reads
+   * as "not closed" — the behaviour this product had before.
+   */
+  case_closed?: boolean;
+  case_stage?: string | null;
+  service_gate_status?: string | null;
+  /**
+   * What the customer declared about political exposure.
+   *
+   * Optional because a server that predates it sends nothing — and an absent
+   * reading is rendered as "not established", never as an answer of "no".
+   */
+  pep_declaration?: PepDeclarationReading;
 }
 
 export interface AmlPartyScreeningSubject {

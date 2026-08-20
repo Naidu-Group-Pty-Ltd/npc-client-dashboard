@@ -43,6 +43,24 @@ import {
   processScreeningEvent, recordTechnicalFailure,
 } from "../cross-portal-outbox-worker/screeningConsumer.ts";
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
+// What the customer said about political exposure. Evidence towards the
+// determination a reviewer or the MLRO records; never the determination.
+import { readPepDeclaration } from "../_shared/aml/pepDeclaration.pure.ts";
+// What a determination must rest on, and why a sanctions register is not a
+// PEP source. Shared with the dialog that collects it.
+import {
+  assessPepDeferral, assessPepEvidence, normalisePepMethods,
+} from "../_shared/aml/pepEvidence.pure.ts";
+// The public office-holder index: what a search of it may and may not say.
+import {
+  PEP_INDEX_SOURCES, describeCoverage, indexIsUsable, searchVerdict,
+  type PepIndexCandidate,
+} from "../_shared/aml/pepOfficeholderIndex.pure.ts";
+import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
+// `aml.cases` has no tenant_id column. This is the only place that knows it.
+import {
+  DEFAULT_AML_TENANT, readCase,
+} from "../_shared/aml/caseTenant.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
   AML_PURGE_ORDER, AML_UNLINKED_CASE_TABLES, decideClientReset,
@@ -2194,9 +2212,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const caseId = String(body.case_id ?? '');
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
 
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, status, risk_rating, subject_display_name').eq('id', caseId).maybeSingle();
+        let { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, status, case_stage, closed_at, service_gate_status, risk_rating, subject_display_name')
+          .eq('id', caseId).maybeSingle();
+        if (!caseRow) {
+          // A deployment without the dimension columns still answers, on the
+          // legacy shape it has always had.
+          ({ data: caseRow } = await admin.schema('aml').from('cases')
+            .select('id, status, risk_rating, subject_display_name')
+            .eq('id', caseId).maybeSingle());
+        }
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        /*
+         * Closed, read from the CANONICAL dimension with the legacy one as
+         * the fallback. Either saying closed is enough: they are two views of
+         * one lifecycle and disagreement between them is a defect, not a
+         * third state, so the safe reading is the one that does not present a
+         * retained record as a live journey.
+         */
+        const caseClosed = String(caseRow.case_stage ?? '') === 'closed'
+          || String(caseRow.status ?? '') === 'closed';
 
         const enrol = await ensureScreeningSubjects(admin, caseId, userId, userEmail);
 
@@ -2498,9 +2534,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // the two cannot describe different cases.
         const policy = decideScreeningPolicy(policyInput);
 
+        /*
+         * Two populations, and using the wrong one produced a next action
+         * that contradicted the same card's own determination rows.
+         *
+         * `required` is the subjects whose SCREENING is owed. On a case whose
+         * perimeter stood sanctions down that list is empty — so
+         * `subjectCount: required.length` was 0 and the stage answered
+         * "Nobody is enrolled for screening yet · Prepare screening" for a
+         * case that had an enrolled party and needed no screening at all.
+         * `anyMissingPep` was `.some()` over the same empty list, so the one
+         * genuinely outstanding obligation could never be the next action.
+         *
+         * Enrolment is about the PARTIES; screening is about the obligation.
+         */
+        const enrolled = (enrol.subjects ?? []) as any[];
         const nextAction = deriveScreeningNextAction({
           hasSubmission: enrol.hasSubmission,
-          subjectCount: required.length,
+          subjectCount: enrolled.length,
           // A provider nobody needs is never the blocker.
           providerReady: providerRelevant ? providerReady : true,
           anyUnscreened: required.some((s: any) =>
@@ -2508,11 +2559,29 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           anyProcessing: required.some((s: any) => ['queued', 'processing'].includes(s.state)),
           anyPossibleMatch: required.some((s: any) => s.state === 'possible_match'),
           anyConfirmedMatch: required.some((s: any) => s.state === 'confirmed_match'),
-          anyMissingPep: required.some((s: any) => !currentDetermination(String(s.id))),
+          /*
+           * PEP is owed per PARTY under its own scope decision, so it is read
+           * over the enrolled parties and only when the scope requires it. A
+           * party whose sanctions obligation was stood down still needs a PEP
+           * determination, and an empty list is never "everybody determined".
+           */
+          anyMissingPep: scope.pep.required === true
+            && (enrolled.length === 0
+              || enrolled.some((s: any) => !currentDetermination(String(s.id)))),
           pepRoute: policy.pepRoute,
           // An undecided perimeter is a question to ask before a provider is
           // a problem to fix. The default it falls back to is unchanged.
           perimeterClassified: scope.perimeter.classified,
+          // A retained record is not a stage in progress.
+          caseClosed,
+          /*
+           * Whether the MANUAL route could discharge what the automated one
+           * cannot. It is a fact about this case — a required sanctions scope
+           * exists — and never about who is asking: the operation itself
+           * enforces MLRO, and offering the route to a reader who may not take
+           * it is how they learn who can.
+           */
+          manualAvailable: scope.sanctions.required === true,
           oldestQueuedSeconds,
           errorCategory: required.find((s: any) => s.state === 'error')?.error_category ?? null,
         });
@@ -2585,7 +2654,30 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           provider_ready: providerReady,
           /* Whether that readiness bears on this case at all. */
           provider_relevant: providerRelevant,
+          /*
+           * The canonical lifecycle, so Stage 5 can say "retained record"
+           * rather than rendering a closed case as live onboarding. Reported,
+           * never decided, here.
+           */
+          case_closed: caseClosed,
+          case_stage: caseRow.case_stage ?? null,
+          service_gate_status: caseRow.service_gate_status ?? null,
           next_action: nextAction,
+          /*
+           * What the CUSTOMER declared about political exposure, verbatim.
+           *
+           * The reviewer recording the determination had the client's answer
+           * nowhere on the stage — it existed only as `personal_details.pep`
+           * inside the policy's material inputs, one collapse down, as the
+           * string "no". So the person making the determination could not see
+           * what the person it is about had said without leaving the case.
+           *
+           * It is EVIDENCE and never the determination: nothing here records
+           * one, prefills a conclusion or changes an obligation, and the
+           * reading reports an unanswered question as unanswered rather than
+           * as a "no".
+           */
+          pep_declaration: readPepDeclaration(personal),
           decision_recorded: decisionRecorded,
           scope_changed: scopeSync.changed,
           /* False when the scope tables are not present yet. */
@@ -2612,9 +2704,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const reason = typeof body.reason === 'string' ? body.reason : null;
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
 
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, case_reference, status, service_gate_status, client_id')
+        let { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, case_reference, status, case_stage, service_gate_status, client_id')
           .eq('id', caseId).maybeSingle();
+        if (!caseRow) {
+          ({ data: caseRow } = await admin.schema('aml').from('cases')
+            .select('id, case_reference, status, service_gate_status, client_id')
+            .eq('id', caseId).maybeSingle());
+        }
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
 
         const [{ data: consents }, { data: subjects }, { data: submission },
@@ -2632,6 +2729,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const plan = planCaseReopen({
           caseId, caseReference: String(caseRow.case_reference ?? caseId),
           status: String(caseRow.status ?? ''),
+          // The canonical dimension, so a case the rest of the product calls
+          // closed can actually be reopened — and reopening is what puts the
+          // two dimensions back into agreement.
+          caseStage: caseRow.case_stage ?? null,
           serviceGateStatus: caseRow.service_gate_status ?? null,
           consents: (consents ?? []).map((c: any) => ({
             kind: String(c.kind), version: c.version ?? null,
@@ -2659,14 +2760,43 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           hasRiskAssessment: Boolean(assessment),
         });
 
-        // The gate is deliberately NOT touched. Reopening restores the work,
-        // not the permission.
-        const { error: updateError } = await admin.schema('aml').from('cases').update({
+        /*
+         * The gate is deliberately NOT touched. Reopening restores the work,
+         * not the permission — `STATUS_TO_SERVICE_GATE[resumeStatus]` would
+         * revive a terminated gate, which is the one thing this must never do.
+         *
+         * `case_stage` and `closed_at` ARE written, and their absence here was
+         * a real defect. `status` is the legacy dimension; `case_stage` is the
+         * canonical one every other surface reads. Reopening moved the first
+         * and left the second, so a reopened case rendered as "Case stage:
+         * Closed" in the Live Position rail and simultaneously offered the
+         * ordinary status transitions of its resumed legacy status — the
+         * contradiction that was reported. `transition` has always kept the
+         * two coherent through the same map; this is the other write that
+         * changes `status` and it did not.
+         */
+        const reopenPatch: Record<string, unknown> = {
           status: resumeStatus,
           client_portal_status: plan.reissue.includes('consents')
             ? 'awaiting_client' : 'in_progress',
+          case_stage: STATUS_TO_STAGE[resumeStatus] ?? null,
+          // A case being worked again is not closed, and a stale `closed_at`
+          // is read as one by anything that asks the date rather than the
+          // status.
+          closed_at: null,
           updated_at: new Date().toISOString(),
-        }).eq('id', caseId);
+        };
+        let { error: updateError } = await admin.schema('aml').from('cases')
+          .update(reopenPatch).eq('id', caseId);
+        if (updateError && isMissingColumnError(updateError)) {
+          // A deployment without the dimension columns keeps the old
+          // behaviour rather than failing the reopen outright.
+          ({ error: updateError } = await admin.schema('aml').from('cases').update({
+            status: resumeStatus,
+            client_portal_status: reopenPatch.client_portal_status,
+            updated_at: reopenPatch.updated_at,
+          }).eq('id', caseId));
+        }
         if (updateError) throw updateError;
 
         /*
@@ -2703,6 +2833,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             consents_to_reaccept: plan.staleConsents,
             not_restored: plan.notRestored,
             service_gate_status: caseRow.service_gate_status ?? null,
+            // Stated on the trail: the gate did NOT move, the stage did.
+            case_stage: STATUS_TO_STAGE[resumeStatus] ?? null,
           },
           userId, userEmail);
 
@@ -3297,10 +3429,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
          * body-supplied case_id decides what is written.
          */
         const caseId = String(subject.case_id);
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, tenant_id').eq('id', caseId).maybeSingle();
-        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
-        if (String(caseRow.tenant_id ?? 'default') !== String(subject.tenant_id ?? 'default')) {
+        /*
+         * Same defect: this selected `cases.tenant_id`, a column the table
+         * does not have, so the read answered 42703 and every manual
+         * screening was refused as "Case not found".
+         *
+         * The comparison it guarded was also circular — `caseId` comes from
+         * `subject.case_id`, so the subject already belongs to this case.
+         * What is worth checking is that the subject carries THIS
+         * deployment's tenant, which is what the write will stamp.
+         */
+        const caseRead = await readCase<{ id: string }>(admin, caseId, 'id');
+        if (caseRead.failed) {
+          console.error('record_manual_screening: case read failed', caseRead.error);
+          return jsonResponse({
+            error: 'The case could not be read. Nothing was recorded.',
+            code: 'case_read_failed',
+          }, 503);
+        }
+        if (!caseRead.row) return jsonResponse({ error: 'Case not found' }, 404);
+        if (String(subject.tenant_id ?? DEFAULT_AML_TENANT) !== caseRead.tenantId) {
           return jsonResponse({ error: 'Subject does not belong to this case', code: 'tenant_mismatch' }, 403);
         }
 
@@ -3750,24 +3898,54 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             return jsonResponse({ error: 'pep_relationship (self|family_member|close_associate) is required for a pep result' }, 400);
           }
         }
-        if (rationale.length < 10) {
-          return jsonResponse({ error: 'A rationale of at least 10 characters is required — record why the conclusion was reasonable' }, 400);
+        /*
+         * The evidence the conclusion rests on, judged by the SAME module the
+         * dialog renders from (`pepEvidence.pure.ts`), so what an operator is
+         * asked for and what this accepts cannot drift into two standards.
+         *
+         * It enforces three things this used to leave to the operator's
+         * judgement, each of which had produced a defensible-looking record
+         * that was not actually defensible:
+         *
+         *   - a SANCTIONS register is refused as a PEP source. The dialog's
+         *     own example was "DFAT consolidated list", which is a targeted
+         *     financial sanctions register: absence from it is not evidence
+         *     that somebody is not politically exposed.
+         *   - at least one source INDEPENDENT of the customer. Their own
+         *     declaration is the thing being tested.
+         *   - a searched source must record what came back.
+         *
+         * `rationale` is judged there too, against the statutory wording.
+         */
+        const cleanMethods = normalisePepMethods(methods);
+        const evidence = assessPepEvidence({ result: result as 'not_pep' | 'pep',
+          methods: cleanMethods, rationale });
+        if (!evidence.ok) {
+          return jsonResponse({
+            error: evidence.errors[0].message,
+            code: 'pep_evidence_insufficient',
+            errors: evidence.errors,
+          }, 400);
         }
-        // Sources/methods are the evidence trail: at least one, references
-        // and metadata only. A "not PEP" with no recorded method is a guess,
-        // not a determination.
-        const cleanMethods = methods
-          .filter((m: any) => m && typeof m === 'object' && typeof m.source === 'string' && m.source.trim())
-          .map((m: any) => ({
-            source: String(m.source).slice(0, 300),
-            reference: typeof m.reference === 'string' ? m.reference.slice(0, 500) : null,
-            note: typeof m.note === 'string' ? m.note.slice(0, 500) : null,
-          })).slice(0, 20);
-        if (cleanMethods.length === 0) {
-          return jsonResponse({ error: 'At least one method/source (e.g. list checked, register consulted) is required' }, 400);
+        /*
+         * `aml.cases` has NO `tenant_id` column, and this select used to name
+         * it. PostgREST answered 42703, the discarded `error` left `data`
+         * null, and the handler reported "Case not found" about the case the
+         * operator was looking at — which is why `pep_determinations` was
+         * empty from the day it was created and why Stage 5's button appeared
+         * to do nothing. `readCase` refuses the column and keeps a failed
+         * READ distinct from an absent ROW.
+         */
+        const caseRead = await readCase<{ id: string; subject_display_name: string | null }>(
+          admin, caseId, 'id, subject_display_name');
+        if (caseRead.failed) {
+          console.error('record_pep_determination: case read failed', caseRead.error);
+          return jsonResponse({
+            error: 'The case could not be read. Nothing was recorded.',
+            code: 'case_read_failed',
+          }, 503);
         }
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('id, tenant_id, subject_display_name').eq('id', caseId).maybeSingle();
+        const caseRow = caseRead.row;
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
 
         // Subject identity is DERIVED, never asserted: the determination is
@@ -3823,7 +4001,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // insert, and the partial unique index guarantees a single current
         // determination per subject scope even under concurrent writes.
         const { data: determination, error: detErr } = await admin.schema('aml').from('pep_determinations').insert({
-          tenant_id: caseRow.tenant_id ?? 'default',
+          tenant_id: caseRead.tenantId,
           case_id: caseId,
           party_screening_subject_id: partySubjectId,
           party_type: derivedPartyType,
@@ -3868,6 +4046,244 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, userId, userEmail);
 
         return jsonResponse({ determination });
+      }
+
+      /**
+       * Record that a PEP determination CANNOT be made yet.
+       *
+       * ── Why this is not a third determination outcome ─────────────
+       * `pep_determinations` records determinations. A row in it means
+       * somebody established a position on reasonable grounds — that is what
+       * every reader of that table, and every downstream control, takes it to
+       * mean.
+       *
+       * An operator who has reached the end of the available checking and is
+       * NOT satisfied has established nothing. Until now the dialog offered
+       * only "not a PEP" or "PEP", so the way out of that position was to
+       * assert one of them: an unfounded conclusion, written down, indexed,
+       * and indistinguishable afterwards from a real one. AUSTRAC expressly
+       * contemplates the opposite — that further information is collected
+       * when the entity is not yet satisfied.
+       *
+       * So this writes NO determination. It records what was checked, why it
+       * did not settle the question and what is needed, on the case audit
+       * trail. The PEP scope stays outstanding, the step stays blocking, and
+       * the stage stays open — which is the honest state.
+       */
+      /*
+       * Search the public office-holder index for a party.
+       *
+       * ── The one rule this operation exists to keep ────────────────────
+       * A HIT is a candidate. A MISS is NOTHING.
+       *
+       * The index is partial by construction — no public source lists every
+       * prominent public function, and none lists family members or close
+       * associates at all. So this never returns a bare candidate list: the
+       * verdict, the coverage of every source and the currency of each load
+       * travel with it, and `searchVerdict` will not produce the word
+       * "clear" in any branch. A caller cannot render "0 candidates" without
+       * also having what was and was not looked at.
+       *
+       * An index that has never loaded, or whose last load FAILED, reads as
+       * `unavailable` rather than as no candidates. That distinction is the
+       * whole lesson of `sanctions_entries`, which was empty from the day
+       * the platform was built while every screening against it would have
+       * returned exactly this shape of nothing.
+       *
+       * Read-only. It writes no determination, no source row and no case
+       * event: what the operator records is what they saw when they
+       * confirmed a candidate against the official register, which is a
+       * different act performed by a person.
+       */
+      /*
+       * What the office-holder index HOLDS, without searching it.
+       *
+       * The coverage was reachable only as a side-effect of a search, so an
+       * operator could not tell whether the index was loaded until after they
+       * had already searched — and the reading that matters most is the one
+       * they get BEFORE they rely on it. Read-only, no identity, no party.
+       *
+       * It returns the same `describeCoverage` rows the search attaches, so
+       * the two surfaces cannot disagree about what is loaded.
+       */
+      case 'pep_officeholder_index_status': {
+        const coverage = [];
+        let failed = false;
+        for (const source of PEP_INDEX_SOURCES) {
+          const { data: sync, error } = await admin.schema('aml')
+            .from('pep_officeholder_syncs')
+            .select('entry_count, source_as_at, completed_at, started_at, status, detail')
+            .eq('source_code', source.code)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+          if (error) { failed = true; break; }
+          coverage.push(describeCoverage(source.code, sync ?? null));
+        }
+        if (failed) {
+          // Unknown is not empty. An index whose state could not be read must
+          // never render as an index holding nothing.
+          return jsonResponse({
+            error: 'The office-holder index state could not be read.',
+            code: 'pep_index_status_failed',
+          }, 503);
+        }
+        return jsonResponse({ coverage, usable: indexIsUsable(coverage) });
+      }
+
+      case 'search_pep_officeholders': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+
+        // Identity is DERIVED, exactly as it is for a determination. A
+        // caller-supplied name would let one party's screen be searched
+        // under another party's name.
+        const partySubjectId = body.party_screening_subject_id
+          ? String(body.party_screening_subject_id) : null;
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+        let searchName = String(caseRow.subject_display_name ?? '').trim();
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('id, case_id, screened_name').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({
+              error: 'party_screening_subject_id does not belong to this case',
+            }, 400);
+          }
+          searchName = String(partySubject.screened_name ?? '').trim();
+        }
+
+        // Coverage FIRST, and unconditionally. It is attached to every
+        // reading including the empty one, which is the reading that needs
+        // it most.
+        const coverage = [];
+        for (const source of PEP_INDEX_SOURCES) {
+          const { data: sync } = await admin.schema('aml').from('pep_officeholder_syncs')
+            // `detail` carries what the load actually reached. The coverage
+            // an operator sees is derived from it rather than from a
+            // sentence, because a sentence cannot be checked against a load.
+            .select('entry_count, source_as_at, completed_at, started_at, status, detail')
+            .eq('source_code', source.code)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+          coverage.push(describeCoverage(source.code, sync ?? null));
+        }
+
+        const tokens = normaliseName(searchName);
+        if (tokens.length === 0) {
+          return jsonResponse(searchVerdict({
+            hasSearchableName: false, candidates: [], coverage,
+          }));
+        }
+
+        // Overlap on ANY token, then score in code — recall first, exactly
+        // as the sanctions provider does. Requiring every token would miss
+        // the partial-name cases the search exists to catch.
+        const { data: rows, error: searchErr } = await admin.schema('aml')
+          .from('pep_officeholders')
+          .select('external_id, source_code, full_name, aliases, position_title, pep_type, '
+            + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+          .overlaps('normalised_names', tokens)
+          .limit(500);
+        if (searchErr) {
+          // A database fault is a technical condition and must never be
+          // returned as "nothing found" — that is how an error becomes an
+          // outcome. The sanctions consumers made exactly this mistake by
+          // discarding a claim's error.
+          console.error('search_pep_officeholders failed', searchErr);
+          return jsonResponse({
+            error: 'The office-holder index could not be searched.',
+            code: 'pep_index_search_failed',
+          }, 503);
+        }
+
+        const MIN_SCORE = 0.7;
+        const candidates: PepIndexCandidate[] = (rows ?? []).map((r: any) => {
+          const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
+          const score = Math.max(...names.map((n) => scoreNames(searchName, n).score), 0);
+          return {
+            externalId: String(r.external_id),
+            sourceCode: String(r.source_code),
+            fullName: String(r.full_name),
+            aliases: (r.aliases ?? []) as string[],
+            positionTitle: String(r.position_title),
+            pepType: r.pep_type ?? 'domestic',
+            jurisdiction: r.jurisdiction ?? null,
+            positionStart: r.position_start ?? null,
+            positionEnd: r.position_end ?? null,
+            currentlyHeld: r.currently_held ?? null,
+            confirmUrl: r.confirm_url ?? null,
+            score,
+          };
+        })
+          .filter((c) => c.score >= MIN_SCORE)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 25);
+
+        return jsonResponse(searchVerdict({
+          hasSearchableName: true, candidates, coverage,
+        }));
+      }
+
+      case 'defer_pep_determination': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const partySubjectId = body.party_screening_subject_id
+          ? String(body.party_screening_subject_id) : null;
+
+        const deferMethods = normalisePepMethods(body.methods);
+        const verdict = assessPepDeferral({
+          reason: body.reason ?? null,
+          needed: body.needed ?? null,
+          methods: deferMethods,
+        });
+        if (!verdict.ok) {
+          return jsonResponse({
+            error: verdict.errors[0].message,
+            code: 'pep_deferral_incomplete',
+            errors: verdict.errors,
+          }, 400);
+        }
+
+        const { data: caseRow } = await admin.schema('aml').from('cases')
+          .select('id, subject_display_name').eq('id', caseId).maybeSingle();
+        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Identity is derived, exactly as it is for a determination: a
+        // caller-supplied name could attach one person's deferral to another.
+        let subjectName = String(caseRow.subject_display_name ?? '').trim();
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('id, case_id, screened_name').eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({
+              error: 'party_screening_subject_id does not belong to this case',
+            }, 400);
+          }
+          subjectName = String(partySubject.screened_name ?? '').trim();
+        }
+
+        await appendEvent(admin, caseId, 'pep_determination_deferred',
+          `PEP determination deferred for ${subjectName}: ${String(body.reason)}`,
+          {
+            party_screening_subject_id: partySubjectId,
+            subject_name: subjectName.slice(0, 300),
+            reason: String(body.reason),
+            needed: String(body.needed).slice(0, 2000),
+            methods: deferMethods,
+            /* Stated in the record itself, so no future reader can mistake
+               this event for a determination that was reached. */
+            determination_recorded: false,
+          }, userId, userEmail);
+
+        return jsonResponse({ deferred: true, subject_name: subjectName });
       }
 
       default:

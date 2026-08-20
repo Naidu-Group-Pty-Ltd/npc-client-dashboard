@@ -1,4 +1,5 @@
 import { airtableService, PropertyListing } from '@/lib/airtable';
+import { dedupeListings } from '../../supabase/functions/_shared/listingDuplicates.pure';
 import { listingsCacheApi } from '@/lib/listingsCacheApi';
 import { INTAKE_SORT_FIELD } from '@/lib/airtableIntakeFields';
 import {
@@ -565,10 +566,33 @@ class PropertyDataService {
     return (filledFields / fields.length) * 100;
   }
 
+  /**
+   * The single funnel every listings read returns through — cached, fresh,
+   * bounded or refreshed — which is why one property becoming one card belongs
+   * here rather than in a page.
+   *
+   * The intake scenario writes the same mailbox message more than once, so the
+   * marketplace was showing 148 listings for 107 distinct addresses: 38
+   * redundant cards, 26% of the page, four of them visible twice in a single
+   * screenshot. `airtable-proxy` already tags what it thinks are duplicates and
+   * deliberately removes nothing, leaving the decision to the client; no client
+   * ever made it. `_shared/listingDuplicates.pure.ts` makes it, over the whole
+   * set rather than one page of it, with a key that cannot merge the eleven
+   * different City Beach properties whose street numbers never got extracted.
+   *
+   * Every caller benefits, and every caller should: counting one property four
+   * times inflated the Overview totals and the quantitative reports too.
+   */
   private buildResult(listings: PropertyListing[], startTime: number, includeDebugInfo: boolean, fromCache: boolean): PropertyDataResult {
+    const fetched = listings.length;
+    const deduped = dedupeListings(listings);
+    listings = deduped.listings;
+
     const debugInfo = includeDebugInfo ? {
-      totalFetched: listings.length,
-      duplicatesRemoved: 0,
+      // What the source returned, so that `totalFetched - duplicatesRemoved`
+      // is the number of cards on the page.
+      totalFetched: fetched,
+      duplicatesRemoved: deduped.duplicatesRemoved,
       fetchTime: Date.now() - startTime,
       sources: this.calculateSourceDistribution(listings),
       dataQuality: {

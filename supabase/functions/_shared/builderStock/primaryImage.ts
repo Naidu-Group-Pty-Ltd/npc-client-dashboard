@@ -31,8 +31,11 @@ import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from './sourceImageRole.pure.ts';
 import {
-  isMarketplaceEligible,
+  isMarketplaceEligible, needsEligibilityAssessment,
 } from './marketplaceEligibility.pure.ts';
+import {
+  servableClearanceFor, servableDerivativeFor,
+} from './sanitizedDerivative.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -79,7 +82,24 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
     // And the sixth: the source designating it is not the same as it being a
     // picture to draw. A facade under a "$25,000 Rebate" ribbon passes all
     // five above. See `marketplaceEligibility.pure.ts`.
-    && isMarketplaceEligible(image.source_detail);
+    //
+    // OR THE SAME PHOTOGRAPH WITH THE RIBBON TAKEN OFF. A servable derivative
+    // is that image's own pixels with the laid-over graphic removed and the
+    // result re-measured by the same classifier that refused the original — so
+    // it satisfies the display rule rather than bypassing it. It is NOT another
+    // image: the record names the exact original by id and by SHA-256, and a
+    // row whose object has since changed stops resolving one. See
+    // `sanitizedDerivative.pure.ts`.
+    //
+    // OR THE SAME PHOTOGRAPH WITH NOTHING WRONG WITH IT. A clearance is the
+    // precise inspection's finding that the coarse classifier convicted this
+    // picture for a feature of the HOUSE — Lot 537 Kirramingly's white garage
+    // door — and that there is no promotional treatment on it at all. It
+    // serves the ORIGINAL, unaltered, because nothing needed changing. See
+    // `overlayClearance.pure.ts`.
+    && (isMarketplaceEligible(image.source_detail)
+      || !!servableDerivativeFor(image.source_detail)
+      || !!servableClearanceFor(image.source_detail));
 }
 
 /**
@@ -148,17 +168,49 @@ export async function chooseAndStorePrimaryImage(
 }
 
 /**
- * Apply the rule to every property an organisation holds.
+ * Is this image still waiting for a display verdict?
+ *
+ * Only asked of images that could BE a card's picture. Anything else has no
+ * verdict by design, and treating its absence as "unassessed" would freeze
+ * every item that happens to hold a floorplan.
+ */
+function awaitingVerdict(image: DisplayableImage): boolean {
+  if (image.source_stage !== SOURCE_SUPPLIED_STAGE) return false;
+  if (image.verification_status !== SOURCE_SUPPLIED_VERIFICATION) return false;
+  if (image.processing_status !== 'ready') return false;
+  if (!isPrimaryRole(readStoredRole(image.source_detail))) return false;
+  return needsEligibilityAssessment(image.source_detail);
+}
+
+/**
+ * Apply the rule to every property an organisation holds — EXCEPT the ones
+ * whose evidence is not in yet.
  *
  * Run at the end of a repair so that properties the repair never touched are
  * settled too: an item whose builder supplied nothing must END the run with no
  * primary image, not with the one it had before the rule changed.
+ *
+ * AN ITEM WHOSE IMAGES HAVE NOT ALL BEEN JUDGED IS SKIPPED ENTIRELY, and that
+ * is the part that had to be added. The display rule fails closed, so an image
+ * with no verdict is not displayable — which means this function, run over an
+ * organisation whose eligibility backfill has not finished, would look at a
+ * perfectly clean builder photograph, see no verdict, conclude the property has
+ * nothing to show, and CLEAR its pointer. The backfill would then write
+ * `eligible` onto an image nothing points at any more.
+ *
+ * Deciding per ITEM rather than per upload is what the schema requires: one
+ * property's images can come from several uploads, so "this upload settled" is
+ * not the same statement as "this property's candidates have all been judged".
+ * Only the second one licenses a write.
+ *
+ * `skipped` is reported rather than swallowed: a caller that keeps seeing a
+ * non-zero count is being told its backfill has not converged.
  */
 export async function enforceStrictPrimaryImages(
   db: any,
   organisationId: string,
-): Promise<{ inspected: number; cleared: number; corrected: number }> {
-  const outcome = { inspected: 0, cleared: 0, corrected: 0 };
+): Promise<{ inspected: number; cleared: number; corrected: number; skipped: number }> {
+  const outcome = { inspected: 0, cleared: 0, corrected: 0, skipped: 0 };
 
   const { data: items } = await db
     .from('builder_stock_items')
@@ -183,7 +235,17 @@ export async function enforceStrictPrimaryImages(
 
   for (const item of items as Array<{ id: string; primary_image_id: string | null }>) {
     outcome.inspected += 1;
-    const chosen = chooseDisplayableImage(byItem.get(item.id) ?? []);
+    const candidates = byItem.get(item.id) ?? [];
+
+    // The evidence is not all in. Leave the pointer exactly as it is — right or
+    // wrong — because clearing it now would lose a picture the backfill is
+    // about to approve, and there is no signal here to tell the two apart.
+    if (candidates.some(awaitingVerdict)) {
+      outcome.skipped += 1;
+      continue;
+    }
+
+    const chosen = chooseDisplayableImage(candidates);
     const next = chosen?.id ?? null;
     if (next === item.primary_image_id) continue;
 

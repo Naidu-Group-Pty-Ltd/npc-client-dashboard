@@ -5,7 +5,7 @@ import type { StoredListingImage } from '@/lib/listingImages';
 import { StreetViewPanel, type StreetViewStatus } from '@/components/listings/StreetViewPanel';
 import { ListingCover, type ListingCoverProps } from '@/components/listings/ListingCover';
 import { useInView } from '@/hooks/useInView';
-import { useOrderedImages } from '@/hooks/useOrderedImages';
+import { useListingGallery } from '@/hooks/useListingGallery';
 
 export interface ListingHeroProps {
   images: StoredListingImage[] | undefined;
@@ -99,10 +99,12 @@ export function ListingHero({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const inView = useInView(containerRef);
 
-  // Photographs first, floor plans last — a hero slot opening on a line
-  // drawing is accurate but sells nothing. The ordering also names plan
-  // slides, so the counter can say what the reader is looking at.
-  const { images: ordered, kindOf } = useOrderedImages(images);
+  // Each photograph once, photographs first, floor plans last — a hero slot
+  // opening on a line drawing is accurate but sells nothing, and a reader who
+  // pages right onto the same picture again reads the set as broken. The
+  // ordering also names plan slides, so the counter can say what the reader is
+  // looking at.
+  const { images: ordered, kindOf } = useListingGallery(images);
   const photos = useMemo(
     () => ordered.filter((image) => image.url && !failed.has(image.url)),
     [ordered, failed],

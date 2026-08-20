@@ -1,4 +1,3 @@
-/// <reference types="leaflet.markercluster" />
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl, useMap } from 'react-leaflet';
 import L from 'leaflet';
@@ -89,6 +88,20 @@ import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.p
 import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPostcodeGeo.pure';
 import { installClusterAnchorPatch } from '@/lib/leafletClusterAnchor';
 import { BUILD_ID } from '@/lib/buildVersion';
+
+/**
+ * The cluster plugin's own types are a `declare module 'leaflet'` augmentation
+ * that the app's typecheck config does not pull in, so the two shapes this file
+ * actually touches are declared locally. Structural, and narrow on purpose: a
+ * plugin type this file does not use cannot go stale here.
+ */
+type MarkerClusterGroupInstance = L.FeatureGroup & {
+  zoomToShowLayer?: (layer: L.Layer, callback?: () => void) => void;
+};
+type MarkerClusterInstance = L.Marker & {
+  getAllChildMarkers: () => L.Marker[];
+  getChildCount: () => number;
+};
 import type { StoredListingImage } from '@/lib/listingImages';
 
 /**
@@ -913,7 +926,7 @@ interface ListingMarkersProps {
   onSelect: (id: string) => void;
   /** Keeps a live id → marker index so the results panel can reach a pin. */
   registerMarker: (id: string, marker: L.Marker | null) => void;
-  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
+  clusterRef: React.MutableRefObject<MarkerClusterGroupInstance | null>;
 }
 
 const ListingMarkers = memo(function ListingMarkers({
@@ -1018,7 +1031,7 @@ function ClusterHoverIntel({
   clusterRef,
   signature,
 }: {
-  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
+  clusterRef: React.MutableRefObject<MarkerClusterGroupInstance | null>;
   signature: string;
 }) {
   useEffect(() => {
@@ -1027,7 +1040,7 @@ function ClusterHoverIntel({
     const onOver = (event: L.LeafletEvent) => {
       const cluster = (event as { propagatedFrom?: unknown; layer?: unknown }).propagatedFrom ??
         (event as { layer?: unknown }).layer;
-      const marker = cluster as (L.MarkerCluster & { __npcIntel?: boolean }) | undefined;
+      const marker = cluster as (MarkerClusterInstance & { __npcIntel?: boolean }) | undefined;
       if (!marker || typeof marker.getAllChildMarkers !== 'function') return;
       try {
         if (!marker.__npcIntel) {
@@ -1352,7 +1365,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   const popupRef = useRef<L.Popup | null>(null);
   const markersRef = useRef<ListingMarker[]>([]);
   const markerIndexRef = useRef(new Map<string, L.Marker>());
-  const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
+  const clusterRef = useRef<MarkerClusterGroupInstance | null>(null);
   const userMovedRef = useRef(false);
   const programmaticUntilRef = useRef(0);
   const reducedMotion = useMemo(prefersReducedMotion, []);

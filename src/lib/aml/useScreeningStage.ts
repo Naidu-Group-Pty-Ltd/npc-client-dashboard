@@ -36,6 +36,12 @@ import {
   sanctionsListFactsFrom, screeningProviderFactsFrom, screeningSubjectFactsFrom,
 } from "./screeningStageFacts";
 import { resolveScreeningNextAction } from "./screeningNextAction";
+import {
+  readSanctionsSource, type SanctionsSourceReading,
+} from "./screeningResolution.pure";
+import {
+  LIST_STALE_AFTER_DAYS,
+} from "../../../supabase/functions/_shared/aml/sanctionsIngest.pure";
 
 export interface AmlScreeningStageReading {
   /** The server's own answer. `null` while loading, or if the read failed. */
@@ -44,6 +50,12 @@ export interface AmlScreeningStageReading {
   scope: AmlScreeningScopeDecision;
   position: AmlCaseScreeningPosition;
   stage: ReturnType<typeof describeScreeningStage>;
+  /**
+   * Which Australian sanctions source an automated check would use, and
+   * whether it is usable. Derived from the same reads the readiness uses —
+   * this only presents them.
+   */
+  source: SanctionsSourceReading;
   loading: boolean;
   /** True when the server read failed — the card says so rather than guessing. */
   unavailable: boolean;
@@ -145,12 +157,24 @@ export function useScreeningStage(
       ? {
         ...raw.sync,
         next_action: resolveScreeningNextAction(
-          raw.sync.next_action, raw.sync.perimeter) ?? raw.sync.next_action,
+          raw.sync.next_action, raw.sync.perimeter,
+          // Lifecycle first. A retained record has no next step in the
+          // journey, only a decision about whether to resume one.
+          raw.sync.case_closed === true) ?? raw.sync.next_action,
       }
       : null;
 
     return {
       sync,
+      source: readSanctionsSource({
+        // `null` propagates as unread all the way to the screen, which is why
+        // the read is tolerated rather than defaulted.
+        syncs: raw.lists?.syncs ?? null,
+        entryCount: raw.lists?.entry_count ?? null,
+        providerReady: raw.sync?.provider_ready === true,
+        staleAfterDays: LIST_STALE_AFTER_DAYS,
+        nowMs: Date.parse(nowIso),
+      }),
       readiness, scope, position,
       // The server decides whether the provider bears on this case; the
       // browser must not reach a different conclusion from the same facts.

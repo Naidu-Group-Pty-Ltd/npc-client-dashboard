@@ -10,6 +10,20 @@
  * and Closed. Hiding a button was never authorisation and still is not —
  * the server decides.
  *
+ * ── Why it reads the CANONICAL lifecycle ──────────────────────────────
+ * `NEXT_STATUSES.closed` is `[]`, so a closed case has always had no
+ * transitions — but this keyed that off the LEGACY `status` column, and the
+ * legacy and canonical dimensions can disagree. They did, in production:
+ * `reopen_case` moved `status` to its resumed value and left `case_stage` at
+ * `closed`, so the Live Position rail said "Case stage: Closed" while this
+ * panel offered the ordinary advances of a live case, Cleared among them.
+ *
+ * The write defect is fixed in `aml-cases` (`reopen_case` now syncs the
+ * dimension, exactly as `transition` always has). This reads the canonical
+ * dimension as well, because a UI that offers to advance a case the rest of
+ * the product calls closed is wrong whichever side produced the divergence —
+ * and the two deploy separately.
+ *
  * ── What moved out of it ──────────────────────────────────────────────
  * It used to open with two context cards: what was outstanding in the
  * current *area*, and a restatement of the service gate. The journey
@@ -33,7 +47,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi, type AmlCase, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
-import { CASE_STATUS_LABELS } from "@/lib/aml/caseDimensions";
+import { caseStage, CASE_STATUS_LABELS } from "@/lib/aml/caseDimensions";
 
 /**
  * The legal transition map. Unchanged from the panel this replaces and
@@ -72,6 +86,12 @@ export interface AmlContextActionPanelProps {
   canWrite: boolean;
   isMlro: boolean;
   onChanged: () => void;
+  /**
+   * Resume a closed case. Reopening is a separate, reason-bearing decision
+   * and must never be reachable as an ordinary status transition, so it is
+   * passed in rather than performed here.
+   */
+  onReopen?: () => void;
 }
 
 export function AmlContextActionPanel({
@@ -79,13 +99,20 @@ export function AmlContextActionPanel({
   canWrite,
   isMlro,
   onChanged,
+  onReopen,
 }: AmlContextActionPanelProps) {
   const [reason, setReason] = useState("");
   const [transitioning, setTransitioning] = useState(false);
   const [pendingDestructive, setPendingDestructive] = useState<AmlCaseStatus | null>(null);
   const [destructiveReason, setDestructiveReason] = useState("");
 
-  const nextOptions = NEXT_STATUSES[caseRow.status] ?? [];
+  /*
+   * Terminal on EITHER dimension. They are two views of one lifecycle and a
+   * disagreement between them is a defect rather than a third state, so the
+   * safe reading is the one that does not offer to advance a retained record.
+   */
+  const closed = caseStage(caseRow) === "closed" || caseRow.status === "closed";
+  const nextOptions = closed ? [] : (NEXT_STATUSES[caseRow.status] ?? []);
   const progressOptions = nextOptions.filter(
     (s) => !PANEL_ATTENTION_TRANSITIONS.has(s) && !PANEL_DESTRUCTIVE_TRANSITIONS.has(s),
   );
@@ -114,6 +141,34 @@ export function AmlContextActionPanel({
 
   return (
     <>
+      {/*
+        ── A closed case gets ONE action, and it is not a transition ──
+        Reopening carries a reason and its own authority check. Presenting it
+        among the ordinary advances would turn the two into the same gesture.
+      */}
+      {closed && (
+        <Card>
+          <CardContent className="space-y-2 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Case closed
+            </p>
+            <p className="text-xs text-muted-foreground">
+              This AML/CTF record is retained for compliance purposes. The journey is not
+              progressing and the ordinary status advances do not apply.
+            </p>
+            {canWrite && onReopen && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onReopen}>
+                Reopen case to resume AML/CTF
+              </Button>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Reopening restores the ability to work the case. It does not approve the
+              service, revive a terminated service gate, or restore a revoked passport.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* ── Case status transitions ────────────────────────────────── */}
       {canWrite && nextOptions.length > 0 && (
         <Card>

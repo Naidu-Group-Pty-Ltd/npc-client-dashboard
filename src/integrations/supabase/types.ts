@@ -5713,6 +5713,7 @@ export type Database = {
           primary_image_id: string | null
           project_name: string | null
           property_type: string | null
+          source_provenance_result: Json | null
           source_row: Json
           state: string | null
           suburb: string | null
@@ -5750,6 +5751,7 @@ export type Database = {
           primary_image_id?: string | null
           project_name?: string | null
           property_type?: string | null
+          source_provenance_result?: Json | null
           source_row?: Json
           state?: string | null
           suburb?: string | null
@@ -5787,6 +5789,7 @@ export type Database = {
           primary_image_id?: string | null
           project_name?: string | null
           property_type?: string | null
+          source_provenance_result?: Json | null
           source_row?: Json
           state?: string | null
           suburb?: string | null

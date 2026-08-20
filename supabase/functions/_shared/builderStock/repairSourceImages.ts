@@ -41,12 +41,15 @@ import {
 } from './sourceAssets.pure.ts';
 import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
 import {
+  negativeProvenanceStillStands, recordNoDeterministicImage,
+} from './negativeProvenance.pure.ts';
+import {
   demoteUnprovenSourceImage, hasReadySourceImage, storeSourceImageBytes,
   storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
 } from './sourceImages.ts';
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
-  DriveListingCache, recoverPackageImage, type PackageFetcher,
+  DriveListingCache, recoverPackageImage, type PackageFetcher, type PackageOutcome,
 } from './packageImages.ts';
 import { attachDocumentMedia } from './importStock.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
@@ -67,6 +70,12 @@ export interface RepairOutcome {
   fromPackage: number;
   /** Rows whose linked package named no image for that exact property. */
   packageNotIdentified: number;
+  /**
+   * Rows skipped because a previous run already read that package, at this
+   * version, and it named no image. Not work avoided by luck — work that is
+   * finished.
+   */
+  packageAlreadyAnswered: number;
   /** Rows whose linked package could not be read without signing in. */
   packageUnreachable: number;
   /** True when the wall-clock budget ran out; run it again to continue. */
@@ -95,6 +104,11 @@ interface ExistingItem {
   source_row?: Record<string, unknown> | null;
   /** Read with the row so settling the primary costs no second query. */
   primary_image_id?: string | null;
+  /**
+   * The terminal answer a previous run reached about this property's linked
+   * package, when it read the package and the package named no image.
+   */
+  source_provenance_result?: unknown;
 }
 
 /** A stage-1 row, as the re-audit needs to see it. */
@@ -124,6 +138,73 @@ interface Stage1ImageRow {
  */
 const STAGE1_CHUNK = 100;
 const STAGE1_ROWS_PER_ITEM = 200;
+
+/**
+ * How many properties one run will re-fetch imagery for.
+ *
+ * THE BOUND THAT ACTUALLY HOLDS. Every other limit in this module is a wall
+ * clock, and a wall clock never fired here: fetching, validating, hashing and
+ * re-uploading a megabyte of PNG is CPU-bound, and Supabase's edge runtime kills
+ * the invocation on its RESOURCE limit — status 546 — long after the work has
+ * started and long before 100s have elapsed. Every production settler
+ * invocation ended that way. A killed worker returns no response, writes no
+ * settlement marker and logs nothing, so the failure was invisible in all three
+ * of the places built to make it visible.
+ *
+ * FOUR, and the number was fitted against production rather than reasoned to.
+ * The first attempt used twelve, from the observation that pre-fix ticks always
+ * died around the thirteenth image — but that measured the ELIGIBILITY sweep,
+ * which only decodes. A provenance restore per property also fetches over the
+ * network, validates, hashes, uploads to storage, upserts the row, re-reads the
+ * property's stage-1 images and re-points its primary; twelve of those still
+ * logged `CPU Time exceeded`. The cap has to sit well under the ceiling, not at
+ * it, because the same invocation may also have run an eligibility sweep and
+ * must still reach the primary-image enforcement pass that follows it.
+ *
+ * Draining is not the thing to optimise: the sweep ticks every five minutes and
+ * removes itself when the queue empties, so four properties a tick clears a
+ * 25-image upload in under half an hour without ever being killed. A run that
+ * finishes is worth more than a run that does more, because only a run that
+ * finishes writes its marker.
+ *
+ * IT COUNTS ATTEMPTS, NOT STORES, AND THAT IS A DELIBERATE TRADE. Counting only
+ * productive work was tried and reverted: the expensive path here is
+ * `recoverPackageImage`, which fetches and parses a linked PDF, and it is
+ * expensive whether or not it finds anything. Production upload f7e0d4d1 has 70
+ * rows of which 13 are already current and the rest yield nothing, so a cap on
+ * stores never engaged, all 57 fruitless recoveries ran, and the worker was
+ * killed on CPU again.
+ *
+ * The cost is that such an upload reports `incomplete` for ever and its
+ * provenance marker is never written, so the sweep does not unschedule itself.
+ * That is the lesser harm: the run now ENDS, in about 17 seconds, and says what
+ * it did, instead of being killed every five minutes having said nothing. It
+ * does not affect display — eligibility is a separate marker and is settled.
+ *
+ * The real fix is to remember a row whose package yielded nothing at this
+ * version so it is not retried, which is a schema change and belongs with the
+ * `packageNotIdentified` accounting rather than here.
+ */
+const MAX_ITEMS_RESTORED_PER_RUN = 4;
+
+/**
+ * And a TIGHTER bound on the expensive kind of restore.
+ *
+ * The cap above counts a property whose imagery this run re-fetched, and it was
+ * fitted against the row-asset path: fetch a picture, validate it, hash it,
+ * upload it. A linked-package recovery is a different order of work — fetch a
+ * whole PDF, parse it, read every page's text, choose the cover, extract and
+ * re-encode the image — and four of those in one invocation still logged
+ * `CPU Time exceeded`, which is how upload f7e0d4d1's last six rows stalled
+ * after the other 44 had been answered.
+ *
+ * ONE. Not a lowering of the fitted cap — that stays at 4 for the cheap path —
+ * but a separate ceiling on the costly one, so the two cannot be traded against
+ * each other. It costs a tick per outstanding package and the sweep runs every
+ * five minutes, which is nothing against a backlog that is answered once and
+ * then never re-read.
+ */
+const MAX_PACKAGE_RECOVERIES_PER_RUN = 1;
 
 async function readStage1Images(
   db: any,
@@ -188,7 +269,7 @@ export async function repairSourceImagesForUpload(
   const outcome: RepairOutcome = {
     uploadId: input.uploadId,
     rowsRead: 0, rowsWithImagery: 0, matched: 0,
-    imagesStored: 0, fromPackage: 0, packageNotIdentified: 0,
+    imagesStored: 0, fromPackage: 0, packageNotIdentified: 0, packageAlreadyAnswered: 0,
     packageUnreachable: 0, incomplete: false, demoted: 0,
     primaryUpdated: 0, problems: [],
   };
@@ -293,7 +374,7 @@ export async function repairSourceImagesForUpload(
   // The stock this organisation already holds, and nobody else's.
   const { data: existingRows } = await db
     .from('builder_stock_items')
-    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id')
+    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result')
     .eq('organisation_id', input.organisationId)
     .eq('lifecycle_status', 'active')
     .order('created_at', { ascending: true })
@@ -314,8 +395,16 @@ export async function repairSourceImagesForUpload(
   const byFingerprint = new Map<string, string[]>();
   /** What each property's primary was before this run, read with the row. */
   const primaryBefore = new Map<string, string | null>();
+  /**
+   * The terminal negative answer each property already holds, read with the
+   * row so the skip below costs no query of its own — the point of the skip is
+   * to make a run cheaper, and paying a round trip per property to decide
+   * whether to skip would give most of that back.
+   */
+  const negativeBefore = new Map<string, unknown>();
   for (const item of (existingRows ?? []) as ExistingItem[]) {
     primaryBefore.set(item.id, item.primary_image_id ?? null);
+    if (item.source_provenance_result) negativeBefore.set(item.id, item.source_provenance_result);
     const reference = referenceKey(item);
     if (reference) byReference.set(reference, item.id);
     const developmentUnit = developmentUnitKey(item);
@@ -353,6 +442,10 @@ export async function repairSourceImagesForUpload(
    * the property as stage 1 is unproven, and unproven means not displayable.
    */
   const provenByItem = new Map<string, Set<string>>();
+  /** Properties whose imagery this run actually re-fetched. The CPU bound. */
+  let restored = 0;
+  /** Of those, the ones that cost a whole PDF parse. The tighter bound. */
+  let recoveries = 0;
   const prove = (itemId: string, reference: string) => {
     const set = provenByItem.get(itemId) ?? new Set<string>();
     set.add(reference.slice(0, 400));
@@ -403,6 +496,49 @@ export async function repairSourceImagesForUpload(
 
     if (all.length) {
       outcome.matched += 1;
+
+      /**
+       * ATTRIBUTION COMES FROM THE ROW; THE DOWNLOAD ONLY REFRESHES BYTES.
+       *
+       * The row was just re-read from the builder's own stored source, and it
+       * names these references — so the property's claim to them is proven
+       * whether or not we fetch the pictures again. Proving before the skip
+       * below is what keeps the demotion pass honest: an image this run
+       * deliberately did not re-download is not an image it failed to prove.
+       */
+      for (const asset of all) prove(itemId, asset.reference);
+      touched.add(itemId);
+
+      /**
+       * A PROPERTY ALREADY AT THE CURRENT VERSION IS NOT RE-FETCHED.
+       *
+       * This is the guard the package branch below has always had, and its
+       * absence here is why the sweep could not converge. `storeSourceImages`
+       * fetches, validates, hashes and re-uploads every asset unconditionally,
+       * so a row path with no skip re-did the SAME work on every tick: upload
+       * f7e0d4d1 sat at 13 of 25 images at version 4 for hours, because each
+       * run started at the first row, spent the worker's whole allowance
+       * re-storing pictures that were already current, and was killed by the
+       * edge runtime at exactly the same place. Progress was not slow, it was
+       * nil.
+       */
+      if (await hasReadySourceImage(db, itemId, PROVENANCE_VERSION)) continue;
+
+      /**
+       * And the run is BOUNDED BY WORK, not only by the clock.
+       *
+       * The wall-clock deadline never fired here: fetching and hashing images
+       * is CPU-bound, and the edge worker's resource limit killed the
+       * invocation long before 100s elapsed — which returns no response, writes
+       * no marker and leaves nothing in the log to explain itself. A count is
+       * the bound that actually holds, so the run stops itself, reports
+       * `incomplete`, and is resumed by the next tick having permanently
+       * retired the properties it did reach.
+       */
+      if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
+      if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+
+      restored += 1;
       const stored = await storeSourceImages(db, {
         organisationId: input.organisationId,
         uploadId: upload.id,
@@ -411,8 +547,6 @@ export async function repairSourceImagesForUpload(
       }, { fetchImage: deps.fetchImage });
       outcome.imagesStored += stored.stored;
       outcome.problems.push(...stored.problems.slice(0, 5));
-      for (const asset of all) prove(itemId, asset.reference);
-      touched.add(itemId);
       continue;
     }
 
@@ -423,22 +557,111 @@ export async function repairSourceImagesForUpload(
      */
     const packageUrl = solePackageUrl(record.unmapped);
     if (!packageUrl) continue;
-    if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
     // A property that already holds a PROVEN one is skipped, which is what
     // makes a budgeted run resumable rather than repetitive. A row from before
     // provenance was recorded does not count, so it gets re-derived.
+    //
+    // Tested BEFORE the budget, so a run cannot spend its allowance stopping at
+    // properties it would not have worked on: the cap counts work done, and
+    // skipping is not work.
     if (await hasReadySourceImage(db, itemId, PROVENANCE_VERSION)) continue;
 
-    const recovered = await recoverPackageImage(
-      { packageUrl, label: stockRecordLabel(record) },
-      { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
-    );
-    if (recovered.status === 'unreachable') {
-      outcome.packageUnreachable += 1;
+    /**
+     * ALREADY ANSWERED. A previous run read this exact package at this exact
+     * version and it named no image for this property, so reading it again can
+     * only reach the same answer at the cost of a fetch and a parse.
+     *
+     * This is the whole fix. Without it the sweep could not tell an answered
+     * property from an unlooked-at one, so upload f7e0d4d1's 57 answered rows
+     * were re-fetched every five minutes, the run always hit its work bound,
+     * `incomplete` was permanent, and the settlement marker could never be
+     * written — which is why the cron job could never see an empty queue and
+     * never unscheduled itself.
+     *
+     * `negativeProvenanceStillStands` re-opens the question on a version bump,
+     * a changed package or a changed anchor, so this skips a settled question
+     * and never a live one.
+     */
+    const question = {
+      provenanceVersion: PROVENANCE_VERSION,
+      packageReference: packageUrl,
+      sourceAnchor: anchor ?? null,
+    };
+    if (negativeProvenanceStillStands(negativeBefore.get(itemId), question)) {
+      outcome.packageAlreadyAnswered += 1;
       continue;
     }
+
+    if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
+    if (recoveries >= MAX_PACKAGE_RECOVERIES_PER_RUN) { outcome.incomplete = true; break; }
+    if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+
+    restored += 1;
+    recoveries += 1;
+
+    /**
+     * THREE OUTCOMES, AND ONLY ONE OF THEM IS KNOWLEDGE.
+     *
+     * A throw is an operational fault like any other — `readPageTexts` and the
+     * selector are not defensive, so a malformed document surfaces here rather
+     * than as a verdict. Catching it keeps one unreadable package from
+     * abandoning the rest of the upload, and it is emphatically NOT recorded as
+     * "no image": the run stays incomplete so the property is asked again.
+     */
+    let recovered: PackageOutcome;
+    try {
+      recovered = await recoverPackageImage(
+        { packageUrl, label: stockRecordLabel(record) },
+        { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
+      );
+    } catch (error) {
+      outcome.packageUnreachable += 1;
+      outcome.incomplete = true;
+      outcome.problems.push({
+        reference: packageUrl.slice(0, 400),
+        reason: String((error as { safeMessage?: string; message?: string })?.safeMessage
+          ?? (error as { message?: string })?.message ?? error).slice(0, 200),
+      });
+      continue;
+    }
+
+    /*
+     * COULD NOT LOOK. A sign-in wall, a fetch that failed, a document that is
+     * not a document. Nothing was learned, so nothing is written down and the
+     * run does not claim to have finished: recording "no image" here would
+     * suppress a package that may be perfectly readable tomorrow.
+     */
+    if (recovered.status === 'unreachable') {
+      outcome.packageUnreachable += 1;
+      outcome.incomplete = true;
+      continue;
+    }
+
+    /*
+     * LOOKED, AND THERE IS NOTHING. The package was read and states nothing
+     * that identifies this property, which is a finished answer for this
+     * extractor version — so it is written down and not asked again until the
+     * version, the package or the anchor changes.
+     *
+     * A write that fails leaves the answer unrecorded, which is merely the
+     * behaviour this replaces; what it must not do is let the caller mark the
+     * upload settled on the strength of an answer that was never persisted, so
+     * the run reports itself incomplete.
+     */
     if (recovered.status !== 'recovered') {
       outcome.packageNotIdentified += 1;
+      const { error: writeError } = await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: recordNoDeterministicImage(question, recovered.detail) })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+      if (writeError) {
+        outcome.incomplete = true;
+        outcome.problems.push({
+          reference: packageUrl.slice(0, 400),
+          reason: String((writeError as { message?: string })?.message ?? writeError).slice(0, 200),
+        });
+      }
       continue;
     }
 
@@ -483,6 +706,20 @@ export async function repairSourceImagesForUpload(
       outcome.fromPackage += 1;
       prove(itemId, recovered.image.reference);
       touched.add(itemId);
+      /*
+       * A package that has just produced an image is not one that names none.
+       * The stale answer would be harmless to the sweep — a property holding a
+       * current image is skipped before the question is even asked — but it
+       * would sit in the column contradicting the picture beside it, and this
+       * column is read by people.
+       */
+      if (negativeBefore.has(itemId)) {
+        await db.from('builder_stock_items')
+          .update({ source_provenance_result: null })
+          .eq('id', itemId)
+          .eq('organisation_id', input.organisationId);
+        negativeBefore.delete(itemId);
+      }
     } else {
       outcome.problems.push({
         reference: recovered.image.reference,

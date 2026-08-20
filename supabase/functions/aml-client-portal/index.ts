@@ -29,7 +29,9 @@
  * no MLRO commentary. Only completion + acceptance state.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
-import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
+import {
+  normaliseQuestionnaireSection, validateQuestionnaireSection,
+} from "./questionnaireValidation.ts";
 import {
   getIdvProvider,
   getHostedIdvProvider,
@@ -61,10 +63,10 @@ import { buildClientStampInput } from "../_shared/aml/passport/passportStamps.pu
 import {
   buildJourney, documentsJourneyStatus, submissionBlockers, verificationJourneyStatus,
 } from "../_shared/aml/portalJourney.pure.ts";
-// Which entity questions a declared purchasing structure may answer. Shared
-// with the portal form so the fields on screen and the keys in the stored
-// payload cannot disagree — see purchasingStructure.pure.ts.
-import { prunePurchasingStructure } from "../_shared/aml/purchasingStructure.pure.ts";
+// What a submitted section must have removed before it is stored — the
+// declared purchasing structure's entity-only fields, and the detail only a
+// declared exposure can carry. Both live at the write boundary so the fields
+// on screen and the keys in the stored payload cannot disagree.
 import {
   buildVendorData, isStaleHostedSession,
 } from "../_shared/aml/providers/didit.pure.ts";
@@ -1119,9 +1121,9 @@ const __corsWrappedHandler = async (req: Request) => {
          * purchaser and carrying a company name and an ABN is a purchaser
          * record that contradicts itself; this is what stops one being stored.
          */
-        const payload = body.section === 'purchasing_structure'
-          ? prunePurchasingStructure(submittedPayload as Record<string, unknown>)
-          : submittedPayload;
+        const payload = normaliseQuestionnaireSection(
+          body.section, submittedPayload as Record<string, unknown>,
+        );
         if (body.submit) {
           const { data: structureResponse } = body.section === 'entity_details'
             ? await admin.schema('aml').from('questionnaire_responses')

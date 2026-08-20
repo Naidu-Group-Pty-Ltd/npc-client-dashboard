@@ -15,3 +15,12 @@
  * no `/aml/configuration` literal survives anywhere.
  */
 export const ADMIN_AML_CONFIGURATION_PATH = "/admin/aml/configuration";
+
+/**
+ * Where the sanctions lists are loaded and their health is shown.
+ *
+ * Named here for the same reason the configuration path is: the one Stage 5
+ * navigation that was hand-written led to a route that did not exist, and a
+ * dead link is how an operator concludes the feature is broken.
+ */
+export const ADMIN_AML_VERIFICATION_PATH = "/admin/aml/verification";

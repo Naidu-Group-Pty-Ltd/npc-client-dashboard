@@ -16,10 +16,10 @@ import { useNotifications } from '@/contexts/NotificationsContext';
 import { useAuth } from '@/hooks/useAuth';
 import { useActivityLogger } from '@/hooks/useActivityLogger';
 import { addBackgroundJob } from '@/components/BackgroundJobTracker';
-import { Loader2, MapPin, Hash, Globe, TrendingUp, FileText, Link, Upload, X, Image, Car, AlertCircle } from 'lucide-react';
+import { Loader2, MapPin, Hash, Globe, TrendingUp, FileText, Link, Upload, X, Image, AlertCircle } from 'lucide-react';
 import { convertPdfToImages, isPdfFile, isImageFile, imageFileToBase64 } from '@/utils/pdfToImages';
 import { PreGenerationOverrides, PreGenerationData } from './PreGenerationOverrides';
-import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
+import { removeCommas } from '@/hooks/useFormattedNumber';
 import { BuildTypeSelector } from './shared/BuildTypeSelector';
 import { BuildType } from '@/types/overrideFields';
 import { AddressAutocomplete } from '@/components/shared/AddressAutocomplete';
@@ -1588,147 +1588,6 @@ export function InvestmentReportGenerator() {
                     )}
                   </div>
 
-              {/* Property Details - Only for property-specific address queries */}
-              {isPropertySpecific && (
-              <>
-              <Separator />
-
-              {/* Property Details - Optional but Recommended */}
-              <div className="reports-property-details-panel space-y-4">
-                <div className="reports-property-details-header">
-                  <Label className="reports-investment-section-label text-base font-semibold">Property Details</Label>
-                  <Badge variant="default" className="reports-required-scoring-badge text-xs">Required for Scoring</Badge>
-                </div>
-                <p className="reports-property-details-helper text-sm text-muted-foreground">
-                  Purchase price is required for investment scoring. Other details are optional but enhance analysis accuracy.
-                </p>
-
-                <div className="reports-property-details-grid grid gap-4 sm:grid-cols-2">
-                  <div className="reports-property-field space-y-2">
-                    <Label htmlFor="propertyPrice" className="reports-property-field-label flex items-center gap-1">
-                      Purchase Price ($) <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      id="propertyPrice"
-                      className="reports-property-input"
-                      type="text"
-                      inputMode="numeric"
-                      value={formatNumberWithCommas(propertyPrice)}
-                      onChange={(e) => handlePropertyPriceChange(e.target.value)}
-                      placeholder="e.g., 750,000"
-                      disabled={isGenerating}
-                      required
-                    />
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label className="reports-property-field-label" htmlFor="weeklyRent">Weekly Rent ($)</Label>
-                    <Input
-                      id="weeklyRent"
-                      className="reports-property-input"
-                      type="text"
-                      inputMode="numeric"
-                      value={formatNumberWithCommas(weeklyRent)}
-                      onChange={(e) => handleWeeklyRentChange(e.target.value)}
-                      placeholder="e.g., 550"
-                      disabled={isGenerating}
-                    />
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label className="reports-property-field-label" htmlFor="propertyType">Property Type</Label>
-                    <Select value={propertyType} onValueChange={setPropertyType}>
-                      <SelectTrigger className="reports-property-select-trigger">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="reports-property-select-content bg-background z-50">
-                        <SelectItem value="house">House</SelectItem>
-                        <SelectItem value="apartment">Apartment/Unit</SelectItem>
-                        <SelectItem value="townhouse">Townhouse</SelectItem>
-                        <SelectItem value="villa">Villa</SelectItem>
-                        <SelectItem value="duplex">Duplex</SelectItem>
-                        <SelectItem value="terrace">Terrace</SelectItem>
-                        <SelectItem value="acreage">Acreage/Rural</SelectItem>
-                        <SelectItem value="land">Vacant Land</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label className="reports-property-field-label" htmlFor="beds">Bedrooms</Label>
-                    <Input
-                      id="beds"
-                      className="reports-property-input"
-                      type="number"
-                      value={beds}
-                      onChange={(e) => setBeds(e.target.value)}
-                      placeholder="e.g., 3"
-                      disabled={isGenerating}
-                    />
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label className="reports-property-field-label" htmlFor="baths">Bathrooms</Label>
-                    <Input
-                      id="baths"
-                      className="reports-property-input"
-                      type="number"
-                      value={baths}
-                      onChange={(e) => setBaths(e.target.value)}
-                      placeholder="e.g., 2"
-                      disabled={isGenerating}
-                    />
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label htmlFor="carSpaces" className="reports-property-field-label flex items-center gap-1">
-                      <Car className="h-4 w-4" />
-                      Car Spaces
-                    </Label>
-                    <Input
-                      id="carSpaces"
-                      className="reports-property-input"
-                      type="number"
-                      min="0"
-                      value={carSpaces}
-                      onChange={(e) => handleCarSpacesChange(e.target.value)}
-                      placeholder="e.g., 2"
-                      disabled={isGenerating}
-                    />
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label className="reports-property-field-label" htmlFor="landSize">Land Size (m²)</Label>
-                      <Input
-                        id="landSize"
-                        className="reports-property-input"
-                        type="text"
-                        inputMode="decimal"
-                        value={landSize}
-                        onChange={(e) => handleLandSizeChange(e.target.value)}
-                        placeholder="e.g., 450"
-                        disabled={isGenerating}
-                      />
-                  </div>
-
-                  <div className="reports-property-field space-y-2">
-                    <Label className="reports-property-field-label" htmlFor="buildSize">Build Size (m²)</Label>
-                      <Input
-                        id="buildSize"
-                        className="reports-property-input"
-                        type="text"
-                        inputMode="decimal"
-                        value={buildSize}
-                        onChange={(e) => handleBuildSizeChange(e.target.value)}
-                        placeholder="e.g., 180"
-                        disabled={isGenerating}
-                      />
-                  </div>
-                </div>
-              </div>
-
-              </>
-              )}
 
               {/* Suburb Year Context - Only show for suburb analysis */}
               {queryType === 'suburb' && (
@@ -1833,6 +1692,20 @@ export function InvestmentReportGenerator() {
                     externalBuildingInsurance={preGenData.buildingLandlordInsurance}
                     externalPropertyManagementPercent={preGenData.propertyManagementFees}
                     externalConstructionYear={preGenData.constructionYear}
+                    externalPropertyType={propertyType}
+                    onPropertyTypeChange={setPropertyType}
+                    beds={beds}
+                    onBedsChange={setBeds}
+                    baths={baths}
+                    onBathsChange={setBaths}
+                    onPurchasePriceChange={handlePropertyPriceChange}
+                    onWeeklyRentChange={handleWeeklyRentChange}
+                    onCarSpacesChange={handleCarSpacesChange}
+                    onLandSizeChange={handleLandSizeChange}
+                    onBuildSizeChange={handleBuildSizeChange}
+                    onLandPriceChange={setLandPrice}
+                    onBuildPriceChange={setBuildPrice}
+                    hideBuildTypeSelector
                   />
                 </>
               )}
@@ -2036,142 +1909,6 @@ export function InvestmentReportGenerator() {
 
                   <Separator />
 
-                  {/* Property Details - Required for URL Scrape */}
-                  <div className="reports-property-details-panel space-y-4">
-                    <div className="reports-property-details-header">
-                      <Label className="reports-investment-section-label text-base font-semibold">Property Details</Label>
-                      <Badge variant="default" className="reports-required-scoring-badge text-xs">Required for Scoring</Badge>
-                    </div>
-                    <p className="reports-property-details-helper text-sm text-muted-foreground">
-                      Purchase price is required for investment scoring. Other details are optional but will override scraped values.
-                    </p>
-
-                    <div className="reports-property-details-grid grid gap-4 sm:grid-cols-2">
-                      <div className="reports-property-field space-y-2">
-                        <Label htmlFor="urlPropertyPrice" className="reports-property-field-label flex items-center gap-1">
-                          Purchase Price ($) <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="urlPropertyPrice"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="numeric"
-                          value={formatNumberWithCommas(propertyPrice)}
-                          onChange={(e) => handlePropertyPriceChange(e.target.value)}
-                          placeholder="e.g., 750,000"
-                          disabled={isScraping}
-                          required
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="urlWeeklyRent">Weekly Rent ($)</Label>
-                        <Input
-                          id="urlWeeklyRent"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="numeric"
-                          value={formatNumberWithCommas(weeklyRent)}
-                          onChange={(e) => handleWeeklyRentChange(e.target.value)}
-                          placeholder="e.g., 550"
-                          disabled={isScraping}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="urlPropertyType">Property Type</Label>
-                        <Select value={propertyType} onValueChange={setPropertyType}>
-                          <SelectTrigger className="reports-property-select-trigger">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="reports-property-select-content bg-background z-50">
-                            <SelectItem value="house">House</SelectItem>
-                            <SelectItem value="apartment">Apartment/Unit</SelectItem>
-                            <SelectItem value="townhouse">Townhouse</SelectItem>
-                            <SelectItem value="villa">Villa</SelectItem>
-                            <SelectItem value="duplex">Duplex</SelectItem>
-                            <SelectItem value="terrace">Terrace</SelectItem>
-                            <SelectItem value="acreage">Acreage/Rural</SelectItem>
-                            <SelectItem value="land">Vacant Land</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="urlBeds">Bedrooms</Label>
-                        <Input
-                          id="urlBeds"
-                          className="reports-property-input"
-                          type="number"
-                          value={beds}
-                          onChange={(e) => setBeds(e.target.value)}
-                          placeholder="e.g., 3"
-                          disabled={isScraping}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="urlBaths">Bathrooms</Label>
-                        <Input
-                          id="urlBaths"
-                          className="reports-property-input"
-                          type="number"
-                          value={baths}
-                          onChange={(e) => setBaths(e.target.value)}
-                          placeholder="e.g., 2"
-                          disabled={isScraping}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label htmlFor="urlCarSpaces" className="reports-property-field-label flex items-center gap-1">
-                          <Car className="h-4 w-4" />
-                          Car Spaces
-                        </Label>
-                        <Input
-                          id="urlCarSpaces"
-                          className="reports-property-input"
-                          type="number"
-                          min="0"
-                          value={carSpaces}
-                          onChange={(e) => handleCarSpacesChange(e.target.value)}
-                          placeholder="e.g., 2"
-                          disabled={isScraping}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="urlLandSize">Land Size (m²)</Label>
-                        <Input
-                          id="urlLandSize"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="decimal"
-                          value={landSize}
-                          onChange={(e) => handleLandSizeChange(e.target.value)}
-                          placeholder="e.g., 450"
-                          disabled={isScraping}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="urlBuildSize">Build Size (m²)</Label>
-                        <Input
-                          id="urlBuildSize"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="decimal"
-                          value={buildSize}
-                          onChange={(e) => handleBuildSizeChange(e.target.value)}
-                          placeholder="e.g., 180"
-                          disabled={isScraping}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <Separator />
-
                   {/* Pre-Generation Overrides for URL mode */}
                   <PreGenerationOverrides
                     propertyAddress={urlScrapedData?.propertyAddress || propertyUrl}
@@ -2192,6 +1929,20 @@ export function InvestmentReportGenerator() {
                     externalBuildingInsurance={preGenData.buildingLandlordInsurance}
                     externalPropertyManagementPercent={preGenData.propertyManagementFees}
                     externalConstructionYear={preGenData.constructionYear}
+                    externalPropertyType={propertyType}
+                    onPropertyTypeChange={setPropertyType}
+                    beds={beds}
+                    onBedsChange={setBeds}
+                    baths={baths}
+                    onBathsChange={setBaths}
+                    onPurchasePriceChange={handlePropertyPriceChange}
+                    onWeeklyRentChange={handleWeeklyRentChange}
+                    onCarSpacesChange={handleCarSpacesChange}
+                    onLandSizeChange={handleLandSizeChange}
+                    onBuildSizeChange={handleBuildSizeChange}
+                    onLandPriceChange={setLandPrice}
+                    onBuildPriceChange={setBuildPrice}
+                    hideBuildTypeSelector
                   />
 
                   {/* Info for URL mode */}
@@ -2391,142 +2142,6 @@ export function InvestmentReportGenerator() {
 
                   <Separator />
 
-                  {/* Property Details - Required for PDF mode */}
-                  <div className="reports-property-details-panel space-y-4">
-                    <div className="reports-property-details-header">
-                      <Label className="reports-investment-section-label text-base font-semibold">Property Details</Label>
-                      <Badge variant="default" className="reports-required-scoring-badge text-xs">Required for Scoring</Badge>
-                    </div>
-                    <p className="reports-property-details-helper text-sm text-muted-foreground">
-                      Purchase price is required for investment scoring. Other details are optional but will override extracted values.
-                    </p>
-
-                    <div className="reports-property-details-grid grid gap-4 sm:grid-cols-2">
-                      <div className="reports-property-field space-y-2">
-                        <Label htmlFor="pdfPropertyPrice" className="reports-property-field-label flex items-center gap-1">
-                          Purchase Price ($) <span className="text-destructive">*</span>
-                        </Label>
-                        <Input
-                          id="pdfPropertyPrice"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="numeric"
-                          value={formatNumberWithCommas(propertyPrice)}
-                          onChange={(e) => handlePropertyPriceChange(e.target.value)}
-                          placeholder="e.g., 750,000"
-                          disabled={isParsing}
-                          required
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="pdfWeeklyRent">Weekly Rent ($)</Label>
-                        <Input
-                          id="pdfWeeklyRent"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="numeric"
-                          value={formatNumberWithCommas(weeklyRent)}
-                          onChange={(e) => handleWeeklyRentChange(e.target.value)}
-                          placeholder="e.g., 550"
-                          disabled={isParsing}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="pdfPropertyType">Property Type</Label>
-                        <Select value={propertyType} onValueChange={setPropertyType}>
-                          <SelectTrigger className="reports-property-select-trigger">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="reports-property-select-content bg-background z-50">
-                            <SelectItem value="house">House</SelectItem>
-                            <SelectItem value="apartment">Apartment/Unit</SelectItem>
-                            <SelectItem value="townhouse">Townhouse</SelectItem>
-                            <SelectItem value="villa">Villa</SelectItem>
-                            <SelectItem value="duplex">Duplex</SelectItem>
-                            <SelectItem value="terrace">Terrace</SelectItem>
-                            <SelectItem value="acreage">Acreage/Rural</SelectItem>
-                            <SelectItem value="land">Vacant Land</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="pdfBeds">Bedrooms</Label>
-                        <Input
-                          id="pdfBeds"
-                          className="reports-property-input"
-                          type="number"
-                          value={beds}
-                          onChange={(e) => setBeds(e.target.value)}
-                          placeholder="e.g., 3"
-                          disabled={isParsing}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="pdfBaths">Bathrooms</Label>
-                        <Input
-                          id="pdfBaths"
-                          className="reports-property-input"
-                          type="number"
-                          value={baths}
-                          onChange={(e) => setBaths(e.target.value)}
-                          placeholder="e.g., 2"
-                          disabled={isParsing}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label htmlFor="pdfCarSpaces" className="reports-property-field-label flex items-center gap-1">
-                          <Car className="h-4 w-4" />
-                          Car Spaces
-                        </Label>
-                        <Input
-                          id="pdfCarSpaces"
-                          className="reports-property-input"
-                          type="number"
-                          min="0"
-                          value={carSpaces}
-                          onChange={(e) => handleCarSpacesChange(e.target.value)}
-                          placeholder="e.g., 2"
-                          disabled={isParsing}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="pdfLandSize">Land Size (m²)</Label>
-                        <Input
-                          id="pdfLandSize"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="decimal"
-                          value={landSize}
-                          onChange={(e) => handleLandSizeChange(e.target.value)}
-                          placeholder="e.g., 450"
-                          disabled={isParsing}
-                        />
-                      </div>
-
-                      <div className="reports-property-field space-y-2">
-                        <Label className="reports-property-field-label" htmlFor="pdfBuildSize">Build Size (m²)</Label>
-                        <Input
-                          id="pdfBuildSize"
-                          className="reports-property-input"
-                          type="text"
-                          inputMode="decimal"
-                          value={buildSize}
-                          onChange={(e) => handleBuildSizeChange(e.target.value)}
-                          placeholder="e.g., 180"
-                          disabled={isParsing}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <Separator />
-
                   {/* Pre-Generation Overrides for PDF mode */}
                   <PreGenerationOverrides
                     propertyAddress={pdfParsedData?.propertyAddress || pdfFile?.name || ''}
@@ -2547,6 +2162,20 @@ export function InvestmentReportGenerator() {
                     externalBuildingInsurance={preGenData.buildingLandlordInsurance}
                     externalPropertyManagementPercent={preGenData.propertyManagementFees}
                     externalConstructionYear={preGenData.constructionYear}
+                    externalPropertyType={propertyType}
+                    onPropertyTypeChange={setPropertyType}
+                    beds={beds}
+                    onBedsChange={setBeds}
+                    baths={baths}
+                    onBathsChange={setBaths}
+                    onPurchasePriceChange={handlePropertyPriceChange}
+                    onWeeklyRentChange={handleWeeklyRentChange}
+                    onCarSpacesChange={handleCarSpacesChange}
+                    onLandSizeChange={handleLandSizeChange}
+                    onBuildSizeChange={handleBuildSizeChange}
+                    onLandPriceChange={setLandPrice}
+                    onBuildPriceChange={setBuildPrice}
+                    hideBuildTypeSelector
                   />
 
                   {/* Info for PDF mode */}

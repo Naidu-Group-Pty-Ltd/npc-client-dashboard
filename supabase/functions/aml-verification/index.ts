@@ -28,18 +28,25 @@ import {
 } from "../_shared/aml/providers/index.ts";
 import { stripImagePayloads } from "../_shared/aml/verificationEvidence.pure.ts";
 import { canonicalOutcome } from "../_shared/aml/verificationOutcome.pure.ts";
+import { DEFAULT_AML_TENANT, tenantForCase } from "../_shared/aml/caseTenant.ts";
 import {
   assessListRecency, decideProviderPromotion, decideSanctionsIngest,
   rowsToDfatEntries, withNormalisedNames,
 } from "../_shared/aml/sanctionsIngest.pure.ts";
 
-const DEFAULT_TENANT = "default";
-async function resolveTenantId(admin: any, caseId: string): Promise<string> {
-  try {
-    const { data } = await admin.schema("aml").from("cases")
-      .select("tenant_id").eq("id", caseId).maybeSingle();
-    return (data?.tenant_id as string) || DEFAULT_TENANT;
-  } catch { return DEFAULT_TENANT; }
+/*
+ * The tenant resolution lives in `_shared/aml/caseTenant.ts` now.
+ *
+ * This function still issued the failing query on every call — selecting
+ * `cases.tenant_id`, getting 42703, and falling through the `||` to the
+ * default. It worked only because it degraded; the same select twelve lines
+ * away in `hasCaseAccess` denied every caller instead, and the same select
+ * in eleven other handlers reported "Case not found" about cases that exist.
+ * A query that always fails is not a fallback, it is a fault with a cushion.
+ */
+const DEFAULT_TENANT = DEFAULT_AML_TENANT;
+async function resolveTenantId(_admin: unknown, caseId: string): Promise<string> {
+  return tenantForCase(caseId);
 }
 
 async function hasCaseAccess(

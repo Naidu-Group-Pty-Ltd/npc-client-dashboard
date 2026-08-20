@@ -62,13 +62,19 @@ export const TEMPLATE_NEUTRALITY_SHORT =
   + 'own legal, licensing, privacy and aggregator advice before use.';
 
 /**
- * Why a workflow surface is gone, for anyone who arrives on an old link.
+ * ## Removed: `WORKFLOW_RETIRED_NOTICE`
  *
- * Written for the person who bookmarked the register, not for a changelog: it
- * says what happened to the thing they were looking for and what they can do
- * now. Silence, or a 404, would read as a fault.
+ * The template desk used to open with a line explaining that issuing and
+ * executing agreements had been retired — written for whoever followed an old
+ * bookmark to the register.
+ *
+ * It is gone at the product owner's direction. The reasoning it served has an
+ * expiry: an explanation of what a page *used to be* is useful in the weeks
+ * after a change and is dead weight afterwards, and by then it is the first
+ * thing every routine visitor reads before the thing they came for. The page
+ * still explains itself — its title, and `TEMPLATE_RESOURCE_INTRO` above the
+ * cards — and the retired routes still redirect here rather than 404.
+ *
+ * Recorded rather than deleted silently so nobody re-adds it as a fix for a
+ * problem that was considered and closed.
  */
-export const WORKFLOW_RETIRED_NOTICE =
-  'Issuing and executing partner agreements through the platform has been '
-  + 'retired. The templates are still here to download and use however you and '
-  + 'your partner choose.';

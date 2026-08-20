@@ -145,6 +145,15 @@ const MAX_REGION_SHARE = 0.55;
 export interface OverlayRegion {
   /** Share of the picture the region covers. */
   share: number;
+  /**
+   * Where it sits, in the measured raster's own pixels.
+   *
+   * Carried so a CALLER can reason about the region — the overlay repair has to
+   * decide whether a flat block is a badge or a black garage door, and it
+   * cannot ask that question of a share and a colour. Nothing in this module
+   * reads it, and no threshold here is expressed in terms of it.
+   */
+  box: { left: number; top: number; right: number; bottom: number };
   /** Mean row occupancy across the rows it touches. */
   rowFill: number;
   /** Straightness of its sides. Low is rectangular. */
@@ -157,6 +166,15 @@ export interface OverlayRegion {
 export interface OverlayMeasurement {
   /** Every region that qualifies as a laid-over graphic, largest first. */
   regions: OverlayRegion[];
+  /**
+   * One byte per pixel: 1 where an ACCEPTED region sits.
+   *
+   * The sanitizer needs to know which pixels the graphic covers, and the only
+   * honest source for that is the pass that decided it was a graphic. A second
+   * implementation would be a second opinion, and the two would drift on
+   * exactly the images that matter.
+   */
+  mask: Uint8Array;
   /** Their combined share of the picture. */
   totalShare: number;
   /** The largest single one, which is what the threshold is applied to. */
@@ -173,12 +191,20 @@ export function measureFlatColourRegions(view: RasterView): OverlayMeasurement {
   const { width, height, pixels } = view;
   const count = width * height;
   if (count <= 0 || pixels.length < count * 3) {
-    return { regions: [], totalShare: 0, largestShare: 0 };
+    return { regions: [], mask: new Uint8Array(0), totalShare: 0, largestShare: 0 };
   }
 
   const label = new Int32Array(count).fill(-1);
   const regions: OverlayRegion[] = [];
   const stack: number[] = [];
+  /*
+   * Every flood gets its own id, ACCEPTED OR NOT — labelling by
+   * `regions.length` meant a rejected flood stamped its pixels with the index
+   * the next accepted region would take, so a mask built from those labels
+   * would claim pixels the detector had thrown away.
+   */
+  let fillId = 0;
+  const acceptedFills = new Set<number>();
 
   for (let seed = 0; seed < count; seed++) {
     if (label[seed] !== -1) continue;
@@ -198,7 +224,8 @@ export function measureFlatColourRegions(view: RasterView): OverlayMeasurement {
     let sumG = 0;
     let sumB = 0;
 
-    label[seed] = regions.length;
+    const currentFill = fillId++;
+    label[seed] = currentFill;
     stack.length = 0;
     stack.push(seed);
     // Per-row extents, for the straightness measure below.
@@ -238,7 +265,7 @@ export function measureFlatColourRegions(view: RasterView): OverlayMeasurement {
             + Math.abs(pixels[q + 1] - sg)
             + Math.abs(pixels[q + 2] - sb);
           if (distance > SEED_TOLERANCE) continue;
-          label[n] = regions.length;
+          label[n] = currentFill;
           stack.push(n);
         }
       }
@@ -269,8 +296,10 @@ export function measureFlatColourRegions(view: RasterView): OverlayMeasurement {
     const edgeSpread = (meanDeviation(rowLeft) + meanDeviation(rowRight)) / 2 / boxWidth;
     if (edgeSpread > MAX_EDGE_SPREAD) continue;
 
+    acceptedFills.add(currentFill);
     regions.push({
       share,
+      box: { left: minX, top: minY, right: maxX, bottom: maxY },
       rowFill,
       edgeSpread,
       chroma,
@@ -278,9 +307,16 @@ export function measureFlatColourRegions(view: RasterView): OverlayMeasurement {
     });
   }
 
+  const mask = new Uint8Array(count);
+  if (acceptedFills.size) {
+    for (let index = 0; index < count; index++) {
+      if (acceptedFills.has(label[index])) mask[index] = 1;
+    }
+  }
+
   regions.sort((a, b) => b.share - a.share);
   const totalShare = regions.reduce((sum, region) => sum + region.share, 0);
-  return { regions, totalShare, largestShare: regions[0]?.share ?? 0 };
+  return { regions, mask, totalShare, largestShare: regions[0]?.share ?? 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -595,9 +631,35 @@ export function measureFaintOverlayText(view: RasterView): TextMeasurement {
  * a mark and in nothing else, and two copies of these gates would drift into
  * two different ideas of what a word looks like.
  */
+/**
+ * Where the strict pass found lines of type, in the measured raster's pixels.
+ *
+ * ADDITIVE, AND IT MOVES NO THRESHOLD. It re-runs the same search the verdict
+ * uses and reports the boxes it already computes and then discards. The overlay
+ * repair needs them: a promotional badge is a coloured block WITH TYPE ON IT,
+ * and a black garage door is a coloured block without. Telling those apart is
+ * the difference between taking a sticker off a photograph and removing a
+ * feature of the house.
+ */
+export function overlayTextBoxes(view: RasterView): Array<{
+  left: number; top: number; right: number; bottom: number;
+}> {
+  const { width, height, pixels } = view;
+  const count = width * height;
+  if (count <= 0 || pixels.length < count * 3 || height < 16) return [];
+  const { luma, local } = lumaField(view);
+  const ink = new Uint8Array(count);
+  for (let i = 0; i < count; i++) {
+    if (Math.abs(luma[i] - local[i]) > INK_CONTRAST) ink[i] = 1;
+  }
+  return runsIn(ink, width, height, STRICT_SHAPE, true).boxes ?? [];
+}
+
 function runsIn(
-  ink: Uint8Array, width: number, height: number, shape: RunShape,
-): TextMeasurement {
+  ink: Uint8Array, width: number, height: number, shape: RunShape, keepBoxes = false,
+): TextMeasurement & { boxes?: Array<{
+  left: number; top: number; right: number; bottom: number;
+}> } {
   const count = width * height;
   const label = new Int32Array(count).fill(-1);
   const stack: number[] = [];
@@ -605,6 +667,7 @@ function runsIn(
   const maxHeight = height * MAX_TEXT_HEIGHT_SHARE;
   let tallest = 0;
   let lines = 0;
+  const boxes: Array<{ left: number; top: number; right: number; bottom: number }> = [];
 
   for (let seed = 0; seed < count; seed++) {
     if (!ink[seed] || label[seed] !== -1) continue;
@@ -656,11 +719,14 @@ function runsIn(
     if (profile.middle < shape.minMiddle) continue;
 
     lines += 1;
+    if (keepBoxes) boxes.push({ left: minX, top: minY, right: maxX, bottom: maxY });
     const share = runHeight / height;
     if (share > tallest) tallest = share;
   }
 
-  return { heightShare: tallest, lineCount: lines };
+  return keepBoxes
+    ? { heightShare: tallest, lineCount: lines, boxes }
+    : { heightShare: tallest, lineCount: lines };
 }
 
 /**

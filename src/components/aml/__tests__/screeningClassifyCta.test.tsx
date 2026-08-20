@@ -141,8 +141,16 @@ describe("7-9. authorization", () => {
 
   it("adjudication is too, and other actions keep the existing rule", () => {
     expect(canPerformScreeningAction("adjudicate_match", analyst)).toBe(false);
+    /*
+     * `record_pep` moved out of this list, because it never belonged in it:
+     * `record_pep_determination` answers a non-reviewer with 403, so an
+     * analyst was being offered the one action Stage 5 was asking for on the
+     * reported case. `screeningActionAccess.test.ts` now reads the edge
+     * function's own role guards rather than trusting a hand-kept list.
+     */
+    expect(canPerformScreeningAction("record_pep", analyst)).toBe(false);
     for (const key of [
-      "fix_provider", "run_screening", "record_pep", "enrol_subjects",
+      "fix_provider", "run_screening", "enrol_subjects",
       "screening_stalled", "escalate", "await_submission",
     ] as const) {
       expect(canPerformScreeningAction(key, analyst)).toBe(true);

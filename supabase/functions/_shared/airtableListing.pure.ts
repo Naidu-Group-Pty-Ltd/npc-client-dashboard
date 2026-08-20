@@ -31,6 +31,7 @@
 import { INTAKE_FIELDS as F } from './airtableIntakeFields.pure.ts';
 import { reconcileLocality, type LocalityTrust } from './auLocality.pure.ts';
 import {
+  imageIdentity,
   normaliseImageCandidates,
   orderCandidatesForDisplay,
   parseImageUrlList,
@@ -313,9 +314,17 @@ export function resolveListingImages(fields: Record<string, unknown>): ResolvedL
     'listing_url',
   );
 
+  // Keyed on the library's own identity rather than on the raw URL string.
+  // `Primary Image URL` is a convenience copy of the head of the list column
+  // and the comment above claims de-duplication drops it — which it only did
+  // when the two columns held byte-identical strings. A different query
+  // signature, or the same photograph at another size, and the "convenience
+  // copy" became a second candidate: the hero shot, twice, at the front of the
+  // carousel. `orderCandidatesForDisplay` below then collapses renditions on
+  // top of this, which is what catches the size case.
   const byIdentity = new Map<string, ImageCandidate>();
   for (const candidate of [...attachments, ...fromListing, ...primary]) {
-    const key = candidate.externalId ? `att:${candidate.externalId}` : candidate.url;
+    const key = imageIdentity(candidate);
     if (!byIdentity.has(key)) byIdentity.set(key, candidate);
   }
 

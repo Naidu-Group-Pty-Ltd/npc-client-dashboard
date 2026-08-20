@@ -579,7 +579,17 @@ function intakeStage(facts: AmlWorkspaceFacts): StageReading {
     outstandingItems: outstanding,
     primaryAction: settled
       ? null
-      : { key: "request", label: "Ask the client for something", section: "requests" },
+      /*
+         `actionType` matters as much as `section` here. Navigating to a
+         section the operator is ALREADY on does nothing visible, and this
+         action's own section is the one Stage 2 opens on — so the button
+         named a specific act and then, from the place it is most often
+         pressed, performed none of it.
+      */
+      : {
+        key: "request", label: "Ask the client for something",
+        section: "requests", actionType: "client_request",
+      },
     secondaryActions: [{ key: "requests", label: "Open request history", section: "requests" }],
     sourceFacts,
     unavailableFacts,
@@ -823,8 +833,9 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
   let owner: AmlJourneyOwner = "none";
 
   if (loaded(facts.screening)) {
-    const subjects = facts.screening.subjects.filter((s) => s.state !== "not_required");
-    sourceFacts.push(`party_screening_subjects (${subjects.length})`);
+    const enrolled = facts.screening.subjects;
+    const subjects = enrolled.filter((s) => s.state !== "not_required");
+    sourceFacts.push(`party_screening_subjects (${subjects.length} of ${enrolled.length} in scope)`);
     const openMatches = subjects.reduce(
       (n, s) => n + (s.matches ?? []).filter((m) => m.status === "open").length,
       0,
@@ -835,7 +846,28 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     const pending = subjects.filter((s) => ["not_started", "queued", "processing"].includes(s.state));
     const settled = subjects.filter((s) => ["completed", "false_positive"].includes(s.state));
 
-    if (subjects.length === 0) {
+    if (subjects.length === 0 && enrolled.length > 0) {
+      /*
+       * Enrolled, and nothing to screen.
+       *
+       * Every party's screening obligation was stood down by the recorded
+       * perimeter decision, so there is no screening to run. This branch used
+       * to fall through to "Screening has not been run" — an obligation
+       * reported as an unfinished task — which sat on the page beside a card
+       * correctly saying sanctions was not required, and left an operator
+       * reconciling two true statements that appeared to contradict.
+       *
+       * Not run and not owed are different facts. This one is settled.
+       */
+      screeningState = "complete";
+      screeningSummary = "No screening is required for this case.";
+      completed.push(
+        note("screening_not_required", "Screening not required under the recorded scope", "steady", {
+          detail: "No obligation arose, so nobody was screened. This is a policy decision, "
+            + "not a screening result.",
+        }),
+      );
+    } else if (subjects.length === 0) {
       screeningState = "not_started";
       screeningSummary = "No screening subjects recorded.";
       owner = "analyst";
@@ -880,6 +912,76 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     unavailableFacts.push("party screening");
   }
 
+  /*
+   * ── The PEP determination ─────────────────────────────────────────
+   * Read here because it is a Stage 5 obligation and this stage could not
+   * see it. On the reported case sanctions was stood down and the PEP
+   * determination was the ONLY thing outstanding — so the stage reported
+   * "screening has not been run", named no owner for the real work, and the
+   * one item holding Stage 5 open appeared nowhere in the rail.
+   *
+   * Established by a recorded determination per party. Absent is outstanding.
+   */
+  let pepState: AmlEvidenceState = "unknown";
+  if (loaded(facts.screening)) {
+    const enrolled = facts.screening.subjects;
+    /*
+     * Three answers, not two.
+     *
+     *   false      no determination is owed — excluded from the stage
+     *   true       owed, so the determinations decide the state
+     *   unread     `unknown`, which fails closed for stage completion
+     *              WITHOUT inventing an outstanding item or claiming an
+     *              owner. Reporting unread work as outstanding work is its
+     *              own kind of lie, and it would fire on every case whose
+     *              scope read has not landed yet.
+     */
+    const pepOwed = facts.screening.pepRequired;
+    if (pepOwed === false) {
+      pepState = "not_applicable";
+    } else if (pepOwed !== true) {
+      pepState = "unknown";
+      unavailableFacts.push("PEP scope decision");
+    } else {
+      const undetermined = enrolled.filter((s) => !s.pep_determination?.result);
+      if (enrolled.length === 0) {
+        // Nobody enrolled cannot mean everybody determined.
+        pepState = "not_started";
+        blockers.push(note("pep_no_parties", "PEP determination outstanding", "attention", {
+          detail: "No party is enrolled yet, so no determination can have been made.",
+        }));
+        if (owner === "none") owner = "analyst";
+      } else if (undetermined.length > 0) {
+        pepState = "not_started";
+        /*
+         * A BLOCKER, not a waiting item.
+         *
+         * It was `outstanding`/`waiting`, which reads as "somebody else is
+         * working on it" — so the stage never set `blocking`, the rail let a
+         * LATER stage claim the journey position, and the Attention panel
+         * could say "nothing on this case is unresolved" while Stage 5
+         * plainly had a required determination with no record against it.
+         * Nobody is working on it; it is owed, and it holds the stage.
+         */
+        blockers.push(
+          note("pep_outstanding",
+            `PEP determination outstanding for ${undetermined.length} part${undetermined.length === 1 ? "y" : "ies"}`,
+            "attention", {
+              detail: "Recorded by a reviewer or the MLRO with the sources checked and a "
+                + "rationale. A client declaration is evidence that supports it; it is "
+                + "never the determination itself.",
+            }),
+        );
+        // Only when nothing more urgent already owns the stage. A candidate
+        // awaiting adjudication outranks an outstanding determination.
+        if (owner === "none") owner = "reviewer";
+      } else {
+        pepState = "complete";
+        completed.push(note("pep_done", "PEP determination recorded for every party", "steady"));
+      }
+    }
+  }
+
   // ── Ownership & control. Individual customers genuinely have none — that
   //    is a property of the case, not an unfinished task.
   const subjectType = facts.caseRow.subject_type;
@@ -916,7 +1018,11 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
     unavailableFacts.push("linked entities");
   }
 
-  const states: AmlEvidenceState[] = [screeningState, ownershipState].filter(
+  // Whether the PEP determination is the thing actually holding this stage.
+  const pepIsTheWork = blockers.some((b) => b.key.startsWith("pep_"))
+    && !blockers.some((b) => ["confirmed", "possible", "no_subjects"].includes(b.key));
+
+  const states: AmlEvidenceState[] = [screeningState, pepState, ownershipState].filter(
     (s) => s !== "not_applicable",
   );
   const status: AmlEvidenceState = states.includes("attention")
@@ -932,10 +1038,15 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
   return {
     status,
     owner: status === "complete" ? "none" : owner,
-    summary:
-      ownershipState === "not_applicable"
-        ? screeningSummary
-        : `${screeningSummary} Ownership: ${EVIDENCE_STATE_LABELS[ownershipState].toLowerCase()}.`,
+    summary: [
+      screeningSummary,
+      pepState === "not_applicable" ? null
+        : pepState === "complete" ? "PEP determined."
+          : pepState === "not_started" ? "PEP determination outstanding."
+            : null,
+      ownershipState === "not_applicable" ? null
+        : `Ownership: ${EVIDENCE_STATE_LABELS[ownershipState].toLowerCase()}.`,
+    ].filter(Boolean).join(" "),
     blockers,
     warnings,
     completedItems: completed,
@@ -947,9 +1058,17 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
             key: "screening",
             label: blockers.some((b) => b.key === "confirmed" || b.key === "possible")
               ? "Adjudicate screening"
-              : "Open screening & ownership",
+              // Name the actual work. "Open screening & ownership" on a case
+              // whose only outstanding item is a PEP determination tells an
+              // operator where to click and nothing about what to do there.
+              : pepIsTheWork
+                ? "Record PEP determination"
+                : "Open screening & ownership",
             section: "ownership",
-            actionType: "screening_adjudication",
+            // Naming the act is only half of it — the workspace opens the
+            // determination dialog for this type rather than navigating to a
+            // section the operator is usually already looking at.
+            actionType: pepIsTheWork ? "record_pep" : "screening_adjudication",
           },
     sourceFacts,
     unavailableFacts,
@@ -1588,9 +1707,55 @@ const STAGE_READERS: Record<AmlJourneyStageId, (facts: AmlWorkspaceFacts) => Sta
  * stage reached" — a case whose Passport is issued but whose documents were
  * never accepted has a real problem at stage 3, and the rail should say so.
  */
+/** Statuses that represent real, readable, outstanding work. */
+const WORKING_STATES: ReadonlyArray<AmlEvidenceState> = [
+  "attention", "in_progress", "not_started",
+];
+
 function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
-  const blocking = stages.find((s) => s.blocking && s.applicable);
+  /*
+   * THE SEQUENCE DECIDES, and it decides first.
+   *
+   * This used to scan every stage for `blocking` before considering order,
+   * so a LATER blocking stage outranked an EARLIER stage that merely had
+   * outstanding work. Measured on the reopened case: Stage 5 held a required
+   * PEP determination with no record (`not_started`, no blocker) while Stage
+   * 7 had a submission to review (`attention`, blocking) — and the journey
+   * reported "6 of 10" and then "Go to stage 7", stepping straight over a
+   * requirement that genuinely holds Stage 5.
+   *
+   * The stages are sequential. A case cannot be AT stage 7 while stage 5 is
+   * unfinished, whatever the relative urgency, so the first applicable stage
+   * with real outstanding work wins.
+   *
+   * `unknown` is deliberately not "work". It means the fact could not be
+   * read, and parking the whole journey on a failed read would be noise —
+   * `unavailableFacts` already reports it honestly. It is still not
+   * `complete`, so the fallback below catches it once nothing is outstanding.
+   */
+  /*
+   * A stage that is BLOCKING outranks one that is merely unfinished, and the
+   * earliest blocking stage wins. Both halves matter:
+   *
+   *   without "blocking first", a stage waiting on the CLIENT (intake, still
+   *   in progress) claimed the position ahead of a determination the MLRO
+   *   actually owed at stage 5 — measured in production, the rail read
+   *   "2 of 10 · Client intake" while Stage 5 held the only actionable work;
+   *
+   *   without "earliest", a later blocking stage claimed it instead — which
+   *   is how "6 of 10" and "Go to stage 7" appeared over the same blocker.
+   */
+  const blocking = stages.find((s) => s.applicable && s.blocking);
   if (blocking) return blocking.id;
+
+  const working = stages.find(
+    (s) => s.applicable && WORKING_STATES.includes(s.status),
+  );
+  if (working) return working.id;
+
+  // Nothing is outstanding: rest on the first stage that is merely unread,
+  // and on the last stage only when every applicable one is settled. This is
+  // the behaviour the original second rule had.
   const open = stages.find(
     (s) => s.applicable && s.status !== "complete" && s.status !== "not_applicable",
   );
@@ -1613,7 +1778,22 @@ function currentStage(stages: AmlJourneyStage[]): AmlJourneyStageId {
  * conditions. This is the journey saying the same thing.
  */
 function isFinished(facts: AmlWorkspaceFacts): boolean {
-  return caseStage(facts.caseRow) === "closed" || serviceGateStatus(facts.caseRow) === "terminated";
+  /*
+   * The LIFECYCLE decides this, and the service gate does not.
+   *
+   * `|| terminated` was added for `AML-2026-00002`, which is closed AND
+   * terminated — but the two are different facts and only one of them means
+   * the work is over. A terminated gate says the customer may not be SERVED;
+   * it says nothing about whether the case is being worked.
+   *
+   * Reopening is exactly the state where they diverge: it restores the
+   * ability to work the case and deliberately leaves the gate terminated. So
+   * the reopened case reported "10 of 10 · Partners & ongoing CDD", rested on
+   * the retention end of the journey, silenced Stage 5's outstanding PEP
+   * determination, and told the operator "Case closed" — which made reopening
+   * a no-op in every surface that mattered.
+   */
+  return caseStage(facts.caseRow) === "closed";
 }
 
 export function deriveAmlJourney(facts: AmlWorkspaceFacts): AmlJourney {

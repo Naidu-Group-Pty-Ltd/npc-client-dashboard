@@ -30,6 +30,15 @@ describe('looksLikeChromeUrl — the images that reached production', () => {
     'https://i1.au.reastatic.net/420x280',
     // Rex CRM agent portrait. The old `profile-` hint missed the underscore.
     'https://au-crm.cdns.rexsoftware.com/app/livestore/accounts/289/account_users/15034/profile_image/Doug_100c',
+    /* -- Found by looking at what the marketplace was actually leading with -- */
+    // An agent's headshot, base64-encoded by an image CDN so no hint could see
+    // it. Six of one listing's twelve "photographs" were three agents' faces.
+    'https://d1x91xybjdkplh.cloudfront.net/eyJidWNrZXQiOiAiamVsbGlzLWNyYWlnLWJ1Y2tldCIsImtleSI6ICJQcm9maWxlRmFjZS9BbmRyZXctVHVybGV5LmpwZyIsImVkaXRzIjogeyJ3ZWJwIjogeyJxdWFsaXR5IjogODB9LCJyZXNpemUiOiB7IndpZHRoIjogMTUwLCJoZWlnaHQiOiAxNTAsImZpdCI6ICJjb3ZlciJ9LCJzaGFycGVuIjogdHJ1ZX19',
+    // A staff portrait the pixels correctly call a photograph. It was promoted
+    // into a hero slot when floor-plan demotion cleared the way.
+    'https://shore-property.com.au/wp-content/uploads/2022/08/team-scott-colour.jpg',
+    // Stock photography: somebody else's picture of somewhere else.
+    'https://shore-property.com.au/wp-content/uploads/2022/01/john-fornander-y3_AHHrxUBY-unsplash-1.jpg',
   ])('rejects %s', (url) => {
     expect(looksLikeChromeUrl(url)).toBe(true);
   });
@@ -57,6 +66,9 @@ describe('looksLikeChromeUrl — must not eat real photographs', () => {
     'https://cdn.agency.test/listings/40-landsborough-avenue.jpg',
     'https://cdn.agency.test/listings/3-bathurst-street.jpg',
     'https://cdn.agency.test/listings/22-planter-close.jpg',
+    // `/team-` is anchored to a path segment, so a street that merely contains
+    // the letters is untouched.
+    'https://cdn.agency.test/listings/12-teamsters-road-front.jpg',
     'https://cdn.agency.test/listings/5-mapleton-drive.jpg',
     'https://cdn.agency.test/listings/master-bedroom-view.jpg',
     'https://cdn.agency.test/listings/ensuite-bathroom.jpg',

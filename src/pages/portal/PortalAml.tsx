@@ -42,6 +42,12 @@ import { stepHoldsSubmission, type SubmissionBlocker } from '@/lib/aml/portalJou
 import {
   PURCHASING_STRUCTURE_TYPES, collectsEntityFields, prunePurchasingStructure,
 } from '@/lib/aml/purchasingStructure';
+// The political-exposure declaration: which detail questions a "yes" carries,
+// and the pruning that stops a corrected answer leaving its detail behind.
+import {
+  PEP_DECLARATION_RELATIONSHIPS, PEP_RELATIONSHIP_LABEL,
+  collectsPepDetail, prunePepDeclaration,
+} from '@/lib/aml/pepDeclaration';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -975,7 +981,9 @@ function QuestionnaireStep({
       <CardContent className="space-y-4">
         {loading ? <Skeleton className="h-40" /> : (
           <>
-            {section === 'personal_details' && <PersonalDetailsForm value={form} set={set} />}
+            {section === 'personal_details' && (
+              <PersonalDetailsForm value={form} set={set} update={update} />
+            )}
             {section === 'purchasing_structure' && (
               <PurchasingStructureForm value={form} set={set} update={update} />
             )}
@@ -1172,7 +1180,105 @@ function SanctionsScreeningForm({
   );
 }
 
-function PersonalDetailsForm({ value, set }: { value: any; set: (k: string, v: any) => void }) {
+/**
+ * The political-exposure question, asked so that the answer is worth having.
+ *
+ * It used to be two radio buttons under the words "Are you a Politically
+ * Exposed Person (PEP)?" and nothing else. A customer who has never met the
+ * term answers "no" to a phrase they do not know, and the answer reaches the
+ * command centre looking like evidence while carrying almost none — the
+ * definition covers immediate FAMILY MEMBERS and CLOSE ASSOCIATES, which is
+ * exactly what a bare "are you a PEP?" never asks about.
+ *
+ * A "yes" was no better: no office, no country, no relationship, so the MLRO
+ * had to go back to the customer for what should have been asked once.
+ *
+ * The stored answer is still `pep: 'yes' | 'no'`, so nothing about the
+ * screening policy that reads it changes. The detail travels beside it.
+ */
+function PepDeclarationFields({ value, set, update }: {
+  value: any;
+  set: (k: string, v: any) => void;
+  update: (fn: (prev: any) => any) => void;
+}) {
+  return (
+    <div className="md:col-span-2 rounded-md border border-border/60 p-4">
+      <Field
+        label="Does anyone connected to this purchase hold, or has anyone held, a prominent public position?"
+        required
+      >
+        <p className="mb-2 text-xs text-muted-foreground">
+          This covers a senior role in government, the judiciary, the military, a
+          state-owned enterprise, a political party or an international organisation —
+          in Australia or anywhere else. It applies if the position is held by{" "}
+          <span className="font-medium text-foreground">you</span>, by an{" "}
+          <span className="font-medium text-foreground">immediate family member</span>{" "}
+          (spouse or partner, parent, child, sibling, or their spouse), or by a{" "}
+          <span className="font-medium text-foreground">close business or personal
+          associate</span>. Answering yes is not a problem and does not affect your
+          purchase — it means we ask a few more questions, which the law requires us
+          to ask.
+        </p>
+        <RadioGroup
+          value={value.pep ?? ''}
+          /*
+           * Pruned in the same state write that changes the answer. A field
+           * nobody can see is still a field that saves: without this, a
+           * customer who answered yes, filled in an office and then corrected
+           * themselves to no would have left that office in the payload, in
+           * the snapshot, and in front of the MLRO.
+           */
+          onValueChange={v => update(prev => prunePepDeclaration({ ...prev, pep: v }))}
+          className="flex gap-4"
+        >
+          <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> No</label>
+          <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="yes" /> Yes</label>
+        </RadioGroup>
+      </Field>
+
+      {collectsPepDetail(value.pep) && (
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <Field label="Who holds the position?" required>
+            <RadioGroup
+              value={value.pep_relationship ?? ''}
+              onValueChange={v => set('pep_relationship', v)}
+              className="grid gap-2"
+            >
+              {PEP_DECLARATION_RELATIONSHIPS.map(r => (
+                <label key={r} className="flex items-start gap-2 text-sm">
+                  <RadioGroupItem value={r} className="mt-0.5" />
+                  <span>{PEP_RELATIONSHIP_LABEL[r]}</span>
+                </label>
+              ))}
+            </RadioGroup>
+          </Field>
+          <div className="grid gap-4">
+            <Field label="What is the position or office?" required>
+              <Input
+                value={value.pep_role ?? ''}
+                onChange={e => set('pep_role', e.target.value)}
+                placeholder="e.g. Member of Parliament · Judge · Head of a state-owned utility"
+              />
+            </Field>
+            <Field label="In which country or jurisdiction?" required>
+              <Input
+                value={value.pep_country ?? ''}
+                onChange={e => set('pep_country', e.target.value)}
+                placeholder="e.g. Australia"
+              />
+            </Field>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PersonalDetailsForm({ value, set, update }: {
+  value: any;
+  set: (k: string, v: any) => void;
+  update: (fn: (prev: any) => any) => void;
+}) {
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <Field label="Legal full name" required>
@@ -1193,13 +1299,8 @@ function PersonalDetailsForm({ value, set }: { value: any; set: (k: string, v: a
       <Field label="Occupation & employer" required>
         <Textarea rows={2} value={value.occupation ?? ''} onChange={e => set('occupation', e.target.value)} />
       </Field>
+      <PepDeclarationFields value={value} set={set} update={update} />
       <div className="md:col-span-2 grid md:grid-cols-2 gap-4">
-        <Field label="Are you a Politically Exposed Person (PEP)?" required>
-          <RadioGroup value={value.pep ?? ''} onValueChange={v => set('pep', v)} className="flex gap-4">
-            <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> No</label>
-            <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="yes" /> Yes</label>
-          </RadioGroup>
-        </Field>
         <Field label="Any adverse media or sanctions concerns?" required>
           <RadioGroup value={value.adverse ?? ''} onValueChange={v => set('adverse', v)} className="flex gap-4">
             <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> No</label>

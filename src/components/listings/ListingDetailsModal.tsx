@@ -17,7 +17,7 @@ import { PropertyListing } from '@/lib/airtable';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
-import { useOrderedImages } from '@/hooks/useOrderedImages';
+import { useListingGallery } from '@/hooks/useListingGallery';
 
 interface ListingDetailsModalProps {
   listing: PropertyListing | null;
@@ -49,7 +49,7 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
   const { searchingId } = useAutoFindPhotos(galleryInput, galleryByListing, galleryResolving, refreshGallery);
   const isSearching = listing !== null && searchingId === listing.id;
   // Photographs lead, floor plans trail — the same order the hero draws.
-  const { images: galleryImages } = useOrderedImages(
+  const { images: galleryImages } = useListingGallery(
     listing ? galleryByListing[listing.id] : undefined,
   );
 

@@ -40,6 +40,13 @@ import {
   isPlausiblePhotographSize,
   looksLikeChromeUrl,
 } from '../_shared/listingImageChrome.pure.ts';
+import { canonicalAssetKey } from '../_shared/listingImageAsset.pure.ts';
+import { analyseImageBytes } from '../_shared/listingImageAnalyse.ts';
+import type { VisualAnalysis } from '../_shared/listingImageAnalyse.ts';
+import {
+  partitionListingImageCopies,
+  selectListingGallery,
+} from '../_shared/listingImageSelection.pure.ts';
 import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
 
 /**
@@ -101,6 +108,19 @@ const MAX_HARVESTS_PER_SWEEP = 40;
 /** How long a handed-out signed URL stays valid. */
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
+/*
+ * How much wall clock one request may spend looking at pixels.
+ *
+ * A full decode costs ~116 ms of CPU and an Edge Function's allowance is
+ * measured in seconds, so this is a budget rather than a count: the loop stops
+ * when it is spent and the `analyse` sweep picks up whatever is left. Tunable
+ * because the right number depends on the plan's CPU limit, which this code
+ * cannot read.
+ */
+const ANALYSIS_BUDGET_MS = Number(Deno.env.get('LISTING_IMAGE_ANALYSIS_BUDGET_MS') ?? 1_200);
+/** Images the `analyse` sweep claims per invocation, before the budget bites. */
+const MAX_ANALYSED_PER_SWEEP = Number(Deno.env.get('LISTING_IMAGE_ANALYSIS_BATCH') ?? 40);
+
 const ALLOWED_CONTENT_TYPES = new Set([
   'image/jpeg',
   'image/pjpeg',
@@ -141,6 +161,81 @@ function imageAgeAnchor(capturedAt: unknown, listedAt: unknown): number | null {
   return epochMs(capturedAt) ?? epochMs(listedAt);
 }
 
+/**
+ * A wall-clock allowance for looking at pixels, carried through one request.
+ *
+ * Deliberately an object threaded through the call rather than module state: an
+ * Edge Function isolate serves many requests, and a budget that leaked between
+ * them would let one request starve the next.
+ */
+interface AnalysisBudget {
+  until: number;
+}
+
+function newAnalysisBudget(ms: number = ANALYSIS_BUDGET_MS): AnalysisBudget {
+  return { until: Date.now() + Math.max(0, ms) };
+}
+
+function hasBudget(budget: AnalysisBudget | null | undefined): boolean {
+  return Boolean(budget) && Date.now() < budget!.until;
+}
+
+/**
+ * The visual verdict as database columns.
+ *
+ * Returns `{}` — not nulls — when there is no verdict, so a row that has been
+ * analysed before is never blanked by a pass that could not analyse it again.
+ */
+function visualColumns(analysis: VisualAnalysis | null): Record<string, unknown> {
+  if (!analysis) return {};
+  return {
+    visual_kind: analysis.kind,
+    visual_signature: analysis.signature,
+    visual_white: analysis.features.white,
+    visual_colour: analysis.features.colour,
+    visual_palette: analysis.features.palette,
+    visual_edge: analysis.features.edge,
+    visual_analysed_at: new Date().toISOString(),
+    width: analysis.width,
+    height: analysis.height,
+  };
+}
+
+/**
+ * Writes a visual verdict, tolerating a database where the columns do not exist.
+ *
+ * The analysis migration is dispatched by hand in this project, so a deploy can
+ * legitimately land first. Rather than 500 on every harvest until somebody
+ * notices, the write is attempted and a schema error is swallowed once per
+ * process — the ordering simply falls back to what it did before, which is the
+ * behaviour this whole module is built around.
+ */
+let visualColumnsMissing = false;
+
+/** A Postgres/PostgREST complaint that means "those columns are not there yet". */
+function isMissingVisualColumn(error: { message?: string } | null): boolean {
+  const message = error?.message ?? '';
+  return /column .* does not exist|schema cache|visual_/i.test(message);
+}
+
+async function writeVisual(
+  supabase: ListingImagesClient,
+  listingId: string,
+  identity: string,
+  analysis: VisualAnalysis | null,
+): Promise<void> {
+  if (!analysis || visualColumnsMissing) return;
+  const { error } = await supabase
+    .from('listing_images')
+    .update(visualColumns(analysis))
+    .eq('listing_id', listingId)
+    .eq('image_identity', identity);
+  if (error && isMissingVisualColumn(error)) {
+    console.warn('[listing-images] visual columns absent; run the analysis migration');
+    visualColumnsMissing = true;
+  }
+}
+
 interface StoredImageRow {
   listing_id: string;
   image_identity: string;
@@ -150,6 +245,13 @@ interface StoredImageRow {
   status: string;
   width: number | null;
   height: number | null;
+  bytes: number | null;
+  checksum: string | null;
+  /** The URL the bytes came from. What the de-duplication reasons about. */
+  source_url: string | null;
+  /** Present once the analysis migration has been applied and the sweep has run. */
+  visual_kind?: string | null;
+  visual_signature?: string | null;
 }
 
 const dnsResolver = async (hostname: string, recordType: 'A' | 'AAAA'): Promise<string[]> => {
@@ -293,6 +395,7 @@ async function harvestListing(
   candidates: ImageCandidate[],
   listedAt: number | null,
   reconcile: Reconciliation = 'additive',
+  budget: AnalysisBudget | null = null,
 ): Promise<HarvestOutcome> {
   const capped = candidates.slice(0, MAX_IMAGES_PER_LISTING);
   const fingerprint = imageSetFingerprint(capped);
@@ -300,12 +403,14 @@ async function harvestListing(
 
   const { data: existingRows } = await supabase
     .from('listing_images')
-    .select('image_identity, checksum, status, storage_path, origin, position')
+    .select('image_identity, checksum, status, storage_path, origin, position, source_url')
     .eq('listing_id', listingId);
 
   const existing = new Map<string, HeldImage>();
   /** checksum -> the row already holding those exact bytes. */
   const byChecksum = new Map<string, { identity: string; storagePath: string }>();
+  /** asset key -> the row already holding some rendition of that photograph. */
+  const byAsset = new Map<string, { identity: string; storagePath: string }>();
   for (const row of (existingRows ?? []) as Array<{
     image_identity: string;
     checksum: string | null;
@@ -313,6 +418,7 @@ async function harvestListing(
     origin: string | null;
     position: number | null;
     storage_path: string | null;
+    source_url: string | null;
   }>) {
     existing.set(row.image_identity, {
       checksum: row.checksum,
@@ -325,6 +431,12 @@ async function harvestListing(
       // that survives re-signing rather than a fresh row each pass.
       if (!byChecksum.has(row.checksum)) {
         byChecksum.set(row.checksum, { identity: row.image_identity, storagePath: row.storage_path });
+      }
+      if (row.source_url) {
+        const asset = canonicalAssetKey(row.source_url);
+        if (!byAsset.has(asset)) {
+          byAsset.set(asset, { identity: row.image_identity, storagePath: row.storage_path });
+        }
       }
     }
   }
@@ -379,6 +491,35 @@ async function harvestListing(
       continue;
     }
 
+    /*
+     * The same photograph, offered at a different size.
+     *
+     * The checksum test below settles this too, but only after the bytes have
+     * been downloaded — and an agency that emits three renditions of every shot
+     * makes that three fetches a pass, every pass, forever. The asset key reads
+     * it off the URL, so a rendition of something already held costs nothing
+     * and files no second row. `listingImageAsset.pure.ts` records the four
+     * URL shapes this covers and why the key is only ever compared inside one
+     * listing.
+     */
+    const sibling = byAsset.get(canonicalAssetKey(candidate.url));
+    if (sibling && sibling.identity !== identity) {
+      seen.add(sibling.identity);
+      await supabase
+        .from('listing_images')
+        .update({
+          status: 'stored',
+          position,
+          last_verified_at: new Date(now).toISOString(),
+          error_count: 0,
+          last_error: null,
+        })
+        .eq('listing_id', listingId)
+        .eq('image_identity', sibling.identity);
+      stored += 1;
+      continue;
+    }
+
     const fetched = await fetchImageBytes(candidate);
     if ('error' in fetched) {
       failed += 1;
@@ -416,6 +557,9 @@ async function harvestListing(
     const twin = byChecksum.get(checksum);
     if (twin && twin.identity !== identity) {
       seen.add(twin.identity);
+      // Now that the bytes have named their twin, the URL that carried them is
+      // another way to reach it — so the next pass settles this for free.
+      byAsset.set(canonicalAssetKey(candidate.url), twin);
       await supabase
         .from('listing_images')
         .update({
@@ -432,6 +576,18 @@ async function harvestListing(
       continue;
     }
 
+    /*
+     * Look at it while the bytes are in hand.
+     *
+     * This is the only moment the server ever holds the decoded image for free,
+     * and the verdict is what stops a floor plan leading a card — six of
+     * sixteen sampled listings led with one, and five of those six are served
+     * from opaque Google Drive ids that no URL rule can read. Budgeted, because
+     * a decode is ~116 ms of CPU and an Edge Function has seconds; whatever
+     * this pass cannot afford is picked up by `op: 'analyse'`.
+     */
+    const visual = hasBudget(budget) ? await analyseImageBytes(fetched.bytes) : null;
+
     const path = await storagePathFor(listingId, identity, fetched.contentType);
 
     const { error: uploadError } = await supabase.storage
@@ -444,26 +600,49 @@ async function harvestListing(
       continue;
     }
 
-    const { error: rowError } = await supabase.from('listing_images').upsert(
-      {
-        listing_id: listingId,
-        image_identity: identity,
-        storage_path: path,
-        origin: candidate.origin,
-        position,
-        status: 'stored',
-        content_type: fetched.contentType,
-        bytes: fetched.bytes.byteLength,
-        width: candidate.width ?? null,
-        height: candidate.height ?? null,
-        checksum,
-        source_url: candidate.url.slice(0, 2048),
-        last_verified_at: new Date(now).toISOString(),
-        error_count: 0,
-        last_error: null,
-      },
-      { onConflict: 'listing_id,image_identity' },
-    );
+    const baseRow = {
+      listing_id: listingId,
+      image_identity: identity,
+      storage_path: path,
+      origin: candidate.origin,
+      position,
+      status: 'stored',
+      content_type: fetched.contentType,
+      bytes: fetched.bytes.byteLength,
+      width: candidate.width ?? visual?.width ?? null,
+      height: candidate.height ?? visual?.height ?? null,
+      checksum,
+      source_url: candidate.url.slice(0, 2048),
+      last_verified_at: new Date(now).toISOString(),
+      error_count: 0,
+      last_error: null,
+    };
+
+    let rowError = (
+      await supabase
+        .from('listing_images')
+        .upsert(
+          { ...baseRow, ...(visualColumnsMissing ? {} : visualColumns(visual)) },
+          { onConflict: 'listing_id,image_identity' },
+        )
+    ).error;
+
+    if (rowError && !visualColumnsMissing && isMissingVisualColumn(rowError)) {
+      /*
+       * The analysis migration has not been dispatched yet.
+       *
+       * Storing the photograph is the part that matters and it must not depend
+       * on the verdict, so the row is written again without it. Said once per
+       * process, then the flag keeps every later write on the plain path.
+       */
+      console.warn('[listing-images] visual columns absent; run the analysis migration');
+      visualColumnsMissing = true;
+      rowError = (
+        await supabase
+          .from('listing_images')
+          .upsert(baseRow, { onConflict: 'listing_id,image_identity' })
+      ).error;
+    }
 
     if (rowError) {
       failed += 1;
@@ -471,6 +650,7 @@ async function harvestListing(
       continue;
     }
     byChecksum.set(checksum, { identity, storagePath: path });
+    byAsset.set(canonicalAssetKey(candidate.url), { identity, storagePath: path });
     stored += 1;
   }
 
@@ -502,7 +682,16 @@ async function harvestListing(
     }
   }
 
-  const total = stored + carried;
+  /*
+   * Housekeeping, last: retire rows that are a second copy of a photograph
+   * this listing already holds. Counted from what actually survives rather
+   * than by subtraction — `stored` and `carried` overlap once a re-signed URL
+   * has been adopted onto a row that was also carried over, and a set whose
+   * count disagrees with its rows is how this became invisible the first time.
+   */
+  const remaining = await retireRedundantCopies(supabase, listingId, now);
+
+  const total = remaining ?? stored + carried;
   const errorCount = total === 0 && failed > 0 ? 1 : 0;
   await supabase.from('listing_image_sets').upsert(
     {
@@ -518,7 +707,7 @@ async function harvestListing(
        * to be the source of record, so it leaves the key alone.
        */
       ...(reconcile === 'full' ? { fingerprint } : {}),
-      image_count: capped.length + carried,
+      image_count: Math.max(total, capped.length),
       stored_count: total,
       listed_at: listedAt ? new Date(listedAt).toISOString() : null,
       last_harvested_at: new Date(now).toISOString(),
@@ -533,7 +722,81 @@ async function harvestListing(
 }
 
 /**
- * The identities already held as `stored`, per listing.
+ * Retires stored rows that are a second copy of a photograph this listing
+ * already holds — the library healing itself, one listing at a time.
+ *
+ * The table accumulates copies faster than any one fix removes them, and the
+ * ones filed before a fix shipped never leave on their own. On 2026-08-19 that
+ * was 240 rows across 56 listings, one of them 35 rows of four pictures. A
+ * one-off repair migration would clear that set and not the next one — the
+ * previous attempt at this class was written, merged, and is still sitting in
+ * `supabase/migrations/` undispatched, which is exactly why the marketplace was
+ * still showing them.
+ *
+ * **This is not the retirement `listingImageReconcile.pure.ts` guards.** That
+ * one asserts "the source no longer offers this photograph", which a caller
+ * holding a partial view must never claim — under-retire and a card shows a
+ * stale photo, over-retire and it goes blank. This asserts only "the same
+ * photograph is stored under another row that is being kept", which is checked
+ * against the rows themselves and cannot be wrong about a gallery's size: every
+ * row it retires has a surviving twin by construction. So it runs on every
+ * harvest, in both reconciliation modes.
+ *
+ * Marked `gone`, never deleted: a report rendered last quarter may still
+ * reference the copy. Storage is shared by content, so nothing is orphaned.
+ *
+ * Returns how many photographs the listing is left holding, or `null` when the
+ * read failed and it therefore knows nothing.
+ */
+async function retireRedundantCopies(
+  supabase: ListingImagesClient,
+  listingId: string,
+  now: number,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from('listing_images')
+    .select('image_identity, checksum, position, bytes, source_url')
+    .eq('listing_id', listingId)
+    .eq('status', 'stored')
+    .order('position', { ascending: true });
+
+  // A read that failed says nothing about the set. Answering 0 would write that
+  // nothing is stored, which is the shape of the bug this whole module keeps
+  // guarding against; the caller falls back to its own count instead.
+  if (error) return null;
+
+  const rows = (data ?? []) as Array<{
+    image_identity: string;
+    checksum: string | null;
+    position: number | null;
+    bytes: number | null;
+    source_url: string | null;
+  }>;
+  if (rows.length < 2) return rows.length;
+
+  const { kept, redundant } = partitionListingImageCopies(
+    rows.map((row) => ({
+      url: row.source_url ?? row.image_identity,
+      checksum: row.checksum,
+      position: row.position,
+      bytes: row.bytes,
+      identity: row.image_identity,
+    })),
+  );
+  if (redundant.length === 0) return kept.length;
+
+  await supabase
+    .from('listing_images')
+    .update({ status: 'gone', last_verified_at: new Date(now).toISOString() })
+    .eq('listing_id', listingId)
+    .in('image_identity', redundant.map((entry) => entry.identity));
+
+  return kept.length;
+}
+
+/**
+ * What each listing already holds as `stored`: every row's identity, and every
+ * row's asset key.
  *
  * This replaces a fingerprint comparison as the "is there anything to do" test.
  * `listing_image_sets.fingerprint` cannot answer it once more than one source
@@ -542,6 +805,10 @@ async function harvestListing(
  * everything changed and re-harvests on every page load. Asking which
  * identities are stored is exact, indexed on `listing_id`, and one query for
  * the whole batch.
+ *
+ * Both keys go in the same set because `isHarvestDue` asks whether a
+ * *photograph* is missing, not whether a URL is — see its header for what
+ * asking the narrower question costs.
  */
 async function storedIdentities(
   supabase: ListingImagesClient,
@@ -551,18 +818,99 @@ async function storedIdentities(
   if (listingIds.length === 0) return out;
   const { data } = await supabase
     .from('listing_images')
-    .select('listing_id, image_identity')
+    .select('listing_id, image_identity, source_url')
     .in('listing_id', listingIds)
     .eq('status', 'stored');
-  for (const row of (data ?? []) as Array<{ listing_id: string; image_identity: string }>) {
-    (out.get(row.listing_id) ?? out.set(row.listing_id, new Set()).get(row.listing_id)!).add(
-      row.image_identity,
-    );
+  for (const row of (data ?? []) as Array<{
+    listing_id: string;
+    image_identity: string;
+    source_url: string | null;
+  }>) {
+    const held =
+      out.get(row.listing_id) ?? out.set(row.listing_id, new Set()).get(row.listing_id)!;
+    held.add(row.image_identity);
+    // An identity is `att:…` or `url:…`; an asset key is `host/…`. They cannot
+    // collide, so one set carries both.
+    if (row.source_url) held.add(canonicalAssetKey(row.source_url));
   }
   return out;
 }
 
-/** Signs every stored image for the requested listings. */
+/**
+ * How many DIFFERENT listings hold each of these photographs.
+ *
+ * The one question no single image can answer, and the only thing that catches
+ * a *genuine* photograph in the wrong place. Measured on 2026-08-19: 3,035 of
+ * 4,841 stored rows carry a photograph at least one other listing also holds,
+ * and **279 of 471 listings lead with one** — a stock interior render was the
+ * hero on 17, an agency banner strip sat on 20.
+ *
+ * Answered by `public.listing_image_reuse`, a grouped aggregate over the whole
+ * table, because the alternative is shipping every checksum in a query string.
+ * A deployment without the function — the migration is dispatched by hand —
+ * gets an empty map, which the selector reads as "no evidence" and ignores.
+ *
+ * Keyed `listingId:imageIdentity`, because the same photograph can legitimately
+ * sit on two listings and each needs its own answer.
+ */
+let reuseFunctionMissing = false;
+
+async function listingImageReuse(
+  supabase: ListingImagesClient,
+  listingIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (listingIds.length === 0 || reuseFunctionMissing) return out;
+
+  const { data, error } = await supabase.rpc('listing_image_reuse', {
+    p_listing_ids: listingIds,
+  });
+
+  if (error) {
+    // `PGRST202` is "no function matches"; anything else is worth one warning
+    // too, because losing this signal silently is how the marketplace came to
+    // show one render on seventeen cards in the first place.
+    console.warn('[listing-images] reuse unavailable', { code: error.code });
+    reuseFunctionMissing = true;
+    return out;
+  }
+
+  for (const row of (data ?? []) as Array<{
+    image_identity: string;
+    listing_id: string;
+    checksum_listings: number | null;
+    signature_listings: number | null;
+  }>) {
+    // Whichever measure saw it on more listings wins: the checksum catches an
+    // identical file, the signature catches the same picture re-encoded.
+    const shared = Math.max(Number(row.checksum_listings) || 1, Number(row.signature_listings) || 1);
+    out.set(`${row.listing_id}:${row.image_identity}`, shared);
+  }
+  return out;
+}
+
+/**
+ * Signs every stored image for the requested listings — **one row per
+ * photograph**.
+ *
+ * The table accumulates copies. It always will: a re-signed Airtable URL, a
+ * rendition an agency added later, a photograph that reached us through two
+ * sources. The write path stops new ones arriving and the repair migration
+ * retires the ones already filed, but neither can be the guarantee a reader
+ * depends on — a deploy lands before a migration is dispatched, and the next
+ * agency to serve four sizes of every shot has not been met yet. So the read
+ * path is where "a listing shows each photograph once" is actually enforced,
+ * and it is enforced for every consumer at once: the marketplace card, the
+ * lightbox, the property page, a generated report.
+ *
+ * Measured on 2026-08-19, before this: 4,807 stored rows carried 4,567
+ * photographs. One listing held 35 rows of four pictures — its card said "35
+ * photos" and its carousel looped the same four nine times.
+ *
+ * It is also cheaper. Signing is one Storage round trip per batch of paths, so
+ * dropping the copies before signing removes them from that request rather than
+ * from the render.
+ */
 async function signStoredImages(
   supabase: ListingImagesClient,
   listingIds: string[],
@@ -570,14 +918,32 @@ async function signStoredImages(
   const out: Record<string, Array<Record<string, unknown>>> = {};
   if (listingIds.length === 0) return out;
 
-  const { data } = await supabase
-    .from('listing_images')
-    .select('listing_id, image_identity, storage_path, origin, position, status, width, height')
-    .in('listing_id', listingIds)
-    .eq('status', 'stored')
-    .order('position', { ascending: true });
+  const FULL =
+    'listing_id, image_identity, storage_path, origin, position, status, width, height, bytes, checksum, source_url, visual_kind, visual_signature';
+  const BASE =
+    'listing_id, image_identity, storage_path, origin, position, status, width, height, bytes, checksum, source_url';
 
-  const rows = (data ?? []) as StoredImageRow[];
+  const read = async (columns: string) =>
+    await supabase
+      .from('listing_images')
+      .select(columns)
+      .in('listing_id', listingIds)
+      .eq('status', 'stored')
+      .order('position', { ascending: true });
+
+  // The analysis migration is dispatched by hand, so a deploy can land first.
+  // Ask for the verdict, and fall back to the ordering this had before rather
+  // than failing every gallery on the page.
+  let { data, error } = visualColumnsMissing ? await read(BASE) : await read(FULL);
+  if (error && !visualColumnsMissing && isMissingVisualColumn(error)) {
+    console.warn('[listing-images] visual columns absent; run the analysis migration');
+    visualColumnsMissing = true;
+    ({ data, error } = await read(BASE));
+  }
+  if (error) return out;
+
+  const reuse = await listingImageReuse(supabase, listingIds);
+  const rows = selectPerListing((data ?? []) as unknown as StoredImageRow[], reuse);
   const paths = rows.map((r) => r.storage_path).filter((p): p is string => Boolean(p));
   if (paths.length === 0) return out;
 
@@ -600,8 +966,69 @@ async function signStoredImages(
       origin: row.origin,
       width: row.width,
       height: row.height,
+      // The browser cannot see the stored bytes and cannot measure a signed URL
+      // without downloading it, so the size travels with the row. It is what
+      // separates a photograph from a thumbnail strip asset.
+      bytes: row.bytes,
+      // What the server saw when it looked at the pixels. Sent so the card is
+      // right on its first paint rather than after the browser has decoded
+      // twelve images per listing, which for a page of 148 cards it never
+      // finishes doing.
+      kind: row.visual_kind ?? null,
       expiresAt,
     });
+  }
+  return out;
+}
+
+/**
+ * One row per photograph, per listing, in the order the listing should show
+ * them.
+ *
+ * Partitioned by listing before anything is compared — the asset key is a
+ * within-listing question and two properties whose keys collide must never be
+ * merged. See `listingImageAsset.pure.ts`.
+ *
+ * `source_url` is what the selector reasons about, not the storage path: the
+ * path is a digest of the identity, which is exactly the thing that differs
+ * between two copies of one photograph.
+ */
+function selectPerListing(
+  rows: StoredImageRow[],
+  reuse: Map<string, number>,
+): StoredImageRow[] {
+  const byListing = new Map<string, StoredImageRow[]>();
+  for (const row of rows) {
+    const held = byListing.get(row.listing_id);
+    if (held) held.push(row);
+    else byListing.set(row.listing_id, [row]);
+  }
+
+  const out: StoredImageRow[] = [];
+  for (const listingRows of byListing.values()) {
+    const selection = selectListingGallery(
+      listingRows.map((row) => ({
+        // Falls back to the identity, never to the empty string: the selector
+        // skips entries with no URL, and a row that reached here has bytes.
+        url: row.source_url ?? row.storage_path ?? row.image_identity,
+        position: row.position,
+        checksum: row.checksum,
+        bytes: row.bytes,
+        width: row.width,
+        height: row.height,
+        kind: (row.visual_kind as 'photo' | 'floorplan' | 'graphic' | null) ?? null,
+        signature: row.visual_signature ?? null,
+        sharedListings: reuse.get(`${row.listing_id}:${row.image_identity}`) ?? null,
+        row,
+      })),
+      // Deliberately uncapped. `MAX_IMAGES_PER_LISTING` bounds how many photos
+      // one harvest downloads, which is a cost decision; rows accumulate across
+      // passes, so a listing legitimately holds more than that. Applying it
+      // here as well would clip a sixteen-photograph gallery to twelve on the
+      // property page and in the lightbox — hiding real photographs in the name
+      // of removing copies of them.
+    );
+    for (const entry of selection.images) out.push(entry.row);
   }
   return out;
 }
@@ -745,6 +1172,97 @@ async function syncAirtable(
   return { synced, error };
 }
 
+/**
+ * Look at photographs that were stored before anybody was looking.
+ *
+ * 4,841 rows existed before the server could see any of them, and the verdict
+ * is what decides whether a floor plan leads a card. This drains that backlog
+ * and then has almost nothing to do, because `harvestListing` analyses new
+ * bytes as they arrive.
+ *
+ * **Heroes first.** The queue is ordered by `position`, so every listing's
+ * leading image is settled before any listing's fifth one — a backfill that is
+ * only a third done has still fixed every card in the marketplace.
+ *
+ * Bounded twice over: a row count, and a wall-clock budget, because a decode is
+ * ~116 ms of CPU and an Edge Function's allowance is measured in seconds. It is
+ * safe to call repeatedly and safe to call concurrently — the worst case is two
+ * workers analysing the same image and writing the same answer.
+ */
+async function analyseStoredImages(
+  supabase: ListingImagesClient,
+  limit: number,
+): Promise<{ analysed: number; failed: number; remaining: number | null }> {
+  const budget = newAnalysisBudget();
+
+  const { data, error } = await supabase
+    .from('listing_images')
+    .select('listing_id, image_identity, storage_path, position')
+    .eq('status', 'stored')
+    .is('visual_analysed_at', null)
+    .not('storage_path', 'is', null)
+    .order('position', { ascending: true })
+    .limit(Math.max(1, Math.min(limit, 200)));
+
+  if (error) {
+    if (isMissingVisualColumn(error)) {
+      visualColumnsMissing = true;
+      return { analysed: 0, failed: 0, remaining: null };
+    }
+    throw error;
+  }
+
+  const queue = (data ?? []) as Array<{
+    listing_id: string;
+    image_identity: string;
+    storage_path: string;
+  }>;
+
+  let analysed = 0;
+  let failed = 0;
+
+  for (const row of queue) {
+    if (!hasBudget(budget)) break;
+    const { data: blob, error: downloadError } = await supabase.storage
+      .from(BUCKET)
+      .download(row.storage_path);
+    if (downloadError || !blob) {
+      failed += 1;
+      continue;
+    }
+    const analysis = await analyseImageBytes(new Uint8Array(await blob.arrayBuffer()));
+    if (!analysis) {
+      /*
+       * An image the decoder cannot read.
+       *
+       * Stamped as analysed anyway, with no verdict. Leaving it null would put
+       * it back at the head of a queue ordered by position and the sweep would
+       * spend its whole budget on the same handful of unreadable files for
+       * ever. A null `visual_kind` is exactly "no evidence", which is what it
+       * is.
+       */
+      await supabase
+        .from('listing_images')
+        .update({ visual_analysed_at: new Date().toISOString() })
+        .eq('listing_id', row.listing_id)
+        .eq('image_identity', row.image_identity);
+      failed += 1;
+      continue;
+    }
+    await writeVisual(supabase, row.listing_id, row.image_identity, analysis);
+    if (visualColumnsMissing) break;
+    analysed += 1;
+  }
+
+  const { count } = await supabase
+    .from('listing_images')
+    .select('image_identity', { count: 'exact', head: true })
+    .eq('status', 'stored')
+    .is('visual_analysed_at', null);
+
+  return { analysed, failed, remaining: count ?? null };
+}
+
 /* -------------------------------------------------------------------------- */
 /* Handler                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -781,7 +1299,7 @@ Deno.serve(async (req) => {
     }
 
     /* -- Cron / service-role operations ---------------------------------- */
-    if (op === 'refresh' || op === 'sync' || op === 'harvest') {
+    if (op === 'refresh' || op === 'sync' || op === 'harvest' || op === 'analyse') {
       if (op === 'harvest') {
         /*
          * `harvest` has exactly one caller — the enrichment sweep — and it used
@@ -826,11 +1344,22 @@ Deno.serve(async (req) => {
        * that storage, deduplication, checksums and the refresh schedule stay
        * owned by one module.
        */
+      if (op === 'analyse') {
+        const limit = Number(body.limit) || MAX_ANALYSED_PER_SWEEP;
+        const outcome = await analyseStoredImages(supabase, limit);
+        return j({ success: true, op, ...outcome });
+      }
+
       if (op === 'harvest') {
         const listingId = cleanId(body.listingId);
         if (!listingId) return j({ success: false, error: 'invalid_listing_id' }, 400);
 
-        const candidates = normaliseImageCandidates(body.candidates, 'scraped');
+        // Ordered like every other path into the harvester, which is also what
+        // collapses the renditions an agency gallery emits — three sizes of one
+        // shot were three of the twelve slots this listing is allowed.
+        const candidates = orderCandidatesForDisplay(
+          normaliseImageCandidates(body.candidates, 'scraped'),
+        );
         if (candidates.length === 0) return j({ success: true, op, stored: 0, failed: 0 });
 
         // The only caller that saw the whole gallery, so the only one allowed
@@ -841,6 +1370,7 @@ Deno.serve(async (req) => {
           candidates,
           epochMs(body.listedAt),
           'full',
+          newAnalysisBudget(),
         );
         return j({ success: true, op, listingId, ...outcome });
       }
@@ -880,6 +1410,9 @@ Deno.serve(async (req) => {
       let harvested = 0;
       let unchanged = 0;
       let errors = 0;
+      // One budget for the whole sweep, not one per listing: forty listings
+      // each spending the allowance would be a minute of decoding.
+      const sweepBudget = newAnalysisBudget();
       try {
         const fresh = await readAirtableImages(config, dueIds);
         const held = await storedIdentities(supabase, dueIds);
@@ -949,6 +1482,7 @@ Deno.serve(async (req) => {
             candidates,
             record.listedAt,
             'additive',
+            sweepBudget,
           );
           harvested += 1;
           if (outcome.error) errors += 1;
@@ -1026,6 +1560,16 @@ Deno.serve(async (req) => {
     const now = Date.now();
     const pending: string[] = [];
     let budget = MAX_HARVESTS_PER_REQUEST;
+    /*
+     * One pixel budget for the whole request.
+     *
+     * `resolve` serves the marketplace on every page view, so this is the path
+     * that must not become slow. Six listings each allowed the full allowance
+     * would be seven seconds of decoding; sharing it means the first listing
+     * whose photographs are new gets looked at and the rest wait for the
+     * `analyse` sweep, which is exactly the right trade.
+     */
+    const analysisBudget = newAnalysisBudget();
 
     for (const listing of listings) {
       // No forced origin: the client has already classified each candidate, and
@@ -1074,6 +1618,7 @@ Deno.serve(async (req) => {
         candidates,
         imageAgeAnchor(listing.capturedAt, listing.listedAt),
         'additive',
+        analysisBudget,
       );
     }
 

@@ -110,16 +110,14 @@ const brandIdFor = (integrationId: string) => BRAND_ID_OVERRIDES[integrationId] 
 const integrations: IntegrationConfig[] = INTEGRATIONS;
 
 /**
- * Where to add the SUPABASE_ACCESS_TOKEN secret. Derived from the project
- * this build actually talks to rather than a project ref typed into the
- * page — the literal named the prime's project, so every deployment sent
- * its operator to the prime's dashboard, and the ref shipped in the bundle.
+ * Where to add the SUPABASE_ACCESS_TOKEN secret. Derived from the project this
+ * build actually talks to rather than a ref typed into the page: the literal
+ * named the prime's project, so every deployment sent its operator to the
+ * PRIME's dashboard, and the ref shipped in the bundle.
  */
-const supabaseProjectRef = SUPABASE_PROJECT_REF ?? '';
-const supabaseFunctionSettingsUrl = supabaseProjectRef
-  ? `https://supabase.com/dashboard/project/${supabaseProjectRef}/settings/functions`
+const supabaseFunctionSettingsUrl = SUPABASE_PROJECT_REF
+  ? `https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/settings/functions`
   : 'https://supabase.com/dashboard/projects';
-
 
 
 interface SupabaseSecretStatus {

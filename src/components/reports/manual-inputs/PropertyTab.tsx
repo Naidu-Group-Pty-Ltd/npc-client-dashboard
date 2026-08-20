@@ -1,9 +1,10 @@
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Building2, Info, Car, Ruler } from 'lucide-react';
+import { Building2, Info, Car, Ruler, BedDouble, Bath } from 'lucide-react';
 import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
 import { useCallback } from 'react';
 import { BuildTypeSelector } from '../shared/BuildTypeSelector';
@@ -13,7 +14,9 @@ import { BuildType } from '@/types/overrideFields';
 
 interface PropertyTabProps {
   buildType: BuildType;
-  onBuildTypeChange: (value: BuildType) => void;
+  onBuildTypeChange?: (value: BuildType) => void;
+  /** The Reports page owns the property-type choice at the top of the page. */
+  showBuildTypeSelector?: boolean;
   purchasePrice: string;
   setPurchasePrice: (value: string) => void;
   propertyValue: string;
@@ -22,6 +25,13 @@ interface PropertyTabProps {
   setLandPrice: (value: string) => void;
   buildPrice: string;
   setBuildPrice: (value: string) => void;
+  // Consolidated primary property details (previously a separate panel above)
+  weeklyRent?: string;
+  setWeeklyRent?: (value: string) => void;
+  beds?: string;
+  setBeds?: (value: string) => void;
+  baths?: string;
+  setBaths?: (value: string) => void;
   // New fields for feature parity
   propertyType?: string;
   setPropertyType?: (value: string) => void;
@@ -54,6 +64,7 @@ interface PropertyTabProps {
 export function PropertyTab({
   buildType,
   onBuildTypeChange,
+  showBuildTypeSelector = true,
   purchasePrice,
   setPurchasePrice,
   propertyValue,
@@ -62,6 +73,12 @@ export function PropertyTab({
   setLandPrice,
   buildPrice,
   setBuildPrice,
+  weeklyRent,
+  setWeeklyRent,
+  beds,
+  setBeds,
+  baths,
+  setBaths,
   propertyType,
   setPropertyType,
   carSpaces,
@@ -114,24 +131,36 @@ export function PropertyTab({
 
   return (
     <div className="reports-overrides-property-tab space-y-6 animate-fade-in">
-      {/* Build Type Selection - Using Shared Component */}
-      <BuildTypeSelector
-        value={buildType}
-        onChange={onBuildTypeChange}
-        disabled={disabled}
-      />
+      {/* Build Type Selection — rendered only when the host page does not
+          already present it at the top of the workflow. */}
+      {showBuildTypeSelector && onBuildTypeChange && (
+        <BuildTypeSelector
+          value={buildType}
+          onChange={onBuildTypeChange}
+          disabled={disabled}
+        />
+      )}
 
       {/* Pricing Section */}
       <Card className="reports-overrides-section-card">
         <CardContent className="reports-overrides-section-content pt-6">
-          <h3 className="reports-overrides-section-title text-lg font-semibold flex items-center gap-2 mb-4">
-            <Building2 className="h-5 w-5 text-primary" />
-            Pricing
-          </h3>
+          <div className="reports-overrides-section-heading mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="reports-overrides-section-title text-lg font-semibold flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Pricing
+            </h3>
+            <Badge variant="default" className="reports-required-scoring-badge text-xs">Required for Scoring</Badge>
+          </div>
+          <p className="reports-overrides-section-helper mb-4 text-sm text-muted-foreground">
+            Purchase price is required for investment scoring. Everything else is optional and
+            overrides any value collected from a listing URL, uploaded document or stored record.
+          </p>
 
           <div className="reports-overrides-field-grid grid grid-cols-2 gap-4 mb-4">
             <div className="reports-overrides-field space-y-2">
-              <Label htmlFor="purchasePrice" className="reports-overrides-label text-sm font-medium">Purchase Price</Label>
+              <Label htmlFor="purchasePrice" className="reports-overrides-label text-sm font-medium flex items-center gap-1">
+                Purchase Price <span className="text-destructive">*</span>
+              </Label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                 <Input
@@ -174,6 +203,24 @@ export function PropertyTab({
                 />
               </div>
             </div>
+            {setWeeklyRent && (
+              <div className="reports-overrides-field space-y-2">
+                <Label htmlFor="weeklyRent" className="reports-overrides-label text-sm font-medium">Weekly Rent</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <Input
+                    id="weeklyRent"
+                    type="text"
+                    inputMode="numeric"
+                    value={formatForDisplay(weeklyRent || '')}
+                    onChange={handleCurrencyChange(setWeeklyRent)}
+                    placeholder="550"
+                    disabled={disabled}
+                    className="reports-overrides-input pl-7"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Land Price - shown for New Builds AND Land Only */}
@@ -220,7 +267,7 @@ export function PropertyTab({
       </Card>
 
       {/* Property Specifications - Show Property Type always, hide other fields for Land Only */}
-      {(setPropertyType || setCarSpaces || setLandSizeSqm || setBuildSizeSqm) && (
+      {(setPropertyType || setCarSpaces || setLandSizeSqm || setBuildSizeSqm || setBeds || setBaths) && (
         <Card className="reports-overrides-section-card">
           <CardContent className="reports-overrides-section-content pt-6">
             <h3 className="reports-overrides-section-title text-lg font-semibold flex items-center gap-2 mb-4">
@@ -252,6 +299,45 @@ export function PropertyTab({
                       <SelectItem value="land">Vacant Land</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              )}
+
+              {/* Bedrooms / Bathrooms - Hide for Land Only */}
+              {setBeds && !isLandOnly && (
+                <div className="reports-overrides-field space-y-2">
+                  <Label htmlFor="beds" className="reports-overrides-label text-sm font-medium flex items-center gap-1">
+                    <BedDouble className="h-3 w-3" />
+                    Bedrooms
+                  </Label>
+                  <Input
+                    id="beds"
+                    className="reports-overrides-input"
+                    type="text"
+                    inputMode="numeric"
+                    value={beds || ''}
+                    onChange={handleNumberChange(setBeds)}
+                    placeholder="3"
+                    disabled={disabled}
+                  />
+                </div>
+              )}
+
+              {setBaths && !isLandOnly && (
+                <div className="reports-overrides-field space-y-2">
+                  <Label htmlFor="baths" className="reports-overrides-label text-sm font-medium flex items-center gap-1">
+                    <Bath className="h-3 w-3" />
+                    Bathrooms
+                  </Label>
+                  <Input
+                    id="baths"
+                    className="reports-overrides-input"
+                    type="text"
+                    inputMode="numeric"
+                    value={baths || ''}
+                    onChange={handleNumberChange(setBaths)}
+                    placeholder="2"
+                    disabled={disabled}
+                  />
                 </div>
               )}
 

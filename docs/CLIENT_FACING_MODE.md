@@ -117,6 +117,83 @@ separate commits from the hides, and the first two help the internal build too:
   as before — the prime is still the built-in fallback — so this is a no-op
   upstream and a switch here. See `BACKEND_PROVISIONING.md`.
 
+## Which Supabase project the build talks to
+
+A second deployment usually wants a second backend, and that used not to be
+possible for a reason unrelated to this mode: **31 source files wrote
+`https://dduzbchuswwbefdunfct.supabase.co` and its publishable key into their
+own module scope** — `useAuth`, `secureInvoke`, `integrations/supabase/client`,
+every portal hook and lib — so setting `VITE_SUPABASE_URL` moved nothing.
+
+All 31 now import from `src/integrations/supabase/env.ts`, the one module that
+resolves it. A build that sets neither variable is byte-for-byte the old
+behaviour, so this changed nothing about the internal console.
+
+Three rules that module enforces, each of which was a live defect:
+
+- **The URL and the key are a matched pair.** The anon key is a JWT whose `ref`
+  claim names its project, so a URL from one and a key from another
+  authenticate to nothing. Set both or neither — a half-configured environment
+  uses *both* built-in defaults rather than mixing them, and says so on the
+  console. A genuinely mismatched pair is honoured and warned about by ref,
+  because that is a configuration error and should read as one.
+- **The fallback is never empty.** `internalMessageAttachments.ts` read
+  `VITE_SUPABASE_URL ?? ''`, which made the upload PUT relative — it went to
+  the app's own origin and got HTML back.
+- **The project ref is derived, never named a third time.**
+  `VITE_SUPABASE_PROJECT_ID` was a third spelling of the same project, free to
+  disagree with the other two; unset, `TemplateSharePreview` fetched
+  `https://undefined.supabase.co/functions/v1/template-share`. Nothing live
+  reads it now — `SUPABASE_PROJECT_REF` comes off the resolved URL, and the
+  Integrations page's "Supabase dashboard" link is built from it rather than
+  sending every deployment's operator to the prime's project.
+
+## Syncing from upstream
+
+This repository carries no code of its own: changes land in
+`npc-property-dashbord` and are pulled over. To sync:
+
+```sh
+git remote add upstream https://github.com/lavan96/npc-property-dashbord
+git fetch upstream main
+git merge origin/main        # this repo's own main first — it moves too
+git merge upstream/main
+```
+
+Then run `npm ci && npx tsc --noEmit -p tsconfig.app.json` and compare the
+error output with upstream's. **They should be identical.** Any error only
+here is drift, and drift is the thing this repository cannot afford — it is
+supposed to differ from upstream in exactly the ways listed in this document
+and no others.
+
+What to expect, and how it has actually gone:
+
+- **Conflicts land in the same handful of files**: `.env.example`,
+  `.gitignore`, `vercel.json`, `supabase/config.toml`, and whichever page
+  upstream and this repo fixed the same way. Everything in `src/` merges.
+- **Keep this repo's side** for `supabase/config.toml`'s `project_id`, the
+  fail-closed workflow guards, `vite.config.ts`'s pinned mode, and
+  `vercel.json` — that last one because the two repositories deploy
+  differently on purpose (upstream serves the SPA alone; this one also runs
+  the AML verification container, in the spelling upstream's own
+  `docs/deployment/VERCEL.md` calls the only correct one).
+- **Take upstream's side** for everything else, including a tidier spelling of
+  a fix that landed in both.
+- **Check for new surfaces.** A merge brings code, not visibility decisions:
+  `git diff <base>...upstream/main -- src/lib/navigation/registry.ts src/App.tsx`
+  shows whether upstream added a route or a nav entry that belongs in
+  `CLIENT_FACING_HIDDEN_PATHS`. The August 2026 sync of 93 commits added
+  neither.
+- **Do not let dependencies drift.** Dependabot majors merged here alone once
+  broke the typecheck in 36 places while upstream stayed green — every date
+  picker and the whole PDF-import grounding path. Align `package.json` to
+  upstream's versions unless there is a recorded reason not to.
+
+`scripts/` carries a 28-point invariant check used for this: it asserts the
+pinned build mode, the hidden-path list and its WIP candidates, the backend
+isolation properties, the stripped constants and the single Supabase resolver.
+Run it before and after every sync.
+
 ## Adding to (or trimming) the list
 
 Edit `CLIENT_FACING_HIDDEN_PATHS` — nav and routing follow together.

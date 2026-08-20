@@ -43,6 +43,9 @@ import {
   MARKETPLACE_ELIGIBILITY_VERSION,
 } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 import {
+  SANITIZATION_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
+import {
   assessMarketplaceEligibility, eligibilityDetailFor,
 } from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
 import {
@@ -567,14 +570,25 @@ describe('TEST AC — the autonomous settler picks up eligibility work on its ow
     })).toBe(true);
   });
 
-  it('stops only when both markers are current', () => {
+  it('stops only when ALL THREE markers are current', () => {
     expect(uploadHasWorkOutstanding({
       source_images_settled_version: 4,
       marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+      image_sanitization_settled_version: SANITIZATION_VERSION,
     })).toBe(false);
     expect(uploadHasWorkOutstanding({
       source_images_settled_version: null,
       marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+      image_sanitization_settled_version: SANITIZATION_VERSION,
+    })).toBe(true);
+    // And the third, which is the overlay repair: a picture the gate refused
+    // for carrying a laid-over graphic can have the graphic taken off, and an
+    // upload never offered to that repair is outstanding however current the
+    // other two are.
+    expect(uploadHasWorkOutstanding({
+      source_images_settled_version: 4,
+      marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+      image_sanitization_settled_version: null,
     })).toBe(true);
   });
 });
@@ -938,6 +952,7 @@ describe('TEST AJ/AK — the queue reaches work behind a full page of settled up
     created_at: `2026-01-01T00:${String(index % 60).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`,
     source_images_settled_version: 4,
     marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    image_sanitization_settled_version: SANITIZATION_VERSION,
   });
 
   it('TEST AJ — 500 settled uploads do not hide the 501st', async () => {
@@ -991,6 +1006,7 @@ describe('TEST AL — the target version lives in the database', () => {
     created_at: '2026-01-01T00:00:00Z',
     source_images_settled_version: 4,
     marketplace_eligibility_settled_version: marker,
+    image_sanitization_settled_version: SANITIZATION_VERSION,
   });
 
   it('an upload at marker 1 is outstanding against a target of 2', async () => {

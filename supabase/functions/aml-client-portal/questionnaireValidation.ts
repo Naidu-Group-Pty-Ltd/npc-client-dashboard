@@ -1,3 +1,11 @@
+/*
+ * The questionnaire contract, enforced at the write boundary.
+ */
+import {
+  PEP_DECLARATION_RELATIONSHIPS, collectsPepDetail, prunePepDeclaration,
+} from '../_shared/aml/pepDeclaration.pure.ts';
+import { prunePurchasingStructure } from '../_shared/aml/purchasingStructure.pure.ts';
+
 const ENTITY_TYPES = ['Individual', 'Joint', 'Company', 'Trust', 'SMSF', 'Partnership'] as const;
 const FUNDING_SOURCES = [
   'Salary savings', 'Business income', 'Sale of asset', 'Inheritance', 'Gift',
@@ -44,6 +52,23 @@ export function validateQuestionnaireSection(
         'full_name', 'dob', 'citizenship', 'tax_residency', 'address', 'occupation',
       ]);
       if (!isOneOf(payload.pep, ['yes', 'no'])) errors.push('pep');
+      /*
+       * A declared political exposure has to say WHAT. A bare "yes" tells the
+       * MLRO that a determination is needed and nothing they can act on — no
+       * office, no jurisdiction, no relationship — so the determination
+       * cannot start without going back to the customer for what should have
+       * been asked once. Enforced here as well as in the form, because the
+       * form is not the write boundary.
+       *
+       * A "no" is complete on its own, and the detail fields are pruned from
+       * it before this runs.
+       */
+      if (collectsPepDetail(payload.pep)) {
+        if (!isOneOf(payload.pep_relationship, PEP_DECLARATION_RELATIONSHIPS)) {
+          errors.push('pep_relationship');
+        }
+        errors.push(...requireFields(payload, ['pep_role', 'pep_country']));
+      }
       if (!isOneOf(payload.adverse, ['yes', 'no'])) errors.push('adverse');
       return errors;
     }
@@ -109,4 +134,35 @@ export function validateQuestionnaireSection(
     default:
       return ['section'];
   }
+}
+
+/**
+ * Everything a submitted section must have removed before it is stored.
+ *
+ * ── Why it lives here and not at the call site ────────────────────────
+ * `aml-client-portal/index.ts` is held to a contract that no line of its
+ * code may mention risk, screening, PEP or sanctions
+ * (`amlPortalContracts.test.ts`) — a blunt rule, deliberately, because the
+ * portal must never become a surface that returns screening detail to a
+ * customer. Pruning a declaration is the opposite direction of travel, but
+ * the guard cannot tell one from the other and should not have to.
+ *
+ * So the write boundary keeps both prunes, and the caller applies one
+ * neutrally-named rule to whatever section arrives.
+ *
+ * ── What each prune is for ────────────────────────────────────────────
+ * Both exist because a field nobody can see is still a field that saves. An
+ * Individual purchaser who typed a company ABN before correcting the
+ * structure, or a customer who named a public office before correcting
+ * their political-exposure answer to "no", would otherwise leave that
+ * answer in the payload, in the submission snapshot, and in front of a
+ * reviewer — an answer nobody gave, presented as one they did.
+ */
+export function normaliseQuestionnaireSection(
+  section: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  if (section === 'purchasing_structure') return prunePurchasingStructure(payload);
+  if (section === 'personal_details') return prunePepDeclaration(payload);
+  return payload;
 }

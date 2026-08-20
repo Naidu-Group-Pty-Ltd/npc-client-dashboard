@@ -33,7 +33,7 @@ import {
 import {
   selectPdfPropertyPrimary, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
-import { readPdfPageTexts } from './pdfText.ts';
+import { readPdfPageTextResult } from './pdfText.ts';
 import type { SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
 /** Folder listings one repair run may read. Shared and cached across rows. */
@@ -129,7 +129,14 @@ export async function recoverPackageImage(
 ): Promise<PackageOutcome> {
   const fetchPackage = deps.fetchPackage ?? guardedFetch;
   const cache = deps.cache ?? new DriveListingCache(fetchPackage);
-  const readPageTexts = deps.readPageTexts ?? readPdfPageTexts;
+  /*
+   * An INJECTED reader is authoritative — a test that hands over page texts has
+   * read them by definition. The production reader is the one that can fail to
+   * load at all, so only it carries the distinction below.
+   */
+  const readPageTexts = deps.readPageTexts
+    ? async (bytes: Uint8Array) => ({ ok: true as const, pages: await deps.readPageTexts!(bytes) })
+    : readPdfPageTextResult;
 
   let host: string;
   try {
@@ -224,7 +231,8 @@ async function findLotFolder(
  */
 async function extractFromDocument(
   fetchPackage: PackageFetcher,
-  readPageTexts: (bytes: Uint8Array) => Promise<string[]>,
+  readPageTexts: (bytes: Uint8Array) => Promise<
+    { ok: true; pages: string[] } | { ok: false; reason: string }>,
   fileId: string,
   documentName: string,
   /** The property this package is supposed to be about. */
@@ -253,7 +261,42 @@ async function extractFromDocument(
    * through a link and the same package uploaded through the portal must not be
    * able to disagree about which picture is the property.
    */
-  const pageTexts = await readPageTexts(bytes);
+  /**
+   * A DOCUMENT WE COULD NOT READ IS NOT A DOCUMENT THAT SAYS NOTHING.
+   *
+   * The cover page is found by matching the property's own label against each
+   * page's prose, so with no prose no page can be recognised and the selector
+   * returns nothing — indistinguishable, from here, from a brochure that
+   * genuinely does not present this property. The reader loads pdf.js from a CDN
+   * at call time and used to answer an empty array when that import did not
+   * resolve, which is how 44 Sandpiper Estate properties came to be told their
+   * packages named no image for them: not one of those documents had been read.
+   *
+   * So a reader that failed is `unreachable` — operational, retried, and never
+   * recorded as a finding — and only a document that was actually read may
+   * answer `not_identified`.
+   */
+  const textResult = await readPageTexts(bytes);
+  if (!textResult.ok) {
+    return {
+      status: 'unreachable',
+      detail: `That document’s text could not be read (${"reason" in textResult ? textResult.reason : "unknown"}).`,
+    };
+  }
+  /*
+   * And zero pages is the same fault wearing a different hat, whichever reader
+   * produced it: a PDF always has pages, so an empty list is the read failing
+   * rather than the document being silent. Judged here rather than inside one
+   * reader so every reader is held to it — the production one, and the ones
+   * tests inject to stand in for it.
+   */
+  if (!textResult.pages.length) {
+    return {
+      status: 'unreachable',
+      detail: 'That document\'s text could not be read (no pages came back).',
+    };
+  }
+  const pageTexts = textResult.pages;
   const selection = await selectPdfPropertyPrimary(bytes, { label, pageTexts });
   const photo = selection.primary;
   if (!photo) {

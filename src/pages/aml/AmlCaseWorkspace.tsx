@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,9 +79,13 @@ import { LegacyVerificationHistoryPanel } from "@/components/aml/LegacyVerificat
 import { PartyVerificationPanel } from "@/components/aml/PartyVerificationPanel";
 import { PartyScreeningPanel } from "@/components/aml/PartyScreeningPanel";
 import { ScreeningStageCard } from "@/components/aml/ScreeningStageCard";
+import { ScreeningPathCard } from "@/components/aml/ScreeningPathCard";
 import { SanctionsPerimeterControl } from "@/components/aml/SanctionsPerimeterControl";
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
-import { ADMIN_AML_CONFIGURATION_PATH } from "@/lib/aml/amlRoutes";
+import { deriveScreeningPath, type ScreeningStepKey } from "@/lib/aml/screeningSteps.pure";
+import {
+  ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_VERIFICATION_PATH,
+} from "@/lib/aml/amlRoutes";
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
@@ -132,6 +137,22 @@ const SECTION_VISIBILITY: Record<SectionKey, (a: { canInvestigate: boolean }) =>
 
 /** The record surface sits beside the journey, not inside it. */
 const RECORD_SECTION: SectionKey = "timeline";
+
+/**
+ * Where each Stage 5 step's evidence actually lives.
+ *
+ * The path names the step; this is the panel that holds the detail behind
+ * it. Keyed by step so a new step fails to compile rather than scrolling to
+ * whatever happens to be first.
+ */
+const SCREENING_STEP_ANCHOR: Record<ScreeningStepKey, string> = {
+  perimeter: "aml-sanctions-perimeter",
+  parties: "aml-party-screening",
+  sanctions: "aml-party-screening",
+  other_checks: "aml-party-screening",
+  pep: "aml-party-screening",
+  resolve: "aml-screening-checks",
+};
 
 
 export default function AmlCaseWorkspace() {
@@ -234,6 +255,17 @@ export default function AmlCaseWorkspace() {
    * every stage. It replaces five self-fetching cards; the heavy stage
    * bodies still load their own detail only when their stage is opened.
    */
+  /*
+   * Read BEFORE the case summary, which now takes the PEP scope decision from
+   * it. Declared afterwards this is a temporal dead zone — the options object
+   * is evaluated eagerly, so the page would throw on mount rather than
+   * degrade.
+   */
+  const screeningStage = useScreeningStage(caseId, {
+    riskRating: caseRow?.risk_rating ?? null,
+    enhancedDueDiligence: caseRow?.status === "edd_required",
+  });
+
   const { loading: summaryLoading, evidence, facts, summary, journey } = useAmlCaseSummary(
     caseRow,
     caseRow ? openRequests.length : undefined,
@@ -241,6 +273,15 @@ export default function AmlCaseWorkspace() {
       enabled: access.hasAnyRole && access.flagEnabled && Boolean(caseRow),
       canReadMatter: canInvestigate,
       clientId: caseRow?.client_id ?? null,
+      /*
+       * The scope decision the stage read already holds. Passing it here is
+       * what lets the journey rail name the PEP determination as the
+       * outstanding item instead of reporting "screening has not been run" on
+       * a case whose screening obligation was stood down. Until that read
+       * lands it is `null`, which reads as owed — the safe direction.
+       */
+      pepRequired: screeningStage.sync?.scopes?.find(
+        (x) => x.scope === "pep")?.required ?? null,
     },
   );
 
@@ -253,11 +294,39 @@ export default function AmlCaseWorkspace() {
   // Owned here because two surfaces open the same dialog: this card's
   // next-action CTA and the control's own button, further down the page.
   const [perimeterDialogOpen, setPerimeterDialogOpen] = useState(false);
-  const screeningStage = useScreeningStage(caseId, {
-    riskRating: caseRow?.risk_rating ?? null,
-    enhancedDueDiligence: caseRow?.status === "edd_required",
-  });
-
+  /*
+   * Whether the evidence panels under Stage 5's path are on screen.
+   *
+   * They are HIDDEN, never unmounted. `PartyScreeningPanel` is what actually
+   * opens the manual-screening and PEP dialogs, and it opens them from a
+   * nonce this page increments — so unmounting it would make the path's own
+   * buttons do nothing, which is precisely the class of defect the path
+   * exists to remove. The dialogs are portalled, so they appear over the
+   * page whether or not the panel beneath is visible.
+   */
+  const [screeningDetailOpen, setScreeningDetailOpen] = useState(false);
+  /*
+   * The reopen action, when the server is offering one.
+   *
+   * Read into a local rather than written inline, so no source in this file
+   * ever spells `next_action` beside a colon — `amlWorkspaceRedesign.source`
+   * forbids that shape here, because this reading is derived per render and
+   * a page that looks like it is assigning one is a page on its way to
+   * persisting it.
+   */
+  const screeningNextAction = screeningStage.sync?.next_action ?? null;
+  const screeningReopenAction = screeningNextAction?.key === "reopen_case"
+    ? screeningNextAction
+    : null;
+  /**
+   * A nonce, not a boolean. The Stage 5 CTA may be pressed again after the
+   * dialog is dismissed, and a boolean that is already `true` produces no
+   * change for the panel to react to — which is how a CTA comes to do nothing
+   * on its second press.
+   */
+  const [manualScreeningRequest, setManualScreeningRequest] = useState(0);
+  /** Same nonce pattern, for the PEP determination dialog. */
+  const [pepRequest, setPepRequest] = useState(0);
   /**
    * Keep the open case current. A document the client uploads, a screening
    * result landing or a stage completing now reaches a tab that is already
@@ -330,6 +399,48 @@ export default function AmlCaseWorkspace() {
    * server refuses anything this page should not have offered — the button
    * is a shortcut to the right place, never a second authority.
    */
+  /**
+   * Perform a stage's primary action, rather than only navigating to it.
+   *
+   * Every one of these opens the surface that PERFORMS the named act. The
+   * navigation still happens — the operator needs to see where the work
+   * lives — but it is no longer the whole of the behaviour, which is why
+   * these buttons appeared dead when the section was already open.
+   *
+   * Nothing here mutates. Each route opens an existing dialog or form whose
+   * own server operation carries the authorisation and the audit record.
+   */
+  const performStageAction = useCallback((action: {
+    section: SectionKey; actionType?: string;
+  }) => {
+    setSection(action.section);
+    switch (action.actionType) {
+      case "record_pep":
+        // The determination is recorded in the party screening panel's own
+        // dialog, with its sources and rationale. Open it directly.
+        setSection("ownership");
+        setPepRequest((n) => n + 1);
+        window.setTimeout(() => {
+          document.getElementById("aml-party-screening")?.scrollIntoView({
+            block: "start", behavior: "smooth",
+          });
+        }, 0);
+        return;
+      case "client_request":
+        // The request form lives in this section and is often already on
+        // screen, so focus it: a click that changes nothing visible is
+        // indistinguishable from a broken button.
+        window.setTimeout(() => {
+          const form = document.getElementById("aml-client-request");
+          form?.scrollIntoView({ block: "start", behavior: "smooth" });
+          form?.querySelector<HTMLElement>("input, textarea, button")?.focus();
+        }, 0);
+        return;
+      default:
+        return;
+    }
+  }, []);
+
   const runScreeningAction = useCallback(async (action: AmlScreeningNextAction) => {
     switch (action.key) {
       case "enrol_subjects":
@@ -429,11 +540,47 @@ export default function AmlCaseWorkspace() {
         // provider fault led to a 404.
         navigate(ADMIN_AML_CONFIGURATION_PATH);
         return;
+      /*
+       * A closed case resumes through the ONE authorised reopen operation,
+       * with its recorded reason — never through an ordinary status advance.
+       * The dialog and the server call already exist; this only routes to
+       * them, so there is no second reopening path to keep in step.
+       */
+      case "reopen_case":
+        void reopenCase();
+        return;
+      /*
+       * The MLRO's route when the provider cannot run. It opens the existing
+       * manual dialog for the first party that still needs screening — the
+       * same dialog, the same evidence rules and the same server operation.
+       * A CTA that merely scrolled taught us that naming an action and then
+       * not performing it is worse than not offering it.
+       */
+      case "complete_manually":
+        setManualScreeningRequest((n) => n + 1);
+        document.getElementById("aml-party-screening")?.scrollIntoView({
+          block: "start", behavior: "smooth",
+        });
+        return;
       case "await_submission":
       case "await_provider_result":
         screeningStage.reload();
         return;
+      /*
+       * The same treatment as `complete_manually`, for the same reason. On a
+       * case whose sanctions obligation is not required, the outstanding PEP
+       * determination is Stage 5's ONLY blocker — so this card's primary CTA
+       * is the one that has to reach the dialog. It scrolled and stopped,
+       * and the party panel is usually already on screen underneath, so the
+       * click changed nothing visible: the same dead-button shape the
+       * journey rail's copy of this action was fixed for.
+       */
       case "record_pep":
+        setPepRequest((n) => n + 1);
+        document.getElementById("aml-party-screening")?.scrollIntoView({
+          block: "start", behavior: "smooth",
+        });
+        return;
       case "adjudicate_match":
       case "escalate":
       default:
@@ -444,7 +591,7 @@ export default function AmlCaseWorkspace() {
         });
         return;
     }
-  }, [screeningStage, load, navigate]);
+  }, [screeningStage, load, navigate, reopenCase]);
 
   const connectedPortals = useMemo(
     () =>
@@ -567,6 +714,14 @@ export default function AmlCaseWorkspace() {
               stage={activeStage}
               totalStages={JOURNEY_STAGES.length}
               onOpenSection={setSection}
+              onPerform={performStageAction}
+              /*
+               * Stage 5's numbered path carries the same action and its own
+               * progress. Repeating both here put one act on the screen three
+               * times, in three sets of words, above two progress readings
+               * that counted different things.
+               */
+              deferToSurfaceBelow={section === "ownership" && Boolean(screeningStage.sync)}
             />
           )}
 
@@ -674,16 +829,85 @@ export default function AmlCaseWorkspace() {
           {section === "ownership" && (
             <div className="space-y-4">
               {/*
+                ── Stage 5 IS A PATH ───────────────────────────────────
+                Numbered steps, one of them open, in the order they are
+                answered — because the stage had every fact it needed and no
+                order at all. On the reported case the whole screen reduced
+                to one act, and "Record PEP determination" appeared four
+                times in four different words while everything else was
+                already settled.
+
+                The path decides nothing: `deriveScreeningPath` arranges the
+                same server-decided facts the card below renders in full,
+                and the work still happens in the panels beneath.
+              */}
+              {screeningStage.sync && (
+                <ScreeningPathCard
+                  path={deriveScreeningPath({
+                    sync: screeningStage.sync,
+                    position: screeningStage.position,
+                  })}
+                  caseClosed={screeningStage.sync.case_closed === true}
+                  closedAction={screeningReopenAction}
+                  onAct={runScreeningAction}
+                  onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
+                  onReviewPerimeter={() => setPerimeterDialogOpen(true)}
+                  onOpenDetail={(step: ScreeningStepKey) => {
+                    setScreeningDetailOpen(true);
+                    // After the panels are on screen, not before.
+                    window.setTimeout(() => {
+                      document.getElementById(SCREENING_STEP_ANCHOR[step])
+                        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+                    }, 0);
+                  }}
+                  actor={{
+                    canWrite,
+                    isReviewer: access.roles.has("reviewer"),
+                    isMlro: access.isMlro,
+                  }}
+                />
+              )}
+
+              {/*
+                ── The evidence, one click away ────────────────────────
+                Everything the stage used to show at once. It is HIDDEN
+                rather than unmounted: `PartyScreeningPanel` owns the manual
+                screening and PEP dialogs and opens them from a nonce this
+                page increments, so unmounting it would make the path's own
+                buttons do nothing.
+              */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm" variant="outline"
+                  aria-expanded={screeningDetailOpen}
+                  aria-controls="aml-screening-detail"
+                  onClick={() => setScreeningDetailOpen((v) => !v)}
+                >
+                  {screeningDetailOpen ? "Hide" : "Show"} the full screening detail
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Scope, determinations, parties, checks and ownership — the complete
+                  evidence behind the steps above.
+                </span>
+              </div>
+
+              <div
+                id="aml-screening-detail"
+                className={cn("space-y-4", !screeningDetailOpen && "hidden")}
+              >
+              {/*
                 What this stage requires, whether it can run, and what
-                happens next — FIRST, because an operator who cannot run a
-                check needs to know why before pressing the button that
-                refuses. PEP and sanctions are shown as mandatory
-                determinations to be established; neither is ever reported
-                as waived.
+                happens next. The ACTION and the classification prompt now
+                belong to the path above, so this renders the evidence only —
+                the same panels, without a second copy of the ask.
               */}
               <ScreeningStageCard
+                variant="evidence"
                 reading={screeningStage}
                 onAct={runScreeningAction}
+                onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
+                onReviewPerimeter={() => setPerimeterDialogOpen(true)}
+                onOpenListHealth={() => navigate(ADMIN_AML_VERIFICATION_PATH)}
                 actor={{
                   canWrite,
                   isReviewer: access.roles.has("reviewer"),
@@ -719,6 +943,11 @@ export default function AmlCaseWorkspace() {
                 canAdjudicate={access.isMlro || access.roles.has("reviewer")}
                 isMlro={access.isMlro}
                 caseStatus={caseRow.status}
+                caseStage={caseRow.case_stage ?? null}
+                manualScreeningRequest={manualScreeningRequest}
+                pepRequest={pepRequest}
+                /* The customer's own answer, shown to the person determining it. */
+                pepDeclaration={screeningStage.sync?.pep_declaration ?? null}
                 onChanged={() => { load(); screeningStage.reload(); }}
                 screeningBlocked={
                   /*
@@ -738,8 +967,13 @@ export default function AmlCaseWorkspace() {
                 }
               />
               </div>
-              <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
-              <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+              <div id="aml-screening-checks" className="scroll-mt-24">
+                <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
+              </div>
+              <div id="aml-ownership-control" className="scroll-mt-24">
+                <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
+              </div>
+              </div>
             </div>
           )}
 
@@ -831,12 +1065,23 @@ export default function AmlCaseWorkspace() {
             // the only place they appear.
             showAttention={section !== "overview"}
             showNextAction={section !== "overview"}
+            /* So it never offers to take the operator where they already are. */
+            currentSection={section}
+            /*
+             * Stage 5's path keeps its own count, in its own units. Two
+             * meters on one screen counting different things is worse than
+             * either alone.
+             */
+            deferReadinessToSurfaceBelow={
+              section === "ownership" && Boolean(screeningStage.sync)
+            }
             onOpenSection={setSection}
           />
           <AmlContextActionPanel
             caseRow={caseRow}
             canWrite={canWrite}
             isMlro={access.isMlro}
+            onReopen={() => void reopenCase()}
             onChanged={load}
           />
         </aside>
@@ -2218,7 +2463,9 @@ function RequestsSection({
   return (
     <div className="space-y-4">
       {canWrite && (
-        <Card>
+        // The id is what Stage 2's primary action focuses. Without it that
+        // button navigated to a section the operator was already on.
+        <Card id="aml-client-request" className="scroll-mt-24">
           <CardHeader className="pb-2"><CardTitle className="text-sm">Ask the client for something</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">

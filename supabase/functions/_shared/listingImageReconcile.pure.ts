@@ -34,6 +34,7 @@
  */
 
 import { IMAGE_ORIGIN_RANK, imageIdentity, type ImageCandidate, type ImageOrigin } from './listingImages.pure.ts';
+import { canonicalAssetKey } from './listingImageAsset.pure.ts';
 
 /** Whether this pass may retire photographs it was not offered. */
 export type Reconciliation = 'full' | 'additive';
@@ -125,9 +126,17 @@ export function identitiesToRetire(
  * due on every page load and the library re-harvests continuously. Asking "am I
  * offering a photograph that is not already stored" is the question actually
  * being asked, and it is exact.
+ *
+ * **A photograph, not a URL.** `stored` carries each held row's identity *and*
+ * its asset key, so a candidate the source now serves at a different size than
+ * the copy we hold is not "missing". Without that, a listing whose kept
+ * rendition and stored rendition disagree is due on every single pass forever:
+ * the harvest adopts the sibling it already has, stores no new identity, and
+ * the next pass asks the same question and gets the same answer.
  */
 export function isHarvestDue(input: {
   candidates: ImageCandidate[];
+  /** Identities **and** asset keys of the rows already held. */
   stored: Set<string>;
   refreshAfter: number | null;
   now: number;
@@ -136,7 +145,9 @@ export function isHarvestDue(input: {
 }): boolean {
   const { candidates, stored, refreshAfter, now, known = true } = input;
   if (candidates.length === 0) return false;
-  if (candidates.some((candidate) => !stored.has(imageIdentity(candidate)))) return true;
+  const missing = (candidate: ImageCandidate) =>
+    !stored.has(imageIdentity(candidate)) && !stored.has(canonicalAssetKey(candidate.url));
+  if (candidates.some(missing)) return true;
   if (!known) return true;
   return refreshAfter === null || !Number.isFinite(refreshAfter) || refreshAfter <= now;
 }

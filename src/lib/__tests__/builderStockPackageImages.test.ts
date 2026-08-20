@@ -400,3 +400,75 @@ describe('recovering a row-linked package image', () => {
     expect(called).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A DOCUMENT WE COULD NOT READ IS NOT A DOCUMENT THAT SAYS NOTHING
+//
+// This is the defect that emptied 44 Sandpiper Estate cards. The cover page is
+// found by matching the property's label against each page's prose, so with no
+// prose nothing matches and the selector returns nothing — which is
+// indistinguishable, at that point, from a brochure that genuinely does not
+// present this property. The reader loads pdf.js from a CDN at call time and
+// answered an empty array when that import did not resolve, so every one of
+// those documents reported "names no image for this property" without having
+// been read at all. Production then banked that as a terminal answer.
+// ---------------------------------------------------------------------------
+
+describe('a package whose text layer cannot be read', () => {
+  /** The same Drive shape the recovery tests above use, routed identically. */
+  const library = () => async (url: string) => {
+    const encode = (html: string) => ({ bytes: new TextEncoder().encode(html), finalUrl: url });
+    if (url.includes('/folders/1isIaQ8qqqDUYICn6q9fyVu_z1kl5PvId')) {
+      return encode(driveFolderHtml([
+        folder('packages', 'Tweed Heads Packages'),
+        folder('images', 'Project Images'),
+        pdf('brochure', 'Sandpiper Brochure.pdf'),
+      ]));
+    }
+    if (url.includes('/folders/packages')) {
+      return encode(driveFolderHtml([folder('lot43', 'Lot 43')]));
+    }
+    if (url.includes('/folders/lot43')) {
+      return encode(driveFolderHtml([
+        pdf('doc-strad', 'Lot 43 - Stradbroke 180 - Property Package.pdf'),
+      ]));
+    }
+    if (url.includes('/folders/')) return encode(driveFolderHtml([]));
+    if (url.includes('id=doc-strad')) {
+      return { bytes: packagePdf(jpegBytes(), jpegBytes(240_000, 0x44)), finalUrl: url };
+    }
+    return encode('<html>Sign in</html>');
+  };
+
+  it('is UNREACHABLE, not "this document names no image for you"', async () => {
+    const outcome = await recoverPackageImage(
+      { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
+      {
+        fetchPackage: library(),
+        // The reader is not available — exactly what a failed CDN import does.
+        readPageTexts: async () => [],
+      },
+    );
+
+    // The distinction the whole fix turns on: an operational fault is retried
+    // and never written down, a finding is banked and stops us looking again.
+    expect(outcome.status).toBe('unreachable');
+    if (outcome.status !== 'unreachable') return;
+    expect(outcome.detail).toMatch(/could not be read/i);
+  });
+
+  it('still answers not_identified when the document WAS read and names nothing', async () => {
+    const outcome = await recoverPackageImage(
+      { packageUrl: PACKAGE_LINK, label: LOT_43_LABEL },
+      {
+        fetchPackage: library(),
+        // Read successfully — the pages simply belong to somebody else.
+        readPageTexts: async () => [
+          'Lot 99 - Someone Else\nFIXED PRICE CONTRACT\n$1,000,000\n3 bed 2 bath',
+        ],
+      },
+    );
+
+    expect(outcome.status).toBe('not_identified');
+  });
+});

@@ -215,6 +215,39 @@ bookmarks, emails and activity trails, and a 404 reads as a fault:
 "Agreements" is gone from the partner's navigation: templates are a resource on
 the dashboard, not a destination that still looks like an inbox.
 
+### And a way back out
+
+The desk is `paletteOnly` in the navigation registry — no sidebar entry — so
+every arrival is a one-way door: the ⌘K palette, the Finance Partners admin
+page, one of the four redirects above, or a bookmark. It carries a Back
+control, and that control is **not** `navigate(-1)`.
+
+`navigate(-1)` is a browser step. It is right when the user walked here from
+another page in the app, and wrong on a bookmark, an emailed link, a fresh tab,
+a refresh — and wrong on a redirect, because `<Navigate replace>` does not add
+an entry, so stepping back lands on whatever preceded the old link the user
+followed. A Back button that silently leaves the product is worse than none.
+
+`src/lib/navigation/pageBack.ts` decides: step back when React Router's
+`history.state.idx` is above zero, and otherwise address `/dashboard` by path
+with `replace` — replace, so the browser's own back button does not walk
+straight back into the page they just left. The label follows the behaviour:
+"Back" when it is a step back, "Back to Dashboard" when it is not. The Overview
+is the fallback rather than the admin page that links here, because this route
+is gated on the `agreements` module and that one on admin rights.
+
+### What the desk no longer says
+
+It used to open with *"Issuing and executing partner agreements through the
+platform has been retired. The templates are still here…"* — `WORKFLOW_RETIRED_NOTICE`.
+Removed at the product owner's direction. An explanation of a change has an
+expiry, and until it is removed it is the first thing every routine visitor
+reads before the thing they came for. The page still identifies itself by its
+title and `TEMPLATE_RESOURCE_INTRO`, and the retired routes still redirect here
+rather than 404. `agreementTemplatesOnly.spec.ts` asserts the constant is gone
+rather than merely unrendered, so it cannot return as a fix for a question that
+was already settled.
+
 ## If this is ever reversed
 
 Everything is in git. But note what the removal actually bought: the neutral

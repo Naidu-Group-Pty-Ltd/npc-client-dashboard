@@ -210,7 +210,22 @@ export interface AmlScreeningFacts {
     /** When the row last changed — how a stalled queue is recognised. */
     updated_at?: string | null;
     matches?: Array<{ status: string; match_type?: string | null; matched_name?: string }>;
+    /**
+     * The party's current PEP determination, when one exists.
+     *
+     * `list_party_screening` has always returned it; the journey reading did
+     * not ask for it and so could not see the one thing genuinely outstanding
+     * on a case whose sanctions obligation had been stood down. Absent means
+     * "no determination", which is outstanding — never satisfied.
+     */
+    pep_determination?: { result?: string | null; review_due_at?: string | null } | null;
   }>;
+  /**
+   * Whether a PEP determination is owed at all, from the server's recorded
+   * scope decision. Absent means unread, which reads as owed: an unread
+   * obligation is not an absent one.
+   */
+  pepRequired?: boolean | null;
 }
 
 /** `aml-monitoring case_monitoring_summary`. */
@@ -689,7 +704,17 @@ function screeningRow(facts: AmlWorkspaceFacts): AmlComplianceRow {
   if (!loaded(facts.screening)) {
     return { ...base, state: "unknown", detail: EVIDENCE_STATE_LABELS.unknown };
   }
-  const subjects = facts.screening.subjects.filter((s) => s.state !== "not_required");
+  const enrolled = facts.screening.subjects;
+  const subjects = enrolled.filter((s) => s.state !== "not_required");
+  if (subjects.length === 0 && enrolled.length > 0) {
+    /*
+     * Enrolled, and every party's screening obligation stood down by the
+     * recorded scope. Not owed is not the same as not done, and reporting it
+     * as `not_started` put "No screening subjects recorded" on a compliance
+     * summary for a case that had a subject and needed no screening.
+     */
+    return { ...base, state: "not_applicable", detail: "Not required under the recorded scope" };
+  }
   if (subjects.length === 0) {
     return { ...base, state: "not_started", detail: "No screening subjects recorded" };
   }
@@ -994,6 +1019,46 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
     const unscreened = subjects.filter(
       (s) => s.required !== false && s.state === "not_started",
     );
+
+    /*
+     * ── The PEP determination ─────────────────────────────────────
+     * There was no candidate for it at all, so this derivation could not
+     * name the one thing genuinely holding Stage 5 — and the rail fell
+     * through to a LATER stage's blocker ("Review the client submission ·
+     * Go to stage 7") while Stage 5 said "PEP determination outstanding".
+     * One case, two derivations, two answers.
+     *
+     * It reads the same facts the journey reads, so the two agree by
+     * construction rather than by being kept in step. `section: "ownership"`
+     * places it at journey position 5, ahead of anything later.
+     *
+     * Ranked BELOW a match: a candidate or a confirmed finding is a fact
+     * about a customer and still leads.
+     */
+    if (facts.screening.pepRequired === true) {
+      // `subjects` here is every ENROLLED party, unfiltered — which is the
+      // right population: PEP is owed per party under its own scope, not per
+      // party whose sanctions screening is owed.
+      const undetermined = subjects.filter((s) => !s.pep_determination?.result);
+      // Nobody enrolled cannot mean everybody determined.
+      if (subjects.length === 0 || undetermined.length > 0) {
+        out.push({
+          key: "pep_determination",
+          label: "Record PEP determination",
+          explanation: subjects.length === 0
+            ? "No party is enrolled yet, so no PEP determination can have been made."
+            : `${undetermined.length} part${undetermined.length === 1 ? "y needs" : "ies need"} `
+              + "a politically-exposed-person determination. A client declaration is "
+              + "evidence that supports it; it is never the determination itself.",
+          attention: "attention",
+          section: "ownership",
+          blocking: true,
+          actionType: "record_pep",
+          facts: ["case_screening_scopes.pep.required = true",
+            `pep_determinations missing (${undetermined.length || "no parties"})`],
+        });
+      }
+    }
 
     if (confirmed.length > 0) {
       out.push({
@@ -1427,9 +1492,17 @@ export function deriveAmlNextAction(facts: AmlWorkspaceFacts): AmlNextAction {
   const gate = serviceGateStatus(facts.caseRow);
   const unavailableFacts = missingFactLabels(facts);
 
-  // A finished case is finished. Say so plainly rather than ranking work
-  // against a relationship that has ended.
-  if (stage === "closed" || gate === "terminated") {
+  /*
+   * A finished case is finished. Say so plainly rather than ranking work
+   * against a relationship that has ended.
+   *
+   * The LIFECYCLE decides it. A terminated gate is a statement about SERVING
+   * the customer, not about whether the case is being worked — and reopening
+   * deliberately leaves the gate terminated, so keying off it announced
+   * "Case closed" on a case that had just been reopened and had real work
+   * outstanding. `isFinished` in the journey model holds the same line.
+   */
+  if (stage === "closed") {
     return {
       ...NO_ACTION,
       label: "Case closed",

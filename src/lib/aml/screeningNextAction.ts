@@ -32,6 +32,45 @@
 import type { AmlScreeningNextAction, AmlScreeningPerimeter } from "./amlCasesApi";
 
 /**
+ * A closed case has no next step in the journey — it has a decision about
+ * whether to resume one.
+ *
+ * Held here as well as on the server for the same reason the perimeter rule
+ * is: the two deploy separately, and a Stage 5 that tells somebody to "Run
+ * screening" on a retained record is asserting the case is progressing when
+ * it is not. The override changes only WHICH action is offered; it reads no
+ * policy, writes nothing, and cannot make a screening unnecessary.
+ *
+ * A finding is deliberately exempt. A possible or confirmed match is a fact
+ * about a customer and does not stop being one because the file was closed,
+ * so adjudication and escalation still lead.
+ */
+const FINDINGS: ReadonlyArray<AmlScreeningNextAction["key"]> = [
+  "adjudicate_match", "escalate",
+];
+
+export function resolveClosedCaseAction(
+  action: AmlScreeningNextAction | null | undefined,
+  caseClosed: boolean,
+): AmlScreeningNextAction | null {
+  if (!action) return null;
+  if (!caseClosed) return action;
+  if (FINDINGS.includes(action.key)) return action;
+  if (action.key === "reopen_case") return action;
+  return {
+    key: "reopen_case",
+    label: "Reopen case to resume AML/CTF",
+    headline: "This case is closed",
+    detail: "The AML/CTF record is retained for compliance purposes and its evidence "
+      + "stays readable. The journey is not progressing. If the customer relationship is "
+      + "now proceeding, reopen the case — reopening restores the ability to WORK the "
+      + "case and never approves the service, revives a terminated gate or restores a "
+      + "revoked passport.",
+    owner: "reviewer",
+  };
+}
+
+/**
  * Has a human actually decided this case's perimeter?
  *
  * `classified` is the canonical answer and is preferred whenever the server
@@ -58,7 +97,13 @@ export function perimeterIsClassified(
 export function resolveScreeningNextAction(
   action: AmlScreeningNextAction | null | undefined,
   perimeter: AmlScreeningPerimeter | null | undefined,
+  caseClosed = false,
 ): AmlScreeningNextAction | null {
+  // Lifecycle first: nothing below this line is a step a closed case takes.
+  const lifecycle = resolveClosedCaseAction(action, caseClosed);
+  if (!lifecycle) return null;
+  if (lifecycle.key === "reopen_case") return lifecycle;
+  action = lifecycle;
   if (!action) return null;
   if (action.key !== "fix_provider") return action;
   if (perimeterIsClassified(perimeter)) return action;

@@ -255,7 +255,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
     "tldraw": "^5.3.0",
-    "vaul": "^0.9.9",
+    "vaul": "^1.1.2",
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.1.10",
     "wavesurfer.js": "^7.12.11",

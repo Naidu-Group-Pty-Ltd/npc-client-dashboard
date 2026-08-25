@@ -15,18 +15,33 @@
  * built-in pair and says so loudly, because silently mixing them produces
  * 401s that look like an auth bug rather than a configuration one.
  *
- * ── Why the prime's values are still the fallback ────────────────────────────
+ * ── Why the fallback is THIS deployment's own project ───────────────────────
  *
- * So that this change is a no-op upstream. A build with no Supabase variables
- * set behaves exactly as it did when the values were inlined; only a build
- * that sets them moves. That is what makes it safe to land in the internal
- * console and the client-facing deployment at the same time.
+ * It used to be the prime's, so that introducing this resolver was a no-op
+ * upstream: a build with no Supabase variables behaved exactly as it did when
+ * the values were inlined. That reasoning was right for the change and wrong
+ * for this repository, and production proved it — the Vercel project never had
+ * `VITE_SUPABASE_URL` set, so the deployed client dashboard fell through to
+ * the prime and served the PRIME's production database. Signing in there
+ * authenticated against the prime's real staff accounts.
+ *
+ * A missing variable is the normal state of a freshly created deployment, so a
+ * fallback that reaches another tenant's data is not a safety net; it is the
+ * failure mode waiting to happen. **A clone must never be able to reach the
+ * prime's backend, configured or not.** The built-in pair is therefore this
+ * deployment's own project, and the prime's ref appears nowhere in `src/` —
+ * asserted by `backendIsolation.spec.ts`, which no longer exempts this file.
+ *
+ * The pairing rule above still holds, and still matters more here: a
+ * half-configured environment falls back to BOTH built-ins rather than mixing,
+ * so a partially-set deployment lands on its own project rather than on a
+ * URL from one tenant with a key from another.
  */
 
-/** The project this repository has always shipped against. */
-const FALLBACK_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
+/** This deployment's own project. Never the prime's — see above. */
+const FALLBACK_URL = 'https://plisdzywzleljorrphxv.supabase.co';
 const FALLBACK_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsaXNkenl3emxlbGpvcnJwaHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwOTI3NzcsImV4cCI6MjEwMjY2ODc3N30.bGxsWwZxPHUih_u6YtzPwsIeG_b-KtwYz7U33OTqbWk';
 
 function readEnv(key: string): string | undefined {
   try {

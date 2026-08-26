@@ -201,3 +201,169 @@ export function passportSofStampReadiness(items: SofItemFacts[]): PassportStampR
         + "Recording alone does not earn it.",
   };
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE DOCUMENTS — reviewed where the verification happens
+   ══════════════════════════════════════════════════════════════════════
+ *
+ * Verifying a source of funds means looking at a document, and the
+ * documents lived two stages back: the analyst read "Verify against
+ * evidence", went to Stage 4, found the bank statement, reviewed it, came
+ * back, and verified — with nothing on the record connecting the two acts.
+ *
+ * The binding already exists in the data. Every client upload carries a
+ * `requirement` code, and `source_of_funds` is one of the seeded
+ * requirements — so which documents ARE the funding evidence is a fact on
+ * file, not a guess. And `aml.source_of_funds` has carried `evidence_path`
+ * since the table was created, writable and never written: a verification
+ * has never once named the document it rested on.
+ */
+
+export interface CaseDocumentFacts {
+  id: string;
+  filename: string;
+  display_name?: string | null;
+  status?: string | null;
+  uploaded_at?: string | null;
+  uploaded_by_type?: string | null;
+  requirement?: { code?: string | null; label?: string | null } | null;
+}
+
+/** Requirement codes whose documents ARE funding evidence. */
+export const FUNDING_REQUIREMENT_CODES = new Set(["source_of_funds", "source_of_wealth"]);
+
+const DOC_ORDER: Record<string, number> = { accepted: 0, uploaded: 1, rejected: 2 };
+
+/**
+ * The case documents that belong to this stage, most reviewable first.
+ *
+ * Membership is the requirement CODE and nothing else. Matching on filenames
+ * ("bank", "statement", "savings") would classify documents by what they
+ * happen to be called, and a mis-filed passport named `savings.pdf` would
+ * become funding evidence. A document uploaded against no requirement is
+ * reachable through Stage 4, which this block links rather than duplicates.
+ */
+export function fundingDocuments(docs: CaseDocumentFacts[]): CaseDocumentFacts[] {
+  return docs
+    .filter((d) => FUNDING_REQUIREMENT_CODES.has(String(d.requirement?.code ?? "")))
+    .sort((a, b) =>
+      (DOC_ORDER[String(a.status ?? "uploaded")] ?? 1)
+      - (DOC_ORDER[String(b.status ?? "uploaded")] ?? 1));
+}
+
+export function documentDisplayName(d: CaseDocumentFacts): string {
+  return clean(d.display_name) || clean(d.requirement?.label) || d.filename;
+}
+
+/**
+ * The write that verifies a source AND names what it rested on.
+ *
+ * `evidence_path` gets a stable `aml_document:<id>` reference (the column is
+ * text, and a naked filename would break the link the moment the document is
+ * renamed); `metadata` carries the ids and the names as read at the time, so
+ * the record shows what the verifier saw even if a document is later
+ * renamed or removed. Metadata is MERGED over the item's existing metadata —
+ * this write must not erase what another surface stored there.
+ *
+ * Verifying with NO document named is legal and stays legal — evidence can
+ * be something no upload holds (a payslip sighted in person, a register
+ * checked). What it can never be is implicit: the caller chooses the empty
+ * list; this function does not invent one.
+ */
+export function verifyWithEvidence(
+  item: SofItemFacts & { metadata?: Record<string, unknown> | null },
+  documents: CaseDocumentFacts[],
+): {
+  id: string | undefined;
+  verified: true;
+  evidence_path: string | null;
+  metadata: Record<string, unknown>;
+} {
+  return {
+    id: item.id,
+    verified: true,
+    evidence_path: documents.length > 0 ? `aml_document:${documents[0].id}` : null,
+    metadata: {
+      ...(item.metadata ?? {}),
+      evidence_document_ids: documents.map((d) => d.id),
+      evidence_document_names: documents.map(documentDisplayName),
+    },
+  };
+}
+
+/** What a verified row says it rested on. Names as recorded at verification. */
+export function evidenceNames(
+  item: { metadata?: Record<string, unknown> | null },
+): string[] {
+  const names = (item.metadata as { evidence_document_names?: unknown } | null)
+    ?.evidence_document_names;
+  return Array.isArray(names) ? names.map(clean).filter(Boolean) : [];
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE NEXT STEP — one sentence, derived, never a dead end
+   ══════════════════════════════════════════════════════════════════════ */
+
+export interface FundingNextStep {
+  key: "review_documents" | "record" | "verify" | "chase_documents" | "settled";
+  sentence: string;
+  /** True when the stage is settled and the walk continues to Stage 7. */
+  continueToSubmission: boolean;
+}
+
+/**
+ * What the operator does next, from where the evidence actually stands.
+ *
+ * Decided from the same facts the panel renders, so the guidance can never
+ * point at work the panel does not show. The order is the work's own order:
+ * an unreviewed document is read before a source is verified against it, and
+ * nothing suggests verifying against documents that are all rejected.
+ */
+export function fundingNextStep(
+  progress: FundingProgress,
+  docs: CaseDocumentFacts[],
+): FundingNextStep {
+  const accepted = docs.filter((d) => String(d.status ?? "") === "accepted").length;
+  const awaiting = docs.filter((d) => String(d.status ?? "uploaded") === "uploaded").length;
+
+  if (progress.settled) {
+    return {
+      key: "settled", continueToSubmission: true,
+      sentence: "This stage is settled — every recorded source is verified. "
+        + "Continue to Stage 7 · Submission review.",
+    };
+  }
+  if (progress.recorded === 0) {
+    return {
+      key: "record", continueToSubmission: false,
+      sentence: "Record each source of funds first — the customer's declared "
+        + "sources can be recorded in one click above.",
+    };
+  }
+  if (awaiting > 0) {
+    return {
+      key: "review_documents", continueToSubmission: false,
+      sentence: `Review the ${awaiting} funding document${awaiting === 1 ? "" : "s"} `
+        + "awaiting review below, then verify each source against what you accepted.",
+    };
+  }
+  if (accepted === 0) {
+    return {
+      key: "chase_documents", continueToSubmission: false,
+      sentence: docs.length === 0
+        ? "No funding document is on file. Request the evidence through the "
+          + "document requirements, or verify from evidence sighted outside "
+          + "the platform and record where it was seen."
+        : "Every funding document on file was rejected. Request replacements "
+          + "before verifying, or verify from evidence sighted outside the "
+          + "platform and record where it was seen.",
+    };
+  }
+  return {
+    key: "verify", continueToSubmission: false,
+    sentence: `Verify the remaining ${progress.recorded - progress.verified} `
+      + `source${progress.recorded - progress.verified === 1 ? "" : "s"} against `
+      + "the accepted documents below — each verification names the document "
+      + "it rested on.",
+  };
+}

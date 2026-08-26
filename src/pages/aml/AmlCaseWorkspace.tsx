@@ -1015,7 +1015,10 @@ export default function AmlCaseWorkspace() {
 
           {/* ── Stage 6 · Funding & transaction ─────────────────────── */}
           {section === "finance" && canInvestigate && (
-            <FundingFinanceTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+            <FundingFinanceTab
+              caseId={caseRow.id} canWrite={canWrite} onChanged={load}
+              onContinue={() => setSection("submission-review")}
+            />
           )}
           {section === "counterparty" && canInvestigate && (
             <PurchaseCounterpartySection caseRow={caseRow} canWrite={canWrite} />

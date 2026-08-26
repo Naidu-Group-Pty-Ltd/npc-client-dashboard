@@ -344,7 +344,14 @@ export async function getBalance(): Promise<BalanceResult> {
     tenant_ref: AGENCY_TENANT_REF,
     display_name: AGENCY_DISPLAY_NAME,
   });
-  const res = await mcFetch(`/api/public/tokens/balance?${q.toString()}`, { method: "GET" });
+  // Balance is display data and mission-control-balance has a durable local
+  // snapshot to fall back to. Do not let a stalled upstream socket consume the
+  // browser's full request deadline: abort promptly so the edge handler can
+  // return that authenticated, tenant-scoped snapshot instead.
+  const res = await mcFetch(`/api/public/tokens/balance?${q.toString()}`, {
+    method: "GET",
+    signal: AbortSignal.timeout(8_000),
+  });
   const body = await parseOrThrow(res);
 
   const tenant = body?.tenant ?? {};

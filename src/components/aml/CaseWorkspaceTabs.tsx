@@ -1470,10 +1470,12 @@ function OwnershipGraph({ entity, owners, reps }: {
  * discrepancy engine as the standalone page. Read-only here — the
  * page owns entitlement gate + write actions.
  */
-export function FundingFinanceTab({ caseId, canWrite = false, onChanged }: {
+export function FundingFinanceTab({ caseId, canWrite = false, onChanged, onContinue }: {
   caseId: string;
   canWrite?: boolean;
   onChanged?: () => void;
+  /** Opens Stage 7 · Submission review, once the stage is settled. */
+  onContinue?: () => void;
 }) {
   const [loading, setLoading] = useState(true);
   const [comparisons, setComparisons] = useState<AmlFinanceComparison[]>([]);
@@ -1518,7 +1520,9 @@ export function FundingFinanceTab({ caseId, canWrite = false, onChanged }: {
         comparisons, and the actual Stage 6 job — record and verify source
         of funds — had no surface anywhere. The button now opens the work.
       */}
-      <FundingEvidencePanel caseId={caseId} canWrite={canWrite} onChanged={onChanged} />
+      <FundingEvidencePanel
+        caseId={caseId} canWrite={canWrite} onChanged={onChanged} onContinue={onContinue}
+      />
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div>

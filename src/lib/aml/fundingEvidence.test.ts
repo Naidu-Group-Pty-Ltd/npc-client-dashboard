@@ -147,3 +147,135 @@ describe("the label map", () => {
     }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE DOCUMENTS, AND THE NEXT STEP
+   ══════════════════════════════════════════════════════════════════════ */
+
+import {
+  documentDisplayName, evidenceNames, fundingDocuments, fundingNextStep,
+  verifyWithEvidence,
+} from "@/lib/aml/fundingEvidence.pure";
+
+const doc = (over = {}) => ({
+  id: "d1", filename: "17868163460724899975067990115218.jpg",
+  display_name: null, status: "uploaded", uploaded_at: "2026-08-20T00:00:00Z",
+  uploaded_by_type: "client",
+  requirement: { code: "source_of_funds", label: "Source of funds evidence" },
+  ...over,
+});
+
+describe("which documents are the funding evidence", () => {
+  it("membership is the requirement code, never the filename", () => {
+    /*
+     * Matching on "bank", "statement" or "savings" would classify documents
+     * by what they happen to be called — and a mis-filed passport named
+     * `savings.pdf` would become funding evidence. The binding the client
+     * upload already carries is the fact; a name is a guess.
+     */
+    const docs = fundingDocuments([
+      doc(),
+      doc({ id: "d2", requirement: { code: "source_of_wealth", label: "Source of wealth" } }),
+      doc({ id: "d3", filename: "savings-statement.pdf", requirement: { code: "photo_id_primary", label: "Photo ID" } }),
+      doc({ id: "d4", requirement: null }),
+    ]);
+    expect(docs.map((d) => d.id)).toEqual(["d1", "d2"]);
+  });
+
+  it("most reviewable first: accepted, then uploaded, then rejected", () => {
+    const docs = fundingDocuments([
+      doc({ id: "r", status: "rejected" }),
+      doc({ id: "u", status: "uploaded" }),
+      doc({ id: "a", status: "accepted" }),
+    ]);
+    expect(docs.map((d) => d.id)).toEqual(["a", "u", "r"]);
+  });
+
+  it("names a document the way Stage 4 does — display name, label, filename", () => {
+    expect(documentDisplayName(doc())).toBe("Source of funds evidence");
+    expect(documentDisplayName(doc({ display_name: "CBA statement Jan–Mar" })))
+      .toBe("CBA statement Jan–Mar");
+    expect(documentDisplayName(doc({ requirement: null }))).toBe(
+      "17868163460724899975067990115218.jpg");
+  });
+});
+
+describe("a verification names what it rested on", () => {
+  it("writes a stable reference and the names as read at the time", () => {
+    const body = verifyWithEvidence(
+      { ...item({ id: "s1" }), metadata: { kept: "yes" } },
+      [doc({ display_name: "CBA statement" }), doc({ id: "d2" })],
+    );
+    expect(body.verified).toBe(true);
+    // An id reference, not a filename — a rename must not break the link.
+    expect(body.evidence_path).toBe("aml_document:d1");
+    expect(body.metadata.evidence_document_ids).toEqual(["d1", "d2"]);
+    expect(body.metadata.evidence_document_names).toEqual([
+      "CBA statement", "Source of funds evidence"]);
+    // Merged, never replaced: what another surface stored survives.
+    expect(body.metadata.kept).toBe("yes");
+  });
+
+  it("verifying with nothing named is legal, and explicit", () => {
+    // Evidence can be something no upload holds — sighted in person, a
+    // register checked. The empty list is the caller's choice; nothing here
+    // invents a document.
+    const body = verifyWithEvidence(item({ id: "s1" }), []);
+    expect(body.evidence_path).toBeNull();
+    expect(body.metadata.evidence_document_ids).toEqual([]);
+  });
+
+  it("reads back the names recorded at verification", () => {
+    expect(evidenceNames({ metadata: { evidence_document_names: ["A", "", "B"] } }))
+      .toEqual(["A", "B"]);
+    expect(evidenceNames({ metadata: null })).toEqual([]);
+    expect(evidenceNames({ metadata: { evidence_document_names: "not-a-list" } }))
+      .toEqual([]);
+  });
+});
+
+describe("the next step is derived from where the evidence stands", () => {
+  const p = (recorded: number, verified: number) =>
+    fundingProgress(Array.from({ length: recorded }, (_, i) =>
+      item({ id: `s${i}`, verified: i < verified,
+        verified_at: i < verified ? "2026-08-25T00:00:00Z" : null })));
+
+  it("nothing recorded → record first", () => {
+    expect(fundingNextStep(p(0, 0), [doc()]).key).toBe("record");
+  });
+
+  it("documents awaiting review outrank verification", () => {
+    // An unreviewed document is read before a source is verified against it.
+    const step = fundingNextStep(p(2, 0), [doc({ status: "uploaded" })]);
+    expect(step.key).toBe("review_documents");
+    expect(step.sentence).toMatch(/review the 1 funding document/i);
+  });
+
+  it("no document on file does not dead-end", () => {
+    const step = fundingNextStep(p(1, 0), []);
+    expect(step.key).toBe("chase_documents");
+    expect(step.sentence).toMatch(/request the evidence/i);
+    expect(step.sentence).toMatch(/sighted outside\s+the platform/i);
+  });
+
+  it("everything rejected does not dead-end either", () => {
+    const step = fundingNextStep(p(1, 0), [doc({ status: "rejected" })]);
+    expect(step.key).toBe("chase_documents");
+    expect(step.sentence).toMatch(/rejected/i);
+  });
+
+  it("accepted documents and unverified sources → verify", () => {
+    const step = fundingNextStep(p(2, 1), [doc({ status: "accepted" })]);
+    expect(step.key).toBe("verify");
+    expect(step.sentence).toMatch(/remaining 1\s+source/);
+  });
+
+  it("settled → continue to Stage 7, and only then", () => {
+    const settled = fundingNextStep(p(2, 2), [doc({ status: "accepted" })]);
+    expect(settled.key).toBe("settled");
+    expect(settled.continueToSubmission).toBe(true);
+    for (const other of [p(0, 0), p(2, 1)]) {
+      expect(fundingNextStep(other, [doc()]).continueToSubmission).toBe(false);
+    }
+  });
+});

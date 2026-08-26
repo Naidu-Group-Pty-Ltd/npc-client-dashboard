@@ -73,7 +73,8 @@ const aphSearched = {
  * return the object it returned last time.
  */
 const declaration = () => ({
-  answered: true, answer: "no" as const, country: null,
+  answered: true, answer: "no" as const, relationship: null, role: null, country: null,
+  complete: true,
   summary: "The customer declared that neither they nor a family member holds office.",
 });
 

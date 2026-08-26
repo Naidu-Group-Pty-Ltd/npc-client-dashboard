@@ -212,6 +212,7 @@ these:
 | `src/App.tsx` | upstream has 0 `RouteExcludedFromBuild` and 0 `__CLIENT_FACING__` gates; this repo has 6 and 5. Compare the ROUTE SETS before keeping this side — they were 194 = 194 in August, and a route only upstream has must be brought over by hand |
 | `src/lib/clientFacing.ts` + its test | 46 hidden paths here against upstream's 24. Upstream's test asserts `/billing`, `/admin/users` and `/admin/template-builder` stay VISIBLE, which this repo deliberately contradicts |
 | `src/components/call-logs/CleanupTestCalls.tsx` | reads `VITE_TEST_CALL_NUMBERS` (see below) |
+| `src/vite-env.d.ts` | declares `__CLIENT_FACING__`. Upstream has no reason to, so taking upstream's version deletes the declaration and `App.tsx` stops type-checking with five `TS2304: Cannot find name '__CLIENT_FACING__'`. This one bit during the 26 Aug sync — and it was invisible for an hour because the typecheck was being run through a pipe, so `$?` was `tail`'s exit code and always 0. **Run `tsc` without a pipe and read its own exit status.** |
 
 **Never take `supabase/.temp/linked-project.json`.** It is TRACKED upstream and
 holds the prime's project ref; `backendIsolation.spec.ts` asserts it stays

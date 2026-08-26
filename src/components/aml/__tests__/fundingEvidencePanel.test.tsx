@@ -24,8 +24,16 @@ vi.mock("@/lib/aml/amlMonitoringApi", () => ({
     deleteSof: (...a: unknown[]) => deleteSof(...a),
   },
 }));
+const listDocuments = vi.fn();
+const reviewDocument = vi.fn();
+const getDocumentDownloadUrl = vi.fn();
 vi.mock("@/lib/aml/amlCasesApi", () => ({
-  amlCasesApi: { getSubmissionReview: (...a: unknown[]) => getSubmissionReview(...a) },
+  amlCasesApi: {
+    getSubmissionReview: (...a: unknown[]) => getSubmissionReview(...a),
+    listDocuments: (...a: unknown[]) => listDocuments(...a),
+    reviewDocument: (...a: unknown[]) => reviewDocument(...a),
+    getDocumentDownloadUrl: (...a: unknown[]) => getDocumentDownloadUrl(...a),
+  },
 }));
 vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn() }));
 
@@ -47,11 +55,21 @@ const review = (sources: string[] = ["Salary savings", "Loan / mortgage"]) => ({
   },
 });
 
+const caseDoc = (over = {}) => ({
+  id: "d1", filename: "statement.pdf", display_name: null, status: "uploaded",
+  uploaded_at: "2026-08-20T00:00:00Z", uploaded_by_type: "client",
+  requirement: { code: "source_of_funds", label: "Source of funds evidence" },
+  ...over,
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   listSof.mockResolvedValue({ items: [] });
+  listDocuments.mockResolvedValue({ documents: [] });
   getSubmissionReview.mockResolvedValue(review());
   upsertSof.mockResolvedValue({ item: sof() });
+  reviewDocument.mockResolvedValue({ document: caseDoc() });
+  getDocumentDownloadUrl.mockResolvedValue({ url: "https://signed.example/x" });
 });
 
 const renderPanel = (canWrite = true, onChanged = vi.fn()) => {
@@ -87,13 +105,54 @@ describe("the customer's declaration reaches the analyst", () => {
 });
 
 describe("verification is an explicit act", () => {
-  it("verify sends verified: true and reloads the workspace", async () => {
+  it("verify asks WHICH documents it rested on, and records them", async () => {
+    /*
+     * The act used to be one click that named nothing — `evidence_path` had
+     * been writable and unwritten since the table was created. Verification
+     * and the document it rested on are one recorded act now.
+     */
     listSof.mockResolvedValue({ items: [sof()] });
+    listDocuments.mockResolvedValue({ documents: [
+      caseDoc({ status: "accepted", display_name: "CBA statement" }),
+    ] });
     const onChanged = renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: /verify against evidence/i }));
+
+    // The accepted document arrives pre-ticked, and the button says the count.
+    const confirm = await screen.findByRole("button", { name: /verify — 1 document named/i });
+    fireEvent.click(confirm);
+
     await waitFor(() => expect(upsertSof).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "s1", verified: true })));
+      expect.objectContaining({
+        id: "s1", verified: true,
+        evidence_path: "aml_document:d1",
+        metadata: expect.objectContaining({
+          evidence_document_ids: ["d1"],
+          evidence_document_names: ["CBA statement"],
+        }),
+      })));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("a merely-uploaded document is offered but never pre-ticked", async () => {
+    // Pre-ticking unreviewed evidence into a verification would launder its
+    // review status. With nothing accepted, the button is explicit about it.
+    listSof.mockResolvedValue({ items: [sof()] });
+    listDocuments.mockResolvedValue({ documents: [caseDoc({ status: "uploaded" })] });
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /verify against evidence/i }));
+    expect(await screen.findByRole("button", { name: /verify without naming a document/i }))
+      .toBeTruthy();
+    expect((screen.getByRole("checkbox") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("a verified row shows what it rested on", async () => {
+    listSof.mockResolvedValue({ items: [sof({
+      verified: true, verified_at: "2026-08-25T00:00:00Z",
+      metadata: { evidence_document_names: ["CBA statement"] },
+    })] });
+    renderPanel();
+    expect(await screen.findByText(/Evidence: CBA statement/)).toBeTruthy();
   });
 
   it("a verified source can be withdrawn, never silently edited", async () => {
@@ -144,5 +203,70 @@ describe("a failed read is not an empty list", () => {
     renderPanel();
     expect(await screen.findByText("Salary savings")).toBeTruthy();
     expect(screen.queryByText(/declared by the customer, not yet recorded/i)).toBeNull();
+  });
+});
+
+describe("the funding documents, reviewed where the work is", () => {
+  it("shows them with the same accept/reject review Stage 4 writes", async () => {
+    listSof.mockResolvedValue({ items: [sof()] });
+    listDocuments.mockResolvedValue({ documents: [caseDoc()] });
+    renderPanel();
+    expect(await screen.findByText(/funding documents on file/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^accept$/i }));
+    await waitFor(() => expect(reviewDocument).toHaveBeenCalledWith("d1", "accepted"));
+  });
+
+  it("a rejection needs a reason the client will read", async () => {
+    listSof.mockResolvedValue({ items: [sof()] });
+    listDocuments.mockResolvedValue({ documents: [caseDoc()] });
+    renderPanel();
+    await screen.findByText(/funding documents on file/i);
+    fireEvent.click(screen.getByRole("button", { name: /^reject$/i }));
+    const confirm = await screen.findByRole("button", { name: /reject document/i });
+    // Too short — the button stays disabled rather than sending "bad".
+    fireEvent.change(screen.getByLabelText(/reason shown to the client/i),
+      { target: { value: "bad" } });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/reason shown to the client/i),
+      { target: { value: "The statement is missing the first page." } });
+    fireEvent.click(confirm);
+    await waitFor(() => expect(reviewDocument).toHaveBeenCalledWith(
+      "d1", "rejected", "The statement is missing the first page."));
+  });
+
+  it("a document bound to a non-funding requirement stays in Stage 4", async () => {
+    listSof.mockResolvedValue({ items: [sof()] });
+    listDocuments.mockResolvedValue({ documents: [
+      caseDoc({ id: "d9", requirement: { code: "photo_id_primary", label: "Photo ID" } }),
+    ] });
+    renderPanel();
+    await screen.findByText("Salary savings");
+    expect(screen.queryByText(/funding documents on file/i)).toBeNull();
+  });
+});
+
+describe("the next step is always on screen", () => {
+  it("documents awaiting review outrank verification", async () => {
+    listSof.mockResolvedValue({ items: [sof()] });
+    listDocuments.mockResolvedValue({ documents: [caseDoc()] });
+    renderPanel();
+    expect(await screen.findByText(/review the 1 funding document/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /continue to submission review/i })).toBeNull();
+  });
+
+  it("settled offers Continue, and pressing it navigates", async () => {
+    listSof.mockResolvedValue({ items: [sof({ verified: true, verified_at: "2026-08-25T00:00:00Z" })] });
+    const onContinue = vi.fn();
+    render(<FundingEvidencePanel caseId={CASE_ID} canWrite onContinue={onContinue} />);
+    fireEvent.click(await screen.findByRole("button", { name: /continue to submission review/i }));
+    expect(onContinue).toHaveBeenCalled();
+  });
+
+  it("an unreadable document list mutes the documents block, not the panel", async () => {
+    listDocuments.mockRejectedValue(new Error("503"));
+    listSof.mockResolvedValue({ items: [sof()] });
+    renderPanel();
+    expect(await screen.findByText(/case documents could not be read/i)).toBeTruthy();
+    expect(screen.getByText("Salary savings")).toBeTruthy();
   });
 });

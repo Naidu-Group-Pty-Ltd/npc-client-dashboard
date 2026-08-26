@@ -61,6 +61,59 @@ date. A source test reads the passport module and fails if the rule ever
 changes shape — **this panel must never promise a stamp the passport will not
 mint.**
 
+## The documents, reviewed where the verification happens
+
+Verifying a source of funds means looking at a document, and the documents
+lived two stages back: read "Verify against evidence", go to Stage 4, find the
+statement, review it, come back, verify — with nothing on the record
+connecting the two acts.
+
+Both halves of the connection already existed in the data:
+
+- every client upload carries a **requirement code**, and `source_of_funds` is
+  one of the seeded requirements — which documents ARE the funding evidence is
+  a fact on file;
+- `aml.source_of_funds.evidence_path` has been writable since the table was
+  created and **never once written** — no verification had ever named the
+  document it rested on.
+
+### The rules
+
+- **Membership is the requirement code, never the filename.** Matching on
+  "bank" or "savings" would classify documents by what they happen to be
+  called, and a mis-filed passport named `savings.pdf` would become funding
+  evidence. Documents bound to other requirements stay in Stage 4, which the
+  panel names as the fallback rather than duplicating.
+- **Reviewing here writes the record Stage 4 writes** — the same
+  `review_document` op, so the two surfaces cannot disagree. A rejection
+  requires a reason the client will read.
+- **Verification asks which documents it rested on.** Accepted documents
+  arrive pre-ticked; a merely-uploaded one can be ticked but never is by
+  default — pre-ticking unreviewed evidence into a verification would launder
+  its review status. `evidence_path` records a stable `aml_document:<id>`
+  reference (a filename would break on rename) and `metadata` carries the ids
+  and the names as read at the time, merged over what other surfaces stored.
+- **Verifying with nothing named stays legal, and explicit.** Evidence can be
+  something no upload holds — sighted in person, a register checked. The
+  button then says "Verify without naming a document"; nothing pretends a
+  document was involved.
+
+### The next step, said once and derived
+
+One line, computed from the same facts the panel renders, so it can never
+point at work the panel does not show:
+
+| state | next step |
+| --- | --- |
+| nothing recorded | record the declared sources |
+| documents awaiting review | review them first — before verifying against them |
+| no document on file / all rejected | request evidence, or verify from evidence sighted outside the platform — never a dead end |
+| accepted documents, unverified sources | verify each; the verification names its documents |
+| settled | **Continue to Stage 7 · Submission review** — the button exists only in this state |
+
+The Continue button appears only when the stage is settled: a continue beside
+unfinished work is an invitation to skip it.
+
 ## What was deliberately not done
 
 - No auto-verification from the declaration, ever.

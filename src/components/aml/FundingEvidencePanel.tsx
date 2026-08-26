@@ -18,7 +18,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import {
-  BadgeCheck, Banknote, Loader2, Plus, ShieldCheck, Stamp, Trash2, Undo2,
+  ArrowRight, BadgeCheck, Banknote, Check, ExternalLink, FileText, Loader2,
+  Plus, ShieldCheck, Stamp, Trash2, Undo2, X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -34,18 +35,32 @@ import { toast } from "@/hooks/use-toast";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import { amlMonitoringApi, type AmlSofItem } from "@/lib/aml/amlMonitoringApi";
 import {
-  SOURCE_TYPE_LABEL, draftsFromDeclaredFunding, fundingProgress,
-  passportSofStampReadiness, type DeclaredFunding, type SofDraft,
+  SOURCE_TYPE_LABEL, documentDisplayName, draftsFromDeclaredFunding,
+  evidenceNames, fundingDocuments, fundingNextStep, fundingProgress,
+  passportSofStampReadiness, verifyWithEvidence,
+  type CaseDocumentFacts, type DeclaredFunding, type SofDraft,
 } from "@/lib/aml/fundingEvidence.pure";
 
-export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
+export function FundingEvidencePanel({ caseId, canWrite, onChanged, onContinue }: {
   caseId: string;
   canWrite: boolean;
   /** The workspace's own reload — the journey and next action move with it. */
   onChanged?: () => void;
+  /**
+   * Opens Stage 7 · Submission review. Offered only once the stage is
+   * settled — a "continue" that appears beside unfinished work is an
+   * invitation to skip it.
+   */
+  onContinue?: () => void;
 }) {
   const [items, setItems] = useState<AmlSofItem[] | null>(null);
   const [declared, setDeclared] = useState<DeclaredFunding | null>(null);
+  const [documents, setDocuments] = useState<CaseDocumentFacts[] | null>(null);
+  /** The item an evidence picker is open for, and which documents are ticked. */
+  const [verifying, setVerifying] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [rejecting, setRejecting] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draftType, setDraftType] = useState("savings");
@@ -61,6 +76,14 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
       // failed read, and nothing below offers to "start" over data it
       // cannot see.
       setItems(null);
+    }
+    try {
+      const res = await amlCasesApi.listDocuments(caseId);
+      setDocuments((res?.documents ?? []) as CaseDocumentFacts[]);
+    } catch {
+      // Unknown is not empty: with the list unreadable, nothing below may
+      // claim "no funding document is on file".
+      setDocuments(null);
     }
     try {
       const review = await amlCasesApi.getSubmissionReview(caseId);
@@ -97,6 +120,40 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
   const drafts = items === null ? [] : draftsFromDeclaredFunding(declared, items);
   const progress = fundingProgress(items ?? []);
   const stamp = passportSofStampReadiness(items ?? []);
+  const evidenceDocs = fundingDocuments(documents ?? []);
+  const nextStep = items === null ? null : fundingNextStep(progress, evidenceDocs);
+
+  const openDocument = async (id: string) => {
+    try {
+      const { url } = await amlCasesApi.getDocumentDownloadUrl(id);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e: unknown) {
+      toast({
+        title: "The document could not be opened",
+        description: e instanceof Error ? e.message : "The server refused it.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const startVerify = (itemId: string) => {
+    setVerifying(itemId);
+    // Accepted documents arrive pre-ticked: they are the reviewed evidence.
+    // A document merely uploaded is NOT — ticking unreviewed evidence into a
+    // verification by default would launder its status.
+    setPicked(new Set(evidenceDocs
+      .filter((d) => String(d.status ?? "") === "accepted").map((d) => d.id)));
+  };
+
+  const confirmVerify = (item: AmlSofItem) => {
+    const chosen = evidenceDocs.filter((d) => picked.has(d.id));
+    return write(`verify:${item.id}`, async () => {
+      await amlMonitoringApi.upsertSof({
+        case_id: caseId, ...verifyWithEvidence(item, chosen),
+      });
+      setVerifying(null);
+    });
+  };
 
   return (
     <Card>
@@ -179,6 +236,14 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
                         {item.notes && (
                           <p className="mt-1 text-[11px] text-muted-foreground">{item.notes}</p>
                         )}
+                        {/* What the verification rested on, as recorded at
+                            the time — survives a later rename or removal. */}
+                        {item.verified && evidenceNames(item).length > 0 && (
+                          <p className="mt-1 flex items-start gap-1 text-[11px] text-success">
+                            <FileText aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+                            <span>Evidence: {evidenceNames(item).join(", ")}</span>
+                          </p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
                         <Badge
@@ -202,16 +267,13 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
                             <Undo2 aria-hidden className="mr-1.5 h-3 w-3" />
                             Withdraw verification
                           </Button>
-                        ) : (
+                        ) : verifying === item.id ? null : (
                           <Button
                             type="button" size="sm" variant="secondary" className="h-7"
                             disabled={busy !== null}
-                            onClick={() => void write(`verify:${item.id}`, () =>
-                              amlMonitoringApi.upsertSof({ id: item.id, case_id: caseId, verified: true }))}
+                            onClick={() => startVerify(item.id)}
                           >
-                            {busy === `verify:${item.id}`
-                              ? <Loader2 aria-hidden className="mr-1.5 h-3 w-3 animate-spin" />
-                              : <BadgeCheck aria-hidden className="mr-1.5 h-3 w-3" />}
+                            <BadgeCheck aria-hidden className="mr-1.5 h-3 w-3" />
                             Verify against evidence
                           </Button>
                         )}
@@ -224,6 +286,85 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
                         >
                           <Trash2 aria-hidden className="h-3 w-3" />
                         </Button>
+                      </div>
+                    )}
+
+                    {/*
+                      ── Naming the evidence ──────────────────────────────
+                      The verification and the document it rested on become
+                      one recorded act. Accepted documents arrive pre-ticked;
+                      a merely-uploaded one can be ticked, but never is by
+                      default — that would launder its review status into a
+                      verification. Verifying with nothing named stays legal:
+                      evidence can be something no upload holds, and the
+                      button says so out loud rather than pretending a
+                      document was involved.
+                    */}
+                    {verifying === item.id && canWrite && (
+                      <div className="mt-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+                        <p className="text-[11px] font-medium">
+                          Which documents did you verify this against?
+                        </p>
+                        {evidenceDocs.length === 0 ? (
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            No funding document is on file to name.
+                          </p>
+                        ) : (
+                          <ul className="mt-1.5 space-y-1">
+                            {evidenceDocs.map((d) => (
+                              <li key={d.id} className="flex items-center gap-2">
+                                <input
+                                  id={`ev-${item.id}-${d.id}`}
+                                  type="checkbox"
+                                  className="h-3.5 w-3.5"
+                                  checked={picked.has(d.id)}
+                                  onChange={(e) => setPicked((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(d.id);
+                                    else next.delete(d.id);
+                                    return next;
+                                  })}
+                                />
+                                <label
+                                  htmlFor={`ev-${item.id}-${d.id}`}
+                                  className="min-w-0 flex-1 truncate text-[11px]"
+                                >
+                                  {documentDisplayName(d)}
+                                  <span className="text-muted-foreground">
+                                    {" "}· {String(d.status ?? "uploaded").replace(/_/g, " ")}
+                                  </span>
+                                </label>
+                                <Button
+                                  type="button" size="sm" variant="ghost" className="h-6 px-1.5"
+                                  aria-label={`Open ${documentDisplayName(d)}`}
+                                  onClick={() => void openDocument(d.id)}
+                                >
+                                  <ExternalLink aria-hidden className="h-3 w-3" />
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Button
+                            type="button" size="sm" className="h-7"
+                            disabled={busy !== null}
+                            onClick={() => void confirmVerify(item)}
+                          >
+                            {busy === `verify:${item.id}`
+                              ? <Loader2 aria-hidden className="mr-1.5 h-3 w-3 animate-spin" />
+                              : <BadgeCheck aria-hidden className="mr-1.5 h-3 w-3" />}
+                            {picked.size > 0
+                              ? `Verify — ${picked.size} document${picked.size === 1 ? "" : "s"} named`
+                              : "Verify without naming a document"}
+                          </Button>
+                          <Button
+                            type="button" size="sm" variant="ghost" className="h-7"
+                            onClick={() => setVerifying(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </li>
@@ -300,6 +441,151 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged }: {
                 Record another source
               </Button>
             ))}
+
+            {/*
+              ── The funding documents, reviewed where the work is ──────
+              Verifying a source means looking at a document, and the
+              documents lived two stages back. Membership here is the
+              requirement CODE — which documents are the funding evidence is
+              a fact on file, never a filename guess — and reviewing one
+              writes the same `review_document` record Stage 4 writes, so
+              the two surfaces cannot disagree.
+            */}
+            {documents === null ? (
+              <p className="text-[11px] text-muted-foreground">
+                The case documents could not be read, so the funding evidence
+                on file cannot be shown here. Stage 4 · Documents is the
+                fallback.
+              </p>
+            ) : evidenceDocs.length > 0 && (
+              <div className="rounded-md border border-border/60 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                  Funding documents on file
+                </p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Uploaded against the source-of-funds requirements. Review them
+                  here — the record is the same one Stage 4 holds.
+                </p>
+                <ul className="mt-2 divide-y divide-border/40">
+                  {evidenceDocs.map((d) => {
+                    const status = String(d.status ?? "uploaded");
+                    return (
+                      <li key={d.id} className="py-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <FileText aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-medium">{documentDisplayName(d)}</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                {d.uploaded_by_type === "client" ? "Client upload" : "Uploaded"}
+                                {d.uploaded_at && ` · ${String(d.uploaded_at).slice(0, 10)}`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <Badge
+                              variant={status === "accepted" ? "outline" : "secondary"}
+                              className={cn("text-[10px] capitalize",
+                                status === "accepted" && "border-success/50 bg-success/10 text-success",
+                                status === "rejected" && "border-destructive/50 bg-destructive/10 text-destructive")}
+                            >
+                              {status.replace(/_/g, " ")}
+                            </Badge>
+                            <Button
+                              type="button" size="sm" variant="outline" className="h-7"
+                              onClick={() => void openDocument(d.id)}
+                            >
+                              <ExternalLink aria-hidden className="mr-1.5 h-3 w-3" />
+                              Open
+                            </Button>
+                            {canWrite && status === "uploaded" && rejecting !== d.id && (
+                              <>
+                                <Button
+                                  type="button" size="sm" variant="secondary" className="h-7"
+                                  disabled={busy !== null}
+                                  onClick={() => void write(`accept:${d.id}`, () =>
+                                    amlCasesApi.reviewDocument(d.id, "accepted"))}
+                                >
+                                  <Check aria-hidden className="mr-1.5 h-3 w-3" />
+                                  Accept
+                                </Button>
+                                <Button
+                                  type="button" size="sm" variant="ghost" className="h-7"
+                                  disabled={busy !== null}
+                                  onClick={() => { setRejecting(d.id); setRejectReason(""); }}
+                                >
+                                  <X aria-hidden className="mr-1.5 h-3 w-3" />
+                                  Reject
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        {rejecting === d.id && canWrite && (
+                          <div className="mt-2 rounded-md border border-border/60 bg-muted/20 p-2.5">
+                            <Label className="text-[11px]" htmlFor={`reject-${d.id}`}>
+                              Reason shown to the client
+                            </Label>
+                            <Input
+                              id={`reject-${d.id}`} className="mt-1 h-8"
+                              value={rejectReason}
+                              onChange={(e) => setRejectReason(e.target.value)}
+                              placeholder="e.g. The statement is missing the first page — please upload all pages."
+                            />
+                            <div className="mt-2 flex gap-2">
+                              <Button
+                                type="button" size="sm" variant="destructive" className="h-7"
+                                disabled={busy !== null || rejectReason.trim().length < 10}
+                                onClick={() => void write(`reject:${d.id}`, async () => {
+                                  await amlCasesApi.reviewDocument(d.id, "rejected", rejectReason.trim());
+                                  setRejecting(null);
+                                })}
+                              >
+                                Reject document
+                              </Button>
+                              <Button
+                                type="button" size="sm" variant="ghost" className="h-7"
+                                onClick={() => setRejecting(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            {/*
+              ── The next step, said once and derived ───────────────────
+              From the same facts the panel renders, so it can never point
+              at work the panel does not show. "Continue" appears only once
+              the stage is settled: a continue button beside unfinished work
+              is an invitation to skip it.
+            */}
+            {nextStep && (
+              <div className={cn(
+                "flex flex-wrap items-center justify-between gap-2 rounded-md border p-2.5",
+                nextStep.continueToSubmission
+                  ? "border-success/40 bg-success/5"
+                  : "border-border/60 bg-muted/20",
+              )}>
+                <p className={cn("text-[11px]",
+                  nextStep.continueToSubmission ? "text-success" : "text-muted-foreground")}>
+                  <span className="font-semibold uppercase tracking-[0.08em]">Next step</span>
+                  {" · "}{nextStep.sentence}
+                </p>
+                {nextStep.continueToSubmission && onContinue && (
+                  <Button type="button" size="sm" className="h-7" onClick={onContinue}>
+                    Continue to Submission review
+                    <ArrowRight aria-hidden className="ml-1.5 h-3 w-3" />
+                  </Button>
+                )}
+              </div>
+            )}
 
             {/*
               ── The Aurixa Passport, told the truth ────────────────────

@@ -104,10 +104,18 @@ describe('no checked-in CLI state points at another project', () => {
 });
 
 describe('the app itself resolves its project from one place', () => {
-  it('no source file outside the resolver hardcodes a project URL', () => {
+  it('NO source file names the prime, the resolver included', () => {
     // Guards the fix that made a dedicated backend reachable at all: 31 files
     // used to write the project URL into their own module scope, so
     // VITE_SUPABASE_URL moved nothing.
+    //
+    // `env.ts` used to be exempt here, because it legitimately held the prime
+    // as the built-in fallback. That exemption is gone, and so is the
+    // fallback: the Vercel project never set VITE_SUPABASE_URL, the build fell
+    // through, and the deployed client dashboard served the PRIME's production
+    // database. A missing variable is the normal state of a new deployment, so
+    // a fallback that reaches another tenant is the failure mode rather than
+    // the safety net. The prime's ref now appears nowhere under `src/`.
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
@@ -116,12 +124,30 @@ describe('the app itself resolves its project from one place', () => {
           if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
           walk(rel);
         } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.(test|spec)\.tsx?$/.test(entry.name)) {
-          if (rel.endsWith(join('integrations', 'supabase', 'env.ts'))) continue;
-          if (read(rel).includes(`${FOREIGN_PROJECT_REF}.supabase.co`)) offenders.push(rel);
+          if (read(rel).includes(FOREIGN_PROJECT_REF)) offenders.push(rel);
         }
       }
     };
     walk('src');
-    expect(offenders).toEqual([]);
+    expect(offenders, `files naming the prime: ${offenders.join(', ')}`).toEqual([]);
+  });
+
+  it('the built-in fallback pair is THIS deployment, and the pair matches', () => {
+    // The pair is what authenticates: a URL from one project with a key from
+    // another authenticates to nothing. Assert both halves name the same
+    // project, and that the project is ours — so an unconfigured build lands
+    // here rather than anywhere else.
+    const env = read(join('src', 'integrations', 'supabase', 'env.ts'));
+
+    const url = /const FALLBACK_URL = '([^']+)'/.exec(env)?.[1] ?? '';
+    expect(url, 'FALLBACK_URL not found').not.toBe('');
+    expect(url).toBe(`https://${OWN_PROJECT_REF}.supabase.co`);
+
+    const key = /const FALLBACK_ANON_KEY =\s*'([^']+)'/.exec(env)?.[1] ?? '';
+    expect(key, 'FALLBACK_ANON_KEY not found').not.toBe('');
+    const claimedRef = JSON.parse(
+      Buffer.from(key.split('.')[1], 'base64').toString('utf8'),
+    ).ref as string;
+    expect(claimedRef, 'the fallback key belongs to a different project').toBe(OWN_PROJECT_REF);
   });
 });

@@ -278,7 +278,7 @@ jobs:
       # warmer than the last.
       - name: Restore Deno module cache
         id: deno-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.cache/deno
           key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
@@ -338,7 +338,7 @@ jobs:
           && steps.deno-cache.outputs.cache-hit != 'true'
           && steps.deno-cache-size.outputs.bytes != ''
           && steps.deno-cache-size.outputs.bytes != '0'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: ~/.cache/deno
           key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}

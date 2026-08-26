@@ -1,0 +1,49 @@
+# Secret scanning for this repository.
+#
+# Extends the default rule set — nothing is turned off. The single allowance
+# below is one literal string, and it is here because the default `jwt` rule
+# cannot tell a credential from a published identifier and this repository
+# needs the second one in two places.
+#
+# ## What is allowed, and why it is not a secret
+#
+# A Supabase **anon** key is a publishable key. It carries no privileges of its
+# own: it identifies the project and asserts the `anon` role, and every row it
+# can reach is decided by Row Level Security on the server. Supabase ships it
+# to the browser by design — it is in the JavaScript bundle of every Supabase
+# application in existence, including this one. Rotating it changes nothing
+# about who can read what.
+#
+# Decoded, the allowed key is exactly that and nothing more:
+#
+#     {"iss":"supabase","ref":"plisdzywzleljorrphxv","role":"anon", ...}
+#
+# `ref` is THIS deployment's own project and `role` is `anon`.
+#
+# ## Why the allowance is a literal rather than a pattern
+#
+# A rule like "any JWT whose role is anon" cannot be written here — the claims
+# are inside a base64 payload the scanner matches as opaque text — and a rule
+# like "ignore JWTs in public/" would wave through a `service_role` key, which
+# bypasses RLS entirely and is the one credential in this system that must
+# never be committed. So the allowance names one string. A different key, a
+# rotated key, another project's key, or a service_role key all still fail the
+# scan, which is the behaviour worth keeping.
+#
+# ## Why it surfaced now
+#
+# It has been in `src/integrations/supabase/env.ts` since this repository got
+# its own backend; gitleaks only scans the commits in a pull request's range,
+# so it had never appeared as an addition under the action. Restoring
+# `public/lead-magnet-embed.html` — which a mirror cascade had reverted to the
+# PRIME's project and the prime's key — added it inside a scanned range for the
+# first time.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "This deployment's own Supabase anon (publishable) key — see the header."
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsaXNkenl3emxlbGpvcnJwaHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwOTI3NzcsImV4cCI6MjEwMjY2ODc3N30.bGxsWwZxPHUih_u6YtzPwsIeG_b-KtwYz7U33OTqbWk''',
+]

@@ -1,5 +1,7 @@
 import { PixelPerfectPDFGenerator } from './PixelPerfectPDFGenerator';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { Button } from '@/components/ui/button';
+import { Download, Loader2 } from 'lucide-react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 
@@ -27,10 +29,22 @@ interface ComparisonPDFGeneratorProps {
 export function ComparisonPDFGenerator({ comparison }: ComparisonPDFGeneratorProps) {
   const [formattedContent, setFormattedContent] = useState<string | null>(null);
   const [isFormatting, setIsFormatting] = useState(true);
+  const formattedForId = useRef<string | null>(null);
 
+  // Formatted once per ROW, never per render. This effect used to key on the
+  // `comparison` object itself, and both mount sites hand this component a
+  // rebuilt object whenever their parent re-renders — so every re-render
+  // re-entered the formatting state, which (a) replaced the download button
+  // with a spinner for the length of the call ("the Download button appears
+  // and then disappears"), and (b) fired ANOTHER metered model call each time.
+  // A stored row's id names its content; the same id never formats twice in
+  // one mount, and a genuinely different comparison (a re-run stores a new
+  // row) formats exactly once.
   useEffect(() => {
+    if (formattedForId.current === comparison.id) return;
+    formattedForId.current = comparison.id;
     formatComparisonReport();
-  }, [comparison]);
+  }, [comparison.id]);
 
   const formatComparisonReport = async () => {
     try {
@@ -123,15 +137,16 @@ export function ComparisonPDFGenerator({ comparison }: ComparisonPDFGeneratorPro
     return content;
   };
 
-  // Show loading state while formatting
+  // While the report is being formatted the CONTROL stays where it is: the
+  // same button, disabled, saying what it is doing. The old full-width spinner
+  // block replaced the button entirely, so in a toolbar this control read as a
+  // download that appeared and then vanished — and the layout jumped around it.
   if (isFormatting || !formattedContent) {
     return (
-      <div className="flex items-center justify-center p-8">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-sm text-muted-foreground">Formatting comparison report...</p>
-        </div>
-      </div>
+      <Button disabled className="gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Preparing Client PDF…
+      </Button>
     );
   }
 

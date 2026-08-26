@@ -59,6 +59,16 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: pptxgenjs
         update-types: [version-update:semver-major]
+      # Added after this repo's `main` went red. zod 3 → 4 and
+      # react-resizable-panels 2 → 4 arrived as ordinary Dependabot version
+      # updates and took the typecheck from 1 error to 247 — every zod schema,
+      # every `zodResolver` form, and `ui/resizable.tsx`. Neither is a build
+      # tool, so neither was covered by the rules above, and neither failure was
+      # visible until the lockfile was rebuilt. Same judgement, same reason.
+      - dependency-name: zod
+        update-types: [version-update:semver-major]
+      - dependency-name: react-resizable-panels
+        update-types: [version-update:semver-major]
       # `xlsx` is pinned to a vendor CDN tarball because SheetJS stopped
       # publishing to npm after 0.18. Dependabot cannot resolve a URL
       # dependency, and a "helpful" rewrite back to the registry would silently

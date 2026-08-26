@@ -71,6 +71,7 @@ import { readRepairRegion, type RepairRegionBox } from './repairRegion.pure.ts';
 import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
+import { PROVENANCE_VERSION, readPrimaryImageStanding } from './sourceImages.ts';
 
 export interface SanitizationSettlement {
   scanned: number;
@@ -630,6 +631,34 @@ export async function settleImageSanitization(
         ? sanitizationSettled({ ...detail, [CLEARANCE_KEY]: null }, storedOriginalSha(detail))
         : sanitizationSettled(detail, storedOriginalSha(detail));
       if (settled) continue;
+
+      /**
+       * A CLEAN BUILDER ORIGINAL ALREADY SERVES THIS PROPERTY: NO REPAIR.
+       *
+       * The order of the whole stage is builder-supplied clean image first,
+       * deterministic repair second, the worker third — and the first step is
+       * decided HERE, because this is where a repair is about to be paid for.
+       * Where the same property holds a proven clean primary (measured clean,
+       * or cleared by the precise inspection, at the current provenance
+       * standard), the card shows that untouched file and a repaired copy of
+       * the convicted tile beside it would never be chosen — see
+       * `chooseDisplayableImage`, where a clean original outranks a
+       * derivative. Spending the tick's allowance, and a worker call, on a
+       * picture the card will not draw is the exact spend this rule removes.
+       *
+       * ONLY the conviction path. A persisted repair region is an operator
+       * saying "rebuild this exact rectangle", and an explicit request is a
+       * legitimate reason to repair whatever else the property holds.
+       *
+       * And it is a SKIP, never a verdict: nothing is written, so the moment
+       * the clean image is demoted or replaced the row is outstanding again on
+       * the next scan.
+       */
+      if (!region && row.stock_item_id) {
+        const standing = await readPrimaryImageStanding(
+          db, String(row.stock_item_id), PROVENANCE_VERSION);
+        if (standing.clean) continue;
+      }
 
       outcome.outstanding += 1;
 

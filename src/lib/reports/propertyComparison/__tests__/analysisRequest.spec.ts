@@ -14,16 +14,21 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  ANALYSIS_BUDGET_MS,
   ANALYSIS_SECTIONS,
+  CLIENT_ABORT_MS,
   COMPARISON_ANALYSIS_SCHEMA,
   COMPARISON_TOKENS_MAX,
   COMPARISON_TOKENS_MIN,
+  MIN_ANALYSIS_MS,
   RESPONSE_FORMAT_LADDER,
+  RESPONSE_RESERVE_MS,
   STORABLE_SECTIONS,
   comparisonOutputTokens,
   nextRung,
   preferReading,
   readAnalysisResponse,
+  resolveAnalysisDeadline,
   responseFormatFor,
   rungRejected,
 } from '../analysisRequest.pure.ts';
@@ -280,5 +285,55 @@ describe('choosing between attempts', () => {
     const parsed = reading({ present: ['rankings'], truncated: false });
     expect(preferReading(scanned, parsed)).toBe(parsed);
     expect(preferReading(parsed, scanned)).toBe(parsed);
+  });
+});
+
+describe('when the answer must be in', () => {
+  // Fixed clocks: the function takes timestamps, so nothing here is flaky.
+  const handlerStart = 1_756_000_000_000;
+
+  it('keeps the handler budget when the wrapper was quick — the behaviour it always had', () => {
+    // The measured healthy gap: auth, the price lookup and the reserve in ~4.5s.
+    const d = resolveAnalysisDeadline(handlerStart, String(handlerStart - 4_500));
+    expect(d.deadlineAt).toBe(handlerStart + ANALYSIS_BUDGET_MS);
+    expect(d.preHandlerMs).toBe(4_500);
+    expect(d.tooLate).toBe(false);
+  });
+
+  it('shrinks the budget when the wrapper burned into it', () => {
+    // Mission Control stalled for a minute before the handler started. The
+    // browser aborts CLIENT_ABORT_MS after the REQUEST started, so the loop
+    // has to stop early enough for the insert, the commit and the response.
+    const d = resolveAnalysisDeadline(handlerStart, String(handlerStart - 60_000));
+    expect(d.deadlineAt).toBe(handlerStart - 60_000 + CLIENT_ABORT_MS - RESPONSE_RESERVE_MS);
+    expect(d.roomMs).toBe(CLIENT_ABORT_MS - RESPONSE_RESERVE_MS - 60_000);
+    expect(d.tooLate).toBe(false);
+  });
+
+  it('refuses to start a run whose answer nobody can receive', () => {
+    // The production incident: 115s spent before the handler. Starting the
+    // analysis anyway is how a stored, charged comparison came to be reported
+    // as "Request timed out".
+    const d = resolveAnalysisDeadline(handlerStart, String(handlerStart - 115_000));
+    expect(d.tooLate).toBe(true);
+    expect(d.roomMs).toBeLessThan(MIN_ANALYSIS_MS);
+  });
+
+  it('falls back to the handler clock on a missing or nonsensical header', () => {
+    for (const header of [null, undefined, '', 'soon', '-5', String(handlerStart + 10_000)]) {
+      const d = resolveAnalysisDeadline(handlerStart, header);
+      expect(d.deadlineAt).toBe(handlerStart + ANALYSIS_BUDGET_MS);
+      expect(d.preHandlerMs).toBe(0);
+      expect(d.tooLate).toBe(false);
+    }
+  });
+
+  it('keeps the constants mutually consistent', () => {
+    // The handler budget plus the response reserve must fit inside the
+    // browser's abort, or the healthy path times out by construction.
+    expect(ANALYSIS_BUDGET_MS + RESPONSE_RESERVE_MS).toBeLessThanOrEqual(CLIENT_ABORT_MS);
+    // The refusal floor has to be reachable: a floor above the budget would
+    // refuse every request, including the healthy ones.
+    expect(MIN_ANALYSIS_MS).toBeLessThan(ANALYSIS_BUDGET_MS);
   });
 });

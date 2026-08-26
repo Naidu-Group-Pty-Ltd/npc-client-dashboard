@@ -32,6 +32,9 @@ import {
 import { eligibilityDetailFor } from './assessSourceImage.ts';
 import { roleDetail } from './sourceImageRole.pure.ts';
 import { sha256Hex } from './rasterPng.ts';
+import {
+  classifyPrimaryImageStanding, type DisplayableImage, type PrimaryImageStanding,
+} from './primaryImage.ts';
 
 /**
  * Bumped when what we record about an image's origin changes.
@@ -342,4 +345,29 @@ export async function hasReadySourceImage(
   return (data ?? []).some((row: any) =>
     (row.storage_path || row.external_url)
     && Number((row.source_detail ?? {}).provenance_version ?? 0) >= minimumProvenanceVersion);
+}
+
+/**
+ * The same reading, answering three questions instead of one.
+ *
+ * `ready` is exactly what `hasReadySourceImage` answers, from the same query;
+ * `clean` and `convictedOnly` are what the source repair needs to know before
+ * it lets a stored image END the search — a promotional page cover is a ready
+ * image and is still not a reason to stop reading the property's own package.
+ * See `classifyPrimaryImageStanding` for the rules; this only fetches the rows.
+ */
+export async function readPrimaryImageStanding(
+  db: any,
+  stockItemId: string,
+  minimumProvenanceVersion = 0,
+): Promise<PrimaryImageStanding> {
+  const { data } = await db
+    .from('builder_stock_item_images')
+    .select('id, storage_path, external_url, verification_status, source_detail')
+    .eq('stock_item_id', stockItemId)
+    .eq('source_stage', 'uploaded_document')
+    .eq('processing_status', 'ready')
+    .limit(20);
+  return classifyPrimaryImageStanding(
+    (data ?? []) as DisplayableImage[], minimumProvenanceVersion);
 }

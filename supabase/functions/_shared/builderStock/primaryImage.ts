@@ -31,7 +31,7 @@ import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from './sourceImageRole.pure.ts';
 import {
-  isMarketplaceEligible, needsEligibilityAssessment,
+  isMarketplaceEligible, needsEligibilityAssessment, readMarketplaceState,
 } from './marketplaceEligibility.pure.ts';
 import {
   servableClearanceFor, servableDerivativeFor,
@@ -103,6 +103,21 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
 }
 
 /**
+ * Does this image serve the builder's ORIGINAL bytes, untouched?
+ *
+ * True for a measured-clean picture and for one the precise inspection
+ * CLEARED; false for one that reaches a card only through a sanitized
+ * derivative — the same photograph with a promotional graphic rebuilt out of
+ * it. The distinction matters to the ordering below and nowhere else: a
+ * derivative is a legitimate card image, it is simply never a better one than
+ * a clean file the builder actually supplied.
+ */
+export function servesCleanOriginal(image: DisplayableImage): boolean {
+  return isMarketplaceEligible(image.source_detail)
+    || !!servableClearanceFor(image.source_detail);
+}
+
+/**
  * The card's image, from a property's images. Null means "show no image".
  *
  * There is normally exactly one candidate, because at most one image per
@@ -127,6 +142,16 @@ export function isDisplayableSourceImage(image: DisplayableImage): boolean {
  * provenance. Ordering only decides between candidates that have ALREADY
  * passed the gate.
  *
+ * AND A CLEAN BUILDER ORIGINAL BEATS A CLEANED PROMOTIONAL DERIVATIVE. Both
+ * pass the gate — that is settled above — but they are not the same kind of
+ * picture: one is the exact file the builder supplied, the other is that file
+ * with a graphic rebuilt out of it by this pipeline. Where the same property
+ * holds both (a promotional page cover with its repair beside a clean render
+ * recovered from the property's own package), the untouched original is the
+ * one the card shows, and no repair should have been the deciding vote.
+ * Ordering, never filtering: a property whose only displayable picture is a
+ * derivative keeps it, exactly as before.
+ *
  * `position` and then the id remain the tie-break, so re-running enrichment
  * cannot silently swap a card's picture.
  */
@@ -135,10 +160,72 @@ export function chooseDisplayableImage<T extends DisplayableImage>(images: T[]):
   if (!displayable.length) return null;
 
   return [...displayable].sort((a, b) =>
-    comparePrimaryEvidence(
+    (servesCleanOriginal(a) ? 0 : 1) - (servesCleanOriginal(b) ? 0 : 1)
+    || comparePrimaryEvidence(
       readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
     || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0];
+}
+
+/**
+ * What a property's stored stage-1 rows amount to, for the SOURCE repair.
+ *
+ * Three facts, and the third is the one the repair loop was missing:
+ *
+ *   `ready`          the property holds at least one usable source-supplied
+ *                    image at the required provenance standard — the exact
+ *                    test `hasReadySourceImage` has always made, unchanged.
+ *   `clean`          at least one of its PRIMARY candidates serves the
+ *                    builder's original untouched (measured clean, or cleared
+ *                    by the precise inspection).
+ *   `convictedOnly`  it has primary candidates and EVERY one of them was
+ *                    measured and convicted as a promotional marketing tile.
+ *                    Not "none is clean": a candidate still pending — an
+ *                    unmeasured container, an uncertain faint pass — is
+ *                    evidence that has not arrived, and nothing may be decided
+ *                    on it.
+ *
+ * `convictedOnly` is what licenses the repair to keep reading the property's
+ * OWN linked package after the row's cover has already been stored: a
+ * promotional cover's mere existence must not end the search for the clean
+ * render the same builder supplied for the same property. It licenses nothing
+ * else — not another property's package, not a wider search, not a different
+ * identity rule.
+ */
+export interface PrimaryImageStanding {
+  ready: boolean;
+  clean: boolean;
+  convictedOnly: boolean;
+}
+
+export function classifyPrimaryImageStanding(
+  images: DisplayableImage[],
+  minimumProvenanceVersion = 0,
+): PrimaryImageStanding {
+  const standing: PrimaryImageStanding = { ready: false, clean: false, convictedOnly: false };
+
+  let primaries = 0;
+  let convicted = 0;
+  for (const image of images ?? []) {
+    const detail = image.source_detail ?? {};
+    if (!(image.storage_path || image.external_url)) continue;
+    if (Number((detail as { provenance_version?: unknown }).provenance_version ?? 0)
+      < minimumProvenanceVersion) continue;
+    standing.ready = true;
+
+    if (image.verification_status !== SOURCE_SUPPLIED_VERIFICATION) continue;
+    if (!isPrimaryRole(readStoredRole(detail))) continue;
+    primaries += 1;
+    if (servesCleanOriginal(image)) standing.clean = true;
+    if (readMarketplaceState(detail) === 'ineligible'
+      && (detail as { marketplace_rejection_reason?: unknown }).marketplace_rejection_reason
+        === 'annotated_marketing_tile') {
+      convicted += 1;
+    }
+  }
+
+  standing.convictedOnly = primaries > 0 && convicted === primaries && !standing.clean;
+  return standing;
 }
 
 /**

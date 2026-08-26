@@ -28,20 +28,8 @@ import {
 } from '../compileTemplateForPdf';
 import { parseTemplate } from '../templateSchema';
 import { assertSafeRenderResources } from '../../../../supabase/functions/_shared/renderResourcePolicy.pure';
-import { SUPABASE_URL } from '@/integrations/supabase/env';
 
-/**
- * The project this build talks to — read from the module that decides it, not
- * written down here.
- *
- * It was a literal, and the literal was one particular deployment's project.
- * `compileTemplateHtmlForPdf` admits `SUPABASE_URL` and nothing else, so in
- * any repository whose backend is a different project the fixture below is a
- * FOREIGN origin: the compiler drops it, exactly as it should, and the
- * assertion that it survives fails. The test was pinned to a deployment
- * rather than to the rule.
- */
-const PROJECT = SUPABASE_URL.replace(/\/+$/, '');
+const PROJECT = 'https://dduzbchuswwbefdunfct.supabase.co';
 
 const templateWith = (blocks: unknown[]) => parseTemplate({
   version: 1,

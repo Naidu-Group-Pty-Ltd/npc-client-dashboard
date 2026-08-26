@@ -25,6 +25,7 @@ import { InvestmentReportCard } from '@/components/reports/library/InvestmentRep
 import { PropertyReportPackageCard } from '@/components/reports/library/PropertyReportPackageCard';
 import { InvestmentReportTable } from '@/components/reports/library/InvestmentReportTable';
 import { ComparisonReportCard } from '@/components/reports/library/ComparisonReportCard';
+import { countComparisonTypes } from '@/components/reports/library/comparisonTypeDescriptor.pure';
 import { ReportLibraryEmptyState } from '@/components/reports/library/ReportLibraryEmptyState';
 import { ReportLibrarySkeleton } from '@/components/reports/library/ReportLibrarySkeleton';
 import { ReportLibraryPagination } from '@/components/reports/library/ReportLibraryPagination';
@@ -660,6 +661,12 @@ export default function GeneratedReports() {
     return comparisons.filter(c => showArchivedComparisons ? (c as any).is_archived === true : (c as any).is_archived !== true);
   }, [comparisons, showArchivedComparisons]);
 
+  // How many of each comparison family the current view holds.
+  const comparisonTypeCounts = useMemo(
+    () => countComparisonTypes(filteredComparisons as Array<{ comparison_type?: unknown }>),
+    [filteredComparisons],
+  );
+
   // Archive/unarchive a comparison
   const archiveComparison = async (comparisonId: string, archive: boolean) => {
     try {
@@ -1088,9 +1095,22 @@ export default function GeneratedReports() {
 
         {comparisonsEnabled && (
         <TabsContent value="comparisons" className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-xs">{comparisons.length} comparison{comparisons.length !== 1 ? 's' : ''}</Badge>
+              {/* What KINDS of comparison this view holds — Compass, Briefing,
+                  Snapshot… — so the mix is visible before any card is read.
+                  A family with no rows shows no chip. */}
+              {comparisonTypeCounts.map(([type, count]) => (
+                <Badge
+                  key={type.key ?? 'untyped'}
+                  variant="secondary"
+                  title={type.blurb}
+                  className={`text-xs font-normal ${type.badgeClassName}`}
+                >
+                  {count} {type.key ? type.label.replace(' Comparison', '') : 'Untyped'}
+                </Badge>
+              ))}
             </div>
             <Button
               variant={showArchivedComparisons ? "secondary" : "outline"}

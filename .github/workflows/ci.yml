@@ -13,6 +13,13 @@ on:
 # while dependency lifecycle scripts and build tooling execute.
 permissions:
   contents: read
+  # `gitleaks/gitleaks-action@v3` lists the pull request's commits to pick the
+  # range it scans. On a private repository that read needs its own scope, and
+  # without it the action dies on `GET /repos/…/pulls/N/commits` -> 403
+  # "Resource not accessible by integration" -- taking the whole `security` job
+  # down after every gate in it had already passed. Read-only, and the narrowest
+  # grant that lets the secret scan run.
+  pull-requests: read
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:

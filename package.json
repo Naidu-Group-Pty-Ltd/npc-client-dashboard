@@ -278,7 +278,7 @@
     "@types/react-dom": "^18.3.7",
     "autoprefixer": "^10.5.4",
     "eslint": "^9.32.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.5.4",
     "globals": "^17.11.0",
     "jsdom": "^29.0.2",

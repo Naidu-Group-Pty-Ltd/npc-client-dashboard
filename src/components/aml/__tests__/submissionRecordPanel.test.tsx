@@ -30,6 +30,18 @@ vi.mock("@/lib/aml/amlCasesApi", () => ({
 const toast = vi.fn();
 vi.mock("@/hooks/use-toast", () => ({ toast: (...a: unknown[]) => toast(...a) }));
 
+/* An unbranded workspace: the record must issue under the Aurixa Systems
+ * fallback, never an empty masthead. */
+vi.mock("@/branding/BrandProvider", () => ({
+  useBrand: () => ({
+    settings: {
+      companyName: "Dashboard", brandColor: null,
+      authLogo: null, sidebarLogo: null, sidebarIcon: null,
+      favicon: null, reportLogo: null, reportMonoLogo: null,
+    },
+  }),
+}));
+
 /*
  * The PDF generator is mocked at the module edge — its real output is pinned
  * by submissionRecordPdf.test.ts (parsed back with pdf-lib). What THIS file
@@ -109,22 +121,57 @@ describe("the reading view is the entirety of the submission", () => {
 });
 
 describe("download and store", () => {
-  it("downloads the record as a PDF saved directly, named for the case", async () => {
+  it("downloads the internal record as a PDF issued under the Aurixa fallback", async () => {
     const createObjectURL = vi.fn(() => "blob:record");
     const revokeObjectURL = vi.fn();
     vi.stubGlobal("URL", Object.assign(Object.create(URL), { createObjectURL, revokeObjectURL }));
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
     try {
       renderPanel();
-      fireEvent.click(await screen.findByRole("button", { name: /download pdf/i }));
+      // The download is a menu of two named documents. Keyboard-open: Radix
+      // opens reliably on Enter in jsdom, where pointer events are partial.
+      const trigger = await screen.findByRole("button", { name: /download pdf/i });
+      fireEvent.keyDown(trigger, { key: "Enter" });
+      fireEvent.click(await screen.findByText(/internal record — full detail/i));
       // A .pdf handed to the browser as a download — never an .html that
       // opens as a tab: the reviewer keeps the finished document.
       await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(1));
+      const [recordArg, brandArg] = generatePdf.mock.calls[0] as any[];
+      expect(recordArg.audience).toBe("internal");
+      expect(brandArg.name).toBe("Aurixa Systems");
       await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
       expect(createObjectURL).toHaveBeenCalledTimes(1);
       expect(toast).toHaveBeenCalledWith(expect.objectContaining({
         title: "PDF downloaded",
-        description: "AML-2026-00005-submission-v1-record.pdf",
+        description: "AML-2026-00005-submission-v1-record.pdf · issued by Aurixa Systems",
+      }));
+    } finally {
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("downloads the client copy without internal readings, named as a client copy", async () => {
+    const createObjectURL = vi.fn(() => "blob:record");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", Object.assign(Object.create(URL), { createObjectURL, revokeObjectURL }));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      renderPanel();
+      const trigger = await screen.findByRole("button", { name: /download pdf/i });
+      fireEvent.keyDown(trigger, { key: "Enter" });
+      fireEvent.click(await screen.findByText(/client copy — shareable/i));
+      await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(1));
+      const [recordArg] = generatePdf.mock.calls[0] as any[];
+      expect(recordArg.audience).toBe("client");
+      // The structural guarantee, asserted on the exact record handed to the
+      // renderer: no screening, no risk, from THIS screen's data.
+      const keys = recordArg.sections.map((sec: any) => sec.key);
+      expect(keys).not.toContain("screening");
+      expect(keys).not.toContain("risk");
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({
+        title: "Client copy downloaded",
+        description: "AML-2026-00005-submission-v1-client-copy.pdf · issued by Aurixa Systems",
       }));
     } finally {
       click.mockRestore();

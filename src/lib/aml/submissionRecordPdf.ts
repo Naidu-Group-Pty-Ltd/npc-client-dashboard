@@ -25,7 +25,19 @@
  * banners), no engine name is printed, dates arrive already formatted by
  * the shared `formatUtc`.
  */
-import type { RecordBlock, RecordTable, SubmissionRecord } from "@/lib/aml/submissionRecord";
+import { recordDocumentTitle, type RecordBlock, type RecordTable, type SubmissionRecord } from "@/lib/aml/submissionRecord";
+import type { RecordBrand } from "@/lib/aml/submissionRecordBrand";
+
+/** jsPDF wants 0–255 channels; the brand ramp arrives as hex. */
+function hexRgb255(hex: string): [number, number, number] {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!m) return [17, 17, 17];
+  return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
+
+/** Warm cream for type on the obsidian masthead — fixed, like the ground:
+ *  the wordmark must read whatever accent a tenant chooses. */
+const CREAM: [number, number, number] = [245, 239, 228];
 
 /** `…-record.html` → `…-record.pdf` — one filename rule, one extension swap. */
 export function submissionRecordPdfFilename(record: Pick<SubmissionRecord, "filename">): string {
@@ -71,25 +83,46 @@ function newPageIfNeeded(doc: Doc, cursor: Cursor, needed: number): boolean {
   return true;
 }
 
-function drawLabelled(doc: Doc, cursor: Cursor, label: string, value: string) {
+interface MeasuredRow { labelLines: string[]; valueLines: string[]; rowH: number }
+
+function measureLabelled(doc: Doc, label: string, value: string): MeasuredRow {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
   const labelLines = doc.splitTextToSize(label.toUpperCase(), LABEL_COL_W) as string[];
   doc.setFontSize(9.5);
   const valueLines = doc.splitTextToSize(value, CONTENT_W - LABEL_COL_W - GRID_GAP) as string[];
   const rowH = Math.max(labelLines.length * lineHeight(7.5), valueLines.length * lineHeight(9.5)) + 1.1;
-  newPageIfNeeded(doc, cursor, rowH);
+  return { labelLines, valueLines, rowH };
+}
+
+function drawMeasuredRow(doc: Doc, cursor: Cursor, row: MeasuredRow) {
   // Label and value share ONE baseline — the value's. Offsetting each by its
   // own line height staggered every row by 0.8mm, which read as unset type
   // beside the tables (whose header and cells align exactly).
   const baseline = cursor.y + lineHeight(9.5) * 0.8;
+  doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
   doc.setTextColor(...LABEL);
-  doc.text(labelLines, MARGIN, baseline);
+  doc.text(row.labelLines, MARGIN, baseline);
   doc.setFontSize(9.5);
   doc.setTextColor(...INK);
-  doc.text(valueLines, MARGIN + LABEL_COL_W + GRID_GAP, baseline);
-  cursor.y += rowH;
+  doc.text(row.valueLines, MARGIN + LABEL_COL_W + GRID_GAP, baseline);
+  cursor.y += row.rowH;
+}
+
+/**
+ * Draw a fields group with widow control: the final row of a group must
+ * never sit alone at the top of a page (a lone "INSTITUTIONS  Cba" under
+ * the page strip belongs to nothing a reader can see). The second-to-last
+ * row reserves the last row's height too — either both fit here, or both
+ * move together.
+ */
+function drawFieldRows(doc: Doc, cursor: Cursor, rows: MeasuredRow[]) {
+  for (let i = 0; i < rows.length; i++) {
+    const needed = i === rows.length - 2 ? rows[i].rowH + rows[i + 1].rowH : rows[i].rowH;
+    newPageIfNeeded(doc, cursor, needed);
+    drawMeasuredRow(doc, cursor, rows[i]);
+  }
 }
 
 /**
@@ -142,15 +175,30 @@ function tableColumnWidths(doc: Doc, table: RecordTable): number[] {
     const prev = edges[i - 1] ?? 0;
     const remaining = (scaled.length - 1 - i) * MIN_W;
     edges.push(Math.min(
-      // The min-width lift rounds UP to the next grid step — a floored
-      // column that lands off-grid can near-align with a neighbouring
-      // table, which is the wobble the snap exists to prevent.
-      Math.max(Math.round(cum / 5) * 5, Math.ceil((prev + MIN_W) / 5) * 5),
+      Math.max(Math.round(cum / 5) * 5, prev + MIN_W),
       CONTENT_W - remaining,
     ));
   }
   edges.push(CONTENT_W);
-  return edges.map((e, i) => e - (edges[i - 1] ?? 0));
+  const widths = edges.map((e, i) => e - (edges[i - 1] ?? 0));
+  /*
+   * Gutter floor: snapping and the min-width lift must never squeeze a
+   * column below the text it holds — that collapses the gutter and two
+   * columns read (and machine-extract) as one run. Any deficit is taken
+   * from the widest column; legibility outranks the 5mm grid when the two
+   * conflict.
+   */
+  for (let i = 0; i < widths.length; i++) {
+    const deficit = natural[i] - widths[i];
+    if (deficit > 0) {
+      const widest = widths.indexOf(Math.max(...widths));
+      if (widest !== i && widths[widest] - deficit >= MIN_W) {
+        widths[widest] -= deficit;
+        widths[i] += deficit;
+      }
+    }
+  }
+  return widths;
 }
 
 /** A long hex token is a literal — a hash, a key. It wears a monospaced
@@ -217,10 +265,20 @@ function drawTable(doc: Doc, cursor: Cursor, table: RecordTable) {
 }
 
 function drawBlock(doc: Doc, cursor: Cursor, block: RecordBlock) {
+  const rows = block.fields ? block.fields.map((f) => measureLabelled(doc, f.label, f.value)) : null;
   if (block.heading) {
-    // Reserve the heading AND one row beneath it, so a group title can never
-    // print as the last line of a page with its first field overleaf.
-    newPageIfNeeded(doc, cursor, lineHeight(9.5) + 15.5);
+    /* A group heading arrives WITH its rows or not at all: a heading at
+     * the page foot over one row, with the rest overleaf under the page
+     * strip, leaves rows belonging to nothing a reader can see. A small
+     * group (≤4 rows) is kept whole; a large one must bring its first two
+     * rows; a heading over a paragraph reserves the paragraph's start. */
+    const headingH = 2 + lineHeight(9.5) + 1.5;
+    const reserve = rows
+      ? rows.length <= 4
+        ? headingH + rows.reduce((a, r) => a + r.rowH, 0)
+        : headingH + rows[0].rowH + rows[1].rowH
+      : headingH + lineHeight(9.5) * 2;
+    newPageIfNeeded(doc, cursor, reserve);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(...INK);
@@ -242,8 +300,8 @@ function drawBlock(doc: Doc, cursor: Cursor, block: RecordBlock) {
     doc.text(lines, MARGIN, cursor.y + lineHeight(9.5) * 0.8);
     cursor.y += h;
   }
-  if (block.fields) {
-    for (const f of block.fields) drawLabelled(doc, cursor, f.label, f.value);
+  if (rows) {
+    drawFieldRows(doc, cursor, rows);
     cursor.y += BLOCK_PAD;
   }
   if (block.table) drawTable(doc, cursor, block.table);
@@ -252,8 +310,16 @@ function drawBlock(doc: Doc, cursor: Cursor, block: RecordBlock) {
 /**
  * Render the record to a PDF blob. jsPDF is imported lazily so the case
  * workspace pays nothing until somebody actually downloads.
+ *
+ * `brand` is the issuing identity (tenant white-label, or the Aurixa
+ * Systems fallback — see `submissionRecordBrand.ts`). It dresses the
+ * document: the obsidian masthead, the accent rules, the wordmark or logo,
+ * the "prepared by" line in the foot. It never touches content — body ink,
+ * table structure and every string stay exactly what the record says.
+ * Omitted (tests, degraded paths), the document renders in its unbranded
+ * austere form.
  */
-export async function generateSubmissionRecordPdf(record: SubmissionRecord): Promise<Blob> {
+export async function generateSubmissionRecordPdf(record: SubmissionRecord, brand?: RecordBrand): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   // Multi-line text draws at jsPDF's default 1.15 leading unless told
@@ -261,28 +327,106 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord): Pro
   // floats row rules away from wrapped text. One factor, set once.
   doc.setLineHeightFactor(1.45);
   const cursor: Cursor = { y: MARGIN };
+  const docTitle = recordDocumentTitle(record);
 
-  /* Document header — mirrors the HTML's: title, identity line, heavy rule.
-   * The meta line stays UNDER body size: at 10.5pt it crowded the section
-   * titles and the type scale lost its middle. */
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(16);
-  doc.setTextColor(...INK);
-  doc.text("Client submission record", MARGIN, cursor.y + lineHeight(16) * 0.8);
-  cursor.y += lineHeight(16) + 1;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9.5);
-  doc.setTextColor(...LABEL);
-  doc.text(record.headerFields.map((f) => f.value).join("  ·  "), MARGIN, cursor.y + lineHeight(9.5) * 0.8);
-  cursor.y += lineHeight(9.5) + 3;
-  doc.setDrawColor(...INK);
-  doc.setLineWidth(0.6);
-  doc.line(MARGIN, cursor.y, MARGIN + CONTENT_W, cursor.y);
-  cursor.y += 6;
+  const BAND_H = 16;
+  if (brand) {
+    /* ── The masthead band: who issues this document ──────────────────
+     * One flat obsidian ground with an accent strip beneath — the print
+     * rules' cover treatment at letterhead scale. The identity is the
+     * logo when a raster mark loaded, the wordmark otherwise; the
+     * document type sits opposite in the accent light, which holds ≥7:1
+     * on obsidian. */
+    doc.setFillColor(...hexRgb255(brand.ground));
+    doc.rect(0, 0, PAGE_W, BAND_H, "F");
+    doc.setFillColor(...hexRgb255(brand.accent));
+    doc.rect(0, BAND_H, PAGE_W, 1.1, "F");
+
+    let identityX = MARGIN;
+    let logoDrawn = false;
+    if (brand.logoDataUrl) {
+      try {
+        const props = doc.getImageProperties(brand.logoDataUrl);
+        const h = 10;
+        const w = Math.min((props.width / props.height) * h, 46);
+        doc.addImage(brand.logoDataUrl, MARGIN, (BAND_H - h) / 2, w, h);
+        identityX = MARGIN + w + 3.5;
+        logoDrawn = true;
+      } catch {
+        // A mark that cannot be drawn degrades to the wordmark below.
+      }
+    }
+    // A bare emblem (the Aurixa delta) does not carry the name, so the
+    // wordmark stands beside it; a tenant's report logo is a complete
+    // lockup and stands alone.
+    if (!logoDrawn || brand.wordmarkBesideLogo) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(...CREAM);
+      doc.text(brand.name.toUpperCase(), identityX, BAND_H / 2 + 1.4, { charSpace: 0.5 });
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(7.5);
+    doc.setTextColor(...hexRgb255(brand.accentLight));
+    // Measured by hand and drawn left-anchored: jsPDF's `align: "right"`
+    // anchors on getTextWidth(), which excludes charSpace — the string then
+    // overruns the right margin by the whole accumulated letter-spacing
+    // (~14mm here) and stops millimetres from the trim.
+    const bandLabel = docTitle.toUpperCase();
+    const bandLabelW = doc.getTextWidth(bandLabel) + 0.6 * Math.max(0, bandLabel.length - 1);
+    doc.text(bandLabel, PAGE_W - MARGIN - bandLabelW, BAND_H / 2 + 1, { charSpace: 0.6 });
+
+    /* Below the band: the case, not the issuer — subject leads, the
+     * reference line under it, and the heavy rule takes the accent deep. */
+    cursor.y = BAND_H + 1.1 + 8;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(...INK);
+    doc.text(record.subject, MARGIN, cursor.y + lineHeight(16) * 0.8);
+    cursor.y += lineHeight(16) + 1;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...LABEL);
+    doc.text(`${record.reference}  ·  Submission v${record.version}`, MARGIN, cursor.y + lineHeight(9.5) * 0.8);
+    cursor.y += lineHeight(9.5) + 3;
+    doc.setDrawColor(...hexRgb255(brand.accentDeep));
+    doc.setLineWidth(0.6);
+    doc.line(MARGIN, cursor.y, MARGIN + CONTENT_W, cursor.y);
+    cursor.y += 6;
+  } else {
+    /* Document header — mirrors the HTML's: title, identity line, heavy
+     * rule. The meta line stays UNDER body size: at 10.5pt it crowded the
+     * section titles and the type scale lost its middle. */
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(...INK);
+    doc.text(docTitle, MARGIN, cursor.y + lineHeight(16) * 0.8);
+    cursor.y += lineHeight(16) + 1;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...LABEL);
+    doc.text(record.headerFields.map((f) => f.value).join("  ·  "), MARGIN, cursor.y + lineHeight(9.5) * 0.8);
+    cursor.y += lineHeight(9.5) + 3;
+    doc.setDrawColor(...INK);
+    doc.setLineWidth(0.6);
+    doc.line(MARGIN, cursor.y, MARGIN + CONTENT_W, cursor.y);
+    cursor.y += 6;
+  }
 
   for (const section of record.sections) {
-    // Never strand a section title at the page foot.
-    newPageIfNeeded(doc, cursor, lineHeight(11.5) + 14);
+    /* Never strand a section title at the page foot — and "not stranded"
+     * means the title arrives WITH the start of its first block. A flat
+     * reserve left a heading and its rule alone at the foot of a client's
+     * page with a bare table header overleaf: a table's opening needs more
+     * room than a fields row, so the reserve asks the first block what it
+     * needs. */
+    const first = section.blocks[0];
+    const firstBlockMin = first?.table
+      ? lineHeight(7.5) + lineHeight(9.5) * 2 + 6
+      : first?.heading
+        ? lineHeight(9.5) + 15.5
+        : lineHeight(9.5) * 2 + 3;
+    newPageIfNeeded(doc, cursor, lineHeight(11.5) + 4.2 + firstBlockMin);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11.5);
     doc.setTextColor(...INK);
@@ -296,14 +440,14 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord): Pro
     cursor.y += 3.5;
   }
 
-  /* The closing notice — the same words the HTML footer carries. The
+  /* The closing notice — the record's own words (`record.notice`), which
+   * differ by audience: the internal record says it must not reach the
+   * client, the client copy says what was deliberately left out. The
    * reference and generation timestamp are NOT repeated here: the running
    * foot below already carries both on every page, and printing them twice
    * on one sheet reads as a mistake. Only what the foot lacks — who
    * generated it — precedes the notice. */
-  const notice =
-    "This record is a point-in-time export of the client submission review. It is internal to the "
-    + "reporting entity: it includes screening states and risk readings and must not be provided to the client.";
+  const notice = record.notice;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
   const noticeLines = doc.splitTextToSize(notice, CONTENT_W) as string[];
@@ -329,14 +473,25 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord): Pro
   }
   doc.text(noticeLines, MARGIN, cursor.y + lineHeight(8.5) * 0.8);
 
-  /* Running foot on every page, once the page count is final. */
+  /* Running foot on every page, once the page count is final — the issuer
+   * leads it when the document is branded. Continuation pages carry the
+   * masthead reduced to a strip, so every sheet says whose document it is. */
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
+    if (brand && i > 1) {
+      doc.setFillColor(...hexRgb255(brand.ground));
+      doc.rect(0, 0, PAGE_W, 2.2, "F");
+      doc.setFillColor(...hexRgb255(brand.accent));
+      doc.rect(0, 2.2, PAGE_W, 0.6, "F");
+    }
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(...LABEL);
-    doc.text(`${record.reference} · Submission v${record.version} · ${record.generatedAt}`, MARGIN, FOOT_Y);
+    const footLeft = brand
+      ? `${brand.name} · ${record.reference} · Submission v${record.version} · ${record.generatedAt}`
+      : `${record.reference} · Submission v${record.version} · ${record.generatedAt}`;
+    doc.text(footLeft, MARGIN, FOOT_Y);
     doc.text(`Page ${i} of ${pages}`, PAGE_W - MARGIN, FOOT_Y, { align: "right" });
   }
 

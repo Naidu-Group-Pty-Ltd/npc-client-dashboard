@@ -86,6 +86,28 @@ updates:
         update-types: [version-update:semver-major]
       - dependency-name: react-resizable-panels
         update-types: [version-update:semver-major]
+      # Both merged on 2026-08-26, both measured on this repository:
+      #
+      #   tailwindcss              4.3.3  v4 removed the PostCSS plugin from the
+      #                                   core package; postcss.config.js and
+      #                                   tailwind.config.ts are v3, so
+      #                                   `npm run build` failed OUTRIGHT on
+      #                                   main until the pin back to 3.4.17.
+      #                                   The whole token/glass system is a v3
+      #                                   config — Tailwind 4 is a migration
+      #                                   project, not a dependency bump.
+      #   eslint-plugin-react-     7.1.1  v7's new rules flag long-standing
+      #     hooks                         patterns repo-wide: main's lint went
+      #                                   from 45 errors to ~906 in one merge,
+      #                                   which makes the enforced "no new
+      #                                   errors" baseline meaningless — a real
+      #                                   new error hides among 906. Adopting
+      #                                   v7 is a repo-wide cleanup with its
+      #                                   own PR, not a side effect.
+      - dependency-name: tailwindcss
+        update-types: [version-update:semver-major]
+      - dependency-name: eslint-plugin-react-hooks
+        update-types: [version-update:semver-major]
       # `xlsx` is pinned to a vendor CDN tarball because SheetJS stopped
       # publishing to npm after 0.18. Dependabot cannot resolve a URL
       # dependency, and a "helpful" rewrite back to the registry would silently

@@ -152,8 +152,21 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
   if (input.state) {
     try {
       console.log('Fetching detailed public transport data from public-transport-service...');
+      // THIS deployment's own project, from the URL Supabase injects into every
+      // function runtime -- never a literal.
+      //
+      // It was `https://<this repository's project>.supabase.co/...`, which is
+      // correct in exactly one deployment and a cross-tenant call in every
+      // other. A clone of this repository ships the same line and reaches back
+      // into the origin project for every location lookup it serves: somebody
+      // else's function, somebody else's rate limits, somebody else's bill, and
+      // the clone's own `public-transport-service` never invoked at all.
+      const projectUrl = (Deno.env.get('SUPABASE_URL') ?? '').replace(/\/+$/, '');
+      if (!projectUrl) {
+        throw new Error('SUPABASE_URL is unset — cannot resolve this project’s own functions');
+      }
       const transportResponse = await fetch(
-        `https://dduzbchuswwbefdunfct.supabase.co/functions/v1/public-transport-service`,
+        `${projectUrl}/functions/v1/public-transport-service`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

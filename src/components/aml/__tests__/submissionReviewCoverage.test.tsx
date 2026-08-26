@@ -27,6 +27,16 @@ vi.mock("@/lib/aml/amlCasesApi", () => ({
   },
 }));
 vi.mock("@/hooks/use-toast", () => ({ toast: vi.fn() }));
+// The panel reads the white-label identity for its PDF downloads.
+vi.mock("@/branding/BrandProvider", () => ({
+  useBrand: () => ({
+    settings: {
+      companyName: "Dashboard", brandColor: null,
+      authLogo: null, sidebarLogo: null, sidebarIcon: null,
+      favicon: null, reportLogo: null, reportMonoLogo: null,
+    },
+  }),
+}));
 
 const CASE_ID = "11111111-1111-4111-8111-111111111111";
 

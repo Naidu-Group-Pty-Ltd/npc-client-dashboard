@@ -1467,6 +1467,38 @@ Deno.serve(async (req: Request) => {
         console.warn('[seat] reserve threw; continuing without seat tracking', e);
       }
 
+      // Which application does this invitation point at?
+      //
+      // Resolved BEFORE anything is written, because the failure below has to
+      // leave no invite row and no reserved seat behind.
+      //
+      // The last resort used to be a literal: `https://<this repository's
+      // project>.lovable.app`. On this deployment that is dead code — a browser
+      // sends `Origin` on every cross-origin POST and this function is only
+      // ever called from the app. On a CLONE of this repository it is live
+      // poison: `APP_URL` is deployment config and is deliberately not
+      // inherited, so the chain runs out and a staff invitation for one tenant
+      // is emailed a link into a DIFFERENT tenant's application — where the
+      // token means nothing and the recipient is asked to sign in to a company
+      // they do not work for.
+      //
+      // There is no safe default for "which application". Refusing is
+      // recoverable; sending somebody else's front door is not.
+      const inviteOrigin = req.headers.get('origin')
+        || req.headers.get('referer')?.replace(/\/$/, '')
+        || Deno.env.get('APP_URL');
+      if (!inviteOrigin) {
+        console.error('[invite] no origin, referer or APP_URL — refusing to guess an application URL');
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Could not determine this deployment's application URL. Set APP_URL on this project and retry — nothing was created and no email was sent.",
+          }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      const appUrl = inviteOrigin.replace(/\/+$/, ''); // Remove trailing slashes
+
       const { error: insertError } = await supabase
         .from('permission_invite_tokens')
         .insert({
@@ -1494,9 +1526,6 @@ Deno.serve(async (req: Request) => {
         );
       }
 
-      // Determine the app URL from request origin or referer header
-      const origin = req.headers.get('origin') || req.headers.get('referer')?.replace(/\/$/, '') || Deno.env.get('APP_URL') || 'https://dduzbchuswwbefdunfct.lovable.app';
-      const appUrl = origin.replace(/\/+$/, ''); // Remove trailing slashes
       const inviteUrl = `${appUrl}/accept-invite?token=${token}`;
 
       // Send email

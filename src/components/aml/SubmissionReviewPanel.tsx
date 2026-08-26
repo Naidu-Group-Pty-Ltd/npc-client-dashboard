@@ -31,9 +31,14 @@ import {
 } from "@/lib/aml/submissionReviewCoverage.pure";
 import {
   buildSubmissionRecord, payloadEntries, renderSubmissionRecordHtml,
-  type RecordSection, type SubmissionRecordInput,
+  type RecordAudience, type RecordSection, type SubmissionRecordInput,
 } from "@/lib/aml/submissionRecord";
 import { generateSubmissionRecordPdf, submissionRecordPdfFilename } from "@/lib/aml/submissionRecordPdf";
+import { loadRecordBrandLogo, resolveRecordBrand } from "@/lib/aml/submissionRecordBrand";
+import { useBrand } from "@/branding/BrandProvider";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { displayDateTime } from "@/lib/aml/displayDate";
 
 type ActionKind = "accept" | "changes" | "document" | "clarification" | "escalate" | "supersede";
@@ -132,6 +137,10 @@ export function SubmissionReviewPanel({
   const [busy, setBusy] = useState(false);
   const [readerOpen, setReaderOpen] = useState(false);
   const [storing, setStoring] = useState(false);
+  /* The white-label identity the downloaded PDF is issued under — the
+   * workspace's own brand, or the Aurixa Systems fallback when none is
+   * configured (`submissionRecordBrand.ts`). */
+  const { settings: brandSettings } = useBrand();
   /*
    * ── What this reviewer has had open, this session ─────────────────────
    * The accordion is controlled so every open is observed. The two
@@ -260,9 +269,9 @@ export function SubmissionReviewPanel({
    * disagree. Built fresh per use — the generation timestamp is the moment
    * of the export, not of the page load.
    */
-  const buildRecord = () => buildSubmissionRecord(
+  const buildRecord = (audience: RecordAudience = "internal") => buildSubmissionRecord(
     { ...data, submission: s } as unknown as SubmissionRecordInput,
-    { generatedAt: new Date().toISOString(), generatedBy: null },
+    { generatedAt: new Date().toISOString(), generatedBy: null, audience },
   );
 
   /*
@@ -292,12 +301,20 @@ export function SubmissionReviewPanel({
    * tab, and what the reviewer needs on file is the finished document, not a
    * page. Rendered from the same record structure as everything else
    * (`submissionRecordPdf.ts`), drawn as selectable text, produced entirely
-   * in the browser from the data on this screen.
+   * in the browser from the data on this screen, and issued under the
+   * workspace's white-label brand (or the Aurixa Systems fallback).
+   *
+   * Two audiences, two documents: the INTERNAL record carries everything;
+   * the CLIENT COPY is built without the internal sections — screening,
+   * risk, service gate, review reasoning — so the file that goes to a
+   * client or portal partner cannot leak what must never reach them.
    */
-  const downloadRecord = async () => {
+  const downloadRecord = async (audience: RecordAudience = "internal") => {
     try {
-      const record = buildRecord();
-      const blob = await generateSubmissionRecordPdf(record);
+      const record = buildRecord(audience);
+      const brand = resolveRecordBrand(brandSettings);
+      brand.logoDataUrl = await loadRecordBrandLogo(brandSettings, brand.tenantBranded);
+      const blob = await generateSubmissionRecordPdf(record, brand);
       const filename = submissionRecordPdfFilename(record);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -305,7 +322,10 @@ export function SubmissionReviewPanel({
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
-      toast({ title: "PDF downloaded", description: filename });
+      toast({
+        title: audience === "client" ? "Client copy downloaded" : "PDF downloaded",
+        description: `${filename} · issued by ${brand.name}`,
+      });
     } catch (e: any) {
       toast({ title: "Download failed", description: e?.message ?? "Unknown error", variant: "destructive" });
     }
@@ -485,9 +505,28 @@ export function SubmissionReviewPanel({
             <Button size="sm" variant="outline" className="h-7" onClick={openReader}>
               <BookOpen className="mr-1.5 h-3.5 w-3.5" /> Read in full
             </Button>
-            <Button size="sm" variant="outline" className="h-7" onClick={() => void downloadRecord()}>
-              <Download className="mr-1.5 h-3.5 w-3.5" /> Download PDF
-            </Button>
+            {/*
+              Two documents, chosen by name: the internal record (everything,
+              staff-only) and the client copy (built without screening, risk
+              or review workings — the only variant that may leave the
+              reporting entity). The menu names the difference so nobody
+              sends the wrong one.
+            */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" className="h-7">
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download PDF
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onClick={() => void downloadRecord("internal")}>
+                  Internal record — full detail, staff only
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => void downloadRecord("client")}>
+                  Client copy — shareable, excludes internal readings
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {canWrite && (
               <Button size="sm" variant="outline" className="h-7" disabled={storing} onClick={() => void storeRecord()}>
                 {storing
@@ -736,8 +775,8 @@ export function SubmissionReviewPanel({
             </div>
           )}
           <DialogFooter className="shrink-0 flex-wrap gap-2 border-t border-border/40 pt-3">
-
-            <Button size="sm" variant="outline" onClick={() => void downloadRecord()}>
+            {/* The reader shows the internal record; its download matches. */}
+            <Button size="sm" variant="outline" onClick={() => void downloadRecord("internal")}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Download PDF
             </Button>
             <Button size="sm" variant="outline" onClick={printRecord}>

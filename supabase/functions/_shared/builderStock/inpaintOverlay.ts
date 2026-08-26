@@ -1,5 +1,5 @@
 /**
- * Builder stock — asking a model to rebuild what a badge was covering.
+ * Builder stock — asking OUR OWN worker to rebuild what a badge was covering.
  *
  * THE ONLY VISUAL INPUT IS THE BUILDER'S OWN FILE FOR THAT PROPERTY. Not a
  * reference photograph, not another facade, not a rendering of a house, not a
@@ -9,66 +9,75 @@
  * conditioning image parameter anywhere in this file and there must never be
  * one.
  *
- * AND IT DOES NOT REGENERATE THE PICTURE. The model's answer is used at the
+ * AND IT DOES NOT REGENERATE THE PICTURE. The worker's answer is used at the
  * mask and discarded everywhere else: `compositePatch` writes only where
  * `blendWeights` is non-zero, and `outsidePermittedRegionUnchanged` then checks
  * the whole frame against the bytes that came out of storage. A response that
  * came back re-lit, re-framed or with a different house on it changes nothing
  * outside the badge, because nothing outside the badge is ever read from it.
  *
- * WHAT THIS FILE MAY REFUSE, and every one of them is recorded rather than
- * swallowed: no credential, an endpoint that errors or times out, a response
- * that is not an image, an image that will not decode, a patch count that says
- * this is a marketing tile rather than a photograph, and a result the gate
- * rejects. In none of those cases does anything else become the card's picture.
+ * THE WORKER IS PRIVATE AND OURS, AND THAT IS THE POINT OF THIS FILE'S
+ * SECOND LIFE. The first version of this transport posted each patch to
+ * OpenAI's image-edit endpoint on a forwarded vendor key — a per-image bill
+ * on somebody else's credit, and a whole production outage the day that
+ * account ran dry (the settler's log still documents the 429s). The endpoint
+ * is now `cloudflare/builder-stock-image-worker/`, a Cloudflare Worker THIS
+ * repository ships, which runs the repair on Cloudflare Workers AI through
+ * the account's own AI binding: no third-party generative API, no Docker and
+ * no server of any kind, and there is no OpenAI URL, key or model name
+ * anywhere in the Builder Stock path — a test reads this file's source and
+ * fails if one comes back. This transport sends an image and a mask and
+ * nothing else; the instruction the model needs is a pinned constant in the
+ * worker's own reviewed source (a request carrying one is refused), so there
+ * is no instruction string here for anyone to soften and no way to ask for a
+ * nicer house than the one that was photographed.
  *
- * The call goes through `meteredFetch`, so it is billed to whoever's key it
- * spent. It is a per-image cost paid ONCE — see `sanitizedDerivative.pure.ts`:
- * the answer is frozen in the bucket and the card serves that object for ever.
+ * WHAT THIS FILE MAY REFUSE, and every one of them is recorded rather than
+ * swallowed: no worker configured, a worker that errors or times out, a
+ * response that is not an image, an image that will not decode, a patch count
+ * that says this is a marketing tile rather than a photograph, and a result
+ * the gate rejects. In none of those cases does anything else become the
+ * card's picture — and an unreachable worker is an OPERATIONAL fault the
+ * settler retries, never a verdict about the photograph.
+ *
+ * The call still goes through `meteredFetch`, exactly as the WeasyPrint and
+ * PDF-parse sidecars do: the service token is the workspace's own, so Mission
+ * Control rates the usage at nothing, but the call is still visible in the
+ * usage ledger instead of being untracked spend.
  */
 import { meteredFetch } from '../meteredFetch.ts';
 import { decodeFullRaster } from './sourceImageRaster.ts';
 import { encodePng } from './rasterPng.ts';
 import {
   blendWeights, compositePatch, cropMask, cropRgb, outsidePermittedRegionUnchanged,
-  planInpaintPatches, resampleRgb, type Patch,
+  planInpaintPatches, resampleRgb,
 } from './inpaintOverlay.pure.ts';
 
-/** The endpoint, named here and nowhere else. */
-const ENDPOINT = 'https://api.openai.com/v1/images/edits';
-/** The model. Recorded on every derivative it produces. */
-export const INPAINT_MODEL = 'gpt-image-1';
-/** What the endpoint works at, whatever it is sent. */
-const EDGE = 1024;
-/** One request's ceiling. Four patches must fit inside the worker's budget. */
-const REQUEST_TIMEOUT_MS = 60_000;
-
 /**
- * The instruction, written once.
+ * The model, named for the derivative record.
  *
- * IT ASKS FOR A RECONSTRUCTION, NOT A PICTURE. Every clause is a constraint:
- * remove the graphic, rebuild only what was behind it, change nothing else,
- * and do not redesign the property. There is no adjective in it, nothing about
- * style, quality, lighting or appeal, and no word that invites the model to
- * improve anything — an "attractive modern home" in this string is how a
- * client comes to be shown a house that was never built.
- *
- * THE CLAUSE ABOUT NOT EXTENDING THE BUILDING IS THERE BECAUSE OF LOT 13
- * HUMMOCK RISE. Its two status pills sit across the top of the frame, half over
- * sky and half over the edge of a timber-clad upper storey, and asked to
- * "reconstruct the background" the model continued the CLADDING across both
- * rectangles — a house a foot wider and a storey taller than the one that was
- * photographed. The gate caught it, as a flat coloured block where a
- * reconstruction should be. Naming what the background is, and naming what it
- * is not, is the narrowest way to ask for the right thing.
+ * The worker states what it actually ran in an `x-inpaint-model` header and
+ * that value wins when present; this constant is the fallback, and the value
+ * recorded when a test injects `edit`. It is the Cloudflare Workers AI
+ * catalog's dedicated masked-inpainting model, pinned in the worker's own
+ * source — run on Cloudflare's infrastructure through the AI binding, no
+ * per-image vendor bill.
  */
-export const INPAINT_PROMPT =
-  'Remove the overlaid promotional graphic or text and reconstruct only the '
-  + 'background that was hidden directly behind the masked area, continuing the '
-  + 'surrounding photograph: if sky was behind it, sky; if landscaping, '
-  + 'landscaping. Do not extend any building, roof, wall or structure into the '
-  + 'masked area. Do not change anything outside the masked area and do not '
-  + 'redesign the property.';
+export const INPAINT_MODEL = '@cf/runwayml/stable-diffusion-v1-5-inpainting';
+/**
+ * What the worker works at, whatever it is sent.
+ *
+ * 512 is the inpainting model's own native edge, so a patch resampled to this
+ * size goes through the model with no second resize on the other side. The
+ * patch geometry is unchanged from the 1024 the previous endpoint imposed:
+ * squares are still planned, merged and gated exactly as before, and only the
+ * wire size moved.
+ */
+const EDGE = 512;
+/** One request's ceiling. Four patches must fit inside the settler's budget. */
+const REQUEST_TIMEOUT_MS = 60_000;
+/** Where the worker answers. Named here and nowhere else. */
+const WORKER_INPAINT_PATH = '/v1/inpaint';
 
 export type InpaintResult =
   | {
@@ -94,44 +103,84 @@ export interface InpaintInput {
   pixels: Uint8Array;
   /** The grown overlay mask, at that same size. */
   mask: Uint8Array;
-  /** Injected in tests. Production passes nothing and the real endpoint runs. */
+  /** Injected in tests. Production passes nothing and the real worker runs. */
   edit?: (image: Uint8Array, mask: Uint8Array) => Promise<Uint8Array | null>;
 }
 
 /**
- * Build the mask the endpoint wants.
+ * An environment read that works under Deno and under the test runner.
  *
- * The convention is the opposite of ours: the API rebuilds where the mask is
- * TRANSPARENT and leaves everything opaque alone. So alpha is 0 over the badge
- * and 255 over the photograph. The colour channels are irrelevant to the API
- * and are written as the patch's own pixels rather than as black, so that a
- * mask opened by a human during a debug looks like what it describes.
+ * Deno first, because that is production; `process.env` second, so the
+ * transport itself — which host is called, what is refused, what travels in
+ * the request — is exercisable under vitest rather than only in an edge
+ * deploy. Anything unreadable is '', which the caller reports as
+ * `inpaint_unavailable`: fail closed, never fail loud.
  */
-async function maskPng(
-  patchPixels: Uint8Array, patchMask: Uint8Array, size: number,
-): Promise<Uint8Array | null> {
-  const rgba = new Uint8Array(size * size * 4);
-  for (let i = 0; i < size * size; i++) {
-    rgba[i * 4] = patchPixels[i * 3];
-    rgba[i * 4 + 1] = patchPixels[i * 3 + 1];
-    rgba[i * 4 + 2] = patchPixels[i * 3 + 2];
-    rgba[i * 4 + 3] = patchMask[i] ? 0 : 255;
+function env(name: string): string {
+  try {
+    const deno = (globalThis as { Deno?: { env?: { get(name: string): string | undefined } } }).Deno;
+    if (deno?.env?.get) return String(deno.env.get(name) ?? '');
+    const node = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
+    return String(node?.env?.[name] ?? '');
+  } catch {
+    return '';
   }
-  return await encodePng(rgba, { width: size, height: size, components: 4 });
 }
 
-/** One call. Returns the returned image's RGB pixels at `EDGE`, or null. */
-async function callEndpoint(
+/**
+ * Build the mask the worker wants: WHITE where the graphic is, BLACK where the
+ * photograph must be left alone.
+ *
+ * This is the inpainting model's own convention, and it is deliberately not an
+ * alpha channel: a mask a human opens during a debug reads exactly as what it
+ * describes, and there is no colour channel for a decoder to misread.
+ */
+async function maskPng(patchMask: Uint8Array, size: number): Promise<Uint8Array | null> {
+  const rgb = new Uint8Array(size * size * 3);
+  for (let i = 0; i < size * size; i++) {
+    const value = patchMask[i] ? 255 : 0;
+    rgb[i * 3] = value;
+    rgb[i * 3 + 1] = value;
+    rgb[i * 3 + 2] = value;
+  }
+  return await encodePng(rgb, { width: size, height: size, components: 3 });
+}
+
+/** A header value recorded as provenance: short, printable, or ignored. */
+function reportedModel(headers: Headers): string | null {
+  const raw = headers.get('x-inpaint-model');
+  if (!raw) return null;
+  const value = raw.trim().slice(0, 120);
+  return /^[\w@:./+-]+$/.test(value) ? value : null;
+}
+
+/**
+ * One call to the internal worker. Returns the patch's RGB pixels at `EDGE`,
+ * or why not.
+ *
+ * `unavailable` is true only where the DEPLOYMENT has no worker at all — no
+ * URL configured — which the caller reports as `inpaint_unavailable`. A worker
+ * that is configured and cannot be reached, refuses, or answers nonsense is
+ * `inpaint_failed`; the settler treats both as operational, so neither one is
+ * ever written down as a verdict about the photograph.
+ */
+async function callWorker(
   imagePng: Uint8Array, maskBytes: Uint8Array,
-): Promise<{ pixels: Uint8Array } | { error: string }> {
-  const key = Deno.env.get('OPENAI_API_KEY');
-  if (!key) return { error: 'no credential is configured for image editing' };
+): Promise<{ pixels: Uint8Array; model: string | null } | { error: string; unavailable?: boolean }> {
+  const base = env('BUILDER_STOCK_IMAGE_WORKER_URL').trim().replace(/\/+$/, '');
+  if (!base) {
+    return {
+      error: 'no internal image worker is configured for overlay inpainting',
+      unavailable: true,
+    };
+  }
+  // Quotes are stripped for the same reason the WeasyPrint client strips them:
+  // a secret pasted into the dashboard with its quotes produces a bearer token
+  // that is silently wrong.
+  const token = env('BUILDER_STOCK_IMAGE_WORKER_TOKEN')
+    .trim().replace(/^["']+|["']+$/g, '');
 
   const form = new FormData();
-  form.append('model', INPAINT_MODEL);
-  form.append('prompt', INPAINT_PROMPT);
-  form.append('n', '1');
-  form.append('size', `${EDGE}x${EDGE}`);
   form.append('image', new Blob([imagePng as unknown as BlobPart], { type: 'image/png' }),
     'image.png');
   form.append('mask', new Blob([maskBytes as unknown as BlobPart], { type: 'image/png' }),
@@ -139,42 +188,31 @@ async function callEndpoint(
 
   let response: Response;
   try {
-    response = await meteredFetch(ENDPOINT, {
+    response = await meteredFetch(`${base}${WORKER_INPAINT_PATH}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: form,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }, {
+      secretName: 'BUILDER_STOCK_IMAGE_WORKER_TOKEN',
       feature: 'builder-stock/overlay-inpaint',
-      model: INPAINT_MODEL,
       metadata: { purpose: 'marketing_overlay_removal' },
     });
   } catch (error) {
-    return { error: `the image editor could not be reached (${String(error).slice(0, 120)})` };
+    return { error: `the image worker could not be reached (${String(error).slice(0, 120)})` };
   }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    return { error: `the image editor refused the request (${response.status}) ${body.slice(0, 160)}` };
-  }
-
-  let payload: { data?: Array<{ b64_json?: string }> };
-  try {
-    payload = await response.json();
-  } catch {
-    return { error: 'the image editor returned something that was not a result' };
-  }
-  const base64 = payload?.data?.[0]?.b64_json;
-  if (typeof base64 !== 'string' || !base64) {
-    return { error: 'the image editor returned no image' };
+    return {
+      error: `the image worker refused the request (${response.status}) ${body.slice(0, 160)}`,
+    };
   }
 
   let bytes: Uint8Array;
   try {
-    const binary = atob(base64);
-    bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    bytes = new Uint8Array(await response.arrayBuffer());
   } catch {
-    return { error: 'the returned image could not be read' };
+    return { error: 'the image worker returned something that was not a result' };
   }
   const raster = await decodeFullRaster(bytes);
   if (!raster) return { error: 'the returned image could not be decoded' };
@@ -182,11 +220,12 @@ async function callEndpoint(
   const pixels = raster.width === EDGE && raster.height === EDGE
     ? raster.pixels
     : resampleRgb(raster.pixels, raster.width, raster.height, EDGE, EDGE);
-  return { pixels };
+  return { pixels, model: reportedModel(response.headers) };
 }
 
 /**
- * Take the graphic off with a model, patch by patch, or say why not.
+ * Take the graphic off with the internal worker, patch by patch, or say why
+ * not.
  *
  * The composite is cumulative across patches — each one is laid onto the result
  * of the last — and the gate runs ONCE at the end against the untouched
@@ -230,6 +269,7 @@ export async function inpaintOverlay(input: InpaintInput): Promise<InpaintResult
   let masked = 0;
   for (let i = 0; i < mask.length; i++) masked += mask[i];
 
+  let model: string | null = null;
   let working = pixels;
   for (const patch of patches) {
     const patchPixels = cropRgb(working, width, patch, height);
@@ -249,26 +289,26 @@ export async function inpaintOverlay(input: InpaintInput): Promise<InpaintResult
     if (input.edit) {
       returned = await input.edit(upPixels, upMask);
       if (!returned) {
-        return { ok: false, reason: 'inpaint_failed', detail: 'the image editor returned nothing' };
+        return { ok: false, reason: 'inpaint_failed', detail: 'the image worker returned nothing' };
       }
     } else {
       const imagePng = await encodePng(upPixels, { width: EDGE, height: EDGE, components: 3 });
-      const maskBytes = await maskPng(upPixels, upMask, EDGE);
+      const maskBytes = await maskPng(upMask, EDGE);
       if (!imagePng || !maskBytes) {
         return {
           ok: false, reason: 'inpaint_failed', detail: 'the request could not be encoded',
         };
       }
-      const answer = await callEndpoint(imagePng, maskBytes);
+      const answer = await callWorker(imagePng, maskBytes);
       if ('error' in answer) {
         return {
           ok: false,
-          reason: answer.error.startsWith('no credential')
-            ? 'inpaint_unavailable' : 'inpaint_failed',
+          reason: answer.unavailable ? 'inpaint_unavailable' : 'inpaint_failed',
           detail: answer.error,
         };
       }
       returned = answer.pixels;
+      model = answer.model ?? model;
     }
 
     if (returned.length < EDGE * EDGE * 3) {
@@ -304,6 +344,6 @@ export async function inpaintOverlay(input: InpaintInput): Promise<InpaintResult
     height,
     repairedShare: masked / (width * height),
     regionsRemoved: patches.length,
-    model: INPAINT_MODEL,
+    model: model ?? INPAINT_MODEL,
   };
 }

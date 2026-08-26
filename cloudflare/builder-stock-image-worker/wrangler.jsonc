@@ -1,0 +1,19 @@
+/**
+ * Builder Stock image worker — the minimal configuration and nothing else.
+ *
+ * No account id, no secrets, no routes: `wrangler deploy` resolves the
+ * account from the authenticated wrangler login, the bearer token is set as a
+ * Worker secret (`wrangler secret put BUILDER_STOCK_IMAGE_WORKER_TOKEN`), and
+ * the endpoint is the workers.dev URL the deploy prints. Deployment steps and
+ * the calling contract: docs/builder-stock/IMAGE_WORKER.md.
+ */
+{
+  "name": "builder-stock-image-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // Workers AI, exposed to the worker as env.AI — Cloudflare's supported AI
+  // binding. The model itself is pinned in src/index.ts.
+  "ai": {
+    "binding": "AI"
+  }
+}

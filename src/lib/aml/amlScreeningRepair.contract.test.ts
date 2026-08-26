@@ -378,9 +378,11 @@ describe("Risk integration — PEP feeds risk without becoming a rejection", () 
 
 describe("missing_mandatory — every non-final state is outstanding", () => {
   it("get_submission_review uses the shared outstanding rule, not a two-state list", () => {
+    // The review is composed once in `composeSubmissionReview`, which both
+    // `get_submission_review` and `store_submission_record` call.
     const op = cases.slice(
-      cases.indexOf("case 'get_submission_review'"),
-      cases.indexOf("case 'accept_submission'"));
+      cases.indexOf("async function composeSubmissionReview"),
+      cases.indexOf("const __corsWrappedHandler"));
     expect(op).toContain("isPartyScreeningMissing");
     expect(op).not.toContain("['not_started', 'possible_match'].includes(s.state)");
   });

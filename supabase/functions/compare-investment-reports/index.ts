@@ -11,21 +11,17 @@ const corsHeaders = {
 };
 
 /**
- * Wall-clock room for the model, inside the invocation around it.
+ * The analysis loop's wall-clock bounds live in
+ * `_shared/reports/propertyComparison/analysisRequest.pure.ts`
+ * (`ANALYSIS_BUDGET_MS` et al.), beside the request they bound.
  *
- * The same discipline `generate-investment-report` keeps with
- * `SECTION_LOOP_BUDGET_MS`, for the same reason: an edge invocation is cut off
- * without warning, and a run that is killed teaches its caller nothing.
- *
- * The binding ceiling is this function's own `request_timeout = 120` in
- * `supabase/config.toml` — tighter than the 150s the browser allows — and the
- * budget is measured from the top of the HANDLER, which the metering wrapper
- * reaches about 4.5s into the request (auth, the reserve, the price lookup).
- * 105s therefore leaves roughly ten seconds for the insert and the response.
- * Raising it to fill the gap would trade a partial answer, stored and disclosed,
- * for an invocation killed with nothing written at all.
+ * The binding ceiling is the BROWSER's, not the gateway's: the client aborts
+ * at 150s, and `resolveAnalysisDeadline` measures from the moment the metering
+ * wrapper first saw the request — because auth, the price lookup and the
+ * reserve run before this handler's clock starts, and on 2026-08-26 they took
+ * 115 seconds between them. That run finished, stored its row and charged for
+ * it nine seconds after the client had already given up.
  */
-const ANALYSIS_BUDGET_MS = 105_000;
 
 /**
  * How many times to ask.
@@ -192,7 +188,11 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
         ? propertyStates[0]
         : propertyStates.join(' & ');
     
-    const reportTitle = `COMPARISON ANALYSIS - ${reports.length} PROPERTIES, ${statesText}`;
+    // The family leads the title — "COMPASS COMPARISON ANALYSIS", "BRIEFING
+    // COMPARISON ANALYSIS", "SNAPSHOT COMPARISON ANALYSIS" — so a stored row is
+    // identifiable everywhere the title surfaces (library card, viewer, PDFs).
+    // Nothing parses this string; existing rows keep their old titles.
+    const reportTitle = `${comparisonType.toUpperCase()} COMPARISON ANALYSIS - ${reports.length} PROPERTIES, ${statesText}`;
     
     console.log(`Generated title: ${reportTitle}`);
     console.log(`Property states extracted: ${propertyStates.length > 0 ? propertyStates.join(', ') : 'none found'}`);
@@ -531,6 +531,7 @@ Format your response as valid JSON with this structure:
       nextRung,
       preferReading,
       readAnalysisResponse,
+      resolveAnalysisDeadline,
       responseFormatFor,
       rungRejected,
     } = await import('../_shared/reports/propertyComparison/analysisRequest.pure.ts');
@@ -539,11 +540,41 @@ Format your response as valid JSON with this structure:
 
     const systemPrompt = (await resolvePrompt('comparison.report_system')).text;
     const outputTokens = comparisonOutputTokens(reports.length);
-    const deadlineAt = startTime + ANALYSIS_BUDGET_MS;
+
+    const deadline = resolveAnalysisDeadline(
+      startTime,
+      req.headers.get('x-metering-received-at'),
+    );
+    if (deadline.preHandlerMs > 15_000) {
+      console.warn(
+        `[comparison] ${Math.round(deadline.preHandlerMs / 1000)}s elapsed before the handler `
+        + `started (metering/auth); ${Math.round(deadline.roomMs / 1000)}s left for the analysis`
+      );
+    }
+    // A run whose answer cannot reach the browser is worse than a refusal: it
+    // is generated, stored and charged, and the person who asked is told it
+    // timed out. Refuse instead — `success: false` releases the reservation,
+    // so this costs the caller nothing and says what to do.
+    if (deadline.tooLate) {
+      console.error(
+        `[comparison] refusing to start: ${Math.round(deadline.preHandlerMs / 1000)}s was spent `
+        + `before the handler and only ${Math.round(deadline.roomMs / 1000)}s remains`
+      );
+      return new Response(
+        JSON.stringify({
+          success: false,
+          retryable: true,
+          error: 'The billing service is responding slowly and there is no longer enough time '
+            + 'to produce this comparison in this request. You have not been charged — please try again.',
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    const deadlineAt = deadline.deadlineAt;
 
     console.log(
       `Calling the comparison model for ${reports.length} properties `
-      + `(up to ${outputTokens} output tokens, ${Math.round(ANALYSIS_BUDGET_MS / 1000)}s budget)...`
+      + `(up to ${outputTokens} output tokens, ${Math.round(deadline.roomMs / 1000)}s budget)...`
     );
 
     let rung: Rung = 'json_schema';

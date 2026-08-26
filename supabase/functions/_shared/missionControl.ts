@@ -153,22 +153,76 @@ function assertConfigured() {
   }
 }
 
-async function mcFetchRaw(path: string, init: RequestInit): Promise<Response> {
-  assertConfigured();
-  return await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      "x-clone-api-key": API_KEY,
-      ...(init.headers ?? {}),
-    },
-  });
+/**
+ * Wall-clock bound on a single Mission Control HTTP attempt.
+ *
+ * These calls run OUTSIDE any handler's analysis budget — the metering wrapper
+ * reserves before the handler starts and commits after it returns — so an
+ * unbounded fetch here silently spends the browser's whole request timeout.
+ * That is not hypothetical: on 2026-08-26 a catalog lookup took 83s and the
+ * reserve after it 31s, so `compare-investment-reports` reached its model call
+ * 115s into a request the browser aborts at 150s. The comparison completed,
+ * was stored and was charged — and the person who asked for it was told
+ * "Request timed out".
+ *
+ * Ten seconds is an eternity for these endpoints (they answer in well under a
+ * second when healthy) and short enough that even the worst path — every
+ * attempt timing out, every retry taken — stays inside the caller's budget.
+ * Fail-closed semantics are unchanged: a reserve that times out is refused
+ * exactly like any other reserve error.
+ */
+export const MC_FETCH_TIMEOUT_MS = (() => {
+  const raw = Number(Deno.env.get("MC_FETCH_TIMEOUT_MS") ?? "");
+  return Number.isFinite(raw) && raw > 0 ? raw : 10_000;
+})();
+
+function isAbortError(e: unknown): boolean {
+  const name = (e as { name?: string })?.name;
+  return name === "AbortError" || name === "TimeoutError";
 }
 
-/** Fetch with one retry on 429 (honoring Retry-After) and 5xx (500ms back-off). */
+async function mcFetchRaw(path: string, init: RequestInit): Promise<Response> {
+  assertConfigured();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MC_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        "x-clone-api-key": API_KEY,
+        ...(init.headers ?? {}),
+      },
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if (isAbortError(e)) {
+      throw new MissionControlError(
+        "mc_timeout",
+        `Mission Control did not answer ${path} within ${MC_FETCH_TIMEOUT_MS}ms`,
+        504,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Fetch with one retry on 429 (honoring Retry-After), 5xx (500ms back-off)
+ *  and a timed-out attempt — a stall can be a transient stall, but two in a row
+ *  mean Mission Control is down for this request's purposes. */
 async function mcFetch(path: string, init: RequestInit): Promise<Response> {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await mcFetchRaw(path, init);
+    let res: Response;
+    try {
+      res = await mcFetchRaw(path, init);
+    } catch (e) {
+      if (e instanceof MissionControlError && e.code === "mc_timeout" && attempt === 0) {
+        continue;
+      }
+      throw e;
+    }
     if (res.status === 429 && attempt === 0) {
       const ra = Number(res.headers.get("retry-after") ?? "1");
       const waitMs = Math.min(Math.max(ra, 1), 10) * 1000;
@@ -243,14 +297,25 @@ export async function reserveTokens(args: ReserveArgs): Promise<ReserveResult> {
 export async function commitTokens(jobId: string, actualTokens: number, resultMeta?: Record<string, unknown>): Promise<void> {
   // Commit must always succeed eventually. Retry once on 5xx — commit is idempotent on completed jobs.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await mcFetchRaw("/api/public/tokens/commit", {
-      method: "POST",
-      body: JSON.stringify({
-        job_id: jobId,
-        actual_tokens: actualTokens,
-        result_meta: resultMeta,
-      }),
-    });
+    let res: Response;
+    try {
+      res = await mcFetchRaw("/api/public/tokens/commit", {
+        method: "POST",
+        body: JSON.stringify({
+          job_id: jobId,
+          actual_tokens: actualTokens,
+          result_meta: resultMeta,
+        }),
+      });
+    } catch (e) {
+      // A timed-out attempt is retryable like a 5xx; the last one propagates so
+      // the caller records the commit as failed rather than silently succeeded.
+      if (e instanceof MissionControlError && e.code === "mc_timeout" && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
     if (res.ok) { await res.text(); return; }
     if (res.status === 429) {
       const ra = Number(res.headers.get("retry-after") ?? "1");

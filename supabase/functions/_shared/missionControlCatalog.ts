@@ -2,7 +2,7 @@
 // Reads roles / add-ons / setup packages / per-report credit costs from
 // Aurixa Mission Control. In-memory cache (5 min) keeps per-function
 // invocations cheap; new edge-function instances re-fetch on cold start.
-import { MissionControlError } from "./missionControl.ts";
+import { MC_FETCH_TIMEOUT_MS, MissionControlError } from "./missionControl.ts";
 
 const BASE_URL = (Deno.env.get("MISSION_CONTROL_URL") ?? "").replace(/\/+$/, "");
 const API_KEY = Deno.env.get("MISSION_CONTROL_CLONE_API_KEY") ?? "";
@@ -85,10 +85,36 @@ async function fetchFromMc(): Promise<Catalog> {
   assertConfigured();
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(`${BASE_URL}/api/public/pricing/catalog`, {
-      method: "GET",
-      headers: { "x-clone-api-key": API_KEY, accept: "application/json" },
-    });
+    // Bounded like every other Mission Control call: this lookup runs inside
+    // the metering wrapper BEFORE the paid handler starts, so an unbounded
+    // fetch here spends the browser's request timeout on pricing. Observed at
+    // 83s (and once 131s, ending in a 401) in front of a comparison whose
+    // model call needed the time far more. A timeout falls through to
+    // `safeFetchCatalog`'s empty catalog and the local pricing heuristic —
+    // pricing must never block a report.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MC_FETCH_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}/api/public/pricing/catalog`, {
+        method: "GET",
+        headers: { "x-clone-api-key": API_KEY, accept: "application/json" },
+        signal: controller.signal,
+      });
+    } catch (e) {
+      const aborted = (e as { name?: string })?.name === "AbortError";
+      if (aborted && attempt === 0) continue;
+      if (aborted) {
+        throw new MissionControlError(
+          "mc_timeout",
+          `Mission Control catalog did not answer within ${MC_FETCH_TIMEOUT_MS}ms`,
+          504,
+        );
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
     lastStatus = res.status;
     if (res.status === 429 && attempt === 0) {
       const ra = Number(res.headers.get("retry-after") ?? "1");

@@ -48,6 +48,7 @@ import {
 import {
   isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
+import { decodeFullRaster } from '../../../supabase/functions/_shared/builderStock/sourceImageRaster';
 import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import {
   marketplaceEligibilityDetail, decideMarketplaceEligibility,
@@ -409,7 +410,7 @@ describe('the validation gate refuses rather than shipping something wrong', () 
       edit: async () => new Uint8Array(64 * 64 * 3),
     });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('inpaint_failed');
   });
 
@@ -420,7 +421,7 @@ describe('the validation gate refuses rather than shipping something wrong', () 
       width: W, height: H, pixels: badged, mask, edit: async () => null,
     });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('inpaint_failed');
   });
 
@@ -629,7 +630,7 @@ describe('the order the two repairs are tried in', () => {
   it('a clean picture is never touched by either route', async () => {
     const result = await sanitizeSourceImage(await bytesOf(sky(W, H)));
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('not_annotated');
     expect(result.transformation).toBeNull();
   });
@@ -710,7 +711,7 @@ describe('the order the two repairs are tried in', () => {
         edit: hostileModel,
       });
       expect(result.ok).toBe(false);
-      if (result.ok) return;
+      if (result.ok === true) return;
       // Flat magenta over the badge is another laid-over graphic, so the
       // classifier refuses it a second time.
       expect(result.reason).toBe('still_annotated');
@@ -735,7 +736,7 @@ describe('the order the two repairs are tried in', () => {
         edit: async () => { throw new Error('the model must not be reached'); },
       });
       expect(big.ok).toBe(false);
-      if (big.ok) return;
+      if (big.ok === true) return;
       expect(big.reason).toBe('too_much_to_rebuild');
     });
 });
@@ -834,6 +835,8 @@ async function refusedRow(bytes: Uint8Array) {
     processing_status: 'ready',
     storage_bucket: 'builder-stock-images',
     storage_path: PATH,
+    // The sweep writes `sanitized_derivative` / `sanitization_failure` onto
+    // this bag at runtime, so it is typed open rather than by its seed keys.
     source_detail: {
       role: 'primary_property',
       role_evidence_level: 3,
@@ -844,7 +847,8 @@ async function refusedRow(bytes: Uint8Array) {
       marketplace_rejection_reason: 'annotated_marketing_tile',
       marketplace_measured: true,
       marketplace_eligibility_version: 1,
-    },
+    } as Record<string, unknown>,
+
   };
 }
 
@@ -1064,6 +1068,595 @@ describe('the repair allowance is spent once per invocation, not once per upload
     if (done === started && second.outstanding > second.repaired + second.refused) {
       expect(sanitizationSweepCompleted(second)).toBe(false);
     }
+  });
+});
+
+describe('one external failure must not take the queue down with it', () => {
+  /*
+   * MEASURED IN PRODUCTION, TWICE.
+   *
+   * The image editor answered 429 "You have no credits remaining" for two
+   * Cloverton rows. They hold the two lowest ids in the sweep, the allowance is
+   * two, and the scan restarts at the lowest id every tick — so those two spent
+   * the entire allowance on every tick for hours, the log read
+   * `outstanding: 3, repaired: 0, unresolved: 2` every minute, and the twelve
+   * rows behind them were never reached. Most needed no vendor at all.
+   *
+   * The first fix refunded the allowance, and that was wrong: it let a tick
+   * attempt a third full-resolution repair and every tick came back 546, a
+   * worker kill with nothing written. TWO ATTEMPTS IS WHAT A TICK CAN AFFORD.
+   * So the allowance does not grow — the tick spends it on DIFFERENT ROWS.
+   */
+  const vendorOutage = async () => {
+    throw new Error('the image editor refused the request (429) '
+      + '"You have no credits remaining."');
+  };
+
+  const outageRows = async (n: number) => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const rows = await Promise.all(Array.from({ length: n }, async (_, i) => ({
+      ...await refusedRow(bytes), id: `image-${String(i).padStart(2, '0')}`,
+      storage_path: `${PATH}.${i}`,
+    })));
+    const objects: Record<string, Uint8Array> = {};
+    for (const row of rows) objects[row.storage_path] = bytes;
+    return { rows, objects };
+  };
+
+  it('never attempts more than the allowance, however cheaply the attempts fail', async () => {
+    // The 546 this replaces: a tick must not do a third repair because the
+    // first two failed fast.
+    const { rows, objects } = await outageRows(6);
+    let attempts = 0;
+    const budget = newRepairBudget();
+    const started = budget.remaining;
+
+    await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget,
+      sanitize: (input) => {
+        attempts += 1;
+        return sanitizeSourceImage(input, { edit: vendorOutage });
+      },
+    });
+
+    expect(attempts).toBeLessThanOrEqual(started);
+  });
+
+  it('records the attempt so the NEXT tick spends its allowance elsewhere', async () => {
+    const { rows, objects } = await outageRows(6);
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
+    });
+
+    const tried = db.rows.filter((row: any) =>
+      (row.source_detail ?? {}).sanitization_attempt);
+    expect(tried.length).toBeGreaterThan(0);
+    // And it is NOT one of the keys that settles a row: the sweep must come
+    // back to it, and no card may be blanked by it.
+    for (const row of tried) {
+      expect(row.source_detail.sanitized_derivative ?? null).toBeNull();
+      expect(row.source_detail.sanitization_failure ?? null).toBeNull();
+      expect(row.source_detail.sanitization_clearance ?? null).toBeNull();
+    }
+  });
+
+  it('so the second tick reaches rows the first never got to', async () => {
+    const { rows, objects } = await outageRows(6);
+    const db = fakeDb(rows, objects);
+    const seen: string[] = [];
+    const run = () => settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
+    });
+
+    for (const row of db.rows) seen.push(row.id);
+    await run();
+    const afterFirst = db.rows.filter((r: any) => (r.source_detail ?? {}).sanitization_attempt)
+      .map((r: any) => r.id);
+    await run();
+    const afterSecond = db.rows.filter((r: any) => (r.source_detail ?? {}).sanitization_attempt)
+      .map((r: any) => r.id);
+
+    // THE WHOLE POINT: the second tick did not re-attempt the same rows.
+    expect(afterSecond.length).toBeGreaterThan(afterFirst.length);
+  });
+
+  it('and an outage never settles the upload', async () => {
+    const { rows, objects } = await outageRows(4);
+    const outcome = await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: (input) => sanitizeSourceImage(input, { edit: vendorOutage }),
+    });
+    expect(outcome.repaired).toBe(0);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+  });
+});
+
+describe('a repair region the caller established, and nothing else about it', () => {
+  /*
+   * WHY THIS EXISTS. The mask builder reads lines of TYPE, so a plate whose
+   * lettering falls below the measuring resolution has no measurable extent —
+   * the picture can carry a real, plainly visible promotional plate and still
+   * produce no mask, and no threshold move that reaches it is safe against real
+   * clean facades. A caller that has established the rectangle by other means
+   * can hand it over; it is asking for those pixels to be rebuilt, not for a
+   * different verdict.
+   */
+  const region = { left: 0.1, top: 0.72, right: 0.42, bottom: 0.86 };
+
+  it('repairs the supplied region on a picture the detector passes as clean', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+
+    // Without a region this picture is not annotated and nothing is done.
+    const untouched = await sanitizeSourceImage(bytes, {});
+    expect(untouched.ok).toBe(false);
+    if (untouched.ok === false) expect(untouched.reason).toBe('not_annotated');
+
+    // With one, the existing repair path runs on it.
+    let reached = false;
+    const repaired = await sanitizeSourceImage(bytes, {
+      repairRegion: region,
+      edit: async (input: never) => { reached = true; return (input as never); },
+    });
+    // Either the deterministic route rebuilt it, or the generative route was
+    // reached. What must NOT happen is the picture being dismissed unexamined.
+    const examined = repaired.ok === true || reached
+      || (repaired.ok === false && repaired.reason !== 'not_annotated');
+    expect(examined).toBe(true);
+  });
+
+  it('leaves detector-driven behaviour byte-for-byte unchanged without one', async () => {
+    const { badged } = badgedPicture();
+    const bytes = (await encodePng(badged, { width: W, height: H, components: 3 }))!;
+    const mask = maskFor(badged);
+    const { clean } = badgedPicture();
+
+    const a = await sanitizeSourceImage(bytes, { edit: honestModel(clean, mask) });
+    const b = await sanitizeSourceImage(bytes, { edit: honestModel(clean, mask) });
+
+    expect(a.ok).toBe(b.ok);
+    if (a.ok === true && b.ok === true) {
+      expect(a.transformation).toBe(b.transformation);
+      expect(Array.from(a.bytes)).toEqual(Array.from(b.bytes));
+    }
+  });
+
+  it('changes nothing outside the supplied region', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+
+    const out = await sanitizeSourceImage(bytes, { repairRegion: region });
+    if (out.ok !== true) return; // a refusal serves the original; nothing altered
+
+    const after = await decodeFullRaster(out.bytes);
+    expect(after).not.toBeNull();
+    // Every pixel well outside the region is identical to the builder's own.
+    let checked = 0;
+    for (let y = 0; y < H; y += 7) {
+      for (let x = 0; x < W; x += 7) {
+        const insideX = x >= region.left * W - 4 && x <= region.right * W + 4;
+        const insideY = y >= region.top * H - 4 && y <= region.bottom * H + 4;
+        if (insideX && insideY) continue;
+        const at = (y * W + x) * 3;
+        expect(after!.pixels[at]).toBe(clean[at]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('treats an empty or inverted region as none', async () => {
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+    for (const bad of [
+      { left: 0.5, top: 0.5, right: 0.5, bottom: 0.9 },
+      { left: 0.9, top: 0.5, right: 0.2, bottom: 0.9 },
+    ]) {
+      const out = await sanitizeSourceImage(bytes, { repairRegion: bad });
+      expect(out.ok).toBe(false);
+      if (out.ok === false) expect(out.reason).toBe('not_annotated');
+    }
+  });
+});
+
+describe('a persisted repair region is repair work the sweep finds by itself', () => {
+  /*
+   * THE MISSING CONNECTION.
+   *
+   * `sanitizeSourceImage` accepts a `repairRegion`, and until now nothing in
+   * the runtime supplied one — so a picture whose plate the detector cannot
+   * measure was repairable only by hand, once, and went straight back to being
+   * served with the plate on it the moment anything reopened the row.
+   *
+   * These pin the whole loop: the rectangle is persisted as ordinary image
+   * metadata, the ordinary five-minute sweep treats such a row as outstanding
+   * EVEN THOUGH THE DETECTOR SAYS `not_annotated`, hands the rectangle to the
+   * existing generic path, survives a vendor outage with the region and its
+   * retryability intact, and stops once there is a derivative to serve.
+   *
+   * Nothing here knows which picture it is. The code understands exactly one
+   * thing — "this image has a persisted explicit repair region" — and every
+   * fact about which pixels is in the row.
+   */
+  const REGION = { left: 0.0950, top: 0.8763, right: 0.3975, bottom: 0.9536 };
+
+  const cleanCandidate = async (over: Record<string, unknown> = {}) => {
+    // A picture the detector passes: eligible, no rejection reason, nothing
+    // for the ordinary conviction path to pick up.
+    const clean = badgedPicture().clean;
+    const bytes = (await encodePng(clean, { width: W, height: H, components: 3 }))!;
+    const sha = await sha256Hex(bytes);
+    const row = {
+      ...await refusedRow(bytes),
+      source_detail: {
+        role: 'primary_property',
+        role_evidence_level: 3,
+        stored_sha256: sha,
+        source_sha256: sha,
+        marketplace_display_eligible: true,
+        marketplace_eligibility_state: 'eligible',
+        marketplace_rejection_reason: null,
+        marketplace_measured: true,
+        marketplace_eligibility_version: 2,
+        repair_region: {
+          ...REGION,
+          original_sha256: sha,
+          established_by: 'identified on the stored bytes and recorded against them',
+        },
+        ...over,
+      },
+    };
+    return { row, bytes, sha, objects: { [PATH]: bytes } };
+  };
+
+  const vendorOutage = async () => {
+    throw new Error('the image editor refused the request (429) '
+      + '"You have no credits remaining."');
+  };
+
+  /*
+   * The vendor answering 429, as the SWEEP sees it.
+   *
+   * A stub rather than the real sanitizer for these two, because what is being
+   * pinned is the sweep's handling of an outage and not the sanitizer's — and a
+   * region small and quiet enough to be realistic is one the DETERMINISTIC
+   * route repairs without a vendor at all, which is the happy case tests 1, 2
+   * and 5 cover against the real thing. It still asserts the region arrived.
+   */
+  const outagedSanitize = (seen: { region?: unknown; calls: number }) =>
+    (async (_bytes: Uint8Array, options?: { repairRegion?: unknown }) => {
+      seen.calls += 1;
+      seen.region = options?.repairRegion ?? null;
+      return {
+        ok: false as const,
+        reason: 'inpaint_unavailable' as const,
+        transformation: 'generative_overlay_inpaint' as const,
+        model: null,
+        operational: true,
+        detail: 'the image editor refused the request (429) '
+          + '"You have no credits remaining."',
+      };
+    }) as never;
+
+  it('1 — a row the detector calls clean is outstanding when it carries a region', async () => {
+    const { row, objects } = await cleanCandidate();
+    let called = 0;
+
+    const outcome = await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        called += 1;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+
+    // Before this, the two gates below excluded it outright and the picture was
+    // served with its plate for ever.
+    expect(row.source_detail.marketplace_eligibility_state).toBe('eligible');
+    expect(row.source_detail.marketplace_rejection_reason).toBeNull();
+    expect(outcome.outstanding).toBe(1);
+    expect(called).toBe(1);
+  });
+
+  it('2 — and the sweep hands the sanitizer the rectangle that was persisted', async () => {
+    const { row, objects } = await cleanCandidate();
+    let handed: unknown = null;
+
+    await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        handed = options?.repairRegion ?? null;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+
+    expect(handed).toEqual(REGION);
+  });
+
+  it('3 — a vendor outage keeps the region, writes no verdict and stays retryable', async () => {
+    const { row, objects } = await cleanCandidate();
+    const db = fakeDb([row], objects);
+
+    const seen = { calls: 0 } as { region?: unknown; calls: number };
+    const outcome = await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: outagedSanitize(seen),
+    });
+
+    expect(seen.region).toEqual(REGION);
+    expect(outcome.unresolved).toBe(1);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    // The region survives, so the next attempt is the same attempt.
+    expect(detail.repair_region).toMatchObject(REGION);
+    // Nothing that could settle the row, and nothing that could blank the card.
+    expect(detail[DERIVATIVE_KEY] ?? null).toBeNull();
+    expect(detail[FAILURE_KEY] ?? null).toBeNull();
+    expect(detail[CLEARANCE_KEY] ?? null).toBeNull();
+    // And the cooldown was recorded, exactly as for any other operational miss.
+    expect(detail.sanitization_attempt).toBeTruthy();
+  });
+
+  it('4 — the existing cooldown is respected, and the row is still outstanding', async () => {
+    const { row, objects } = await cleanCandidate();
+    const db = fakeDb([row], objects);
+    const seen = { calls: 0 } as { region?: unknown; calls: number };
+    const run = () => settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: outagedSanitize(seen),
+    });
+
+    await run();
+    const second = await run();
+
+    // Passed over, NOT settled: the sweep must come back to it.
+    expect(seen.calls).toBe(1);
+    expect(second.outstanding).toBe(1);
+    expect(second.incomplete).toBe(true);
+    expect(sanitizationSweepCompleted(second)).toBe(false);
+  });
+
+  it('5 — a successful repair is stored the normal way and stops the retrying', async () => {
+    const { row, objects } = await cleanCandidate();
+    const db = fakeDb([row], objects);
+    const clean = badgedPicture().clean;
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => sanitizeSourceImage(input, {
+        ...options, edit: honestModel(clean, maskFor(badgedPicture().badged)),
+      }),
+    });
+
+    const detail = db.rows[0].source_detail as Record<string, any>;
+    const stored = detail[DERIVATIVE_KEY];
+    if (!stored) {
+      // The deterministic route answered instead; either is a stored result.
+      expect(detail[FAILURE_KEY] ?? detail[DERIVATIVE_KEY]).toBeTruthy();
+    }
+
+    // Whatever route answered, the row is settled and a second tick does no
+    // work on it — the retrying stops without anything marking it "complete"
+    // by hand.
+    let again = 0;
+    const second = await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        again += 1;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+    expect(again).toBe(0);
+    expect(second.outstanding).toBe(0);
+  });
+
+  it('6 — a region that names other bytes, or is malformed, is not a region', async () => {
+    for (const bad of [
+      { original_sha256: 'f'.repeat(64) },                       // a replaced file
+      { original_sha256: undefined },                            // unattributable
+      { left: 0.9, right: 0.2 },                                 // inverted
+      { top: 0.5, bottom: 0.5 },                                 // empty
+      { left: -0.2 },                                            // outside the frame
+    ]) {
+      const { row, objects } = await cleanCandidate();
+      Object.assign(row.source_detail.repair_region as Record<string, unknown>, bad);
+      let called = 0;
+
+      const outcome = await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+        budget: newRepairBudget(),
+        sanitize: async (input, options) => {
+          called += 1;
+          return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+        },
+      });
+
+      // Falls back to exactly the behaviour of a row with no region at all: the
+      // detector gates decide, and this picture they pass.
+      expect(called).toBe(0);
+      expect(outcome.outstanding).toBe(0);
+    }
+  });
+
+  it('7 — a row with no region is left to the detector, unchanged', async () => {
+    const { row, objects } = await cleanCandidate();
+    delete (row.source_detail as Record<string, unknown>).repair_region;
+    let handed: unknown = 'never called';
+
+    const outcome = await settleImageSanitization(fakeDb([row], objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: async (input, options) => {
+        handed = options?.repairRegion ?? null;
+        return sanitizeSourceImage(input, { ...options, edit: vendorOutage });
+      },
+    });
+
+    expect(handed).toBe('never called');
+    expect(outcome.outstanding).toBe(0);
+    expect(outcome.scanned).toBe(1);
+  });
+});
+
+describe('the allowance goes to the rows that have waited longest', () => {
+  /*
+   * MEASURED IN PRODUCTION, AND IT IS THE COOLDOWN'S OWN FAILURE ONE STEP OUT.
+   *
+   * Nine rows outstanding, an allowance of two, a ten-minute cooldown: four
+   * attempts fit in each cooldown window, so the five lowest ids cycled among
+   * themselves and the four behind them were never reached. One had last been
+   * looked at half an hour earlier, one an hour and a half, and one — the row
+   * whose repair region had just been recorded — had never been attempted once.
+   *
+   * The scan also returned the moment the allowance ran out, so `outstanding`
+   * read 6 where nine rows needed work: it did not even count what it starved.
+   */
+  const vendorOutage = (seen: string[]) =>
+    (async (_bytes: Uint8Array, _options?: unknown) => ({
+      ok: false as const,
+      reason: 'inpaint_unavailable' as const,
+      transformation: 'generative_overlay_inpaint' as const,
+      model: null,
+      operational: true,
+      detail: 'the image editor refused the request (429)',
+    })) as never;
+
+  const queue = async (waits: Array<{ id: string; minutesAgo: number | null }>) => {
+    const bytes = (await encodePng(badgedPicture().badged,
+      { width: W, height: H, components: 3 }))!;
+    const rows = await Promise.all(waits.map(async (wait) => {
+      const row = await refusedRow(bytes);
+      row.id = wait.id;
+      row.storage_path = `${PATH}.${wait.id}`;
+      if (wait.minutesAgo !== null) {
+        (row.source_detail as Record<string, unknown>).sanitization_attempt = {
+          at: new Date(Date.now() - wait.minutesAgo * 60_000).toISOString(),
+          operational: true,
+        };
+      }
+      return row;
+    }));
+    const objects: Record<string, Uint8Array> = {};
+    for (const row of rows) objects[row.storage_path] = bytes;
+    return { rows, objects };
+  };
+
+  it('reaches a never-attempted row sitting behind a prefix that never clears', async () => {
+    // Five lower ids, every one of them outside the cooldown and so eligible,
+    // and the row that has never been looked at LAST in id order.
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 11 },
+      { id: 'image-02', minutesAgo: 12 },
+      { id: 'image-03', minutesAgo: 13 },
+      { id: 'image-04', minutesAgo: 14 },
+      { id: 'image-05', minutesAgo: 15 },
+      { id: 'image-99', minutesAgo: null },
+    ]);
+    const attempted: string[] = [];
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage(attempted),
+    });
+
+    const tried = db.rows
+      .filter((row: any) => (row.source_detail ?? {}).sanitization_attempt?.at
+        && Date.parse(row.source_detail.sanitization_attempt.at) > Date.now() - 60_000)
+      .map((row: any) => row.id);
+
+    // THE WHOLE POINT: id order would have spent both slots on image-01 and
+    // image-02 for ever.
+    expect(tried).toContain('image-99');
+  });
+
+  it('and then the one that has waited longest', async () => {
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 11 },
+      { id: 'image-02', minutesAgo: 12 },
+      { id: 'image-03', minutesAgo: 90 },
+      { id: 'image-04', minutesAgo: 14 },
+    ]);
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage([]),
+    });
+
+    const fresh = db.rows
+      .filter((row: any) => Date.parse(row.source_detail.sanitization_attempt.at)
+        > Date.now() - 60_000)
+      .map((row: any) => row.id)
+      .sort();
+    expect(fresh).toEqual(['image-03', 'image-04']);
+  });
+
+  it('counts every outstanding row, including the ones it could not afford', async () => {
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 11 },
+      { id: 'image-02', minutesAgo: 12 },
+      { id: 'image-03', minutesAgo: 13 },
+      { id: 'image-04', minutesAgo: 14 },
+      { id: 'image-05', minutesAgo: 15 },
+      { id: 'image-99', minutesAgo: null },
+    ]);
+
+    const outcome = await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage([]),
+    });
+
+    // It used to return at the allowance and report 3.
+    expect(outcome.outstanding).toBe(6);
+    expect(outcome.scanned).toBe(6);
+    expect(sanitizationSweepCompleted(outcome)).toBe(false);
+  });
+
+  it('still never attempts more than the allowance', async () => {
+    const { rows, objects } = await queue(Array.from({ length: 8 }, (_, i) => ({
+      id: `image-${String(i).padStart(2, '0')}`, minutesAgo: null,
+    })));
+    let attempts = 0;
+    const budget = newRepairBudget();
+    const started = budget.remaining;
+
+    await settleImageSanitization(fakeDb(rows, objects) as never, ORG, {
+      budget,
+      sanitize: (async () => {
+        attempts += 1;
+        return {
+          ok: false as const, reason: 'inpaint_unavailable' as const,
+          transformation: 'generative_overlay_inpaint' as const,
+          model: null, operational: true, detail: '429',
+        };
+      }) as never,
+    });
+
+    expect(attempts).toBe(started);
+  });
+
+  it('a row inside its cooldown is never spent on, however long the queue', async () => {
+    const { rows, objects } = await queue([
+      { id: 'image-01', minutesAgo: 1 },
+      { id: 'image-02', minutesAgo: 2 },
+      { id: 'image-03', minutesAgo: 40 },
+    ]);
+    const db = fakeDb(rows, objects);
+
+    await settleImageSanitization(db as never, ORG, {
+      budget: newRepairBudget(),
+      sanitize: vendorOutage([]),
+    });
+
+    const fresh = db.rows
+      .filter((row: any) => Date.parse(row.source_detail.sanitization_attempt.at)
+        > Date.now() - 60_000)
+      .map((row: any) => row.id);
+    expect(fresh).toEqual(['image-03']);
   });
 });
 

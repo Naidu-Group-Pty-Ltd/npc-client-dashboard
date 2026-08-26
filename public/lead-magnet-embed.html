@@ -115,8 +115,16 @@
 
   <script>
     (function () {
-      var SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
-      var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
+      // THIS deployment's own project — never the prime's.
+      //
+      // Both values were the PRIME's, hard-coded, in a file served straight out
+      // of `public/`. Every lead captured through this embed on a clone landed
+      // in the prime's database, using the prime's anon key, from the clone's
+      // own domain. It is the same defect `src/integrations/supabase/env.ts`
+      // carried until 26 Aug, surviving in the one directory the isolation
+      // guard did not scan — which is why that guard now covers `public/` too.
+      var SUPABASE_URL = 'https://plisdzywzleljorrphxv.supabase.co';
+      var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsaXNkenl3emxlbGpvcnJwaHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwOTI3NzcsImV4cCI6MjEwMjY2ODc3N30.bGxsWwZxPHUih_u6YtzPwsIeG_b-KtwYz7U33OTqbWk';
 
       var params = new URLSearchParams(window.location.search);
       var slug = params.get('slug');

@@ -41,6 +41,47 @@ describe("the sources offered", () => {
     expect(hosts).toContain("www.directory.gov.au");
     expect(hosts).toContain("www.aph.gov.au");
     expect(hosts).toContain("abr.business.gov.au");
+    expect(hosts).toContain("parlinfo.aph.gov.au");
+  });
+
+  /*
+   * The Government Directory link was `/search/node?keys=…` — a Drupal 7
+   * path the site no longer serves. Every operator who followed the most
+   * authoritative source on the list got "Page not found".
+   */
+  it("the Government Directory link uses the search the site actually serves", () => {
+    const dir = searches.find((s) => s.id === "directory_gov_au")!;
+    const url = new URL(dir.url);
+    expect(url.pathname).toBe("/search");
+    expect(url.searchParams.get("keywords")).toBe("Pat Example");
+    expect(dir.url).not.toContain("/search/node");
+    expect(dir.url).not.toContain("keys=");
+  });
+
+  /*
+   * The list used to end with two DuckDuckGo rows sitting beside DFAT and
+   * Parliament as though they were peers. A search engine is a starting
+   * point; it is not a source of record, and a screening that rests on one
+   * rests on whatever it returned that morning.
+   */
+  it("no search engine is presented as a register", () => {
+    for (const s of searches.filter((x) => x.tier === "register")) {
+      const host = new URL(s.url).hostname;
+      expect(host).not.toMatch(/duckduckgo|google|bing|yahoo/i);
+      expect(host).toMatch(/\.gov\.au$/);
+    }
+  });
+
+  it("there is exactly one general web search, and it says what it is", () => {
+    const open = searches.filter((s) => s.tier === "open_web");
+    expect(open).toHaveLength(1);
+    expect(open[0].purpose).toMatch(/not a source of record/i);
+    expect(searches.filter((s) => s.tier === "register").length)
+      .toBeGreaterThan(open.length);
+  });
+
+  it("every source declares which tier it is", () => {
+    for (const s of searches) expect(["register", "open_web"]).toContain(s.tier);
   });
 
   it("every source is a SEARCH page, never an assertion about the subject", () => {

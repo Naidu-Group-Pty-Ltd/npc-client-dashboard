@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { isClientFacingDeployment, isPathVisibleInDeployment } from "@/lib/clientFacing";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -283,31 +282,7 @@ export function AmlLayout() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const clientFacing = isClientFacingDeployment();
-
-  // A client-facing deployment drops the hidden destinations (Launch
-  // Operations today) from the workspace nav, repoints a default that
-  // pointed at one to the first surviving entry — the legacy nav's
-  // Organisation Settings defaulted to launch-ops — and removes a workspace
-  // left with nowhere to go. Route access is refused by ClientFacingGate
-  // either way; this keeps the nav from advertising a gated page.
-  const WORKSPACES = useMemo(() => {
-    const base = v3Nav ? V3_WORKSPACES : LEGACY_WORKSPACES;
-    if (!clientFacing) return base;
-    return base
-      .map((w) => {
-        if (!w.secondary || w.secondary.length === 0) {
-          return isPathVisibleInDeployment(w.defaultPath, true) ? w : null;
-        }
-        const secondary = w.secondary.filter((s) => isPathVisibleInDeployment(s.to, true));
-        if (secondary.length === 0) return null;
-        const defaultPath = isPathVisibleInDeployment(w.defaultPath, true)
-          ? w.defaultPath
-          : secondary[0].to;
-        return { ...w, secondary, defaultPath };
-      })
-      .filter((w): w is Workspace => w !== null);
-  }, [v3Nav, clientFacing]);
+  const WORKSPACES = v3Nav ? V3_WORKSPACES : LEGACY_WORKSPACES;
 
   // Only show workspaces the user has *any* legitimate reason to enter.
   // Server-side permission enforcement continues to happen inside each route

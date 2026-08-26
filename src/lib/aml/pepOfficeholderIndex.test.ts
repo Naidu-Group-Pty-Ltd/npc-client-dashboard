@@ -20,6 +20,8 @@ import {
  */
 
 const candidate = (over: Partial<PepIndexCandidate> = {}): PepIndexCandidate => ({
+  dateOfBirth: undefined,
+  dob: undefined,
   externalId: "Q42",
   sourceCode: "wikidata_au_public_office",
   fullName: "Pat Example",

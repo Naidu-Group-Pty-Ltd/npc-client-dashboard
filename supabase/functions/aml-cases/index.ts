@@ -56,10 +56,20 @@ import {
   PEP_INDEX_SOURCES, describeCoverage, indexIsUsable, searchVerdict,
   type PepIndexCandidate,
 } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
+import { assessIndexRecency } from "../_shared/aml/pepOfficeholderIndex.pure.ts";
+import {
+  admitCandidate, comparePepDob, rankCandidate, resolveSubjectDob,
+} from "../_shared/aml/pepCandidateMatch.pure.ts";
 import { normaliseName, scoreNames } from "../_shared/aml/matching.ts";
+// The screening engine: what the platform can establish by itself, and the
+// line it may never cross. It screens; it never determines.
+import {
+  SERVER_UNREACHABLE_SOURCES, buildScreeningRun, runIsEvidence, runToMethodDraft,
+  type PepScreeningCandidate, type PepScreeningSourceResult,
+} from "../_shared/aml/pepScreeningEngine.pure.ts";
 // `aml.cases` has no tenant_id column. This is the only place that knows it.
 import {
-  DEFAULT_AML_TENANT, readCase,
+  DEFAULT_AML_TENANT, readCase, tenantForCase,
 } from "../_shared/aml/caseTenant.ts";
 import { planCaseReopen, resumeStatusFor } from "../_shared/aml/caseReopen.pure.ts";
 import {
@@ -412,14 +422,69 @@ async function syncScreeningScopeDecision(
   if (readError) {
     return { changed: [], subjectsChanged: 0, recorded: false };
   }
-  const byScope = new Map<string, any>(
-    (current ?? []).map((r: any) => [String(r.scope), r]));
+  /*
+   * ── ONE LIVE DECISION PER SCOPE, MADE STRUCTURAL ──────────────────────
+   *
+   * This was `new Map(current.map((r) => [r.scope, r]))`, which keeps only
+   * the LAST row for a scope and discards the rest. The loop below then
+   * supersedes the one row the map kept — so if a scope ever holds two live
+   * rows, one of them survives for ever.
+   *
+   * No case in production holds duplicates today, and this path cannot
+   * create them on its own: it always supersedes before it inserts. What it
+   * does not survive is a RACE. `sync_screening_stage` runs on every page
+   * load, so two tabs opening one case can both read the single live row,
+   * both supersede it, and both insert — leaving two live rows that disagree
+   * about whether screening is required.
+   *
+   * That is worth closing rather than watching for, because of what reads
+   * these rows. `deriveAmlScreeningScope` resolved them last-wins over a
+   * `SELECT` with no `ORDER BY`, so a contradiction would have been settled
+   * by row order — and the scope most likely to flip is `sanctions`, the one
+   * obligation in this product that binds every dealing and cannot be stood
+   * down by risk.
+   *
+   * So: every live row for a scope is collected, the newest is the decision,
+   * and any older ones are superseded whether or not the decision changed.
+   * A case that ever acquires duplicates repairs itself the next time
+   * anything syncs it — the same self-healing-on-read pattern
+   * `ensureScreeningSubjects` uses. The reader was also made to resolve a
+   * contradiction toward the obligation rather than toward row order.
+   */
+  const liveByScope = new Map<string, any[]>();
+  for (const r of current ?? []) {
+    const list = liveByScope.get(String(r.scope)) ?? [];
+    list.push(r);
+    liveByScope.set(String(r.scope), list);
+  }
+  const newestFirst = (a: any, b: any) =>
+    String(b.decided_at ?? b.created_at ?? '').localeCompare(
+      String(a.decided_at ?? a.created_at ?? ''));
+  for (const list of liveByScope.values()) list.sort(newestFirst);
 
   const changed: ScreeningScopeKey[] = [];
   const nowIso = new Date().toISOString();
+
+  /*
+   * Retire the duplicates first, and for EVERY scope — including the ones
+   * whose decision has not changed and would `continue` below before
+   * reaching any write.
+   */
+  for (const [scopeKey, list] of liveByScope) {
+    if (list.length < 2) continue;
+    const stale = list.slice(1).map((r: any) => r.id);
+    const { error: dedupeError } = await admin.schema('aml')
+      .from('case_screening_scopes')
+      .update({ superseded_at: nowIso }).in('id', stale);
+    if (dedupeError) {
+      console.error('case_screening_scopes dedupe failed', scopeKey, dedupeError);
+      return { changed: [], subjectsChanged: 0, recorded: false };
+    }
+  }
+
   for (const key of ALL_SCREENING_SCOPES) {
     const decided = scope[key];
-    const existing = byScope.get(key);
+    const existing = (liveByScope.get(key) ?? [])[0];
     // Re-recording an unchanged decision on every page load would bury the
     // trail it exists to provide. A CHANGE is what deserves a new row.
     const same = existing &&
@@ -4129,6 +4194,386 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jsonResponse({ coverage, usable: indexIsUsable(coverage) });
       }
 
+      /*
+       * Run the PEP screening for one party, against the registers the
+       * platform holds, and record what it searched.
+       *
+       * ── The line ─────────────────────────────────────────────────────
+       * This SCREENS. It never determines. It writes a row to
+       * `pep_screening_runs`, not to `pep_determinations`, and the two
+       * vocabularies deliberately share no value — there is no `clear`, no
+       * `not_pep`. A run that returns nothing has established that some
+       * registers hold nothing under that name, which is a fact about the
+       * search and not about the person.
+       *
+       * ── Why every source here is local ───────────────────────────────
+       * Measured, not assumed. Wikidata's action API answered 429 on the
+       * first call from this deployment's egress; its SPARQL endpoint
+       * answered 504 to a query it could not finish in sixty seconds; and
+       * directory.gov.au and aph.gov.au both answer 403 to a scripted client
+       * on every path while serving a browser normally. A compliance
+       * decision cannot depend on somebody else's rate limiter, so the
+       * registers are loaded on a schedule and read locally at decision
+       * time — instant, reproducible, and independent of anyone's uptime.
+       *
+       * The two that cannot be reached are NAMED as unsearched rather than
+       * omitted, because a source nobody mentions reads as a source nobody
+       * needed.
+       */
+      case 'run_pep_screening': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const partySubjectId = body.party_screening_subject_id
+          ? String(body.party_screening_subject_id) : null;
+
+        const caseRead = await readCase<{ id: string; subject_display_name: string | null }>(
+          admin, caseId, 'id, subject_display_name');
+        if (caseRead.failed) {
+          console.error('run_pep_screening: case read failed', caseRead.error);
+          return jsonResponse({
+            error: 'The case could not be read. Nothing was screened.',
+            code: 'case_read_failed',
+          }, 503);
+        }
+        if (!caseRead.row) return jsonResponse({ error: 'Case not found' }, 404);
+
+        // Identity is DERIVED, exactly as it is for a determination.
+        let subjectName = String(caseRead.row.subject_display_name ?? '').trim();
+        let partySubjectRow: { date_of_birth?: unknown } | null = null;
+        let sanctionsSignal: 'none' | 'candidate' | 'confirmed' = 'none';
+        if (partySubjectId) {
+          const { data: partySubject } = await admin.schema('aml')
+            .from('party_screening_subjects')
+            .select('id, case_id, screened_name, state, date_of_birth')
+            .eq('id', partySubjectId).maybeSingle();
+          if (!partySubject || String(partySubject.case_id) !== caseId) {
+            return jsonResponse({
+              error: 'party_screening_subject_id does not belong to this case',
+            }, 400);
+          }
+          subjectName = String(partySubject.screened_name ?? '').trim();
+          partySubjectRow = partySubject;
+          sanctionsSignal = partySubject.state === 'confirmed_match' ? 'confirmed'
+            : partySubject.state === 'possible_match' ? 'candidate' : 'none';
+        }
+
+        /*
+         * The submission snapshot, read ONCE and used twice — for the party's
+         * date of birth here, and for the political-exposure declaration in
+         * section 3 below.
+         *
+         * It is hoisted rather than read twice because a screening run is a
+         * record of what was true when it ran: two reads could straddle a
+         * customer resubmitting, and the run would then hold a date of birth
+         * from one version and a declaration from another, with nothing on
+         * the record to show it.
+         */
+        const { data: submissionRow } = await admin.schema('aml')
+          .from('submission_versions')
+          .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
+          .order('version_number', { ascending: false }).limit(1).maybeSingle();
+        const snapshotSections = (((submissionRow?.snapshot ?? {}) as any).sections ?? []) as any[];
+        const personalSection = (snapshotSections
+          .find((x: any) => x?.section === 'personal_details')?.payload ?? null) as
+          Record<string, unknown> | null;
+        const subjectDob = resolveSubjectDob({
+          partySubject: partySubjectRow, personalDetails: personalSection,
+        });
+
+        const tokens = normaliseName(subjectName);
+        const sources: PepScreeningSourceResult[] = [];
+        const candidates: PepScreeningCandidate[] = [];
+        const registerVersions: Record<string, unknown> = {};
+
+        /* ── 1 · the office-holder index ──────────────────────────────── */
+        for (const source of PEP_INDEX_SOURCES) {
+          const { data: sync } = await admin.schema('aml').from('pep_officeholder_syncs')
+            .select('entry_count, source_as_at, completed_at, started_at, status, detail')
+            .eq('source_code', source.code)
+            .order('started_at', { ascending: false }).limit(1).maybeSingle();
+          const cov = describeCoverage(source.code, sync ?? null);
+          registerVersions[source.code] = {
+            entry_count: cov.entryCount, source_as_at: cov.sourceAsAt,
+            last_sync_status: cov.lastSyncStatus,
+          };
+          const usable = cov.entryCount > 0 && cov.lastSyncStatus === 'succeeded';
+          if (!usable) {
+            sources.push({
+              key: source.code, label: cov.label, status: 'unavailable',
+              coverage: cov.covers, excludes: cov.excludes, foundCount: 0,
+              asAt: cov.sourceAsAt,
+              detail: 'The index has not loaded, so nothing was searched against it.',
+            });
+            continue;
+          }
+          /*
+           * How current it is, recorded ON THE RUN.
+           *
+           * Usability and currency stay separate: a stale register is still
+           * searched, because its rows are still leads and refusing to read
+           * it would remove the only assistance there is. What it cannot do
+           * is support the claim `currently_held` makes, and the run is the
+           * record of what was searched — so the age belongs in it rather
+           * than only on the screen at the moment somebody looked.
+           */
+          const recency = assessIndexRecency(cov, Date.now());
+          registerVersions[source.code] = {
+            ...(registerVersions[source.code] as Record<string, unknown>),
+            age_days: recency.ageDays, recency: recency.reading,
+          };
+          if (tokens.length === 0) {
+            sources.push({
+              key: source.code, label: cov.label, status: 'searched',
+              coverage: cov.covers, excludes: cov.excludes, foundCount: 0,
+              asAt: cov.sourceAsAt,
+            });
+            continue;
+          }
+          /*
+           * `.eq('source_code', …)` is load-bearing and was not here.
+           *
+           * This query sits INSIDE a loop over the index sources, and each
+           * iteration reports its rows under that source's label, coverage
+           * statement and as-at date. With one source loaded that was
+           * invisible. With two it means every candidate is returned twice,
+           * and half of them are described by the wrong register's coverage
+           * — a Wikidata row presented as a Parliament record, with
+           * Parliament's "authoritative, current" prose attached to it.
+           *
+           * A coverage statement bound to the wrong rows is worse than no
+           * coverage statement, because it is the sentence the operator is
+           * being asked to rely on.
+           */
+          const { data: rows, error: idxErr } = await admin.schema('aml')
+            .from('pep_officeholders')
+            .select('external_id, source_code, full_name, aliases, position_title, '
+              + 'jurisdiction, position_start, position_end, currently_held, confirm_url, '
+              + 'date_of_birth')
+            .eq('source_code', source.code)
+            .overlaps('normalised_names', tokens).limit(500);
+          if (idxErr) {
+            // A read that FAILED is not a register that is EMPTY.
+            console.error('run_pep_screening: index read failed', idxErr);
+            sources.push({
+              key: source.code, label: cov.label, status: 'failed',
+              coverage: cov.covers, excludes: cov.excludes, foundCount: 0,
+              asAt: cov.sourceAsAt,
+              detail: 'The register could not be read. That is a technical condition, '
+                + 'not a result.',
+            });
+            continue;
+          }
+          const found = (rows ?? []).map((r: any) => {
+            const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
+            const score = Math.max(...names.map((n) => scoreNames(subjectName, n).score), 0);
+            return {
+              id: `${r.source_code}:${r.external_id}`,
+              sourceKey: String(r.source_code),
+              name: String(r.full_name),
+              aliases: (r.aliases ?? []) as string[],
+              positionTitle: r.position_title ?? null,
+              jurisdiction: r.jurisdiction ?? null,
+              positionStart: r.position_start ?? null,
+              positionEnd: r.position_end ?? null,
+              currentlyHeld: r.currently_held ?? null,
+              confirmUrl: r.confirm_url ?? null,
+              dateOfBirth: r.date_of_birth ?? null,
+              /*
+               * Stored on the RUN, so the record of what was searched shows
+               * what the operator was shown. It ordered the list and it never
+               * shortened it — `admitCandidate` reads the name score alone.
+               */
+              dob: comparePepDob(subjectDob, r.date_of_birth ?? null),
+              score,
+            } as PepScreeningCandidate;
+          }).filter((c) => admitCandidate(c.score))
+            .sort((a, b) => rankCandidate(b.score, b.dob!.agreement)
+              - rankCandidate(a.score, a.dob!.agreement))
+            .slice(0, 25);
+          candidates.push(...found);
+          sources.push({
+            key: source.code, label: cov.label, status: 'searched',
+            coverage: cov.covers, excludes: cov.excludes,
+            foundCount: found.length, asAt: cov.sourceAsAt,
+            currency: recency.reading,
+            // Only when there is something to say. A fresh register does not
+            // need a sentence about its freshness on every result.
+            detail: recency.reading === 'fresh' ? null : recency.reason,
+          });
+        }
+
+        /* ── 2 · the sources a server cannot reach, named as unsearched ── */
+        for (const s of SERVER_UNREACHABLE_SOURCES) {
+          sources.push({
+            key: s.key, label: s.label, status: 'not_reachable',
+            coverage: s.coverage, excludes: s.excludes, foundCount: 0,
+            detail: s.detail,
+          });
+        }
+
+        /* ── 3 · what the customer declared ───────────────────────────── */
+        /*
+         * From the snapshot read above — the same `personal_details` section
+         * `sync_screening_stage` reads, and the same one the date of birth
+         * came from. Read from the server rather than passed in, because a
+         * screening run is a record of what was true when it ran and must not
+         * depend on what a caller chose to send.
+         */
+        const declaration = readPepDeclaration(personalSection);
+
+        const run = buildScreeningRun({
+          searchedNames: subjectName ? [subjectName] : [],
+          sources, candidates, sanctionsSignal,
+          declaration: declaration
+            ? { answered: declaration.answered, answer: declaration.answer,
+                summary: declaration.summary }
+            : null,
+        });
+
+        const { data: saved, error: saveErr } = await admin.schema('aml')
+          .from('pep_screening_runs').insert({
+            tenant_id: caseRead.tenantId,
+            case_id: caseId,
+            party_screening_subject_id: partySubjectId,
+            subject_name: subjectName.slice(0, 300) || 'unknown',
+            searched_names: run.searchedNames,
+            verdict: run.verdict,
+            requires_manual_review: run.requiresManualReview,
+            sources: run.sources,
+            candidates: run.candidates,
+            indicators: run.indicators,
+            not_reached: run.notReached,
+            register_versions: registerVersions,
+            run_by: userId,
+            run_by_label: userEmail ?? null,
+          }).select('id, created_at').single();
+        if (saveErr) {
+          console.error('run_pep_screening: could not record the run', saveErr);
+          return jsonResponse({
+            error: 'The screening ran but could not be recorded. Nothing was saved.',
+            code: 'screening_run_not_recorded',
+          }, 503);
+        }
+
+        await appendEvent(admin, caseId, 'pep_screening_run',
+          `PEP screening run for ${subjectName}: ${run.verdict}`,
+          {
+            run_id: saved.id,
+            party_screening_subject_id: partySubjectId,
+            verdict: run.verdict,
+            candidate_count: run.candidates.length,
+            not_reached: run.notReached,
+            /* Said in the record itself, so no future reader can mistake a
+               search for a conclusion. */
+            determination_recorded: false,
+          }, userId, userEmail);
+
+        return jsonResponse({
+          run: { ...run, id: saved.id, created_at: saved.created_at },
+          evidence: runIsEvidence(run) ? runToMethodDraft(run) : null,
+        });
+      }
+
+      /*
+       * A candidate is a lead, and somebody has to say whether it is this
+       * person. A rejection must say HOW that was told — "dismissed" with no
+       * reason is indistinguishable from nobody having looked, and it is the
+       * line an auditor will ask about first.
+       */
+      case 'review_pep_screening_candidate': {
+        if (!(roles.has('reviewer') || roles.has('mlro'))) {
+          return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
+        }
+        const runId = String(body.run_id ?? '');
+        const candidateId = String(body.candidate_id ?? '');
+        const decision = String(body.decision ?? '');
+        const reason = String(body.reason ?? '').trim();
+        if (!runId || !candidateId) {
+          return jsonResponse({ error: 'run_id and candidate_id are required' }, 400);
+        }
+        if (!['accepted', 'rejected'].includes(decision)) {
+          return jsonResponse({ error: 'decision must be accepted or rejected' }, 400);
+        }
+        if (reason.length < 10) {
+          return jsonResponse({
+            error: 'Say how you told this is or is not the customer. A decision with no '
+              + 'reason reads, later, exactly like nobody having looked.',
+            code: 'candidate_reason_required',
+          }, 400);
+        }
+
+        const { data: runRow, error: runErr } = await admin.schema('aml')
+          .from('pep_screening_runs')
+          .select('id, case_id, candidates').eq('id', runId).maybeSingle();
+        if (runErr) {
+          console.error('review_pep_screening_candidate: run read failed', runErr);
+          return jsonResponse({
+            error: 'The screening run could not be read.', code: 'run_read_failed',
+          }, 503);
+        }
+        if (!runRow) return jsonResponse({ error: 'Screening run not found' }, 404);
+
+        // The candidate must belong to the run. A caller-supplied id could
+        // otherwise attach a decision to something never searched for.
+        const candidate = ((runRow.candidates ?? []) as PepScreeningCandidate[])
+          .find((c) => c.id === candidateId);
+        if (!candidate) {
+          return jsonResponse({
+            error: 'That candidate is not part of this screening run',
+            code: 'candidate_not_in_run',
+          }, 400);
+        }
+
+        const { data: review, error: reviewErr } = await admin.schema('aml')
+          .from('pep_screening_candidate_reviews').upsert({
+            tenant_id: tenantForCase(String(runRow.case_id)),
+            run_id: runId,
+            candidate_id: candidateId,
+            candidate_name: String(candidate.name).slice(0, 300),
+            decision, reason: reason.slice(0, 2000),
+            reviewed_by: userId, reviewed_by_label: userEmail ?? null,
+          }, { onConflict: 'run_id,candidate_id' }).select('*').single();
+        if (reviewErr) {
+          console.error('review_pep_screening_candidate: write failed', reviewErr);
+          return jsonResponse({
+            error: 'The decision could not be recorded.', code: 'candidate_review_failed',
+          }, 503);
+        }
+
+        await appendEvent(admin, String(runRow.case_id), 'pep_screening_candidate_review',
+          `Screening candidate ${decision}: ${candidate.name}`,
+          {
+            run_id: runId, candidate_id: candidateId, decision,
+            determination_recorded: false,
+          }, userId, userEmail);
+
+        return jsonResponse({ review });
+      }
+
+      /* The runs recorded for a case, newest first, with their reviews. */
+      case 'list_pep_screening_runs': {
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const { data: runs, error: listErr } = await admin.schema('aml')
+          .from('pep_screening_runs').select('*')
+          .eq('case_id', caseId).order('created_at', { ascending: false }).limit(25);
+        if (listErr) {
+          console.error('list_pep_screening_runs failed', listErr);
+          return jsonResponse({
+            error: 'The screening history could not be read.', code: 'runs_read_failed',
+          }, 503);
+        }
+        const ids = (runs ?? []).map((r: any) => r.id);
+        const { data: reviews } = ids.length
+          ? await admin.schema('aml').from('pep_screening_candidate_reviews')
+            .select('*').in('run_id', ids)
+          : { data: [] as any[] };
+        return jsonResponse({ runs: runs ?? [], reviews: reviews ?? [] });
+      }
+
       case 'search_pep_officeholders': {
         if (!(roles.has('reviewer') || roles.has('mlro'))) {
           return jsonResponse({ error: 'Reviewer or MLRO role required' }, 403);
@@ -4145,17 +4590,36 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select('id, subject_display_name').eq('id', caseId).maybeSingle();
         if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
         let searchName = String(caseRow.subject_display_name ?? '').trim();
+        let partySubjectRow: { date_of_birth?: unknown } | null = null;
         if (partySubjectId) {
           const { data: partySubject } = await admin.schema('aml')
             .from('party_screening_subjects')
-            .select('id, case_id, screened_name').eq('id', partySubjectId).maybeSingle();
+            .select('id, case_id, screened_name, date_of_birth')
+            .eq('id', partySubjectId).maybeSingle();
           if (!partySubject || String(partySubject.case_id) !== caseId) {
             return jsonResponse({
               error: 'party_screening_subject_id does not belong to this case',
             }, 400);
           }
           searchName = String(partySubject.screened_name ?? '').trim();
+          partySubjectRow = partySubject;
         }
+
+        /*
+         * The party's date of birth, resolved by the SAME module the recorded
+         * run uses. Deriving it twice would let the list an operator browses
+         * rank a person differently from the record kept of what was
+         * searched, and both would look right on their own.
+         */
+        const { data: searchSubmission } = await admin.schema('aml')
+          .from('submission_versions')
+          .select('snapshot').eq('case_id', caseId).is('superseded_at', null)
+          .order('version_number', { ascending: false }).limit(1).maybeSingle();
+        const searchDob = resolveSubjectDob({
+          partySubject: partySubjectRow,
+          personalDetails: (((searchSubmission?.snapshot ?? {}) as any).sections ?? [])
+            .find((x: any) => x?.section === 'personal_details')?.payload ?? null,
+        });
 
         // Coverage FIRST, and unconditionally. It is attached to every
         // reading including the empty one, which is the reading that needs
@@ -4185,7 +4649,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const { data: rows, error: searchErr } = await admin.schema('aml')
           .from('pep_officeholders')
           .select('external_id, source_code, full_name, aliases, position_title, pep_type, '
-            + 'jurisdiction, position_start, position_end, currently_held, confirm_url')
+            + 'jurisdiction, position_start, position_end, currently_held, confirm_url, '
+            + 'date_of_birth')
           .overlaps('normalised_names', tokens)
           .limit(500);
         if (searchErr) {
@@ -4200,27 +4665,45 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }, 503);
         }
 
-        const MIN_SCORE = 0.7;
+        /*
+         * A date of birth ORDERS candidates and annotates them. It never
+         * removes one — `admitCandidate` takes the name score and nothing
+         * else, and the sort is the only place the comparison acts. See
+         * `_shared/aml/pepCandidateMatch.pure.ts`.
+         */
         const candidates: PepIndexCandidate[] = (rows ?? []).map((r: any) => {
           const names = [String(r.full_name), ...((r.aliases ?? []) as string[])];
           const score = Math.max(...names.map((n) => scoreNames(searchName, n).score), 0);
+          const dob = comparePepDob(searchDob, r.date_of_birth ?? null);
           return {
             externalId: String(r.external_id),
             sourceCode: String(r.source_code),
             fullName: String(r.full_name),
             aliases: (r.aliases ?? []) as string[],
             positionTitle: String(r.position_title),
-            pepType: r.pep_type ?? 'domestic',
+            /*
+             * NULL when the index holds no category, and it never holds one.
+             * This used to read `r.pep_type ?? 'domestic'`, which asserted an
+             * AUSTRAC category the loader deliberately refuses to write, the
+             * column deliberately leaves null and the migration's own comment
+             * says belongs to the determination rather than to the index.
+             * Nothing rendered it yet, so it was a fabricated field waiting
+             * for its first consumer.
+             */
+            pepType: r.pep_type ?? null,
             jurisdiction: r.jurisdiction ?? null,
             positionStart: r.position_start ?? null,
             positionEnd: r.position_end ?? null,
             currentlyHeld: r.currently_held ?? null,
             confirmUrl: r.confirm_url ?? null,
+            dateOfBirth: r.date_of_birth ?? null,
+            dob,
             score,
           };
         })
-          .filter((c) => c.score >= MIN_SCORE)
-          .sort((a, b) => b.score - a.score)
+          .filter((c) => admitCandidate(c.score))
+          .sort((a, b) => rankCandidate(b.score, b.dob!.agreement)
+            - rankCandidate(a.score, a.dob!.agreement))
           .slice(0, 25);
 
         return jsonResponse(searchVerdict({

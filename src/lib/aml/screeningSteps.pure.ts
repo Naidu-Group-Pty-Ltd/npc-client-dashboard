@@ -72,6 +72,22 @@ export type ScreeningStepState =
    * server is asking for something else, and this must not outrank it).
    */
   | "review"
+  /**
+   * Owed, not yet done, and nothing is stopping it — it is simply not the
+   * step the server is pointing at right now.
+   *
+   * This exists because there was no word for it. A PEP determination that
+   * had not been made could only be `blocked`, so the screen told an
+   * operator something was preventing them when it was their turn, and sent
+   * them to look for an obstacle that did not exist.
+   */
+  | "outstanding"
+  /**
+   * Cannot be done until something else happens, and that something is
+   * NAMED. `blockedBy` carries it, and a step with nothing to name is not
+   * blocked — it is `outstanding` or, if the server is asking for it,
+   * `current`.
+   */
   | "blocked"
   | "waiting"
   | "upcoming"
@@ -96,6 +112,14 @@ export interface ScreeningStep {
   action: AmlScreeningNextAction | null;
   /** True when this step is what holds the stage open. */
   blocking: boolean;
+  /**
+   * What must happen before this step can be done, when something must.
+   *
+   * Null on every step that is merely outstanding. The rule is one way
+   * round: `state === "blocked"` requires a `blockedBy`, because a red badge
+   * with no obstacle named is an instruction to go and look for one.
+   */
+  blockedBy: string | null;
   /** The determination row behind this step, where one exists. */
   row: DeterminationRow | null;
   /**
@@ -156,6 +180,7 @@ export const STEP_STATE_LABEL: Record<ScreeningStepState, string> = {
   not_required: "Not required",
   current: "Do this now",
   review: "Confirm this still holds",
+  outstanding: "Still to do",
   blocked: "Blocked",
   waiting: "Waiting",
   upcoming: "Later",
@@ -163,7 +188,7 @@ export const STEP_STATE_LABEL: Record<ScreeningStepState, string> = {
 };
 
 const OUTSTANDING: ScreeningStepState[] = [
-  "current", "review", "blocked", "waiting", "unknown",
+  "current", "review", "outstanding", "blocked", "waiting", "unknown",
 ];
 
 /** True when a step still holds the path open. */
@@ -196,19 +221,21 @@ function perimeterStep(args: {
   if (classification) {
     detail.push(classification === "outside_perimeter"
       ? `Recorded as OUTSIDE the perimeter${p?.reason_code ? ` — ${p.reason_code.replace(/_/g, " ")}` : ""}.`
-      : "Recorded as a designated service.");
+      : "Recorded as a real deal — a designated service is being provided.");
     if (recordedBy || recordedAt) {
       detail.push(`Recorded${recordedBy ? ` by ${recordedBy}` : ""}${
         recordedAt ? ` on ${new Date(recordedAt).toLocaleDateString()}` : ""}.`);
     }
     if ((p?.scopes_excluded ?? []).length > 0) {
-      detail.push(`Excludes: ${(p!.scopes_excluded as string[]).join(", ")}.`);
+      detail.push(`Checks this removes: ${(p!.scopes_excluded as string[])
+        .map((s) => s.replace(/_/g, " ")).join(", ")}.`);
     }
   } else {
     // The default is INSIDE. An unclassified case is not an exempt one.
-    detail.push("Nothing recorded. An unclassified case is treated as inside the "
-      + "perimeter, so sanctions screening is required.");
+    detail.push("Nothing recorded yet. A case nobody has classified counts as inside "
+      + "the perimeter, so sanctions screening is required.");
   }
+
 
   /*
    * The one case where a recorded classification is not the end of it: an
@@ -224,21 +251,30 @@ function perimeterStep(args: {
 
   return {
     key: "perimeter",
-    title: "Confirm what this case is",
-    purpose: "Whether a designated service is being provided decides what screening is "
-      + "owed. It is recorded by a reviewer or the MLRO and never inferred.",
+    title: "Confirm what kind of case this is",
+    /*
+     * Plain language, on purpose. This step used to open with "whether a
+     * designated service is being provided decides what screening is owed",
+     * which is the statute's sentence rather than the operator's: the
+     * question they can actually answer is whether this is a real deal or
+     * only an enquiry.
+     */
+    purpose: "A real deal has to be screened; an enquiry that never became one does "
+      + "not. Only a reviewer or the MLRO records this, and it is never assumed.",
     state: !classification ? "current" : staleEnquiry ? "review" : "done",
     summary: !classification
-      ? "This case has not been classified. Until it is, it is treated as inside the "
-        + "perimeter and sanctions screening is required."
+      ? "Nobody has recorded whether we are providing a service here. Until someone "
+        + "does, this case counts as inside the perimeter and sanctions screening is "
+        + "required."
       : staleEnquiry
-        ? "This case was classified as an enquiry only, which is why no sanctions "
-          + "screening is required. It has since been reopened and is being worked "
-          + "again — confirm whether the relationship is now progressing."
+        ? "This was recorded as an enquiry only, which is why no sanctions screening "
+          + "is required. It has since been reopened and is being worked again — "
+          + "confirm whether it is now a real deal."
         : classification === "outside_perimeter"
-          ? "Recorded as outside the sanctions perimeter. This is a statement about "
-            + "obligation: nobody has been screened and nobody has been cleared."
-          : "Recorded as a designated service, so the full screening obligation applies.",
+          ? "Recorded as outside the sanctions perimeter: no service is being provided, "
+            + "so no screening is owed. Nobody was screened and nobody was cleared."
+          : "Recorded as a real deal, so the full screening obligation applies.",
+
     detail,
     /*
      * Outstanding, and deliberately NOT blocking.
@@ -250,6 +286,7 @@ function perimeterStep(args: {
      * competing demands, which is the whole defect this arrangement removes.
      */
     blocking: false,
+    blockedBy: null,
     row: null,
   };
 }
@@ -284,6 +321,15 @@ function partiesStep(args: {
           : []),
       ],
     blocking: args.position.read && subjects.length === 0,
+    /*
+     * A real blocker, and the only one on this step: nothing below can be
+     * settled against a population of nobody, and enrolment comes from the
+     * reconciled parties rather than from anything an operator does here.
+     */
+    blockedBy: args.position.read && subjects.length === 0
+      ? "No parties have been reconciled from the submission yet, so there is "
+        + "nobody to assess."
+      : null,
     row: null,
   };
 }
@@ -296,18 +342,30 @@ function screenedStep(
   row: DeterminationRow,
 ): Omit<ScreeningStep, "number" | "action"> {
   const notRequired = row.obligation === "not_required";
+  /*
+   * The only thing that genuinely stops this step is the METHOD being
+   * unavailable — a provider that cannot run. A screening that is simply not
+   * yet run is the operator's turn, not an obstruction, and calling it
+   * "Blocked" sent them to look for a fault that was not there.
+   */
+  const methodUnavailable = row.method === "automated_unavailable";
   return {
     key, title, purpose,
     state: notRequired
       ? "not_required"
       : row.blocking
-        ? (row.outcome === "running" ? "waiting" : "blocked")
+        ? (row.outcome === "running"
+          ? "waiting"
+          : methodUnavailable ? "blocked" : "outstanding")
         : "done",
     summary: notRequired ? row.obligationDetail : row.outcomeDetail,
     detail: notRequired
       ? [row.outcomeDetail]
       : [`Method — ${row.methodDetail}`, `Obligation — ${row.obligationDetail}`],
     blocking: row.blocking,
+    blockedBy: !notRequired && row.blocking && methodUnavailable
+      ? `The automated method is unavailable — ${row.methodDetail}`
+      : null,
     row,
   };
 }
@@ -326,7 +384,21 @@ function pepStep(args: {
     purpose: "A politically-exposed-person determination is owed for every party in "
       + "scope. The client's own declaration is evidence towards it and is never the "
       + "determination itself.",
-    state: notRequired ? "not_required" : row.blocking ? "blocked" : "done",
+    /*
+     * A determination that is owed and has not been made is OUTSTANDING, not
+     * blocked. It used to be `blocked`: a red badge, a warning marker, and
+     * the word an operator reads as "something is preventing you" — on the
+     * one step in this stage where nothing was, and where the whole route
+     * was two clicks away behind a working dialog.
+     *
+     * The single genuine blocker is having nobody to determine against, and
+     * that belongs to the parties step above.
+     */
+    state: notRequired
+      ? "not_required"
+      : row.blocking
+        ? (position.subjects.length === 0 ? "blocked" : "outstanding")
+        : "done",
     summary: notRequired
       ? row.obligationDetail
       : row.blocking
@@ -341,6 +413,10 @@ function pepStep(args: {
         ? [`Outstanding: ${outstanding.map((s) => s.name).join(", ")}`]
         : position.subjects.map((s) => `${s.name} — ${s.pep.detail}`),
     blocking: row.blocking,
+    blockedBy: !notRequired && row.blocking && position.subjects.length === 0
+      ? "Nobody is enrolled on this case yet, so there is no party to determine "
+        + "against. Confirm who must be assessed first."
+      : null,
     row,
     /*
      * What the customer said, carried to the person who has to decide.
@@ -376,6 +452,8 @@ function resolveStep(args: {
   if (confirmed.length > 0) {
     return {
       ...base, state: "blocked", blocking: true, finding: true,
+      blockedBy: "A confirmed match is a finding about a customer. It is resolved "
+        + "by escalation, not by completing the stage around it.",
       summary: `${confirmed.length} confirmed match${confirmed.length === 1 ? "" : "es"}. `
         + "This is a finding about a customer and it outranks everything else on the case.",
       detail: confirmed.map((s) => `${s.name} — confirmed match`),
@@ -383,7 +461,12 @@ function resolveStep(args: {
   }
   if (possible.length > 0) {
     return {
-      ...base, state: "blocked", blocking: true, finding: false,
+      /*
+       * A candidate awaiting adjudication is WORK, not an obstruction — a
+       * person opens it, looks, and confirms or dismisses it. Naming that
+       * "Blocked" is the same mislabel the PEP step carried.
+       */
+      ...base, state: "outstanding", blocking: true, finding: false, blockedBy: null,
       summary: `${possible.length} candidate${possible.length === 1 ? "" : "s"} awaiting `
         + "adjudication.",
       detail: possible.map((s) => `${s.name} — possible match`),
@@ -391,20 +474,20 @@ function resolveStep(args: {
   }
   if (!screeningOwed) {
     return {
-      ...base, state: "not_required", blocking: false, finding: false,
+      ...base, state: "not_required", blocking: false, finding: false, blockedBy: null,
       summary: "No screening was owed, so nothing was returned to adjudicate.",
       detail: [],
     };
   }
   if (!screeningSettled) {
     return {
-      ...base, state: "upcoming", blocking: false, finding: false,
+      ...base, state: "upcoming", blocking: false, finding: false, blockedBy: null,
       summary: "Nothing to resolve yet — the screening above has not produced a result.",
       detail: [],
     };
   }
   return {
-    ...base, state: "done", blocking: false, finding: false,
+    ...base, state: "done", blocking: false, finding: false, blockedBy: null,
     summary: "No candidates were returned. There is nothing to adjudicate.",
     detail: [],
   };
@@ -494,12 +577,22 @@ export function deriveScreeningPath(args: {
     number: i + 1,
     action: action && ACTION_STEP[action.key] === s.key ? action : null,
     /*
-     * The current step is shown as current even when its own arithmetic
-     * called it upcoming or done — the server is asking for it, and a step
-     * that renders "Later" under a button the operator is meant to press is
-     * the contradiction this whole arrangement exists to remove.
+     * The step the server is asking for is CURRENT, whatever its own
+     * arithmetic called it.
+     *
+     * The guard used to be `!isOutstanding(s.state)`, which only ever
+     * upgraded a `done` or `upcoming` step. A step whose own arithmetic said
+     * `blocked` — which is outstanding — could never be promoted, so the one
+     * step the operator was being asked to do kept a red badge, a warning
+     * marker and the word "Blocked" while the server pointed at it. That is
+     * the same contradiction the old comment described, one state further
+     * along, and the guard was what produced it.
+     *
+     * The honest guard is whether anything is actually in the way.
+     * `blockedBy` is that, in words, and a step with nothing to name cannot
+     * be blocked.
      */
-    state: s.key === currentKey && !isOutstanding(s.state) ? "current" : s.state,
+    state: s.key === currentKey && !s.blockedBy ? "current" : s.state,
   }));
 
   const settled = steps.filter((s) => !isOutstanding(s.state)).length;

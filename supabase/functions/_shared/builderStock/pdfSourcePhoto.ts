@@ -191,33 +191,31 @@ export async function extractPdfPagePhoto(
   // (1) The photograph the layout leads with.
   const chosen = selectPropertyPhotographFrom(drawn, page.width, page.height);
   if (chosen) {
-    const raw = bytes.slice(chosen.image.start, chosen.image.end);
-    const asset = chosen.image.filters[0] === 'FlateDecode'
-      ? await inflate(raw).catch(() => null)
-      : raw;
-    if (asset) {
-      const check = validateSourceImageBytes(asset);
-      if (check.ok === true) {
-        const hash = await sha256Hex(asset);
-        return {
-          bytes: asset,
-          contentType: check.contentType,
-          provenance: {
-            page: pageIndex + 1,
-            method: 'embedded_raster',
-            objectNumber: chosen.image.objectNumber,
-            resourceName: chosen.image.name,
-            sourceWidth: chosen.image.width,
-            sourceHeight: chosen.image.height,
-            sourceSha256: hash,
-            // Nothing was done to the bytes, so the two hashes are one hash.
-            storedSha256: hash,
-            crop: null,
-            pageAreaShare: Number(chosen.pageAreaShare.toFixed(4)),
-            transformation: null,
-          },
-        };
-      }
+    const picture = await pictureFromStream(bytes, {
+      start: chosen.image.start,
+      end: chosen.image.end,
+      flate: chosen.image.filters[0] === 'FlateDecode',
+      width: chosen.image.width,
+      height: chosen.image.height,
+    });
+    if (picture) {
+      return {
+        bytes: picture.bytes,
+        contentType: picture.contentType,
+        provenance: {
+          page: pageIndex + 1,
+          method: 'embedded_raster',
+          objectNumber: chosen.image.objectNumber,
+          resourceName: chosen.image.name,
+          sourceWidth: chosen.image.width,
+          sourceHeight: chosen.image.height,
+          sourceSha256: picture.sourceSha256,
+          storedSha256: picture.storedSha256,
+          crop: null,
+          pageAreaShare: Number(chosen.pageAreaShare.toFixed(4)),
+          transformation: picture.transformation,
+        },
+      };
     }
   }
 
@@ -419,20 +417,88 @@ async function discoverCandidates(
   return { kept, pagesDrawnOn };
 }
 
+/**
+ * The picture an image XObject's stream holds, as a file.
+ *
+ * TWO WAYS A PDF CARRIES A PHOTOGRAPH, AND ONLY ONE OF THEM IS A FILE. A JPEG
+ * placed in a document is stored as the JPEG — `/DCTDecode`, copy the bytes out
+ * and you have the picture. A picture an exporter re-samples is stored as raw
+ * pixels under `/FlateDecode`: inflating it yields SAMPLES, not a JPEG, not a
+ * PNG, and nothing that reads image headers will recognise it.
+ *
+ * Only the first was handled here, and the second is not a rare shape — it is
+ * how Lot 60434 Cloverton's package carries its facade. The document holds two
+ * rasters: a 3508x4961 JPEG floor plan, which came out, and a 2400x1400 raw
+ * render of the house, which did not. The page held one candidate, so the
+ * flattened-page path did not apply either, and a card sat blank in front of a
+ * clean builder photograph.
+ *
+ * SO RAW SAMPLES ARE WRAPPED, USING THE SAME ENCODER THE FLATTENED PATH USES.
+ * `encodePng` is lossless, the crop path already stores its output, and the
+ * hashes below record both sides of it: `sourceSha256` is what the document
+ * holds, `storedSha256` is what we wrote, and the transformation is stated.
+ *
+ * NO COLOUR SPACE IS GUESSED. The component count is DERIVED — the inflated
+ * length must divide the pixel count exactly, into one component or three.
+ * CMYK, 16-bit and every predictor-filtered or subsampled layout fail that
+ * division and are refused, because cropping or re-encoding samples under the
+ * wrong interpretation produces a plausible-looking wrong picture, which is the
+ * one outcome this whole module exists to prevent.
+ */
+async function pictureFromStream(
+  bytes: Uint8Array,
+  stream: { start: number; end: number; flate: boolean; width: number; height: number },
+): Promise<{
+  bytes: Uint8Array; contentType: string;
+  sourceSha256: string; storedSha256: string; transformation: string | null;
+} | null> {
+  const raw = bytes.slice(stream.start, stream.end);
+  const asset = stream.flate ? await inflate(raw).catch(() => null) : raw;
+  if (!asset) return null;
+
+  const direct = validateSourceImageBytes(asset);
+  if (direct.ok === true) {
+    const hash = await sha256Hex(asset);
+    // Nothing was done to the bytes, so the two hashes are one hash.
+    return {
+      bytes: asset, contentType: direct.contentType,
+      sourceSha256: hash, storedSha256: hash, transformation: null,
+    };
+  }
+  if (!stream.flate) return null;
+
+  const pixels = stream.width * stream.height;
+  if (pixels <= 0 || asset.length % pixels !== 0) return null;
+  const components = asset.length / pixels;
+  if (components !== 1 && components !== 3) return null;
+
+  const png = await encodePng(asset, {
+    width: stream.width, height: stream.height, components,
+  });
+  if (!png) return null;
+  const check = validateSourceImageBytes(png);
+  if (check.ok !== true) return null;
+
+  return {
+    bytes: png,
+    contentType: check.contentType,
+    sourceSha256: await sha256Hex(asset),
+    storedSha256: await sha256Hex(png),
+    transformation: 'the document\'s own image samples re-encoded losslessly as PNG; '
+      + 'no pixel values changed',
+  };
+}
+
 async function materialise(
   bytes: Uint8Array,
   candidate: RawCandidate,
 ): Promise<{ bytes: Uint8Array; contentType: string; provenance: PdfPhotoProvenance } | null> {
-  const raw = bytes.slice(candidate.start, candidate.end);
-  const asset = candidate.flate ? await inflate(raw).catch(() => null) : raw;
-  if (!asset) return null;
-  const check = validateSourceImageBytes(asset);
-  if (check.ok !== true) return null;
+  const picture = await pictureFromStream(bytes, candidate);
+  if (!picture) return null;
 
-  const hash = await sha256Hex(asset);
   return {
-    bytes: asset,
-    contentType: check.contentType,
+    bytes: picture.bytes,
+    contentType: picture.contentType,
     provenance: {
       page: candidate.page,
       method: 'embedded_raster',
@@ -440,12 +506,11 @@ async function materialise(
       resourceName: candidate.resourceName,
       sourceWidth: candidate.width,
       sourceHeight: candidate.height,
-      sourceSha256: hash,
-      // Nothing was done to the bytes, so the two hashes are one hash.
-      storedSha256: hash,
+      sourceSha256: picture.sourceSha256,
+      storedSha256: picture.storedSha256,
       crop: null,
       pageAreaShare: Number(candidate.pageAreaShare.toFixed(4)),
-      transformation: null,
+      transformation: picture.transformation,
     },
   };
 }
@@ -473,6 +538,15 @@ export async function selectPdfPropertyPrimary(
     label?: string | null;
     pageTexts?: string[];
     maxPages?: number;
+    /**
+     * The page the CONTAINING DOCUMENT's own identification implies is this
+     * property's cover, for a document that yielded no text at all.
+     *
+     * Passed only by a caller that tied the document to exactly one stock row
+     * from the builder's folder structure before downloading it. See
+     * `assignPdfMediaRoles`.
+     */
+    structuralCoverPage?: number | null;
   } = {},
 ): Promise<{
   assets: PdfSourceAsset[];
@@ -487,6 +561,7 @@ export async function selectPdfPropertyPrimary(
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),
+    structuralCoverPage: options.structuralCoverPage ?? null,
   });
 
   let primary: PdfSourceAsset | null = null;
@@ -534,5 +609,49 @@ export async function discoverPdfSourceAssets(
       role: noPrimaryEvidence('the role of this image has not been settled yet'),
     });
   }
+
+  /*
+   * AND THE PAGES THAT ARE ONE PICTURE EACH.
+   *
+   * `discoverCandidates` reads a page's drawing instructions and takes the
+   * rasters placed on it, which is right for a laid-out document and finds
+   * NOTHING in a brochure exported as page images: there is no facade object to
+   * take, because the facade, the type and the price panel are one 2480x3506
+   * bitmap. "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three such pages, and it
+   * is the reason `pdfFlattenedPhoto.pure.ts` exists — a module written for this
+   * exact document that nothing on this path could reach, because only the
+   * legacy single-photo function called it.
+   *
+   * So a page that yielded no embedded candidate is offered to the flattened
+   * path, which cuts the photograph out of the builder's own pixels and refuses
+   * unless EXACTLY ONE band qualifies. Pages that yielded a candidate are left
+   * alone: where the document placed its pictures properly, those pictures are
+   * the answer and a crop of the whole page would be a worse one.
+   */
+  const pagesWithAssets = new Set(assets.map((asset) => asset.page));
+  for (let index = 0; index < limit; index++) {
+    const page = index + 1;
+    if (pagesWithAssets.has(page)) continue;
+    const cut = await extractPdfPagePhoto(bytes, index, recovered);
+    if (!cut || cut.provenance.method !== 'page_crop') continue;
+    assets.push({
+      page,
+      key: `page${page}:crop`,
+      bytes: cut.bytes,
+      contentType: cut.contentType,
+      provenance: cut.provenance,
+      placement: {
+        page,
+        name: cut.provenance.resourceName,
+        // A crop is by construction the only thing taken from its page, and it
+        // exists on no other, so it can never be the repeated artwork
+        // `selectCoverHero` eliminates.
+        placementsOnPage: 1,
+        pagesDrawnOn: 1,
+      },
+      role: noPrimaryEvidence('the role of this image has not been settled yet'),
+    });
+  }
+
   return { assets, pageOrderAuthoritative: authoritative };
 }

@@ -521,6 +521,16 @@ const FAINT_MIN_STRIPES = 4;
 const FAINT_MIN_CORE_PROFILE = 0.55;
 
 /** The strict pass's shape gates, gathered so both passes read the same way. */
+/**
+ * The narrowest a run may be, as a share of the picture's width, to count as a
+ * line of laid-over type.
+ *
+ * Fitted with margin on both sides of a real gap: 0.043 (the foliage mark that
+ * hid a clean facade) against 0.072 (Brownsplains' narrowest real word). See
+ * the use site for the full production measurement.
+ */
+const MIN_TEXT_WIDTH_SHARE = 0.055;
+
 const STRICT_SHAPE: RunShape = {
   minFill: MIN_TEXT_FILL,
   maxFill: MAX_TEXT_FILL,
@@ -711,6 +721,27 @@ function runsIn(
     const runWidth = maxX - minX + 1;
     if (runHeight < minHeight || runHeight > maxHeight) continue;
     if (runWidth < runHeight * MIN_TEXT_ASPECT) continue;
+    /*
+     * AND IT HAS TO BE LONG ENOUGH TO BE A LINE OF TYPE AT ALL.
+     *
+     * A caption laid over a photograph is a WORD or a phrase, and on a 400px
+     * reduction that is tens of pixels wide. A mark seventeen pixels across is
+     * not a line of anything; it is a coincidence of high-contrast edges — and
+     * on the live list it is FOLIAGE AGAINST SKY, in the top corner of a
+     * recovered Sandpiper facade that carries no overlay whatsoever. That one
+     * mark convicted the picture and hid a clean builder photograph.
+     *
+     * Measured across every marketing control in the production set, the
+     * narrowest real run is Brownsplains' second word at 7.2% of the frame's
+     * width; the foliage mark is 4.3%. Lot 13's pills run to 30%, Lot 1663's to
+     * 29.7%, Coridale's to 9.2%. The floor sits between the two populations
+     * with room on both sides, and it is a statement about GEOMETRY — no word,
+     * no colour, no position, nothing about what the mark says.
+     *
+     * It cannot admit a marketing tile: making a run WIDER is not something
+     * this rejects, so every control that passed before passes now.
+     */
+    if (runWidth < width * MIN_TEXT_WIDTH_SHARE) continue;
     const fill = area / (runWidth * runHeight);
     if (fill < shape.minFill || fill > shape.maxFill) continue;
     if (stripesAcross(ink, label, width, minX, maxX, minY, maxY) < shape.minStripes) continue;

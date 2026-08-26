@@ -146,6 +146,18 @@ export function useAmlCaseSummary(
      * An unread obligation is not an absent one.
      */
     pepRequired?: boolean | null;
+    /**
+     * The recorded perimeter classification, from the same stage read.
+     *
+     * It decides whether Stage 6 — Funding & transaction — is owed at all,
+     * and it is the ONLY thing that can stand it down. Absent means
+     * unclassified, which reads as inside the perimeter and therefore owed.
+     */
+    perimeter?: {
+      classified?: boolean | null;
+      classification?: string | null;
+      reason_code?: string | null;
+    } | null;
   } = {},
 ): AmlCaseSummaryResult {
   const enabled = options.enabled !== false;
@@ -328,9 +340,10 @@ export function useAmlCaseSummary(
       consent: evidence.consent,
       transactions: evidence.transactions,
       passport: evidence.passport,
+      perimeter: options.perimeter ?? null,
     }),
     // `fallbackCase` is a constant literal, so it is intentionally not a dep.
-    [caseRow, openClientRequests, evidence, options.pepRequired],
+    [caseRow, openClientRequests, evidence, options.pepRequired, options.perimeter],
   );
 
   const summary = useMemo(() => deriveAmlWorkspaceSummary(facts), [facts]);

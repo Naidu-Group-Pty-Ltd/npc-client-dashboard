@@ -132,6 +132,34 @@ describe('the app itself resolves its project from one place', () => {
     expect(offenders, `files naming the prime: ${offenders.join(', ')}`).toEqual([]);
   });
 
+  it('NO SHIPPED STATIC FILE names the prime either', () => {
+    // `src/` was the whole of the rule, and `public/` is served verbatim —
+    // every file in it is copied into `dist/` untouched and reachable on the
+    // deployment's own domain.
+    //
+    // `public/lead-magnet-embed.html` hard-coded the PRIME's project URL *and*
+    // the prime's anon key, so every lead captured through the embed on this
+    // clone was written into the prime's database, from this clone's domain,
+    // for as long as the file has existed. Exactly the defect `env.ts` carried
+    // — surviving in the one directory this spec did not look at.
+    //
+    // A build is not the boundary: it was found by grepping `dist/`, which is
+    // too late. So the rule is the source tree, and it is the whole of it.
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
+        const rel = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(rel);
+        } else if (read(rel).includes(FOREIGN_PROJECT_REF)) {
+          offenders.push(rel);
+        }
+      }
+    };
+    walk('public');
+    expect(offenders, `shipped files naming the prime: ${offenders.join(', ')}`).toEqual([]);
+  });
+
   it('the built-in fallback pair is THIS deployment, and the pair matches', () => {
     // The pair is what authenticates: a URL from one project with a key from
     // another authenticates to nothing. Assert both halves name the same

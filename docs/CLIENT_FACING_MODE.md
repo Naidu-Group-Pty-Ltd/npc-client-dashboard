@@ -151,14 +151,78 @@ Three rules that module enforces, each of which was a live defect:
 ## Syncing from upstream
 
 This repository carries no code of its own: changes land in
-`npc-property-dashbord` and are pulled over. To sync:
+`npc-property-dashbord` and are pulled over.
+
+### The merge below does not run, and why
 
 ```sh
-git remote add upstream https://github.com/lavan96/npc-property-dashbord
-git fetch upstream main
-git merge origin/main        # this repo's own main first — it moves too
-git merge upstream/main
+git merge-base origin/main upstream/main    # exit 1 — no common ancestor
 ```
+
+**The two repositories have unrelated histories.** `main` here is two commits
+deep and its root commit has no parents: PR #13 was SQUASH-merged, which
+discarded the ancestry the merge needs. `git merge upstream/main` now demands
+`--allow-unrelated-histories` and then conflicts on essentially every file.
+
+That is not a small inconvenience — it is why this repository silently fell 159
+files behind between 20 and 26 August. The procedure looked correct, nobody ran
+it, and nothing reported that it could not be run.
+
+### The branch that must not be deleted
+
+`claude/npc-dashboard-client-facing-zq1md2` on THIS repository still holds
+**19,643 commits** of pre-squash history — the prime's full lineage, ending at
+the commit PR #13 squashed. It is the only surviving link between the two
+histories.
+
+**Do not delete it, and do not force-push it.** A future sync based on that
+branch can be a real `git merge upstream/main`, because it shares ancestry with
+the prime; a sync based on `main` cannot, and has to be the tree-apply below. It
+is cheap to keep and impossible to recreate.
+
+`origin`'s fetch refspec was also narrowed to `+refs/heads/main:…` at some
+point, so no branch except `main` had a remote-tracking ref and no branch could
+be tracked. Restored to `+refs/heads/*:refs/remotes/origin/*` on 26 Aug; if
+branches stop appearing after a fetch, check that first.
+
+### Syncing as a tree-apply
+
+Until a sync is based on the bridge branch, take upstream's content path by path
+and restore this repo's side afterwards:
+
+```sh
+git fetch upstream main
+git diff --name-status origin/main upstream/main       # what moved
+# check out every changed path EXCEPT the protected list below, then:
+git checkout origin/main -- <each protected path>
+```
+
+Held back every time — the list is stable, and the 26 Aug sync needed exactly
+these:
+
+| Keep this repo's side | Why |
+| --- | --- |
+| `supabase/config.toml` | names THIS project |
+| `vite.config.ts` | pins the client-facing build mode |
+| `vercel.json` | the two repos deploy differently on purpose |
+| `.env.example`, `src/integrations/supabase/env.ts` | this deployment's Supabase pair |
+| `deploy-supabase-functions.yml`, `apply-migration.yml` | the fail-closed guards |
+| `.gitignore` | keeps `supabase/.temp` out |
+| this document | — |
+| `src/App.tsx` | upstream has 0 `RouteExcludedFromBuild` and 0 `__CLIENT_FACING__` gates; this repo has 6 and 5. Compare the ROUTE SETS before keeping this side — they were 194 = 194 in August, and a route only upstream has must be brought over by hand |
+| `src/lib/clientFacing.ts` + its test | 46 hidden paths here against upstream's 24. Upstream's test asserts `/billing`, `/admin/users` and `/admin/template-builder` stay VISIBLE, which this repo deliberately contradicts |
+| `src/components/call-logs/CleanupTestCalls.tsx` | reads `VITE_TEST_CALL_NUMBERS` (see below) |
+| `src/vite-env.d.ts` | declares `__CLIENT_FACING__`. Upstream has no reason to, so taking upstream's version deletes the declaration and `App.tsx` stops type-checking with five `TS2304: Cannot find name '__CLIENT_FACING__'`. This one bit during the 26 Aug sync — and it was invisible for an hour because the typecheck was being run through a pipe, so `$?` was `tail`'s exit code and always 0. **Run `tsc` without a pipe and read its own exit status.** |
+
+**Never take `supabase/.temp/linked-project.json`.** It is TRACKED upstream and
+holds the prime's project ref; `backendIsolation.spec.ts` asserts it stays
+untracked here. Bringing it over re-arms a defect this repo has already removed
+once.
+
+`CleanupTestCalls.tsx` was on that list because upstream hardcoded two real
+staff mobiles while this repo read them from the environment. That fix was
+cherry-picked UPWARD on 26 Aug, so the two should now agree — if a future diff
+shows them differing again, check which direction moved before assuming.
 
 Then run `npm ci && npx tsc --noEmit -p tsconfig.app.json` and compare the
 error output with upstream's. **They should be identical.** Any error only

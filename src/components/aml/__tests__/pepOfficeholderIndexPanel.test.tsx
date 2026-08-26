@@ -38,6 +38,8 @@ const coverage = (over = {}) => ({
 });
 
 const candidate = (over = {}) => ({
+  dateOfBirth: undefined,
+  dob: undefined,
   externalId: "Q42", sourceCode: "wikidata_au_public_office",
   fullName: "Pat Example", aliases: ["Patricia Example"],
   positionTitle: "Member of the Australian House of Representatives",
@@ -150,12 +152,25 @@ describe("a candidate", () => {
     }));
   });
 
-  it("shows the office, the dates and whether it is currently held", async () => {
+  it("shows the office, the dates, and a held seat AS AT a date", async () => {
+    /*
+     * It used to say the bare word "Current".
+     *
+     * Every row from the Parliament register carries `currently_held: true`
+     * by construction — the files are a snapshot of who sits on the day they
+     * are downloaded. That is accurate at the load and decays from then on,
+     * so a member who lost their seat at an election read as "Current" for as
+     * long as nothing reloaded, and that word travels into the evidence a
+     * determination rests on.
+     *
+     * The date is what makes the claim checkable.
+     */
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
     expect(await screen.findByText("Pat Example")).toBeTruthy();
     expect(screen.getByText(/House of Representatives/)).toBeTruthy();
-    expect(screen.getByText("Current")).toBeTruthy();
+    expect(screen.getByText(/Held as at 2026-08-19/)).toBeTruthy();
+    expect(screen.queryByText("Current")).toBeNull();
     expect(screen.getByText(/94% name match/)).toBeTruthy();
   });
 
@@ -168,7 +183,7 @@ describe("a candidate", () => {
     }));
     renderPanel();
     fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
-    expect(await screen.findByText("Former")).toBeTruthy();
+    expect(await screen.findByText("Formerly held")).toBeTruthy();
   });
 
   it("records as a source with the RESULT left empty for the operator", async () => {

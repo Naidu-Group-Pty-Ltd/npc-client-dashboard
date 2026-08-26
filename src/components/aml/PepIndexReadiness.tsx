@@ -74,9 +74,21 @@ export function PepIndexReadiness({ className }: { className?: string }) {
 
   const loaded = state.coverage.filter(
     (c) => c.entryCount > 0 && c.lastSyncStatus === "succeeded");
-  const people = loaded.reduce((n, c) => n + c.entryCount, 0);
-  const offices = loaded.reduce((n, c) => n + (c.officeCount ?? 0), 0);
+  /*
+   * Each register is reported on its own terms, and their entry counts are
+   * NEVER added together.
+   *
+   * The two sources overlap heavily — every sitting member of the federal
+   * Parliament is in both — so a sum is a count of ROWS presented as a count
+   * of PEOPLE. That is the same overstatement this index already shipped
+   * once, when a load holding two offices read identically to one holding
+   * seven hundred, and the lesson recorded then was that anything countable
+   * is measured per load and rendered from the load.
+   */
   const asAt = loaded.map((c) => c.sourceAsAt).filter(Boolean).sort().reverse()[0] ?? null;
+  const describe = (c: PepIndexCoverage) =>
+    `${c.label} — ${c.entryCount.toLocaleString()} people`
+    + (c.officeCount ? ` across ${c.officeCount.toLocaleString()} offices` : "");
 
   return (
     <p
@@ -95,11 +107,20 @@ export function PepIndexReadiness({ className }: { className?: string }) {
             Office-holder index ready
           </span>
           {" — "}
-          {people.toLocaleString()} people
-          {offices > 0 && ` across ${offices.toLocaleString()} offices`}
+          {loaded.map(describe).join("; ")}
           {asAt && `, current to ${asAt}`}. Searched from inside the
           determination. A hit is a candidate to confirm; it never clears
           anybody.
+          {/* A register that has NOT loaded is named here rather than
+              omitted. An operator reading "index ready" while half of it is
+              missing is being told the search reached further than it did. */}
+          {state.coverage.length > loaded.length && (
+            <span className="block">
+              Not loaded, and therefore not searched:{" "}
+              {state.coverage.filter((c) => !loaded.includes(c))
+                .map((c) => c.label).join("; ")}.
+            </span>
+          )}
         </span>
       ) : (
         <span>

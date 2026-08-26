@@ -52,6 +52,7 @@ import {
   financePortalStatus,
   serviceGateStatus,
 } from "./caseDimensions";
+import { deriveFundingObligation } from "./fundingObligation.pure";
 import {
   EVIDENCE_STATE_LABELS,
   highestAttention,
@@ -1075,6 +1076,19 @@ function screeningStage(facts: AmlWorkspaceFacts): StageReading {
   };
 }
 
+/**
+ * Is some party on this case determined to be a PEP?
+ *
+ * A confirmed finding only — a candidate is not one, and an absent
+ * determination is not a negative. `false` here means "no recorded PEP
+ * finding", which is exactly what the funding obligation needs: a reason to
+ * escalate, never a reason to relax.
+ */
+function pepFindingOnCase(facts: AmlWorkspaceFacts): boolean {
+  if (!loaded(facts.screening)) return false;
+  return facts.screening.subjects.some((s) => s.pep_determination?.result === "pep");
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    9. Stage 6 — Funding & transaction
    ══════════════════════════════════════════════════════════════════════ */
@@ -1087,6 +1101,48 @@ function fundingStage(facts: AmlWorkspaceFacts): StageReading {
   const sourceFacts: string[] = [];
   const unavailableFacts: string[] = [];
 
+  /*
+   * ── Is this stage owed at all? ────────────────────────────────────────
+   * Decided first, and decided explicitly. Stage 6 used to have no answer to
+   * this question: it reported on the evidence it found and said nothing
+   * about whether any was owed, so a case with nothing recorded was
+   * indistinguishable from a case that owed nothing — and the journey went
+   * from Stage 5 to Stage 7 with no account of the one in between.
+   */
+  const obligation = deriveFundingObligation({
+    perimeter: facts.perimeter ?? null,
+    riskRating: facts.caseRow?.risk_rating ?? null,
+    enhancedDueDiligence: facts.caseRow?.status === "edd_required",
+    pepFinding: pepFindingOnCase(facts),
+  });
+  sourceFacts.push(...obligation.sourceFacts);
+
+  if (obligation.reading === "not_required") {
+    /*
+     * Skipped, and SAID. `applicable: false` is what takes it out of the
+     * journey's own count; `notApplicableReason` is what stops that being a
+     * silent disappearance. A stage that vanishes without a reason is the
+     * defect, not the skip.
+     */
+    return {
+      status: "not_applicable",
+      owner: "none",
+      summary: obligation.reason,
+      applicable: false,
+      notApplicableReason: obligation.reason,
+      completedItems: [note("funding_na", "Funding & transaction — not required", "steady", {
+        detail: obligation.reason,
+      })],
+      blockers: [], warnings: [], outstandingItems: [],
+      primaryAction: null,
+      secondaryActions: [
+        { key: "counterparty", label: "Purchase & counterparty", section: "counterparty" },
+      ],
+      sourceFacts,
+      unavailableFacts: [],
+    };
+  }
+
   let status: AmlEvidenceState = "unknown";
   let owner: AmlJourneyOwner = "none";
   let summary = "Funding evidence could not be read.";
@@ -1098,8 +1154,12 @@ function fundingStage(facts: AmlWorkspaceFacts): StageReading {
     if (items.length === 0) {
       status = "not_started";
       owner = "analyst";
-      summary = "No source of funds recorded.";
-      blockers.push(note("no_sof", "Source of funds not recorded", "attention"));
+      summary = obligation.nonWaivable
+        ? "No source of funds recorded, and enhanced due diligence requires it."
+        : "No source of funds recorded.";
+      blockers.push(note("no_sof", "Source of funds not recorded", "attention", {
+        detail: obligation.reason,
+      }));
       outstanding.push(note("sof", "Source of funds", "attention"));
     } else if (verified.length === items.length) {
       status = "complete";

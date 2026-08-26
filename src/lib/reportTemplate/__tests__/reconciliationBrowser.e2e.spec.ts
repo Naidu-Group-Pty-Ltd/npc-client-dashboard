@@ -61,6 +61,24 @@ describe.skipIf(!hasBrowserCanvas)('Template import reconciliation browser E2E',
 
     expect(report.pageId).toBe(plan.pages[0].id);
     expect(report.diffScore).toBeGreaterThan(0);
-    expect(report.issues.some((issue) => issue.issue.includes('visual delta'))).toBe(true);
+
+    // One quadrant of four was painted over, so exactly one region is expected
+    // to be reported, carrying the region it names and a severity.
+    //
+    // This asserted `issue.includes('visual delta')` until it first ran. No
+    // code path has ever emitted that phrase — the text is "Rendered output
+    // differs from the reference in this region (SSIM confidence NN%)" — so
+    // the assertion could only ever have failed. It did not, because the suite
+    // skips wherever the native `canvas` package is absent, which is
+    // everywhere it has been run. A test that cannot run is not a passing
+    // test, and matching on prose is what let the two drift unnoticed; the
+    // shape of the finding is the contract, so that is what is asserted now.
+    expect(report.issues).toHaveLength(1);
+    const [issue] = report.issues;
+    expect(issue.region).toBeTruthy();
+    expect(issue.severity).toBeTruthy();
+    expect(issue.issue).toMatch(/differs from the reference/i);
+    // The repair instruction is what a model is actually handed.
+    expect(report.repairInstruction).toContain(plan.pages[0].id);
   });
 });

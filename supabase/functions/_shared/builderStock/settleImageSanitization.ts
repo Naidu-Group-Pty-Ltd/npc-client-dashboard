@@ -20,6 +20,18 @@
  * reason. And not a non-primary: an interior or a floorplan cannot reach a card
  * whatever is drawn on it.
  *
+ * AND ONE OTHER THING: A PRIMARY CARRYING A PERSISTED REPAIR REGION. That is a
+ * rectangle established by other means and recorded against these exact bytes
+ * (`repairRegion.pure.ts`), and it is outstanding repair work whatever the
+ * detector currently says — INCLUDING `not_annotated`, which is precisely the
+ * case it exists for. A plate whose lettering falls below the measuring
+ * resolution leaves no mask and no conviction, so without this such a picture is
+ * served with the plate on it for ever, and the only other remedy is moving a
+ * global threshold that was measured against real clean production facades and
+ * is not safe to move. Every other rule still applies: primary only, the
+ * deterministic route first, and the result still checked by the same
+ * classifier before it may be served.
+ *
  * IT SEPARATES A DECISION FROM A FAILURE TO REACH ONE, exactly as the
  * eligibility sweep does and for the same reason:
  *
@@ -52,9 +64,10 @@ import { sanitizeSourceImage } from './sanitizeImage.ts';
 import { sha256Hex } from './rasterPng.ts';
 import {
   clearanceDetail, derivativeDetail, failureDetail, sanitizationSettled, storedOriginalSha,
-  SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
+  CLEARANCE_KEY, SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
   type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
+import { readRepairRegion, type RepairRegionBox } from './repairRegion.pure.ts';
 import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
@@ -111,6 +124,36 @@ const MAX_PAGES = 200;
  * The sweep is resumable, so a small budget costs ticks and never coverage.
  */
 const MAX_REPAIRS_PER_RUN = 2;
+
+/**
+ * How long a row that could not be looked at is passed over for.
+ *
+ * Long enough that a vendor outage stops consuming the allowance every minute,
+ * short enough that the row is genuinely retried rather than parked: at the
+ * five-minute sweep this is six attempts an hour, and at the one-minute sweep
+ * used to drain a backlog it is still six. It is a COOLDOWN and never a
+ * verdict — nothing reads it to decide whether a card may draw.
+ */
+const OPERATIONAL_RETRY_AFTER_MS = 10 * 60 * 1000;
+
+/** Where the cooldown is recorded. Deliberately not one of the settling keys. */
+const ATTEMPT_KEY = 'sanitization_attempt';
+
+/**
+ * When this row was last attempted, in epoch milliseconds — or 0 for never.
+ *
+ * ZERO IS THE POINT OF IT. A row nobody has looked at has waited longer than
+ * any row somebody has, so it must sort ahead of every real timestamp; that is
+ * what lets work which becomes outstanding today reach a queue whose earlier
+ * rows are all blocked. An unparseable stamp reads as never for the same
+ * reason: the safe direction is to look again.
+ */
+function attemptedAt(detail: Record<string, unknown>): number {
+  const raw = detail[ATTEMPT_KEY];
+  if (!raw || typeof raw !== 'object') return 0;
+  const at = Date.parse(String((raw as { at?: unknown }).at ?? ''));
+  return Number.isFinite(at) ? at : 0;
+}
 
 /** A repair allowance shared by every upload in one invocation. */
 export interface RepairBudget {
@@ -170,11 +213,343 @@ export async function settleImageSanitization(
   const sanitize = options.sanitize ?? sanitizeSourceImage;
   const budget = options.budget ?? newRepairBudget();
 
+  /**
+   * An attempt that did no repair work, recorded so the NEXT tick spends its
+   * allowance somewhere else.
+   *
+   * THE ALLOWANCE MAY NOT GROW. Two attempts is what a tick can afford — a
+   * full-resolution decode, a relaxation over the mask or up to four model
+   * calls, an encode and a re-decode to check — and letting a tick attempt a
+   * third because the first two failed cheaply is how this function starts
+   * returning 546 with nothing written. That was measured too: refunding the
+   * allowance made every tick a worker kill.
+   *
+   * So the fix is not more attempts, it is attempting DIFFERENT ROWS. The scan
+   * restarts at the lowest id every tick, so without this the same two rows are
+   * attempted for ever.
+   *
+   * Measured in production. The image editor answered 429 "You have no credits
+   * remaining" for two Cloverton rows. They hold the two lowest ids, the
+   * allowance is two, and the log read `outstanding: 3, repaired: 0,
+   * unresolved: 2` every minute for hours while twelve rows behind them were
+   * never reached — most of which needed no vendor at all.
+   *
+   * WHAT IS WRITTEN IS NOT AN ANSWER ABOUT THE PICTURE. `sanitizationSettled`
+   * reads the derivative, failure and clearance keys and nothing else, so this
+   * key cannot settle a row, cannot blank a card and cannot survive a version
+   * bump into meaning anything. It records only that we tried and could not
+   * look, and it expires.
+   */
+  const noteOperationalFailure = async (row: ImageRow): Promise<void> => {
+    outcome.unresolved += 1;
+    try {
+      await db.from('builder_stock_item_images')
+        .update({
+          source_detail: {
+            ...(row.source_detail ?? {}),
+            [ATTEMPT_KEY]: { at: new Date().toISOString(), operational: true },
+          },
+        })
+        .eq('id', row.id);
+    } catch {
+      /* Recording the attempt is an optimisation; failing to is not a fault. */
+    }
+  };
+
+  /** True while a recent operational attempt says to spend the tick elsewhere. */
+  const attemptedRecently = (detail: Record<string, unknown>): boolean => {
+    const at = attemptedAt(detail);
+    return at > 0 && Date.now() - at < OPERATIONAL_RETRY_AFTER_MS;
+  };
+
+  /**
+   * ONE PICTURE'S REPAIR, LIFTED OUT SO THE SCAN CAN CHOOSE BEFORE IT SPENDS.
+   *
+   * The work is identical to what the scan used to do inline. The only reason
+   * it is a function is that WHICH rows the allowance goes to is now decided
+   * across the whole scan rather than at the first row that qualifies — see
+   * `consider`.
+   */
+  const repairOne = async (
+    row: ImageRow & { storage_path: string },
+    detail: Record<string, unknown>,
+    region: RepairRegionBox | null,
+  ): Promise<void> => {
+    const bucket = row.storage_bucket || STOCK_IMAGE_BUCKET;
+    const { data: blob, error: downloadError } = await db.storage
+      .from(bucket).download(row.storage_path);
+    if (downloadError || !blob) {
+      outcome.unresolved += 1;
+      return;
+    }
+
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await blob.arrayBuffer());
+    } catch {
+      outcome.unresolved += 1;
+      return;
+    }
+
+    /*
+     * THE HASH IS TAKEN OF THE BYTES THAT WERE JUST READ, not of the one
+     * recorded in the row.
+     *
+     * The derivative's whole claim is "this came from those exact bytes", and
+     * a claim keyed on a hash nobody re-computed is a claim about what the
+     * row SAYS is in the bucket. Where the two disagree the stored hash is
+     * the stale one, and keying on it would let a replaced object be served
+     * through a derivative made from something else.
+     */
+    const actualSha = await sha256Hex(bytes);
+
+    /*
+     * The region is handed straight to the existing generic path and nothing
+     * else about the call changes: the deterministic route is still tried
+     * first, the result still goes back through the same classifier, and a
+     * row without a region is called exactly as it was before.
+     */
+    const result = await sanitize(bytes, region ? { repairRegion: region } : {});
+
+    if (result.ok === false) {
+      /*
+       * AN OPERATIONAL FAILURE IS NOT AN ANSWER ABOUT THE PICTURE, and I had
+       * this wrong until production proved it. A model that could not be
+       * reached — no credential, a network fault, a rate limit, a vendor
+       * account with no credit left — tells us nothing about whether this
+       * photograph can be repaired. Writing it down as a refusal parks the
+       * picture on "we tried" until the next version bump, so one billing
+       * outage would permanently blank every card it touched.
+       *
+       * It is exactly the distinction the eligibility sweep makes and the
+       * same one the terminal-negative-provenance work was built on: "we
+       * looked and there is nothing" is knowledge, "we could not look" is
+       * not, and only the first may stop us looking again. Left unresolved,
+       * so the marker does not advance and the next tick tries again.
+       */
+      if (result.reason === 'inpaint_unavailable' || result.reason === 'inpaint_failed') {
+        console.warn('[builderStock] overlay repair could not reach the model', {
+          image_id: row.id,
+          phase: 'image_sanitization',
+          detail: String(result.detail ?? '').slice(0, 200),
+        });
+        await noteOperationalFailure(row);
+        return;
+      }
+
+      /*
+       * THE PICTURE WAS INSPECTED AND CARRIES NOTHING TO REMOVE.
+       *
+       * The classifier convicted it for something that is part of the house —
+       * Lot 537 Kirramingly's white garage door is the case this was built
+       * for — and the precise inspection found no type, no brand colour and
+       * no plate. So the CLEARANCE is recorded and the builder's own file is
+       * what the card draws.
+       *
+       * NOTHING IS WRITTEN TO STORAGE AND NO DERIVATIVE IS MADE. There is no
+       * repair to store: the bytes that go on the card are the bytes already
+       * in the row, unaltered, and a "cleaned copy" of a picture that was
+       * never dirty would be a change to a photograph for no reason.
+       *
+       * It is checked BEFORE the operational test below on purpose. A
+       * clearance is a finding, and a finding is never an operational fault.
+       */
+      if (result.clearance) {
+        const clearance: SanitizationClearance = {
+          sanitization_version: SANITIZATION_VERSION,
+          original_image_id: row.id,
+          original_sha256: actualSha,
+          stock_item_id: String(row.stock_item_id ?? ''),
+          organisation_id: String(row.organisation_id ?? organisationId),
+          source_reference: row.source_reference ?? null,
+          evidence: {
+            text_run_count: result.clearance.textRunCount,
+            strict_text_lines: result.clearance.strictTextLines,
+            faint_text_lines: result.clearance.faintTextLines,
+            flat_region_count: result.clearance.flatRegionCount,
+            promotional_region_count: result.clearance.promotionalRegionCount,
+            plate_count: result.clearance.plateCount,
+          },
+          cleared_at: new Date().toISOString(),
+        };
+        const { error: clearError } = await db.from('builder_stock_item_images')
+          .update({ source_detail: { ...detail, ...clearanceDetail(clearance) } })
+          .eq('id', row.id);
+        if (clearError) {
+          outcome.unresolved += 1;
+          return;
+        }
+        outcome.cleared += 1;
+        return;
+      }
+
+      /*
+       * AN OPERATION THAT FAILED IS NOT AN ANSWER EITHER. A decoder that fell
+       * over, an encoder that did, a mask that could not be placed: the
+       * picture is exactly as unexamined afterwards as before, and recording
+       * a refusal would park it until the next version bump.
+       */
+      if (result.operational) {
+        await noteOperationalFailure(row);
+        return;
+      }
+
+      if (result.reason === 'not_annotated') {
+        /*
+         * The stored verdict says annotated and a fresh reading of the same
+         * bytes says otherwise. That is a disagreement between two versions
+         * of the classifier, not a repair outcome, and writing a failure for
+         * it would blame the repair for something it was never asked to do.
+         * Left for the eligibility sweep, whose question it actually is.
+         */
+        outcome.outstanding -= 1;
+        return;
+      }
+      /*
+       * A REFUSED RENDER IS KEPT WHERE NOTHING SERVES IT.
+       *
+       * `rejected/` is not a derivative path and no reader looks in it: the
+       * only thing that reaches a card is a record under `sanitized_derivative`
+       * whose verdict is `eligible`, and a refusal writes no such record. What
+       * this buys is the ability to LOOK at what the repair produced, which is
+       * the difference between improving it and guessing at it. An upload that
+       * fails here is not itself a failure — the refusal still gets written.
+       */
+      let rejectedPath: string | null = null;
+      if (result.rejected && row.storage_path) {
+        const path = `${derivativePath(row.storage_path, row.id)
+          .replace(/\/[^/]+$/, '')}/rejected/${row.id}.png`;
+        const { error: rejectedError } = await db.storage.from(bucket).upload(
+          path,
+          new Blob([result.rejected.bytes as unknown as BlobPart], { type: 'image/png' }),
+          { contentType: 'image/png', upsert: true },
+        );
+        if (!rejectedError) rejectedPath = path;
+      }
+
+      const failure: SanitizationFailure = {
+        transformation: result.transformation,
+        sanitization_version: SANITIZATION_VERSION,
+        original_image_id: row.id,
+        original_sha256: actualSha,
+        reason: result.reason,
+        detail: String(result.detail ?? '').slice(0, 300),
+        model: result.model,
+        failed_at: new Date().toISOString(),
+        rejected_path: rejectedPath,
+      };
+      const { error: writeError } = await db.from('builder_stock_item_images')
+        .update({ source_detail: { ...detail, ...failureDetail(failure) } })
+        .eq('id', row.id);
+      if (writeError) {
+        outcome.unresolved += 1;
+        return;
+      }
+      outcome.refused += 1;
+      return;
+    }
+
+    const path = derivativePath(row.storage_path, row.id);
+    const { error: uploadError } = await db.storage.from(bucket).upload(
+      path,
+      // A fresh view, so the storage client cannot retain the repair buffer.
+      new Blob([result.bytes as unknown as BlobPart], { type: 'image/png' }),
+      { contentType: 'image/png', upsert: true },
+    );
+    if (uploadError) {
+      outcome.unresolved += 1;
+      return;
+    }
+
+    const derivative: SanitizedDerivative = {
+      transformation: result.transformation,
+      sanitization_version: SANITIZATION_VERSION,
+      original_image_id: row.id,
+      original_sha256: actualSha,
+      stock_item_id: String(row.stock_item_id ?? ''),
+      organisation_id: String(row.organisation_id ?? organisationId),
+      source_reference: row.source_reference ?? null,
+      storage_bucket: bucket,
+      storage_path: path,
+      derivative_sha256: await sha256Hex(result.bytes),
+      width: result.width,
+      height: result.height,
+      repaired_share: result.repairedShare,
+      regions_removed: result.regionsRemoved,
+      model: result.model,
+      generated_at: new Date().toISOString(),
+      verdict: result.verdict,
+      classifier_state: result.classifierState,
+    };
+
+    const { error: recordError } = await db.from('builder_stock_item_images')
+      .update({ source_detail: { ...detail, ...derivativeDetail(derivative) } })
+      .eq('id', row.id);
+    if (recordError) {
+      // The bytes are in the bucket and the record is not, so nothing will
+      // serve them. Unresolved: the next pass remakes and re-records, and
+      // `upsert` means the orphan is overwritten rather than accumulating.
+      outcome.unresolved += 1;
+      return;
+    }
+
+    outcome.repaired += 1;
+  };
+
+  /*
+   * THE ALLOWANCE GOES TO THE ROWS THAT HAVE WAITED LONGEST, NOT THE LOWEST IDS.
+   *
+   * MEASURED IN PRODUCTION, AND IT IS THE COOLDOWN'S OWN FAILURE ONE STEP
+   * FURTHER OUT. The cooldown stops a tick re-attempting the row it just
+   * attempted; it does not stop every tick attempting the same small PREFIX of
+   * the queue for ever. With nine rows outstanding, an allowance of two and a
+   * ten-minute cooldown, four attempts fit in each cooldown window — so the
+   * five lowest ids cycled among themselves and the four behind them were not
+   * reached at all: one had last been looked at half an hour earlier, one an
+   * hour and a half, and one had never been attempted once. The log read
+   * `outstanding: 6` rather than 9, because the scan returned the moment the
+   * allowance ran out and so did not even COUNT the rows it was starving.
+   *
+   * A row that has waited longest is the row we know least about, so that is
+   * where the allowance goes. A row never attempted sorts ahead of every
+   * attempted one, which is what makes newly outstanding work reachable on a
+   * queue that is otherwise blocked — a fresh conviction, or a repair region
+   * somebody has just recorded, would otherwise wait behind a prefix that never
+   * clears, and no amount of waiting would help.
+   *
+   * IT SPENDS NOTHING EXTRA. The allowance is unchanged, the cooldown is
+   * unchanged, and the scan reads what it always read; the shortlist holds at
+   * most `budget.remaining` rows, so this is a bounded selection over a stream
+   * and not a queue held in memory.
+   */
+  const slots = Math.max(0, budget.remaining);
+  const shortlist: Array<{
+    row: ImageRow & { storage_path: string };
+    detail: Record<string, unknown>;
+    region: RepairRegionBox | null;
+    waitingSince: number;
+  }> = [];
+  /** Same truthiness test the loop always used, expressed so it narrows `row`. */
+  const hasStoragePath = (r: ImageRow): r is ImageRow & { storage_path: string } =>
+    Boolean(r.storage_path);
+  const consider = (
+    row: ImageRow & { storage_path: string },
+    detail: Record<string, unknown>,
+    region: RepairRegionBox | null,
+  ): void => {
+    if (slots <= 0) return;
+    const waitingSince = attemptedAt(detail);
+    let at = shortlist.length;
+    while (at > 0 && shortlist[at - 1].waitingSince > waitingSince) at -= 1;
+    shortlist.splice(at, 0, { row, detail, region, waitingSince });
+    if (shortlist.length > slots) shortlist.length = slots;
+  };
+
   let after = '';
   for (let page = 0; page < MAX_PAGES; page++) {
     if (options.deadlineAt && Date.now() > options.deadlineAt) {
       outcome.incomplete = true;
-      return outcome;
+      break;
     }
 
     let query = db
@@ -197,7 +572,7 @@ export async function settleImageSanitization(
       return outcome;
     }
     const rows = (data ?? []) as ImageRow[];
-    if (!rows.length) return outcome;
+    if (!rows.length) break;
 
     for (const row of rows) {
       outcome.scanned += 1;
@@ -207,250 +582,103 @@ export async function settleImageSanitization(
       if (!isPrimaryRole(readStoredRole(detail))) continue;
 
       /*
-       * ONLY A PICTURE THE GATE CONVICTED. `pending` is not a badge and
-       * `eligible` is not a defect; see the header.
+       * A RECTANGLE SOMEBODY WROTE DOWN AGAINST THESE EXACT BYTES.
+       *
+       * This is the second way a picture reaches the repair, and it exists
+       * because the first cannot see everything. The detector's mask builder
+       * reads lines of TYPE; a plate whose lettering is below the measuring
+       * resolution has no measurable extent, so a promotional plate can be
+       * real, plainly visible to a person, and still leave the picture
+       * measuring clean and being served with the plate on it.
+       *
+       * The region is read here rather than being a special case anywhere
+       * further down: it is ordinary image metadata, any row may carry one, and
+       * this code knows nothing about the picture beyond "this image has a
+       * persisted explicit repair region". See `repairRegion.pure.ts` for the
+       * origin test, which is the same one a derivative gets.
        */
-      if (readMarketplaceState(detail) !== 'ineligible') continue;
-      if (detail.marketplace_rejection_reason !== 'annotated_marketing_tile') continue;
+      const region = readRepairRegion(detail, storedOriginalSha(detail));
 
-      if (sanitizationSettled(detail, storedOriginalSha(detail))) continue;
+      /*
+       * ONLY A PICTURE THE GATE CONVICTED — OR ONE CARRYING A REGION.
+       *
+       * `pending` is not a badge and `eligible` is not a defect; see the
+       * header. That rule is untouched for every row without a region, which is
+       * all but a handful of them. Where a region IS recorded the conviction has
+       * already been reached by other means and recorded against these bytes,
+       * so requiring the detector to agree would be requiring the instrument
+       * that missed the plate to certify that it is there.
+       */
+      if (!region) {
+        if (readMarketplaceState(detail) !== 'ineligible') continue;
+        if (detail.marketplace_rejection_reason !== 'annotated_marketing_tile') continue;
+      }
+
+      /*
+       * A CLEARANCE DOES NOT SETTLE A ROW THAT CARRIES A REGION.
+       *
+       * A clearance says "we looked and there is nothing on this picture"; a
+       * region says "there is, and here it is". They cannot both be current,
+       * and of the two the region is the one established by other means against
+       * these exact bytes — so a standing clearance from before the region was
+       * recorded is stale, and leaving it to settle the row would mean writing a
+       * region down had no effect. A derivative and a failure still settle it:
+       * the first is the work done, the second is a completed answer for this
+       * version, and neither can be produced on the region path by accident.
+       */
+      const settled = region
+        ? sanitizationSettled({ ...detail, [CLEARANCE_KEY]: null }, storedOriginalSha(detail))
+        : sanitizationSettled(detail, storedOriginalSha(detail));
+      if (settled) continue;
 
       outcome.outstanding += 1;
 
-      if (!row.storage_path) {
+      // A type predicate rather than `if (!row.storage_path)`: the falsy check
+      // narrows the PROPERTY and leaves `row` itself as ImageRow, so passing it
+      // to `consider` — which needs `storage_path` to be a string — did not
+      // compile. Same runtime test, same rows rejected; the difference is that
+      // TypeScript can now carry the fact forward.
+      if (!hasStoragePath(row)) {
         // A designated primary with nowhere to read its bytes from. Not an
         // answer about the picture: left unresolved so a later tick tries.
         outcome.unresolved += 1;
         continue;
       }
-      if (budget.remaining <= 0) {
-        outcome.incomplete = true;
-        return outcome;
-      }
-      budget.remaining -= 1;
-      if (options.deadlineAt && Date.now() > options.deadlineAt) {
-        outcome.incomplete = true;
-        return outcome;
-      }
-
-      const bucket = row.storage_bucket || STOCK_IMAGE_BUCKET;
-      const { data: blob, error: downloadError } = await db.storage
-        .from(bucket).download(row.storage_path);
-      if (downloadError || !blob) {
-        outcome.unresolved += 1;
-        continue;
-      }
-
-      let bytes: Uint8Array;
-      try {
-        bytes = new Uint8Array(await blob.arrayBuffer());
-      } catch {
-        outcome.unresolved += 1;
-        continue;
-      }
-
       /*
-       * THE HASH IS TAKEN OF THE BYTES THAT WERE JUST READ, not of the one
-       * recorded in the row.
-       *
-       * The derivative's whole claim is "this came from those exact bytes", and
-       * a claim keyed on a hash nobody re-computed is a claim about what the
-       * row SAYS is in the bucket. Where the two disagree the stored hash is
-       * the stale one, and keying on it would let a replaced object be served
-       * through a derivative made from something else.
+       * A row we could not look at a moment ago is passed over so this tick's
+       * allowance reaches one we have not tried. It stays outstanding, so the
+       * completeness test below keeps the sweep unsettled.
        */
-      const actualSha = await sha256Hex(bytes);
+      if (attemptedRecently(detail)) continue;
 
-      const result = await sanitize(bytes, {});
-
-      if (!result.ok) {
-        /*
-         * AN OPERATIONAL FAILURE IS NOT AN ANSWER ABOUT THE PICTURE, and I had
-         * this wrong until production proved it. A model that could not be
-         * reached — no credential, a network fault, a rate limit, a vendor
-         * account with no credit left — tells us nothing about whether this
-         * photograph can be repaired. Writing it down as a refusal parks the
-         * picture on "we tried" until the next version bump, so one billing
-         * outage would permanently blank every card it touched.
-         *
-         * It is exactly the distinction the eligibility sweep makes and the
-         * same one the terminal-negative-provenance work was built on: "we
-         * looked and there is nothing" is knowledge, "we could not look" is
-         * not, and only the first may stop us looking again. Left unresolved,
-         * so the marker does not advance and the next tick tries again.
-         */
-        if (result.reason === 'inpaint_unavailable' || result.reason === 'inpaint_failed') {
-          console.warn('[builderStock] overlay repair could not reach the model', {
-            image_id: row.id,
-            phase: 'image_sanitization',
-            detail: String(result.detail ?? '').slice(0, 200),
-          });
-          outcome.unresolved += 1;
-          continue;
-        }
-
-        /*
-         * THE PICTURE WAS INSPECTED AND CARRIES NOTHING TO REMOVE.
-         *
-         * The classifier convicted it for something that is part of the house —
-         * Lot 537 Kirramingly's white garage door is the case this was built
-         * for — and the precise inspection found no type, no brand colour and
-         * no plate. So the CLEARANCE is recorded and the builder's own file is
-         * what the card draws.
-         *
-         * NOTHING IS WRITTEN TO STORAGE AND NO DERIVATIVE IS MADE. There is no
-         * repair to store: the bytes that go on the card are the bytes already
-         * in the row, unaltered, and a "cleaned copy" of a picture that was
-         * never dirty would be a change to a photograph for no reason.
-         *
-         * It is checked BEFORE the operational test below on purpose. A
-         * clearance is a finding, and a finding is never an operational fault.
-         */
-        if (result.clearance) {
-          const clearance: SanitizationClearance = {
-            sanitization_version: SANITIZATION_VERSION,
-            original_image_id: row.id,
-            original_sha256: actualSha,
-            stock_item_id: String(row.stock_item_id ?? ''),
-            organisation_id: String(row.organisation_id ?? organisationId),
-            source_reference: row.source_reference ?? null,
-            evidence: {
-              text_run_count: result.clearance.textRunCount,
-              strict_text_lines: result.clearance.strictTextLines,
-              faint_text_lines: result.clearance.faintTextLines,
-              flat_region_count: result.clearance.flatRegionCount,
-              promotional_region_count: result.clearance.promotionalRegionCount,
-              plate_count: result.clearance.plateCount,
-            },
-            cleared_at: new Date().toISOString(),
-          };
-          const { error: clearError } = await db.from('builder_stock_item_images')
-            .update({ source_detail: { ...detail, ...clearanceDetail(clearance) } })
-            .eq('id', row.id);
-          if (clearError) {
-            outcome.unresolved += 1;
-            continue;
-          }
-          outcome.cleared += 1;
-          continue;
-        }
-
-        /*
-         * AN OPERATION THAT FAILED IS NOT AN ANSWER EITHER. A decoder that fell
-         * over, an encoder that did, a mask that could not be placed: the
-         * picture is exactly as unexamined afterwards as before, and recording
-         * a refusal would park it until the next version bump.
-         */
-        if (result.operational) {
-          outcome.unresolved += 1;
-          continue;
-        }
-
-        if (result.reason === 'not_annotated') {
-          /*
-           * The stored verdict says annotated and a fresh reading of the same
-           * bytes says otherwise. That is a disagreement between two versions
-           * of the classifier, not a repair outcome, and writing a failure for
-           * it would blame the repair for something it was never asked to do.
-           * Left for the eligibility sweep, whose question it actually is.
-           */
-          outcome.outstanding -= 1;
-          continue;
-        }
-        /*
-         * A REFUSED RENDER IS KEPT WHERE NOTHING SERVES IT.
-         *
-         * `rejected/` is not a derivative path and no reader looks in it: the
-         * only thing that reaches a card is a record under `sanitized_derivative`
-         * whose verdict is `eligible`, and a refusal writes no such record. What
-         * this buys is the ability to LOOK at what the repair produced, which is
-         * the difference between improving it and guessing at it. An upload that
-         * fails here is not itself a failure — the refusal still gets written.
-         */
-        let rejectedPath: string | null = null;
-        if (result.rejected && row.storage_path) {
-          const path = `${derivativePath(row.storage_path, row.id)
-            .replace(/\/[^/]+$/, '')}/rejected/${row.id}.png`;
-          const { error: rejectedError } = await db.storage.from(bucket).upload(
-            path,
-            new Blob([result.rejected.bytes as unknown as BlobPart], { type: 'image/png' }),
-            { contentType: 'image/png', upsert: true },
-          );
-          if (!rejectedError) rejectedPath = path;
-        }
-
-        const failure: SanitizationFailure = {
-          transformation: result.transformation,
-          sanitization_version: SANITIZATION_VERSION,
-          original_image_id: row.id,
-          original_sha256: actualSha,
-          reason: result.reason,
-          detail: String(result.detail ?? '').slice(0, 300),
-          model: result.model,
-          failed_at: new Date().toISOString(),
-          rejected_path: rejectedPath,
-        };
-        const { error: writeError } = await db.from('builder_stock_item_images')
-          .update({ source_detail: { ...detail, ...failureDetail(failure) } })
-          .eq('id', row.id);
-        if (writeError) {
-          outcome.unresolved += 1;
-          continue;
-        }
-        outcome.refused += 1;
-        continue;
-      }
-
-      const path = derivativePath(row.storage_path, row.id);
-      const { error: uploadError } = await db.storage.from(bucket).upload(
-        path,
-        // A fresh view, so the storage client cannot retain the repair buffer.
-        new Blob([result.bytes as unknown as BlobPart], { type: 'image/png' }),
-        { contentType: 'image/png', upsert: true },
-      );
-      if (uploadError) {
-        outcome.unresolved += 1;
-        continue;
-      }
-
-      const derivative: SanitizedDerivative = {
-        transformation: result.transformation,
-        sanitization_version: SANITIZATION_VERSION,
-        original_image_id: row.id,
-        original_sha256: actualSha,
-        stock_item_id: String(row.stock_item_id ?? ''),
-        organisation_id: String(row.organisation_id ?? organisationId),
-        source_reference: row.source_reference ?? null,
-        storage_bucket: bucket,
-        storage_path: path,
-        derivative_sha256: await sha256Hex(result.bytes),
-        width: result.width,
-        height: result.height,
-        repaired_share: result.repairedShare,
-        regions_removed: result.regionsRemoved,
-        model: result.model,
-        generated_at: new Date().toISOString(),
-        verdict: result.verdict,
-        classifier_state: result.classifierState,
-      };
-
-      const { error: recordError } = await db.from('builder_stock_item_images')
-        .update({ source_detail: { ...detail, ...derivativeDetail(derivative) } })
-        .eq('id', row.id);
-      if (recordError) {
-        // The bytes are in the bucket and the record is not, so nothing will
-        // serve them. Unresolved: the next pass remakes and re-records, and
-        // `upsert` means the orphan is overwritten rather than accumulating.
-        outcome.unresolved += 1;
-        continue;
-      }
-
-      outcome.repaired += 1;
+      consider(row, detail, region);
     }
 
-    if (rows.length < PAGE) return outcome;
+    if (rows.length < PAGE) break;
+    if (page === MAX_PAGES - 1) outcome.incomplete = true;
   }
 
-  outcome.incomplete = true;
+  /*
+   * AND ONLY NOW IS ANYTHING DECODED. Every row above cost a field read; the
+   * work that kills this worker happens here, on the rows the scan chose.
+   */
+  for (const candidate of shortlist) {
+    if (budget.remaining <= 0) break;
+    if (options.deadlineAt && Date.now() > options.deadlineAt) break;
+    budget.remaining -= 1;
+    await repairOne(candidate.row, candidate.detail, candidate.region);
+  }
+
+  /*
+   * A SWEEP IS FINISHED WHEN EVERY OUTSTANDING ROW GOT AN ANSWER.
+   *
+   * The answers are the three that settle a row: repaired, refused, cleared. A
+   * row skipped for its cooldown, one left over when the allowance ran out and
+   * one whose operation failed are all rows with no answer, and the upload's
+   * marker must not advance past any of them.
+   */
+  if (outcome.outstanding > outcome.repaired + outcome.refused + outcome.cleared) {
+    outcome.incomplete = true;
+  }
   return outcome;
 }

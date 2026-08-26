@@ -52,8 +52,22 @@ import { sha256Hex } from './rasterPng.ts';
  * the new one, and the re-audit is deliberately forbidden from demoting a row
  * already at the current version — so it would sit there ready and displayable
  * for ever beside its replacement. Bumping is what retires it.
+ *
+ * 5 changes what the package reader can IDENTIFY, and every negative version 4
+ * banked is therefore stale by definition. Two capabilities changed. A page now
+ * states a property's identity when it names the lot, contradicts no other lot
+ * and names the design — rather than when it repeats every one of the label's
+ * first eight tokens, which required the builder's document to word an address
+ * exactly as the stock list does and refused twenty-five live properties whose
+ * own package cover names them plainly. And a document whose pages carry no
+ * extractable text is now operationally unreadable rather than a finished "this
+ * names no image", because a reader that read nothing has learned nothing.
+ *
+ * This is the bump doing precisely the job it exists for: `negativeProvenance`
+ * compares the stored version against this one, so raising it reopens every
+ * banked negative for a reader that can now find what the old one could not.
  */
-export const PROVENANCE_VERSION = 4;
+export const PROVENANCE_VERSION = 5;
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {

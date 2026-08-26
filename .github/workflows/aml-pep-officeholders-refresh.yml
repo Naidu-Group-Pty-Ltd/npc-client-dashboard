@@ -15,6 +15,11 @@ name: AML PEP officeholder index refresh
 #     itself to a dry run is how a register goes stale behind a green tick.
 #   - Node 22, because `createClient` builds a RealtimeClient that demands a
 #     native WebSocket. On 20 the loader dies before reading a byte.
+#   - `--experimental-strip-types`, because the loader imports the SAME
+#     TypeScript module the endpoint renders Rule coverage from rather than
+#     keeping a second copy of the classifier in .mjs. Node 22.18+ strips
+#     types without the flag and accepts it as a no-op; older 22.x needs it.
+#     Passing it always is the version-independent answer.
 #   - the parser tests run BEFORE anything is written.
 #
 # Required repository secret:
@@ -32,7 +37,7 @@ on:
       sources:
         description: 'Comma-separated sources to load'
         required: false
-        default: 'wikidata_au_public_office'
+        default: 'aph_commonwealth_parliament,wikidata_au_public_office'
       dry_run:
         description: 'Parse and report without writing'
         type: boolean
@@ -96,8 +101,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ steps.project.outputs.url }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: node scripts/aml/load-pep-officeholders.mjs --source "${{ github.event.inputs.sources || 'wikidata_au_public_office' }}"
+        run: node --experimental-strip-types scripts/aml/load-pep-officeholders.mjs --source "${{ github.event.inputs.sources || 'aph_commonwealth_parliament,wikidata_au_public_office' }}"
 
       - name: Dry run (explicitly requested)
         if: github.event.inputs.dry_run == 'true'
-        run: node scripts/aml/load-pep-officeholders.mjs --dry-run --source "${{ github.event.inputs.sources || 'wikidata_au_public_office' }}"
+        run: node --experimental-strip-types scripts/aml/load-pep-officeholders.mjs --dry-run --source "${{ github.event.inputs.sources || 'aph_commonwealth_parliament,wikidata_au_public_office' }}"

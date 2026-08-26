@@ -1,3 +1,15 @@
+-- SYNTAX NOTE (added later): this file was written with
+--   CREATE POLICY IF NOT EXISTS ...
+-- which PostgreSQL has never supported, in any version. `CREATE POLICY` has no
+-- IF NOT EXISTS clause, so every statement below was a parse error (42601) and
+-- this migration could never have run. Verified against PostgreSQL 17.
+--
+-- It is harmless in practice — clone backends are built by catalog
+-- introspection and have this version stamped in their ledger, so it is never
+-- replayed — but the pattern gets copied, and a NEW migration written this way
+-- fails `applyPrimeMigrations`, which halts incremental sync to every clone on
+-- the first failure. Rewritten to DROP IF EXISTS + CREATE, which is what the
+-- author meant and what the rest of this corpus uses.
 -- Rollback Migration: Restore Original Client Data RLS Policies
 -- Purpose: Rollback the security changes if needed
 -- Date: 2025-01-24
@@ -14,58 +26,67 @@ BEGIN;
 -- Restoring them makes the data accessible again but less secure.
 
 -- client_activities: Restore "Allow all access"
-CREATE POLICY IF NOT EXISTS "Allow all access to client_activities"
+DROP POLICY IF EXISTS "Allow all access to client_activities" ON client_activities;
+CREATE POLICY "Allow all access to client_activities"
 ON client_activities
 FOR ALL
 USING (true)
 WITH CHECK (true);
 
 -- client_files: Restore "Allow all access"
-CREATE POLICY IF NOT EXISTS "Allow all access to client_files"
+DROP POLICY IF EXISTS "Allow all access to client_files" ON client_files;
+CREATE POLICY "Allow all access to client_files"
 ON client_files
 FOR ALL
 USING (true)
 WITH CHECK (true);
 
 -- client_notes: Restore "Allow all operations"
-CREATE POLICY IF NOT EXISTS "Allow all operations on client_notes"
+DROP POLICY IF EXISTS "Allow all operations on client_notes" ON client_notes;
+CREATE POLICY "Allow all operations on client_notes"
 ON client_notes
 FOR ALL
 USING (true)
 WITH CHECK (true);
 
 -- client_tag_assignments: Restore "Allow all access"
-CREATE POLICY IF NOT EXISTS "Allow all access to client_tag_assignments"
+DROP POLICY IF EXISTS "Allow all access to client_tag_assignments" ON client_tag_assignments;
+CREATE POLICY "Allow all access to client_tag_assignments"
 ON client_tag_assignments
 FOR ALL
 USING (true)
 WITH CHECK (true);
 
 -- client_tags: Restore "Allow all access"
-CREATE POLICY IF NOT EXISTS "Allow all access to client_tags"
+DROP POLICY IF EXISTS "Allow all access to client_tags" ON client_tags;
+CREATE POLICY "Allow all access to client_tags"
 ON client_tags
 FOR ALL
 USING (true)
 WITH CHECK (true);
 
 -- client_branding_profiles: Restore original policies
-CREATE POLICY IF NOT EXISTS "Branding profiles are publicly readable"
+DROP POLICY IF EXISTS "Branding profiles are publicly readable" ON client_branding_profiles;
+CREATE POLICY "Branding profiles are publicly readable"
 ON client_branding_profiles
 FOR SELECT
 USING (true);
 
-CREATE POLICY IF NOT EXISTS "Allow branding profile inserts"
+DROP POLICY IF EXISTS "Allow branding profile inserts" ON client_branding_profiles;
+CREATE POLICY "Allow branding profile inserts"
 ON client_branding_profiles
 FOR INSERT
 WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS "Allow branding profile updates"
+DROP POLICY IF EXISTS "Allow branding profile updates" ON client_branding_profiles;
+CREATE POLICY "Allow branding profile updates"
 ON client_branding_profiles
 FOR UPDATE
 USING (true)
 WITH CHECK (true);
 
-CREATE POLICY IF NOT EXISTS "Allow branding profile deletes"
+DROP POLICY IF EXISTS "Allow branding profile deletes" ON client_branding_profiles;
+CREATE POLICY "Allow branding profile deletes"
 ON client_branding_profiles
 FOR DELETE
 USING (true);

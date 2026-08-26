@@ -322,9 +322,14 @@ describe("PartyScreeningPanel — PEP determination", () => {
     });
     fireEvent.click(await screen.findByRole(
       "button", { name: /record pep determination/i }));
-    // Seeded, so the operator does not retype it.
-    expect(await screen.findByDisplayValue(
+    // Held under step 1 as read-only evidence — not an editable row in the
+    // "check the sources" grid, where it read as a source somebody checked.
+    expect(await screen.findByText(
       /the customer's declaration in the client portal/i)).toBeTruthy();
+    expect(screen.queryByDisplayValue(
+      /the customer's declaration in the client portal/i)).toBeNull();
+    expect(screen.getByText(/carried into the record as evidence/i)).toBeTruthy();
+
 
     fireEvent.click(screen.getByRole(
       "radio", { name: /not a politically exposed person/i }));

@@ -1,7 +1,6 @@
 import React from 'react';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { ClientFacingOutlet } from '@/components/auth/ClientFacingGate';
-import { isClientFacingDeployment, isPathVisibleInDeployment } from '@/lib/clientFacing';
 import { DashboardSidebar } from './DashboardSidebar';
 import { DashboardHeader } from './DashboardHeader';
 import { MobileHeader } from './MobileHeader';
@@ -21,11 +20,6 @@ import { GlobalCommandPalette } from './GlobalCommandPalette';
 export function DashboardLayout() {
   const breakpoint = useBreakpoint();
   const { theme, isDark, cycleTheme } = useDashboardTheme();
-  // The three ambient banners are all Aurixa-commercial: a plan change, a
-  // token balance, a feedback prompt — and the first links to a billing page
-  // this deployment hides. They travel with /billing rather than standing on
-  // their own.
-  const showCommercialBanners = isPathVisibleInDeployment('/billing', isClientFacingDeployment());
 
   // Mobile + Tablet share the same chrome (top bar + bottom nav).
   // Desktop sidebar shell only mounts at >= 1024px.
@@ -44,9 +38,9 @@ export function DashboardLayout() {
           <div className="dashboard-content">
             <ErrorBoundary>
               <DashboardPageShell>
-                {showCommercialBanners && <PlanChangeBanner />}
-                {showCommercialBanners && <FeedbackPromptBanner />}
-                {showCommercialBanners && <TokenBalanceBanner />}
+                <PlanChangeBanner />
+                <FeedbackPromptBanner />
+                <TokenBalanceBanner />
                 <ClientFacingOutlet />
               </DashboardPageShell>
             </ErrorBoundary>
@@ -79,9 +73,9 @@ export function DashboardLayout() {
             <div className="dashboard-content">
               <ErrorBoundary>
                 <DashboardPageShell>
-                  {showCommercialBanners && <PlanChangeBanner />}
-                  {showCommercialBanners && <FeedbackPromptBanner />}
-                  {showCommercialBanners && <TokenBalanceBanner />}
+                  <PlanChangeBanner />
+                  <FeedbackPromptBanner />
+                  <TokenBalanceBanner />
                   <ClientFacingOutlet />
                 </DashboardPageShell>
               </ErrorBoundary>

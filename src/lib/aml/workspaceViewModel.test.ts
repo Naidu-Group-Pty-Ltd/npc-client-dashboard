@@ -531,7 +531,9 @@ describe("deriveAmlNextAction", () => {
       screening: { subjects: [] },
       monitoring: { open_alerts: [], open_edd: [], overdue_review_count: 0 },
       documents: { requirements: [] },
-      funding: { sources: [] },
+      // Settled, not merely empty. Zero recorded sources is now stage 6's
+      // own outstanding work rather than silence the ranking walks past.
+      funding: { sources: [{ verified: true }] },
     });
     expect(action.key).toBe("awaiting_client");
     expect(action.attention).toBe("waiting");

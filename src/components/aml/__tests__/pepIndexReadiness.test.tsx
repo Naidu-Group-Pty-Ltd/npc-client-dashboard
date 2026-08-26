@@ -64,6 +64,50 @@ describe("a loaded index", () => {
   });
 });
 
+describe("two registers, reported on their own terms", () => {
+  const aph = () => ({
+    ...describeCoverage("aph_commonwealth_parliament", {
+      entry_count: 225, source_as_at: "2026-08-20",
+      completed_at: "2026-08-20T08:00:00.000Z", status: "succeeded",
+      detail: { distinct_offices: 275, sample_offices: ["Prime Minister"] },
+    }),
+  });
+
+  it("never adds the entry counts together", async () => {
+    /*
+     * The two registers overlap almost completely at the federal level —
+     * every sitting member of Parliament is in both — so 225 + 10,558 is a
+     * count of ROWS wearing the label of a count of PEOPLE.
+     *
+     * That is the overstatement this index already shipped once, when a load
+     * holding two offices read identically to one holding seven hundred.
+     */
+    pepOfficeholderIndexStatus.mockResolvedValue({
+      coverage: [aph(), coverage()], usable: true,
+    });
+    render(<PepIndexReadiness />);
+    await screen.findByText(/office-holder index ready/i);
+    const text = document.body.textContent ?? "";
+    expect(text).toMatch(/225 people/);
+    expect(text).toMatch(/10,558 people/);
+    expect(text).not.toMatch(/10,783/);        // the sum
+    expect(text).not.toMatch(/951 offices/);   // the sum of offices
+  });
+
+  it("names a register that did not load, rather than omitting it", async () => {
+    // "Index ready" while half of it is missing tells an operator the search
+    // reached further than it did.
+    pepOfficeholderIndexStatus.mockResolvedValue({
+      coverage: [aph(), coverage({ entryCount: 0, lastSyncStatus: "failed" })],
+      usable: true,
+    });
+    render(<PepIndexReadiness />);
+    await screen.findByText(/office-holder index ready/i);
+    expect(screen.getByText(/not loaded, and therefore not searched/i)).toBeTruthy();
+    expect(document.body.textContent).toContain("Australian public office holders");
+  });
+});
+
 describe("an index that is not loaded", () => {
   it("says so, and does not imply the step is blocked", async () => {
     // The determination is made from the sources an operator checks. This

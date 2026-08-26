@@ -127,6 +127,85 @@ way, but the guard cannot tell one from the other and should not have to. So the
 write boundary owns both prunes behind `normaliseQuestionnaireSection`, and the
 caller applies one neutrally-named rule.
 
+## "Blocked" means something is in the way, and it must say what
+
+### What was on the screen
+
+Stage 5 showed **Record the PEP determination — Blocked**, in red, with a
+warning marker — while the case rail asked the operator to record exactly that
+determination and the dialog behind it worked perfectly.
+
+Nothing was blocking it. The determination was owed and had not been made,
+which is *work*.
+
+### Two causes, and both had to go
+
+**`pepStep` had no word for "your turn".** Its states were `not_required`,
+`blocked` and `done`, so a determination that had not been made could only be
+`blocked`. An operator was sent to look for an obstacle that did not exist.
+
+**The promotion to `current` refused to relabel it.** The rule was:
+
+```js
+state: s.key === currentKey && !isOutstanding(s.state) ? "current" : s.state
+```
+
+which only ever upgraded a step that was *already settled*. A step whose own
+arithmetic said `blocked` is outstanding, so the one step the server was
+pointing at kept its red badge **because** it was the outstanding one. The
+comment above that line said it existed to stop a step rendering "Later" under
+a button the operator must press; the guard produced the same contradiction one
+state further along.
+
+### The rule now
+
+The vocabulary gained the missing state, and `blocked` gained an obligation:
+
+| state | means |
+| --- | --- |
+| `current` — *Do this now* | the server is asking for it and nothing is in the way |
+| `outstanding` — *Still to do* | owed, not done, and not the step being pointed at |
+| `blocked` — *Blocked* | something must happen first, and **`blockedBy` names it** |
+
+The guard is now `!s.blockedBy`. A step with nothing to name cannot be blocked,
+and a blocked step renders its blocker on the card — a red badge with no
+obstacle named is an instruction to go and look for one.
+
+Per step, the only genuine blockers are: **parties** — no parties reconciled
+yet; **sanctions** — the automated method is unavailable; **PEP** — nobody
+enrolled to determine against, which points back at the parties step;
+**resolve** — a confirmed match, which is a finding and is resolved by
+escalation rather than by completing the stage around it. A candidate merely
+awaiting adjudication is `outstanding`: a person opens it, looks, and confirms
+or dismisses it.
+
+Relabelling settles nothing. `outstanding` and `current` both count as
+outstanding, so the stage stays open and `complete` stays false — the change is
+what the operator is told, not what the stage concludes.
+
+### A scope decision must not be settled by row order
+
+Two adjacent hardenings, from reading the same case.
+
+`deriveAmlScreeningScope` resolved the server's scope decisions with
+`new Map(serverScopes.map((x) => [x.scope, x]))` — last wins, over a `SELECT`
+with no `ORDER BY`. It now resolves a contradiction **toward the obligation**:
+sanctions bind every dealing under the Charter of the UN Act 1945 and the
+Autonomous Sanctions Act 2011 and cannot be stood down by risk, so a
+disagreement must never read as an exemption. Being wrong that way costs a
+screening nobody strictly owed; being wrong the other way is a dealing that was
+never screened.
+
+The recorder used the same last-wins shape and then superseded only the row it
+had kept. No case in production holds duplicate live scope rows, and this path
+cannot create them alone — it always supersedes before inserting. What it did
+not survive is a **race**: `sync_screening_stage` runs on every page load, so
+two tabs on one case could both read the single live row, both supersede it and
+both insert, leaving a permanent pair that disagree. Every live row for a scope
+is now collected, the newest is the decision, and older ones are superseded
+whether or not the decision changed — so a case that ever acquires duplicates
+repairs itself on the next sync.
+
 ## The deployment order is not interchangeable
 
 `aml-cases` and `aml-client-portal` change here, and only ONE of them may ship

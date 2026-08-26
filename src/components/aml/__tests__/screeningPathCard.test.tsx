@@ -166,7 +166,7 @@ describe("obligation is never dressed as a result", () => {
 describe("the classification question", () => {
   it("asks for confirmation on the perimeter step", () => {
     renderPath();
-    const step = screen.getByText(/confirm what this case is/i).closest("li")!;
+    const step = screen.getByText(/confirm what kind of case this is/i).closest("li")!;
     expect(within(step).getByText(/confirm this still holds/i)).toBeTruthy();
   });
 
@@ -178,14 +178,14 @@ describe("the classification question", () => {
 
   it("routes the confirmation to the classification dialog", () => {
     renderPath();
-    fireEvent.click(screen.getByText(/confirm what this case is/i));
+    fireEvent.click(screen.getByText(/confirm what kind of case this is/i));
     fireEvent.click(screen.getByRole("button", { name: /confirm or change the classification/i }));
     expect(onReviewPerimeter).toHaveBeenCalledTimes(1);
   });
 
   it("offers no classification control to somebody who may not record one", () => {
     renderPath({ actor: { canWrite: true, isReviewer: false, isMlro: false } });
-    fireEvent.click(screen.getByText(/confirm what this case is/i));
+    fireEvent.click(screen.getByText(/confirm what kind of case this is/i));
     expect(screen.queryByRole("button", { name: /classification/i })).toBeNull();
     expect(screen.getByText(/a reviewer or the MLRO records this classification/i)).toBeTruthy();
   });

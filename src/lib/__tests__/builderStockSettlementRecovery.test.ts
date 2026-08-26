@@ -36,6 +36,7 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import {
   readOutstandingUploads, readSettlementReadiness, runSettlementTick,
+  settleUploadSourceImages,
   type SettlementCandidate,
 } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
 import { PROVENANCE_VERSION } from '../../../supabase/functions/_shared/builderStock/sourceImages';
@@ -538,6 +539,98 @@ describe('8 — nothing stands in for a refused primary', () => {
 // ---------------------------------------------------------------------------
 // The deployment-order defect itself
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 9 — A REFUSAL WRITTEN AFTER THE REPAIR SETTLED IS STILL A REFUSAL
+// ---------------------------------------------------------------------------
+
+describe('9 — a conviction reached after the repair settled still gets repaired', () => {
+  /*
+   * THE DEFECT. The overlay repair only ever picks up an image the display gate
+   * REFUSED. Once its marker sits at the current version, an image refused
+   * afterwards is work the marker says does not exist: no derivative is built,
+   * no clearance is sought, and the card stays blank in front of the builder's
+   * own photograph with every marker reading "settled" and nothing outstanding
+   * anywhere.
+   *
+   * It could not strand anything while one tick did all three phases in order.
+   * It can now that they are one-per-tick and the order rotates.
+   */
+  const uploadRow = (over: Partial<Row> = {}): Row => ({
+    id: 'upload-1',
+    organisation_id: ORG,
+    source_type: 'file',
+    original_filename: 'stock.csv',
+    storage_bucket: 'builder-stock-sources',
+    storage_path: 'org/sources/stock.csv',
+    deleted_at: null,
+    source_images_settled_version: PROVENANCE_VERSION,
+    marketplace_eligibility_settled_version: null,
+    image_sanitization_settled_version: SANITIZATION_VERSION,
+    ...over,
+  });
+
+  /** Only the eligibility phase runs, which is what a rotated tick does. */
+  const eligibilityTick = async (db: ReturnType<typeof fakeDb>) =>
+    await settleUploadSourceImages(
+      db as never,
+      {
+        organisationId: ORG, uploadId: 'upload-1',
+        needsProvenance: false, needsSanitization: false,
+      },
+    );
+
+  const worldWith = async (bytes: Uint8Array, id: string) => {
+    const row = image({ id, storage_path: `org/items/item-1/source/${id}.png` });
+    return fakeDb({
+      uploads: [uploadRow()],
+      images: [row],
+      items: [item({ primary_image_id: id })],
+      objects: { [row.storage_path as string]: bytes },
+    });
+  };
+
+  it('re-opens the repair when the sweep refuses a picture', async () => {
+    const db = await worldWith(await annotatedBytes(), 'image-tile');
+    const outcome = await eligibilityTick(db);
+
+    expect(outcome.eligibility?.rejected).toBe(1);
+    // The refusal is new work for a repair that had reported itself finished.
+    expect(db.tables.builder_stock_uploads[0].image_sanitization_settled_version).toBeNull();
+    // And the phase that DID run still records its own answer.
+    expect(db.tables.builder_stock_uploads[0].marketplace_eligibility_settled_version)
+      .toBe(MARKETPLACE_ELIGIBILITY_VERSION);
+  });
+
+  it('and leaves it alone when nothing was refused', async () => {
+    // The rule is "a conviction was added", not "a sweep ran". Clearing the
+    // marker on every pass would stop the sweep ever finishing.
+    const db = await worldWith(await cleanBytes(), 'image-clean');
+    const outcome = await eligibilityTick(db);
+
+    expect(outcome.eligibility?.rejected).toBe(0);
+    expect(db.tables.builder_stock_uploads[0].image_sanitization_settled_version)
+      .toBe(SANITIZATION_VERSION);
+  });
+
+  it('so the upload comes back to the sweep with repair work outstanding', async () => {
+    const db = await worldWith(await annotatedBytes(), 'image-tile');
+    await eligibilityTick(db);
+
+    const outstanding = await readOutstandingUploads(db as never, {
+      eligibilityTarget: MARKETPLACE_ELIGIBILITY_VERSION,
+      sanitizationTarget: SANITIZATION_VERSION,
+      limit: 10,
+    });
+    const row = outstanding.rows.find((candidate) => candidate.id === 'upload-1');
+    expect(row).toBeDefined();
+    // Selected BY the repair marker: it is the only one of the three that is
+    // now behind, which is exactly what the re-open was for.
+    expect(row!.image_sanitization_settled_version).toBeNull();
+    expect(row!.marketplace_eligibility_settled_version).toBe(MARKETPLACE_ELIGIBILITY_VERSION);
+    expect(row!.source_images_settled_version).toBe(PROVENANCE_VERSION);
+  });
+});
 
 describe('a missing migration is an operational failure, never a quiet success', () => {
   it('names every piece of schema that is absent', async () => {

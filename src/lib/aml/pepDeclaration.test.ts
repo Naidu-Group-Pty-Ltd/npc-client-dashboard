@@ -223,7 +223,13 @@ describe("the stage carries it", () => {
     const step = deriveScreeningPath({ sync: sync(declaration), position })
       .steps.find((s) => s.key === "pep")!;
     expect(step.summary).not.toMatch(/customer declared/i);
-    expect(step.state).toBe("blocked");
+    /*
+     * The step the server is asking for reads "Do this now". It read
+     * "Blocked" until the promotion stopped being guarded on whether the
+     * step was already settled — a determination that is owed and has not
+     * been made is the operator's turn, not an obstruction.
+     */
+    expect(step.state).toBe("current");
   });
 
   it("a server that sends nothing produces no declaration, not a no", () => {

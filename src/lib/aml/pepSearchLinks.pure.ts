@@ -40,6 +40,16 @@ export interface PepSearch {
   searchTerms: string;
   /** Australian domestic sources first; a foreign PEP is not found here. */
   coverage: "domestic" | "general";
+  /**
+   * An official REGISTER, or a general web search.
+   *
+   * The distinction is rendered, because they are not the same kind of
+   * evidence. A register is published by the body that maintains the office;
+   * a web search is a starting point whose result depends on the day, the
+   * engine and the operator's wording. AUSTRAC accepts internet research —
+   * it is not the same as saying a search engine is a source of record.
+   */
+  tier: "register" | "open_web";
 }
 
 /** Trimmed, de-duplicated, non-empty names to search on. */
@@ -81,19 +91,36 @@ export function buildPepSearches(args: {
       purpose: "Commonwealth office holders, senior officials and government board "
         + "appointments.",
       kind: "government_directory",
-      url: `https://www.directory.gov.au/search/node?keys=${enc(primary)}`,
+      /*
+       * `?keywords=…&op=Search`. This was `/search/node?keys=…`, a Drupal 7
+       * path the site no longer serves — every operator who followed it got
+       * "Page not found" from the most authoritative source on the list.
+       * Confirmed against the live site's own search URLs.
+       */
+      url: `https://www.directory.gov.au/search?keywords=${enc(primary)}&op=Search`,
       searchTerms: terms,
       coverage: "domestic",
+      tier: "register",
     },
     {
       id: "aph_members",
       label: "Parliament of Australia — senators and members",
-      purpose: "Current and recent federal parliamentarians.",
+      /*
+       * This is also where a candidate from the office-holder index is
+       * confirmed: the index is loaded from Parliament's own published
+       * register, and every APH row's `confirm_url` points back here. It
+       * stays on the manual list because the index holds only who sits
+       * TODAY — a former member is not in it, and this search reaches
+       * further than the file does.
+       */
+      purpose: "Senators and members currently sitting, and the place to confirm a "
+        + "candidate the index returned.",
       kind: "parliamentary_register",
       url: "https://www.aph.gov.au/Senators_and_Members/Parliamentarian_Search_Results"
         + `?q=${enc(primary)}`,
       searchTerms: terms,
       coverage: "domestic",
+      tier: "register",
     },
     {
       id: "abn_lookup",
@@ -104,30 +131,44 @@ export function buildPepSearches(args: {
       url: `https://abr.business.gov.au/Search/ResultsActive?SearchText=${enc(primary)}`,
       searchTerms: terms,
       coverage: "domestic",
+      tier: "register",
     },
     {
+      id: "parlinfo",
+      label: "ParlInfo — the parliamentary record",
+      purpose: "Hansard, committee papers and tabled documents naming the subject. The "
+        + "official record rather than a report of it.",
+      kind: "parliamentary_register",
+      url: "https://parlinfo.aph.gov.au/parlInfo/search/summary/summary.w3p;query="
+        + enc(primary),
+      searchTerms: terms,
+      coverage: "domestic",
+      tier: "register",
+    },
+    /*
+     * ── One general web search, and it is labelled as one ────────────────
+     * AUSTRAC's guidance accepts internet research, and it is genuinely the
+     * only route to a foreign office or a family connection no register
+     * publishes. But it is not a register, and the list used to end with two
+     * DuckDuckGo rows sitting beside DFAT and Parliament as though they were
+     * peers — which is how a screening ends up resting on whatever a search
+     * engine happened to return that morning.
+     *
+     * So: one row, `open_web`, rendered separately and after the registers.
+     */
+    {
       id: "open_source",
-      label: "Open-source search — public office",
-      purpose: "Public office, appointment or political role, in the subject's own name.",
+      label: "General web search",
+      purpose: "A starting point for a public office, appointment or political role "
+        + "that no register above publishes. Not a source of record.",
       kind: "open_source",
-      url: "https://duckduckgo.com/?q="
+      url: "https://www.google.com/search?q="
         + enc(`"${primary}" (minister OR "member of parliament" OR judge OR ambassador `
           + `OR "chief executive" OR board OR government)${jurisdiction ? ` ${jurisdiction}` : ""}`),
       searchTerms: `${terms} + public office terms`
         + (jurisdiction ? ` (jurisdiction: ${jurisdiction})` : ""),
       coverage: "general",
-    },
-    {
-      id: "media",
-      label: "Media search",
-      purpose: "Reporting that connects the subject to a prominent public function, or "
-        + "to somebody who holds one.",
-      kind: "media",
-      url: "https://duckduckgo.com/?q="
-        + enc(`"${primary}" (politician OR government OR corruption OR appointed)`)
-        + "&iar=news",
-      searchTerms: `${terms} + media terms`,
-      coverage: "general",
+      tier: "open_web",
     },
   ];
 

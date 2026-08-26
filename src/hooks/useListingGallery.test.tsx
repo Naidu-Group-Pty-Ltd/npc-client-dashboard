@@ -21,7 +21,7 @@ vi.mock('@/lib/imageKind', async () => {
 });
 const verdictsRef = verdicts;
 
-const image = (url: string, extra: Partial<StoredListingImage> = {}): StoredListingImage =>
+const image = (url: string, extra: Partial<StoredListingImage> & Record<string, unknown> = {}): StoredListingImage =>
   ({ url, position: 0, origin: 'scraped', ...extra }) as StoredListingImage;
 
 function Probe({ images }: { images: StoredListingImage[] }) {

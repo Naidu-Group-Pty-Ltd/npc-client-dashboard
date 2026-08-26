@@ -15,6 +15,7 @@ import { Link } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { FundingEvidencePanel } from "@/components/aml/FundingEvidencePanel";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -1469,7 +1470,13 @@ function OwnershipGraph({ entity, owners, reps }: {
  * discrepancy engine as the standalone page. Read-only here — the
  * page owns entitlement gate + write actions.
  */
-export function FundingFinanceTab({ caseId }: { caseId: string }) {
+export function FundingFinanceTab({ caseId, canWrite = false, onChanged, onContinue }: {
+  caseId: string;
+  canWrite?: boolean;
+  onChanged?: () => void;
+  /** Opens Stage 7 · Submission review, once the stage is settled. */
+  onContinue?: () => void;
+}) {
   const [loading, setLoading] = useState(true);
   const [comparisons, setComparisons] = useState<AmlFinanceComparison[]>([]);
   const [discrepancies, setDiscrepancies] = useState<AmlFinanceDiscrepancy[]>([]);
@@ -1505,6 +1512,17 @@ export function FundingFinanceTab({ caseId }: { caseId: string }) {
   );
 
   return (
+    <div className="space-y-4">
+      {/*
+        ── The stage's own work, first ──────────────────────────────────
+        "Open funding & finance" used to land here with nothing actionable:
+        the card below is a read-only view of the finance module's
+        comparisons, and the actual Stage 6 job — record and verify source
+        of funds — had no surface anywhere. The button now opens the work.
+      */}
+      <FundingEvidencePanel
+        caseId={caseId} canWrite={canWrite} onChanged={onChanged} onContinue={onContinue}
+      />
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3">
         <div>
@@ -1560,6 +1578,7 @@ export function FundingFinanceTab({ caseId }: { caseId: string }) {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }
 

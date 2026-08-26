@@ -6,6 +6,10 @@ const functionSource = readFileSync(
   resolve(process.cwd(), "supabase/functions/mission-control-balance/index.ts"),
   "utf8",
 );
+const missionControlSource = readFileSync(
+  resolve(process.cwd(), "supabase/functions/_shared/missionControl.ts"),
+  "utf8",
+);
 
 describe("Mission Control balance resilience security contract", () => {
   it("keeps the cache fallback behind authentication and exact-tenant scoping", () => {
@@ -23,5 +27,14 @@ describe("Mission Control balance resilience security contract", () => {
     expect(functionSource).toMatch(/source:\s*"live"/);
     expect(functionSource).toMatch(/source:\s*"cache"/);
     expect(functionSource).toContain('"cache-control": "private, no-store"');
+  });
+
+  it("bounds the upstream balance request so the cache fallback remains reachable", () => {
+    const getBalanceSource = missionControlSource.slice(
+      missionControlSource.indexOf("export async function getBalance"),
+      missionControlSource.indexOf("export async function getTopupPacks"),
+    );
+
+    expect(getBalanceSource).toContain("AbortSignal.timeout(8_000)");
   });
 });

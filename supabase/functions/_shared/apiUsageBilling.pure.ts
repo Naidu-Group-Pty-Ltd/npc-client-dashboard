@@ -100,6 +100,16 @@ const BINDINGS: Record<string, ServiceBinding> = {
   api2pdf: { secretName: "API2PDF_API_KEY", unit: "render", quantityFrom: "requests" },
   weasyprint: { secretName: "WEASYPRINT_SERVICE_TOKEN", unit: "render", quantityFrom: "requests" },
   pdfparse: { secretName: "PDF_PARSE_SERVICE_TOKEN", unit: "document", quantityFrom: "requests" },
+  // Ours like the two above: the Builder Stock overlay-inpaint worker — a
+  // Cloudflare Worker in front of Workers AI on the workspace's own account.
+  // The token is the workspace's own service secret, never a forwarded vendor
+  // key, so Mission Control rates the usage at nothing — the binding exists so
+  // the call is visible in the ledger rather than untracked.
+  builderstockimageworker: {
+    secretName: "BUILDER_STOCK_IMAGE_WORKER_TOKEN",
+    unit: "render",
+    quantityFrom: "requests",
+  },
   docusign: { secretName: "DOCUSIGN_INTEGRATION_KEY", unit: "document", quantityFrom: "requests" },
 
   // ── Compliance ──

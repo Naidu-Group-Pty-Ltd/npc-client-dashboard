@@ -88,9 +88,25 @@ function corsFor(req: Request) {
   return origin ? { ...baseCors, "Access-Control-Allow-Origin": origin } : baseCors;
 }
 
-function rebuildRequest(req: Request, body: any): Request {
-  if (body === undefined) return req;
+/**
+ * Header carrying the epoch-ms at which this wrapper first saw the request.
+ *
+ * The wrapper's own work — auth, the price lookup, the reserve — happens before
+ * the handler starts, so a handler that budgets its wall clock from its own
+ * first line is blind to however long that took. Usually ~4.5s; when Mission
+ * Control stalls it has been 115s, which walked `compare-investment-reports`
+ * straight through the browser's 150s abort while every individual piece
+ * "worked". Server-side only: the header is set on the rebuilt internal
+ * request, never sent by a browser, so no CORS allow-list is involved.
+ */
+export const METERING_RECEIVED_AT_HEADER = "x-metering-received-at";
+
+function rebuildRequest(req: Request, body: any, receivedAt: number): Request {
   const headers = new Headers(req.headers);
+  headers.set(METERING_RECEIVED_AT_HEADER, String(receivedAt));
+  if (body === undefined) {
+    return new Request(req.url, { method: req.method, headers });
+  }
   return new Request(req.url, { method: req.method, headers, body: JSON.stringify(body) });
 }
 
@@ -125,12 +141,13 @@ export function withReportMetering(
   return async (req: Request) => {
     if (req.method === "OPTIONS") return handler(req);
 
+    const receivedAt = Date.now();
     let body: any = undefined;
     try {
       const text = await req.text();
       body = text ? JSON.parse(text) : undefined;
     } catch { body = undefined; }
-    const forwardReq = rebuildRequest(req, body);
+    const forwardReq = rebuildRequest(req, body, receivedAt);
     const cors = corsFor(req);
 
     let plan: MeteringPlan | null = null;

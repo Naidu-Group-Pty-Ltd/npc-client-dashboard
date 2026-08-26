@@ -287,10 +287,17 @@ const portalPage2 = readFileSync("src/pages/portal/PortalAml.tsx", "utf8");
 
 describe("submission review", () => {
   it("returns an immutable package and never writes the snapshot", () => {
-    const block = casesFn.slice(casesFn.indexOf("case 'get_submission_review'"), casesFn.indexOf("case 'accept_submission'"));
+    // The package is composed once, in `composeSubmissionReview` — the same
+    // composition answers the screen and renders the stored record
+    // (SUBMISSION_RECORD.md), so the pins read the composer.
+    const block = casesFn.slice(
+      casesFn.indexOf("async function composeSubmissionReview"),
+      casesFn.indexOf("const __corsWrappedHandler"));
     for (const key of ["consent_evidence", "differences", "missing_mandatory", "risk", "related_parties", "verification", "screening"]) {
       expect(block).toContain(key);
     }
+    expect(casesFn).toContain("case 'get_submission_review'");
+    expect((casesFn.match(/await composeSubmissionReview\(/g) ?? []).length).toBe(2);
     const decide = casesFn.slice(casesFn.indexOf("case 'accept_submission'"), casesFn.indexOf("case 'review_document_v2'"));
     expect(decide).not.toMatch(/update\(\{[^}]*snapshot/s);
     expect(decide).toContain("service_gate_unchanged: true");
@@ -348,8 +355,13 @@ describe("document rejection and replacement", () => {
   it("lineage columns exist and internal notes are staff-only in the review package", () => {
     expect(completionMigration).toContain("previous_document_id");
     expect(completionMigration).toContain("replacement_document_id");
-    const block = casesFn.slice(casesFn.indexOf("case 'get_submission_review'"), casesFn.indexOf("case 'accept_submission'"));
-    expect(block).toContain("canWrite || roles.has('auditor') ? d.internal_review_note : null");
+    // The masking rule lives in the shared composition; the caller decides
+    // who counts as internal (staff writer or auditor) at the call site.
+    const block = casesFn.slice(
+      casesFn.indexOf("async function composeSubmissionReview"),
+      casesFn.indexOf("const __corsWrappedHandler"));
+    expect(block).toContain("includeInternalNotes ? d.internal_review_note : null");
+    expect(casesFn).toContain("canWrite || roles.has('auditor')");
   });
 });
 

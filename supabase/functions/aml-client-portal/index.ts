@@ -48,6 +48,12 @@ import {
 } from "../_shared/aml/providers/index.ts";
 import { callInternalFunction } from "../_shared/internalCall.ts";
 import { projectParty } from "../_shared/aml/verificationParties.pure.ts";
+// Staff-generated submission records live in `aml.documents` beside the
+// client's own files but are never theirs to see: they carry screening
+// states and risk readings (a tipping-off hazard). Both the listing and the
+// signing op below refuse rows carrying this mark; clients cannot write
+// `metadata`, so the mark cannot be forged from this side.
+import { SUBMISSION_RECORD_DOCUMENT_KIND } from "../_shared/aml/submissionRecord.pure.ts";
 import {
   CLIENT_ACTION_CODES as SHARED_CLIENT_ACTION_CODES,
   QUESTIONNAIRE_SECTION_CODES,
@@ -2551,10 +2557,20 @@ const __corsWrappedHandler = async (req: Request) => {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ documents: [] });
         const { data } = await admin.schema('aml').from('documents')
-          .select('id, requirement_id, filename, display_name, mime_type, size_bytes, status, uploaded_at, rejection_reason, requirement:requirement_id (code, label)')
+          .select('id, requirement_id, filename, display_name, mime_type, size_bytes, status, uploaded_at, rejection_reason, metadata, requirement:requirement_id (code, label)')
           .eq('case_id', c.id).neq('status', 'deleted')
           .order('uploaded_at', { ascending: false });
-        return jsonResponse({ documents: data ?? [] });
+        /*
+         * Staff submission records are filtered in code, not with a
+         * PostgREST `.neq()` on `metadata->>kind` — in SQL `null <> 'x'` is
+         * null, so that filter would also drop every document with no mark,
+         * which is all of the client's own files. `metadata` itself stays on
+         * this side of the response: it can carry internal context.
+         */
+        const documents = (data ?? [])
+          .filter((d: any) => d?.metadata?.kind !== SUBMISSION_RECORD_DOCUMENT_KIND)
+          .map(({ metadata: _metadata, ...d }: any) => d);
+        return jsonResponse({ documents });
       }
 
       /**
@@ -2602,14 +2618,19 @@ const __corsWrappedHandler = async (req: Request) => {
         if (!body.document_id) return jsonResponse({ error: 'document_id required' }, 400);
 
         const { data: doc } = await admin.schema('aml').from('documents')
-          .select('id, filename, storage_path, status')
+          .select('id, filename, storage_path, status, metadata')
           .eq('id', String(body.document_id))
           .eq('case_id', c.id)
           .neq('status', 'deleted')
           .maybeSingle();
         // One answer for "not yours", "not there" and "deleted". Telling them
         // apart would confirm that a document id exists on another case.
-        if (!doc) return jsonResponse({ error: 'Document not found' }, 404);
+        // A staff submission record gets the SAME answer: it never appears in
+        // the client's listing, so distinguishing it here would only confirm
+        // that a staff-only document exists.
+        if (!doc || (doc as any)?.metadata?.kind === SUBMISSION_RECORD_DOCUMENT_KIND) {
+          return jsonResponse({ error: 'Document not found' }, 404);
+        }
 
         // What storage holds against this path, for its content type alone.
         // Same `list`-with-`search` shape `confirm_upload` uses to prove an

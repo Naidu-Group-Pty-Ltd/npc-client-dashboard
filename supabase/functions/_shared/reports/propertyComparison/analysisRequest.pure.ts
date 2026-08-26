@@ -94,6 +94,88 @@ export function comparisonOutputTokens(propertyCount: number): number {
   return Math.min(COMPARISON_TOKENS_MAX, Math.max(COMPARISON_TOKENS_MIN, wanted));
 }
 
+// ── When the answer must be in ──────────────────────────────────────────────
+
+/**
+ * Wall-clock room for the model, measured from the top of the HANDLER.
+ *
+ * The same discipline `generate-investment-report` keeps with
+ * `SECTION_LOOP_BUDGET_MS`, for the same reason: an edge invocation is cut off
+ * without warning, and a run that is killed teaches its caller nothing.
+ */
+export const ANALYSIS_BUDGET_MS = 105_000;
+
+/**
+ * When the browser gives up on the whole request. `invokeSecureFunction` is
+ * called with `timeoutMs: 150000` in `PropertyComparisonModal`, and an answer
+ * the browser has already stopped waiting for is an answer nobody receives —
+ * the run on 2026-08-26 completed, stored its row and was charged nine seconds
+ * after the client aborted, and the person who asked was told it failed.
+ */
+export const CLIENT_ABORT_MS = 150_000;
+
+/**
+ * Room kept back for everything after the analysis loop: the insert, the
+ * metering commit (bounded at up to two retries against Mission Control) and
+ * writing the response itself.
+ */
+export const RESPONSE_RESERVE_MS = 20_000;
+
+/**
+ * The shortest analysis worth starting. A three-property comparison has been
+ * observed at 50–75s; under this floor an attempt cannot finish, so starting
+ * one only converts a clean, refunded failure into a timed-out charge.
+ */
+export const MIN_ANALYSIS_MS = 25_000;
+
+export interface AnalysisDeadline {
+  /** Absolute wall-clock deadline (epoch ms) for the analysis loop. */
+  deadlineAt: number;
+  /** How much of the budget is actually available, in ms. */
+  roomMs: number;
+  /** Milliseconds the request spent before the handler started. */
+  preHandlerMs: number;
+  /** True when so little room remains that no attempt can finish. */
+  tooLate: boolean;
+}
+
+/**
+ * Where the analysis loop must stop, given when the request ACTUALLY started.
+ *
+ * Two ceilings, and the earlier one wins. The handler's own budget bounds the
+ * loop the way it always has; the browser's abort bounds the whole invocation,
+ * measured from `x-metering-received-at` — the moment the metering wrapper
+ * first saw the request — because auth, the price lookup and the reserve all
+ * run before the handler's clock starts. When Mission Control is healthy that
+ * gap is ~4.5s and the first ceiling decides, exactly as before. When it
+ * stalls, the second ceiling shrinks the loop so the answer still reaches the
+ * browser — or, past `MIN_ANALYSIS_MS`, refuses to start a run whose result
+ * nobody can receive.
+ *
+ * A missing or nonsensical header (absent wrapper, clock skew) falls back to
+ * the handler's own start: the behaviour this function had before the header
+ * existed.
+ */
+export function resolveAnalysisDeadline(
+  handlerStartedAt: number,
+  meteringReceivedAt: string | number | null | undefined,
+): AnalysisDeadline {
+  const received = Number(meteringReceivedAt);
+  const requestStartedAt =
+    Number.isFinite(received) && received > 0 && received <= handlerStartedAt
+      ? received
+      : handlerStartedAt;
+  const clientCeiling = requestStartedAt + CLIENT_ABORT_MS - RESPONSE_RESERVE_MS;
+  const deadlineAt = Math.min(handlerStartedAt + ANALYSIS_BUDGET_MS, clientCeiling);
+  const roomMs = deadlineAt - handlerStartedAt;
+  return {
+    deadlineAt,
+    roomMs,
+    preHandlerMs: handlerStartedAt - requestStartedAt,
+    tooLate: roomMs < MIN_ANALYSIS_MS,
+  };
+}
+
 // ── How to ask for the shape ────────────────────────────────────────────────
 
 const numbered = { type: 'integer' } as const;

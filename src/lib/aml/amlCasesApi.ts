@@ -296,6 +296,12 @@ export const amlCasesApi = {
   /* ── Submission review (integration Stage 3/4) ── */
   getSubmissionReview: (case_id: string, version_number?: number) =>
     invoke<AmlSubmissionReview>({ op: "get_submission_review", case_id, version_number }),
+  /** Store the submission record on the case: the entirety of the review as
+   *  one inert HTML document in `aml-documents`, rendered by the same shared
+   *  module the reading view and the browser download use. Each store is a
+   *  point-in-time export — a new document, never an overwrite. */
+  storeSubmissionRecord: (case_id: string, version_number?: number) =>
+    invoke<{ document: any; content_hash: string }>({ op: "store_submission_record", case_id, version_number }),
   acceptSubmission: (submission_id: string, reason?: string) =>
     invoke<{ submission: any }>({ op: "accept_submission", submission_id, reason }),
   requestSubmissionChanges: (submission_id: string, reason: string, client_message?: string, subject?: string) =>

@@ -36,9 +36,11 @@ describe('list_documents stays portal-safe', () => {
   it('returns the projection the client contract declares, and no more', () => {
     // The columns are named explicitly rather than `select('*')` — the staff
     // function selects `*`, and copying that here would ship `storage_path`,
-    // `checksum`, `uploaded_by` and the reviewer to the browser.
+    // `checksum`, `uploaded_by` and the reviewer to the browser. `metadata`
+    // is selected ONLY to filter out staff submission records server-side,
+    // and is stripped from every row before the response.
     expect(listBranch).toContain(
-      "'id, requirement_id, filename, display_name, mime_type, size_bytes, status, uploaded_at, rejection_reason, requirement:requirement_id (code, label)'");
+      "'id, requirement_id, filename, display_name, mime_type, size_bytes, status, uploaded_at, rejection_reason, metadata, requirement:requirement_id (code, label)'");
     expect(listBranch).not.toContain("select('*')");
     // `display_name` and the requirement's code/label are client-facing by
     // construction: the client chose the one and was shown the other when
@@ -48,9 +50,23 @@ describe('list_documents stays portal-safe', () => {
   });
 
   it('never exposes a storage path, bucket or checksum', () => {
-    for (const internal of ['storage_path', 'checksum', 'uploaded_by', 'reviewed_by', 'metadata']) {
+    for (const internal of ['storage_path', 'checksum', 'uploaded_by', 'reviewed_by']) {
       expect(listBranch).not.toContain(internal);
     }
+  });
+
+  it('staff submission records are filtered out and metadata never ships', () => {
+    // The record carries screening states and risk readings — staff-only
+    // (SUBMISSION_RECORD.md). Filtered in code, because a PostgREST `.neq()`
+    // on `metadata->>kind` also drops every row where the key is absent
+    // (`null <> 'x'` is null in SQL) — which is all of the client's files.
+    expect(listBranch).toContain(
+      '.filter((d: any) => d?.metadata?.kind !== SUBMISSION_RECORD_DOCUMENT_KIND)');
+    // …and the column selected for that decision is stripped from every row
+    // before the response: the raw `data` is never what gets returned.
+    expect(listBranch).toContain('.map(({ metadata: _metadata, ...d }: any) => d)');
+    expect(listBranch).toContain('jsonResponse({ documents })');
+    expect(listBranch).not.toContain('jsonResponse({ documents: data');
   });
 
   it('is scoped to a case the caller owns and hides deleted rows', () => {

@@ -15,7 +15,9 @@
  * reconstruction and another returns something completely different, and both
  * are asserted against the original bytes.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import {
   overlayTextBoxes, readMarketingOverlay,
@@ -32,7 +34,7 @@ import {
   outsidePermittedRegionUnchanged, planInpaintPatches, resampleRgb,
 } from '../../../supabase/functions/_shared/builderStock/inpaintOverlay.pure';
 import {
-  inpaintOverlay, INPAINT_MODEL, INPAINT_PROMPT,
+  inpaintOverlay, INPAINT_MODEL,
 } from '../../../supabase/functions/_shared/builderStock/inpaintOverlay';
 import {
   sanitizeSourceImage,
@@ -56,7 +58,9 @@ import {
 
 const W = 400;
 const H = 200;
-const EDGE = 1024;
+// The private worker's wire size: the inpainting model's own native edge.
+// It was 1024 only while the transport was OpenAI's endpoint.
+const EDGE = 512;
 
 /** The sky a builder photographs a house against, with real grain. */
 function sky(width: number, height: number): Uint8Array {
@@ -286,18 +290,150 @@ describe('the model sees the builder\'s own photograph and nothing else', () => 
     });
   });
 
-  it('RULE 6 — the instruction asks for a reconstruction, never for a picture', () => {
-    const prompt = INPAINT_PROMPT.toLowerCase();
-    expect(prompt).toContain('remove the overlaid promotional graphic');
-    expect(prompt).toContain('reconstruct only the background');
-    expect(prompt).toContain('do not change anything outside the masked area');
-    expect(prompt).toContain('do not redesign the property');
-    expect(prompt).toContain('do not extend any building');
-    // Nothing that invites a nicer house than the one that was photographed.
-    for (const word of ['beautiful', 'attractive', 'modern', 'improve', 'enhance',
-      'photorealistic', 'render a', 'generate a house', 'style']) {
-      expect(prompt).not.toContain(word);
+  it('RULE 6 — there is no instruction to soften: masked reconstruction is structural', () => {
+    /*
+     * The previous transport carried a carefully-worded prompt, because a
+     * text-to-image endpoint can be ASKED for a nicer house than the one that
+     * was photographed. The instruction the inpainting model needs now lives
+     * as a pinned constant inside the Cloudflare Worker's own reviewed source
+     * — a request carrying one is refused — so the guarantee moved from
+     * wording to structure on THIS side of the wire: no prompt export exists
+     * here, and the request the transport builds carries exactly two parts.
+     */
+    expect(TRANSPORT_SOURCE).not.toContain('INPAINT_PROMPT');
+    for (const word of ['beautiful', 'attractive', 'photorealistic', 'generate a house']) {
+      expect(TRANSPORT_SOURCE.toLowerCase()).not.toContain(word);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RULES 7, 11, 12, 15 — the transport is OUR worker, and can never be OpenAI
+// ---------------------------------------------------------------------------
+
+/** The transport module's own source, read so the claims below are checkable. */
+const TRANSPORT_SOURCE = readFileSync(
+  resolve(process.cwd(), 'supabase/functions/_shared/builderStock/inpaintOverlay.ts'),
+  'utf8',
+);
+
+describe('the required production path calls our own worker and cannot call OpenAI', () => {
+  const URL_ENV = 'BUILDER_STOCK_IMAGE_WORKER_URL';
+  const TOKEN_ENV = 'BUILDER_STOCK_IMAGE_WORKER_TOKEN';
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env[URL_ENV];
+    delete process.env[TOKEN_ENV];
+  });
+
+  it('RULE 12/15 — no OpenAI endpoint, key or model exists anywhere in the module', () => {
+    /*
+     * Not "is not called" but "cannot be": the URL, the credential name and
+     * the model name are all absent from the source, so there is no code path
+     * — configured, misconfigured or fallback — that reaches a paid vendor.
+     */
+    expect(TRANSPORT_SOURCE).not.toContain('api.openai.com');
+    expect(TRANSPORT_SOURCE).not.toContain('OPENAI_API_KEY');
+    expect(TRANSPORT_SOURCE).not.toContain('gpt-image-1');
+    // Nor any other external image-edit vendor: no silent fallback exists.
+    expect(TRANSPORT_SOURCE).not.toContain('replicate.com');
+    expect(TRANSPORT_SOURCE).not.toContain('stability.ai');
+    expect(TRANSPORT_SOURCE).not.toContain('huggingface.co');
+    expect(TRANSPORT_SOURCE).not.toContain('generativelanguage.googleapis.com');
+    // The only endpoint named is our own private worker's.
+    expect(TRANSPORT_SOURCE).toContain('BUILDER_STOCK_IMAGE_WORKER_URL');
+    expect(TRANSPORT_SOURCE).toContain('/v1/inpaint');
+  });
+
+  it('RULE 11 — a deployment with no worker refuses as UNAVAILABLE and sends nothing', async () => {
+    delete process.env[URL_ENV];
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      throw new Error('no request may leave this test');
+    }) as typeof fetch;
+
+    const { badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const result = await inpaintOverlay({ width: W, height: H, pixels: badged, mask });
+
+    expect(result.ok).toBe(false);
+    if (result.ok === true) return;
+    // `inpaint_unavailable` is what the settler treats as operational: nothing
+    // recorded, the row retried — an outage is never a verdict about a picture.
+    expect(result.reason).toBe('inpaint_unavailable');
+    expect(requests).toBe(0);
+  });
+
+  it('RULE 7 — the worker receives this picture\'s patch and mask, nothing else, '
+    + 'under the internal bearer', async () => {
+    process.env[URL_ENV] = 'https://image-worker.internal.example/';
+    process.env[TOKEN_ENV] = 'internal-secret';
+
+    const { clean, badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const patches = planInpaintPatches(mask, W, H).patches;
+    expect(patches.length).toBeGreaterThan(0);
+
+    const seen: Array<{ url: string; auth: unknown; parts: string[] }> = [];
+    let call = 0;
+    globalThis.fetch = (async (input: unknown, init?: RequestInit) => {
+      const form = init?.body as FormData;
+      seen.push({
+        url: String(input),
+        auth: (init?.headers as Record<string, string> | undefined)?.Authorization ?? null,
+        parts: [...form.keys()].sort(),
+      });
+      // An honest worker: the patch as the sky actually was, PNG-encoded.
+      const patch = patches[call++];
+      const png = await encodePng(
+        resampleRgb(cropRgb(clean, W, patch, H), patch.size, patch.size, EDGE, EDGE),
+        { width: EDGE, height: EDGE, components: 3 });
+      return new Response(png as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          'content-type': 'image/png',
+          'x-inpaint-model': '@cf/runwayml/stable-diffusion-v1-5-inpainting@pinned',
+        },
+      });
+    }) as typeof fetch;
+
+    const result = await inpaintOverlay({ width: W, height: H, pixels: badged, mask });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(seen).toHaveLength(patches.length);
+    for (const request of seen) {
+      // One endpoint, ours, with the internal credential — and exactly two
+      // parts: the image and its mask. No prompt, no reference, no conditioning.
+      expect(request.url).toBe('https://image-worker.internal.example/v1/inpaint');
+      expect(request.auth).toBe('Bearer internal-secret');
+      expect(request.parts).toEqual(['image', 'mask']);
+    }
+
+    // The worker's own statement of what ran becomes the recorded model.
+    expect(result.model).toBe('@cf/runwayml/stable-diffusion-v1-5-inpainting@pinned');
+
+    // And the whole-frame guarantee held across the real composite.
+    const weights = blendWeights(mask, W, H);
+    expect(outsidePermittedRegionUnchanged(badged, result.pixels, weights).ok).toBe(true);
+  });
+
+  it('RULE 11 — a worker that answers 503 is a FAILED repair, not a verdict', async () => {
+    process.env[URL_ENV] = 'https://image-worker.internal.example';
+    process.env[TOKEN_ENV] = 'internal-secret';
+    globalThis.fetch = (async () =>
+      new Response('overloaded', { status: 503 })) as typeof fetch;
+
+    const { badged } = badgedPicture();
+    const mask = maskFor(badged);
+    const result = await inpaintOverlay({ width: W, height: H, pixels: badged, mask });
+
+    expect(result.ok).toBe(false);
+    if (result.ok === true) return;
+    expect(result.reason).toBe('inpaint_failed');
   });
 });
 

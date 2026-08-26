@@ -39,6 +39,12 @@ import {
   type ClientPickerStatus,
 } from "../_shared/aml/clientSearchMatch.pure.ts";
 import { sanitiseDocumentName } from "../_shared/aml/documentNaming.pure.ts";
+// The submission record: one structure, three presentations (read on screen,
+// downloaded, stored on the case). Shared with the browser so what the
+// reviewer read and what the case retains cannot disagree.
+import {
+  SUBMISSION_RECORD_DOCUMENT_KIND, buildSubmissionRecord, renderSubmissionRecordHtml,
+} from "../_shared/aml/submissionRecord.pure.ts";
 import {
   processScreeningEvent, recordTechnicalFailure,
 } from "../cross-portal-outbox-worker/screeningConsumer.ts";
@@ -712,6 +718,175 @@ async function generateCaseReference(admin: any): Promise<string> {
     .ilike('case_reference', `${prefix}%`);
   const seq = String((count ?? 0) + 1).padStart(5, '0');
   return `${prefix}${seq}`;
+}
+
+/**
+ * The complete submission review for one case, composed once.
+ *
+ * `get_submission_review` answers the screen from it and
+ * `store_submission_record` renders the stored record from it — the same
+ * queries, the same staleness reading, the same first-submission rule. Two
+ * compositions would be two opinions about what the review contains, and the
+ * stored record's whole value is that it says what the screen said.
+ */
+async function composeSubmissionReview(
+  admin: any,
+  caseId: string,
+  versionNumber: number | null,
+  includeInternalNotes: boolean,
+): Promise<{ status: number; payload: any }> {
+  const { data: caseRow } = await admin.schema('aml').from('cases')
+    .select('*').eq('id', caseId).maybeSingle();
+  if (!caseRow) return { status: 404, payload: { error: 'Case not found' } };
+
+  const { data: versions } = await admin.schema('aml').from('submission_versions')
+    .select('*').eq('case_id', caseId).order('version_number', { ascending: false });
+  const all = versions ?? [];
+  const current = versionNumber ? all.find((v: any) => v.version_number === versionNumber) : all[0];
+  if (!current) {
+    return { status: 200, payload: { submission: null, versions: [], message: 'No client submission yet.' } };
+  }
+  const previous = all.find((v: any) => v.version_number < current.version_number) ?? null;
+
+  const snap = (current.snapshot ?? {}) as any;
+  /*
+   * Only diff when there is a previous version to differ FROM.
+   *
+   * This compared against `previous?.snapshot ?? {}`, so a FIRST
+   * submission was diffed against nothing: every answered field became
+   * a "change", the diff came back material, and
+   * `material_information_changed` joined the risk-stale reasons — the
+   * screen then showed a red "20 · material" badge directly above the
+   * sentence "This is the first submission." A first submission is not
+   * changed information; it is the information.
+   */
+  const prevSnap = (previous?.snapshot ?? {}) as any;
+  const diff = previous
+    ? diffSubmissions(snap.sections ?? [], prevSnap.sections ?? [])
+    : [];
+
+  const [{ data: reqs }, { data: docs }, { data: consents }, { data: recon },
+         { data: checks }, { data: screening }, { data: openReqs }, { data: assessment },
+         { data: pepDets }] = await Promise.all([
+    admin.schema('aml').from('document_requirements').select('*').eq('case_id', caseId),
+    admin.schema('aml').from('documents')
+      .select('id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, reviewed_at, client_safe_rejection_reason, internal_review_note, version_number, previous_document_id, replacement_document_id, metadata')
+      .eq('case_id', caseId).order('uploaded_at', { ascending: false }),
+    admin.schema('aml').from('consents').select('kind, version, accepted_at, document_hash').eq('case_id', caseId),
+    admin.schema('aml').from('party_reconciliation_items').select('*').eq('case_id', caseId),
+    admin.schema('aml').from('verification_checks')
+      .select('id, party_id, party_label, check_type, status, processing_status, attempt_consumed, authoritative, execution_mode, provider, completed_at, provider_error_category')
+      .eq('case_id', caseId).order('created_at', { ascending: false }),
+    admin.schema('aml').from('party_screening_subjects').select('*').eq('case_id', caseId),
+    admin.schema('aml').from('client_requests').select('id, kind, subject, status, action_code, created_at')
+      .eq('case_id', caseId).in('status', ['open', 'responded']),
+    admin.schema('aml').from('risk_assessments').select('id, created_at, rating, score')
+      .eq('case_id', caseId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    admin.schema('aml').from('pep_determinations')
+      .select('id, determined_at').eq('case_id', caseId),
+  ]);
+
+  /*
+   * A stored submission record is an export OF this review, never evidence
+   * IN it: listing it among the client's documents would make every stored
+   * record change the next one, and would count a staff export as client
+   * evidence. Filtered in code — a PostgREST `.neq()` on `metadata->>kind`
+   * would also drop every row where the key is absent, because in SQL
+   * `null <> 'x'` is null.
+   */
+  const evidenceDocs = (docs ?? []).filter(
+    (d: any) => d?.metadata?.kind !== SUBMISSION_RECORD_DOCUMENT_KIND,
+  );
+
+  // Risk staleness: any canonical verification outcome or reconciliation
+  // change after the latest assessment makes it stale, with reasons.
+  const staleReasons: string[] = [];
+  if (assessment?.created_at) {
+    const since = new Date(assessment.created_at).getTime();
+    if ((checks ?? []).some((c: any) => c.completed_at && new Date(c.completed_at).getTime() > since)) staleReasons.push('verification_changed');
+    if ((recon ?? []).some((r: any) => new Date(r.updated_at ?? r.created_at).getTime() > since)) staleReasons.push('party_reconciliation_changed');
+    if ((screening ?? []).some((s: any) => s.adjudicated_at && new Date(s.adjudicated_at).getTime() > since)) staleReasons.push('screening_adjudicated');
+    if ((pepDets ?? []).some((d: any) => d.determined_at && new Date(d.determined_at).getTime() > since)) staleReasons.push('pep_determination_recorded');
+    if (new Date(current.submitted_at).getTime() > since) staleReasons.push('new_submission');
+    if (submissionDiffIsMaterial(diff)) staleReasons.push('material_information_changed');
+  } else {
+    staleReasons.push('no_assessment');
+  }
+
+  const missing: string[] = [];
+  for (const r of (reqs ?? [])) {
+    if (r.required && !['uploaded', 'accepted'].includes(r.status)) missing.push(`document:${r.code}`);
+  }
+  for (const r of (recon ?? [])) {
+    if (r.resolution_status === 'open') missing.push(`party_reconciliation:${r.declared_name}`);
+  }
+  // Every non-terminal state is outstanding — queued and processing are
+  // work not yet done, and a technical error must stay outstanding and
+  // retryable, never read as clear. A satisfied screening past its
+  // refresh date is outstanding again. (Shared rule: partyScreening.pure.ts.)
+  const nowIso = new Date().toISOString();
+  for (const s of (screening ?? [])) {
+    if (isPartyScreeningMissing(s, nowIso)) missing.push(`screening:${s.screened_name}`);
+  }
+
+  return { status: 200, payload: {
+    case: {
+      id: caseRow.id, reference: caseRow.case_reference, subject: caseRow.subject_display_name,
+      status: caseRow.status, case_stage: caseRow.case_stage,
+      client_portal_status: caseRow.client_portal_status,
+      // Read-only context: acceptance never moves the gate.
+      service_gate_status: caseRow.service_gate_status,
+    },
+    submission: {
+      id: current.id, version_number: current.version_number,
+      review_status: current.review_status ?? 'submitted',
+      submitted_at: current.submitted_at, submitted_by_type: current.submitted_by_type,
+      submitted_by: current.submitted_by,
+      review_reason: current.review_reason ?? null,
+      reviewed_at: current.review_decided_at ?? current.reviewed_at ?? null,
+      questionnaire_version: snap.questionnaire_version ?? null,
+      consent_version: snap.consent_version ?? null,
+      applicable_sections: snap.applicable_sections ?? [],
+      sections: snap.sections ?? [],
+      superseded_at: current.superseded_at ?? null,
+    },
+    previous_version: previous ? { id: previous.id, version_number: previous.version_number, submitted_at: previous.submitted_at } : null,
+    differences: diff,
+    differences_material: submissionDiffIsMaterial(diff),
+    versions: all.map((v: any) => ({
+      id: v.id, version_number: v.version_number, submitted_at: v.submitted_at,
+      review_status: v.review_status ?? 'submitted',
+    })),
+    consent_evidence: (consents ?? []).map((c: any) => ({
+      kind: c.kind, version: c.version, accepted_at: c.accepted_at, document_hash: c.document_hash,
+    })),
+    related_parties: (recon ?? []).map((r: any) => ({
+      id: r.id, declared_role: r.declared_role, declared_name: r.declared_name,
+      change_kind: r.change_kind, resolution_status: r.resolution_status,
+      resolved_party_type: r.resolved_party_type, resolved_party_id: r.resolved_party_id,
+      verification_required: r.verification_required, screening_required: r.screening_required,
+      conflicts: r.conflicts ?? [], similarity_candidates: r.similarity_candidates ?? [],
+      exact_candidate_id: r.exact_candidate_id, exact_candidate_type: r.exact_candidate_type,
+    })),
+    requirements: reqs ?? [],
+    documents: evidenceDocs.map((d: any) => ({
+      ...d,
+      // Internal reviewer reasoning is staff-only; auditors and analysts
+      // may read it, but it never leaves this staff response.
+      internal_review_note: includeInternalNotes ? d.internal_review_note : null,
+    })),
+    verification: (checks ?? []).map((c: any) => ({
+      id: c.id, party_id: c.party_id, party_label: c.party_label, check_type: c.check_type,
+      status: c.status, processing_status: c.processing_status,
+      authoritative: c.authoritative, execution_mode: c.execution_mode,
+      attempt_consumed: c.attempt_consumed, provider: c.provider,
+      completed_at: c.completed_at, provider_error_category: c.provider_error_category,
+    })),
+    screening: screening ?? [],
+    open_requests: openReqs ?? [],
+    missing_mandatory: missing,
+    risk: { latest_assessment_at: assessment?.created_at ?? null, stale: staleReasons.length > 0, stale_reasons: staleReasons },
+  } };
 }
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
@@ -1796,134 +1971,95 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       case 'get_submission_review': {
         const caseId = String(body.case_id ?? '');
         if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
-        const { data: caseRow } = await admin.schema('aml').from('cases')
-          .select('*').eq('id', caseId).maybeSingle();
-        if (!caseRow) return jsonResponse({ error: 'Case not found' }, 404);
+        const composed = await composeSubmissionReview(
+          admin, caseId,
+          body.version_number ? Number(body.version_number) : null,
+          canWrite || roles.has('auditor'));
+        return jsonResponse(composed.payload, composed.status);
+      }
 
-        const { data: versions } = await admin.schema('aml').from('submission_versions')
-          .select('*').eq('case_id', caseId).order('version_number', { ascending: false });
-        const all = versions ?? [];
-        const requested = body.version_number ? Number(body.version_number) : null;
-        const current = requested ? all.find((v: any) => v.version_number === requested) : all[0];
-        if (!current) {
-          return jsonResponse({ submission: null, versions: [], message: 'No client submission yet.' });
-        }
-        const previous = all.find((v: any) => v.version_number < current.version_number) ?? null;
-
-        const snap = (current.snapshot ?? {}) as any;
-        const prevSnap = (previous?.snapshot ?? {}) as any;
-        const diff = diffSubmissions(snap.sections ?? [], prevSnap.sections ?? []);
-
-        const [{ data: reqs }, { data: docs }, { data: consents }, { data: recon },
-               { data: checks }, { data: screening }, { data: openReqs }, { data: assessment },
-               { data: pepDets }] = await Promise.all([
-          admin.schema('aml').from('document_requirements').select('*').eq('case_id', caseId),
-          admin.schema('aml').from('documents')
-            .select('id, requirement_id, filename, mime_type, size_bytes, status, uploaded_at, reviewed_at, client_safe_rejection_reason, internal_review_note, version_number, previous_document_id, replacement_document_id')
-            .eq('case_id', caseId).order('uploaded_at', { ascending: false }),
-          admin.schema('aml').from('consents').select('kind, version, accepted_at, document_hash').eq('case_id', caseId),
-          admin.schema('aml').from('party_reconciliation_items').select('*').eq('case_id', caseId),
-          admin.schema('aml').from('verification_checks')
-            .select('id, party_id, party_label, check_type, status, processing_status, attempt_consumed, authoritative, execution_mode, provider, completed_at, provider_error_category')
-            .eq('case_id', caseId).order('created_at', { ascending: false }),
-          admin.schema('aml').from('party_screening_subjects').select('*').eq('case_id', caseId),
-          admin.schema('aml').from('client_requests').select('id, kind, subject, status, action_code, created_at')
-            .eq('case_id', caseId).in('status', ['open', 'responded']),
-          admin.schema('aml').from('risk_assessments').select('id, created_at, rating, score')
-            .eq('case_id', caseId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
-          admin.schema('aml').from('pep_determinations')
-            .select('id, determined_at').eq('case_id', caseId),
-        ]);
-
-        // Risk staleness: any canonical verification outcome or reconciliation
-        // change after the latest assessment makes it stale, with reasons.
-        const staleReasons: string[] = [];
-        if (assessment?.created_at) {
-          const since = new Date(assessment.created_at).getTime();
-          if ((checks ?? []).some((c: any) => c.completed_at && new Date(c.completed_at).getTime() > since)) staleReasons.push('verification_changed');
-          if ((recon ?? []).some((r: any) => new Date(r.updated_at ?? r.created_at).getTime() > since)) staleReasons.push('party_reconciliation_changed');
-          if ((screening ?? []).some((s: any) => s.adjudicated_at && new Date(s.adjudicated_at).getTime() > since)) staleReasons.push('screening_adjudicated');
-          if ((pepDets ?? []).some((d: any) => d.determined_at && new Date(d.determined_at).getTime() > since)) staleReasons.push('pep_determination_recorded');
-          if (new Date(current.submitted_at).getTime() > since) staleReasons.push('new_submission');
-          if (submissionDiffIsMaterial(diff)) staleReasons.push('material_information_changed');
-        } else {
-          staleReasons.push('no_assessment');
+      /**
+       * Store the submission record on the case — the entirety of the review
+       * as one inert HTML document, rendered by the SAME shared module the
+       * screen's reading view and the browser download use, so the stored
+       * copy says what the reviewer saw.
+       *
+       * Each stored record is a point-in-time export: storing again after
+       * the case moves is a new record, never an overwrite. The row is
+       * deliberately `status: 'accepted'` — the uploaded/accepted/rejected
+       * cycle reviews CLIENT evidence, and a record the platform generated
+       * would otherwise sit in a review queue it can never leave.
+       *
+       * The metadata `kind` mark is what keeps it out of the client portal:
+       * the record carries screening states and risk readings, which are
+       * staff-only (a tipping-off hazard in a client's hands). The portal's
+       * list and signing ops refuse documents carrying the mark, and clients
+       * can never write `metadata`, so the mark is trustworthy as a gate.
+       */
+      case 'store_submission_record': {
+        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        const caseId = String(body.case_id ?? '');
+        if (!caseId) return jsonResponse({ error: 'case_id required' }, 400);
+        const composed = await composeSubmissionReview(
+          admin, caseId,
+          body.version_number ? Number(body.version_number) : null,
+          canWrite || roles.has('auditor'));
+        if (composed.status !== 200) return jsonResponse(composed.payload, composed.status);
+        const review = composed.payload;
+        if (!review.submission) {
+          return jsonResponse({ error: 'No client submission to record yet.' }, 400);
         }
 
-        const missing: string[] = [];
-        for (const r of (reqs ?? [])) {
-          if (r.required && !['uploaded', 'accepted'].includes(r.status)) missing.push(`document:${r.code}`);
-        }
-        for (const r of (recon ?? [])) {
-          if (r.resolution_status === 'open') missing.push(`party_reconciliation:${r.declared_name}`);
-        }
-        // Every non-terminal state is outstanding — queued and processing are
-        // work not yet done, and a technical error must stay outstanding and
-        // retryable, never read as clear. A satisfied screening past its
-        // refresh date is outstanding again. (Shared rule: partyScreening.pure.ts.)
-        const nowIso = new Date().toISOString();
-        for (const s of (screening ?? [])) {
-          if (isPartyScreeningMissing(s, nowIso)) missing.push(`screening:${s.screened_name}`);
-        }
+        const generatedAt = new Date().toISOString();
+        const record = buildSubmissionRecord(review, { generatedAt, generatedBy: userEmail ?? null });
+        const html = renderSubmissionRecordHtml(record);
+        const bytes = new TextEncoder().encode(html);
+        const contentHash = await sha256Hex(html);
 
-        return jsonResponse({
-          case: {
-            id: caseRow.id, reference: caseRow.case_reference, subject: caseRow.subject_display_name,
-            status: caseRow.status, case_stage: caseRow.case_stage,
-            client_portal_status: caseRow.client_portal_status,
-            // Read-only context: acceptance never moves the gate.
-            service_gate_status: caseRow.service_gate_status,
+        // Object name carries the hash prefix so repeated stores of one
+        // version never collide and never overwrite.
+        const storagePath = `${caseId}/submission-v${review.submission.version_number}-record-${contentHash.slice(0, 12)}.html`;
+        const { error: upErr } = await admin.storage.from('aml-documents')
+          .upload(storagePath, bytes, { contentType: 'text/html; charset=utf-8', upsert: true });
+        if (upErr) throw upErr;
+
+        const { data: doc, error: docErr } = await admin.schema('aml').from('documents').insert({
+          case_id: caseId,
+          requirement_id: null,
+          filename: record.filename,
+          display_name: `Submission v${review.submission.version_number} — review record`,
+          storage_path: storagePath,
+          mime_type: 'text/html',
+          size_bytes: bytes.byteLength,
+          checksum: contentHash,
+          status: 'accepted',
+          uploaded_by_type: 'staff',
+          uploaded_by: userId,
+          reviewed_by: userId,
+          reviewed_at: generatedAt,
+          metadata: {
+            kind: SUBMISSION_RECORD_DOCUMENT_KIND,
+            submission_id: review.submission.id,
+            submission_version: review.submission.version_number,
+            content_sha256: contentHash,
+            generated_at: generatedAt,
+            generated_by: userEmail ?? null,
           },
-          submission: {
-            id: current.id, version_number: current.version_number,
-            review_status: current.review_status ?? 'submitted',
-            submitted_at: current.submitted_at, submitted_by_type: current.submitted_by_type,
-            submitted_by: current.submitted_by,
-            review_reason: current.review_reason ?? null,
-            reviewed_at: current.review_decided_at ?? current.reviewed_at ?? null,
-            questionnaire_version: snap.questionnaire_version ?? null,
-            consent_version: snap.consent_version ?? null,
-            applicable_sections: snap.applicable_sections ?? [],
-            sections: snap.sections ?? [],
-            superseded_at: current.superseded_at ?? null,
+        }).select('*').single();
+        if (docErr) throw docErr;
+
+        await appendEvent(admin, caseId, 'document_added',
+          `Submission v${review.submission.version_number} review record stored`,
+          {
+            document_id: doc.id,
+            submission_id: review.submission.id,
+            submission_version: review.submission.version_number,
+            content_sha256: contentHash,
+            review_status_at_generation: review.submission.review_status,
           },
-          previous_version: previous ? { id: previous.id, version_number: previous.version_number, submitted_at: previous.submitted_at } : null,
-          differences: diff,
-          differences_material: submissionDiffIsMaterial(diff),
-          versions: all.map((v: any) => ({
-            id: v.id, version_number: v.version_number, submitted_at: v.submitted_at,
-            review_status: v.review_status ?? 'submitted',
-          })),
-          consent_evidence: (consents ?? []).map((c: any) => ({
-            kind: c.kind, version: c.version, accepted_at: c.accepted_at, document_hash: c.document_hash,
-          })),
-          related_parties: (recon ?? []).map((r: any) => ({
-            id: r.id, declared_role: r.declared_role, declared_name: r.declared_name,
-            change_kind: r.change_kind, resolution_status: r.resolution_status,
-            resolved_party_type: r.resolved_party_type, resolved_party_id: r.resolved_party_id,
-            verification_required: r.verification_required, screening_required: r.screening_required,
-            conflicts: r.conflicts ?? [], similarity_candidates: r.similarity_candidates ?? [],
-            exact_candidate_id: r.exact_candidate_id, exact_candidate_type: r.exact_candidate_type,
-          })),
-          requirements: reqs ?? [],
-          documents: (docs ?? []).map((d: any) => ({
-            ...d,
-            // Internal reviewer reasoning is staff-only; auditors and analysts
-            // may read it, but it never leaves this staff response.
-            internal_review_note: canWrite || roles.has('auditor') ? d.internal_review_note : null,
-          })),
-          verification: (checks ?? []).map((c: any) => ({
-            id: c.id, party_id: c.party_id, party_label: c.party_label, check_type: c.check_type,
-            status: c.status, processing_status: c.processing_status,
-            authoritative: c.authoritative, execution_mode: c.execution_mode,
-            attempt_consumed: c.attempt_consumed, provider: c.provider,
-            completed_at: c.completed_at, provider_error_category: c.provider_error_category,
-          })),
-          screening: screening ?? [],
-          open_requests: openReqs ?? [],
-          missing_mandatory: missing,
-          risk: { latest_assessment_at: assessment?.created_at ?? null, stale: staleReasons.length > 0, stale_reasons: staleReasons },
-        });
+          userId, userEmail);
+
+        return jsonResponse({ document: doc, content_hash: contentHash });
       }
 
       case 'accept_submission':

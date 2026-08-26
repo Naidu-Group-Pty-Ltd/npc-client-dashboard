@@ -29,6 +29,8 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
 import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { ComparisonWeights, DEFAULT_COMPARISON_SETTINGS, DEFAULT_COMPARISON_WEIGHTS, cloneComparisonWeights, comparisonWeightsEqual, parseComparisonTemplateSettings, validateComparisonWeights } from './comparisonConfiguration';
+import { absentComparisonSections, analysisFromComparisonRow, isDisplayableComparisonRow, matchesSelectedReportIds, normaliseComparisonAnalysis } from './comparisonRecovery.pure';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 
 interface PropertyComparisonModalProps {
   isOpen: boolean;
@@ -96,6 +98,421 @@ interface ComparisonAnalysis {
   };
 }
 
+function getRankIcon(rank: number) {
+  if (rank === 1) return <Trophy className="h-5 w-5 text-brand-500" />;
+  if (rank === 2) return <Trophy className="h-5 w-5 text-muted-foreground" />;
+  if (rank === 3) return <Trophy className="h-5 w-5 text-warning" />;
+  return <Target className="h-5 w-5 text-muted-foreground" />;
+}
+
+// Both take whatever the model wrote — `riskLevel` and `severity` are optional
+// in the response schema, and calling `.toLowerCase()` on an absent one is a
+// page-level crash, not a styling nit.
+function getRiskColor(riskLevel: string | null | undefined) {
+  const level = (riskLevel || '').toLowerCase();
+  if (level.includes('low')) return 'text-success bg-success/10 border-success/30';
+  if (level.includes('high')) return 'text-destructive bg-destructive/10 border-destructive/30';
+  return 'text-brand-600 bg-brand-50 border-brand-200';
+}
+
+function getSeverityIcon(severity: string | null | undefined) {
+  const sev = (severity || '').toLowerCase();
+  if (sev.includes('high') || sev.includes('critical')) return <XCircle className="h-4 w-4 text-destructive-foreground0" />;
+  if (sev.includes('medium')) return <AlertCircle className="h-4 w-4 text-brand-500" />;
+  return <AlertTriangle className="h-4 w-4 text-warning-foreground0" />;
+}
+
+// ── Results sections ────────────────────────────────────────────────────────
+//
+// Extracted from inline JSX for two reasons, both learned on 2026-08-26 when a
+// completed comparison took down the whole Generated Reports page behind a
+// "Comparison Complete" toast. Each section GUARDS what it renders — the
+// producer may omit any section, or any axis inside one (a stored
+// financialComparison held only `bestYield`), and the response schema names
+// the verdict `recommendations` while this view reads `finalRecommendation`.
+// And each mounts under its own ErrorBoundary: a boundary only catches throws
+// in components BELOW it, so a section must be a component for the boundary to
+// contain it — inline JSX throws in the dialog's own render and unmounts the
+// page.
+
+/** A value that may be printed as text, or null when it is not printable. */
+const asText = (v: unknown): string | null =>
+  typeof v === 'string' || typeof v === 'number' ? String(v) : null;
+
+const sectionHasContent = (v: unknown): boolean => {
+  if (v === null || v === undefined) return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === 'object') return Object.keys(v as Record<string, unknown>).length > 0;
+  return true;
+};
+
+function SectionNotProduced({ name }: { name: string }) {
+  return (
+    <div className="rounded-lg border border-dashed p-8 text-center">
+      <AlertCircle className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
+      <p className="text-sm font-medium">The {name} section was not produced for this run</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        The model ran out of room or had nothing recorded for it. Re-run the analysis to try for a
+        complete document.
+      </p>
+    </div>
+  );
+}
+
+function SectionRenderFailure({ name }: { name: string }) {
+  return (
+    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center text-sm">
+      <p className="font-medium">The {name} section could not be displayed</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        The rest of the analysis is unaffected. Re-run the analysis, or download the PDF instead.
+      </p>
+    </div>
+  );
+}
+
+function FinancialComparisonSection({ analysis }: { analysis: ComparisonAnalysis }) {
+  const fin = (analysis.financialComparison || {}) as Record<string, any>;
+  const axes = [
+    { key: 'bestYield', title: 'Best Rental Yield', valueLabel: 'Yield', icon: <TrendingUp className="h-4 w-4 text-success" /> },
+    { key: 'bestCashFlow', title: 'Best Cash Flow', valueLabel: 'Monthly', icon: <DollarSign className="h-4 w-4 text-info" /> },
+    { key: 'bestROI', title: 'Best ROI Projection', valueLabel: 'Expected ROI', icon: <TrendingUp className="h-4 w-4 text-accent" /> },
+    { key: 'bestValue', title: 'Best Value', valueLabel: null as string | null, icon: <Target className="h-4 w-4 text-warning" /> },
+  ].filter((axis) => sectionHasContent(fin[axis.key]));
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <DollarSign className="h-5 w-5" />
+          Financial Performance Comparison
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {axes.length === 0 ? (
+          <SectionNotProduced name="financial comparison" />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2">
+            {axes.map((axis) => {
+              const winner = fin[axis.key] || {};
+              return (
+                <Card key={axis.key}>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      {axis.icon}
+                      {axis.title}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Property</span>
+                        <Badge>#{asText(winner.propertyNumber) ?? '—'}</Badge>
+                      </div>
+                      {axis.valueLabel && asText(winner.value) && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm text-muted-foreground">{axis.valueLabel}</span>
+                          <span className="font-medium">{asText(winner.value)}</span>
+                        </div>
+                      )}
+                      {asText(winner.reason) && (
+                        <p className="text-xs text-muted-foreground mt-2">{asText(winner.reason)}</p>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function LocationComparisonSection({ analysis }: { analysis: ComparisonAnalysis }) {
+  const entries = Object.entries((analysis.locationComparison || {}) as Record<string, any>)
+    .filter(([, value]) => sectionHasContent(value));
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <MapPin className="h-5 w-5" />
+          Location Intelligence Comparison
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {entries.length === 0 ? (
+          <SectionNotProduced name="location comparison" />
+        ) : (
+          <div className="grid gap-4">
+            {entries.map(([key, value]) => (
+              <Card key={key}>
+                <CardHeader>
+                  <CardTitle className="text-base capitalize">
+                    {key.replace(/([A-Z])/g, ' $1').trim()}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-muted-foreground">Leading Property</span>
+                    <Badge>Property #{asText(value?.propertyNumber) ?? '—'}</Badge>
+                  </div>
+                  {asText(value?.reason) && (
+                    <p className="text-sm text-muted-foreground">{asText(value?.reason)}</p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RiskComparisonSection({ analysis }: { analysis: ComparisonAnalysis }) {
+  const risk = (analysis.riskComparison || {}) as Record<string, any>;
+  const riskLevels: any[] = Array.isArray(risk.riskLevels) ? risk.riskLevels : [];
+  const redFlags: any[] = Array.isArray(analysis.redFlags) ? analysis.redFlags : [];
+  const hasAnything = sectionHasContent(risk) || redFlags.length > 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5" />
+          Risk Assessment
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!hasAnything && <SectionNotProduced name="risk assessment" />}
+
+        {(sectionHasContent(risk.lowestRisk) || sectionHasContent(risk.highestRisk)) && (
+          <div className="grid gap-4 md:grid-cols-2">
+            {sectionHasContent(risk.lowestRisk) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base text-success">Lowest Risk</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-muted-foreground">Property</span>
+                    <Badge variant="outline">#{asText(risk.lowestRisk?.propertyNumber) ?? '—'}</Badge>
+                  </div>
+                  {asText(risk.lowestRisk?.reason) && (
+                    <p className="text-sm text-muted-foreground">{asText(risk.lowestRisk?.reason)}</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {sectionHasContent(risk.highestRisk) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base text-destructive">Highest Risk</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm text-muted-foreground">Property</span>
+                    <Badge variant="outline">#{asText(risk.highestRisk?.propertyNumber) ?? '—'}</Badge>
+                  </div>
+                  {asText(risk.highestRisk?.reason) && (
+                    <p className="text-sm text-muted-foreground">{asText(risk.highestRisk?.reason)}</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {riskLevels.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Risk Levels by Property</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {riskLevels.map((riskRow, index) => (
+                <div key={`${asText(riskRow?.propertyNumber) ?? 'p'}-${index}`} className="border rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium">Property {asText(riskRow?.propertyNumber) ?? '—'}</span>
+                    <Badge className={getRiskColor(asText(riskRow?.riskLevel))}>
+                      {asText(riskRow?.riskLevel) ?? 'Unrated'}
+                    </Badge>
+                  </div>
+                  {(Array.isArray(riskRow?.specificRisks) ? riskRow.specificRisks : []).length > 0 && (
+                    <ul className="space-y-1 mt-2">
+                      {riskRow.specificRisks.map((riskItem: unknown, i: number) => (
+                        <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
+                          <ChevronRight className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                          {asText(riskItem)}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {redFlags.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base text-destructive flex items-center gap-2">
+                <XCircle className="h-5 w-5" />
+                Red Flags & Concerns
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {redFlags.map((flag, index) => (
+                <div key={`${asText(flag?.propertyNumber) ?? 'p'}-${index}`} className="border rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium">Property {asText(flag?.propertyNumber) ?? '—'}</span>
+                    <div className="flex items-center gap-2">
+                      {getSeverityIcon(asText(flag?.severity))}
+                      {asText(flag?.severity) && <Badge variant="destructive">{asText(flag?.severity)}</Badge>}
+                    </div>
+                  </div>
+                  <ul className="space-y-1">
+                    {(Array.isArray(flag?.concerns) ? flag.concerns : []).map((concern: unknown, i: number) => (
+                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
+                        <ChevronRight className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                        {asText(concern)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function FinalRecommendationSection({ analysis }: { analysis: ComparisonAnalysis }) {
+  const fr = (analysis.finalRecommendation || {}) as Record<string, any>;
+  const runners: any[] = Array.isArray(fr.runners) ? fr.runners : [];
+  const scenarios: any[] = Array.isArray(fr.alternativeScenarios) ? fr.alternativeScenarios : [];
+  const matches: any[] = Array.isArray(analysis.investorMatches) ? analysis.investorMatches : [];
+  const hasAnything = sectionHasContent(fr) || matches.length > 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-5 w-5 text-brand-500" />
+          Final Recommendation
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!hasAnything && <SectionNotProduced name="final recommendation" />}
+
+        {sectionHasContent(fr.bestOverall) && (
+          <Card className="border-2 border-primary">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Trophy className="h-6 w-6 text-brand-500" />
+                Best Overall Investment
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-lg font-semibold">
+                  Property #{asText(fr.bestOverall?.propertyNumber) ?? '—'}
+                </span>
+                <Badge className="text-lg px-4 py-1">Top Choice</Badge>
+              </div>
+              {asText(fr.bestOverall?.reason) && (
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  {asText(fr.bestOverall?.reason)}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {runners.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Runner-Up Options</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {runners.map((runner, index) => (
+                <div key={index} className="border rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">Property #{asText(runner?.propertyNumber) ?? '—'}</span>
+                    <Badge variant="secondary">Close Second</Badge>
+                  </div>
+                  {asText(runner?.reason) && (
+                    <p className="text-sm text-muted-foreground">{asText(runner?.reason)}</p>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {scenarios.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Alternative Scenarios</CardTitle>
+              <CardDescription>
+                Recommendations based on different investment goals
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {scenarios.map((scenario, index) => (
+                <div key={index} className="border rounded-lg p-3">
+                  {asText(scenario?.scenario) && (
+                    <h5 className="font-medium text-sm mb-2">{asText(scenario?.scenario)}</h5>
+                  )}
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm text-muted-foreground">Recommended:</span>
+                    <Badge>Property #{asText(scenario?.recommendation) ?? '—'}</Badge>
+                  </div>
+                  {asText(scenario?.reason) && (
+                    <p className="text-xs text-muted-foreground">{asText(scenario?.reason)}</p>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
+        {matches.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Investor Profile Matching</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {matches.map((match, index) => (
+                <div key={`${asText(match?.propertyNumber) ?? 'p'}-${index}`} className="border rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-medium">Property {asText(match?.propertyNumber) ?? '—'}</span>
+                    <div className="flex gap-1 flex-wrap">
+                      {(Array.isArray(match?.investorTypes) ? match.investorTypes : []).map((type: unknown, i: number) => (
+                        <Badge key={i} variant="outline" className="text-xs">
+                          {asText(type)}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  {asText(match?.reasoning) && (
+                    <p className="text-xs text-muted-foreground">{asText(match?.reasoning)}</p>
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function PropertyComparisonModal({
   isOpen,
   onClose,
@@ -103,8 +520,13 @@ export function PropertyComparisonModal({
   propertyAddresses
 }: PropertyComparisonModalProps) {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isRecovering, setIsRecovering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [analysis, setAnalysis] = useState<ComparisonAnalysis | null>(null);
+  // Display names of sections this analysis does not carry. The producer is
+  // allowed to omit a section it had nothing to say about, so the UI says so
+  // instead of assuming completeness — assuming is what crashed this page.
+  const [absentSections, setAbsentSections] = useState<string[]>([]);
   const [comparisonId, setComparisonId] = useState<string>('');
   const [isCopied, setIsCopied] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
@@ -198,6 +620,39 @@ export function PropertyComparisonModal({
     }
   }, [analysis]);
 
+  /**
+   * The most recent stored comparison of exactly these reports, written since
+   * `sinceIso`, or null. The same sorted-ids match the History panel uses.
+   */
+  const findStoredComparison = async (sinceIso: string): Promise<any | null> => {
+    const { data, error } = await supabase
+      .from('property_comparisons')
+      .select('*')
+      .gte('created_at', sinceIso)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    if (error || !data) return null;
+    return data.find((comp) => matchesSelectedReportIds(comp.report_ids, reportIds)) ?? null;
+  };
+
+  /**
+   * After the request times out, the server run usually FINISHES anyway — the
+   * browser abort does not reach the edge function, which keeps generating,
+   * stores the row and charges for it. (Observed in production: the row landed
+   * 19 seconds after the client gave up.) So a timeout is not yet a failure:
+   * poll for the stored row for a while before reporting one.
+   */
+  const recoverStoredComparison = async (sinceIso: string): Promise<any | null> => {
+    const RECOVERY_POLL_MS = 8_000;
+    const RECOVERY_ATTEMPTS = 10;
+    for (let i = 0; i < RECOVERY_ATTEMPTS; i++) {
+      const row = await findStoredComparison(sinceIso);
+      if (row) return row;
+      await new Promise((r) => setTimeout(r, RECOVERY_POLL_MS));
+    }
+    return null;
+  };
+
   const startAnalysis = async (background = false) => {
     if (!appliedValidation.isValid || hasUnappliedWeightChanges) {
       setSettingsOpen(true);
@@ -206,8 +661,13 @@ export function PropertyComparisonModal({
     }
     setRunInBackground(background);
     setIsAnalyzing(true);
+    setIsRecovering(false);
     setHasStarted(true);
     setProgress(10);
+
+    // A minute of slack absorbs client/server clock skew; an identical-report
+    // comparison stored in that window is this comparison for every purpose.
+    const attemptStartedIso = new Date(Date.now() - 60_000).toISOString();
 
     // Add notification for analysis start
     addNotification({
@@ -216,34 +676,74 @@ export function PropertyComparisonModal({
       message: `Comparing ${reportIds.length} properties with ${analysisDepth} analysis depth...`
     });
 
+    // The analysis runs 50–90s server-side; a bar frozen at 30% for a minute
+    // reads as a hang. Creep towards 85% and let the real milestones finish it.
+    const progressTimer = setInterval(() => {
+      setProgress((p) => (p >= 30 && p < 85 ? p + 1 : p));
+    }, 1500);
+
     try {
       setProgress(30);
-      
-      const requestBody: any = { 
+
+      const requestBody: any = {
         reportIds,
         analysisDepth,
         investorProfile,
         timeHorizon,
         riskTolerance
       };
-      
+
       requestBody.customWeights = cloneComparisonWeights(appliedWeights);
       requestBody.scoring_weights = cloneComparisonWeights(appliedWeights);
       requestBody.templateId = activeTemplateId;
-      
-      const { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
+
+      let { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
+
+      // ── The request timed out; the analysis may well have completed ──
+      // Only the transport's own abort counts: `network` is set solely on the
+      // fetch-failed path, so a server-side failure whose message happens to
+      // mention a timeout (a 502 naming a provider timeout) is not mistaken
+      // for a request the server might still be finishing.
+      const timedOut = !!error && error.network === true
+        && (error.code === 'provider_timeout' || /timed out/i.test(error.message || ''));
+      if (timedOut) {
+        setIsRecovering(true);
+        try {
+          const row = await recoverStoredComparison(attemptStartedIso);
+          if (row && isDisplayableComparisonRow(row)) {
+            data = { analysis: analysisFromComparisonRow(row), comparisonId: row.id };
+            error = null;
+          } else if (row) {
+            // Stored, but as the raw-response shape only the viewer can read.
+            error = {
+              ...error!,
+              message: 'The analysis finished in the background but was only partially saved. '
+                + 'Open it from the comparison library to see what was recovered.',
+            };
+          } else {
+            error = {
+              ...error!,
+              message: 'The analysis service did not respond in time, and no completed analysis '
+                + 'was found. It may still finish in the background — check History in a minute, '
+                + 'or try again.',
+            };
+          }
+        } finally {
+          setIsRecovering(false);
+        }
+      }
 
       if (error) {
         // Extract more detailed error information
         let errorMessage = error.message || 'Failed to compare properties';
-        
+
         // Check for specific error types in the error message
         if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
           errorMessage = 'Rate limit exceeded. Too many comparison requests. Please wait a moment and try again.';
         } else if (errorMessage.includes('payment') || errorMessage.includes('credits') || errorMessage.includes('402')) {
           errorMessage = 'AI credits exhausted. Please add credits to your Lovable workspace.';
         }
-        
+
         throw new Error(errorMessage);
       }
 
@@ -253,7 +753,12 @@ export function PropertyComparisonModal({
         throw new Error('No analysis data received');
       }
 
-      setAnalysis(data.analysis);
+      // Shape before storing in state: the response may name the verdict
+      // section `recommendations` (the schema's word) and may omit any section
+      // it had nothing to say about. The view renders one shape only.
+      const shapedAnalysis = normaliseComparisonAnalysis(data.analysis) as unknown as ComparisonAnalysis;
+      setAnalysis(shapedAnalysis);
+      setAbsentSections(absentComparisonSections(shapedAnalysis as any));
       setComparisonId(data.comparisonId);
       setProgress(100);
 
@@ -310,10 +815,13 @@ export function PropertyComparisonModal({
       
       // Reset states on error to prevent blank page
       setAnalysis(null);
+      setAbsentSections([]);
       setComparisonId('');
       setHasStarted(false);
     } finally {
+      clearInterval(progressTimer);
       setIsAnalyzing(false);
+      setIsRecovering(false);
       setProgress(0);
     }
   };
@@ -321,9 +829,6 @@ export function PropertyComparisonModal({
   const loadComparisonHistory = async () => {
     setLoadingHistory(true);
     try {
-      // Sort report IDs to ensure consistent matching
-      const sortedReportIds = [...reportIds].sort();
-      
       const { data, error } = await supabase
         .from('property_comparisons')
         .select('*')
@@ -333,11 +838,7 @@ export function PropertyComparisonModal({
       if (error) throw error;
 
       // Filter for comparisons with the exact same report IDs
-      const matchingComparisons = data?.filter(comp => {
-        const compReportIds = [...(comp.report_ids || [])].sort();
-        return compReportIds.length === sortedReportIds.length &&
-               compReportIds.every((id, index) => id === sortedReportIds[index]);
-      }) || [];
+      const matchingComparisons = data?.filter(comp => matchesSelectedReportIds(comp.report_ids, reportIds)) || [];
 
       setComparisonHistory(matchingComparisons);
     } catch (error) {
@@ -364,19 +865,10 @@ export function PropertyComparisonModal({
       if (!data) throw new Error('Comparison not found');
 
       // Reconstruct the analysis object from database fields
-      const historicalAnalysis: ComparisonAnalysis = {
-        executiveSummary: data.executive_summary || '',
-        rankings: (data.rankings || []) as ComparisonAnalysis['rankings'],
-        financialComparison: (data.financial_comparison || {}) as ComparisonAnalysis['financialComparison'],
-        locationComparison: (data.location_comparison || {}) as ComparisonAnalysis['locationComparison'],
-        riskComparison: (data.risk_comparison || {}) as ComparisonAnalysis['riskComparison'],
-        investorMatches: (data.investor_matches || []) as ComparisonAnalysis['investorMatches'],
-        competitiveAdvantages: [], // Not stored separately
-        redFlags: (data.red_flags || []) as ComparisonAnalysis['redFlags'],
-        finalRecommendation: (data.recommendations || {}) as ComparisonAnalysis['finalRecommendation']
-      };
+      const historicalAnalysis = analysisFromComparisonRow(data) as unknown as ComparisonAnalysis;
 
       setAnalysis(historicalAnalysis);
+      setAbsentSections(absentComparisonSections(historicalAnalysis as any));
       setComparisonId(comparisonId);
 
       // Load settings from analysis_summary if available
@@ -542,26 +1034,6 @@ export function PropertyComparisonModal({
     });
   };
 
-  const getRankIcon = (rank: number) => {
-    if (rank === 1) return <Trophy className="h-5 w-5 text-brand-500" />;
-    if (rank === 2) return <Trophy className="h-5 w-5 text-muted-foreground" />;
-    if (rank === 3) return <Trophy className="h-5 w-5 text-warning" />;
-    return <Target className="h-5 w-5 text-muted-foreground" />;
-  };
-
-  const getRiskColor = (riskLevel: string) => {
-    const level = riskLevel.toLowerCase();
-    if (level.includes('low')) return 'text-success bg-success/10 border-success/30';
-    if (level.includes('high')) return 'text-destructive bg-destructive/10 border-destructive/30';
-    return 'text-brand-600 bg-brand-50 border-brand-200';
-  };
-
-  const getSeverityIcon = (severity: string) => {
-    const sev = severity.toLowerCase();
-    if (sev.includes('high') || sev.includes('critical')) return <XCircle className="h-4 w-4 text-destructive-foreground0" />;
-    if (sev.includes('medium')) return <AlertCircle className="h-4 w-4 text-brand-500" />;
-    return <AlertTriangle className="h-4 w-4 text-warning-foreground0" />;
-  };
 
   const copyAnalysis = () => {
     if (!analysis) return;
@@ -596,8 +1068,14 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
     });
   };
 
-  // Build comparison data for PDF generator
-  const getComparisonDataForPDF = () => {
+  // Build comparison data for PDF generator.
+  //
+  // Memoised on the analysis identity, not rebuilt per render:
+  // `ComparisonPDFGenerator` re-runs its formatting effect whenever this object
+  // changes identity, and that effect is a METERED model call — a fresh object
+  // every render turned every hover and toggle on this screen into another
+  // billed `format-comparison-report` invocation.
+  const comparisonDataForPDF = useMemo(() => {
     if (!analysis || !comparisonId) return null;
     return {
       id: comparisonId,
@@ -615,7 +1093,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
       report_ids: reportIds,
       created_at: new Date().toISOString(),
     };
-  };
+  }, [analysis, comparisonId, reportIds, propertyAddresses]);
 
   return (
     <>
@@ -823,10 +1301,13 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
             <div className="flex-1 flex items-center justify-center p-8">
               <div className="text-center space-y-4 w-full max-w-md">
                 <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" />
-                <h3 className="text-lg font-medium">Analyzing Properties...</h3>
+                <h3 className="text-lg font-medium">
+                  {isRecovering ? 'Still working…' : 'Analyzing Properties...'}
+                </h3>
                 <p className="text-sm text-muted-foreground">
-                  AI is performing comprehensive comparison across financial metrics, location quality,
-                  risk factors, and investment potential.
+                  {isRecovering
+                    ? 'The request is taking longer than usual. Checking whether the analysis completed in the background…'
+                    : 'AI is performing comprehensive comparison across financial metrics, location quality, risk factors, and investment potential.'}
                 </p>
                 <div className="space-y-2">
                   <Progress value={progress} className="w-full" />
@@ -844,7 +1325,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                     {isCopied ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
                     {isCopied ? 'Copied' : 'Copy'}
                   </Button>
-                  {getComparisonDataForPDF() && (
+                  {comparisonDataForPDF && (
                     <>
                       {/*
                         The row is already persisted at this point — the gate above
@@ -852,8 +1333,8 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         to read. That is a real difference from the Portfolio
                         generator, whose row is not inserted until download.
                       */}
-                      <ComparisonDownloadButton comparisonId={getComparisonDataForPDF()!.id} />
-                      <ComparisonPDFGenerator comparison={getComparisonDataForPDF()!} />
+                      <ComparisonDownloadButton comparisonId={comparisonDataForPDF.id} />
+                      <ComparisonPDFGenerator comparison={comparisonDataForPDF} />
                     </>
                   )}
                   <Button 
@@ -1179,6 +1660,21 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                 </Card>
               )}
 
+              {absentSections.length > 0 && (
+                <Card className="mb-4 border-warning/30 bg-warning/5">
+                  <CardContent className="flex items-start gap-3 p-4">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                    <div className="text-sm">
+                      <p className="font-medium">This analysis is incomplete</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        The model did not produce: {absentSections.join(', ')}. Everything shown below is
+                        complete — use Re-run Analysis to try for the missing sections.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               <Tabs defaultValue="overview" className="flex-1 flex flex-col min-h-0">
                 <TabsList className="grid w-full grid-cols-6">
                   <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -1317,344 +1813,27 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                   </TabsContent>
 
                   <TabsContent value="financial" className="space-y-4 mt-0">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <DollarSign className="h-5 w-5" />
-                          Financial Performance Comparison
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base flex items-center gap-2">
-                                <TrendingUp className="h-4 w-4 text-success" />
-                                Best Rental Yield
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Property</span>
-                                  <Badge>#{analysis.financialComparison.bestYield.propertyNumber}</Badge>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Yield</span>
-                                  <span className="font-medium">{analysis.financialComparison.bestYield.value}</span>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-2">
-                                  {analysis.financialComparison.bestYield.reason}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base flex items-center gap-2">
-                                <DollarSign className="h-4 w-4 text-info" />
-                                Best Cash Flow
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Property</span>
-                                  <Badge>#{analysis.financialComparison.bestCashFlow.propertyNumber}</Badge>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Monthly</span>
-                                  <span className="font-medium">{analysis.financialComparison.bestCashFlow.value}</span>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-2">
-                                  {analysis.financialComparison.bestCashFlow.reason}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base flex items-center gap-2">
-                                <TrendingUp className="h-4 w-4 text-accent" />
-                                Best ROI Projection
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Property</span>
-                                  <Badge>#{analysis.financialComparison.bestROI.propertyNumber}</Badge>
-                                </div>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Expected ROI</span>
-                                  <span className="font-medium">{analysis.financialComparison.bestROI.value}</span>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-2">
-                                  {analysis.financialComparison.bestROI.reason}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base flex items-center gap-2">
-                                <Target className="h-4 w-4 text-warning" />
-                                Best Value
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-sm text-muted-foreground">Property</span>
-                                  <Badge>#{analysis.financialComparison.bestValue.propertyNumber}</Badge>
-                                </div>
-                                <p className="text-xs text-muted-foreground mt-2">
-                                  {analysis.financialComparison.bestValue.reason}
-                                </p>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <ErrorBoundary fallback={<SectionRenderFailure name="financial comparison" />}>
+                      <FinancialComparisonSection analysis={analysis} />
+                    </ErrorBoundary>
                   </TabsContent>
 
                   <TabsContent value="location" className="space-y-4 mt-0">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <MapPin className="h-5 w-5" />
-                          Location Intelligence Comparison
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-4">
-                          {Object.entries(analysis.locationComparison).map(([key, value]) => (
-                            <Card key={key}>
-                              <CardHeader>
-                                <CardTitle className="text-base capitalize">
-                                  {key.replace(/([A-Z])/g, ' $1').trim()}
-                                </CardTitle>
-                              </CardHeader>
-                              <CardContent>
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-sm text-muted-foreground">Leading Property</span>
-                                  <Badge>Property #{value.propertyNumber}</Badge>
-                                </div>
-                                <p className="text-sm text-muted-foreground">{value.reason}</p>
-                              </CardContent>
-                            </Card>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
+                    <ErrorBoundary fallback={<SectionRenderFailure name="location comparison" />}>
+                      <LocationComparisonSection analysis={analysis} />
+                    </ErrorBoundary>
                   </TabsContent>
 
                   <TabsContent value="risk" className="space-y-4 mt-0">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <AlertTriangle className="h-5 w-5" />
-                          Risk Assessment
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base text-success">Lowest Risk</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-sm text-muted-foreground">Property</span>
-                                <Badge variant="outline">#{analysis.riskComparison.lowestRisk.propertyNumber}</Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                {analysis.riskComparison.lowestRisk.reason}
-                              </p>
-                            </CardContent>
-                          </Card>
-
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base text-destructive">Highest Risk</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-sm text-muted-foreground">Property</span>
-                                <Badge variant="outline">#{analysis.riskComparison.highestRisk.propertyNumber}</Badge>
-                              </div>
-                              <p className="text-sm text-muted-foreground">
-                                {analysis.riskComparison.highestRisk.reason}
-                              </p>
-                            </CardContent>
-                          </Card>
-                        </div>
-
-                        <Card>
-                          <CardHeader>
-                            <CardTitle className="text-base">Risk Levels by Property</CardTitle>
-                          </CardHeader>
-                          <CardContent className="space-y-3">
-                            {(analysis.riskComparison?.riskLevels || []).map((risk) => (
-                              <div key={risk.propertyNumber} className="border rounded-lg p-3">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-sm font-medium">Property {risk.propertyNumber}</span>
-                                  <Badge className={getRiskColor(risk.riskLevel)}>
-                                    {risk.riskLevel}
-                                  </Badge>
-                                </div>
-                                {(risk.specificRisks || []).length > 0 && (
-                                  <ul className="space-y-1 mt-2">
-                                    {(risk.specificRisks || []).map((riskItem, i) => (
-                                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
-                                        <ChevronRight className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                                        {riskItem}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            ))}
-                          </CardContent>
-                        </Card>
-
-                        {analysis.redFlags && analysis.redFlags.length > 0 && (
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base text-destructive flex items-center gap-2">
-                                <XCircle className="h-5 w-5" />
-                                Red Flags & Concerns
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {analysis.redFlags.map((flag) => (
-                                <div key={flag.propertyNumber} className="border rounded-lg p-3">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="text-sm font-medium">Property {flag.propertyNumber}</span>
-                                    <div className="flex items-center gap-2">
-                                      {getSeverityIcon(flag.severity)}
-                                      <Badge variant="destructive">{flag.severity}</Badge>
-                                    </div>
-                                  </div>
-                                  <ul className="space-y-1">
-                                    {(flag.concerns || []).map((concern, i) => (
-                                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
-                                        <ChevronRight className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                                        {concern}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ))}
-                            </CardContent>
-                          </Card>
-                        )}
-                      </CardContent>
-                    </Card>
+                    <ErrorBoundary fallback={<SectionRenderFailure name="risk assessment" />}>
+                      <RiskComparisonSection analysis={analysis} />
+                    </ErrorBoundary>
                   </TabsContent>
 
                   <TabsContent value="recommendation" className="space-y-4 mt-0">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                          <Trophy className="h-5 w-5 text-brand-500" />
-                          Final Recommendation
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <Card className="border-2 border-primary">
-                          <CardHeader>
-                            <CardTitle className="text-lg flex items-center gap-2">
-                              <Trophy className="h-6 w-6 text-brand-500" />
-                              Best Overall Investment
-                            </CardTitle>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="flex items-center justify-between mb-3">
-                              <span className="text-lg font-semibold">
-                                Property #{analysis.finalRecommendation.bestOverall.propertyNumber}
-                              </span>
-                              <Badge className="text-lg px-4 py-1">Top Choice</Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground leading-relaxed">
-                              {analysis.finalRecommendation.bestOverall.reason}
-                            </p>
-                          </CardContent>
-                        </Card>
-
-                        {analysis.finalRecommendation.runners && analysis.finalRecommendation.runners.length > 0 && (
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base">Runner-Up Options</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {analysis.finalRecommendation.runners.map((runner, index) => (
-                                <div key={index} className="border rounded-lg p-3">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="font-medium">Property #{runner.propertyNumber}</span>
-                                    <Badge variant="secondary">Close Second</Badge>
-                                  </div>
-                                  <p className="text-sm text-muted-foreground">{runner.reason}</p>
-                                </div>
-                              ))}
-                            </CardContent>
-                          </Card>
-                        )}
-
-                        {analysis.finalRecommendation.alternativeScenarios && 
-                         analysis.finalRecommendation.alternativeScenarios.length > 0 && (
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base">Alternative Scenarios</CardTitle>
-                              <CardDescription>
-                                Recommendations based on different investment goals
-                              </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {analysis.finalRecommendation.alternativeScenarios.map((scenario, index) => (
-                                <div key={index} className="border rounded-lg p-3">
-                                  <h5 className="font-medium text-sm mb-2">{scenario.scenario}</h5>
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <span className="text-sm text-muted-foreground">Recommended:</span>
-                                    <Badge>Property #{scenario.recommendation}</Badge>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground">{scenario.reason}</p>
-                                </div>
-                              ))}
-                            </CardContent>
-                          </Card>
-                        )}
-
-                        {analysis.investorMatches && analysis.investorMatches.length > 0 && (
-                          <Card>
-                            <CardHeader>
-                              <CardTitle className="text-base">Investor Profile Matching</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              {analysis.investorMatches.map((match) => (
-                                <div key={match.propertyNumber} className="border rounded-lg p-3">
-                                  <div className="flex items-center justify-between mb-2">
-                                    <span className="font-medium">Property {match.propertyNumber}</span>
-                                    <div className="flex gap-1 flex-wrap">
-                                      {(match.investorTypes || []).map((type, i) => (
-                                        <Badge key={i} variant="outline" className="text-xs">
-                                          {type}
-                                        </Badge>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  <p className="text-xs text-muted-foreground">{match.reasoning}</p>
-                                </div>
-                              ))}
-                            </CardContent>
-                          </Card>
-                        )}
-                      </CardContent>
-                    </Card>
+                    <ErrorBoundary fallback={<SectionRenderFailure name="final recommendation" />}>
+                      <FinalRecommendationSection analysis={analysis} />
+                    </ErrorBoundary>
                   </TabsContent>
                 </div>
               </Tabs>

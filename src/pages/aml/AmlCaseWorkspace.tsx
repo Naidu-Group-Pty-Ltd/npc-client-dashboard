@@ -434,6 +434,20 @@ export default function AmlCaseWorkspace() {
           });
         }, 0);
         return;
+      case "review_submission":
+        /*
+         * The review lives in the panel this section renders, and the
+         * operator pressing this is often ALREADY on the section — so
+         * `setSection` alone changed nothing visible, and a click that
+         * changes nothing visible is indistinguishable from a broken
+         * button. Same remedy as `client_request`: land on the work.
+         */
+        window.setTimeout(() => {
+          document.getElementById("aml-submission-review")?.scrollIntoView({
+            block: "start", behavior: "smooth",
+          });
+        }, 0);
+        return;
       case "client_request":
         // The request form lives in this section and is often already on
         // screen, so focus it: a click that changes nothing visible is
@@ -1026,12 +1040,14 @@ export default function AmlCaseWorkspace() {
 
           {/* ── Stage 7 · Submission review ─────────────────────────── */}
           {section === "submission-review" && (
+            <div id="aml-submission-review" className="scroll-mt-24">
             <SubmissionReviewPanel
               caseId={caseRow.id}
               canWrite={canWrite}
               canDecide={access.isMlro || access.roles.has("reviewer")}
               onChanged={load}
             />
+            </div>
           )}
 
           {/* ── Stage 8 · Risk & MLRO decision ──────────────────────── */}

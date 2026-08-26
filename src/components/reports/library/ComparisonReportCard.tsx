@@ -1,9 +1,10 @@
 import { format } from 'date-fns';
-import { Archive, ArchiveRestore, Calendar, Crown, Eye, MapPin, Scale, Trophy, User } from 'lucide-react';
+import { Archive, ArchiveRestore, Calendar, Camera, Compass, Crown, DollarSign, Eye, FileText, Gauge, MapPin, Scale, Target, Trophy, User } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { ComparisonDownloadButton } from '@/components/reports/ComparisonDownloadButton';
+import { describeComparisonType, type ComparisonTypeKey } from './comparisonTypeDescriptor.pure';
 import type { ComparisonAnalysis } from './types';
 
 interface ComparisonReportCardProps {
@@ -13,11 +14,25 @@ interface ComparisonReportCardProps {
   onToggleArchive: (comparisonId: string, archive: boolean) => void;
 }
 
+/** One icon per comparison family; the untyped fallback keeps the scales. */
+const TYPE_ICONS: Record<ComparisonTypeKey, typeof Scale> = {
+  compass: Compass,
+  briefing: FileText,
+  snapshot: Camera,
+  financial: DollarSign,
+  strategic: Target,
+};
+
 export function ComparisonReportCard({ comparison, generatorLabel, onView, onToggleArchive }: ComparisonReportCardProps) {
   const topRanked = comparison.rankings?.[0]?.address || (comparison.rankings?.[0]?.propertyNumber ? `Property #${comparison.rankings[0].propertyNumber}` : 'Not ranked');
   const states = comparison.property_states && comparison.property_states.length > 0
     ? comparison.property_states.join(', ')
     : 'No states listed';
+  // Which report family this row compares — "Compass Comparison", "Briefing
+  // Comparison", "Snapshot Comparison", … The label carries the identity; the
+  // tint only reinforces it, so nothing depends on colour alone.
+  const type = describeComparisonType(comparison.comparison_type);
+  const TypeIcon = type.key ? TYPE_ICONS[type.key] : Scale;
 
   return (
     <Card className="group relative overflow-hidden rounded-2xl border border-border/70 bg-card/90 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-xl hover:shadow-primary/10 dark:bg-background/70">
@@ -25,9 +40,9 @@ export function ComparisonReportCard({ comparison, generatorLabel, onView, onTog
 
       <CardHeader className="relative space-y-4 p-4 pb-3">
         <div className="flex items-start justify-between gap-3">
-          <Badge variant="secondary" className="gap-1 bg-success/15 text-xs text-success hover:bg-success/20 dark:bg-success/30 dark:text-success">
-            <Scale className="h-3 w-3" />
-            Comparison
+          <Badge variant="secondary" title={type.blurb} className={`gap-1 text-xs ${type.badgeClassName}`}>
+            <TypeIcon className="h-3 w-3" />
+            {type.label}
           </Badge>
           <div className="flex items-center gap-1.5 text-xs tabular-nums text-muted-foreground">
             <Calendar className="h-3.5 w-3.5 shrink-0" />
@@ -40,9 +55,22 @@ export function ComparisonReportCard({ comparison, generatorLabel, onView, onTog
           <h3 className="line-clamp-2 text-lg font-semibold leading-snug tracking-tight text-foreground">
             {comparison.report_title || `${comparison.property_count} Property Comparison`}
           </h3>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <User className="h-3.5 w-3.5" />
-            Created by {generatorLabel(comparison.created_by)}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1.5">
+              <User className="h-3.5 w-3.5" />
+              Created by {generatorLabel(comparison.created_by)}
+            </span>
+            {comparison.analysis_depth && (
+              <Badge variant="outline" className="gap-1 text-[10px] font-normal capitalize">
+                <Gauge className="h-3 w-3" />
+                {comparison.analysis_depth} depth
+              </Badge>
+            )}
+            {comparison.investor_profile && (
+              <Badge variant="outline" className="text-[10px] font-normal capitalize">
+                {comparison.investor_profile} investor
+              </Badge>
+            )}
           </div>
           {comparison.executive_summary ? (
             <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">{comparison.executive_summary}</p>

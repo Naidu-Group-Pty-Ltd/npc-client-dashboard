@@ -23,7 +23,7 @@
  * writing that sentence for them is what would make the record indefensible.
  */
 import { useState } from "react";
-import { AlertTriangle, ArrowUpRight, Info, Loader2, Search } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, CalendarClock, Info, Loader2, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,8 +31,10 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
 import {
+  assessIndexRecency,
   candidateToMethodDraft,
-  type PepIndexCandidate, type PepIndexVerdict,
+  describeTenure,
+  type PepIndexCandidate, type PepIndexRecency, type PepIndexVerdict,
 } from "@/lib/aml/pepOfficeholderIndex";
 
 function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
@@ -59,9 +61,69 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
                 For example: {c.sampleOffices.slice(0, 6).join("; ")}.
               </span>
             )}
+            {/*
+              * Coverage against the AML/CTF Rules, MEASURED by the load.
+              *
+              * "676 offices" is a number about a database. The question an
+              * operator has when this returns nothing is whether it had ever
+              * looked at judges, or ambassadors, or the Chief of Navy — so the
+              * gaps are named first and in the same words the Rules use.
+              *
+              * A load from before this was measured says so rather than
+              * reporting every category as a gap it never tested for.
+              */}
+            {c.ruleCoverageMeasured && c.ruleCategories.length > 0 && (
+              <span className="mt-1 block">
+                {(() => {
+                  const missing = c.ruleCategories.filter((r) => r.notEvidenced);
+                  const held = c.ruleCategories.filter((r) => !r.notEvidenced);
+                  return (
+                    <>
+                      {held.length > 0 && (
+                        <span className="block">
+                          Holds at least:{" "}
+                          {held.map((r) => `${r.label.toLowerCase()} (${r.officeCount})`)
+                            .join(", ")}.
+                          {c.unclassifiedOffices > 0 && ` A further ${c.unclassifiedOffices} `
+                            + "office titles matched no category, so every number here "
+                            + "is a floor."}
+                        </span>
+                      )}
+                      {missing.length > 0 && (
+                        <span className="block font-medium text-warning">
+                          Not evidenced, so check by hand:{" "}
+                          {missing.map((r) => r.label.toLowerCase()).join(", ")}.
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
+              </span>
+            )}
             <span className="block font-medium text-foreground">
               Does not cover {c.excludes}
             </span>
+            {/*
+              * How current it is — a different question from whether it
+              * loaded, and the one nothing was asking. A load that succeeded
+              * eight months ago passes `indexIsUsable` exactly as this
+              * morning's does, and every Parliament row it holds still says
+              * the seat is held.
+              */}
+            {(() => {
+              const r = assessIndexRecency(c, Date.now());
+              if (r.reading === "fresh" || r.reading === "never") {
+                return <span className="block">{r.reason}</span>;
+              }
+              return (
+                <span className={cn(
+                  "block font-medium",
+                  r.reading === "stale" ? "text-warning" : "text-foreground",
+                )}>
+                  {r.reason}
+                </span>
+              );
+            })()}
             {c.collaborative && (
               <span className="block">
                 Collaboratively edited — a hit here is a lead, and the official
@@ -75,9 +137,11 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
   );
 }
 
-function CandidateRow({ c, onRecord }: {
+function CandidateRow({ c, onRecord, recencyFor }: {
   c: PepIndexCandidate;
   onRecord: (c: PepIndexCandidate) => void;
+  /** How current the register this candidate came from is. */
+  recencyFor: (sourceCode: string) => PepIndexRecency;
 }) {
   const span = [c.positionStart, c.positionEnd].filter(Boolean).join(" – ");
   return (
@@ -95,13 +159,44 @@ function CandidateRow({ c, onRecord }: {
               Also recorded as {c.aliases.slice(0, 4).join(", ")}
             </p>
           )}
+          {/*
+            * The date of birth, in words.
+            *
+            * This is the only thing on the card that can tell this person
+            * apart from somebody who merely shares their name — and it is
+            * shown rather than acted on. It did not decide that this
+            * candidate is here: the threshold reads the name score alone,
+            * and a date that disagrees never removes a lead.
+            *
+            * `corroborates` styles it and nothing more. A disagreement is
+            * muted, not struck through or coloured as a rejection, because
+            * the registers disagree with each other and with official
+            * records often enough that a date is a reason to look harder.
+            */}
+          {c.dob?.sentence && (
+            <p className={cn(
+              "mt-1 flex items-start gap-1 text-[11px]",
+              c.dob.corroborates ? "text-foreground" : "text-muted-foreground",
+            )}>
+              <CalendarClock aria-hidden className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>{c.dob.sentence}</span>
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          {/* Current or former, stated. A former holder is assessed on risk,
-              never written off by the passage of time. */}
+          {/*
+            * Held AS AT a date, never the bare word "Current".
+            *
+            * Every row from the Parliament register carries
+            * `currently_held: true` by construction — the files are a
+            * snapshot of who sits on the day they are downloaded. That is
+            * accurate at the load and decays from then on, so a member who
+            * lost their seat reads as "Current" for as long as nothing
+            * reloads. The date is what makes the claim checkable, and it
+            * travels into the evidence record the same way.
+            */}
           <Badge variant="outline" className="text-[10px]">
-            {c.currentlyHeld === true ? "Current"
-              : c.currentlyHeld === false ? "Former" : "Dates unknown"}
+            {describeTenure(c.currentlyHeld, recencyFor(c.sourceCode))}
           </Badge>
           <Badge variant="secondary" className="text-[10px]">
             {Math.round(c.score * 100)}% name match
@@ -195,6 +290,22 @@ export function PepOfficeholderIndexPanel({ caseId, subjectId, onAddSource }: {
                 <CandidateRow
                   key={`${c.sourceCode}:${c.externalId}`} c={c}
                   onRecord={(cand) => onAddSource(candidateToMethodDraft(cand))}
+                  recencyFor={(code) => assessIndexRecency(
+                    verdict.coverage.find((v) => v.sourceCode === code)
+                      /*
+                       * A candidate whose register is not in the coverage
+                       * list is a state that should not arise, and if it
+                       * does the answer is "never loaded" rather than a
+                       * confident date. An invented as-at is worse than
+                       * none: it is the claim, not the gap, that misleads.
+                       */
+                      ?? { sourceCode: code, label: code, covers: "", excludes: "",
+                           collaborative: true, entryCount: 0, officeCount: null,
+                           sampleOffices: [], ruleCategories: [],
+                           ruleCoverageMeasured: false, unclassifiedOffices: 0,
+                           sourceAsAt: null, lastSyncedAt: null, lastSyncStatus: "never" },
+                    Date.now(),
+                  )}
                 />
               ))}
             </ul>

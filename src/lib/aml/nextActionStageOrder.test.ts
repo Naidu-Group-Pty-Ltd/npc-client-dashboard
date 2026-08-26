@@ -128,8 +128,38 @@ describe("the journey is walked in order", () => {
     expect(a.section).toBe("finance");
   });
 
-  it("reaches submission review only once the earlier stages are quiet", () => {
+  it("does not fall through to stage 7 while stage 6 has nothing recorded", () => {
+    /*
+     * The reported defect, and the sibling of the one at the top of this
+     * file. There was ONE funding candidate and it was gated on
+     * `sources.length > 0 && unverified.length > 0` — it spoke only once
+     * somebody had already started. A case with nothing recorded, which is
+     * every case at the moment stage 5 finishes, produced no candidate, so
+     * the ranking walked past stage 6 to submission review.
+     */
     const a = deriveAmlNextAction(facts());
+    expect(a.key).toBe("funding_start");
+    expect(a.stageOrder).toBe(6);
+    expect(a.section).toBe("finance");
+  });
+
+  it("reaches submission review only once the earlier stages are quiet", () => {
+    // Including stage 6. "Quiet" has to mean settled, not merely silent.
+    const a = deriveAmlNextAction(facts({
+      funding: { sources: [{ verified: true }] } as never,
+    }));
+    expect(a.key).toBe("submission_review");
+    expect(a.stageOrder).toBe(7);
+  });
+
+  it("a stage nobody owes does not hold the walk up", () => {
+    // An enquiry that never became a deal owes no funding evidence, so the
+    // walk reaches stage 7 with nothing recorded — because it is not owed,
+    // not because nobody asked.
+    const a = deriveAmlNextAction(facts({
+      perimeter: { classified: true, classification: "outside_perimeter",
+        reason_code: "enquiry_only" },
+    } as never));
     expect(a.key).toBe("submission_review");
     expect(a.stageOrder).toBe(7);
   });

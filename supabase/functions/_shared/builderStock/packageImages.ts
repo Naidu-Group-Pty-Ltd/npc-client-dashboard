@@ -154,7 +154,8 @@ export async function recoverPackageImage(
   const directFileId = driveFileId(input.packageUrl);
   if (directFileId) {
     return await extractFromDocument(
-      fetchPackage, readPageTexts, directFileId, 'the linked document', input.label);
+      fetchPackage, readPageTexts, directFileId, 'the linked document', input.label,
+      'direct_link');
   }
 
   const rootId = driveFolderId(input.packageUrl);
@@ -172,7 +173,28 @@ export async function recoverPackageImage(
 
   const lotFolderId = await findLotFolder(cache, root, lot);
   const entries = lotFolderId ? await cache.list(lotFolderId) : root;
-  const document = selectPackageDocument(entries, { lot, design });
+  /*
+   * A LIBRARY THAT FILES BY SUBJECT RATHER THAN BY LOT.
+   *
+   * Sandpiper's library keeps one folder per lot, which is what `findLotFolder`
+   * looks for. Four live rows link a library that does the opposite: the folder
+   * IS the property, and inside it are "Package", "Rental Appraisal" and "Area
+   * Profile - Investment Report" — one folder per KIND of document. There is no
+   * lot folder to find, the root holds only an estate-wide inclusions list, and
+   * the property's own package sits one level down.
+   *
+   * So when no lot folder was found, the whole bounded subtree the search has
+   * already read is offered to the same selector. It is not a wider search:
+   * `findLotFolder` walked exactly these entries to conclude there was no lot
+   * folder, so this costs no further listing, reaches nothing outside the folder
+   * the row itself linked, and asks the identical question — one document, this
+   * lot, this design, and of a kind that can be a package. Two candidates is
+   * still the source declining to say, and the answer is still no image.
+   */
+  const document = selectPackageDocument(entries, { lot, design })
+    ?? (lotFolderId
+      ? null
+      : selectPackageDocument(await subtreeEntries(cache, root), { lot, design }));
   if (!document) {
     return {
       status: 'not_identified',
@@ -183,7 +205,43 @@ export async function recoverPackageImage(
   }
 
   return await extractFromDocument(
-    fetchPackage, readPageTexts, document.id, document.name, input.label);
+    fetchPackage, readPageTexts, document.id, document.name, input.label,
+    'folder_structure');
+}
+
+/**
+ * Every entry inside THIS linked folder, to the same bounded depth the lot
+ * search uses.
+ *
+ * DESCENT FROM THIS ROOT, NEVER A READ OF THE CACHE. The cache is shared by
+ * every row in a run — that is what keeps forty-four rows pointing at one
+ * library to a handful of requests — so taking "everything read so far" from it
+ * would pull in folders belonging to OTHER properties. Two Cloverton rows are
+ * exactly that: each links its own folder, each folder holds one document
+ * naming its own lot, and reading the cache flat made the two look like two
+ * candidates for one property and produced no image for either.
+ *
+ * So it walks down from this root and no further, exactly as `findLotFolder`
+ * does. Every listing it asks for was asked for by that search first, so the
+ * cache answers all of them and this costs no request.
+ */
+async function subtreeEntries(
+  cache: DriveListingCache,
+  root: DriveEntry[],
+): Promise<DriveEntry[]> {
+  const all = [...root];
+  let level = root;
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    const children = level
+      .filter((entry) => entry.mimeType === DRIVE_FOLDER_MIME)
+      .map((entry) => entry.id);
+    if (!children.length) break;
+    const next: DriveEntry[] = [];
+    for (const id of children) next.push(...await cache.list(id));
+    all.push(...next);
+    level = next;
+  }
+  return all;
 }
 
 /**
@@ -237,6 +295,22 @@ async function extractFromDocument(
   documentName: string,
   /** The property this package is supposed to be about. */
   label: string,
+  /**
+   * HOW THIS DOCUMENT CAME TO BE THIS PROPERTY'S.
+   *
+   * `folder_structure` means the builder's own library tied it to exactly one
+   * stock row before anything was downloaded: one folder named for the lot, one
+   * PDF in it naming that lot and that design, and `selectPackageDocument`
+   * returning null for anything other than exactly one. That tie is what
+   * licenses the structural cover below.
+   *
+   * `direct_link` means the row linked a file rather than a folder, so nothing
+   * has been established about WHICH property the document is about except that
+   * the row pointed at it — and on the live list one folder is shared by
+   * forty-four rows, so pointing is not naming. Those documents must state
+   * their property in text like everything else.
+   */
+  identifiedBy: 'folder_structure' | 'direct_link',
 ): Promise<PackageOutcome> {
   const url = driveDownloadUrl(fileId);
   let bytes: Uint8Array;
@@ -296,10 +370,58 @@ async function extractFromDocument(
       detail: 'That document\'s text could not be read (no pages came back).',
     };
   }
+  /*
+   * AND PAGES THAT CAME BACK EMPTY ARE THE SAME FAULT AGAIN.
+   *
+   * A package whose every page yields no text at all is not a package that says
+   * nothing about the property — it is a package this reader cannot read. The
+   * live list has them: "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three pages
+   * of designed brochure exported as images, and its first page carries the
+   * lot, the estate, the suburb, the price, the land and house sizes and the
+   * facade render, all of it drawn rather than set. Text extraction returns
+   * zero characters from every page.
+   *
+   * Recording that as "the document names no image for this property" banks a
+   * finished negative produced by a reader that never read the document — and
+   * `negativeProvenanceStillStands` would then suppress the source until a
+   * version bump. So it is operational, and the property is asked again: the
+   * answer changes for free the day this can read a drawn page.
+   *
+   * PARTIAL emptiness is deliberately NOT this. A document with text on some
+   * pages was read; that it says nothing identifying on the others is a fact
+   * about the document.
+   */
+  const textFree = textResult.pages.every((text) => !String(text ?? '').trim());
+  if (textFree && identifiedBy !== 'folder_structure') {
+    return {
+      status: 'unreachable',
+      detail: 'That document\'s pages carry no extractable text, so it could not be read.',
+    };
+  }
   const pageTexts = textResult.pages;
-  const selection = await selectPdfPropertyPrimary(bytes, { label, pageTexts });
+  const selection = await selectPdfPropertyPrimary(bytes, {
+    label,
+    pageTexts,
+    // Supplied ONLY when the builder's folder already named this document for
+    // this one property and the document itself can say nothing. See
+    // `assignPdfMediaRoles`.
+    structuralCoverPage: textFree ? 1 : null,
+  });
   const photo = selection.primary;
   if (!photo) {
+    /*
+     * A document nothing could be read from has still established nothing, even
+     * where its first page was structurally eligible and presented no single
+     * photograph. Recording a negative for it would bank an answer this reader
+     * never earned, so it stays operational and the property is asked again.
+     */
+    if (textFree) {
+      return {
+        status: 'unreachable',
+        detail: 'That document\'s pages carry no extractable text and its first page '
+          + 'presents no single photograph, so it could not be read.',
+      };
+    }
     return {
       status: 'not_identified',
       detail: 'That document does not present a page as this property\'s package cover, '

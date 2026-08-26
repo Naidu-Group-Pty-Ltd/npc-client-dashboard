@@ -1185,13 +1185,16 @@ describe('repairing stock that is already imported', () => {
     const outcome = await repairSourceImagesForUpload(
       db, { organisationId: 'org-a', uploadId: 'upload-3' },
       {
-        // Three documents, every one of them naming lot 914: the folder does
-        // not say which is the property's photograph, so neither do we.
+        /*
+         * TWO documents that could both be the package, and neither declares
+         * itself anything else. The folder has not said which is the
+         * property's photograph, so neither do we — and unlike a contract or
+         * an appraisal beside a package, there is nothing here to narrow.
+         */
         fetchPackage: async (url: string) => ({
           bytes: listing([
             ['a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf', 'application/pdf'],
-            ['b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf', 'application/pdf'],
-            ['c', 'Rental Appraisal_ Lot 914, Covella Estate.pdf', 'application/pdf'],
+            ['b', 'Lot 914 Covella Estate - Property Package.pdf', 'application/pdf'],
           ]),
           finalUrl: url,
         }),

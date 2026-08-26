@@ -138,7 +138,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
     expect(plates.plates).toHaveLength(0);
     // Not "cleaned to the same thing" — never touched at all.
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('nothing_to_remove');
   });
 
@@ -226,7 +226,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
 
     const { result } = run(split);
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('background_too_detailed');
   });
 
@@ -236,7 +236,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
 
     const { result } = run(busy);
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('background_too_detailed');
   });
 
@@ -250,7 +250,7 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
 
     const { result } = run(badged);
     expect(result.ok).toBe(false);
-    if (result.ok) return;
+    if (result.ok === true) return;
     expect(result.reason).toBe('too_much_to_rebuild');
   });
 

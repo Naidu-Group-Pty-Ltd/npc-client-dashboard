@@ -1,14 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AIRTABLE_RETENTION_DAYS,
   MAX_DELETION_ABSOLUTE,
   MAX_DELETION_SHARE,
+  MAX_REMOVAL_SHARE,
+  MIN_REMOVAL_FLOOR,
+  RETENTION_GRACE_DAYS,
   SMALL_TABLE_FLOOR,
+  assessRetention,
   cleanRecordId,
   extractCreatedTime,
   extractLastModified,
   fingerprintRecord,
   orderLooksSorted,
   planReconciliation,
+  planRetention,
   toCacheRow,
 } from '../../supabase/functions/_shared/listingsCache.pure';
 
@@ -233,5 +239,194 @@ describe('orderLooksSorted', () => {
     expect(orderLooksSorted([])).toBe(true);
     expect(orderLooksSorted([at(1), at(9)])).toBe(true);
     expect(orderLooksSorted([null, null])).toBe(true);
+  });
+});
+
+
+/* -------------------------------------------------------------------------- */
+/* Retention                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every date below is real. On 2026-08-19 `listings_cache` held 148 listings
+ * created between 2026-07-23 and 2026-08-04. By 2026-08-25 it held 51 — all of
+ * them from the single evening of 2026-08-04, because Airtable's thirty-day
+ * purge had taken the July intake and the cache had mirrored every deletion.
+ * The next purge was due to take the remaining 51 on about 2026-09-03.
+ */
+const JULY_INTAKE = '2026-07-24T05:43:54.000Z';
+const AUGUST_INTAKE = '2026-08-04T22:34:47.000Z';
+const OBSERVED = Date.parse('2026-08-25T00:00:00.000Z');
+
+describe('planRetention', () => {
+  it('archives the July intake the purge took, and deletes nothing', () => {
+    const plan = planRetention(
+      [
+        { listing_id: 'recSHpjztzdgkdxgD', created_time: JULY_INTAKE },
+        { listing_id: 'recizkixZPQXEtr3Y', created_time: JULY_INTAKE },
+      ],
+      OBSERVED,
+    );
+    expect(plan.archive).toEqual(['recSHpjztzdgkdxgD', 'recizkixZPQXEtr3Y']);
+    expect(plan.remove).toEqual([]);
+  });
+
+  it('still removes a record deleted while it was inside the window', () => {
+    // Someone deleted this on purpose three weeks after it arrived. A
+    // deliberate deletion has to reach the dashboard; that is the whole reason
+    // this is a plan and not a blanket "keep everything".
+    const plan = planRetention(
+      [{ listing_id: 'rec13OFeA8GW4Xal9', created_time: AUGUST_INTAKE }],
+      OBSERVED,
+    );
+    expect(plan.archive).toEqual([]);
+    expect(plan.remove).toEqual(['rec13OFeA8GW4Xal9']);
+  });
+
+  it('archives the August intake once it in turn ages out', () => {
+    // 2026-09-05: the batch that was in-window above is now past thirty days.
+    // Before this change that date is when the marketplace reached zero.
+    const plan = planRetention(
+      [{ listing_id: 'rec13OFeA8GW4Xal9', created_time: AUGUST_INTAKE }],
+      Date.parse('2026-09-05T00:00:00.000Z'),
+    );
+    expect(plan.archive).toEqual(['rec13OFeA8GW4Xal9']);
+    expect(plan.remove).toEqual([]);
+  });
+
+  it('leans toward keeping at the boundary', () => {
+    const created = '2026-07-26T00:00:00.000Z';
+    const dayAfter = (days: number) => Date.parse(created) + days * 24 * 60 * 60 * 1000;
+    const rows = [{ listing_id: 'rec1', created_time: created }];
+
+    // Exactly thirty days: the automation has not necessarily run yet.
+    expect(planRetention(rows, dayAfter(AIRTABLE_RETENTION_DAYS)).remove).toEqual(['rec1']);
+    // A day of grace later it is unambiguously the schedule's doing.
+    expect(
+      planRetention(rows, dayAfter(AIRTABLE_RETENTION_DAYS + RETENTION_GRACE_DAYS)).archive,
+    ).toEqual(['rec1']);
+  });
+
+  it('archives a row it cannot date rather than deleting the only copy', () => {
+    const plan = planRetention(
+      [
+        { listing_id: 'rec-null', created_time: null },
+        { listing_id: 'rec-junk', created_time: 'not a date' },
+      ],
+      OBSERVED,
+    );
+    expect(plan.archive).toEqual(['rec-null', 'rec-junk']);
+    expect(plan.remove).toEqual([]);
+  });
+
+  it('ignores a row with no id and survives an empty set', () => {
+    expect(planRetention([{ listing_id: '', created_time: JULY_INTAKE }], OBSERVED)).toEqual({
+      archive: [],
+      remove: [],
+      withheld: 0,
+      note: null,
+    });
+    expect(planRetention([], OBSERVED)).toEqual({
+      archive: [],
+      remove: [],
+      withheld: 0,
+      note: null,
+    });
+  });
+
+  it('still accepts the older positional retentionDays form', () => {
+    const rows = [{ listing_id: 'rec1', created_time: JULY_INTAKE }];
+    expect(planRetention(rows, OBSERVED, 30)).toEqual(planRetention(rows, OBSERVED, { retentionDays: 30 }));
+    // A shorter window ages the same record out sooner; a longer one keeps it live.
+    expect(planRetention(rows, OBSERVED, 90).remove).toEqual(['rec1']);
+  });
+
+  describe('the removal cap', () => {
+    const inWindow = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ listing_id: `rec${i}`, created_time: AUGUST_INTAKE }));
+
+    it('deletes a handful, which is what a person removing a listing looks like', () => {
+      const plan = planRetention(inWindow(3), OBSERVED, { liveCount: 148 });
+      expect(plan.remove).toHaveLength(3);
+      expect(plan.withheld).toBe(0);
+      expect(plan.note).toBeNull();
+    });
+
+    it('archives the batch instead when a walk loses most of the table', () => {
+      // The shape that `planReconciliation` cannot catch: 122 of 148 missing is
+      // 82%, but its two allowances are ANDed and 122 never approaches
+      // MAX_DELETION_ABSOLUTE, so it would have let all 122 deletions through.
+      expect(
+        planReconciliation({ walkComplete: true, fetchedCount: 26, previousCount: 148 }).allowed,
+      ).toBe(true);
+
+      const plan = planRetention(inWindow(122), OBSERVED, { liveCount: 26 });
+      expect(plan.remove).toEqual([]);
+      expect(plan.archive).toHaveLength(122);
+      expect(plan.withheld).toBe(122);
+      expect(plan.note).toMatch(/not a deliberate deletion/);
+    });
+
+    it('is all-or-nothing, so a racing sync cannot bleed the allowance every run', () => {
+      const plan = planRetention(inWindow(20), OBSERVED, { liveCount: 51 });
+      expect(plan.remove).toEqual([]);
+      expect(plan.archive).toHaveLength(20);
+    });
+
+    it('scales with the live set and never falls below the floor', () => {
+      const allowance = Math.floor(1441 * MAX_REMOVAL_SHARE);
+      expect(planRetention(inWindow(allowance), OBSERVED, { liveCount: 1441 }).remove).toHaveLength(
+        allowance,
+      );
+      expect(planRetention(inWindow(allowance + 1), OBSERVED, { liveCount: 1441 }).withheld).toBe(
+        allowance + 1,
+      );
+      // A tiny table still gets the floor rather than an allowance of zero.
+      expect(planRetention(inWindow(MIN_REMOVAL_FLOOR), OBSERVED, { liveCount: 3 }).remove).toHaveLength(
+        MIN_REMOVAL_FLOOR,
+      );
+    });
+
+    it('never withholds an archive — only a deletion is capped', () => {
+      const plan = planRetention(
+        Array.from({ length: 140 }, (_, i) => ({ listing_id: `rec${i}`, created_time: JULY_INTAKE })),
+        OBSERVED,
+        { liveCount: 8 },
+      );
+      expect(plan.archive).toHaveLength(140);
+      expect(plan.withheld).toBe(0);
+      expect(plan.note).toBeNull();
+    });
+  });
+});
+
+describe('assessRetention', () => {
+  it('reports the purge as working when the oldest live record is inside the window', () => {
+    // The real reading on 2026-08-25: nothing older than 2026-08-04 survived.
+    const health = assessRetention(AUGUST_INTAKE, OBSERVED);
+    expect(health.effective).toBe(true);
+    expect(health.oldestLiveAgeDays).toBe(20);
+  });
+
+  it('reports the purge as stopped when the live table keeps ageing', () => {
+    // The automation shipped once as a draft with an empty Run script node and
+    // nothing in the product noticed. This is what noticing looks like.
+    const health = assessRetention(JULY_INTAKE, Date.parse('2026-10-01T00:00:00.000Z'));
+    expect(health.effective).toBe(false);
+    expect(health.oldestLiveAgeDays).toBe(68);
+    expect(health.reason).toMatch(/may have stopped/);
+  });
+
+  it('does not call an empty or undated table a failure', () => {
+    expect(assessRetention(null, OBSERVED).effective).toBe(true);
+    expect(assessRetention(null, OBSERVED).oldestLiveAgeDays).toBeNull();
+    expect(assessRetention('never', OBSERVED).effective).toBe(true);
+  });
+
+  it('allows the same day of grace the plan does', () => {
+    const created = '2026-07-26T00:00:00.000Z';
+    const at = (days: number) => Date.parse(created) + days * 24 * 60 * 60 * 1000;
+    expect(assessRetention(created, at(AIRTABLE_RETENTION_DAYS + RETENTION_GRACE_DAYS)).effective).toBe(true);
+    expect(assessRetention(created, at(AIRTABLE_RETENTION_DAYS + RETENTION_GRACE_DAYS + 1)).effective).toBe(false);
   });
 });

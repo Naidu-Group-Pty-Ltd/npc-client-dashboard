@@ -65,6 +65,11 @@
  *      regardless of colour or whether anything is drawn behind it; and a
  *      contrast-normalised second pass that reports `overlay_uncertain` rather
  *      than letting faint typography read as a clean picture
+ *   2  a run of ink must be wide enough to be a LINE of type before it counts
+ *      as one. A single 17x12px mark — foliage against sky, in the top corner
+ *      of a recovered Sandpiper facade that carries no overlay at all —
+ *      convicted a clean builder photograph and hid it. Every verdict version 1
+ *      recorded was reached with that mark counting, so all of them are stale.
  *
  * IT HAS A SECOND HALF IN THE DATABASE. `builder_stock_settlement_target`
  * carries the version production is being brought TO, because the sweep's cron
@@ -74,7 +79,7 @@
  * migrations and fails when they disagree — a bump that ships only this half
  * changes new imports and silently leaves every stored image on the old rules.
  */
-export const MARKETPLACE_ELIGIBILITY_VERSION = 1;
+export const MARKETPLACE_ELIGIBILITY_VERSION = 2;
 
 /** The three answers. `pending` is the one that keeps this failing closed. */
 export type MarketplaceEligibilityState = 'eligible' | 'ineligible' | 'pending';

@@ -1,12 +1,18 @@
 /**
  * Pure model for the server-side listings cache.
  *
- * The cache mirrors Airtable rather than archiving it: when Airtable prunes a
- * record at 30 days, the cached row goes too. That makes the sync's deletion
- * step the most dangerous code in the feature — it is the one operation that can
- * destroy data for every user at once, and it fires on a schedule with nobody
- * watching. Everything here exists to decide, from evidence, whether a given
- * sync run has earned the right to delete.
+ * The cache is an **archive**, not a mirror. Airtable's `Property Intake Master`
+ * is a working table and the base prunes it at thirty days; this store keeps
+ * what the purge took, because it is the only copy the product has. It used to
+ * mirror those deletions, which put the whole marketplace on a thirty-day fuse —
+ * see `planRetention` below for the measurement.
+ *
+ * That makes the sync's deletion step the most dangerous code in the feature: it
+ * is the one operation that can destroy data for every user at once, and it
+ * fires on a schedule with nobody watching. Two decisions guard it, and they are
+ * separate questions. `planReconciliation` asks whether this run may act on what
+ * it did not see at all. `planRetention` then asks, of each row it did not see,
+ * whether it aged out (keep it) or was deleted on purpose (remove it).
  *
  * Free of Deno, Supabase, React and the DOM so both runtimes can share it and
  * the dangerous decisions can be tested directly.
@@ -263,4 +269,201 @@ export function orderLooksSorted(createdTimes: Array<string | null>): boolean {
   // 0.8 tolerates ties and the odd stray while a genuinely unsorted read
   // scores around 0.5.
   return descending / (stamps.length - 1) >= 0.8;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Retention: what a vanished record means                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How long Airtable keeps an intake record.
+ *
+ * Set by the base's own `Delete Property Intake Records After 30 Days`
+ * automation (`wfljwe75Zqv5u8uCx`), which finds records whose `Created Time` is
+ * before *30 days ago* and deletes them. This constant must track that
+ * automation; see `docs/integrations/AIRTABLE_RETENTION.md`.
+ */
+export const AIRTABLE_RETENTION_DAYS = 30;
+
+/**
+ * Slack between "old enough to be purged" and "we treat its disappearance as a
+ * purge".
+ *
+ * The automation runs once a day at midnight Kuala Lumpur, so a record can sit
+ * up to a day past thirty before its turn comes, and the walk that notices it
+ * gone may be a further fifteen minutes behind. A day of grace keeps a
+ * *deliberate* deletion of a nearly-expired record from being mistaken for the
+ * schedule — the two are indistinguishable at the boundary, and this decides
+ * which way the boundary leans.
+ */
+export const RETENTION_GRACE_DAYS = 1;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface VanishedRow {
+  listing_id: string;
+  /** Airtable's own record creation time, which the purge measures against. */
+  created_time: string | null;
+}
+
+/**
+ * The most in-window disappearances one sync may act on destructively, as a
+ * share of what the walk actually saw.
+ *
+ * A deliberate deletion is a person removing a listing or two. A dozen records
+ * that were inside the window vanishing between two syncs fifteen minutes apart
+ * is not somebody tidying up — it is a walk that missed them, which Airtable's
+ * offset pagination makes entirely possible while the nightly purge is deleting
+ * rows underneath it.
+ *
+ * `planReconciliation` cannot catch that on a table this size: its two
+ * allowances are ANDed, and `missing` never approaches
+ * `MAX_DELETION_ABSOLUTE` on 148 records, so a walk that returned 26 of them
+ * would be acted on in full. That guard is calibrated for the nightly purge,
+ * which no longer needs to produce deletions at all now that ageing out is
+ * archived — so the destructive half gets its own, much tighter, limit.
+ */
+export const MAX_REMOVAL_SHARE = 0.1;
+
+/** Below this a share is meaningless, so this many removals are always allowed. */
+export const MIN_REMOVAL_FLOOR = 5;
+
+export interface RetentionPlan {
+  /** Rows the 30-day purge took. Kept, and marked archived. */
+  archive: string[];
+  /** Rows that disappeared while still inside the window. Really deleted. */
+  remove: string[];
+  /**
+   * In-window rows archived instead of deleted because there were too many of
+   * them to be anybody's deliberate act. Zero on a normal run.
+   */
+  withheld: number;
+  /** Why, when `withheld` is non-zero. Worth writing to the sync row. */
+  note: string | null;
+}
+
+export interface RetentionOptions {
+  retentionDays?: number;
+  /**
+   * How many records the walk actually saw. The removal cap is measured against
+   * this; omit it and only the floor applies.
+   */
+  liveCount?: number;
+}
+
+/**
+ * What to do with the rows a completed walk did not see.
+ *
+ * **This is the difference between a mirror and an archive**, and it is the
+ * whole reason the Property Marketplace was emptying itself. Airtable prunes
+ * the intake table at thirty days because it is a working table, not a store —
+ * and the cache propagated every one of those deletions, so the product's
+ * entire inventory sat on a thirty-day fuse. Measured on 2026-08-25: 148
+ * listings on 2026-08-19 had become 51, all of them from a single evening's
+ * intake, with the next purge due to take those too.
+ *
+ * The purge is not the bug. Mirroring it is. So a row that vanished *because it
+ * aged out* is kept and marked archived, and only a row that vanished while it
+ * was still inside the window is actually removed — because that one was
+ * deleted on purpose by somebody, and a deliberate deletion must still reach
+ * the dashboard.
+ *
+ * A row with no `created_time` cannot be shown to have aged out, so it is
+ * archived rather than removed: keeping a listing that should have gone is a
+ * recoverable mistake, and deleting the only copy of one is not.
+ *
+ * The same asymmetry bounds the destructive half. Deliberate deletions come a
+ * few at a time; a crowd of them is a walk that missed records, so past
+ * `MAX_REMOVAL_SHARE` the whole batch is archived rather than part-deleted —
+ * all or nothing, because deleting the first five and archiving the rest would
+ * still lose five listings on every racing sync.
+ */
+export function planRetention(
+  vanished: readonly VanishedRow[],
+  now: number,
+  options: RetentionOptions | number = {},
+): RetentionPlan {
+  // Tolerates the older positional `retentionDays` form.
+  const opts: RetentionOptions = typeof options === 'number' ? { retentionDays: options } : options;
+  const retentionDays = opts.retentionDays ?? AIRTABLE_RETENTION_DAYS;
+  const cutoff = now - (retentionDays + RETENTION_GRACE_DAYS) * DAY_MS;
+  const archive: string[] = [];
+  const remove: string[] = [];
+
+  for (const row of vanished) {
+    if (!row?.listing_id) continue;
+    const created = row.created_time ? Date.parse(row.created_time) : NaN;
+    if (!Number.isFinite(created) || created <= cutoff) archive.push(row.listing_id);
+    else remove.push(row.listing_id);
+  }
+
+  const allowance = Math.max(
+    MIN_REMOVAL_FLOOR,
+    Math.floor((opts.liveCount ?? 0) * MAX_REMOVAL_SHARE),
+  );
+  if (remove.length > allowance) {
+    const note =
+      `${remove.length} records still inside the ${retentionDays}d window vanished at once ` +
+      `(allowance ${allowance}); archived rather than deleted — that is a walk that missed them, ` +
+      'not a deliberate deletion';
+    return { archive: [...archive, ...remove], remove: [], withheld: remove.length, note };
+  }
+
+  return { archive, remove, withheld: 0, note: null };
+}
+
+export interface RetentionHealth {
+  /** True when the live table contains nothing older than the window allows. */
+  effective: boolean;
+  /** Age in days of the oldest record Airtable still holds, or null if empty. */
+  oldestLiveAgeDays: number | null;
+  reason: string;
+}
+
+/**
+ * Is the 30-day purge actually running?
+ *
+ * The automation is configured in Airtable and cannot be asserted from here, so
+ * this asserts its *effect* instead: if it runs daily, nothing in the live table
+ * is ever much older than the window. If it stops, the oldest record ages past
+ * the boundary and keeps going, and this says so on every sync.
+ *
+ * That check is worth having because the automation has already been off once —
+ * it shipped as a draft with an empty Run script node and had to be pasted in by
+ * hand (`AIRTABLE_RETENTION.md`), and nothing in the product would have noticed.
+ *
+ * An empty table is reported as effective with no age: there is nothing to
+ * prune, which is not evidence of failure.
+ */
+export function assessRetention(
+  oldestLiveCreatedTime: string | null,
+  now: number,
+  retentionDays: number = AIRTABLE_RETENTION_DAYS,
+): RetentionHealth {
+  if (!oldestLiveCreatedTime) {
+    return { effective: true, oldestLiveAgeDays: null, reason: 'no live records to prune' };
+  }
+
+  const created = Date.parse(oldestLiveCreatedTime);
+  if (!Number.isFinite(created)) {
+    return { effective: true, oldestLiveAgeDays: null, reason: 'oldest record carries no usable date' };
+  }
+
+  const ageDays = Math.floor((now - created) / DAY_MS);
+  const limit = retentionDays + RETENTION_GRACE_DAYS;
+  if (ageDays <= limit) {
+    return {
+      effective: true,
+      oldestLiveAgeDays: ageDays,
+      reason: `oldest live record is ${ageDays}d old, inside the ${retentionDays}d window`,
+    };
+  }
+
+  return {
+    effective: false,
+    oldestLiveAgeDays: ageDays,
+    reason:
+      `oldest live record is ${ageDays}d old, past the ${retentionDays}d window` +
+      ` — the Airtable purge may have stopped running`,
+  };
 }

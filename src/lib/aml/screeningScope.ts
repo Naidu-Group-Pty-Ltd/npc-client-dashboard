@@ -277,9 +277,27 @@ export function deriveAmlScreeningScope(
   /*
    * The server's decision, when there is one. Absent it, everything is
    * required — the same answer this module always gave, and the safe one.
+   *
+   * ── When the server sends TWO decisions for one scope ─────────────────
+   * This was `new Map(serverScopes.map((x) => [x.scope, x]))`: last wins,
+   * and the order is whatever the read returned. No case in production holds
+   * duplicate live scope rows today, and the recorder has been hardened so a
+   * concurrent sync cannot leave a pair behind — but this is the layer that
+   * DECIDES, and it should not be the layer that assumes.
+   *
+   * A contradiction resolves toward the OBLIGATION. Sanctions bind every
+   * dealing under the Charter of the UN Act 1945 and the Autonomous
+   * Sanctions Act 2011; they are the one control risk cannot stand down, and
+   * a disagreement must never read as an exemption. Being wrong this way
+   * costs a screening nobody strictly owed. Being wrong the other way is a
+   * dealing that was never screened.
    */
-  const byScope = new Map<string, AmlServerScopeDecision>(
-    (serverScopes ?? []).map((x) => [String(x.scope), x]));
+  const byScope = new Map<string, AmlServerScopeDecision>();
+  for (const decision of serverScopes ?? []) {
+    const key = String(decision.scope);
+    const held = byScope.get(key);
+    if (!held || (!held.required && decision.required)) byScope.set(key, decision);
+  }
   const serverSays = (scope: AmlScreeningScope) => byScope.get(scope) ?? null;
   const isRequired = (scope: AmlScreeningScope, fallback: boolean) => {
     const d = serverSays(scope);

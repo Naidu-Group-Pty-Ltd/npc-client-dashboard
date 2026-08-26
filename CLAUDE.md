@@ -31,8 +31,23 @@ reads a mailbox and writes Airtable's **Property Intake Master** (205 columns, b
 before touching intake, the projection in `_shared/airtableListing.pure.ts`, or anything to
 do with listing photographs — it records 22 defects found in that scenario, including the
 two that meant the page had never received a single photo, and it names the columns the
-dashboard now depends on. Retention (the 30-day purge) is in
-[`AIRTABLE_RETENTION.md`](./docs/integrations/AIRTABLE_RETENTION.md); it has one manual step.
+dashboard now depends on. Retention is its own concern and the one that emptied the page. Read
+[`AIRTABLE_RETENTION.md`](./docs/integrations/AIRTABLE_RETENTION.md) before
+touching `planRetention`, `planReconciliation` or the reconciliation step in
+`listings-cache`. Airtable prunes `Property Intake Master` at 30 days and that
+is correct — **`listings_cache` used to MIRROR the prune**, which put the whole
+marketplace on a thirty-day fuse: 148 listings on 2026-08-19 were 51 by
+2026-08-26 and would have been 0 on 2026-09-04, unrecoverably, because nothing
+else in the database can rebuild a listing. The cache is now an **archive**: a
+row that aged out is kept and stamped `archived_at`, a row that vanished while
+still inside the window is really deleted, and an undated one is kept. Two rules
+bite. **`planReconciliation`'s two allowances are ANDed**, so on a small table a
+walk that returned 26 of 148 records would be acted on in full — the destructive
+half has its own 10% cap, and past it the batch is archived rather than
+part-deleted, because archiving is reversible and deleting is not. And **the
+purge is asserted by its effect, never by its configuration**: the live base is
+not reachable by the Airtable token this repo's tooling holds, so every sync
+records `oldest_live_created_time` / `retention_effective` instead.
 
 The scenario that is actually **switched on** is `NPC Email 1 New` (Make id `9618493`); the
 audited `NPC Email 1` (`6720116`) is off. Listings reach it *forwarded* by NPC staff rather
@@ -353,6 +368,33 @@ ReferenceError on one branch. A count baseline can absorb that (one goes, one
 arrives, the number holds), so `TS2304`/`TS2552` are now fatal in
 `check-edge-functions.mjs` and the pre-existing occurrences are frozen in
 `edge-missing-names.txt`, keyed by file and identifier rather than by line.
+
+## The PEP screening engine
+Read [`docs/aml/PEP_SCREENING_ENGINE.md`](./docs/aml/PEP_SCREENING_ENGINE.md)
+before touching `_shared/aml/pepScreeningEngine.pure.ts`, `run_pep_screening`,
+`PepScreeningRunPanel` or `pepSearchLinks.pure.ts`. It replaces five browser
+tabs — two of which were wrong: the Government Directory link was a Drupal 7
+path the site no longer serves, so the most authoritative source answered
+"Page not found" every time, and two of the five rows were a search engine
+sitting beside DFAT as though it were a peer.
+
+**It screens; it does not determine.** The verdict vocabulary
+(`indicators_found`, `no_indicators`, `incomplete`, `not_searchable`) shares no
+value with `pep_determinations.result` — no `clear`, no `not_pep` — and both a
+test and the security gate assert it. `no_indicators` is drawn neutrally and
+says it is a result about the SEARCH; a register that FAILED is never reported
+as one that was empty; and anything unreached forces manual review, including
+an unanswered declaration, because no register here publishes family members or
+close associates.
+
+**Every source is local, and that was measured.** Wikidata's action API answers
+429 from this egress, its SPARQL endpoint 504 on a worldwide walk, and
+directory.gov.au and aph.gov.au both 403 a scripted client. A compliance
+decision cannot depend on somebody else's rate limiter, so registers load on a
+schedule and are read locally at decision time. The two that a server cannot
+reach are NAMED as unsearched rather than omitted. A candidate rejection must
+say how it was told — enforced at the column, the endpoint and the button.
+Foreign office holders are deliberately still a gap the engine discloses.
 
 ## The public office-holder index
 Read [`docs/aml/PEP_OFFICEHOLDER_INDEX.md`](./docs/aml/PEP_OFFICEHOLDER_INDEX.md)

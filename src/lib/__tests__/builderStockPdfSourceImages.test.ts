@@ -25,13 +25,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { cleanPicture, jpegOf } from './fixtures/builderStockPictures';
+import { deflateSync } from 'node:zlib';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { extractStockFile } from '../../../supabase/functions/_shared/builderStock/extract';
 import { classifyStockFile } from '../../../supabase/functions/_shared/builderStock/fileTypes.pure';
 import {
-  extractExactSourcePhotoFromPdf, extractPdfPhotosByPage,
+  extractExactSourcePhotoFromPdf, extractPdfPagePhoto, extractPdfPhotosByPage,
 } from '../../../supabase/functions/_shared/builderStock/pdfSourcePhoto';
 import {
   anchorPdfRowsToPages, pdfAnchorPage, pdfPageAnchor,
@@ -670,6 +671,115 @@ describe('J — re-reading the stored PDF of an upload already imported', () => 
 // ---------------------------------------------------------------------------
 // TEST K — the sentence that started this is gone
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// TEST L — a photograph the document stored LOSSLESSLY
+// ---------------------------------------------------------------------------
+
+describe('L — a photograph the document stored losslessly', () => {
+  /*
+   * WHAT THIS PINS, AND WHAT IT COST. "Is it a DCT raster" was the whole test
+   * for whether a picture could be a photograph, and it is only a proxy. Lot
+   * 60434 Cloverton's package is where the proxy costs a card: the document
+   * holds a 3508x4961 JPEG of the FLOOR PLAN and a 2400x1400 Flate raster of
+   * the HOUSE, so the rule admitted the plan and refused the photograph. The
+   * card sat blank in front of the builder's own clean facade render.
+   *
+   * The detail floor is what actually separates a photograph from a diagram,
+   * and the numbers are measured off the production documents, decoded and
+   * re-compressed losslessly in bytes per pixel:
+   *
+   *   solid plate 0.003 · wash 0.003 · line art 0.011 · that floor plan 0.042
+   *   ---- floor 0.5 ----
+   *   that facade 1.675 · Sandpiper's six covers 1.423-2.156
+   *
+   * The fixtures below sit either side of it on the same measure: the render
+   * deflates to 2.28 bytes a pixel and the diagram to 0.004.
+   */
+  const W = 700;
+  const H = 450;
+  const deflate = (bytes: Uint8Array) => new Uint8Array(deflateSync(Buffer.from(bytes)));
+  const PLACED: [number, number, number, number, number, number] = [420, 0, 0, 236, 88, 470];
+
+  /** Real photographic pixels, Flate-compressed the way a PDF stores them. */
+  const losslessRender = (variant: number) => deflate(cleanPicture(W, H, variant).pixels);
+
+  /** The same size, but nearly empty — what a diagram compresses to. */
+  const losslessDiagram = () => {
+    const pixels = new Uint8Array(W * H * 3).fill(0xff);
+    for (let y = 0; y < H; y += 9) pixels.fill(0x11, y * W * 3, (y * W + W) * 3);
+    return deflate(pixels);
+  };
+
+  const onePage = (data: Uint8Array, cm = PLACED) => buildPdf([{
+    inForm: true,
+    text: 'Lot 60434 - Cloverton Estate, Kalkallo VIC 3064 · house and land package · $712,000',
+    images: [{ name: 'Im1', width: W, height: H, filter: 'FlateDecode', data, cm }],
+  }]);
+
+  it('takes the render out, and says what it did to it', async () => {
+    const photo = await extractPdfPagePhoto(onePage(losslessRender(3)), 0);
+    expect(photo).not.toBeNull();
+    expect(photo!.provenance.method).toBe('embedded_raster');
+    expect(photo!.contentType).toBe('image/png');
+    // The bytes we stored are not the bytes the document holds — it holds
+    // samples — so BOTH hashes are recorded and the change is stated.
+    expect(photo!.provenance.sourceSha256).not.toBe(photo!.provenance.storedSha256);
+    expect(photo!.provenance.transformation).toMatch(/losslessly as PNG/);
+    expect(photo!.provenance.transformation).toMatch(/no pixel values changed/);
+  });
+
+  it('and the pixels it recorded are the document\'s own, unaltered', async () => {
+    const picture = cleanPicture(W, H, 4);
+    const photo = await extractPdfPagePhoto(onePage(deflate(picture.pixels)), 0);
+    expect(photo!.provenance.sourceSha256).toBe(await sha256Hex(picture.pixels));
+  });
+
+  it('refuses a lossless raster with no photographic detail in it', async () => {
+    // A diagram at exactly the same size on exactly the same page. The only
+    // thing separating it from the render above is how much a lossless encoder
+    // had to spend on it, which is the whole rule.
+    expect(await extractPdfPagePhoto(onePage(losslessDiagram()), 0)).toBeNull();
+  });
+
+  it('does not let a lossless PAGE be served as if it were a photograph', async () => {
+    /*
+     * THE OTHER HALF, AND THE ONE THAT COULD PUT MARKETING ON A CARD. A
+     * brochure exported as page images draws ONE lossless raster over the whole
+     * sheet — facade, headline and price panel together. It was never mistaken
+     * for a placed picture only because lossless rasters were refused outright;
+     * admitting them removes that accident, so the exclusion is stated. Covella
+     * Lot 914 and Cloverton's own 122m2 package are both exactly this shape,
+     * and both came back as whole pages the moment it was not.
+     */
+    const photo = await extractPdfPagePhoto(onePage(losslessRender(5), FULL_BLEED), 0);
+    // Either the photograph is CUT OUT of the page, or nothing is taken. What
+    // must never happen is the whole page returning as an embedded raster.
+    expect(photo?.provenance.method ?? 'page_crop').toBe('page_crop');
+  });
+
+  it('leaves a lossy document reaching exactly the same answer as before', async () => {
+    const bytes = buildPdf([{
+      inForm: true,
+      text: 'Lot 12 - Somewhere Estate · house and land package · $700,000',
+      images: [
+        { name: 'Im0', width: 1300, height: 698, filter: 'DCTDecode', data: wash, cm: FULL_BLEED },
+        {
+          name: 'Im1', width: 1700, height: 956, filter: 'DCTDecode', data: render(6),
+          cm: PLACED,
+        },
+      ],
+    }]);
+    const photo = await extractPdfPagePhoto(bytes, 0);
+    expect(photo!.provenance.method).toBe('embedded_raster');
+    expect(photo!.provenance.resourceName).toBe('Im1');
+    // Untouched bytes, so one hash and no transformation — the wash is still
+    // refused and the render is still copied out as it sits in the document.
+    expect(photo!.provenance.transformation).toBeNull();
+    expect(photo!.provenance.sourceSha256).toBe(photo!.provenance.storedSha256);
+  });
+});
+
 
 describe('K — the stale PDF warning', () => {
   const ROOTS = ['src', 'supabase/functions'];

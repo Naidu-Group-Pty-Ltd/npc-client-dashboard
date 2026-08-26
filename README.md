@@ -1,61 +1,74 @@
-# NPC Client Dashboard
+# Welcome to your Lovable project
 
-The **client-facing deployment** of the NPC Property Dashboard. This
-repository is a mirror of
-[`npc-property-dashbord`](https://github.com/lavan96/npc-property-dashbord)
-that builds with the client-facing mode pinned on, so the developer/operator
-tooling — the Integrations credential cards, Workflow Playground, engine
-diagnostics, test-data controls such as the Call Logs test numbers — is hidden
-from navigation and routing.
 
-Two things to hold onto:
+## Project info
 
-- **The mode is presentation, not access control.** Module permissions,
-  workspace entitlements and the edge functions' own auth checks are untouched.
-  Hiding the Integrations page does not disturb the Make.com → Airtable
-  **Property Intake Master** intake pipeline — that runs server-side and never
-  depended on the UI being visible.
-- **This repo carries (almost) no code of its own.** Features and fixes land in
-  `npc-property-dashbord` first and are pulled over. The deliberate
-  divergence is the pin in `vite.config.ts`
-  (`process.env.VITE_CLIENT_FACING ??= "true"`) and this README — plus, while
-  the surface is **work in progress**, a menu of cherry-pickable candidate
-  hides carried one commit each (see the open PR and the "WIP cherry-pick
-  candidates" section of `docs/CLIENT_FACING_MODE.md`). Once the picks
-  settle, the surviving hides land upstream and this repo returns to
-  pin-and-README divergence only.
+**URL**: https://lovable.dev/projects/7976d60b-c277-4851-889b-c170285f4be2
 
-The full design — the one hidden-path list, the route gate, the page-level
-gates, what is deliberately *not* hidden — is in
-[`docs/CLIENT_FACING_MODE.md`](./docs/CLIENT_FACING_MODE.md), and the
-mechanism lives in [`src/lib/clientFacing.ts`](./src/lib/clientFacing.ts).
+## How can I edit this code?
 
-## Building
+There are several ways of editing your application.
+
+**Use Lovable**
+
+Simply visit the [Lovable Project](https://lovable.dev/projects/7976d60b-c277-4851-889b-c170285f4be2) and start prompting.
+
+Changes made via Lovable will be committed automatically to this repo.
+
+**Use your preferred IDE**
+
+If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+
+The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+
+Follow these steps:
 
 ```sh
-npm install
-npm run build      # client-facing bundle — the flag is pinned in vite.config.ts
+# Step 1: Clone the repository using the project's Git URL.
+git clone <YOUR_GIT_URL>
+
+# Step 2: Navigate to the project directory.
+cd <YOUR_PROJECT_NAME>
+
+# Step 3: Install the necessary dependencies.
+npm i
+
+# Step 4: Start the development server with auto-reloading and an instant preview.
+npm run dev
 ```
 
-Environment setup is the same as upstream (see `.env.example`). An explicitly
-exported `VITE_CLIENT_FACING=false` overrides the pin if an internal-console
-bundle is ever needed from this repo.
+**Edit a file directly in GitHub**
 
-## Syncing from upstream
+- Navigate to the desired file(s).
+- Click the "Edit" button (pencil icon) at the top right of the file view.
+- Make your changes and commit the changes.
 
-```sh
-git remote add upstream https://github.com/lavan96/npc-property-dashbord   # once
-git fetch upstream
-git merge upstream/main
-```
+**Use GitHub Codespaces**
 
-The pin sits in `vite.config.ts`, so merges stay clean unless upstream edits
-the top of that file or this README.
+- Navigate to the main page of your repository.
+- Click on the "Code" button (green button) near the top right.
+- Select the "Codespaces" tab.
+- Click on "New codespace" to launch a new Codespace environment.
+- Edit files directly within the Codespace and commit and push your changes once you're done.
 
-## GitHub Actions
+## What technologies are used for this project?
 
-The mirrored workflows (`.github/workflows/`) deploy Supabase functions and
-Cloud Run services using per-repository secrets and federation that are
-configured for the upstream repository only. Leave Actions disabled here (or
-leave the workflows unconfigured) — this repository exists to build and host
-the client-facing front-end, not to run the deploy pipeline twice.
+This project is built with:
+
+- Vite
+- TypeScript
+- React
+- shadcn-ui
+- Tailwind CSS
+
+## How can I deploy this project?
+
+Simply open [Lovable](https://lovable.dev/projects/7976d60b-c277-4851-889b-c170285f4be2) and click on Share -> Publish.
+
+## Can I connect a custom domain to my Lovable project?
+
+Yes, you can!
+
+To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+
+Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)

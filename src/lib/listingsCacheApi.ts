@@ -40,7 +40,19 @@ export interface CachedListingsSyncState {
   last_full_sync_at: string | null;
   status: string | null;
   reconciled: boolean | null;
+  /**
+   * What Airtable holds, which after the first purge is fewer than this store
+   * serves — the difference is the archive. See `AIRTABLE_RETENTION.md`.
+   */
   record_count: number | null;
+  archived_count?: number | null;
+  /**
+   * Whether Airtable's 30-day purge still looks like it is running. Asserted
+   * from its effect, because the automation cannot be read from this codebase.
+   */
+  retention_effective?: boolean | null;
+  oldest_live_created_time?: string | null;
+  retention_note?: string | null;
 }
 
 export interface CachedListingsResult {

@@ -85,6 +85,8 @@ export interface DedupableListing {
   imageCandidates?: unknown[] | null;
   receivedAt?: Date | string | null;
   createdTime?: Date | string | null;
+  /** Set by `dedupeListings` on the surviving copy; also set by `airtable-proxy`. */
+  duplicateCount?: number;
   createdAt?: Date | string | null;
 }
 

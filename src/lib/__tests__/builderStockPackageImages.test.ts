@@ -221,10 +221,35 @@ describe('which document belongs to which property', () => {
     expect(selectPackageDocument(entries, { lot: '43', design: 'miami 190' })).toBeNull();
   });
 
-  it('refuses a folder whose documents all name the same lot', () => {
-    // Lot 914's folder: a package, a land contract and a rental appraisal.
+  it('picks the package out of a folder whose documents all name the same lot', () => {
+    /*
+     * Lot 914's real folder: a package, a land contract and a rental appraisal,
+     * every one of them naming lot 914. Counting names finds three and refuses
+     * — which left a real builder facade off a live card. The contract and the
+     * appraisal say in their own filenames what they are, so what remains is
+     * exactly one package candidate.
+     */
     const entries = [
       pdf('a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf'),
+      pdf('b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf'),
+      pdf('c', 'Rental Appraisal_ Lot 914, Covella Estate, Greenbank QLD.pdf'),
+    ];
+    expect(selectPackageDocument(entries, { lot: '914', design: null })?.id).toBe('a');
+  });
+
+  it('still refuses when TWO documents could both be the package', () => {
+    // Neither declares itself something else, so the folder has not said which.
+    const entries = [
+      pdf('a', 'LOT 914 • COVELLA • GREENBANK QLD.pdf'),
+      pdf('b', 'Lot 914 Covella - Property Package.pdf'),
+    ];
+    expect(selectPackageDocument(entries, { lot: '914', design: null })).toBeNull();
+  });
+
+  it('refuses when every candidate declares itself something else', () => {
+    // A contract and an appraisal and nothing else. Inventing a package out of
+    // a contract is precisely what this must not do.
+    const entries = [
       pdf('b', 'OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf'),
       pdf('c', 'Rental Appraisal_ Lot 914, Covella Estate, Greenbank QLD.pdf'),
     ];
@@ -398,6 +423,131 @@ describe('recovering a row-linked package image', () => {
     );
     expect(outcome.status).toBe('not_identified');
     expect(called).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A LIBRARY THAT FILES BY SUBJECT INSTEAD OF BY LOT
+// ---------------------------------------------------------------------------
+
+describe('a library whose folders are document KINDS, not lots', () => {
+  /*
+   * FOUR LIVE CARDS. Sandpiper's library keeps one folder per lot, which is
+   * what the lot search looks for. Cloverton's and Coridale's do the opposite:
+   * the LINKED FOLDER is the property, and inside it are "Package", "Rental
+   * Appraisal" and "Area Profile - Investment Report" — one folder per kind of
+   * document. There is no lot folder to find, the root holds only an
+   * estate-wide inclusions list, and the property's own package sits one level
+   * down where nothing looked.
+   *
+   * The whole bounded subtree the lot search already walked is offered to the
+   * same selector, so this reaches nothing outside the folder the row linked
+   * and costs no further listing. Every rule it decides by is unchanged: one
+   * document, this lot, and of a kind that can be a package.
+   */
+  const CLOVERTON = 'https://drive.google.com/drive/folders/cloverton60434';
+  const LABEL = 'Lot 60434 - Cloverton Estate, Kalkallo VIC 3064';
+
+  const subjectLibrary = (packageFolder: DriveEntry[]) => async (url: string) => {
+    const encode = (html: string) => ({ bytes: new TextEncoder().encode(html), finalUrl: url });
+    if (url.includes('/folders/cloverton60434')) {
+      return encode(driveFolderHtml([
+        folder('area', 'Area Profile - Investment Report'),
+        folder('pack', 'Package'),
+        folder('rent', 'Rental Appraisal'),
+        pdf('incl', 'Victoria_Premium Inclusions List.pdf'),
+      ]));
+    }
+    if (url.includes('/folders/pack')) return encode(driveFolderHtml(packageFolder));
+    if (url.includes('/folders/')) return encode(driveFolderHtml([]));
+    if (url.includes('id=doc-60434')) {
+      return { bytes: packagePdf(jpegBytes(160_000, 0x33), jpegBytes(240_000, 0x44)), finalUrl: url };
+    }
+    return encode('<html>Sign in</html>');
+  };
+
+  it('finds the package one level down, in the folder the builder named', async () => {
+    const outcome = await recoverPackageImage(
+      { packageUrl: CLOVERTON, label: LABEL },
+      {
+        fetchPackage: subjectLibrary([pdf('doc-60434', 'Lot 60434 Cloverton, Kalkallo_140.pdf')]),
+        readPageTexts: coverTextFor(LABEL),
+      },
+    );
+    expect(outcome.status).toBe('recovered');
+    if (outcome.status !== 'recovered') return;
+    expect(outcome.image.documentName).toBe('Lot 60434 Cloverton, Kalkallo_140.pdf');
+  });
+
+  it('and still refuses when the subtree names the lot twice', async () => {
+    // Relaxing WHERE it looks may not relax WHETHER the source said which
+    // document. Two candidates is the library declining to answer.
+    const outcome = await recoverPackageImage(
+      { packageUrl: CLOVERTON, label: LABEL },
+      {
+        fetchPackage: subjectLibrary([
+          pdf('doc-60434', 'Lot 60434 Cloverton, Kalkallo_140.pdf'),
+          pdf('doc-60434b', 'Lot 60434 Cloverton, Kalkallo_122m2.pdf'),
+        ]),
+        readPageTexts: coverTextFor(LABEL),
+      },
+    );
+    expect(outcome.status).toBe('not_identified');
+  });
+
+  it('and never reads a folder outside the one the row linked', async () => {
+    const requested: string[] = [];
+    const inner = subjectLibrary([pdf('doc-60434', 'Lot 60434 Cloverton, Kalkallo_140.pdf')]);
+    await recoverPackageImage(
+      { packageUrl: CLOVERTON, label: LABEL },
+      {
+        fetchPackage: async (url: string) => { requested.push(url); return await inner(url); },
+        readPageTexts: coverTextFor(LABEL),
+      },
+    );
+    const folders = requested.filter((url) => url.includes('/folders/'));
+    expect(folders.every((url) =>
+      ['cloverton60434', 'area', 'pack', 'rent'].some((id) => url.includes(id)))).toBe(true);
+  });
+
+  it('does not let ANOTHER property\'s folder become a second candidate', async () => {
+    /*
+     * The cache is shared by every row in a run — that is what keeps
+     * forty-four rows pointing at one library to a handful of requests — so
+     * "everything read so far" is not this property's subtree. Two Cloverton
+     * rows each link their own folder and each folder holds one document naming
+     * its own lot; reading the cache flat made the two look like two candidates
+     * for one property, and produced no image for either.
+     */
+    const route = async (url: string) => {
+      const encode = (html: string) => ({ bytes: new TextEncoder().encode(html), finalUrl: url });
+      if (url.includes('/folders/cloverton60434')) {
+        return encode(driveFolderHtml([folder('pack', 'Package')]));
+      }
+      if (url.includes('/folders/pack')) {
+        return encode(driveFolderHtml([pdf('doc-60434', 'Lot 60434 Cloverton, Kalkallo_140.pdf')]));
+      }
+      if (url.includes('/folders/otherfolder')) {
+        return encode(driveFolderHtml([folder('pack2', 'Package')]));
+      }
+      if (url.includes('/folders/pack2')) {
+        return encode(driveFolderHtml([pdf('doc-60434b', 'Lot 60434 Cloverton, Kalkallo_122m2.pdf')]));
+      }
+      if (url.includes('/folders/')) return encode(driveFolderHtml([]));
+      return { bytes: packagePdf(jpegBytes(160_000, 0x33), jpegBytes(240_000, 0x44)), finalUrl: url };
+    };
+    const shared = new DriveListingCache(route);
+    const deps = { cache: shared, fetchPackage: route, readPageTexts: coverTextFor(LABEL) };
+
+    const first = await recoverPackageImage(
+      { packageUrl: 'https://drive.google.com/drive/folders/otherfolder', label: LABEL }, deps);
+    expect(first.status).toBe('recovered');
+
+    // The second row, through the SAME cache, must still find its own.
+    const second = await recoverPackageImage({ packageUrl: CLOVERTON, label: LABEL }, deps);
+    expect(second.status).toBe('recovered');
+    if (second.status !== 'recovered') return;
+    expect(second.image.documentName).toBe('Lot 60434 Cloverton, Kalkallo_140.pdf');
   });
 });
 

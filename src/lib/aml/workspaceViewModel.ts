@@ -34,6 +34,7 @@
  * canonical; the five macro phases below are a map drawn over it.
  */
 
+import { deriveFundingObligation } from "./fundingObligation.pure";
 import {
   CASE_STAGE_LABELS,
   SERVICE_GATE_LABELS,
@@ -350,6 +351,19 @@ export interface AmlWorkspaceFacts {
    * every reader degrades rather than guessing that there is no account.
    */
   portalAccess?: AmlPortalAccessFacts | null;
+  /**
+   * The recorded perimeter classification, from `sync_screening_stage`.
+   *
+   * Threaded in the same way `screening.pepRequired` is — the workspace
+   * already holds that read, and a second copy of an idempotent compliance
+   * read is a second thing to keep in step. Absent means unclassified, which
+   * means INSIDE: an unclassified case is not an exempt one.
+   */
+  perimeter?: {
+    classified?: boolean | null;
+    classification?: string | null;
+    reason_code?: string | null;
+  } | null;
 }
 
 /* Small readers that keep the "was this loaded?" question in one place. */
@@ -1237,9 +1251,44 @@ function nextActionCandidates(facts: AmlWorkspaceFacts): Candidate[] {
       facts: ["service_gate_status = conditions_outstanding"],
     });
   }
+  /*
+   * ── Stage 6, which used to be silent ──────────────────────────────
+   *
+   * There was one funding candidate and it was gated on
+   * `sources.length > 0 && unverified.length > 0` — it spoke only once
+   * somebody had ALREADY started. A case with nothing recorded, which is
+   * every case at the moment Stage 5 finishes, produced no candidate at all.
+   *
+   * This ranking orders by journey position, so with Stage 6 saying nothing
+   * the winner became Stage 7 and the operator was sent from Screening
+   * straight to Submission review — under a line reading "Stages 2–6 have
+   * nothing outstanding on this reading", while Stage 6's own journey
+   * reading carried an unmet blocker. Two derivations of the same case,
+   * disagreeing, one of them on screen.
+   *
+   * Whether it is owed is decided in `fundingObligation.pure.ts` and never
+   * inferred from whether anybody has got round to it.
+   */
   if (loaded(facts.funding)) {
+    const fundingObligation = deriveFundingObligation({
+      perimeter: facts.perimeter ?? null,
+      riskRating: facts.caseRow?.risk_rating ?? null,
+      enhancedDueDiligence: facts.caseRow?.status === "edd_required",
+      pepFinding: loaded(facts.screening)
+        && facts.screening.subjects.some((s) => s.pep_determination?.result === "pep"),
+    });
     const unverified = facts.funding.sources.filter((s) => !s.verified);
-    if (facts.funding.sources.length > 0 && unverified.length > 0) {
+    if (fundingObligation.reading === "required" && facts.funding.sources.length === 0) {
+      out.push({
+        key: "funding_start",
+        label: "Record source of funds",
+        explanation: `${fundingObligation.reason} Nothing has been recorded yet.`,
+        attention: "attention",
+        section: "finance",
+        blocking: false,
+        facts: ["source-of-funds items (0)", ...fundingObligation.sourceFacts],
+      });
+    } else if (facts.funding.sources.length > 0 && unverified.length > 0) {
       out.push({
         key: "funding_review",
         label: "Review source of funds",

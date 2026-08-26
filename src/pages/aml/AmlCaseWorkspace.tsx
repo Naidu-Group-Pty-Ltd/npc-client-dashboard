@@ -282,6 +282,14 @@ export default function AmlCaseWorkspace() {
        */
       pepRequired: screeningStage.sync?.scopes?.find(
         (x) => x.scope === "pep")?.required ?? null,
+      /*
+       * The same read again, for Stage 6. The perimeter is the only thing
+       * that can stand down source-of-funds evidence, and until it lands
+       * this is null — which reads as unclassified, which reads as inside,
+       * which reads as owed. The safe direction, and the same one the
+       * screening scope takes.
+       */
+      perimeter: screeningStage.sync?.perimeter ?? null,
     },
   );
 
@@ -759,6 +767,29 @@ export default function AmlCaseWorkspace() {
                 currentStageOrder={
                   activeStageId ? JOURNEY_STAGES.indexOf(activeStageId) + 1 : undefined
                 }
+                /*
+                 * The stages the button steps over, read from the journey
+                 * itself. The card used to assert they had nothing
+                 * outstanding without consulting any of them.
+                 */
+                interposed={(() => {
+                  const from = activeStageId
+                    ? JOURNEY_STAGES.indexOf(activeStageId) + 1 : 0;
+                  const to = summary.nextAction.stageOrder;
+                  if (!from || to <= from + 1) return [];
+                  return journey.stages
+                    .filter((st) => st.number > from && st.number < to)
+                    .map((st) => ({
+                      number: st.number,
+                      label: st.shortLabel,
+                      state: !st.applicable
+                        ? "not_required" as const
+                        : st.outstandingItems.length > 0
+                          ? "outstanding" as const
+                          : "clear" as const,
+                      reason: st.notApplicableReason,
+                    }));
+                })()}
                 onReopen={canInvestigate ? () => void reopenCase() : undefined}
               />
               <div className="grid items-start gap-4 md:grid-cols-2">
@@ -849,6 +880,11 @@ export default function AmlCaseWorkspace() {
                   })}
                   caseClosed={screeningStage.sync.case_closed === true}
                   closedAction={screeningReopenAction}
+                  radarParties={(screeningStage.sync.subjects ?? []).map((s) => ({
+                    name: s.screened_name,
+                    returned: s.state !== "not_started" && s.state !== "processing",
+                    candidate: s.state === "possible_match",
+                  }))}
                   onAct={runScreeningAction}
                   onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
                   onReviewPerimeter={() => setPerimeterDialogOpen(true)}
@@ -978,7 +1014,9 @@ export default function AmlCaseWorkspace() {
           )}
 
           {/* ── Stage 6 · Funding & transaction ─────────────────────── */}
-          {section === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
+          {section === "finance" && canInvestigate && (
+            <FundingFinanceTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+          )}
           {section === "counterparty" && canInvestigate && (
             <PurchaseCounterpartySection caseRow={caseRow} canWrite={canWrite} />
           )}

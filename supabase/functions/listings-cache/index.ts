@@ -16,10 +16,13 @@ import {
   redactError,
 } from '../_shared/publicAbuseControls.ts';
 import {
+  assessRetention,
   orderLooksSorted,
   planReconciliation,
+  planRetention,
   toCacheRow,
   type CachedListingRow,
+  type VanishedRow,
 } from '../_shared/listingsCache.pure.ts';
 import {
   allowlistAdmits,
@@ -45,13 +48,22 @@ import { INTAKE_SORT_FIELD } from '../_shared/airtableIntakeFields.pure.ts';
  *   op: 'sync'  (service role, cron) — walks Airtable once for everybody and
  *               brings the cache in line, deletions included.
  *
- * The cache **mirrors** Airtable, it does not archive it. Airtable prunes the
- * intake table 30 days after a record's Created Time; the sync's reconciliation
- * step propagates that here, so the dashboard settles into a rolling window of
- * current stock. That makes reconciliation the most dangerous code in this file
- * — it is the one operation that can destroy data for every user at once, on a
- * schedule, unattended — so the decision to run it is made by
- * `planReconciliation` from evidence, and is refused by default.
+ * The cache **archives** Airtable; it used to mirror it, and that was the bug.
+ * Airtable prunes the intake table 30 days after a record's Created Time
+ * because it is a working table, and the reconciliation step propagated every
+ * one of those deletions — so the product's whole inventory sat on a thirty-day
+ * fuse with no copy anywhere. 148 listings on 2026-08-19 were 51 by 2026-08-25,
+ * all from one evening's intake, with the next purge due to take those too.
+ *
+ * The purge stays; it is doing its job. What changed is what a vanished row
+ * MEANS: aged out of the window → kept and stamped `archived_at`; gone while
+ * still inside it → deleted, because somebody deleted it. `planRetention` draws
+ * that line.
+ *
+ * Reconciliation is still the most dangerous code in this file — it is the one
+ * operation that can destroy data for every user at once, on a schedule,
+ * unattended — so whether it runs at all is still decided by
+ * `planReconciliation` from evidence, and is still refused by default.
  */
 
 const CIRCUIT_SCOPE = 'listings_cache_read';
@@ -233,23 +245,59 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
 
 type Supabase = ReturnType<typeof createClient>;
 
-/** Every fingerprint currently held for a table, paged past PostgREST's cap. */
-async function loadFingerprints(
-  supabase: Supabase,
-  tableKey: string,
-): Promise<Map<string, string | null>> {
-  const held = new Map<string, string | null>();
+interface HeldRows {
+  /** listing_id → fingerprint, for deciding what has to be rewritten. */
+  fingerprints: Map<string, string | null>;
+  /** Rows currently marked archived, so a record that comes back can be revived. */
+  archived: Set<string>;
+}
+
+/** Every row currently held for a table, paged past PostgREST's cap. */
+async function loadHeldRows(supabase: Supabase, tableKey: string): Promise<HeldRows> {
+  const fingerprints = new Map<string, string | null>();
+  const archived = new Set<string>();
   for (let from = 0; ; from += READ_PAGE) {
     const { data, error } = await supabase
       .from('listings_cache')
-      .select('listing_id, fingerprint')
+      .select('listing_id, fingerprint, archived_at')
       .eq('table_key', tableKey)
       .range(from, from + READ_PAGE - 1);
     if (error) throw new Error(`fingerprint_read_failed: ${error.message}`);
-    const rows = (data ?? []) as Array<{ listing_id: string; fingerprint: string | null }>;
-    for (const row of rows) held.set(row.listing_id, row.fingerprint);
-    if (rows.length < READ_PAGE) return held;
+    const rows = (data ?? []) as Array<{
+      listing_id: string;
+      fingerprint: string | null;
+      archived_at: string | null;
+    }>;
+    for (const row of rows) {
+      fingerprints.set(row.listing_id, row.fingerprint);
+      if (row.archived_at) archived.add(row.listing_id);
+    }
+    if (rows.length < READ_PAGE) return { fingerprints, archived };
   }
+}
+
+/**
+ * Un-archives records the walk saw again.
+ *
+ * Airtable never reissues a record id, so this only fires when somebody
+ * restores one from the trash — but an archived row that is live again must say
+ * so, or the next reconciliation would skip it (it selects live rows only) and
+ * it would sit archived forever while Airtable holds it.
+ */
+async function reviveArchived(
+  supabase: Supabase,
+  tableKey: string,
+  ids: string[],
+): Promise<number> {
+  for (let i = 0; i < ids.length; i += WRITE_CHUNK) {
+    const { error } = await supabase
+      .from('listings_cache')
+      .update({ archived_at: null })
+      .eq('table_key', tableKey)
+      .in('listing_id', ids.slice(i, i + WRITE_CHUNK));
+    if (error) throw new Error(`revive_failed: ${error.message}`);
+  }
+  return ids.length;
 }
 
 async function writeChanged(supabase: Supabase, rows: CachedListingRow[]): Promise<void> {
@@ -298,6 +346,10 @@ async function recordSyncState(
 
 interface SyncOutcome {
   fetched: number;
+  archived: number;
+  revived: number;
+  withheld: number;
+  retentionEffective: boolean;
   changed: number;
   unchanged: number;
   deleted: number;
@@ -336,16 +388,19 @@ async function runSync(
   }
   const rows = Array.from(rowsById.values());
 
-  const held = await loadFingerprints(supabase, tableKey);
+  const held = await loadHeldRows(supabase, tableKey);
   const changed: CachedListingRow[] = [];
   const unchanged: string[] = [];
+  const revived: string[] = [];
   for (const row of rows) {
-    if (held.get(row.listing_id) === row.fingerprint) unchanged.push(row.listing_id);
+    if (held.fingerprints.get(row.listing_id) === row.fingerprint) unchanged.push(row.listing_id);
     else changed.push(row);
+    if (held.archived.has(row.listing_id)) revived.push(row.listing_id);
   }
 
   await writeChanged(supabase, changed);
   await stampUnchanged(supabase, tableKey, unchanged, startedAt);
+  await reviveArchived(supabase, tableKey, revived);
 
   const verdict = planReconciliation({
     walkComplete: walk.complete,
@@ -354,18 +409,73 @@ async function runSync(
   });
 
   let deleted = 0;
+  let archived = 0;
+  let withheld = 0;
+  let withheldNote: string | null = null;
   if (verdict.allowed) {
-    // Anything not re-stamped by this run is gone from Airtable. This is the
-    // only path by which an upstream deletion reaches the cache.
+    /*
+     * Anything not re-stamped by this run is gone from Airtable — and what that
+     * MEANS is the difference between a mirror and an archive.
+     *
+     * This used to delete all of it, which is why the marketplace was emptying
+     * itself: Airtable prunes the intake table at thirty days because it is a
+     * working table, and propagating that left the product with a thirty-day
+     * fuse and no copy anywhere. 148 listings on 2026-08-19 were 51 by
+     * 2026-08-25, and the next purge was due to take those too.
+     *
+     * The purge is not the bug. Mirroring it is. So a row that aged out is kept
+     * and stamped `archived_at`; a row that disappeared while still inside the
+     * window was deleted on purpose and is still removed. `planRetention` draws
+     * that line and explains where it leans at the boundary.
+     */
     const { data, error } = await supabase
       .from('listings_cache')
-      .delete()
+      .select('listing_id, created_time')
       .eq('table_key', tableKey)
       .lt('last_verified_at', startedAt)
-      .select('listing_id');
+      .is('archived_at', null);
     if (error) throw new Error(`reconcile_failed: ${error.message}`);
-    deleted = (data ?? []).length;
+
+    const plan = planRetention((data ?? []) as VanishedRow[], Date.parse(startedAt) || Date.now(), {
+      // The removal cap is measured against what this walk actually saw, so a
+      // walk that missed most of the table cannot delete what it missed.
+      liveCount: rows.length,
+    });
+    if (plan.note) console.warn('[listings-cache] retention', plan.note);
+
+    for (let i = 0; i < plan.archive.length; i += WRITE_CHUNK) {
+      const { error: archiveError } = await supabase
+        .from('listings_cache')
+        .update({ archived_at: startedAt })
+        .eq('table_key', tableKey)
+        .in('listing_id', plan.archive.slice(i, i + WRITE_CHUNK));
+      if (archiveError) throw new Error(`archive_failed: ${archiveError.message}`);
+    }
+    archived = plan.archive.length;
+
+    for (let i = 0; i < plan.remove.length; i += WRITE_CHUNK) {
+      const { error: deleteError } = await supabase
+        .from('listings_cache')
+        .delete()
+        .eq('table_key', tableKey)
+        .in('listing_id', plan.remove.slice(i, i + WRITE_CHUNK));
+      if (deleteError) throw new Error(`reconcile_failed: ${deleteError.message}`);
+    }
+    deleted = plan.remove.length;
+    withheld = plan.withheld;
+    withheldNote = plan.note;
   }
+
+  /*
+   * Is the purge still running? Asserted from its effect, because the
+   * automation lives in Airtable and cannot be read from here: if it runs
+   * daily, nothing the walk sees is ever much older than thirty days.
+   */
+  const oldestLive = rows.reduce<string | null>((oldest, row) => {
+    if (!row.created_time) return oldest;
+    return oldest === null || row.created_time < oldest ? row.created_time : oldest;
+  }, null);
+  const retention = assessRetention(oldestLive, Date.parse(startedAt) || Date.now());
 
   const sorted = orderLooksSorted(rows.slice(0, 200).map((row) => row.created_time));
   const status = walk.complete ? (verdict.allowed ? 'ok' : 'partial') : 'partial';
@@ -373,6 +483,8 @@ async function runSync(
     walk.error,
     verdict.allowed ? null : `reconcile skipped: ${verdict.reason}`,
     sorted ? null : 'walk did not come back newest-first',
+    retention.effective ? null : retention.reason,
+    withheldNote,
   ].filter(Boolean) as string[];
 
   await recordSyncState(supabase, tableKey, {
@@ -385,6 +497,10 @@ async function runSync(
       : {}),
     status,
     reconciled: verdict.allowed,
+    archived_count: archived,
+    oldest_live_created_time: oldestLive,
+    retention_effective: retention.effective,
+    retention_note: retention.reason.slice(0, 300),
     error_count: notes.length,
     last_error: notes.length ? notes.join('; ').slice(0, 500) : null,
   });
@@ -394,6 +510,10 @@ async function runSync(
     changed: changed.length,
     unchanged: unchanged.length,
     deleted,
+    archived,
+    revived: revived.length,
+    withheld,
+    retentionEffective: retention.effective,
     reconciled: verdict.allowed,
     reconcileReason: verdict.reason,
     sorted,
@@ -594,7 +714,10 @@ Deno.serve(async (req) => {
     const records = await readCache(supabase, tableKey);
     const { data: state } = await supabase
       .from('listings_cache_sync')
-      .select('last_sync_at, last_full_sync_at, status, reconciled, record_count')
+      .select(
+        'last_sync_at, last_full_sync_at, status, reconciled, record_count, ' +
+          'archived_count, oldest_live_created_time, retention_effective, retention_note',
+      )
       .eq('table_key', tableKey)
       .maybeSingle();
 
@@ -607,6 +730,11 @@ Deno.serve(async (req) => {
       // Surfaced rather than swallowed: a caller that gets an empty set because
       // the cache has never synced should be able to tell that apart from a
       // table that genuinely has no listings.
+      //
+      // `record_count` is what Airtable still holds; `total` is what this store
+      // serves, and the two now differ by the archive. `retention_effective`
+      // carries the answer to "is the 30-day purge still running", which is
+      // otherwise unobservable from anywhere in this product.
       sync: state ?? null,
     });
   } catch (error) {

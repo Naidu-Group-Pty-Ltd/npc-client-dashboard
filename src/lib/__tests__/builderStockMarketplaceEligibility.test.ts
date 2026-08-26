@@ -32,6 +32,9 @@
  * set on a common baseline, over a photograph with grain in it.
  */
 import { describe, expect, it } from 'vitest';
+import {
+  PROVENANCE_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/sourceImages';
 import { readFileSync, readdirSync } from 'node:fs';
 
 import {
@@ -565,14 +568,14 @@ describe('TEST AC — the autonomous settler picks up eligibility work on its ow
     // Exactly the state every existing upload is in the moment this ships:
     // its imagery has been settled, and its display eligibility has not.
     expect(uploadHasWorkOutstanding({
-      source_images_settled_version: 4,
+      source_images_settled_version: PROVENANCE_VERSION,
       marketplace_eligibility_settled_version: null,
     })).toBe(true);
   });
 
   it('stops only when ALL THREE markers are current', () => {
     expect(uploadHasWorkOutstanding({
-      source_images_settled_version: 4,
+      source_images_settled_version: PROVENANCE_VERSION,
       marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
       image_sanitization_settled_version: SANITIZATION_VERSION,
     })).toBe(false);
@@ -586,7 +589,7 @@ describe('TEST AC — the autonomous settler picks up eligibility work on its ow
     // upload never offered to that repair is outstanding however current the
     // other two are.
     expect(uploadHasWorkOutstanding({
-      source_images_settled_version: 4,
+      source_images_settled_version: PROVENANCE_VERSION,
       marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
       image_sanitization_settled_version: null,
     })).toBe(true);
@@ -950,7 +953,7 @@ describe('TEST AJ/AK — the queue reaches work behind a full page of settled up
     organisation_id: ORG,
     deleted_at: null,
     created_at: `2026-01-01T00:${String(index % 60).padStart(2, '0')}:${String(index % 60).padStart(2, '0')}Z`,
-    source_images_settled_version: 4,
+    source_images_settled_version: PROVENANCE_VERSION,
     marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
     image_sanitization_settled_version: SANITIZATION_VERSION,
   });
@@ -1004,7 +1007,7 @@ describe('TEST AL — the target version lives in the database', () => {
   const upload = (marker: number | null) => ({
     id: 'upload-1', organisation_id: ORG, deleted_at: null,
     created_at: '2026-01-01T00:00:00Z',
-    source_images_settled_version: 4,
+    source_images_settled_version: PROVENANCE_VERSION,
     marketplace_eligibility_settled_version: marker,
     image_sanitization_settled_version: SANITIZATION_VERSION,
   });

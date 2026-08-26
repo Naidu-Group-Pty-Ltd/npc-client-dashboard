@@ -122,6 +122,61 @@ export interface SanitizeImageOptions {
   allowGenerative?: boolean;
   /** Injected in tests. Production passes nothing. */
   edit?: InpaintInput['edit'];
+  /**
+   * A repair region the CALLER has already established, as fractions of the
+   * picture's own width and height.
+   *
+   * WHY THIS EXISTS, AND WHY IT IS NOT A WAY ROUND THE DETECTOR. The detector
+   * is the authority on whether a picture may be DRAWN, and nothing here
+   * changes that: a caller supplying a region is not asking for a different
+   * verdict, it is saying "I have identified this rectangle by other means,
+   * rebuild it". The routine case remains detector-driven and is byte-for-byte
+   * unchanged when this is absent.
+   *
+   * It exists because the detector's mask builder reads lines of TYPE, and a
+   * plate whose lettering is below the measuring resolution has no measurable
+   * extent — so a promotional plate can be real, visible to a person, and
+   * still produce no mask. Without this there is no way to repair such a
+   * picture except to move a global threshold, which was measured against real
+   * clean production facades and is not safe.
+   *
+   * Fractions rather than pixels so a caller never has to know the size of the
+   * reduction the classifier happens to measure on.
+   *
+   * IT GRANTS NO NEW POWERS. The supplied region chooses only which pixels are
+   * rebuilt; every other rule is untouched — the deterministic route is still
+   * tried first, the result still goes back through the same classifier before
+   * it may be offered, and compositing still restricts the change to the mask.
+   */
+  repairRegion?: { left: number; top: number; right: number; bottom: number };
+}
+
+/**
+ * A caller-supplied region, as a mask at the measured reduction's own size.
+ *
+ * Clamped to the picture and refused when it is empty or inverted, so a
+ * malformed region is the same as none rather than a mask over the whole
+ * photograph.
+ */
+function suppliedRepairMask(
+  region: SanitizeImageOptions['repairRegion'],
+  width: number,
+  height: number,
+): { mask: Uint8Array; regions: number } | null {
+  if (!region) return null;
+  const clamp = (value: number, max: number) =>
+    Math.max(0, Math.min(max, Math.round(value * max)));
+  const left = clamp(region.left, width);
+  const right = clamp(region.right, width);
+  const top = clamp(region.top, height);
+  const bottom = clamp(region.bottom, height);
+  if (!(right > left) || !(bottom > top)) return null;
+
+  const mask = new Uint8Array(width * height);
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) mask[y * width + x] = 1;
+  }
+  return { mask, regions: 1 };
 }
 
 /**
@@ -156,6 +211,8 @@ export async function sanitizeSourceImage(
      * to loosen the rule that made it blank.
      */
     const verdict = readMarketingOverlay(thumbnail.thumbnail);
+    const supplied = suppliedRepairMask(
+      options.repairRegion, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
 
     /*
      * THE PRECISE INSPECTION, MEASURED ONCE AND USED BY BOTH DECISIONS.
@@ -187,7 +244,7 @@ export async function sanitizeSourceImage(
       plateCount,
     });
 
-    if (!verdict || !verdict.annotated) {
+    if (!supplied && (!verdict || !verdict.annotated)) {
       /*
        * The classifier that convicted this picture and a fresh reading of the
        * same bytes disagree. That is a question for the eligibility sweep — but
@@ -223,7 +280,14 @@ export async function sanitizeSourceImage(
      * its blank card.
      */
     const plates = overlayPlateMask(thumbnail.thumbnail, textBoxes, flatBoxes);
-    if (!plates.plates.length) {
+    /*
+     * A SUPPLIED REGION REPLACES THE DERIVED MASK AND NOTHING ELSE. The
+     * caller has said which pixels to rebuild; it has not said anything about
+     * how to rebuild them, whether the result is acceptable, or what may be
+     * drawn afterwards.
+     */
+    const repair = supplied ?? { mask: plates.mask, regions: plates.plates.length };
+    if (!supplied && !plates.plates.length) {
       /*
        * NOTHING TO REMOVE — AND THAT IS NOW TWO DIFFERENT ANSWERS.
        *
@@ -267,18 +331,18 @@ export async function sanitizeSourceImage(
       width: raster.width,
       height: raster.height,
       pixels: raster.pixels,
-      mask: plates.mask,
-      regions: plates.plates.length,
+      mask: repair.mask,
+      regions: repair.regions,
       maskWidth: thumbnail.thumbnail.width,
       maskHeight: thumbnail.thumbnail.height,
     });
 
-    if (deterministic.ok) {
+    if (deterministic.ok === true) {
       return await finish(
         deterministic.pixels, raster.width, raster.height,
         'deterministic_overlay_reconstruction', deterministic.repairedShare,
         deterministic.regionsRemoved, null,
-        plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
+        repair.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
     }
 
     /*
@@ -308,7 +372,7 @@ export async function sanitizeSourceImage(
     }
 
     const mask = growOverlayMask(
-      plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height,
+      repair.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height,
       raster.width, raster.height);
     if (!mask) {
       return {
@@ -323,7 +387,7 @@ export async function sanitizeSourceImage(
       width: raster.width, height: raster.height, pixels: raster.pixels, mask,
       edit: options.edit,
     });
-    if (!generated.ok) {
+    if (generated.ok === false) {
       return {
         ok: false,
         reason: generated.reason === 'too_many_regions'
@@ -338,7 +402,7 @@ export async function sanitizeSourceImage(
       generated.pixels, generated.width, generated.height,
       'generative_overlay_inpaint', generated.repairedShare, generated.regionsRemoved,
       generated.model,
-      plates.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
+      repair.mask, thumbnail.thumbnail.width, thumbnail.thumbnail.height);
   } catch (error) {
     // A thrown decoder, a thrown encoder, a thrown anything. Nothing was
     // established about the picture, so nothing is written down about it.

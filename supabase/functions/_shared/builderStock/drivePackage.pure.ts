@@ -136,6 +136,32 @@ export function normaliseDriveName(value: string): string {
 }
 
 /**
+ * A design name with the TENURE wording taken out of it.
+ *
+ * The stock list writes how a house is HELD — "[Bishop 258 Dual Occ]" — inside
+ * the same bracket it writes the design in. The builder never does: the file is
+ * "Lot 51 - Bishop 258 - Property Package.pdf" and its own cover reads "Bishop
+ * 258, Mira facade" over "Dual key home, 4 + 2". The design and its number are
+ * the part BOTH sides state; the tenure is one side's vocabulary for the
+ * other's, and the two spellings share not a single token.
+ *
+ * WHY IT IS SHARED RATHER THAN COPIED. This was applied when choosing WHICH
+ * document in the lot folder is a property's, and not when asking whether that
+ * document's cover names the property — so nineteen Sandpiper rows selected
+ * exactly the right package, opened it, reached the right page, and refused it
+ * because the page does not contain the letters "occ". Choosing a document and
+ * recognising its cover are the same question about the same label, and
+ * answering them with two different readings of it is what left a blank card in
+ * front of the builder's own photograph.
+ *
+ * It removes wording and never adds any, so nothing it touches can begin to
+ * match a design it did not already match.
+ */
+export function withoutTenureWording(design: string): string {
+  return String(design ?? '').replace(/\b(dual\s*occ(?:upancy)?|dual\s*key)\b/gi, ' ');
+}
+
+/**
  * The lot and the house design a stock row names.
  *
  * Both come from the row's own label — "Lot 43 - Tringa Street, Sandpiper
@@ -144,17 +170,16 @@ export function normaliseDriveName(value: string): string {
  * identified by its lot alone and will only match a folder holding a single
  * document.
  *
- * "Dual Occ" / "Dual Key" are dropped: the source writes them on the row and
- * not on the file ("Lot 43 - Echo 236 - Property Package.pdf"), and the model
- * name plus its number is the part both sides state.
+ * "Dual Occ" / "Dual Key" are dropped by `withoutTenureWording`, for the reason
+ * recorded there.
  */
 export function lotAndDesignFrom(label: string): { lot: string | null; design: string | null } {
   const text = String(label ?? '');
   const lot = /(?:^|[^a-z0-9])lot\s*([0-9]{1,6}[a-z]?)\b/i.exec(text)?.[1] ?? null;
 
   const bracketed = /\[([^\]]{1,60})\]/.exec(text)?.[1] ?? '';
-  const cleaned = bracketed.replace(/\b(dual\s*occ(?:upancy)?|dual\s*key)\b/gi, ' ');
-  const design = /([a-z][a-z' -]{2,24}\s+\d{2,4})/i.exec(cleaned)?.[1] ?? null;
+  const design = /([a-z][a-z' -]{2,24}\s+\d{2,4})/i.exec(withoutTenureWording(bracketed))?.[1]
+    ?? null;
 
   return {
     lot: lot ? lot.toLowerCase() : null,
@@ -184,6 +209,58 @@ export function selectLotFolder(entries: DriveEntry[], lot: string): string | nu
  * one would be a guess. A row with no design matches only when the folder
  * holds exactly one document naming the lot.
  */
+/**
+ * What KIND of document a builder's own filename says this is.
+ *
+ * A package library holds several documents about one property, and only one of
+ * them is the property package. Lot 914 Covella's folder is exactly that:
+ *
+ *   LOT 914 • COVELLA • GREENBANK QLD.pdf              the package
+ *   OTP_Land_Contract_P1_-_Rana_-_Lot_914_Covella.pdf  a contract
+ *   Rental Appraisal_ Lot 914, Covella Estate ….pdf    an appraisal
+ *
+ * All three name Lot 914, so a rule that asks only "which files name this lot"
+ * finds three and correctly refuses — and a real facade the builder supplied
+ * stays off the card for want of a question nobody asked.
+ *
+ * THIS IS DOCUMENT KIND, NOT IMAGE CONTENT. It reads the name the builder gave
+ * the FILE to decide what the file is for; it makes no judgement about any
+ * picture, and nothing here can promote or demote an image. That distinction is
+ * why naming these words is legitimate where naming marketing words never is:
+ * a contract is a contract because its author called it one.
+ *
+ * IT ONLY EVER EXCLUDES. A document is a package candidate unless its name
+ * declares it something else — so a builder who names a package
+ * "LOT 914 • COVELLA • GREENBANK QLD.pdf", with no word for what it is,
+ * remains a candidate. Requiring the word "package" instead would have thrown
+ * that exact file away.
+ */
+export type DriveDocumentKind = 'package_candidate' | 'contract' | 'appraisal' | 'reference';
+
+/**
+ * Words that declare a document to be something other than a property package.
+ *
+ * Each is a document TYPE a builder library holds beside its packages, and each
+ * appears in the live folders. Deliberately narrow: anything not matched stays
+ * a candidate, so the cost of an omission here is the behaviour this already
+ * had, and the cost of a wrong entry is a package refused rather than a wrong
+ * picture shown.
+ */
+const NOT_A_PACKAGE: ReadonlyArray<readonly [DriveDocumentKind, RegExp]> = [
+  ['contract', /\b(contract|otp|offer to purchase|sale of land|conveyanc)/],
+  ['appraisal', /\b(appraisal|valuation|rental assessment)/],
+  ['reference', /\b(inclusion|specification|price list|pricelist|stocklist|stock list|acoustic|soil|survey|covenant|disclosure|brochure pack|investment report)/],
+];
+
+/** The kind a document's own name declares. Candidates are the default. */
+export function driveDocumentKind(name: string): DriveDocumentKind {
+  const clean = normaliseDriveName(name);
+  for (const [kind, pattern] of NOT_A_PACKAGE) {
+    if (pattern.test(clean)) return kind;
+  }
+  return 'package_candidate';
+}
+
 export function selectPackageDocument(
   entries: DriveEntry[],
   key: { lot: string; design: string | null },
@@ -197,5 +274,20 @@ export function selectPackageDocument(
     if (!name.includes(` ${lotToken} `)) return false;
     return key.design ? name.includes(` ${key.design} `) : true;
   });
+
+  /*
+   * NARROWED BY KIND, AND ONLY WHERE IT HELPS.
+   *
+   * The kind filter runs on the documents that already name this property, and
+   * its answer is taken only when it leaves EXACTLY ONE. Leaving two is the
+   * library still declining to say which is the package; leaving none means
+   * every candidate declared itself something else, and inventing a package out
+   * of a contract is precisely what this must not do. Both fall through to the
+   * unfiltered count, which is the behaviour that shipped — so this can turn a
+   * refusal into a selection and can never turn one selection into another.
+   */
+  const packages = named.filter((entry) => driveDocumentKind(entry.name) === 'package_candidate');
+  if (named.length !== 1 && packages.length === 1) return packages[0];
+
   return named.length === 1 ? named[0] : null;
 }

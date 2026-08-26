@@ -482,6 +482,60 @@ export async function runSettlementTick(
 }
 
 /**
+ * Re-open a settled question because the thing it was an answer ABOUT changed.
+ *
+ * THE REPAIR MARKER IS AN ANSWER ABOUT A SET OF CONVICTIONS, and both the
+ * things that can add a conviction happen after it may already have settled.
+ * The overlay repair only ever picks up an image the display gate REFUSED, so
+ * once its marker sits at the current version an image refused later is work
+ * its marker says does not exist — no derivative is ever built, no clearance is
+ * ever sought, and the card stays blank in front of a photograph the builder
+ * supplied, with every marker reading "settled" and nothing outstanding
+ * anywhere.
+ *
+ * Two routes add one. The eligibility sweep writes `ineligible` onto a picture
+ * it has just measured; and the provenance repair STORES a picture, which
+ * arrives already judged — `storeSourceImages` and `storeSourceImageBytes` both
+ * embed the verdict at write time — and can therefore arrive refused.
+ *
+ * Neither could strand a repair while one tick did all three phases in order.
+ * Both can now that they are separated one-per-tick, and rotation makes the
+ * order arbitrary, so this cannot be left to the phases happening to fall the
+ * right way round.
+ *
+ * Clearing rather than lowering, because null is what the schema already means
+ * by "never answered", and it is the one value no target can be satisfied by.
+ * A failure here is logged and not fatal: the work was done, and the worst case
+ * is the state this replaces.
+ */
+async function reopenSettlement(
+  db: any,
+  input: { organisationId: string; uploadId: string },
+  columns: string[],
+  because: string,
+): Promise<void> {
+  if (!columns.length) return;
+  const { error } = await db
+    .from('builder_stock_uploads')
+    .update(Object.fromEntries(columns.map((column) => [column, null])))
+    .eq('id', input.uploadId)
+    .eq('organisation_id', input.organisationId);
+  if (error) {
+    console.warn('[builderStock] settlement not re-opened', {
+      upload_id: input.uploadId,
+      phase: 'settlement_reopen',
+      columns,
+      because,
+      message: String((error as { message?: string }).message ?? error).slice(0, 200),
+    });
+    return;
+  }
+  console.info('[builderStock] settlement re-opened', {
+    upload_id: input.uploadId, phase: 'settlement_reopen', columns, because,
+  });
+}
+
+/**
  * Bring ONE upload's imagery up to the current rules.
  *
  * Budgeted and resumable in exactly the way the repair already is: a run that
@@ -575,6 +629,18 @@ export async function settleUploadSourceImages(
         return { uploadId: input.uploadId, settled: false, eligibilitySettled, eligibility };
       }
       eligibilitySettled = true;
+      /*
+       * A NEW CONVICTION IS NEW WORK FOR THE REPAIR. The overlay repair only
+       * ever picks up an image the display gate refused, so a verdict written
+       * after that repair last reported itself finished is work its marker
+       * says does not exist. Rotation makes the order of the two phases within
+       * a run arbitrary, so this cannot be left to them happening to fall the
+       * right way round.
+       */
+      if (eligibility.rejected > 0) {
+        await reopenSettlement(db, input, [SANITIZATION_SETTLED_VERSION_COLUMN],
+          `${eligibility.rejected} image(s) newly refused for display`);
+      }
     } else {
       if (eligibility.unresolved) {
         console.warn('[builderStock] eligibility work unresolved', {
@@ -680,6 +746,17 @@ export async function settleUploadSourceImages(
       phase: 'source_image_recovery',
       problems: repair.problems.slice(0, 10),
     });
+  }
+
+  /*
+   * A STORED PICTURE ARRIVES WITH A VERDICT, AND THE VERDICT MAY BE A REFUSAL.
+   * Done before the `incomplete` branch below, because a run that stopped at
+   * its work cap still stored everything it reached, and a refusal among those
+   * needs a repair whether or not the rest of the upload is finished.
+   */
+  if (repair.imagesStored > 0) {
+    await reopenSettlement(db, input, [SANITIZATION_SETTLED_VERSION_COLUMN],
+      `${repair.imagesStored} image(s) stored, any of which may have arrived refused`);
   }
 
   /**

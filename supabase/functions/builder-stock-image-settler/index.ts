@@ -53,6 +53,7 @@
  * which is exactly why it must not be reachable by a portal session.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { choosePhase } from '../_shared/builderStock/settlementPhase.pure.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
@@ -96,6 +97,16 @@ const MAX_UPLOADS_PER_TICK = 6;
  */
 const MAX_QUEUE_ROWS = 100;
 const MAX_BODY_BYTES = 8 * 1024;
+
+/**
+ * How often the phase rotation advances.
+ *
+ * The cron interval, so one tick is one phase and the next tick is the next
+ * one. Reading the clock rather than a counter keeps this function stateless;
+ * the only property required is that consecutive ticks land on consecutive
+ * indices, which any period at or below the cron's gives.
+ */
+const TICK_ROTATION_MS = 5 * 60 * 1000;
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -268,6 +279,33 @@ Deno.serve(async (req: Request) => {
      */
     const repairBudget = newRepairBudget();
 
+    /**
+     * ONE PHASE PER INVOCATION, AND PRODUCTION IS WHY.
+     *
+     * The three phases are independent questions with independent markers, and
+     * running all three in one invocation is what kills this function: a tick
+     * that re-reads a builder's Drive package (a folder listing, a multi-megabyte
+     * PDF download, a text extraction and a raster extraction), THEN sweeps
+     * display eligibility, THEN spends the overlay-repair budget on
+     * full-resolution decodes, exceeds the worker's CPU allowance and returns
+     * 546 with NOTHING WRITTEN. Every tick then does the same work and dies the
+     * same way, so a queue that looks busy makes no progress at all — which is
+     * exactly what a provenance-version bump produced here: 26 reopened
+     * packages, and 546 on every tick.
+     *
+     * So the tick picks the one phase with work and does only that. Nothing is
+     * skipped and no cap is relaxed: the phases have their own markers, the
+     * sweep is resumable, and a phase deferred by this tick is the phase the
+     * next tick picks. It costs ticks and never coverage.
+     *
+     * PROVENANCE FIRST, because it is the phase that DISCOVERS images. The
+     * other two judge and repair pictures that provenance has already found, so
+     * running them first would be spending the expensive budget deciding about
+     * a smaller set than the one we are about to have.
+     */
+    // One phase per tick, rotated so none starves. See `settlementPhase.pure.ts`.
+    const phase = choosePhase(candidates, startedAt, TICK_ROTATION_MS);
+
     const { attempted, settled, organisations } = await runSettlementTick(
       candidates,
       { maxSettled: MAX_UPLOADS_PER_TICK, deadlineAt },
@@ -275,9 +313,9 @@ Deno.serve(async (req: Request) => {
         organisationId: candidate.organisation_id,
         uploadId: candidate.id,
         deadlineAt,
-        needsProvenance: candidate.needsProvenance,
-        needsEligibility: candidate.needsEligibility,
-        needsSanitization: candidate.needsSanitization,
+        needsProvenance: phase === 'provenance' && candidate.needsProvenance,
+        needsEligibility: phase === 'eligibility' && candidate.needsEligibility,
+        needsSanitization: phase === 'sanitization' && candidate.needsSanitization,
         repairBudget,
       }),
     );
@@ -302,7 +340,12 @@ Deno.serve(async (req: Request) => {
     console.log('[builder-stock-image-settler] tick', {
       attempted, settled, remaining, ms: Date.now() - startedAt,
     });
-    return json({ success: true, settled, attempted, remaining, complete: remaining === 0 });
+    // `phase` is reported because a tick that did one phase and left the others
+    // is indistinguishable from a tick that did nothing, and telling them apart
+    // from the outside is the whole point of this response.
+    return json({
+      success: true, phase, settled, attempted, remaining, complete: remaining === 0,
+    });
   } catch (error) {
     // `internalError` builds the BODY; the handler owes `Deno.serve` a
     // Response. Returning the body meant the sweep's only failure path

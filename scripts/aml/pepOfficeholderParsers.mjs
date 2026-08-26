@@ -65,6 +65,7 @@ export function buildWikidataOfficeholderQuery(officeQids) {
   const values = officeQids.map((q) => `wd:${q}`).join(' ');
   return `
 SELECT ?person ?personLabel ?article
+       (SAMPLE(?dobValue) AS ?dob) (SAMPLE(?dobPrecision) AS ?dobPrec)
        (GROUP_CONCAT(DISTINCT ?alias; separator="||") AS ?aliases)
        (GROUP_CONCAT(DISTINCT ?posline; separator="||") AS ?positions)
 WHERE {
@@ -78,6 +79,17 @@ WHERE {
   BIND(CONCAT(?posLabel, "~", COALESCE(STR(?s), ""), "~", COALESCE(STR(?e), "")) AS ?posline)
   OPTIONAL { ?article schema:about ?person ; schema:isPartOf <https://en.wikipedia.org/> . }
   OPTIONAL { ?person skos:altLabel ?alias . FILTER(LANG(?alias) = "en") }
+  # Read through the STATEMENT NODE rather than the truncated wdt:P569,
+  # which hands back a full timestamp with no way to tell how much of it is
+  # known. wikibase:timePrecision is the only thing that distinguishes
+  # "born in 1961" from "born on 1 January 1961", and storing the second
+  # when the source said the first produces a confident mismatch against a
+  # real birthday.
+  OPTIONAL {
+    ?person p:P569 ?dobSt .
+    ?dobSt psv:P569 ?dobNode .
+    ?dobNode wikibase:timeValue ?dobValue ; wikibase:timePrecision ?dobPrecision .
+  }
 }
 GROUP BY ?person ?personLabel ?article
 `.trim();
@@ -94,6 +106,37 @@ const asDate = (v) => {
   const m = /^(-?\d{4})-(\d{2})-(\d{2})/.exec(v);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
 };
+
+/**
+ * A Wikidata time value, truncated to the precision the source claims.
+ *
+ * Wikidata's precision codes: 11 = day, 10 = month, 9 = year. Anything
+ * coarser (decade, century) is not a date of birth in any useful sense and
+ * is dropped rather than rounded into one.
+ *
+ * ── Why an unknown precision truncates to the YEAR ────────────────────
+ * Because of which way the mistake runs. Over-truncating can only turn a
+ * `match` into a `year_match`, or a `mismatch` into a `year_match` — it
+ * keeps a candidate in front of a reviewer and understates the agreement.
+ * Under-truncating asserts a birthday nobody published, and produces a
+ * confident MISMATCH that demotes a real lead with a reason that sounds
+ * decisive.
+ *
+ * A discriminator that is wrong in the demoting direction is worse than no
+ * discriminator, so the default leans the other way.
+ */
+export function truncateWikidataDate(value, precision) {
+  const m = /^(-?)(\d{4})-(\d{2})-(\d{2})/.exec(String(value ?? ''));
+  // A BC date has no place in a register of current and recent office
+  // holders, and `-0500-01-01` would parse into a plausible-looking year.
+  if (!m || m[1] === '-') return null;
+  const [, , year, month, day] = m;
+  const p = Number(precision);
+  if (Number.isFinite(p) && p <= 8) return null;      // decade or coarser
+  if (p === 11) return `${year}-${month}-${day}`;
+  if (p === 10) return `${year}-${month}`;
+  return `${year}`;                                    // 9, or unstated
+}
 
 /**
  * A label that is really a Q-id ("Q23939864") means Wikidata has no English
@@ -135,10 +178,22 @@ export function accumulateWikidataOfficeholders(json, into = new Map()) {
     const qid = uri.split('/').pop();
     let row = into.get(qid);
     if (!row) {
-      row = { external_id: qid, full_name: name, aliases: new Set(), positions: [], article: null };
+      row = {
+        external_id: qid, full_name: name, aliases: new Set(),
+        positions: [], article: null, date_of_birth: null,
+      };
       into.set(qid, row);
     }
     if (!row.article) row.article = text(b, 'article');
+    /*
+     * First one wins. A person appears in several office batches and every
+     * one of them carries the same `P569`, so overwriting would churn the
+     * value for no gain — and a later batch that happened to return nothing
+     * for it would erase a date the index already had.
+     */
+    if (!row.date_of_birth) {
+      row.date_of_birth = truncateWikidataDate(text(b, 'dob'), text(b, 'dobPrec'));
+    }
     for (const alias of String(b?.aliases?.value ?? '').split('||')) {
       const a = alias.trim();
       if (a && a !== name && !isQid(a)) row.aliases.add(a);
@@ -185,6 +240,12 @@ export function officeholderEntries(acc) {
        * would be wrong on the face of the data as well as in principle.
        */
       pep_type: null,
+      /*
+       * The one field on this row that can tell an office holder apart from
+       * somebody who merely shares their name. Null wherever the source did
+       * not publish one — and an absent date is never a disagreement.
+       */
+      date_of_birth: row.date_of_birth ?? null,
       jurisdiction: 'Australia',
       position_start: lead.start,
       position_end: lead.end,
@@ -221,6 +282,7 @@ export function withNormalisedNames(entry, sourceCode, syncId) {
     normalised_names: normalised,
     position_title: entry.position_title,
     pep_type: entry.pep_type ?? null,
+    date_of_birth: entry.date_of_birth ?? null,
     jurisdiction: entry.jurisdiction ?? null,
     position_start: entry.position_start ?? null,
     position_end: entry.position_end ?? null,
@@ -230,4 +292,234 @@ export function withNormalisedNames(entry, sourceCode, syncId) {
     sync_id: syncId ?? null,
     updated_at: new Date().toISOString(),
   };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ * TIER A — the Parliament of Australia registers
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * The spike measured this. `www.aph.gov.au/Senators_and_Members/Members`
+ * answers 403 to a scripted client from every environment tried, and the
+ * link named `Members_List.csv` answers 200 with 184 KB of `%PDF-1.7`.
+ * Both of those are why this source was written off as unreachable.
+ *
+ * The register files themselves are neither. Parliament publishes the
+ * address-label CSVs on `static.aph.gov.au`, and they download cleanly from
+ * the dev container AND from a GitHub runner: 150 members, 75 senators.
+ *
+ * That distinction is the whole finding, and it is worth stating plainly
+ * because the product asserted the opposite on screen: **the website blocks
+ * automated clients; the register it publishes does not.** A source is
+ * reachable or not as a matter of which URL you ask for, and "aph.gov.au
+ * blocks bots" was a true sentence about a page being used as a false
+ * sentence about a dataset.
+ *
+ * ── What is taken, and what is deliberately left ──────────────────────
+ * These are ADDRESS LABEL files. Two thirds of every row is an electorate
+ * office street address, a postal address and three phone numbers.
+ *
+ * None of that is taken. A PEP index answers "is this name a public office
+ * holder"; it does not need, and must not accumulate, the home-suburb
+ * contact details of 225 people because they happened to be in the same
+ * download. What is ingested is the name, the office, the jurisdiction and
+ * the party — the facts that make a candidate worth looking at.
+ *
+ * ── What the source cannot tell us ────────────────────────────────────
+ * There are no dates in these files at all. They are a snapshot of who
+ * holds the office TODAY, so `position_start` and `position_end` are null
+ * and `currently_held` is true — accurately, and narrowly.
+ *
+ * A former member of Parliament is NOT in here, and AUSTRAC is explicit
+ * that leaving office does not end the risk. That is a real gap in a Tier A
+ * source, it is the gap the collaboratively-edited source covers, and it is
+ * why this register does not replace that one.
+ */
+
+/**
+ * The two files, named once.
+ *
+ * `expect` and these URLs are the same strings the reachability spike
+ * probes, for the reason the catalogue's header gives: a source must not be
+ * validated under one URL and ingested from another.
+ */
+export const APH_REGISTERS = [
+  {
+    key: 'house',
+    chamber: 'House of Representatives',
+    label: 'Members of the House of Representatives',
+    url: 'https://static.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/'
+      + 'All_members_by_name/All_members_by_name.csv',
+    /** The seat is the office. Every member holds exactly one. */
+    seat: (row) => (row.Electorate ? `Member for ${row.Electorate}` : 'Member of the House of Representatives'),
+    /** How the file spells the honorific column, and where extra offices live. */
+    honorificColumn: 'Honorific',
+    titleColumns: ['Ministerial Title', 'Parliamentary Title'],
+    /** Roughly what a complete file holds; a big shortfall is a bad download. */
+    expectAtLeast: 100,
+  },
+  {
+    key: 'senate',
+    chamber: 'Senate',
+    label: 'Senators',
+    url: 'https://static.aph.gov.au/-/media/03_Senators_and_Members/Address_Labels_and_CSV_files/'
+      + 'Senators/allsenel.csv',
+    seat: (row) => (row.State ? `Senator for ${row.State}` : 'Senator'),
+    honorificColumn: 'Title',
+    titleColumns: ['Parliamentary Titles'],
+    expectAtLeast: 60,
+  },
+];
+
+/**
+ * One title cell → the offices in it.
+ *
+ * ── The mistake this function is a record of ──────────────────────────
+ * The members' file appeared to run its ministerial titles together with no
+ * separator at all:
+ *
+ *   Minister for Small BusinessMinister for International DevelopmentMinister
+ *     for Multicultural Affairs
+ *
+ * That is not what the file says. Each of those boundaries is a bare
+ * carriage return inside the quoted field, and a terminal prints `\r` by
+ * returning the cursor to the start of the line and overwriting what is
+ * already there. The delimiter was present the whole time; the terminal ate
+ * it, and reading the rendering as the data produced a confident diagnosis
+ * of a broken government export.
+ *
+ * What nearly shipped on the back of that diagnosis was a list of English
+ * phrases — "Minister for", "Cabinet Secretary", "Assistant Minister" — and
+ * a rule guessing where one office title ends and the next begins. It gave
+ * the right answer on the four strings it was tested against, which is
+ * exactly how a heuristic earns its place and then quietly gets something
+ * wrong on the row nobody looked at.
+ *
+ * The bytes settle it instead: `od -c` on the file shows `\r` between the
+ * titles, the members' file uses LF for its rows (151 of them, and 25 bare
+ * CRs, all inside quoted cells), and the senators' file uses CRLF for rows
+ * and `; ` between titles.
+ *
+ * So the delimiters are the ones the two files actually use, and nothing
+ * here knows anything about what an Australian ministry is called.
+ */
+export function splitTitleCell(raw) {
+  return [...new Set(
+    String(raw ?? '')
+      // `\r` and `\n` inside a quoted cell are content, and in these files
+      // that content is "the next title". `;` is what the Senate uses.
+      .split(/[\r\n;]+/)
+      .map((t) => t.trim())
+      .filter(Boolean),
+  )];
+}
+
+/** Header row → objects, tolerating the two files' different column names. */
+function rowsToObjects(rows) {
+  const head = (rows[0] ?? []).map((h) => String(h ?? '').trim());
+  return rows.slice(1)
+    .filter((r) => r.some((c) => String(c ?? '').trim()))
+    .map((r) => Object.fromEntries(head.map((h, i) => [h, String(r[i] ?? '').trim()])));
+}
+
+/**
+ * One register file → index entries.
+ *
+ * `external_id` is derived, because the address-label files carry no
+ * identifier of any kind — no MPID, no PHID, nothing. A derived key is fine
+ * so long as it cannot silently merge two people, which is why a collision
+ * THROWS rather than resolving: an index quietly holding 149 of 150 members
+ * is the empty-register failure at one-row scale, and it would read as a
+ * clean load forever.
+ */
+export function parseAphRegister(text, register, parseCsvFn) {
+  const objects = rowsToObjects(parseCsvFn(String(text)));
+  const seen = new Map();
+  const entries = [];
+
+  for (const row of objects) {
+    const surname = row.Surname ?? '';
+    const first = row['First Name'] ?? '';
+    const preferred = row['Preferred Name'] ?? '';
+    const other = row['Other Name'] ?? '';
+    if (!surname && !first && !preferred) continue;
+
+    // The name to lead with is the one the person actually goes by.
+    const fullName = [preferred || first, surname].filter(Boolean).join(' ').trim();
+    const aliases = [...new Set([
+      [first, surname].filter(Boolean).join(' '),
+      [first, other, surname].filter(Boolean).join(' '),
+      [preferred, other, surname].filter(Boolean).join(' '),
+    ].map((n) => n.trim()).filter((n) => n && n !== fullName))];
+
+    const seat = register.seat(row);
+    /*
+     * Ministerial and parliamentary titles are offices in their own right,
+     * and they are the ones the AML/CTF Rules name most directly. A row
+     * whose seat is "Member for Grayndler" and whose ministerial title is
+     * "Prime Minister" must surface as the latter.
+     */
+    const extra = register.titleColumns.flatMap((col) => splitTitleCell(row[col]));
+    const positions = [...new Set([...extra, seat])]
+      .map((title) => ({ title, start: null, end: null }));
+
+    const idParts = [
+      register.key,
+      ...normaliseName(surname),
+      ...normaliseName(preferred || first),
+      (row.Electorate || row.State || '').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    ].filter(Boolean);
+    const externalId = `aph:${idParts.join(':')}`;
+    if (seen.has(externalId)) {
+      throw new Error(
+        `two rows in the ${register.label} file derive the same key ${externalId} `
+        + `(${seen.get(externalId)} and ${fullName}) — refusing to load an index that `
+        + 'would silently hold one of them',
+      );
+    }
+    seen.set(externalId, fullName);
+
+    entries.push({
+      external_id: externalId,
+      full_name: fullName,
+      aliases: aliases.slice(0, 12),
+      // The most senior office, else the seat. `positions` is already in
+      // that order — extra titles first, seat last.
+      position_title: positions[0].title,
+      /*
+       * NOT asserted, for the same reason as every other source: the
+       * AUSTRAC category is part of the determination, not of the index.
+       */
+      pep_type: null,
+      jurisdiction: 'Australia (Commonwealth)',
+      // The file has no dates whatsoever. It is a snapshot of who holds the
+      // office now, which is exactly and only what these three say.
+      position_start: null,
+      position_end: null,
+      currently_held: true,
+      /*
+       * The official register, searched by surname. The operator opens this
+       * in a browser — the 403 the spike recorded is a fact about scripted
+       * clients, and it does not touch a link a person clicks.
+       */
+      confirm_url: 'https://www.aph.gov.au/Senators_and_Members/Parliamentarian_Search_Results?q='
+        + encodeURIComponent([preferred || first, surname].filter(Boolean).join(' ')),
+      source_detail: {
+        chamber: register.chamber,
+        positions,
+        position_count: positions.length,
+        state: row.State || null,
+        electorate: row.Electorate || null,
+        party: row['Political Party'] || null,
+        /*
+         * The title columns verbatim, beside the split. What the file said
+         * has to remain recoverable: the split is a repair of a broken
+         * export, and a repair that destroys the original cannot be checked.
+         */
+        titles_as_published: Object.fromEntries(
+          register.titleColumns.map((c) => [c, row[c] || null]).filter(([, v]) => v),
+        ),
+      },
+    });
+  }
+  return entries;
 }

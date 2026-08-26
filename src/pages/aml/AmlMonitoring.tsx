@@ -26,7 +26,6 @@ import {
   type AmlEddCase, type AmlMonitoringRule, type AmlMonitoringSummary, type AmlReview,
 } from "@/lib/aml/amlMonitoringApi";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
-import { isClientFacingDeployment } from "@/lib/clientFacing";
 
 const SEV_TONE: Record<string, string> = {
   info: "bg-muted text-muted-foreground",
@@ -328,7 +327,7 @@ export default function AmlMonitoring() {
               <div><CardTitle>Existing customer reviews</CardTitle><CardDescription>Pre-commencement remediation + periodic reviews.</CardDescription></div>
               {canWrite && (
                 <div className="flex gap-2">
-                  {!isClientFacingDeployment() && <Button size="sm" variant="outline" onClick={seedPre}>Seed pre-commencement</Button>}
+                  <Button size="sm" variant="outline" onClick={seedPre}>Seed pre-commencement</Button>
                   <Button size="sm" onClick={() => setReviewOpen(true)}><PlusCircle className="mr-2 h-4 w-4" /> Queue review</Button>
                 </div>
               )}
@@ -343,7 +342,7 @@ export default function AmlMonitoring() {
                 <TableBody>
                   {reviews.length === 0 && (busy
                     ? <AmlTableLoadingRow colSpan={7} label="Loading reviews…" />
-                    : <AmlTableEmptyRow colSpan={7}>{isClientFacingDeployment() ? "No reviews queued. Queue a review to get started." : "No reviews queued. Queue a review, or seed the pre-commencement backlog to get started."}</AmlTableEmptyRow>)}
+                    : <AmlTableEmptyRow colSpan={7}>No reviews queued. Queue a review, or seed the pre-commencement backlog to get started.</AmlTableEmptyRow>)}
                   {reviews.map((r) => {
                     const c = cases.find((x) => x.id === r.case_id);
                     const overdue = r.due_at && new Date(r.due_at).getTime() < Date.now() && !["complete", "exited"].includes(r.status);

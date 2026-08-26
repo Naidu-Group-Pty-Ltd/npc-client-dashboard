@@ -706,6 +706,25 @@ export function parseImagePlacements(content: string, base: Matrix = IDENTITY): 
 
 /** Photographic encodings. A plan, a logo and a QR code are not drawn as JPEG. */
 const PHOTOGRAPHIC_FILTERS = new Set(['DCTDecode', 'JPXDecode']);
+/**
+ * And the LOSSLESS one, which carries photographs too.
+ *
+ * A LOSSY ENCODING IS EVIDENCE, NOT A REQUIREMENT. "Is it a DCT raster" was the
+ * whole test, and it is a good proxy — an exporter reaches for JPEG when the
+ * content is continuous-tone — but it is only a proxy, and Lot 60434
+ * Cloverton's package is where it costs a card: the document holds a 3508x4961
+ * JPEG of the FLOOR PLAN and a 2400x1400 Flate raster of the HOUSE. The rule
+ * admitted the plan and refused the photograph, which is the wrong way round in
+ * both directions at once.
+ *
+ * The detail floor below is what actually separates a photograph from a wash,
+ * and it works just as well on a lossless stream — better, because a lossless
+ * encoder cannot spend bytes on noise it was told to discard. It has to be a
+ * DIFFERENT NUMBER, though: the two encodings are not measured in comparable
+ * units, and reusing the lossy floor would admit every diagram in every
+ * document.
+ */
+const LOSSLESS_FILTERS = new Set(['FlateDecode', 'LZWDecode']);
 
 /** A picture smaller than this on the page is a logo, an icon or a rule. */
 const MIN_PAGE_AREA_SHARE = 0.06;
@@ -733,6 +752,40 @@ const MAX_ASPECT = 4;
  * rectangle on a client's card.
  */
 const MIN_ENCODED_DETAIL = 0.02;
+
+/**
+ * The same floor for a LOSSLESS stream, and it is nowhere near the same number.
+ *
+ * Measured the same way — the production images, decoded and re-compressed
+ * losslessly, in bytes per pixel:
+ *
+ *   solid brand plate                       0.003
+ *   gradient wash                           0.003
+ *   line art at plan density                0.011
+ *   Lot 60434's floor plan, the real one    0.042
+ *   ------------------------------------ floor 0.5
+ *   Lot 60434's facade, the real one        1.675
+ *   Lot 36 Miami 190 cover facade           2.156
+ *   Lot 36 Echo 236 cover facade            2.048
+ *   the four other Sandpiper renders   1.423-1.887
+ *
+ * Every photograph in the set is above 1.4 and everything that is not one is
+ * below 0.05 — a separation of more than thirty times, with the floor an order
+ * of magnitude clear of the highest non-photograph and three times below the
+ * least detailed photograph. It fails towards no image, exactly as the lossy
+ * floor does.
+ */
+const MIN_LOSSLESS_DETAIL = 0.5;
+
+/**
+ * How much detail this picture's encoding has to show before it can be a
+ * photograph — or null when the encoding is one no photograph is written in.
+ */
+function detailFloorFor(filters: string[]): number | null {
+  if (filters.some((filter) => PHOTOGRAPHIC_FILTERS.has(filter))) return MIN_ENCODED_DETAIL;
+  if (filters.some((filter) => LOSSLESS_FILTERS.has(filter))) return MIN_LOSSLESS_DETAIL;
+  return null;
+}
 
 export interface PhotographChoice {
   image: PdfImage;
@@ -813,6 +866,32 @@ export function selectPropertyPhotograph(
 }
 
 /**
+ * A raster that IS the page is not a picture ON the page.
+ *
+ * A brochure exported as page images draws one raster over the whole sheet —
+ * the facade, the type and the price panel in one bitmap — and serving that as
+ * a property photograph puts a page of marketing on a client's card. That is
+ * what `pdfFlattenedPhoto.pure.ts` exists to prevent, by cutting the photograph
+ * out of the builder's own pixels instead.
+ *
+ * It only ever worked because such a page is drawn losslessly and the
+ * candidate rules admitted lossy encodings alone, so a flattened page could
+ * never be mistaken for a placed picture. Admitting lossless rasters — which
+ * carry real photographs, and is why they are admitted — removes that accident,
+ * so the exclusion has to be stated: Covella's three brochure pages and
+ * Cloverton's own package both came out as whole pages the moment it was not.
+ */
+function withoutTheFlattenedPage(
+  drawn: DrawnImage[],
+  pageWidth: number,
+  pageHeight: number,
+): DrawnImage[] {
+  const page = flattenedPageImageFrom(drawn, pageWidth, pageHeight);
+  if (!page) return drawn;
+  return drawn.filter((entry) => entry.image !== page.image);
+}
+
+/**
  * Every picture on the page that COULD be a photograph, with how often the
  * page draws it.
  *
@@ -838,8 +917,9 @@ export function qualifyingPhotographsFrom(
   if (pageArea <= 0) return [];
 
   const byObject = new Map<string, PhotographCandidate>();
-  for (const { image, placement } of drawn) {
-    if (!image.filters.some((filter) => PHOTOGRAPHIC_FILTERS.has(filter))) continue;
+  for (const { image, placement } of withoutTheFlattenedPage(drawn, pageWidth, pageHeight)) {
+    const floor = detailFloorFor(image.filters);
+    if (floor === null) continue;
     if (image.width < MIN_PIXELS.width || image.height < MIN_PIXELS.height) continue;
 
     const aspect = image.width / image.height;
@@ -847,7 +927,7 @@ export function qualifyingPhotographsFrom(
 
     // Detail, in the only unit available without decoding it. See the header.
     const detail = (image.end - image.start) / (image.width * image.height);
-    if (detail < MIN_ENCODED_DETAIL) continue;
+    if (detail < floor) continue;
 
     const share = (placement.drawn.width * placement.drawn.height) / pageArea;
     if (share < MIN_PAGE_AREA_SHARE) continue;
@@ -885,8 +965,9 @@ export function selectPropertyPhotographFrom(
   if (pageArea <= 0) return null;
 
   let best: PhotographChoice | null = null;
-  for (const { image, placement } of drawn) {
-    if (!image.filters.some((filter) => PHOTOGRAPHIC_FILTERS.has(filter))) continue;
+  for (const { image, placement } of withoutTheFlattenedPage(drawn, pageWidth, pageHeight)) {
+    const floor = detailFloorFor(image.filters);
+    if (floor === null) continue;
     if (image.width < MIN_PIXELS.width || image.height < MIN_PIXELS.height) continue;
 
     const aspect = image.width / image.height;
@@ -894,7 +975,7 @@ export function selectPropertyPhotographFrom(
 
     // Detail, in the only unit available without decoding it. See the header.
     const detail = (image.end - image.start) / (image.width * image.height);
-    if (detail < MIN_ENCODED_DETAIL) continue;
+    if (detail < floor) continue;
 
     const drawnArea = placement.drawn.width * placement.drawn.height;
     const share = drawnArea / pageArea;

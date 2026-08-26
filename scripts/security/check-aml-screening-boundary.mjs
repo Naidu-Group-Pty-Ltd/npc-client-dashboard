@@ -103,6 +103,44 @@ assert.match(indexOp, /pep_index_search_failed/,
 assert.doesNotMatch(indexOp, /\.insert\(/,
   "searching the index must write nothing");
 
+/* ── The screening engine screens; it never determines ──────────────────── */
+const runOp = slice(cases, "case 'run_pep_screening'", "case 'review_pep_screening_candidate'");
+assert.match(runOp, /roles\.has\('reviewer'\) \|\| roles\.has\('mlro'\)/,
+  "run_pep_screening must require reviewer or MLRO");
+assert.match(runOp, /from\('pep_screening_runs'\)\.insert/,
+  "a screening run must be recorded as a run");
+assert.doesNotMatch(runOp, /from\('pep_determinations'\)/,
+  "a screening run must never write a determination — it screens, it does not determine");
+assert.match(runOp, /determination_recorded: false/,
+  "the record must state that no determination was reached");
+assert.match(runOp, /party_screening_subject_id does not belong to this case/,
+  "the screened identity must be derived from the case, never asserted");
+
+const engine = readFileSync(
+  "supabase/functions/_shared/aml/pepScreeningEngine.pure.ts", "utf8");
+/*
+ * The verdict vocabulary and the determination vocabulary must stay disjoint.
+ * If a run could ever spell `not_pep`, a search would become a conclusion by
+ * vocabulary alone — which is the exact failure this whole stage is built to
+ * prevent, arriving through the back door of an automated result.
+ */
+for (const forbidden of ["'not_pep'", "'pep'", "'clear'", "'cleared'", "'pass'"]) {
+  const verdictUnion = engine.slice(
+    engine.indexOf("export type PepScreeningVerdict"),
+    engine.indexOf("export interface PepScreeningRun"));
+  assert.ok(!verdictUnion.includes(forbidden),
+    `a screening verdict must never spell ${forbidden} — a search is not a determination`);
+}
+
+const reviewOp = slice(cases, "case 'review_pep_screening_candidate'",
+  "case 'list_pep_screening_runs'");
+assert.match(reviewOp, /roles\.has\('reviewer'\) \|\| roles\.has\('mlro'\)/,
+  "reviewing a screening candidate must require reviewer or MLRO");
+assert.match(reviewOp, /candidate_reason_required/,
+  "a candidate decision with no reason must be refused");
+assert.match(reviewOp, /candidate_not_in_run/,
+  "a candidate that is not part of the run must be refused");
+
 /* ── Senior manager: explicit designation, MLRO-managed, linked approvals ── */
 const designate = slice(risk, 'op === "designate_senior_manager"', 'op === "revoke_senior_manager"');
 assert.match(designate, /if \(!isMlro\)/, "designating a senior manager must be MLRO-only");

@@ -5962,16 +5962,19 @@ export type Database = {
       builder_stock_settlement_target: {
         Row: {
           id: boolean
+          image_sanitization_version: number
           marketplace_eligibility_version: number
           updated_at: string
         }
         Insert: {
           id?: boolean
+          image_sanitization_version?: number
           marketplace_eligibility_version?: number
           updated_at?: string
         }
         Update: {
           id?: boolean
+          image_sanitization_version?: number
           marketplace_eligibility_version?: number
           updated_at?: string
         }
@@ -5991,6 +5994,7 @@ export type Database = {
           file_sha256: string | null
           final_url: string | null
           id: string
+          image_sanitization_settled_version: number | null
           image_stage_summary: Json
           marketplace_eligibility_settled_version: number | null
           organisation_id: string
@@ -6026,6 +6030,7 @@ export type Database = {
           file_sha256?: string | null
           final_url?: string | null
           id?: string
+          image_sanitization_settled_version?: number | null
           image_stage_summary?: Json
           marketplace_eligibility_settled_version?: number | null
           organisation_id: string
@@ -6061,6 +6066,7 @@ export type Database = {
           file_sha256?: string | null
           final_url?: string | null
           id?: string
+          image_sanitization_settled_version?: number | null
           image_stage_summary?: Json
           marketplace_eligibility_settled_version?: number | null
           organisation_id?: string
@@ -23175,6 +23181,13 @@ export type Database = {
           source_url: string | null
           status: string
           storage_path: string | null
+          visual_analysed_at: string | null
+          visual_colour: number | null
+          visual_edge: number | null
+          visual_kind: string | null
+          visual_palette: number | null
+          visual_signature: string | null
+          visual_white: number | null
           width: number | null
         }
         Insert: {
@@ -23194,6 +23207,13 @@ export type Database = {
           source_url?: string | null
           status?: string
           storage_path?: string | null
+          visual_analysed_at?: string | null
+          visual_colour?: number | null
+          visual_edge?: number | null
+          visual_kind?: string | null
+          visual_palette?: number | null
+          visual_signature?: string | null
+          visual_white?: number | null
           width?: number | null
         }
         Update: {
@@ -23213,12 +23233,20 @@ export type Database = {
           source_url?: string | null
           status?: string
           storage_path?: string | null
+          visual_analysed_at?: string | null
+          visual_colour?: number | null
+          visual_edge?: number | null
+          visual_kind?: string | null
+          visual_palette?: number | null
+          visual_signature?: string | null
+          visual_white?: number | null
           width?: number | null
         }
         Relationships: []
       }
       listings_cache: {
         Row: {
+          archived_at: string | null
           created_time: string | null
           fields: Json
           fingerprint: string | null
@@ -23229,6 +23257,7 @@ export type Database = {
           table_key: string
         }
         Insert: {
+          archived_at?: string | null
           created_time?: string | null
           fields: Json
           fingerprint?: string | null
@@ -23239,6 +23268,7 @@ export type Database = {
           table_key: string
         }
         Update: {
+          archived_at?: string | null
           created_time?: string | null
           fields?: Json
           fingerprint?: string | null
@@ -23252,32 +23282,44 @@ export type Database = {
       }
       listings_cache_sync: {
         Row: {
+          archived_count: number | null
           error_count: number
           last_error: string | null
           last_full_sync_at: string | null
           last_sync_at: string | null
+          oldest_live_created_time: string | null
           reconciled: boolean
           record_count: number
+          retention_effective: boolean | null
+          retention_note: string | null
           status: string
           table_key: string
         }
         Insert: {
+          archived_count?: number | null
           error_count?: number
           last_error?: string | null
           last_full_sync_at?: string | null
           last_sync_at?: string | null
+          oldest_live_created_time?: string | null
           reconciled?: boolean
           record_count?: number
+          retention_effective?: boolean | null
+          retention_note?: string | null
           status?: string
           table_key: string
         }
         Update: {
+          archived_count?: number | null
           error_count?: number
           last_error?: string | null
           last_full_sync_at?: string | null
           last_sync_at?: string | null
+          oldest_live_created_time?: string | null
           reconciled?: boolean
           record_count?: number
+          retention_effective?: boolean | null
+          retention_note?: string | null
           status?: string
           table_key?: string
         }
@@ -38822,6 +38864,15 @@ export type Database = {
           subject: string
         }[]
       }
+      listing_image_reuse: {
+        Args: { p_listing_ids: string[] }
+        Returns: {
+          checksum_listings: number
+          image_identity: string
+          listing_id: string
+          signature_listings: number
+        }[]
+      }
       log_activity: {
         Args: {
           p_action_type: Database["public"]["Enums"]["activity_action_type"]
@@ -39242,6 +39293,10 @@ export type Database = {
       seed_sample_schools: { Args: never; Returns: undefined }
       seed_settlement_runway: { Args: { _file_id: string }; Returns: undefined }
       set_builder_stock_eligibility_target: {
+        Args: { p_version: number }
+        Returns: number
+      }
+      set_builder_stock_sanitization_target: {
         Args: { p_version: number }
         Returns: number
       }

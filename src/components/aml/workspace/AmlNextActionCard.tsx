@@ -44,11 +44,61 @@ const STAGE_NAMES: Record<number, string> = {
   10: "Distribution & monitoring",
 };
 
+/**
+ * What is being stepped over, and on what grounds.
+ *
+ * Three readings, and the difference between them is the whole point:
+ *
+ *   - nothing outstanding — say so, and it is now derived rather than assumed;
+ *   - not required — name the stage AND the reason. A stage that disappears
+ *     without one is a skip the operator cannot audit, which is the thing
+ *     this card was doing silently;
+ *   - still outstanding — do not claim otherwise. Two derivations of one case
+ *     disagreeing is a defect, and printing the reassuring half of it is how
+ *     it stays invisible.
+ */
+function InterposedNote({ stages }: {
+  stages: Array<{ number: number; label: string;
+    state: "clear" | "not_required" | "outstanding"; reason?: string | null }>;
+}) {
+  if (stages.length === 0) return null;
+  const outstanding = stages.filter((s) => s.state === "outstanding");
+  const skipped = stages.filter((s) => s.state === "not_required");
+
+  if (outstanding.length > 0) {
+    return (
+      <span className="text-xs text-warning">
+        {outstanding.map((s) => `Stage ${s.number} · ${s.label}`).join(", ")}
+        {outstanding.length === 1 ? " still has" : " still have"} work outstanding.
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-muted-foreground">
+      {skipped.length > 0 && (
+        <>
+          {skipped.map((s) => (
+            <span key={s.number} className="block">
+              Stage {s.number} · {s.label} — not required.{s.reason ? ` ${s.reason}` : ""}
+            </span>
+          ))}
+        </>
+      )}
+      {stages.length > skipped.length && (
+        <span className="block">
+          Nothing is outstanding on the other stages in between.
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function AmlNextActionCard({
   action,
   onOpenSection,
   className,
   currentStageOrder,
+  interposed,
   onReopen,
 }: {
   action: AmlNextAction;
@@ -56,6 +106,26 @@ export function AmlNextActionCard({
   className?: string;
   /** Where the operator is standing, so a jump forward can be named. */
   currentStageOrder?: number;
+  /**
+   * The stages being stepped over, so the claim about them can be checked.
+   *
+   * The card used to print "Stages 2–6 have nothing outstanding on this
+   * reading" purely from `action.stageOrder > currentStageOrder + 1` — it
+   * never consulted a single one of them. On the case that prompted this it
+   * was false: Stage 6 carried an unmet blocker in its own journey reading
+   * while this line told the operator it had nothing.
+   *
+   * A jump forward is fine. A jump forward that asserts something about what
+   * it jumped over has to be able to support it.
+   */
+  interposed?: Array<{
+    number: number;
+    label: string;
+    /** `clear` — nothing outstanding. `not_required` — owed by nobody, with
+     *  a reason. `outstanding` — it has work, and this is not a clean jump. */
+    state: "clear" | "not_required" | "outstanding";
+    reason?: string | null;
+  }>;
   /**
    * Reopen a closed case. Provided only where the caller can authorise it —
    * a closed case is otherwise a dead end, because `closed` is terminal in
@@ -116,12 +186,8 @@ export function AmlNextActionCard({
               <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
             </Button>
             {typeof currentStageOrder === "number"
-              && action.stageOrder > currentStageOrder + 1 && (
-              <span className="text-xs text-muted-foreground">
-                Stages {currentStageOrder + 1}–{action.stageOrder - 1} have nothing
-                outstanding on this reading.
-              </span>
-            )}
+              && action.stageOrder > currentStageOrder + 1
+              && <InterposedNote stages={interposed ?? []} />}
           </div>
         )}
 

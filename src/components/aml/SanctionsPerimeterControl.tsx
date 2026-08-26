@@ -234,62 +234,125 @@ export function SanctionsPerimeterControl({
       </CardContent>
 
       <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-        <DialogContent>
-          <DialogHeader>
+        {/*
+          The height cap and the overflow MUST carry the `sm:` prefix. The
+          dialog primitive sets `sm:max-h-[85dvh]` and `sm:overflow-visible`,
+          and tailwind-merge treats an unprefixed `max-h-*`/`overflow-*` as a
+          different utility group — so a plain `max-h-[90vh] overflow-y-auto`
+          silently loses on every screen ≥640px, which is how the note field
+          and the footer came to render outside the dialog card.
+        */}
+        <DialogContent className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-h-[92dvh] sm:max-w-lg sm:overflow-hidden">
+          <DialogHeader className="flex-none border-b border-border/60 p-6 pb-4 text-left">
             <DialogTitle>Is this case within the sanctions screening perimeter?</DialogTitle>
             <DialogDescription>
-              Targeted financial sanctions bind every dealing, so this is not a question
-              about risk. It asks whether a designated service is being provided at all.
-              Recording a finding screens nobody and clears nobody.
+              In plain terms: are we actually providing a service on this case, or was it
+              only an enquiry? That decides what screening is owed. Recording this screens
+              nobody and clears nobody.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <RadioGroup
-              value={classification}
-              onValueChange={(v) => setClassification(v as typeof classification)}
-              className="space-y-2"
-            >
-              <div className="flex items-start gap-2">
-                <RadioGroupItem value="designated_service" id="perimeter-inside" className="mt-0.5" />
-                <Label htmlFor="perimeter-inside" className="font-normal">
-                  <span className="font-medium">Inside perimeter</span>
-                  <span className="block text-xs text-muted-foreground">
-                    Sanctions screening required.
-                  </span>
-                </Label>
-              </div>
-              <div className="flex items-start gap-2">
-                <RadioGroupItem value="outside_perimeter" id="perimeter-outside" className="mt-0.5" />
-                <Label htmlFor="perimeter-outside" className="font-normal">
-                  <span className="font-medium">Outside perimeter</span>
-                  <span className="block text-xs text-muted-foreground">
-                    No designated service is provided, so no screening obligation arises.
-                  </span>
-                </Label>
-              </div>
-            </RadioGroup>
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-6">
+
+            {/*
+              ── One question at a time ──────────────────────────────────
+              The dialog previously presented the classification, four
+              reason codes, four scope checkboxes and a note as one flat
+              column of radios, so an operator met every decision at once
+              and could not tell which ones their answer had made
+              irrelevant. Same state, same submit payload — the reason and
+              scope questions are now numbered, and only appear once the
+              answer that needs them has been given.
+            */}
+            <fieldset className="space-y-2">
+              <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                Step 1 · Which is it?
+              </legend>
+              <RadioGroup
+                value={classification}
+                onValueChange={(v) => setClassification(v as typeof classification)}
+                className="space-y-2"
+              >
+                {([
+                  {
+                    value: "designated_service" as const,
+                    id: "perimeter-inside",
+                    title: "Inside perimeter",
+                    plain: "We are providing (or will provide) a service on this case.",
+                    consequence: "Sanctions screening required.",
+                  },
+                  {
+                    value: "outside_perimeter" as const,
+                    id: "perimeter-outside",
+                    title: "Outside perimeter",
+                    plain: "No service is being provided — an enquiry, a duplicate, or "
+                      + "something that never went ahead.",
+                    consequence:
+                      "No designated service is provided, so no screening obligation arises.",
+                  },
+                ]).map((opt) => (
+                  <Label
+                    key={opt.value}
+                    htmlFor={opt.id}
+                    className={
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal "
+                      + "transition-colors "
+                      + (classification === opt.value
+                        ? "border-primary/60 bg-primary/5"
+                        : "border-border/60 hover:bg-muted/40")
+                    }
+                  >
+                    <RadioGroupItem value={opt.value} id={opt.id} className="mt-0.5" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{opt.title}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {opt.plain}
+                      </span>
+                      <span className="mt-1 block text-xs text-foreground/70">
+                        {opt.consequence}
+                      </span>
+                    </span>
+                  </Label>
+                ))}
+              </RadioGroup>
+            </fieldset>
 
             {classification === "outside_perimeter" && (
               <>
                 <fieldset className="space-y-2">
-                  <legend className="text-xs font-medium text-muted-foreground">Reason</legend>
+                  <legend className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Step 2 · Why is nothing owed?
+                  </legend>
                   <RadioGroup value={reason} onValueChange={setReason} className="space-y-2">
                     {REASONS.map((r) => (
-                      <div key={r.value} className="flex items-start gap-2">
-                        <RadioGroupItem value={r.value} id={`reason-${r.value}`} className="mt-0.5" />
-                        <Label htmlFor={`reason-${r.value}`} className="font-normal">
-                          <span className="font-medium">{r.label}</span>
-                          <span className="block text-xs text-muted-foreground">{r.detail}</span>
-                        </Label>
-                      </div>
+                      <Label
+                        key={r.value}
+                        htmlFor={`reason-${r.value}`}
+                        className={
+                          "flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal "
+                          + "transition-colors "
+                          + (reason === r.value
+                            ? "border-primary/60 bg-primary/5"
+                            : "border-border/60 hover:bg-muted/40")
+                        }
+                      >
+                        <RadioGroupItem
+                          value={r.value} id={`reason-${r.value}`} className="mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">{r.label}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">
+                            {r.detail}
+                          </span>
+                        </span>
+                      </Label>
                     ))}
                   </RadioGroup>
                 </fieldset>
 
                 <fieldset className="space-y-2">
-                  <legend className="text-xs font-medium text-muted-foreground">
-                    Scopes this finding removes
+                  <legend className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+                    Step 3 · Which checks does this remove?
                   </legend>
                   {/*
                     Ticked individually. A perimeter finding is not automatically
@@ -297,17 +360,28 @@ export function SanctionsPerimeterControl({
                     them would stand PEP down on the strength of a sanctions
                     decision nobody made.
                   */}
-                  {SCOPES.map((s) => (
-                    <div key={s.value} className="flex items-center gap-2">
-                      <Checkbox
-                        id={`scope-${s.value}`}
-                        checked={scopes.includes(s.value)}
-                        onCheckedChange={(c) => setScopes((prev) =>
-                          c ? [...new Set([...prev, s.value])] : prev.filter((x) => x !== s.value))}
-                      />
-                      <Label htmlFor={`scope-${s.value}`} className="font-normal">{s.label}</Label>
-                    </div>
-                  ))}
+                  <p className="text-xs text-muted-foreground">
+                    Untick nothing you have not actually decided. Sanctions is ticked
+                    because that is the finding you are recording; the others are separate
+                    obligations and stay in place unless you say otherwise.
+                  </p>
+                  <div className="space-y-1">
+                    {SCOPES.map((s) => (
+                      <Label
+                        key={s.value}
+                        htmlFor={`scope-${s.value}`}
+                        className="flex cursor-pointer items-center gap-2.5 rounded-md border border-transparent px-2 py-1.5 font-normal hover:bg-muted/40"
+                      >
+                        <Checkbox
+                          id={`scope-${s.value}`}
+                          checked={scopes.includes(s.value)}
+                          onCheckedChange={(c) => setScopes((prev) =>
+                            c ? [...new Set([...prev, s.value])] : prev.filter((x) => x !== s.value))}
+                        />
+                        <span className="text-sm">{s.label}</span>
+                      </Label>
+                    ))}
+                  </div>
                   {scopes.length === 0 && (
                     <p className="text-xs text-destructive">
                       A finding that excludes nothing exempts nothing. Choose at least one.
@@ -327,9 +401,30 @@ export function SanctionsPerimeterControl({
                 placeholder="Anything a reviewer would need to understand this determination later."
               />
             </div>
+
+            {/*
+              What is about to be written, in one sentence, before it is
+              written. The submit button used to be the first place an
+              operator learned what their four answers added up to.
+            */}
+            <div className="rounded-md border border-border/60 bg-muted/40 p-3 text-xs">
+              <p className="font-medium text-foreground/80">You are about to record</p>
+              <p className="mt-1 text-muted-foreground">
+                {classification === "designated_service"
+                  ? "This case is inside the perimeter. Sanctions screening is required and "
+                    + "no check is stood down."
+                  : `This case is outside the perimeter — ${
+                    (REASON_LABEL[reason] ?? reason).toLowerCase()}. ${
+                    scopes.length === 0
+                      ? "No check is removed yet."
+                      : `${scopes.map((s) => SCOPE_LABEL[s] ?? s).join(", ")} `
+                        + `${scopes.length === 1 ? "is" : "are"} no longer required.`
+                  } Nobody is screened and nobody is cleared by this.`}
+              </p>
+            </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-none border-t border-border/60 p-4">
             <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
@@ -343,6 +438,7 @@ export function SanctionsPerimeterControl({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </Card>
   );
 }

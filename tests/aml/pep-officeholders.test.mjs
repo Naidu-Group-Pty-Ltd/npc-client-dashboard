@@ -13,11 +13,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import {
-  WIKIDATA_AU_OFFICES_QUERY, accumulateWikidataOfficeholders,
-  buildWikidataOfficeholderQuery, officeholderEntries,
-  parseWikidataOfficeholders, withNormalisedNames,
+  APH_REGISTERS, WIKIDATA_AU_OFFICES_QUERY, accumulateWikidataOfficeholders,
+  buildWikidataOfficeholderQuery, officeholderEntries, parseAphRegister,
+  parseWikidataOfficeholders, splitTitleCell, truncateWikidataDate,
+  withNormalisedNames,
 } from '../../scripts/aml/pepOfficeholderParsers.mjs';
-import { normaliseName } from '../../scripts/aml/sanctionsParsers.mjs';
+import { summariseRuleCoverage } from '../../supabase/functions/_shared/aml/pepRuleCoverage.pure.ts';
+import { normaliseName, parseCsv } from '../../scripts/aml/sanctionsParsers.mjs';
+import { CANDIDATE_SOURCES } from '../../scripts/aml/pepSourceCatalogue.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const loader = readFileSync(join(root, 'scripts/aml/load-pep-officeholders.mjs'), 'utf8');
@@ -278,4 +281,270 @@ test('the table says out loud that it cannot clear anybody', () => {
 test('reads go through the service role only, so coverage travels with the result', () => {
   assert.match(migration, /pep_officeholders_service_only/);
   assert.match(migration, /FOR ALL TO service_role/);
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+ * TIER A — the Parliament of Australia registers
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * The fixtures are VERBATIM BYTES from the two published files — header row
+ * plus a few rows, cut on the line boundary and otherwise untouched. That
+ * matters more here than anywhere else in this suite, because the defect
+ * these tests exist to hold is a single byte: the members' file separates
+ * multiple ministerial titles with a bare `\r` INSIDE a quoted cell, and its
+ * rows with LF. A fixture retyped by hand would not have it, and the tests
+ * would pass against data the source does not produce.
+ */
+const aphFixture = (name) =>
+  readFileSync(join(root, 'tests/aml/fixtures', name), 'utf8');
+
+const houseRegister = APH_REGISTERS.find((r) => r.key === 'house');
+const senateRegister = APH_REGISTERS.find((r) => r.key === 'senate');
+
+test('a carriage return inside a cell is a delimiter, not a typo', () => {
+  // The fixture holds it; assert the fixture before asserting the parse, so
+  // a fixture that loses the byte fails as a fixture rather than as a rule.
+  const raw = aphFixture('aph-members.sample.csv');
+  assert.ok(/[^\n]\r[^\n]/.test(raw), 'the members fixture must retain its bare CRs');
+
+  const titles = splitTitleCell('Minister for Small Business\rMinister for '
+    + 'International Development\rMinister for Multicultural Affairs');
+  assert.deepEqual(titles, [
+    'Minister for Small Business',
+    'Minister for International Development',
+    'Minister for Multicultural Affairs',
+  ]);
+});
+
+test('the Senate spells the same thing with a semicolon', () => {
+  assert.deepEqual(
+    splitTitleCell('Minister for Industry and Innovation; Minister for Science'),
+    ['Minister for Industry and Innovation', 'Minister for Science']);
+});
+
+test('a title with no delimiter survives whole', () => {
+  // The failure mode of an unrecognised title must be an intact string. An
+  // earlier draft of this split on a list of English phrases — "Minister
+  // for", "Cabinet Secretary" — which is a rule that guesses where an office
+  // name begins, and guesses right until the row nobody checked.
+  assert.deepEqual(splitTitleCell('Deputy Leader of the National Party'),
+    ['Deputy Leader of the National Party']);
+  assert.deepEqual(splitTitleCell('Assistant Minister for Regional Development'),
+    ['Assistant Minister for Regional Development']);
+  assert.deepEqual(splitTitleCell(''), []);
+  assert.deepEqual(splitTitleCell(null), []);
+});
+
+test('a ministerial office outranks the seat on the candidate card', () => {
+  const entries = parseAphRegister(
+    aphFixture('aph-members.sample.csv'), houseRegister, parseCsv);
+  const pm = entries.find((e) => e.full_name.includes('Albanese'));
+  // An operator scanning candidates needs the office that makes the person
+  // worth a second look. "Member for Grayndler" is true and useless here.
+  assert.equal(pm.position_title, 'Prime Minister');
+  assert.deepEqual(pm.source_detail.positions.map((p) => p.title),
+    ['Prime Minister', 'Member for Grayndler']);
+});
+
+test('the register carries no dates, and says so rather than inventing them', () => {
+  const entries = parseAphRegister(
+    aphFixture('aph-senators.sample.csv'), senateRegister, parseCsv);
+  for (const e of entries) {
+    assert.equal(e.position_start, null);
+    assert.equal(e.position_end, null);
+    // A snapshot of who sits today. `true` is the only honest reading, and
+    // the absence of former members is a coverage statement, not a bug.
+    assert.equal(e.currently_held, true);
+    assert.match(e.position_title, /^(Senator for|Minister|Assistant|Leader|Deputy|Shadow|Cabinet|One Nation|Nationals|United|Manager)/);
+  }
+});
+
+test('no address or telephone from an address-label file reaches the index', () => {
+  /*
+   * Two thirds of every row is an electorate office address, a postal
+   * address and three phone numbers. A PEP index answers whether a name
+   * holds public office; it has no business accumulating the contact
+   * details of 225 people because they arrived in the same download.
+   */
+  const entries = [
+    ...parseAphRegister(aphFixture('aph-members.sample.csv'), houseRegister, parseCsv),
+    ...parseAphRegister(aphFixture('aph-senators.sample.csv'), senateRegister, parseCsv),
+  ];
+  const blob = JSON.stringify(entries);
+  for (const forbidden of [
+    /\b\(0[237]\)\s*\d{4}\s*\d{4}\b/,        // an Australian landline
+    /\bPO Box\b/i, /\bStreet\b/, /\bRoad\b/, /\bSuite\b/i,
+    /\b\d{4}\b(?![^"]*")/,                    // a bare postcode outside a string
+  ]) assert.ok(!forbidden.test(blob), `an address-shaped value leaked: ${forbidden}`);
+});
+
+test('a derived key collision is refused, never resolved', () => {
+  // The files carry no identifier of any kind — no MPID, no PHID — so the
+  // key is derived. An index quietly holding 149 of 150 members is the
+  // empty-register failure at one-row scale, and it reads as a clean load
+  // for as long as nobody counts.
+  const raw = aphFixture('aph-members.sample.csv');
+  const lines = raw.split('\n').filter(Boolean);
+  const doubled = [lines[0], lines[1], lines[1]].join('\n');
+  assert.throws(() => parseAphRegister(doubled, houseRegister, parseCsv),
+    /derive the same key/);
+});
+
+test('every parsed row is searchable by the query that will look for it', () => {
+  const entries = [
+    ...parseAphRegister(aphFixture('aph-members.sample.csv'), houseRegister, parseCsv),
+    ...parseAphRegister(aphFixture('aph-senators.sample.csv'), senateRegister, parseCsv),
+  ];
+  assert.ok(entries.length > 0);
+  for (const e of entries) {
+    const row = withNormalisedNames(e, 'aph_commonwealth_parliament', null);
+    assert.ok(row.normalised_names.length > 0, `${e.full_name} has no searchable token`);
+    // The same `normaliseName` the server query uses — imported, not
+    // reimplemented, for the reason the sanctions loader learned.
+    assert.deepEqual(row.normalised_names,
+      [...new Set([e.full_name, ...e.aliases].flatMap((n) => normaliseName(n)))]);
+    // The index asserts no AUSTRAC category. That belongs to the
+    // determination a person reaches.
+    assert.equal(row.pep_type, null);
+    assert.ok(row.confirm_url.startsWith('https://www.aph.gov.au/'));
+  }
+});
+
+test('the loader refuses a short download rather than publishing a thin register', () => {
+  // The failure this repository has had twice: a truncated response reads
+  // exactly like a smaller source.
+  assert.match(loader, /expectAtLeast/);
+  assert.match(loader, /truncated download, not a smaller chamber/);
+  // And it sniffs, because the link Parliament labels `Members_List.csv`
+  // answers 200 with a PDF, and a CSV parser fed a PDF returns rows.
+  assert.match(loader, /served a PDF, not a CSV/);
+});
+
+test('the refresh loads both registers by default', () => {
+  const workflow = readFileSync(
+    join(root, '.github/workflows/aml-pep-officeholders-refresh.yml'), 'utf8');
+  // A source that exists and is never scheduled is a source that is empty,
+  // which is the reading this whole index is built to avoid producing.
+  for (const code of ['aph_commonwealth_parliament', 'wikidata_au_public_office']) {
+    assert.ok(workflow.includes(code), `${code} is not in the refresh workflow`);
+  }
+});
+
+test('a source is ingested from the URL the spike proved, not a second copy', () => {
+  /*
+   * The catalogue's own rule, now that something actually loads from it. The
+   * whole value of a reachability measurement is that the thing measured is
+   * the thing read; two copies of a URL drifting apart turns a green spike
+   * into a statement about a file nobody fetches.
+   */
+  const ingested = CANDIDATE_SOURCES.filter((s) => s.ingestedAs);
+  assert.ok(ingested.length >= 2, 'the APH registers should be marked as ingested');
+  const loaderUrls = new Set(APH_REGISTERS.map((r) => r.url));
+  for (const s of ingested) {
+    assert.equal(s.ingestedAs, 'aph_commonwealth_parliament');
+    assert.ok(loaderUrls.has(s.url),
+      `${s.key} is catalogued at a URL the loader does not read: ${s.url}`);
+  }
+  assert.equal(loaderUrls.size, ingested.length);
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+ * DATE OF BIRTH — the field that tells a candidate apart from a namesake
+ * ══════════════════════════════════════════════════════════════════════ */
+
+test('a year-precision birth is stored as a year, not as 1 January', () => {
+  /*
+   * Wikidata records precision explicitly — 11 day, 10 month, 9 year — and
+   * renders a full timestamp regardless. A year-precision birth in 1961 comes
+   * back as `1961-01-01T00:00:00Z`.
+   *
+   * Storing that verbatim asserts a birthday nobody published, and the
+   * comparison then reports a confident MISMATCH against a customer genuinely
+   * born on 4 August 1961 — demoting a real lead with a reason that sounds
+   * decisive. Measured against the live endpoint: 46 of 1,247 people in one
+   * office batch are year-precision, so this is ~4% of the register.
+   */
+  assert.equal(truncateWikidataDate('1961-01-01T00:00:00Z', 11), '1961-01-01');
+  assert.equal(truncateWikidataDate('1961-03-01T00:00:00Z', 10), '1961-03');
+  assert.equal(truncateWikidataDate('1961-01-01T00:00:00Z', 9), '1961');
+});
+
+test('an unstated precision truncates to the year, and that direction is chosen', () => {
+  /*
+   * Over-truncating can only turn a `match` into a `year_match` — it keeps a
+   * candidate in front of a reviewer and understates the agreement.
+   * Under-truncating invents a birthday. The default leans away from the
+   * mistake that demotes.
+   */
+  assert.equal(truncateWikidataDate('1961-08-04T00:00:00Z', undefined), '1961');
+  assert.equal(truncateWikidataDate('1961-08-04T00:00:00Z', 'nonsense'), '1961');
+});
+
+test('anything coarser than a year is not a date of birth', () => {
+  assert.equal(truncateWikidataDate('1960-01-01T00:00:00Z', 8), null);   // decade
+  assert.equal(truncateWikidataDate('1900-01-01T00:00:00Z', 7), null);   // century
+  // A BC date would parse into a plausible-looking year.
+  assert.equal(truncateWikidataDate('-0500-01-01T00:00:00Z', 11), null);
+  assert.equal(truncateWikidataDate('', 11), null);
+  assert.equal(truncateWikidataDate(null, 11), null);
+});
+
+test('the query reads the statement node, not the truncated predicate', () => {
+  // `wdt:P569` hands back a full timestamp with no way to tell how much of it
+  // is known, which is the whole reason the two tests above exist.
+  const q = buildWikidataOfficeholderQuery(['Q1']);
+  assert.match(q, /psv:P569/);
+  assert.match(q, /wikibase:timePrecision/);
+  assert.match(q, /wikibase:timeValue/);
+});
+
+test('the Parliament register publishes none, and says null rather than guessing', () => {
+  const entries = parseAphRegister(
+    aphFixture('aph-members.sample.csv'), houseRegister, parseCsv);
+  for (const e of entries) assert.equal(e.date_of_birth ?? null, null);
+  const row = withNormalisedNames(entries[0], 'aph_commonwealth_parliament', null);
+  assert.equal(row.date_of_birth, null);
+});
+
+test('the column accepts only the partial-date shapes the comparator reads', () => {
+  const dob = readFileSync(
+    join(root, 'supabase/migrations/20260929000000_aml_pep_officeholder_dob.sql'), 'utf8');
+  // A timestamp, a `circa 1961` or an empty string would parse to a year by
+  // accident or to nothing at all, and both readings are silent.
+  assert.match(dob, /\^\[0-9\]\{4\}\(-\[0-9\]\{2\}\(-\[0-9\]\{2\}\)\?\)\?\$/);
+  assert.match(dob, /date_of_birth text/);
+});
+
+/* ══════════════════════════════════════════════════════════════════════
+ * RULE COVERAGE — measured by the load, rendered from the load
+ * ══════════════════════════════════════════════════════════════════════ */
+
+test('the load measures coverage against the Rules and stores it', () => {
+  assert.match(loader, /summariseRuleCoverage/);
+  assert.match(loader, /rule_categories: ruleCoverage\.categories/);
+  // The categories with NOTHING are stored too. A gap that is not recorded is
+  // a gap nobody can be told about.
+  assert.match(loader, /unclassified_offices/);
+  // One implementation, imported — not a second copy of the classifier in mjs.
+  assert.match(loader, /pepRuleCoverage\.pure\.ts/);
+});
+
+test('the Parliament register evidences legislators and ministers, and nothing else', () => {
+  // Measured from the real files: the two APH registers hold seats and
+  // portfolios. Reporting judiciary or Defence coverage off them would be
+  // false, and this is the assertion that keeps it false-negative rather than
+  // false-positive.
+  const entries = [
+    ...parseAphRegister(aphFixture('aph-members.sample.csv'), houseRegister, parseCsv),
+    ...parseAphRegister(aphFixture('aph-senators.sample.csv'), senateRegister, parseCsv),
+  ];
+  const offices = new Set();
+  for (const e of entries) for (const p of e.source_detail.positions) offices.add(p.title);
+  const summary = summariseRuleCoverage(offices);
+  const evidenced = summary.categories.filter((c) => !c.notEvidenced).map((c) => c.code).sort();
+  assert.deepEqual(evidenced, ['legislature', 'ministry']);
+  for (const code of ['judiciary', 'defence', 'diplomatic', 'vice_regal']) {
+    const cat = summary.categories.find((c) => c.code === code);
+    assert.equal(cat.notEvidenced, true, `${code} must not be claimed from APH alone`);
+  }
 });

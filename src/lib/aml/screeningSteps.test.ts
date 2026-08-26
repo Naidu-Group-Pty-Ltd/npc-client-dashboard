@@ -132,7 +132,31 @@ describe("the production case", () => {
     // The whole point: an obligation that never arose is not a completed one.
     expect(byKey.sanctions).toBe("not_required");
     expect(byKey.resolve).toBe("not_required");
-    expect(byKey.pep).toBe("blocked");
+    /*
+     * "Do this now", not "Blocked".
+     *
+     * The server's action on this case IS the PEP determination, so the step
+     * it points at is the current one. It used to keep a red BLOCKED badge
+     * and a warning marker while the operator was being asked to do it,
+     * because the promotion to `current` was guarded by
+     * `!isOutstanding(s.state)` — which only ever upgraded a step that was
+     * already settled.
+     *
+     * A determination that is owed and has not been made is work. The one
+     * thing that genuinely blocks it — having nobody enrolled to determine
+     * against — belongs to the parties step, and is asserted below.
+     */
+    expect(byKey.pep).toBe("current");
+    expect(path().steps.find((s) => s.key === "pep")!.blockedBy).toBeNull();
+  });
+
+  it("a step is only blocked when it can say what is blocking it", () => {
+    // The rule one way round: a red badge with no obstacle named is an
+    // instruction to go and look for one.
+    for (const step of path().steps) {
+      if (step.state === "blocked") expect(step.blockedBy).toBeTruthy();
+      else expect(step.blockedBy).toBeNull();
+    }
   });
 
   it("counts the settled steps honestly", () => {

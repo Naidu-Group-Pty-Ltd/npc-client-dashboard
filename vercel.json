@@ -1,42 +1,48 @@
 {
-    "$schema": "https://openapi.vercel.sh/vercel.json",
-    "services": {
-        "frontend": {
-            "root": ".",
-            "framework": "vite"
-        },
-        "aml-verification-service": {
-            "root": "services/aml-verification-service",
-            "runtime": "container",
-            "entrypoint": "Dockerfile",
-            "routes": [
-                {
-                    "src": "/api/(.*)",
-                    "transforms": [
-                        {
-                            "type": "request.path",
-                            "op": "set",
-                            "args": "/$1"
-                        }
-                    ]
-                }
-            ]
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": ".",
+      "framework": "vite",
+      "rewrites": [
+        {
+          "source": "/(.*)",
+          "destination": "/index.html"
         }
+      ]
     },
-    "rewrites": [
+    "aml-verification-service": {
+      "root": "services/aml-verification-service",
+      "runtime": "container",
+      "entrypoint": "Dockerfile",
+      "routes": [
         {
-            "source": "/api/(.*)",
-            "destination": {
-                "type": "service",
-                "service": "aml-verification-service"
+          "src": "/api/(.*)",
+          "transforms": [
+            {
+              "type": "request.path",
+              "op": "set",
+              "args": "/$1"
             }
-        },
-        {
-            "source": "/(.*)",
-            "destination": {
-                "type": "service",
-                "service": "frontend"
-            }
+          ]
         }
-    ]
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "aml-verification-service"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "type": "service",
+        "service": "frontend"
+      }
+    }
+  ]
 }

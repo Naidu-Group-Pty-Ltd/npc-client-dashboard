@@ -66,4 +66,11 @@ export interface ComparisonAnalysis {
   risk_comparison: any;
   red_flags: any;
   created_by?: string | null;
+  /** Which report family was compared — 'compass' | 'briefing' | 'snapshot' |
+   *  'financial' | 'strategic'. Null on legacy rows the backfill could not
+   *  type (dangling or mixed source reports). */
+  comparison_type?: string | null;
+  analysis_depth?: string | null;
+  investor_profile?: string | null;
+  is_archived?: boolean | null;
 }

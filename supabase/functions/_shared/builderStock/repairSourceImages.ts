@@ -44,8 +44,8 @@ import {
   negativeProvenanceStillStands, recordNoDeterministicImage,
 } from './negativeProvenance.pure.ts';
 import {
-  demoteUnprovenSourceImage, hasReadySourceImage, storeSourceImageBytes,
-  storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
+  demoteUnprovenSourceImage, hasReadySourceImage, readPrimaryImageStanding,
+  storeSourceImageBytes, storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
 } from './sourceImages.ts';
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
@@ -494,6 +494,13 @@ export async function repairSourceImagesForUpload(
       else if (itemIdByAnchor.get(anchor) !== itemId) itemIdByAnchor.set(anchor, null);
     }
 
+    /**
+     * The row's own linked package, read up front because BOTH branches now
+     * need it: the no-assets branch it has always served, and the branch below
+     * where the row's own cover turns out to be a convicted marketing tile.
+     */
+    const packageUrl = solePackageUrl(record.unmapped);
+
     if (all.length) {
       outcome.matched += 1;
 
@@ -521,41 +528,71 @@ export async function repairSourceImagesForUpload(
        * re-storing pictures that were already current, and was killed by the
        * edge runtime at exactly the same place. Progress was not slow, it was
        * nil.
+       *
+       * The reading is `readPrimaryImageStanding` now rather than
+       * `hasReadySourceImage` — the identical query answering the identical
+       * `ready` question, plus the one fact this branch was blind to: whether
+       * everything the row itself supplied has been CONVICTED as promotional.
        */
-      if (await hasReadySourceImage(db, itemId, PROVENANCE_VERSION)) continue;
+      let standing = await readPrimaryImageStanding(db, itemId, PROVENANCE_VERSION);
+      if (!standing.ready) {
+        /**
+         * And the run is BOUNDED BY WORK, not only by the clock.
+         *
+         * The wall-clock deadline never fired here: fetching and hashing
+         * images is CPU-bound, and the edge worker's resource limit killed the
+         * invocation long before 100s elapsed — which returns no response,
+         * writes no marker and leaves nothing in the log to explain itself. A
+         * count is the bound that actually holds, so the run stops itself,
+         * reports `incomplete`, and is resumed by the next tick having
+         * permanently retired the properties it did reach.
+         */
+        if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
+        if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+
+        restored += 1;
+        const stored = await storeSourceImages(db, {
+          organisationId: input.organisationId,
+          uploadId: upload.id,
+          stockItemId: itemId,
+          assets: all,
+        }, { fetchImage: deps.fetchImage });
+        outcome.imagesStored += stored.stored;
+        outcome.problems.push(...stored.problems.slice(0, 5));
+        // What was just stored was measured as it was stored, so the standing
+        // is re-read — but only where a package exists to act on the answer.
+        if (packageUrl) {
+          standing = await readPrimaryImageStanding(db, itemId, PROVENANCE_VERSION);
+        }
+      }
 
       /**
-       * And the run is BOUNDED BY WORK, not only by the clock.
+       * THE PRECEDENCE FIX. A row-owned image used to end this property's
+       * search unconditionally — `if (all.length) { …; continue; }` — which
+       * let a promotional Notion page cover stop the discovery of the CLEAN
+       * render the same builder supplied for the same property, one link away
+       * in the row's own package. So the search continues in exactly one case:
+       * every primary candidate the row itself produced has been measured and
+       * CONVICTED as a promotional marketing tile, none is clean, and the row
+       * links a package of its own to read.
        *
-       * The wall-clock deadline never fired here: fetching and hashing images
-       * is CPU-bound, and the edge worker's resource limit killed the
-       * invocation long before 100s elapsed — which returns no response, writes
-       * no marker and leaves nothing in the log to explain itself. A count is
-       * the bound that actually holds, so the run stops itself, reports
-       * `incomplete`, and is resumed by the next tick having permanently
-       * retired the properties it did reach.
+       * Nothing else changed. A clean cover still ends the search (nothing is
+       * unnecessarily replaced); a pending verdict still ends it (evidence
+       * that has not arrived decides nothing); a property with no package
+       * still ends it (there is nowhere else this property may be looked for
+       * — NEVER another lot's package, a search, a map or a generator). And
+       * everything downstream of this line is the package path that already
+       * existed, with every identity proof it has always demanded.
        */
-      if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
-      if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
-
-      restored += 1;
-      const stored = await storeSourceImages(db, {
-        organisationId: input.organisationId,
-        uploadId: upload.id,
-        stockItemId: itemId,
-        assets: all,
-      }, { fetchImage: deps.fetchImage });
-      outcome.imagesStored += stored.stored;
-      outcome.problems.push(...stored.problems.slice(0, 5));
-      continue;
+      if (!(packageUrl && standing.convictedOnly)) continue;
     }
 
     /**
-     * Nothing on the row itself. Its own linked package is the last place a
+     * Nothing usable on the row itself — no assets at all, or only convicted
+     * marketing tiles. Its own linked package is the last place a
      * builder-supplied photograph can be — and the only one that has to prove
      * which property it depicts before it is used.
      */
-    const packageUrl = solePackageUrl(record.unmapped);
     if (!packageUrl) continue;
     // A property that already holds a PROVEN one is skipped, which is what
     // makes a budgeted run resumable rather than repetitive. A row from before
@@ -564,7 +601,11 @@ export async function repairSourceImagesForUpload(
     // Tested BEFORE the budget, so a run cannot spend its allowance stopping at
     // properties it would not have worked on: the cap counts work done, and
     // skipping is not work.
-    if (await hasReadySourceImage(db, itemId, PROVENANCE_VERSION)) continue;
+    //
+    // Only on the no-assets path: where the row's own assets fell through as
+    // convicted-only, "already holds a ready image" is precisely the fact that
+    // must not end the search — the ready image IS the convicted tile.
+    if (!all.length && await hasReadySourceImage(db, itemId, PROVENANCE_VERSION)) continue;
 
     /**
      * ALREADY ANSWERED. A previous run read this exact package at this exact
@@ -665,8 +706,11 @@ export async function repairSourceImagesForUpload(
       continue;
     }
 
-    outcome.rowsWithImagery += 1;
-    outcome.matched += 1;
+    // A row that fell through with convicted assets was already counted once.
+    if (!all.length) {
+      outcome.rowsWithImagery += 1;
+      outcome.matched += 1;
+    }
     const written = await storeSourceImageBytes(db, {
       organisationId: input.organisationId,
       uploadId: upload.id,

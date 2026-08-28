@@ -50,8 +50,9 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import { readMarketingOverlay } from '../../../supabase/functions/_shared/builderStock/marketingOverlay.pure';
 import { eligibilityDetailFor } from '../../../supabase/functions/_shared/builderStock/assessSourceImage';
-import { encodePng } from '../../../supabase/functions/_shared/builderStock/rasterPng';
+import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import { annotatedPicture, cleanPicture } from './fixtures/builderStockPictures';
+import { readPostgrestColumn } from './fixtures/postgrestJsonPath';
 
 const ORG = 'org-a';
 const OTHER_ORG = 'org-b';
@@ -166,21 +167,44 @@ function fakeDb(options: {
       return {
         select: (columns = '*') => select(table, columns),
         update(patch: Record<string, unknown>) {
-          const filters: Array<[string, unknown]> = [];
+          const filters: Array<[string, string, unknown]> = [];
+          // The JSON-path filters are RESOLVED against the row, never assumed:
+          // `source_detail->sanitization_attempt->>at` reads the way the server
+          // reads it, or the claim's compare-and-set is a test of nothing.
+          const matchesRow = (row: Row) => filters.every(([op, c, v]) => {
+            const current = readPostgrestColumn(row, c);
+            if (op === 'is') return (current ?? null) === (v ?? null);
+            return current === v;
+          });
+          const apply = (): { applied: Row[]; error: unknown } => {
+            if (options.failWritesFor?.(table)) {
+              return { applied: [], error: { message: 'write rejected' } };
+            }
+            const applied: Row[] = [];
+            for (const row of tables[table] ?? []) {
+              if (matchesRow(row)) {
+                Object.assign(row, patch);
+                writes.push({ table, patch, id: row.id });
+                applied.push(row);
+              }
+            }
+            return { applied, error: null };
+          };
           const builder: any = {
-            eq(c: string, v: unknown) { filters.push([c, v]); return builder; },
+            eq(c: string, v: unknown) { filters.push(['eq', c, v]); return builder; },
+            is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
+            select() {
+              return {
+                maybeSingle() {
+                  const { applied, error } = apply();
+                  if (error) return Promise.resolve({ data: null, error });
+                  return Promise.resolve({ data: applied[0] ?? null, error: null });
+                },
+              };
+            },
             then(resolve: (r: unknown) => unknown, reject?: unknown) {
-              if (options.failWritesFor?.(table)) {
-                return Promise.resolve({ data: null, error: { message: 'write rejected' } })
-                  .then(resolve, reject as never);
-              }
-              for (const row of tables[table] ?? []) {
-                if (filters.every(([c, v]) => row[c] === v)) {
-                  Object.assign(row, patch);
-                  writes.push({ table, patch, id: row.id });
-                }
-              }
-              return Promise.resolve({ data: null, error: null }).then(resolve, reject as never);
+              const { error } = apply();
+              return Promise.resolve({ data: null, error }).then(resolve, reject as never);
             },
           };
           return builder;
@@ -230,17 +254,32 @@ const item = (over: Partial<Row> = {}): Row => ({
   ...over,
 });
 
+/**
+ * Give the row the provenance a real one has: `stored_sha256` IS the hash of
+ * the object it references. The legacy fixture's dummy hash stopped being
+ * inert when the eligibility verdict started naming the bytes it judged — a
+ * verdict written for these bytes beside a hash of OTHER bytes now reads as
+ * `pending`, which is the binding working, not the settlement failing.
+ * `source_sha256` keeps the dummy: the binding reads only the stored hash,
+ * and a test asserts the settlement leaves provenance untouched.
+ */
+const withStoredHash = async (row: Row, bytes: Uint8Array): Promise<Row> => {
+  (row.source_detail as Record<string, unknown>).stored_sha256 = await sha256Hex(bytes);
+  return row;
+};
+
 // ---------------------------------------------------------------------------
 // 1 / 2 — the backfill itself
 // ---------------------------------------------------------------------------
 
 describe('1 — a clean legacy primary with no verdict is assessed and restored', () => {
   it('reads its stored bytes, writes eligible, and becomes the chosen image', async () => {
-    const row = image();
+    const bytes = await cleanBytes();
+    const row = await withStoredHash(image(), bytes);
     const db = fakeDb({
       images: [row],
       items: [item({ primary_image_id: null })],
-      objects: { [row.storage_path as string]: await cleanBytes() },
+      objects: { [row.storage_path as string]: bytes },
     });
 
     // Before: no verdict, so the display rule hides it and the card is blank.
@@ -343,6 +382,8 @@ describe('4 — one upload failing must not clear another property in the same o
       id: 'image-stranded', upload_id: 'upload-2', stock_item_id: 'item-stranded',
       storage_path: 'org/items/item-stranded/source/missing.png',
     });
+    const settledBytes = await cleanBytes();
+    await withStoredHash(settledImage, settledBytes);
     const db = fakeDb({
       images: [settledImage, strandedImage],
       items: [
@@ -350,7 +391,7 @@ describe('4 — one upload failing must not clear another property in the same o
         item({ id: 'item-stranded', primary_image_id: 'image-stranded' }),
       ],
       // Only the first upload's object is readable.
-      objects: { [settledImage.storage_path as string]: await cleanBytes() },
+      objects: { [settledImage.storage_path as string]: settledBytes },
     });
 
     await settleMarketplaceEligibility(db as never, ORG, { uploadId: 'upload-1' });
@@ -442,6 +483,10 @@ describe('5 — after a complete settlement the pointers are exactly right', () 
       id: 'image-tile', stock_item_id: 'item-tile',
       storage_path: 'org/items/item-tile/source/tile.png',
     });
+    const cleanObject = await cleanBytes();
+    const tileObject = await annotatedBytes();
+    await withStoredHash(cleanRow, cleanObject);
+    await withStoredHash(tileRow, tileObject);
     const db = fakeDb({
       images: [cleanRow, tileRow],
       items: [
@@ -449,8 +494,8 @@ describe('5 — after a complete settlement the pointers are exactly right', () 
         item({ id: 'item-tile', primary_image_id: 'image-tile' }),
       ],
       objects: {
-        [cleanRow.storage_path as string]: await cleanBytes(),
-        [tileRow.storage_path as string]: await annotatedBytes(),
+        [cleanRow.storage_path as string]: cleanObject,
+        [tileRow.storage_path as string]: tileObject,
       },
     });
 
@@ -759,5 +804,138 @@ describe('a missing migration is an operational failure, never a quiet success',
       );
       expect(stillOwed.rows.length).toBe(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10 — one repair allowance for the whole invocation, whoever is invoking
+// ---------------------------------------------------------------------------
+
+describe('10 — the enrichment loop spends ONE repair allowance, not one per upload', () => {
+  /*
+   * THE SETTLER LEARNED THIS THE EXPENSIVE WAY and wrote it down beside its
+   * own budget: a repair is a full-resolution decode plus a reconstruction or
+   * up to four model calls, the worker dies on its RESOURCE limit long before
+   * any wall clock, and several uploads each spending a private allowance is
+   * how a tick becomes a 546 with nothing written. `settleImageSanitization`
+   * therefore takes the budget as an argument — and defaults to a fresh one
+   * when the caller passes nothing, which is right for a single-upload manual
+   * repair and wrong for every loop. The portal's enrichment loop was the
+   * loop that passed nothing: up to five uploads a call, two repairs each.
+   */
+  const uploadRow = (id: string): Row => ({
+    id,
+    organisation_id: ORG,
+    source_type: 'file',
+    original_filename: 'stock.csv',
+    storage_bucket: 'builder-stock-sources',
+    storage_path: 'org/sources/stock.csv',
+    deleted_at: null,
+    source_images_settled_version: PROVENANCE_VERSION,
+    marketplace_eligibility_settled_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    image_sanitization_settled_version: null,
+  });
+
+  const convicted = (id: string, uploadId: string, itemId: string, sha: string): Row => ({
+    id,
+    organisation_id: ORG,
+    upload_id: uploadId,
+    stock_item_id: itemId,
+    source_stage: 'uploaded_document',
+    verification_status: 'source_supplied',
+    processing_status: 'ready',
+    position: 0,
+    storage_bucket: 'builder-stock-images',
+    storage_path: `org/items/${itemId}/source/${id}.png`,
+    source_detail: {
+      role: 'primary_property',
+      role_evidence_level: 3,
+      stored_sha256: sha,
+      source_sha256: sha,
+      marketplace_display_eligible: false,
+      marketplace_eligibility_state: 'ineligible',
+      marketplace_rejection_reason: 'annotated_marketing_tile',
+      marketplace_measured: true,
+      marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION,
+    },
+  });
+
+  async function worldWithTwoUploads() {
+    const bytes = await annotatedBytes();
+    const { sha256Hex } = await import(
+      '../../../supabase/functions/_shared/builderStock/rasterPng');
+    const sha = await sha256Hex(bytes);
+    const imageA = convicted('image-a', 'upload-1', 'item-1', sha);
+    const imageB = convicted('image-b', 'upload-2', 'item-2', sha);
+    const db = fakeDb({
+      uploads: [uploadRow('upload-1'), uploadRow('upload-2')],
+      images: [imageA, imageB],
+      items: [item({ id: 'item-1', primary_image_id: 'image-a' }),
+        item({ id: 'item-2', primary_image_id: 'image-b' })],
+      objects: {
+        [imageA.storage_path as string]: bytes,
+        [imageB.storage_path as string]: bytes,
+      },
+    });
+    return db;
+  }
+
+  /** The portal loop's shape: several uploads, one call each. */
+  async function enrichLoop(
+    db: ReturnType<typeof fakeDb>,
+    repairBudget: { remaining: number } | undefined,
+    onSanitize: () => void,
+  ) {
+    for (const uploadId of ['upload-1', 'upload-2']) {
+      await settleUploadSourceImages(db as never, {
+        organisationId: ORG, uploadId,
+        needsProvenance: false, needsEligibility: false,
+        repairBudget: repairBudget as never,
+      }, {
+        sanitize: (async () => {
+          onSanitize();
+          return {
+            ok: false, reason: 'inpaint_unavailable',
+            transformation: 'generative_overlay_inpaint',
+            model: null, operational: true, detail: 'held for the budget test',
+          };
+        }) as never,
+      });
+    }
+  }
+
+  it('a SHARED budget is spent once across the whole loop', async () => {
+    const db = await worldWithTwoUploads();
+    let attempts = 0;
+    await enrichLoop(db, { remaining: 1 }, () => { attempts += 1; });
+    // One allowance, however many uploads the loop visits.
+    expect(attempts).toBe(1);
+  });
+
+  it('and omitting it is a fresh allowance per upload — the defect\'s mechanism', async () => {
+    const db = await worldWithTwoUploads();
+    let attempts = 0;
+    await enrichLoop(db, undefined, () => { attempts += 1; });
+    // Each upload minted its own budget. This is the module's documented
+    // default for a single manual repair; in a loop it is the 546.
+    expect(attempts).toBe(2);
+  });
+
+  it('the portal\'s enrichment loop passes the shared budget', () => {
+    // The loop lives in an edge function no test can import, so the contract
+    // is pinned the way the version-pairing test pins the deploy: on the
+    // source itself.
+    const { readFileSync } = require('node:fs') as typeof import('node:fs');
+    const { resolve } = require('node:path') as typeof import('node:path');
+    const source = readFileSync(resolve(
+      __dirname, '../../../supabase/functions/builder-portal-stock/index.ts'), 'utf8');
+    const enrich = source.slice(source.indexOf("operation === 'enrich_images'"));
+    const call = enrich.slice(
+      enrich.indexOf('settleUploadSourceImages('),
+      enrich.indexOf('settleUploadSourceImages(') + 700);
+    expect(call).toContain('repairBudget');
+    // And the budget is minted once, before the loop — not per iteration.
+    const beforeLoop = enrich.slice(0, enrich.indexOf('for (const id of outstanding)'));
+    expect(beforeLoop).toContain('newRepairBudget()');
   });
 });

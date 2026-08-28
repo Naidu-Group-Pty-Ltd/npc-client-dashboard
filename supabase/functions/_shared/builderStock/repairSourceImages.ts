@@ -32,7 +32,8 @@ import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
 import { isNotionUrl } from './urlSource.pure.ts';
 import {
-  normaliseStockRow, stockMatchKeys, stockRecordLabel, stockRowFingerprint,
+  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockMatchKeys,
+  stockRecordLabel, stockRowFingerprint,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -43,6 +44,10 @@ import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
 import {
   negativeProvenanceStillStands, recordNoDeterministicImage,
 } from './negativeProvenance.pure.ts';
+import {
+  attemptsSoFar, packageAttemptsExhausted, recordPackageAttempt,
+  recordPackageUnprocessable,
+} from './packageAttempt.pure.ts';
 import {
   demoteUnprovenSourceImage, hasReadySourceImage, readPrimaryImageStanding,
   storeSourceImageBytes, storeSourceImages, PROVENANCE_VERSION, type SourceImageFetcher,
@@ -206,6 +211,18 @@ const MAX_ITEMS_RESTORED_PER_RUN = 4;
  */
 const MAX_PACKAGE_RECOVERIES_PER_RUN = 1;
 
+/**
+ * How much of the budget one package recovery is assumed to need.
+ *
+ * Not a measurement of a particular document — it cannot be, since the cost is
+ * whatever PDF a builder linked — but the size of the bet this run is willing
+ * to place. Fitted to the production kills: a recovery that began around ten
+ * seconds in ran the invocation to twenty-two. Ten seconds of headroom means
+ * the run declines the bet instead of losing it, reports `incomplete`, and the
+ * next tick takes it with a full budget.
+ */
+const PACKAGE_RECOVERY_RESERVE_MS = 10_000;
+
 async function readStage1Images(
   db: any,
   stockItemIds: string[],
@@ -246,6 +263,83 @@ function developmentUnitKey(item: ExistingItem): string | null {
  * time is precisely the artefact that lost the covers. Everything else is
  * re-read from the stored snapshot, which IS the original document.
  */
+/**
+ * Where the upload records that it has enumerated its live source's row assets.
+ *
+ * A key inside the existing `image_stage_summary` document rather than a new
+ * column: it is a fact about this upload's imagery, which is what that column
+ * already holds, and it needs no migration. It is MERGED, never written over
+ * the stage counts beside it.
+ */
+export const NOTION_ROW_ASSETS_VERSION_KEY = 'notion_row_assets_version';
+
+/**
+ * The rows this upload already imported, as the source presented them.
+ *
+ * `source_row` is the normalised record `importStock.ts` wrote — the same
+ * shape `normaliseStockRow` produces, carrying `unmapped` (and with it the
+ * `Complete Package Pack` link), `image_urls`, `image_url_fields` and the
+ * `source_anchor`. Reading it back is a single indexed query against rows this
+ * organisation already owns; nothing here reaches the network.
+ */
+async function storedSourceRows(
+  db: any,
+  input: { organisationId: string; uploadId: string },
+): Promise<NormalisedStockRecord[]> {
+  const { data } = await db
+    .from('builder_stock_items')
+    .select('source_row')
+    .eq('organisation_id', input.organisationId)
+    .eq('upload_id', input.uploadId)
+    .eq('lifecycle_status', 'active')
+    .order('created_at', { ascending: true });
+  return (data ?? [])
+    .map((row: { source_row?: unknown }) => readStoredRecord(row?.source_row))
+    .filter((record: NormalisedStockRecord | null): record is NormalisedStockRecord => !!record);
+}
+
+/**
+ * A stored `source_row` back as the record it already is.
+ *
+ * NEVER `normaliseStockRow`. That function reads a row keyed by the SOURCE'S
+ * OWN HEADERS — `Deal`, `Photo`, `Complete Package Pack` — and a stored record
+ * is keyed by this repository's field names, with `unmapped` as a nested
+ * object rather than a cell. Passing one to the other loses the whole point of
+ * reading it: `unmapped` stringifies to nothing usable, so the package link
+ * this exists to recover would be dropped, and the row would then fail
+ * `identifiesAProperty` and vanish silently. It is copied field by field, and
+ * the same property test the import applied is applied again — so a row that
+ * could never have been imported cannot enter here either.
+ */
+function readStoredRecord(stored: unknown): NormalisedStockRecord | null {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
+  const source = stored as Partial<NormalisedStockRecord> & Record<string, unknown>;
+  const record = emptyStockRecord();
+
+  for (const key of Object.keys(record) as Array<keyof NormalisedStockRecord>) {
+    const value = source[key];
+    if (value === undefined || value === null) continue;
+    if (key === 'image_urls') {
+      if (!Array.isArray(value)) continue;
+      record.image_urls = value
+        .filter((url): url is string => typeof url === 'string').slice(0, 12);
+      continue;
+    }
+    if (key === 'image_url_fields' || key === 'unmapped') {
+      if (typeof value !== 'object' || Array.isArray(value)) continue;
+      const out: Record<string, string> = {};
+      for (const [name, entry] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof entry === 'string') out[name] = entry;
+      }
+      record[key] = out;
+      continue;
+    }
+    (record as unknown as Record<string, unknown>)[key] = value;
+  }
+
+  return identifiesAProperty(record) ? record : null;
+}
+
 export async function repairSourceImagesForUpload(
   db: any,
   input: {
@@ -264,6 +358,19 @@ export async function repairSourceImagesForUpload(
     fetchImage?: SourceImageFetcher;
     /** How a linked package's prose is read. See `packageImages.ts`. */
     readPageTexts?: (bytes: Uint8Array) => Promise<string[]>;
+    /**
+     * How the LIVE public source is re-read, for the row assets only.
+     *
+     * A seam, for the same reason `fetchImage` and `fetchPackage` are seams:
+     * the real one reaches `Deno.resolveDns` through `fetchSource.ts`, so
+     * without it the branch that decides whether the live page is read at all
+     * could only be exercised against the network. That branch is now the
+     * thing that keeps the sweep moving, and it shipped once in the wrong
+     * function past a green suite — a rule nothing can execute is not pinned.
+     */
+    readNotionSource?: (url: string) => Promise<
+      { ok: false } | { ok: true; rows: Array<Record<string, unknown>>; assets: AnchoredAssets[] }
+    >;
   } = {},
 ): Promise<RepairOutcome> {
   const outcome: RepairOutcome = {
@@ -276,7 +383,8 @@ export async function repairSourceImagesForUpload(
 
   const { data: upload } = await db
     .from('builder_stock_uploads')
-    .select('id, organisation_id, source_type, source_url, final_url, original_filename, storage_bucket, storage_path, deleted_at')
+    .select('id, organisation_id, source_type, source_url, final_url, original_filename, '
+      + 'storage_bucket, storage_path, deleted_at, image_stage_summary')
     .eq('id', input.uploadId)
     .eq('organisation_id', input.organisationId)
     .maybeSingle();
@@ -285,6 +393,11 @@ export async function repairSourceImagesForUpload(
   }
 
   let rows: Array<Record<string, unknown>> = [];
+  /**
+   * Set only on the stored-source path: rows that are ALREADY records and must
+   * not be put through `normaliseStockRow` again. See `readStoredRecord`.
+   */
+  let storedRecords: NormalisedStockRecord[] | null = null;
   let rowAssets: AnchoredAssets[] = [];
   let media: ExtractedMedia[] = [];
   let pageTexts: string[] = [];
@@ -292,25 +405,80 @@ export async function repairSourceImagesForUpload(
 
   const sourceUrl: string | null = upload.final_url || upload.source_url || null;
 
+  /**
+   * WHAT THE LIVE SOURCE IS ACTUALLY NEEDED FOR — AND WHAT IT IS NOT.
+   *
+   * Re-reading a public Notion page costs about nine seconds and answers TWO
+   * different questions at once:
+   *
+   *   THE ROW DATA — identity, and the `Complete Package Pack` link a row
+   *   carries. This is captured at import and is sitting in
+   *   `builder_stock_items.source_row`, verbatim, including the unmapped
+   *   columns. Re-fetching to read it again is buying something already owned.
+   *
+   *   THE ROW ASSETS — a Notion page cover, which is a file reference the CSV
+   *   snapshot cannot carry. This one genuinely does need the live page.
+   *
+   * Conflating them is a LIVENESS BUG, and production held still because of
+   * it. Every tick spent its whole budget re-deriving the record map, then
+   * declined the package recovery it existed to perform because too little
+   * time remained (see `PACKAGE_RECOVERY_RESERVE_MS`) — 200, `incomplete`,
+   * nothing stored, repeat every five minutes for ever. Fourteen properties
+   * whose builder image sits in a linked package were never once attempted.
+   *
+   * So the fetch is now bought only while the ASSET question is open. Once a
+   * run has enumerated this source's row assets and left none of them
+   * outstanding, that is recorded on the upload and every later tick reads the
+   * rows it already has and spends the whole budget on the package.
+   */
+  const stageSummary = (upload.image_stage_summary ?? {}) as Record<string, unknown>;
+  const rowAssetsEnumerated =
+    Number(stageSummary[NOTION_ROW_ASSETS_VERSION_KEY] ?? -1) >= PROVENANCE_VERSION;
+  /** Set when a run had to defer an asset-bearing row; blocks the stamp. */
+  let assetRowsDeferred = 0;
+  /** True only where this run actually read the live page. */
+  let notionAssetsRead = false;
+
   try {
-    if (upload.source_type === 'url' && sourceUrl && isNotionUrl(sourceUrl)) {
-      // Imported here rather than at the top: both modules reach for
-      // `Deno.resolveDns`, and the repair path for an uploaded document must
-      // stay loadable — and testable — without the edge runtime.
-      const { fetchStockSource } = await import('./fetchSource.ts');
-      const { recoverNotionPublicContent } = await import('./notionPublicContent.ts');
-      const fetched = await fetchStockSource(sourceUrl);
-      const html = new TextDecoder('utf-8', { fatal: false }).decode(fetched.bytes);
-      const recovery = await recoverNotionPublicContent(fetched.finalUrl, html);
-      if (!recovery.ok) {
-        return { ...outcome, error: 'That Notion page could not be read again.' };
+    if (upload.source_type === 'url' && sourceUrl && isNotionUrl(sourceUrl)
+      && rowAssetsEnumerated) {
+      /*
+       * The assets have been enumerated at this version and none was left
+       * outstanding, so nothing on the live page is needed. The rows come from
+       * what the import already stored — the same normalised records, with the
+       * same unmapped columns and the same anchors.
+       */
+      storedRecords = await storedSourceRows(db, input);
+      rows = storedRecords as unknown as Array<Record<string, unknown>>;
+      rowAssets = [];
+    } else if (upload.source_type === 'url' && sourceUrl && isNotionUrl(sourceUrl)) {
+      if (deps.readNotionSource) {
+        const read = await deps.readNotionSource(sourceUrl);
+        if (!read.ok) {
+          return { ...outcome, error: 'That Notion page could not be read again.' };
+        }
+        rows = read.rows;
+        rowAssets = read.assets;
+      } else {
+        // Imported here rather than at the top: both modules reach for
+        // `Deno.resolveDns`, and the repair path for an uploaded document must
+        // stay loadable — and testable — without the edge runtime.
+        const { fetchStockSource } = await import('./fetchSource.ts');
+        const { recoverNotionPublicContent } = await import('./notionPublicContent.ts');
+        const fetched = await fetchStockSource(sourceUrl);
+        const html = new TextDecoder('utf-8', { fatal: false }).decode(fetched.bytes);
+        const recovery = await recoverNotionPublicContent(fetched.finalUrl, html);
+        if (!recovery.ok) {
+          return { ...outcome, error: 'That Notion page could not be read again.' };
+        }
+        if (!recovery.matrix) {
+          return { ...outcome, error: 'That Notion page no longer lists properties in rows.' };
+        }
+        const keyed = keyRowsByHeader(recovery.matrix);
+        rows = keyed?.rows ?? [];
+        rowAssets = recovery.assets;
       }
-      if (!recovery.matrix) {
-        return { ...outcome, error: 'That Notion page no longer lists properties in rows.' };
-      }
-      const keyed = keyRowsByHeader(recovery.matrix);
-      rows = keyed?.rows ?? [];
-      rowAssets = recovery.assets;
+      notionAssetsRead = true;
     } else {
       const { data: blob, error: downloadError } = await db.storage
         .from(upload.storage_bucket).download(upload.storage_path);
@@ -435,6 +603,8 @@ export async function repairSourceImagesForUpload(
 
   const itemIdByAnchor = new Map<string, string | null>();
   const itemIdsInOrder: string[] = [];
+  /** Rows the DOCUMENT stated, matched or not — see `documentRowCount`. */
+  let documentRows = 0;
   const touched = new Set<string>();
   /**
    * What this run could PROVE about each property: the source references it
@@ -452,9 +622,13 @@ export async function repairSourceImagesForUpload(
     provenByItem.set(itemId, set);
   };
 
-  for (const raw of rows) {
-    const record: NormalisedStockRecord | null = normaliseStockRow(raw);
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const raw = rows[rowIndex];
+    const record: NormalisedStockRecord | null = storedRecords
+      ? storedRecords[rowIndex]
+      : normaliseStockRow(raw);
     if (!record) continue;
+    documentRows += 1;
 
     const keys = stockMatchKeys(record);
     const itemId = (keys.reference ? byReference.get(keys.reference) : undefined)
@@ -547,8 +721,18 @@ export async function repairSourceImagesForUpload(
          * reports `incomplete`, and is resumed by the next tick having
          * permanently retired the properties it did reach.
          */
-        if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
-        if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+        if (restored >= MAX_ITEMS_RESTORED_PER_RUN) {
+          // An asset this run could not store. The enumeration is therefore
+          // NOT finished, and must not be recorded as if it were.
+          assetRowsDeferred += 1;
+          outcome.incomplete = true;
+          break;
+        }
+        if (input.deadlineAt && Date.now() > input.deadlineAt) {
+          assetRowsDeferred += 1;
+          outcome.incomplete = true;
+          break;
+        }
 
         restored += 1;
         const stored = await storeSourceImages(db, {
@@ -633,12 +817,107 @@ export async function repairSourceImagesForUpload(
       continue;
     }
 
+    /**
+     * A PACKAGE THAT HAS ALREADY KILLED THE WORKER TWICE IS NOT ASKED A THIRD
+     * TIME.
+     *
+     * The attempt written below survives only when the recovery never returned
+     * — a `CPU Time exceeded` or `Memory limit exceeded` kill, which throws
+     * nothing and runs no `finally`. Seeing one here is therefore evidence that
+     * this exact question destroyed a previous invocation, and starting it
+     * again would destroy this one, and the one after that, for ever: upload
+     * `eccc9840` stopped dead on Lot 104 Finch Road and pinned twenty-three
+     * properties behind it.
+     *
+     * So it is retired with an honest verdict and the sweep advances. The
+     * property loses its builder image, which is a real loss — and it GAINS the
+     * fallback ladder, which it could not reach at all while the upload could
+     * never settle.
+     */
+    const priorAttempts = attemptsSoFar(negativeBefore.get(itemId), question);
+    if (packageAttemptsExhausted(negativeBefore.get(itemId), question)) {
+      const { error: giveUpError } = await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: recordPackageUnprocessable(question) })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+      if (giveUpError) {
+        // Unrecorded means unadvanced; say so rather than settle on it.
+        outcome.incomplete = true;
+      } else {
+        outcome.packageNotIdentified += 1;
+      }
+      outcome.problems.push({
+        reference: packageUrl.slice(0, 400),
+        reason: `package retired after ${priorAttempts} resource-limit failures`,
+      });
+      continue;
+    }
+
     if (restored >= MAX_ITEMS_RESTORED_PER_RUN) { outcome.incomplete = true; break; }
     if (recoveries >= MAX_PACKAGE_RECOVERIES_PER_RUN) { outcome.incomplete = true; break; }
-    if (input.deadlineAt && Date.now() > input.deadlineAt) { outcome.incomplete = true; break; }
+    /**
+     * A DEADLINE YOU CHECK BEFORE AN UNINTERRUPTIBLE STEP MUST RESERVE ROOM
+     * FOR IT.
+     *
+     * "Is there time left?" is the wrong question in front of a package
+     * recovery. It downloads a multi-megabyte PDF, extracts its rasters and
+     * classifies them, and once begun nothing stops it — so a run with one
+     * second left happily starts fifteen seconds of work and is killed on the
+     * worker's resource limit, having written no marker and logged nothing.
+     *
+     * PRODUCTION, 27 AUG 2026. This is what survived giving the step its own
+     * budget: the run ended at 22-24 seconds against a 12-second deadline,
+     * with zero images stored, because the deadline was tested at ~10s and the
+     * recovery then ran past it. The right question is "is there time for THIS
+     * step", and `PACKAGE_RECOVERY_RESERVE_MS` is what makes it askable.
+     */
+    if (input.deadlineAt
+      && Date.now() + PACKAGE_RECOVERY_RESERVE_MS > input.deadlineAt) {
+      outcome.incomplete = true;
+      break;
+    }
 
     restored += 1;
     recoveries += 1;
+
+    /**
+     * Undo the claim below. The attempt must survive ONLY a kill, so every path
+     * on which `recoverPackageImage` actually RETURNED restores the column to
+     * exactly what it held before — which for an unreadable package is nothing
+     * at all, keeping it retryable for ever as it always was. Counting a
+     * sign-in wall towards exhaustion would retire a document that reads
+     * perfectly well tomorrow.
+     */
+    const clearAttempt = async () => {
+      await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: negativeBefore.get(itemId) ?? null })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+    };
+
+    /**
+     * THE CLAIM, WRITTEN BEFORE THE SPEND.
+     *
+     * Everything below this line is uninterruptible and can end the process
+     * without raising anything. Recording the attempt first is what makes a
+     * kill leave evidence instead of silence — the same reason the sanitizer
+     * compares-and-sets its repair claim before it calls the model. The verdict
+     * paths below overwrite this, so it survives only when the step did not.
+     *
+     * A write that fails is not fatal: the recovery still runs and may well
+     * succeed. It only means a kill this time would go unrecorded, which is
+     * exactly the behaviour this replaces.
+     */
+    await db
+      .from('builder_stock_items')
+      .update({
+        source_provenance_result: recordPackageAttempt(
+          negativeBefore.get(itemId), question),
+      })
+      .eq('id', itemId)
+      .eq('organisation_id', input.organisationId);
 
     /**
      * THREE OUTCOMES, AND ONLY ONE OF THEM IS KNOWLEDGE.
@@ -656,6 +935,7 @@ export async function repairSourceImagesForUpload(
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
     } catch (error) {
+      await clearAttempt();
       outcome.packageUnreachable += 1;
       outcome.incomplete = true;
       outcome.problems.push({
@@ -673,6 +953,7 @@ export async function repairSourceImagesForUpload(
      * suppress a package that may be perfectly readable tomorrow.
      */
     if (recovered.status === 'unreachable') {
+      await clearAttempt();
       outcome.packageUnreachable += 1;
       outcome.incomplete = true;
       continue;
@@ -705,6 +986,11 @@ export async function repairSourceImagesForUpload(
       }
       continue;
     }
+
+    // RECOVERED. The step returned, so the claim is spent: clear it, or a
+    // future question about this property would inherit a failure that never
+    // happened.
+    await clearAttempt();
 
     // A row that fell through with convicted assets was already counted once.
     if (!all.length) {
@@ -777,7 +1063,13 @@ export async function repairSourceImagesForUpload(
   if (media.length) {
     await attachDocumentMedia(
       db,
-      { organisationId: input.organisationId, uploadId: upload.id, media },
+      {
+        organisationId: input.organisationId, uploadId: upload.id, media,
+        // The repair lists only rows that re-matched, which can be one row of
+        // a many-row file. The document's own row count travels with it so
+        // the one-property containment fallback cannot fire on a subset.
+        documentRowCount: documentRows,
+      },
       itemIdsInOrder,
       itemIdByAnchor,
     );
@@ -789,8 +1081,26 @@ export async function repairSourceImagesForUpload(
    * checked against what the source actually says now. A row written before
    * provenance was recorded, or one naming an asset the source no longer
    * carries, is demoted — kept for the audit trail, refused for display.
+   *
+   * NEVER ON THE STORED-SOURCE PATH. A run that read stored rows deliberately
+   * did not read the live page, and the live page is the ONLY thing that can
+   * name a row asset — every one of this deployment's nine served cards is a
+   * `notion:attachment:…` reference and not one of them appears in any
+   * `source_row.image_urls`. So on that path `provenByItem` is empty for them
+   * BY CONSTRUCTION, and a re-audit would convict pictures it never looked
+   * for. It survives today only because those rows sit at the current
+   * provenance version and the loop skips them; the next version bump would
+   * blank nine working cards in a single tick.
+   *
+   * A run that did not look is not a run that found nothing. This is the same
+   * rule the image library states as "absent evidence never merges", and the
+   * cost of getting it wrong here is a client seeing an empty card for a
+   * photograph the builder did in fact supply.
    */
-  const stage1ByItem = await readStage1Images(db, itemIdsInOrder);
+  const stage1ByItem = storedRecords
+    ? new Map<string, Array<{ id: string; processing_status: string;
+      source_reference: string | null; source_detail: Record<string, unknown> | null }>>()
+    : await readStage1Images(db, itemIdsInOrder);
   for (const itemId of new Set(itemIdsInOrder)) {
     const proven = provenByItem.get(itemId) ?? new Set<string>();
 
@@ -814,6 +1124,35 @@ export async function repairSourceImagesForUpload(
   for (const itemId of touched) {
     const primary = await chooseAndStorePrimaryImage(db, itemId);
     if (primary && primary !== (primaryBefore.get(itemId) ?? null)) outcome.primaryUpdated += 1;
+  }
+
+  /**
+   * RECORD THAT THE LIVE SOURCE HAS NOTHING LEFT TO SAY ABOUT ROW ASSETS.
+   *
+   * Stamped only when this run actually read the live page AND left no
+   * asset-bearing row unstored — otherwise a run that stopped at its item cap
+   * would strand a cover nobody would ever look for again. Merged into the
+   * existing summary so the stage counts beside it are untouched.
+   *
+   * From here the sweep stops paying nine seconds a tick to re-derive rows it
+   * already has, and the package recovery this upload has been waiting on gets
+   * a whole budget to itself.
+   */
+  if (notionAssetsRead && !assetRowsDeferred && !rowAssetsEnumerated) {
+    const { error } = await db.from('builder_stock_uploads').update({
+      image_stage_summary: {
+        ...stageSummary,
+        [NOTION_ROW_ASSETS_VERSION_KEY]: PROVENANCE_VERSION,
+      },
+    }).eq('id', input.uploadId).eq('organisation_id', input.organisationId);
+    if (error) {
+      // Not fatal: the next run simply reads the page again, which is the
+      // behaviour this replaces rather than a new failure.
+      outcome.problems.push({
+        reference: input.uploadId,
+        reason: `row-asset enumeration not recorded: ${error.message}`.slice(0, 200),
+      });
+    }
   }
 
   return outcome;

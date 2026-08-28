@@ -72,6 +72,20 @@ export interface SubmissionRecordInput {
 
 /* ── The record structure both renderers draw from ── */
 
+/**
+ * Who a record presentation is FOR — and therefore what it may contain.
+ *
+ * `internal` is the review record: everything, including screening states,
+ * risk readings and review reasoning. `client` is the shareable copy for the
+ * client or a portal partner: it is built WITHOUT the internal sections —
+ * screening, risk & completeness, the service gate, review reasons and the
+ * reconciliation workflow never enter the structure, so no renderer of a
+ * client record can leak them. Handing a client a document that names who
+ * was screened and what came back is a tipping-off hazard; the exclusion is
+ * structural, not a rendering choice.
+ */
+export type RecordAudience = 'internal' | 'client';
+
 export interface RecordField { label: string; value: string }
 export interface RecordTable { columns: string[]; rows: string[][] }
 export interface RecordBlock {
@@ -86,12 +100,16 @@ export interface SubmissionRecord {
   reference: string;
   subject: string;
   version: number;
+  audience: RecordAudience;
   /** Formatted, locale-independent, explicitly UTC — the browser and the
    *  edge function must stamp identically for the same instant. */
   generatedAt: string;
   generatedBy: string | null;
   headerFields: RecordField[];
   sections: RecordSection[];
+  /** The closing notice every renderer carries verbatim — it states what the
+   *  document is and, for the client copy, what was deliberately left out. */
+  notice: string;
   filename: string;
 }
 
@@ -151,67 +169,109 @@ export function verificationOutcomeText(v: {
   return v.status;
 }
 
-/** `AML-2026-00005` → `AML-2026-00005-submission-v1-record.html`. Anything
- *  outside [A-Za-z0-9-] in the reference is dropped, never encoded. */
-export function submissionRecordFilename(reference: string, version: number): string {
+/** `AML-2026-00005` → `AML-2026-00005-submission-v1-record.html` (internal)
+ *  or `…-v1-client-copy.html` — the filename says which document this is
+ *  before anybody opens it. Anything outside [A-Za-z0-9-] in the reference is
+ *  dropped, never encoded. */
+export function submissionRecordFilename(
+  reference: string, version: number, audience: RecordAudience = 'internal',
+): string {
   const safe = reference.replace(/[^A-Za-z0-9-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-|-$/g, '')
     || 'case';
-  return `${safe}-submission-v${version}-record.html`;
+  return `${safe}-submission-v${version}-${audience === 'client' ? 'client-copy' : 'record'}.html`;
 }
+
+export const INTERNAL_RECORD_NOTICE =
+  'This record is a point-in-time export of the client submission review. It is internal to the reporting '
+  + 'entity: it includes screening states and risk readings and must not be provided to the client.';
+
+/** Deliberately does not enumerate WHAT was excluded: naming the categories
+ *  on a page a client reads is itself a disclosure. A test bans the internal
+ *  vocabulary from every string of a client record, this one included. */
+export const CLIENT_COPY_NOTICE =
+  'This document is a copy of the information the client submitted, prepared for sharing with the client '
+  + "or an authorised partner. The reporting entity's internal compliance readings and review workings "
+  + 'are not part of this document.';
 
 export function buildSubmissionRecord(
   input: SubmissionRecordInput,
-  opts: { generatedAt: string; generatedBy?: string | null },
+  opts: { generatedAt: string; generatedBy?: string | null; audience?: RecordAudience },
 ): SubmissionRecord {
   const s = input.submission;
+  const audience = opts.audience ?? 'internal';
+  const internal = audience === 'internal';
   const sections: RecordSection[] = [];
 
   /* 1 · The decision facts first: what a reader opening this record years
    *     later needs before any evidence — what was decided, when, by which
-   *     route, and what the case looked like around it. */
-  const decisionFields: RecordField[] = [
-    { label: 'Review status', value: words(s.review_status) },
-    { label: 'Submitted', value: `${formatUtc(s.submitted_at)} by ${s.submitted_by_type ?? 'client'}` },
-    { label: 'Reviewed', value: formatUtc(s.reviewed_at) },
-    { label: 'Review reason', value: s.review_reason ?? '—' },
-    { label: 'Questionnaire version', value: s.questionnaire_version ?? '—' },
-    { label: 'Consent version', value: s.consent_version ?? '—' },
-    { label: 'Case stage', value: words(input.case.case_stage ?? '—') },
-    { label: 'Client-visible status', value: words(input.case.client_portal_status ?? '—') },
-    // Context only, exactly as the screen says: acceptance never moves it.
-    { label: 'Service gate (read-only)', value: words(input.case.service_gate_status ?? '—') },
-  ];
+   *     route, and what the case looked like around it. The client copy
+   *     keeps the client-visible facts alone: no review reasoning, no case
+   *     stage, no service gate — those are the reporting entity's workings. */
+  /* On the client copy the labels are written for a lay reader: "Submission
+   * status" and "Case status" hold apart where "Review status"/"Status"
+   * read as a contradiction, and an unreviewed submission says "Not yet
+   * reviewed" — an em dash on a client's page reads as a field somebody
+   * forgot, where on the internal record it correctly means "not recorded". */
+  const decisionFields: RecordField[] = internal
+    ? [
+        { label: 'Review status', value: words(s.review_status) },
+        { label: 'Submitted', value: `${formatUtc(s.submitted_at)} by ${s.submitted_by_type ?? 'client'}` },
+        { label: 'Reviewed', value: formatUtc(s.reviewed_at) },
+        { label: 'Review reason', value: s.review_reason ?? '—' },
+        { label: 'Questionnaire version', value: s.questionnaire_version ?? '—' },
+        { label: 'Consent version', value: s.consent_version ?? '—' },
+        { label: 'Case stage', value: words(input.case.case_stage ?? '—') },
+        { label: 'Client-visible status', value: words(input.case.client_portal_status ?? '—') },
+        // Context only, exactly as the screen says: acceptance never moves it.
+        { label: 'Service gate (read-only)', value: words(input.case.service_gate_status ?? '—') },
+      ]
+    : [
+        { label: 'Submission status', value: words(s.review_status) },
+        { label: 'Submitted', value: formatUtc(s.submitted_at) },
+        { label: 'Reviewed', value: s.reviewed_at ? formatUtc(s.reviewed_at) : 'Not yet reviewed' },
+        { label: 'Questionnaire version', value: s.questionnaire_version ?? '—' },
+        { label: 'Consent version', value: s.consent_version ?? '—' },
+        { label: 'Case status', value: words(input.case.client_portal_status ?? '—') },
+      ];
   if (s.superseded_at) {
     decisionFields.push({ label: 'Superseded', value: formatUtc(s.superseded_at) });
   }
-  sections.push({ key: 'decision', title: 'Review decision', blocks: [{ fields: decisionFields }] });
+  sections.push({
+    key: 'decision',
+    title: internal ? 'Review decision' : 'Submission',
+    blocks: [{ fields: decisionFields }],
+  });
 
   /* 2 · Risk and completeness — part of what the reviewer had in front of
-   *     them, so part of the record. */
-  sections.push({
-    key: 'risk', title: 'Risk & completeness at generation time', blocks: [
-      {
-        fields: [
-          { label: 'Latest risk assessment', value: formatUtc(input.risk.latest_assessment_at) },
-          {
-            label: 'Risk assessment standing',
-            value: input.risk.stale
-              ? `Stale: ${input.risk.stale_reasons.map(words).join(', ')}`
-              : 'Current',
-          },
-        ],
-      },
-      input.missing_mandatory.length === 0
-        ? { paragraph: 'No mandatory information was missing.' }
-        : {
-            heading: 'Missing mandatory information',
-            table: {
-              columns: ['Item'],
-              rows: input.missing_mandatory.map((m) => [m.replace(/:/g, ': ')]),
+   *     them, so part of the INTERNAL record. Never built for the client
+   *     copy: the standing names screening obligations and the missing list
+   *     spells `screening:<name>`. */
+  if (internal) {
+    sections.push({
+      key: 'risk', title: 'Risk & completeness at generation time', blocks: [
+        {
+          fields: [
+            { label: 'Latest risk assessment', value: formatUtc(input.risk.latest_assessment_at) },
+            {
+              label: 'Risk assessment standing',
+              value: input.risk.stale
+                ? `Stale: ${input.risk.stale_reasons.map(words).join(', ')}`
+                : 'Current',
             },
-          },
-    ],
-  });
+          ],
+        },
+        input.missing_mandatory.length === 0
+          ? { paragraph: 'No mandatory information was missing.' }
+          : {
+              heading: 'Missing mandatory information',
+              table: {
+                columns: ['Item'],
+                rows: input.missing_mandatory.map((m) => [m.replace(/:/g, ': ')]),
+              },
+            },
+      ],
+    });
+  }
 
   /* 3 · Changes — derived from previous_version, never from the differences
    *     array alone: an old server diffs a FIRST submission against an empty
@@ -233,22 +293,30 @@ export function buildSubmissionRecord(
     ],
   });
 
-  /* 4 · Consent evidence. */
+  /* 4 · Consent evidence. The hash column is the reporting entity's
+   * evidence chain and appears on the INTERNAL record alone — in full,
+   * never a prefix: a 16-hex cut can be verified against nothing.
+   * Renderers wrap it; they do not trim it. On the client copy the hash is
+   * machine exhaust the reader cannot use, and the most database-looking
+   * thing on their page. */
   sections.push({
     key: 'consent', title: 'Consent evidence', blocks: [
       input.consent_evidence.length === 0
         ? { paragraph: 'No consent records.' }
         : {
-            table: {
-              columns: ['Consent', 'Version', 'Accepted', 'Document hash'],
-              rows: input.consent_evidence.map((c) => [
-                words(c.kind), c.version, formatUtc(c.accepted_at),
-                // The full hash, never a prefix: in a consent-evidence table
-                // the hash IS the evidence, and a 16-hex cut can be verified
-                // against nothing. Renderers wrap it; they do not trim it.
-                c.document_hash ?? '—',
-              ]),
-            },
+            table: internal
+              ? {
+                  columns: ['Consent', 'Version', 'Accepted', 'Document hash'],
+                  rows: input.consent_evidence.map((c) => [
+                    words(c.kind), c.version, formatUtc(c.accepted_at), c.document_hash ?? '—',
+                  ]),
+                }
+              : {
+                  columns: ['Consent', 'Version', 'Accepted'],
+                  rows: input.consent_evidence.map((c) => [
+                    words(c.kind), c.version, formatUtc(c.accepted_at),
+                  ]),
+                },
           },
     ],
   });
@@ -266,18 +334,27 @@ export function buildSubmissionRecord(
           }),
   });
 
-  /* 6 · Related parties. */
+  /* 6 · Related parties. The client copy carries what the client declared —
+   *     name and role — and not the reconciliation workflow, which is the
+   *     reporting entity's processing of the declaration. */
   sections.push({
     key: 'parties', title: 'Related parties', blocks: [
       input.related_parties.length === 0
         ? { paragraph: 'No declared related parties for this case.' }
         : {
-            table: {
-              columns: ['Name', 'Role', 'Change', 'Resolution'],
-              rows: input.related_parties.map((p) => [
-                p.declared_name, words(p.declared_role), words(p.change_kind), words(p.resolution_status),
-              ]),
-            },
+            table: internal
+              ? {
+                  columns: ['Name', 'Role', 'Change', 'Resolution'],
+                  rows: input.related_parties.map((p) => [
+                    p.declared_name, words(p.declared_role), words(p.change_kind), words(p.resolution_status),
+                  ]),
+                }
+              : {
+                  columns: ['Name', 'Role'],
+                  rows: input.related_parties.map((p) => [
+                    p.declared_name, words(p.declared_role),
+                  ]),
+                },
           },
     ],
   });
@@ -297,7 +374,10 @@ export function buildSubmissionRecord(
         ? { paragraph: 'No documents uploaded.' }
         : {
             table: {
-              columns: ['Document', 'Version', 'Status', 'Client-safe note'],
+              // "Client-safe note" is INTERNAL vocabulary: printed on the
+              // client's own page it announces that a note about them
+              // exists which is not client-safe. Their copy says "Note".
+              columns: ['Document', 'Version', 'Status', internal ? 'Client-safe note' : 'Note'],
               rows: input.documents.map((d) => [
                 d.display_name
                   || (d.requirement_id ? requirementName.get(d.requirement_id) ?? null : null)
@@ -327,21 +407,26 @@ export function buildSubmissionRecord(
     ],
   });
 
-  /* 9 · Screening — states verbatim. */
-  sections.push({
-    key: 'screening', title: 'Screening by party', blocks: [
-      input.screening.length === 0
-        ? { paragraph: 'No party screening work yet — the declared parties had not been reconciled.' }
-        : {
-            table: {
-              columns: ['Party', 'Type', 'State'],
-              rows: input.screening.map((sc) => [
-                sc.screened_name, words(sc.party_type), words(sc.state),
-              ]),
+  /* 9 · Screening — states verbatim, and INTERNAL ONLY. A document that
+   *     names who was screened and what came back, in a client's hands, is
+   *     a tipping-off hazard; the section is never built for the client
+   *     copy, so no renderer of one can leak it. */
+  if (internal) {
+    sections.push({
+      key: 'screening', title: 'Screening by party', blocks: [
+        input.screening.length === 0
+          ? { paragraph: 'No party screening work yet — the declared parties had not been reconciled.' }
+          : {
+              table: {
+                columns: ['Party', 'Type', 'State'],
+                rows: input.screening.map((sc) => [
+                  sc.screened_name, words(sc.party_type), words(sc.state),
+                ]),
+              },
             },
-          },
-    ],
-  });
+      ],
+    });
+  }
 
   /* 10 · Open client requests. */
   sections.push({
@@ -363,15 +448,20 @@ export function buildSubmissionRecord(
     reference: input.case.reference,
     subject: input.case.subject,
     version: s.version_number,
+    audience,
     generatedAt: formatUtc(opts.generatedAt),
-    generatedBy: opts.generatedBy ?? null,
+    // A staff member's work email is for the internal record alone — on a
+    // document handed to an external party it is a disclosure, decided here
+    // once so no renderer can print it.
+    generatedBy: internal ? opts.generatedBy ?? null : null,
     headerFields: [
       { label: 'Case', value: input.case.reference },
       { label: 'Subject', value: input.case.subject },
       { label: 'Submission', value: `Version ${s.version_number}` },
     ],
     sections,
-    filename: submissionRecordFilename(input.case.reference, s.version_number),
+    notice: internal ? INTERNAL_RECORD_NOTICE : CLIENT_COPY_NOTICE,
+    filename: submissionRecordFilename(input.case.reference, s.version_number, audience),
   };
 }
 
@@ -447,8 +537,13 @@ function renderBlock(block: RecordBlock): string {
  * to email, to open from a cold archive, and to print (the print stylesheet
  * is inside it — the browser's own "save as PDF" produces the paper copy).
  */
+export function recordDocumentTitle(record: Pick<SubmissionRecord, 'audience'>): string {
+  return record.audience === 'client' ? 'Client submission copy' : 'Client submission record';
+}
+
 export function renderSubmissionRecordHtml(record: SubmissionRecord): string {
-  const title = `${record.reference} — submission v${record.version} record`;
+  const title = `${record.reference} — submission v${record.version} `
+    + (record.audience === 'client' ? 'client copy' : 'record');
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -459,7 +554,7 @@ export function renderSubmissionRecordHtml(record: SubmissionRecord): string {
 </head>
 <body>
 <header>
-<h1>Client submission record</h1>
+<h1>${esc(recordDocumentTitle(record))}</h1>
 <p class="ident">${record.headerFields.map((f) => esc(f.value)).join(' · ')}</p>
 </header>
 ${record.sections.map((sec) =>
@@ -467,8 +562,7 @@ ${record.sections.map((sec) =>
 ).join('\n')}
 <footer>
 <p>Generated ${esc(record.generatedAt)}${record.generatedBy ? ` by ${esc(record.generatedBy)}` : ''} · Case ${esc(record.reference)}.</p>
-<p>This record is a point-in-time export of the client submission review. It is internal to the reporting
-entity: it includes screening states and risk readings and must not be provided to the client.</p>
+<p>${esc(record.notice)}</p>
 </footer>
 </body>
 </html>

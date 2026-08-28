@@ -34,6 +34,8 @@ import {
   bookletGeometry,
   bookletLabel,
   bookletSpreads,
+  bookletZoom,
+  nextBookletZoom,
   type BookletGeometry,
   type BookletPage,
   type PassportView,
@@ -211,7 +213,22 @@ export function PassportBook({
   className?: string;
   onClose?: () => void;
 }) {
-  const { ref, geometry } = useBookGeometry(singleOnly);
+  /* ── reading controls ───────────────────────────────────────────────
+     The fit is correct and the page is still too small to read: the design
+     authors 9.5-11px body copy at 470x648, so a two-up spread in a dialog
+     draws that copy at 6-7px. Two controls answer it, and both are the
+     reader's rather than the caller's — the document is unchanged, only how
+     large it is drawn.
+
+     `onePage` starts wherever the caller asked, so every existing surface
+     opens exactly as it did; the reader may then take a single leaf, which
+     roughly doubles the scale before any magnification at all. */
+  const [onePage, setOnePage] = useState(singleOnly);
+  useEffect(() => { setOnePage(singleOnly); }, [singleOnly]);
+  const [zoom, setZoom] = useState(1);
+
+  const { ref, geometry } = useBookGeometry(onePage);
+  const view = bookletZoom(geometry, zoom);
   const [index, setIndex] = useState(0);
   const [turn, setTurn] = useState<"fwd" | "back" | null>(null);
 
@@ -258,39 +275,117 @@ export function PassportBook({
       onKeyDown={(e) => {
         if (e.key === "ArrowRight") go(1);
         if (e.key === "ArrowLeft") go(-1);
+        // The magnification keys everybody already knows, so the control is
+        // discoverable without being the only way in.
+        if (e.key === "+" || e.key === "=") setZoom((z) => nextBookletZoom(z, 1));
+        if (e.key === "-" || e.key === "_") setZoom((z) => nextBookletZoom(z, -1));
+        if (e.key === "0") setZoom(1);
         if (e.key === "Escape" && onClose) onClose();
       }}
       tabIndex={-1}
       role="group"
       aria-label="Digital passport"
     >
-      {/* page chips */}
-      <div className="flex flex-none flex-wrap items-center justify-center gap-1.5 px-4 py-2.5">
-        {pages.map((p, i) => (
+      {/* page chips, and the reading controls beside them */}
+      <div className="flex flex-none flex-wrap items-center justify-center gap-x-3 gap-y-2 px-4 py-2.5">
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          {pages.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              className={cn("passport-pagechip", p.variant === "cover" && "passport-pagechip--cover")}
+              aria-current={spread.includes(i)}
+              aria-label={p.variant === "cover" ? "Cover" : `Page ${i}: ${p.title}`}
+              onClick={() => goToPage(i)}
+            >
+              {p.variant === "cover" ? "◈" : i}
+            </button>
+          ))}
+        </div>
+
+        {/* Magnification. The document is authored at 9.5-11px and fitted into
+            whatever space there is, so on a laptop the body copy lands around
+            6px — the glyphs are distinct and nobody reads them. This changes
+            only how large it is drawn: the same uniform transform the fit
+            already applies, so nothing reflows and no line rewraps. */}
+        <div className="flex items-center gap-1" role="group" aria-label="Passport magnification">
+          {/* One leaf is the cheapest magnification there is — it roughly
+              doubles the scale before any zoom at all — so it sits with the
+              zoom rather than being a caller-only decision. */}
           <button
-            key={p.id}
             type="button"
-            className={cn("passport-pagechip", p.variant === "cover" && "passport-pagechip--cover")}
-            aria-current={spread.includes(i)}
-            aria-label={p.variant === "cover" ? "Cover" : `Page ${i}: ${p.title}`}
-            onClick={() => goToPage(i)}
+            className="passport-pagechip"
+            aria-pressed={onePage}
+            title={onePage ? "Show two pages side by side" : "Show one page at a time"}
+            aria-label={onePage ? "Show two pages side by side" : "Show one page at a time"}
+            onClick={() => setOnePage((v) => !v)}
           >
-            {p.variant === "cover" ? "◈" : i}
+            {onePage ? "❐" : "▯"}
           </button>
-        ))}
+          <button
+            type="button"
+            className="passport-pagechip"
+            onClick={() => setZoom((z) => nextBookletZoom(z, -1))}
+            disabled={!view.canZoomOut}
+            aria-label="Zoom out"
+            title="Zoom out (−)"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="passport-pagechip passport-mono"
+            style={{ width: "auto", paddingInline: 8 }}
+            onClick={() => setZoom(1)}
+            disabled={view.zoom === 1}
+            aria-label={`Magnification ${view.percent} percent. Reset to fit.`}
+            title="Reset to fit (0)"
+          >
+            {view.percent}%
+          </button>
+          <button
+            type="button"
+            className="passport-pagechip"
+            onClick={() => setZoom((z) => nextBookletZoom(z, 1))}
+            disabled={!view.canZoomIn}
+            aria-label="Zoom in"
+            title="Zoom in (+)"
+          >
+            +
+          </button>
+        </div>
       </div>
 
       {/* board */}
-      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
-        {/* The ref sits on a padding-free box so its measured rect IS the space
-            available. Measuring a padded element and subtracting a guessed
-            padding is how the board came to be sized larger than its container. */}
-        <div ref={ref} className="flex h-full w-full items-center justify-center">
+      <div className="relative min-h-0 flex-1">
+        {/* The measuring probe.
+            The ref used to sit on the box that HOLDS the board, which was
+            correct while the board could only ever be as large as the space —
+            it made the measured rect the space available, with no guessed
+            padding subtracted from a padded parent.
+            Magnification breaks that: a board larger than its container makes
+            the holder larger too, the next measurement reads the enlarged box
+            as "space available", and the fit grows to match — the leaf shrinks
+            as fast as the reader enlarges it. So the probe is now a sibling
+            that draws nothing and never changes size. `inset-4` is the same
+            16px the scroller's `p-4` reserves, so its rect is still exactly
+            the padding-free space, and content cannot feed back into the fit. */}
+        <div ref={ref} aria-hidden className="pointer-events-none absolute inset-4" />
+        <div
+          className={cn(
+            "flex h-full w-full p-4",
+            // Magnified, the board is larger than the space and the reader
+            // pans it. Centring a box wider than its container pins it to a
+            // negative offset no scrollbar can reach, so alignment starts at
+            // the top-left the moment it overflows.
+            view.overflows ? "items-start justify-start overflow-auto" : "items-center justify-center",
+          )}
+        >
           <div
-            className="passport-board relative overflow-hidden"
+            className="passport-board relative m-auto flex-none overflow-hidden"
             style={{
-              width: Math.round(geometry.width + BOARD_FRAME),
-              height: Math.round(geometry.height + BOARD_FRAME),
+              width: Math.round(view.width + BOARD_FRAME),
+              height: Math.round(view.height + BOARD_FRAME),
             }}
           >
             {/* The scaled layer is ABSOLUTELY positioned, never a flex item.
@@ -310,7 +405,7 @@ export function PassportBook({
                 top: BOARD_FRAME / 2,
                 width: geometry.spreadWidth,
                 height: LEAF_H,
-                transform: `scale(${geometry.scale})`,
+                transform: `scale(${view.scale})`,
               }}
             >
               <div className="flex items-start" style={{ gap: spread.length > 1 ? SPINE : 0 }}>

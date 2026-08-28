@@ -7,18 +7,65 @@
  *
  *   1. `AML_ENVIRONMENT` — explicit operator declaration
  *      ("production" | "staging" | "test" | "local"). Always wins.
- *   2. `SUPABASE_URL` — set by Supabase, not by callers. When it names the
- *      known production project ref the environment is production even if
- *      nobody remembered to set AML_ENVIRONMENT.
- *   3. Otherwise "unknown".
+ *   2. `SUPABASE_URL` — set by Supabase, not by callers. When it names ANY
+ *      hosted Supabase project the environment is production even if nobody
+ *      remembered to set AML_ENVIRONMENT.
+ *   3. Otherwise "unknown" — a local stack, or no URL at all.
+ *
+ * ## Rule 2 used to name one project, and that was a hole
+ *
+ * It read `url.includes("<this repository's own project>")`, so production was
+ * a fact about ONE deployment rather than about the kind of environment the
+ * code was running in. This repository is now cloned into a hosted Supabase
+ * project per tenant, and on every one of those the test failed: a live
+ * customer deployment classified as "unknown", and "unknown" is precisely the
+ * branch `decideProvider` keeps the simulator available on, because that
+ * branch exists so local and test flows keep working.
+ *
+ * So a real AML case on a real tenant could be answered by the deterministic
+ * simulator and recorded as a verification, unless somebody remembered to set
+ * `AML_ENVIRONMENT=production` by hand on that project. Nothing anywhere sets
+ * it. `noProductionSimulator.test.ts` proves `decideProvider` never yields a
+ * simulator in production and every one of its cases passes `environment:
+ * "production"` in by hand -- the guarantee was airtight downstream of a
+ * question that answered wrongly.
+ *
+ * The rule is now the kind of environment: **a hosted Supabase project is
+ * production unless somebody declares otherwise.** A genuine staging or test
+ * project is a hosted project too, and it is now required to say so via
+ * `AML_ENVIRONMENT` -- which is the fail-closed direction. The refusal is
+ * visible and names the remedy; a simulator result written into a compliance
+ * record is neither.
  *
  * The decision table is a pure function so it can be tested exhaustively
  * without Deno or the network.
  */
 
-/** The one production project this repository deploys to (also hardcoded in
- * src/integrations/supabase/client.ts and the deploy workflow). */
+/**
+ * The project THIS repository deploys to.
+ *
+ * Kept because it names something true, and deliberately no longer the test
+ * for "is this production" -- see the header. A clone of this repository runs
+ * from a different project and is no less production for it.
+ */
 export const PRODUCTION_PROJECT_REF = "dduzbchuswwbefdunfct";
+
+/**
+ * A hosted Supabase project URL: `https://<20 lowercase letters>.supabase.co`.
+ *
+ * Deliberately not "anything that is not localhost". `SUPABASE_URL` is absent
+ * in a unit test and is a container hostname (`http://kong:8000`) under
+ * `supabase start`; both must stay OUT of production so the local flows this
+ * branch exists for keep working.
+ */
+function isHostedProjectUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && /^[a-z]{20}\.supabase\.co$/.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
 
 export type AmlEnvironment = "production" | "staging" | "test" | "local" | "unknown";
 
@@ -30,8 +77,8 @@ export function classifyEnvironment(env: {
   if (explicit === "production" || explicit === "staging" || explicit === "test" || explicit === "local") {
     return explicit;
   }
-  const url = env.supabaseUrl ?? "";
-  if (url.includes(`${PRODUCTION_PROJECT_REF}.supabase.co`)) return "production";
+  const url = (env.supabaseUrl ?? "").trim();
+  if (isHostedProjectUrl(url)) return "production";
   return "unknown";
 }
 

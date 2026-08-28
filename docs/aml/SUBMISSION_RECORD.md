@@ -39,6 +39,36 @@ All three are projections of the ONE structure built by
 functions deploy separately; a record built twice is two opinions about what
 the review contained.
 
+## Two audiences, two documents
+
+The record has a `RecordAudience`: `internal` (everything — the review
+record) and `client` (the shareable copy for the client or a portal
+partner). **The exclusion is structural, not a rendering choice**:
+`buildSubmissionRecord` never builds the screening, risk & completeness,
+service-gate, review-reason or reconciliation-workflow content into a
+client record, so no renderer of one can leak it — a document that names
+who was screened and what came back, in a client's hands, is a tipping-off
+hazard. A test plants internal vocabulary in the internal-only fields and
+asserts none of it appears anywhere in the client record or its HTML —
+including the closing notice, which deliberately does not enumerate what
+was excluded (naming the categories on a page a client reads is itself a
+disclosure). The Download button is a menu of the two documents, named for
+what they are; the filename says it too (`…-record.pdf` /
+`…-client-copy.pdf`).
+
+## The white-label identity
+
+A record PDF is issued under the workspace's brand — company name, colour
+ramp via `getBrandPdfPalette` (the same resolver every other white-labelled
+PDF uses), report logo when a raster one loads — and under **Aurixa
+Systems** when no brand is configured: never an empty masthead, never
+another tenant's marks (`submissionRecordBrand.ts`). The brand dresses the
+document (obsidian masthead band, accent strip and rules, wordmark or logo,
+issuer in the running foot) and never touches content: body ink stays
+neutral, and every string is the record's own. A logo that cannot be
+fetched or is not PNG/JPEG degrades to the text wordmark rather than
+failing the download — identity is required, a picture is not.
+
 ## The rules that carry it
 
 **One composition serves the screen and the stored copy.**

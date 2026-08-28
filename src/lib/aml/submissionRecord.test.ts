@@ -210,4 +210,89 @@ describe("the filename is derived and safe", () => {
     expect(submissionRecordFilename("../..//etc", 1)).toBe("etc-submission-v1-record.html");
     expect(submissionRecordFilename("///", 1)).toBe("case-submission-v1-record.html");
   });
+
+  it("names the client copy as what it is", () => {
+    expect(submissionRecordFilename("AML-2026-00005", 2, "client"))
+      .toBe("AML-2026-00005-submission-v2-client-copy.html");
+  });
+});
+
+describe("the client copy structurally excludes internal readings", () => {
+  // The fixture plants unmistakable internal vocabulary in the internal-only
+  // fields, then asserts none of it can appear ANYWHERE in the client
+  // record — the exclusion is structural, so no renderer can leak it.
+  const clientRecord = () => buildSubmissionRecord(input({
+    screening: [{ screened_name: "Sensitive Party", party_type: "beneficial_owner", state: "confirmed_match" }],
+    risk: { latest_assessment_at: "2026-08-20T00:00:00Z", stale: true, stale_reasons: ["screening_adjudicated"] },
+    missing_mandatory: ["screening:Sensitive Party"],
+    submission: { ...input().submission, review_reason: "internal reviewer reasoning" },
+  }), { generatedAt: "2026-08-26T03:00:00Z", generatedBy: null, audience: "client" });
+
+  it("never builds the screening or risk sections", () => {
+    const keys = clientRecord().sections.map((sec) => sec.key);
+    expect(keys).toEqual(["decision", "differences", "consent", "answers", "parties", "documents", "verification", "requests"]);
+  });
+
+  it("no internal vocabulary survives anywhere in the structure or its HTML", () => {
+    const record = clientRecord();
+    const everything = JSON.stringify(record) + renderSubmissionRecordHtml(record);
+    expect(everything).not.toContain("Sensitive Party");
+    expect(everything).not.toContain("confirmed match");
+    expect(everything).not.toMatch(/screening/i);
+    expect(everything).not.toMatch(/risk/i);
+    expect(everything).not.toMatch(/service gate/i);
+    expect(everything).not.toContain("internal reviewer reasoning");
+    expect(everything).not.toContain("case stage");
+  });
+
+  it("related parties keep the declaration, not the reconciliation workflow", () => {
+    const record = buildSubmissionRecord(input({
+      related_parties: [{ declared_name: "A Partner", declared_role: "co_purchaser", change_kind: "new", resolution_status: "open" }],
+    }), { generatedAt: "2026-08-26T03:00:00Z", audience: "client" });
+    const table = record.sections.find((sec) => sec.key === "parties")!.blocks[0].table!;
+    expect(table.columns).toEqual(["Name", "Role"]);
+    expect(table.rows).toEqual([["A Partner", "co purchaser"]]);
+  });
+
+  it("each audience carries its own notice, and says so in the file", () => {
+    const internal = build();
+    const client = clientRecord();
+    expect(internal.notice).toMatch(/must not be provided to the client/);
+    expect(client.notice).toMatch(/not part of this document/);
+    expect(renderSubmissionRecordHtml(client)).toContain("Client submission copy");
+    expect(client.filename).toBe("AML-2026-00005-submission-v1-client-copy.html");
+  });
+
+  it("the internal record is unchanged by the audience feature", () => {
+    const record = build();
+    expect(record.audience).toBe("internal");
+    expect(record.sections.map((sec) => sec.key)).toContain("screening");
+    expect(record.sections.map((sec) => sec.key)).toContain("risk");
+  });
+
+  it("is written for a lay reader, not the review screen", () => {
+    const record = clientRecord();
+    const decision = record.sections.find((sec) => sec.key === "decision")!.blocks[0].fields!;
+    const labels = decision.map((f) => f.label);
+    // "Review status" beside a bare "Status" read as a contradiction; and an
+    // em dash for "not reviewed yet" reads as a field somebody forgot.
+    expect(labels).toContain("Submission status");
+    expect(labels).toContain("Case status");
+    expect(decision.find((f) => f.label === "Reviewed")!.value).toBe("Not yet reviewed");
+  });
+
+  it("carries no evidence hashes, no internal column names, no staff email", () => {
+    const record = buildSubmissionRecord(input(), {
+      generatedAt: "2026-08-26T03:00:00Z",
+      generatedBy: "a.reviewer@npcservices.com.au",
+      audience: "client",
+    });
+    const consent = record.sections.find((sec) => sec.key === "consent")!.blocks[0].table!;
+    expect(consent.columns).toEqual(["Consent", "Version", "Accepted"]);
+    const documents = record.sections.find((sec) => sec.key === "documents")!.blocks[0].table!;
+    expect(documents.columns[3]).toBe("Note");
+    // Structural: no renderer can print what the record does not hold.
+    expect(record.generatedBy).toBeNull();
+    expect(renderSubmissionRecordHtml(record)).not.toContain("a.reviewer@npcservices.com.au");
+  });
 });

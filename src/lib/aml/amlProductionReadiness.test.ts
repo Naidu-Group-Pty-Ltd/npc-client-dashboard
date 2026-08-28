@@ -31,9 +31,63 @@ describe("environment classification", () => {
   it("recognises the production project from the platform-injected URL", () => {
     expect(classifyEnvironment({ supabaseUrl: `https://${PRODUCTION_PROJECT_REF}.supabase.co` })).toBe("production");
   });
+
+  it("treats ANY hosted Supabase project as production", () => {
+    // This assertion used to say `"unknown"`, and that was the hole.
+    //
+    // The rule was `url.includes("<this repository's own project>")`, so
+    // "production" was a fact about ONE deployment rather than about the kind
+    // of environment the code was running in. This repository is cloned into a
+    // hosted Supabase project per tenant, and every one of those classified as
+    // "unknown" -- which is exactly the branch `decideProvider` keeps the
+    // simulator available on, because that branch exists so local and test
+    // flows keep working.
+    //
+    // A real AML case on a real tenant could therefore be answered by the
+    // deterministic simulator and recorded as a verification, unless somebody
+    // remembered to set AML_ENVIRONMENT=production by hand on that project.
+    // Nothing anywhere sets it.
+    expect(classifyEnvironment({ supabaseUrl: "https://plisdzywzleljorrphxv.supabase.co" })).toBe(
+      "production",
+    );
+    expect(classifyEnvironment({ supabaseUrl: "https://abcdefghijklmnopqrst.supabase.co" })).toBe(
+      "production",
+    );
+  });
+
+  it("still lets a hosted project declare itself staging or test", () => {
+    // The fail-closed direction: a genuine staging project is a hosted project
+    // too, and now has to say so. The refusal is visible and names the remedy;
+    // a simulator result written into a compliance record is neither.
+    expect(
+      classifyEnvironment({
+        amlEnvironment: "staging",
+        supabaseUrl: "https://abcdefghijklmnopqrst.supabase.co",
+      }),
+    ).toBe("staging");
+  });
+
   it("answers unknown when nothing trusted identifies the environment", () => {
     expect(classifyEnvironment({})).toBe("unknown");
-    expect(classifyEnvironment({ supabaseUrl: "https://someotherref.supabase.co" })).toBe("unknown");
+    expect(classifyEnvironment({ supabaseUrl: "" })).toBe("unknown");
+  });
+
+  it("keeps a local stack out of production", () => {
+    // `SUPABASE_URL` is absent in a unit test and is a container hostname under
+    // `supabase start`. Both must stay OUT, or the branch that exists for local
+    // and test flows stops existing.
+    for (const url of [
+      "http://localhost:54321",
+      "http://127.0.0.1:54321",
+      "http://kong:8000",
+      "https://not-a-project.example.com",
+      // http, not https — a hosted project is never served over http
+      "http://abcdefghijklmnopqrst.supabase.co",
+      // a hostname that merely CONTAINS a project-shaped label
+      "https://abcdefghijklmnopqrst.supabase.co.evil.example",
+    ]) {
+      expect(classifyEnvironment({ supabaseUrl: url }), url).toBe("unknown");
+    }
   });
 });
 

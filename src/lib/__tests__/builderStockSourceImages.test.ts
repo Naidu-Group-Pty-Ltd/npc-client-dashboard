@@ -16,6 +16,9 @@
  * names (`Deal`, `Estate Tag`, `Package Status`).
  */
 import { describe, expect, it } from 'vitest';
+import {
+  negativeProvenanceStillStands,
+} from '../../../supabase/functions/_shared/builderStock/negativeProvenance.pure';
 
 import {
   ANNOTATED_VERDICT, CLEAN_VERDICT, cleanPicture, jpegOf, pngOf,
@@ -636,14 +639,60 @@ describe('embedded document imagery', () => {
     expect(attributions[1].reason).toContain('did not anchor this one');
   });
 
-  it('still counts when the format stated nothing at all', () => {
+  it('NEVER counts across properties, whatever the lengths happen to be', () => {
+    /*
+     * This test used to pin the opposite: two properties, two unanchored
+     * images, paired by position. The counts lining up is a coincidence — the
+     * media list is capped, skips oversize and non-raster parts silently, and
+     * was not even in document order — so the pairing asserted a relationship
+     * the source never stated, at the evidence level that reaches a card.
+     * Both images are kept against the upload now, where a person can decide.
+     */
     const attributions = attributeDocumentMedia({
       anchors: [null, null],
       itemIdByAnchor: {},
       itemIdsInOrder: ['item-a', 'item-b'],
     });
-    expect(attributions.map((entry) => entry.stockItemId)).toEqual(['item-a', 'item-b']);
-    expect(attributions[0].structural).toBe(false);
+    expect(attributions.map((entry) => entry.stockItemId)).toEqual([null, null]);
+    expect(attributions[0].reason).toContain('stated no relationships');
+  });
+
+  it('anchors that resolved to nothing still switch ordering off', () => {
+    // A deck whose properties came from prose (no row anchors) while every
+    // image carries a real slide anchor: the document DOES state
+    // relationships, and none of them matched. Counting here would pair
+    // images with properties the structure never tied together.
+    const attributions = attributeDocumentMedia({
+      anchors: ['slide:0', 'slide:1'],
+      itemIdByAnchor: {},
+      itemIdsInOrder: ['item-a', 'item-b'],
+    });
+    expect(attributions.map((entry) => entry.stockItemId)).toEqual([null, null]);
+  });
+
+  it('a one-property document contains its images, and says so structurally', () => {
+    const attributions = attributeDocumentMedia({
+      anchors: [null, null],
+      itemIdByAnchor: {},
+      itemIdsInOrder: ['item-only'],
+      rowCount: 1,
+    });
+    expect(attributions.map((entry) => entry.stockItemId))
+      .toEqual(['item-only', 'item-only']);
+    expect(attributions[0].structural).toBe(true);
+    expect(attributions[0].reason).toContain('one property');
+  });
+
+  it('a one-item MATCH out of a many-row document is not a one-property document', () => {
+    // The repair lists only rows that re-matched: one match out of a
+    // twelve-row file must not attribute the whole file's imagery to it.
+    const attributions = attributeDocumentMedia({
+      anchors: [null, null],
+      itemIdByAnchor: {},
+      itemIdsInOrder: ['item-only'],
+      rowCount: 12,
+    });
+    expect(attributions.map((entry) => entry.stockItemId)).toEqual([null, null]);
   });
 });
 
@@ -1419,8 +1468,23 @@ describe('a package that named no image is not read again', () => {
     });
 
     expect(outcome.packageUnreachable).toBe(1);
-    // "We could not look" is not "there is nothing to find".
-    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    /*
+     * "We could not look" is not "there is nothing to find".
+     *
+     * Asserted as retryability rather than as `undefined`: the recovery now
+     * writes an attempt claim before it starts, so that a worker KILL leaves
+     * evidence, and clears it again on every path where the step returned. A
+     * cleared claim is NULL, which is the same thing as absent to Postgres —
+     * what matters, and what is checked, is that nothing here stands as an
+     * answer, so the package is asked again next tick.
+     */
+    const afterUnreachable = db.tables.builder_stock_items[0].source_provenance_result;
+    expect(afterUnreachable ?? null).toBeNull();
+    expect(negativeProvenanceStillStands(afterUnreachable, {
+      provenanceVersion: PROVENANCE_VERSION,
+      packageReference: FOLDER_A,
+      sourceAnchor: null,
+    })).toBe(false);
     expect(outcome.incomplete).toBe(true);
   });
 
@@ -1439,7 +1503,15 @@ describe('a package that named no image is not read again', () => {
       fetchPackage: async () => { throw new Error('parser exploded'); },
     });
 
-    expect(db.tables.builder_stock_items[0].source_provenance_result).toBeUndefined();
+    // Same rule as F: a claim written before an uninterruptible step is cleared
+    // when that step returns, however it returned.
+    const afterThrow = db.tables.builder_stock_items[0].source_provenance_result;
+    expect(afterThrow ?? null).toBeNull();
+    expect(negativeProvenanceStillStands(afterThrow, {
+      provenanceVersion: PROVENANCE_VERSION,
+      packageReference: FOLDER_A,
+      sourceAnchor: null,
+    })).toBe(false);
     expect(outcome.incomplete).toBe(true);
   });
 

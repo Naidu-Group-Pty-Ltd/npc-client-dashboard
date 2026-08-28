@@ -167,8 +167,15 @@ describe('removing a marketing badge from the builder\'s own photograph', () => 
      * And the photograph outside the repair is the builder's, to the byte.
      * This is the promise that makes the derivative honest: it is their picture
      * with a sticker taken off, not a picture of ours that resembles theirs.
+     *
+     * THE MARGIN IS THE GEOMETRY, NOT A SHRUG. At mask scale 1 the dilation is
+     * `EDGE_GROW` = 3 pixels beyond the plate the flood settled, and the flood
+     * itself can take a few pixels of anti-aliased edge beyond the stamped
+     * box. Eight covers both with room to spare; the forty this used to be
+     * would have passed a dilation thirteen times the real one unnoticed,
+     * which made the prose above a promise the assertion did not check.
      */
-    const margin = 40;
+    const margin = 8;
     let compared = 0;
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {

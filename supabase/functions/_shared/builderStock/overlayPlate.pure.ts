@@ -265,14 +265,32 @@ export function overlayPlateMask(
   return { mask, plates };
 }
 
-/** The smallest flat block that has this line of type printed inside it. */
+/**
+ * The smallest flat block that has this line of type printed inside it.
+ *
+ * HELD TO THE SAME PLATE-TO-TEXT RATIO AS THE FLOOD. This path used to check
+ * containment and the share ceiling only, which left the one self-consistent
+ * wrong repair constructible: a small caption printed on a large flat area of
+ * the render — a wall, a driveway, a banded sky — where the flood cannot
+ * settle a plate colour, so the fallback accepted the WHOLE flat area as the
+ * plate. Every later gate then agreed with itself: the grown mask is the
+ * permitted set, Barrier B passes at a fifth of the frame, the integrity gate
+ * inspects only the pixels the compositor declined to write, and a fifth of
+ * the house is rebuilt with every check reporting success. A pill is roughly
+ * its text plus a margin, whichever instrument found it; something ten times
+ * its type is the picture, and the run is refused rather than the wall being
+ * rebuilt — the same rule, the same constant, as `plateAround`'s own ceiling.
+ */
 function flatRegionAround(text: Box, regions: Box[], count: number): Box | null {
+  const textArea = (text.right - text.left + 1) * (text.bottom - text.top + 1);
+  if (textArea <= 0) return null;
   let best: Box | null = null;
   for (const region of regions) {
     if (region.left > text.left || region.top > text.top) continue;
     if (region.right < text.right || region.bottom < text.bottom) continue;
     const area = (region.right - region.left + 1) * (region.bottom - region.top + 1);
     if (area > MAX_PLATE_SHARE * count) continue;
+    if (area > MAX_PLATE_TO_TEXT * textArea) continue;
     if (!best) { best = region; continue; }
     const bestArea = (best.right - best.left + 1) * (best.bottom - best.top + 1);
     if (area < bestArea) best = region;

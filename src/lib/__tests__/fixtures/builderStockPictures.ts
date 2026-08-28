@@ -157,6 +157,105 @@ export function withCaption(base: Picture, text: string,
 }
 
 /**
+ * Set a word over the picture FAINTLY — visible, but below the strict pass's
+ * ink floor.
+ *
+ * Drawn as a fixed LIFT above whatever is underneath rather than toward an
+ * absolute ink, so the local contrast is the lift itself wherever the caption
+ * lands: above `measureFaintOverlayText`'s quiet-ground floor — the ground's
+ * own dispersion × 2.4, which on the grained sky fixtures lands around 31 —
+ * and below the strict pass's `INK_CONTRAST` of 40. The default of 34 sits in
+ * that window on the shared sky fixtures; a caller drawing on other ground
+ * should assert the mark is measured, not assume it. This is the shape of the
+ * pale "artist impression" strip a repair can leave behind — the mark only
+ * the faint pass can see, which is exactly why a gate that reads a suppressed
+ * faint count instead of measuring one misses it.
+ */
+export function withFaintCaption(base: Picture, text: string,
+  options: { x: number; y: number; scale: number; lift?: number }): Picture {
+  const lift = options.lift ?? 34;
+  const pixels = new Uint8Array(base.pixels);
+  const coverage = new Float32Array(base.width * base.height);
+  let cursor = options.x;
+  for (const character of text) {
+    const glyph = FONT[character];
+    if (glyph) {
+      for (let row = 0; row < 7; row++) {
+        for (let column = 0; column < 5; column++) {
+          if (glyph[row][column] !== '1') continue;
+          for (let dy = 0; dy < options.scale; dy++) {
+            for (let dx = 0; dx < options.scale; dx++) {
+              const x = cursor + column * options.scale + dx;
+              const y = options.y + row * options.scale + dy;
+              if (x < 0 || y < 0 || x >= base.width || y >= base.height) continue;
+              coverage[y * base.width + x] = 1;
+            }
+          }
+        }
+      }
+    }
+    cursor += 6 * options.scale;
+  }
+  for (let y = 0; y < base.height; y++) {
+    for (let x = 0; x < base.width; x++) {
+      const alpha = coverage[y * base.width + x];
+      if (alpha <= 0) continue;
+      const at = (y * base.width + x) * 3;
+      for (let c = 0; c < 3; c++) {
+        pixels[at + c] = clamp(pixels[at + c] + Math.round(lift * alpha));
+      }
+    }
+  }
+  return { width: base.width, height: base.height, pixels };
+}
+
+/**
+ * A diagonal corner ribbon — the promotional shape the flat-colour arm's
+ * rectangle assumption exempts. Drawn as the band of pixels within half a
+ * thickness of the line from (x1,y1) to (x2,y2).
+ */
+export function withDiagonalRibbon(base: Picture,
+  line: { x1: number; y1: number; x2: number; y2: number; thickness: number },
+  colour: [number, number, number]): Picture {
+  const pixels = new Uint8Array(base.pixels);
+  const dx = line.x2 - line.x1;
+  const dy = line.y2 - line.y1;
+  const length = Math.hypot(dx, dy) || 1;
+  const half = line.thickness / 2;
+  for (let y = 0; y < base.height; y++) {
+    for (let x = 0; x < base.width; x++) {
+      const t = ((x - line.x1) * dx + (y - line.y1) * dy) / (length * length);
+      if (t < 0 || t > 1) continue;
+      const px = line.x1 + t * dx;
+      const py = line.y1 + t * dy;
+      if (Math.hypot(x - px, y - py) > half) continue;
+      const at = (y * base.width + x) * 3;
+      pixels[at] = colour[0];
+      pixels[at + 1] = colour[1];
+      pixels[at + 2] = colour[2];
+    }
+  }
+  return { width: base.width, height: base.height, pixels };
+}
+
+/** A circular price roundel — the other shape the rectangle assumption exempts. */
+export function withDisc(base: Picture,
+  disc: { cx: number; cy: number; r: number },
+  colour: [number, number, number]): Picture {
+  const pixels = new Uint8Array(base.pixels);
+  for (let y = 0; y < base.height; y++) {
+    for (let x = 0; x < base.width; x++) {
+      if (Math.hypot(x - disc.cx, y - disc.cy) > disc.r) continue;
+      const at = (y * base.width + x) * 3;
+      pixels[at] = colour[0];
+      pixels[at + 1] = colour[1];
+      pixels[at + 2] = colour[2];
+    }
+  }
+  return { width: base.width, height: base.height, pixels };
+}
+
+/**
  * The clean picture. `variant` re-seeds the grain, so two calls give two
  * genuinely different pictures — which is what stops a document's images
  * deduplicating on their content hash.

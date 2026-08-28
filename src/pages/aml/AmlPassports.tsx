@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { BookMarked, Loader2, Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,10 @@ import { cn } from "@/lib/utils";
  */
 export default function AmlPassports() {
   const navigate = useNavigate();
+  /* `?case=<id>` — the case workspace's "Preview the digital passport" step
+   * lands here on the RIGHT customer, not whoever sorts first. */
+  const [searchParams] = useSearchParams();
+  const requestedCaseId = searchParams.get("case");
   const [cases, setCases] = useState<AmlCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,13 +50,18 @@ export default function AmlPassports() {
     try {
       const { cases: rows } = await amlCasesApi.list({ limit: 100 });
       setCases(rows ?? []);
-      setSelected((current) => current ?? (rows ?? [])[0]?.id ?? null);
+      // The deep-linked case wins on first load — but only when it exists in
+      // the list; an unknown id falls back to the first row, never a blank.
+      const requested = requestedCaseId && (rows ?? []).some((r) => r.id === requestedCaseId)
+        ? requestedCaseId
+        : null;
+      setSelected((current) => current ?? requested ?? (rows ?? [])[0]?.id ?? null);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "The customer list could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [requestedCaseId]);
 
   useEffect(() => { void load(); }, [load]);
 

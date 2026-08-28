@@ -56,6 +56,57 @@ export const PORTAL_TERMS_ACKNOWLEDGEMENTS = [
 
 export type PortalAcknowledgementKey = (typeof PORTAL_TERMS_ACKNOWLEDGEMENTS)[number]['key'];
 
+/**
+ * The same four acknowledgments, written for the LINK channel.
+ *
+ * A partner outside the three portals is never given a portal account: they
+ * receive one time-limited link to a Compliance Passport. Asking them to
+ * acknowledge obligations about a Portal they have no access to is both
+ * confusing and, for the conduct clauses, meaningless — so the statements
+ * under the first and third keys describe what is actually granted.
+ *
+ * The KEYS are deliberately identical. They are internal identifiers, not
+ * prose: the server's required-acknowledgment check, every stored
+ * acceptance and all three portals are untouched by this. Only the words a
+ * direct partner reads and assents to change, and those words are the ones
+ * printed on their executed agreement.
+ */
+export const DIRECT_TERMS_ACKNOWLEDGEMENTS = [
+  {
+    key: 'global_confidentiality_privacy',
+    heading: 'Global confidentiality and privacy',
+    statement:
+      'I acknowledge that all information made available through the Compliance Passport Link is confidential and may include personal, sensitive, commercially confidential or legally privileged information. I agree that my organisation will access, use, protect and disclose that information only for an authorised client, transaction and lawful professional purpose.',
+  },
+  {
+    key: 'authority_binding_acceptance',
+    heading: 'Authority and binding acceptance',
+    statement:
+      'I confirm that I am authorised to accept this Agreement and legally bind the Partner Organisation identified above. I agree that my electronic acceptance will constitute execution of this Agreement on behalf of the Partner Organisation.',
+  },
+  {
+    key: 'portal_access',
+    heading: 'Compliance Passport Link access',
+    statement:
+      'I acknowledge that access is provided as a single, time-limited link rather than a portal account, that the link is itself the credential and must not be forwarded outside authorised personnel, and that it will expire — ordinarily after 90 days — unless a replacement is issued.',
+  },
+  {
+    key: 'binding_amlctf_arrangement',
+    heading: 'Binding AML/CTF arrangement',
+    statement:
+      'I acknowledge and agree that, where the applicable eligibility and legislative requirements are satisfied, this Agreement is intended to constitute a binding customer due-diligence agreement or arrangement between the Originating Organisation and Partner Organisation for the purposes of section 37A of the AML/CTF Act and section 6-29 of the AML/CTF Rules.',
+  },
+] as const;
+
+/** The link channel's own notice, naming the instrument it actually is. */
+export const DIRECT_AGREEMENT_ACCEPTANCE_NOTICE =
+  'By proceeding, you confirm that you are authorised to bind the Partner Organisation and accept this '
+  + 'AML/CTF Compliance Passport Link Agreement on its behalf. Statutory reliance is available only where '
+  + 'the applicable eligibility, assessment, information-access and record-keeping requirements are '
+  + 'satisfied — completing your own independent customer due diligence remains available at any time.';
+
+export const DIRECT_AGREEMENT_TITLE = 'AML/CTF Compliance Passport Link Agreement';
+
 /** The agreement's own notice, shown immediately above the accept button. */
 export const PORTAL_AGREEMENT_ACCEPTANCE_NOTICE =
   'By proceeding, you confirm that you are authorised to bind the Partner Organisation and accept this '

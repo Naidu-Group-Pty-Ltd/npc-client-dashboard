@@ -30,6 +30,7 @@ import { describe, expect, it } from 'vitest';
 import {
   annotatedPicture, cleanPicture, jpegOf, pngOf,
 } from './fixtures/builderStockPictures';
+import { readPostgrestColumn } from './fixtures/postgrestJsonPath';
 
 import { importStockRecords } from '../../../supabase/functions/_shared/builderStock/importStock';
 import { extractStockFile } from '../../../supabase/functions/_shared/builderStock/extract';
@@ -68,10 +69,12 @@ function fakeDb(seed: { items?: Row[]; uploads?: Row[] } = {}) {
 
   const matches = (row: Row, filters: Array<[string, string, unknown]>) =>
     filters.every(([op, column, value]) => {
-      if (op === 'eq') return row[column] === value;
-      if (op === 'neq') return row[column] !== value;
-      if (op === 'is') return row[column] === value || (value === null && row[column] == null);
-      if (op === 'in') return Array.isArray(value) && value.includes(row[column]);
+      // JSON-path columns (the claim's compare-and-set) resolve for real.
+      const current = readPostgrestColumn(row, column);
+      if (op === 'eq') return current === value;
+      if (op === 'neq') return current !== value;
+      if (op === 'is') return current === value || (value === null && current == null);
+      if (op === 'in') return Array.isArray(value) && value.includes(current);
       return true;
     });
 
@@ -123,8 +126,14 @@ function fakeDb(seed: { items?: Row[]; uploads?: Row[] } = {}) {
           const builder: any = {
             eq(c: string, v: unknown) { filters.push(['eq', c, v]); return builder; },
             in(c: string, v: unknown) { filters.push(['in', c, v]); return builder; },
+            is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
             select: () => ({
               single: () => {
+                const hit = list.filter((row) => matches(row, filters));
+                for (const row of hit) Object.assign(row, patch);
+                return Promise.resolve({ data: hit[0] ?? null, error: null });
+              },
+              maybeSingle: () => {
                 const hit = list.filter((row) => matches(row, filters));
                 for (const row of hit) Object.assign(row, patch);
                 return Promise.resolve({ data: hit[0] ?? null, error: null });

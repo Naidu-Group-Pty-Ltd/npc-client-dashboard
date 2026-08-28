@@ -391,6 +391,7 @@ describe('H — a spreadsheet whose media the workbook merely contains', () => {
         { name: 'xl/media/image2.png', anchor: 'sheet:Stock!A2' },
       ],
       stockItemIds: ['item-1', 'item-1'],
+      structural: [true, true],
       container: 'the spreadsheet row',
     });
     expect(roles.every((role) => !isPrimaryRole(role.role))).toBe(true);
@@ -404,6 +405,7 @@ describe('H — a spreadsheet whose media the workbook merely contains', () => {
         { name: 'xl/media/image2.png', anchor: 'sheet:Stock!A3' },
       ],
       stockItemIds: ['item-1', 'item-2'],
+      structural: [true, true],
       container: 'the spreadsheet row',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -424,6 +426,7 @@ describe('I — a DOCX property section with a hero and a later interior', () =>
         { name: 'word/media/kitchen.png', anchor: 'docx:table1:row2' },
       ],
       stockItemIds: ['item-1', 'item-1'],
+      structural: [true, true],
       container: 'the property table row',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -440,6 +443,7 @@ describe('J — a PPTX property slide and later imagery', () => {
         { name: 'ppt/media/company-logo.png', anchor: null },
       ],
       stockItemIds: ['item-1', 'item-1', null],
+      structural: [true, true, false],
       container: 'the slide',
     });
     expect(roles[0].role).toBe('primary_property');
@@ -535,10 +539,160 @@ describe('O — a direct image upload for one property', () => {
   it('makes those exact bytes the property\'s image', () => {
     const roles = settleContainerMediaRoles({
       media: [{ name: 'lot-12-render.jpg', anchor: null }],
+      // The one-property containment attribution: structural, because the
+      // document's own boundary is the statement.
       stockItemIds: ['item-1'],
+      structural: [true],
       container: 'the uploaded image',
     });
     expect(roles[0].role).toBe('primary_property');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// R — the row's cover, and the field the builder actually named
+// ---------------------------------------------------------------------------
+
+describe('R — a Notion cover does not outrank the row\'s own Property Image field', () => {
+  /*
+   * THE HIERARCHY, AS DOCUMENTED AND AS STORED: LEVEL 1 is "the source's own
+   * field on this property's row names this image"; LEVEL 3 is "a structural
+   * container put this image first". One is the builder saying which picture
+   * IS the listing image; the other is where a picture happens to sit. The
+   * Notion caller inverted them: the page cover was passed as the preferred
+   * asset whenever the row had one, so a promotional cover took the card and
+   * the clean facade the builder explicitly filed under "Property Image" was
+   * demoted to property_secondary — undisplayable, unrepairable, unread.
+   */
+  const cover = (url = 'https://notion/cover.png') => ({
+    ...asset(url),
+    origin: 'notion_page_cover' as const,
+    role: roleFromStructuralContainer({
+      container: 'the Notion row for this property', designation: 'page cover' }),
+  });
+  const field = (label: string, url: string) => ({
+    ...asset(url),
+    origin: 'notion_file_property' as const,
+    role: roleFromExplicitField(label),
+  });
+  const notionRow = (assets: SourceImageAsset[], coverIndex: number) =>
+    settleRowAssetRoles(assets, {
+      container: 'the Notion row for this property',
+      designation: coverIndex >= 0 ? 'page cover' : 'property image',
+      preferredIndex: coverIndex >= 0 ? coverIndex : undefined,
+    });
+
+  it('A — a cover alone is the row\'s primary, LEVEL 3', () => {
+    const out = notionRow([cover()], 0);
+    expect(out[0].role.role).toBe('primary_property');
+    expect(out[0].role.evidenceLevel).toBe(3);
+  });
+
+  it('B — an explicit Property Image alone is primary, LEVEL 1', () => {
+    const out = notionRow([field('Property Image', 'https://notion/facade.png')], -1);
+    expect(out[0].role.role).toBe('primary_property');
+    expect(out[0].role.evidenceLevel).toBe(1);
+  });
+
+  it('C — cover AND Property Image: the named field wins, on its own evidence', () => {
+    const out = notionRow([
+      cover('https://notion/promo-cover.png'),
+      field('Property Image', 'https://notion/facade.png'),
+    ], 0);
+    // The builder named a field; the cover is merely where a picture sits.
+    expect(out[1].role.role).toBe('primary_property');
+    expect(out[1].role.evidenceLevel).toBe(1);
+    // The cover is still this property's imagery — just not the card.
+    expect(out[0].role.role).toBe('property_secondary');
+    expect(isPrimaryRole(out[0].role.role)).toBe(false);
+  });
+
+  it('E — cover + Floorplan field: the cover leads and the floorplan stays one', () => {
+    const out = notionRow([
+      cover(),
+      field('Floorplan', 'https://notion/plan.png'),
+    ], 0);
+    expect(out[0].role.role).toBe('primary_property');
+    expect(out[0].role.evidenceLevel).toBe(3);
+    // An explicitly non-hero field keeps the role the source gave it.
+    expect(out[1].role.role).toBe('floorplan');
+  });
+
+  it('F — cover + Masterplan field: same shape', () => {
+    const out = notionRow([cover(), field('Masterplan', 'https://notion/estate.png')], 0);
+    expect(out[0].role.role).toBe('primary_property');
+    expect(isPrimaryRole(out[1].role.role)).toBe(false);
+  });
+
+  it('G — Property Image + Floorplan + cover: the named hero wins', () => {
+    const out = notionRow([
+      cover(),
+      field('Property Image', 'https://notion/facade.png'),
+      field('Floor Plan', 'https://notion/plan.png'),
+    ], 0);
+    expect(out[1].role.role).toBe('primary_property');
+    expect(out[1].role.evidenceLevel).toBe(1);
+    expect(out[0].role.role).toBe('property_secondary');
+    expect(isPrimaryRole(out[2].role.role)).toBe(false);
+  });
+
+  it('H — TWO explicit hero fields: nobody is guessed, the cover leads', () => {
+    const out = notionRow([
+      cover(),
+      field('Property Image', 'https://notion/a.png'),
+      field('Hero Image', 'https://notion/b.png'),
+    ], 0);
+    // Two equal explicit claims contradict each other; the row's own cover is
+    // still a coherent designation, so it stands — nothing is picked by order.
+    expect(out[0].role.role).toBe('primary_property');
+    expect(out[0].role.evidenceLevel).toBe(3);
+    expect(isPrimaryRole(out[1].role.role)).toBe(false);
+    expect(isPrimaryRole(out[2].role.role)).toBe(false);
+  });
+
+  it('H2 — two hero fields and NO cover: ambiguity, not file order', () => {
+    const out = notionRow([
+      field('Property Image', 'https://notion/a.png'),
+      field('Hero Image', 'https://notion/b.png'),
+    ], -1);
+    expect(out.every((entry) => !isPrimaryRole(entry.role.role))).toBe(true);
+  });
+
+  it('I — a hero FIELD whose file is named Masterplan is still demoted', () => {
+    const out = notionRow([
+      cover(),
+      field('Property Image', 'https://notion/x.png'),
+    ].map((entry, index) => index === 1
+      ? { ...entry, reference: 'attachment:abc:ESTATE-MASTERPLAN.png' }
+      : entry), 0);
+    // The filename rule runs first and may only demote — the field label does
+    // not resurrect a file the builder themselves called a masterplan.
+    expect(isPrimaryRole(out[1].role.role)).toBe(false);
+    expect(out[0].role.role).toBe('primary_property');
+  });
+
+  it('J — a lone non-hero field is never promoted by being alone', () => {
+    const out = notionRow([field('Floor Plan', 'https://notion/plan.png')], -1);
+    expect(isPrimaryRole(out[0].role.role)).toBe(false);
+    expect(out[0].role.role).toBe('floorplan');
+  });
+
+  it('K — cover + body images: the cover still leads as before', () => {
+    const out = notionRow([cover(), asset('https://notion/body-1.png'),
+      asset('https://notion/body-2.png')], 0);
+    expect(out[0].role.role).toBe('primary_property');
+    expect(out[0].role.evidenceLevel).toBe(3);
+    expect(isPrimaryRole(out[1].role.role)).toBe(false);
+    expect(isPrimaryRole(out[2].role.role)).toBe(false);
+  });
+
+  it('L — the winner\'s LEVEL 1 record survives persistence round-trip', () => {
+    const out = notionRow([cover(), field('Property Image', 'https://n/f.png')], 0);
+    const detail = roleDetail(out[1].role);
+    expect(detail.role).toBe('primary_property');
+    expect(detail.role_evidence_level).toBe(1);
+    expect(String(detail.role_evidence)).toContain('Property Image');
   });
 });
 
@@ -566,6 +720,7 @@ describe('Q — a builder source with only interior photographs', () => {
         { name: 'ensuite.jpg', anchor: 'docx:table1:row2' },
       ],
       stockItemIds: ['item-1', 'item-1', 'item-1'],
+      structural: [true, true, true],
       container: 'the property table row',
     });
     expect(roles.map((role) => role.role)).toEqual(['interior', 'interior', 'interior']);

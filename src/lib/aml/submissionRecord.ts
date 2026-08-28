@@ -8,14 +8,18 @@
  * cannot disagree.
  */
 export {
+  CLIENT_COPY_NOTICE,
+  INTERNAL_RECORD_NOTICE,
   SUBMISSION_RECORD_DOCUMENT_KIND,
   buildSubmissionRecord,
   formatUtc,
   payloadEntries,
+  recordDocumentTitle,
   renderSubmissionRecordHtml,
   submissionRecordFilename,
   valueText,
   verificationOutcomeText,
+  type RecordAudience,
   type RecordBlock,
   type RecordField,
   type RecordSection,

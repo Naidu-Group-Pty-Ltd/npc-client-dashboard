@@ -632,6 +632,11 @@ export const PORTAL_LABELS: Record<string, string> = {
   solicitor: 'Solicitor / Conveyancer Portal',
   builder: 'Builder / Developer Portal',
   finance: 'Finance Partner Portal',
+  // A partner outside the three portals, who acknowledged the same
+  // instrument through a one-time emailed link. The label says how the
+  // agreement was executed, so the document never implies a portal
+  // account that does not exist.
+  direct: 'Direct Partner Acknowledgement (no portal)',
 };
 
 /**

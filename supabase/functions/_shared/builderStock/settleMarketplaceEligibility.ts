@@ -45,6 +45,7 @@
  * unscheduled, and every card empty for ever with nothing left to retry it.
  */
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
+import { sha256Hex } from './rasterPng.ts';
 import { assessMarketplaceEligibility } from './assessSourceImage.ts';
 import {
   marketplaceEligibilityDetail, needsEligibilityAssessment,
@@ -197,7 +198,9 @@ export async function settleMarketplaceEligibility(
         .update({
           source_detail: {
             ...(row.source_detail ?? {}),
-            ...marketplaceEligibilityDetail(eligibility),
+            // Bound to the bytes that were just hashed and judged, so a later
+            // re-store of different bytes cannot inherit this verdict.
+            ...marketplaceEligibilityDetail(eligibility, await sha256Hex(bytes)),
           },
         })
         .eq('id', row.id);

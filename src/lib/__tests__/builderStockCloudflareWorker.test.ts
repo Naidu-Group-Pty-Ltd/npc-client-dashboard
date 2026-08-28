@@ -90,6 +90,27 @@ async function squarePng(seed: number, edge = EDGE): Promise<Uint8Array> {
 }
 
 /**
+ * A mask the way the one honest client draws one: black, with a white
+ * rectangle covering `share` of the patch — 8-bit RGB, non-interlaced,
+ * filter 0, through the repo's own encoder. The worker DECODES the mask now
+ * and measures its ink, so a noise image is no longer a stand-in for one.
+ */
+async function maskFixture(share = 0.1, edge = EDGE): Promise<Uint8Array> {
+  const pixels = new Uint8Array(edge * edge * 3);
+  const side = Math.max(1, Math.floor(edge * Math.sqrt(share)));
+  const from = Math.floor((edge - side) / 2);
+  for (let y = from; y < from + side; y++) {
+    for (let x = from; x < from + side; x++) {
+      const at = (y * edge + x) * 3;
+      pixels[at] = 255;
+      pixels[at + 1] = 255;
+      pixels[at + 2] = 255;
+    }
+  }
+  return (await encodePng(pixels, { width: edge, height: edge, components: 3 }))!;
+}
+
+/**
  * A multipart body built by hand, byte for byte, so these tests control the
  * request exactly — including malformed ones no honest client would send.
  */
@@ -167,7 +188,7 @@ describe('the worker is private: authentication fails closed', () => {
     const ai = stubAi(async () => squarePng(1));
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }], { token: null }),
+        { name: 'mask', bytes: await maskFixture(0.12) }], { token: null }),
       envWith(ai.binding));
     expect(response.status).toBe(401);
     expect(ai.calls).toHaveLength(0);
@@ -177,7 +198,7 @@ describe('the worker is private: authentication fails closed', () => {
     const ai = stubAi(async () => squarePng(1));
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }], { token: 'not-the-secret' }),
+        { name: 'mask', bytes: await maskFixture(0.12) }], { token: 'not-the-secret' }),
       envWith(ai.binding));
     expect(response.status).toBe(401);
     expect(ai.calls).toHaveLength(0);
@@ -189,7 +210,7 @@ describe('the worker is private: authentication fails closed', () => {
     // all, exactly as a deploy that never ran `wrangler secret put` looks.
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }]),
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
       { AI: ai.binding });
     expect(response.status).toBe(401);
     expect(ai.calls).toHaveLength(0);
@@ -199,7 +220,7 @@ describe('the worker is private: authentication fails closed', () => {
     const ai = stubAi(async () => squarePng(1));
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }], { scheme: 'Basic' }),
+        { name: 'mask', bytes: await maskFixture(0.12) }], { scheme: 'Basic' }),
       envWith(ai.binding));
     expect(response.status).toBe(401);
     expect(ai.calls).toHaveLength(0);
@@ -209,7 +230,7 @@ describe('the worker is private: authentication fails closed', () => {
     const ai = stubAi(async () => squarePng(3));
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }]),
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
       envWith(ai.binding, `"${TOKEN}"`));
     expect(response.status).toBe(200);
   });
@@ -231,7 +252,7 @@ describe('the contract is one image and its mask, and nothing else', () => {
   it('RULE 11 — a valid request runs Workers AI through the binding, once, '
     + 'with exactly the pinned inputs', async () => {
     const imagePng = await squarePng(21);
-    const maskPng = await squarePng(22);
+    const maskPng = await maskFixture(0.12);
     const answer = await squarePng(23);
     const ai = stubAi(() => answer);
 
@@ -272,7 +293,7 @@ describe('the contract is one image and its mask, and nothing else', () => {
     ]) {
       const response = await worker.fetch(
         inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-          { name: 'mask', bytes: await squarePng(2) }, extra]),
+          { name: 'mask', bytes: await maskFixture(0.12) }, extra]),
         envWith(ai.binding));
       expect(response.status).toBe(422);
     }
@@ -292,7 +313,7 @@ describe('the contract is one image and its mask, and nothing else', () => {
     const ai = stubAi(async () => squarePng(3));
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: new Uint8Array([1, 2, 3, 4]) },
-        { name: 'mask', bytes: await squarePng(2) }]),
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
       envWith(ai.binding));
     expect(response.status).toBe(422);
     expect(ai.calls).toHaveLength(0);
@@ -339,7 +360,7 @@ describe('failure is operational and honest', () => {
     const ai = stubAi(() => { throw new Error('3040: model temporarily unavailable'); });
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }]),
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
       envWith(ai.binding));
     expect(response.status).toBe(502);
     const body = await response.json() as { error: string };
@@ -350,7 +371,7 @@ describe('failure is operational and honest', () => {
     const ai = stubAi(async () => new TextEncoder().encode('{"unexpected":"json"}'));
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }]),
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
       envWith(ai.binding));
     expect(response.status).toBe(502);
   });
@@ -360,7 +381,7 @@ describe('failure is operational and honest', () => {
     const ai = stubAi(() => new Response(answer as unknown as BodyInit).body);
     const response = await worker.fetch(
       inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
-        { name: 'mask', bytes: await squarePng(2) }]),
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
       envWith(ai.binding));
     expect(response.status).toBe(200);
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(answer);
@@ -649,4 +670,146 @@ describe('the Supabase transport and the Cloudflare Worker speak one dialect', (
       expect(result.detail).toContain('401');
       expect(ai.calls).toHaveLength(0);
     });
+});
+
+// ---------------------------------------------------------------------------
+// The request is bounded before it is believed
+// ---------------------------------------------------------------------------
+
+describe('the worker bounds what it will even look at', () => {
+  it('a request declaring more body than the service accepts is refused before parsing', async () => {
+    const ai = stubAi(async () => squarePng(3));
+    const response = await worker.fetch(new Request(
+      'https://builder-stock-image-worker.internal.workers.dev/v1/inpaint',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          'content-type': 'multipart/form-data; boundary=x',
+          'content-length': String(64 * 1024 * 1024),
+        },
+        // 413 off the DECLARED length: the body itself is never buffered, so
+        // it need not exist for the refusal to be exercised.
+        body: new Uint8Array(16) as unknown as BodyInit,
+      }), envWith(ai.binding));
+    expect(response.status).toBe(413);
+    expect(ai.calls).toHaveLength(0);
+  });
+
+  it('the patch must be the shape the one honest client sends: square, and small', async () => {
+    const ai = stubAi(async () => squarePng(3));
+
+    // A 512x256 sliver: both edges inside the old per-edge window, and not a
+    // shape the transport has ever produced.
+    const sliverPixels = new Uint8Array(512 * 256 * 3);
+    const sliver = (await encodePng(sliverPixels, { width: 512, height: 256, components: 3 }))!;
+    const slivered = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: sliver }, { name: 'mask', bytes: sliver }]),
+      envWith(ai.binding));
+    expect(slivered.status).toBe(422);
+
+    // 2048-square was inside the model's published range and ~16x the compute
+    // of the real workload. The window is the caller's shape, not the model's.
+    const big = await squarePng(5, 2048);
+    const oversized = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: big }, { name: 'mask', bytes: big }]),
+      envWith(ai.binding));
+    expect(oversized.status).toBe(422);
+    expect(ai.calls).toHaveLength(0);
+  });
+
+  it('an all-white mask is not a badge repair, and is refused unrun', async () => {
+    const ai = stubAi(async () => squarePng(3));
+    const response = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
+        { name: 'mask', bytes: await maskFixture(1) }]),
+      envWith(ai.binding));
+    expect(response.status).toBe(422);
+    const body = await response.json() as { error: string };
+    expect(body.error).toContain('not a badge repair');
+    expect(ai.calls).toHaveLength(0);
+  });
+
+  it('a legitimate patch-sized mask still runs — the ceiling is a backstop', async () => {
+    // A plate plus its context margin legitimately reaches ~0.6 of the patch.
+    const ai = stubAi(async () => squarePng(3));
+    const response = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
+        { name: 'mask', bytes: await maskFixture(0.6) }]),
+      envWith(ai.binding));
+    expect(response.status).toBe(200);
+    expect(ai.calls).toHaveLength(1);
+  });
+
+  it('a mask in any encoding but the client\'s own is refused, not decoded', async () => {
+    const ai = stubAi(async () => squarePng(3));
+    // A real mask with its IHDR interlace byte flipped: `pngDimensions` still
+    // reads it, and the ink measurement must refuse it rather than guess.
+    const interlaced = new Uint8Array(await maskFixture(0.12));
+    interlaced[28] = 1;
+    const response = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
+        { name: 'mask', bytes: interlaced }]),
+      envWith(ai.binding));
+    expect(response.status).toBe(422);
+    expect(ai.calls).toHaveLength(0);
+  });
+
+  it('a model that answers at a different size is 502, never composited', async () => {
+    const ai = stubAi(async () => squarePng(9, 256));
+    const response = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
+      envWith(ai.binding));
+    expect(response.status).toBe(502);
+    const body = await response.json() as { error: string };
+    expect(body.error).toContain('different size');
+  });
+
+  it('every answer says nosniff, image and error alike', async () => {
+    // Read by iterating the entries for the same reason `statedInpaintModel`
+    // does: this header travels on the private server-to-server call, never
+    // through a browser, and the CORS gate reads a literal `headers.get`
+    // under src/ as a frontend cross-origin read.
+    const nosniff = (headers: Headers): string | null => {
+      for (const [name, value] of headers.entries()) {
+        if (name.toLowerCase() === 'x-content-type-options') return value;
+      }
+      return null;
+    };
+    const ai = stubAi(async () => squarePng(3));
+    const ok = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: await squarePng(1) },
+        { name: 'mask', bytes: await maskFixture(0.12) }]),
+      envWith(ai.binding));
+    expect(nosniff(ok.headers)).toBe('nosniff');
+
+    const refused = await worker.fetch(
+      inpaintRequest([{ name: 'image', bytes: await squarePng(1) }]),
+      envWith(ai.binding));
+    expect(nosniff(refused.headers)).toBe('nosniff');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The worker's tests and gates are actually wired
+// ---------------------------------------------------------------------------
+
+describe('this file runs where it claims to', () => {
+  it('CI names this test file — an unrun proof proves nothing', () => {
+    // This file sat beside the named Builder Stock list in ci.yml without
+    // being on it, so every assertion here — the no-external-URL proof, the
+    // constant-time proof, the wrangler-has-no-credentials proof — ran on no
+    // runner. A test that asserts its own wiring cannot silently fall off.
+    const workflow = readFileSync(
+      resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
+    expect(workflow).toContain('builderStockCloudflareWorker.test.ts');
+  });
+
+  it('the worker hardening gate names the worker source', () => {
+    const gate = readFileSync(
+      resolve(process.cwd(), 'scripts/security/check-cloudflare-worker-hardening.mjs'),
+      'utf8');
+    expect(gate).toContain('cloudflare/builder-stock-image-worker/src/index.ts');
+  });
 });

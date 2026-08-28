@@ -1593,8 +1593,19 @@ describe("compliance journey surfaces", () => {
     expect(staffMap).not.toMatch(/\.update\(|\.insert\(|issueAttestation|grantAccess|\btransition\(/);
   });
 
-  it("staff map derives 'approved' only from the explicit gate decision", () => {
-    expect(staffMap).toContain('["approved", "approved_with_controls"].includes(gate)');
+  it("staff map completes its nodes from explicit human decisions — never from risk", () => {
+    // "Approved · human decision" is the Stage 8 decision (canonical stage,
+    // legacy status dual-read) or an approved gate, which can only follow
+    // one. It used to complete ONLY on the gate, so a verified, cleared
+    // case still showed "We verify" and "Approved" as in-progress. The
+    // derivation lives in the pure module; the map only renders it.
+    const stages = readFileSync(
+      join(repo, "src/lib/aml/journeyMapStages.pure.ts"), "utf8");
+    expect(staffMap).toContain('from "@/lib/aml/journeyMapStages.pure"');
+    expect(stages).toContain('["approved", "approved_with_controls"].includes(gate)');
+    expect(stages).toMatch(/caseStage\(caseRow\)/);
+    expect(stages).toMatch(/stage === "cleared"/);
+    expect(stages).not.toMatch(/risk_rating|risk_score/);
     expect(staffMap).not.toMatch(/risk_rating|risk_score/);
   });
 

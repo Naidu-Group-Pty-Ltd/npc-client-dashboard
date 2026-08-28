@@ -70,11 +70,38 @@ export const INPAINT_NEGATIVE_PROMPT =
 
 /** The Workers AI ceiling for this model; more steps than any faster answer. */
 const NUM_STEPS = 20;
+/**
+ * The whole request, refused off its declared length BEFORE the body is
+ * parsed. `formData()` buffers the entire body first, so without this an
+ * authenticated caller could park ~100 MB (the platform's own ceiling) in a
+ * 128 MB isolate before any per-part check ran. Production sends two
+ * ~700 KB parts; four megabytes is generous headroom. A body with no
+ * declared length (chunked) falls through to the per-part checks below —
+ * availability over a pre-parse refusal nothing honest ever trips.
+ */
+const MAX_BODY_BYTES = 4 * 1024 * 1024;
 /** Each part is a 512-square PNG in normal operation (< 1 MB). Headroom, not invitation. */
-const MAX_PART_BYTES = 12 * 1024 * 1024;
-/** The model's own published input range. */
+const MAX_PART_BYTES = 2 * 1024 * 1024;
+/**
+ * The patch is SQUARE, and small. The transport (`inpaintOverlay.ts`) encodes
+ * every patch at exactly 512x512; the model's published range reaches 2048,
+ * but a 2048-square request is ~16x the compute of the real workload billed
+ * to this account's own Workers AI allowance, and `Array.from` boxes each
+ * byte at ~8x the input's size on the way to the binding — so the accepted
+ * window is the caller's actual shape with one doubling of headroom, not the
+ * model's maximum.
+ */
 const MODEL_MIN_EDGE = 256;
-const MODEL_MAX_EDGE = 2048;
+const MAX_PATCH_EDGE = 1024;
+/**
+ * The most of a patch a mask may paint. A BACKSTOP, deliberately looser than
+ * the real bound: the Supabase side refuses any repair past 35% of the FRAME
+ * before it ever calls here (Barrier B), but a patch is a plate plus a
+ * context margin, so a legitimate per-patch share runs to ~0.6. What this
+ * refuses is the stolen-token case — an all-white mask turning a private
+ * repair endpoint into a free-form generator on this account's credit.
+ */
+const MAX_MASK_INK_SHARE = 0.8;
 
 /**
  * The AI binding as this worker uses it — `env.AI.run(model, inputs)`. Typed
@@ -96,7 +123,11 @@ export interface Env {
 function json(status: number, error: string): Response {
   return new Response(JSON.stringify({ error }), {
     status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
   });
 }
 
@@ -175,6 +206,93 @@ async function readPart(form: FormData, name: string): Promise<Uint8Array | { er
 }
 
 /**
+ * The share of the mask that is INK — pixels the model would be permitted to
+ * paint — read by actually decoding the mask, in the narrow shape the one
+ * honest client ever sends.
+ *
+ * The transport's `maskPng` writes an 8-bit, non-interlaced PNG with filter
+ * byte 0 on every scanline (see `rasterPng.ts`), so that exact shape is
+ * REQUIRED rather than handled generally: a mask in any other encoding is
+ * refused outright, which turns a crafted input into a 422 instead of a
+ * decoding job. The inflate is capped at the size the header promises, so a
+ * mismatched IDAT cannot expand past it, and the dimensions were already
+ * bounded before this runs.
+ *
+ * Returns the ink share in [0,1], or null for a mask this refuses to read.
+ */
+export async function maskInkShare(bytes: Uint8Array): Promise<number | null> {
+  const dims = pngDimensions(bytes);
+  if (!dims) return null;
+
+  // Walk the chunks: IHDR fields first, then every IDAT concatenated.
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const depth = bytes[24];
+  const colour = bytes[25];
+  const compression = bytes[26];
+  const filter = bytes[27];
+  const interlace = bytes[28];
+  if (depth !== 8 || (colour !== 0 && colour !== 2)) return null;
+  if (compression !== 0 || filter !== 0 || interlace !== 0) return null;
+  const channels = colour === 2 ? 3 : 1;
+
+  const idat: Uint8Array[] = [];
+  let at = 8;
+  while (at + 8 <= bytes.length) {
+    const length = view.getUint32(at);
+    const type = String.fromCharCode(bytes[at + 4], bytes[at + 5], bytes[at + 6], bytes[at + 7]);
+    const start = at + 8;
+    if (start + length > bytes.length) return null;
+    if (type === 'IDAT') idat.push(bytes.subarray(start, start + length));
+    if (type === 'IEND') break;
+    at = start + length + 4;
+  }
+  if (!idat.length) return null;
+  let total = 0;
+  for (const chunk of idat) total += chunk.length;
+  const deflated = new Uint8Array(total);
+  let cursor = 0;
+  for (const chunk of idat) { deflated.set(chunk, cursor); cursor += chunk.length; }
+
+  // Inflate, capped at exactly the bytes the header promises. Written
+  // against the stream's own writer rather than `new Blob(...).stream()` —
+  // the same lesson the repo's PNG codec records: `Blob` has no `stream()`
+  // under the test runtime, and an inflate nothing can test breaks quietly.
+  const expected = (dims.width * channels + 1) * dims.height;
+  let raw: Uint8Array;
+  try {
+    const transform = new DecompressionStream('deflate');
+    const writer = transform.writable.getWriter();
+    const writing = writer.write(deflated).then(() => writer.close());
+    const reader = transform.readable.getReader();
+    raw = new Uint8Array(expected);
+    let read = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (read + value.length > expected) { await reader.cancel(); return null; }
+      raw.set(value, read);
+      read += value.length;
+    }
+    await writing;
+    if (read !== expected) return null;
+  } catch {
+    return null;
+  }
+
+  let ink = 0;
+  const rowBytes = dims.width * channels + 1;
+  for (let y = 0; y < dims.height; y++) {
+    const row = y * rowBytes;
+    // Filter byte 0 on every scanline, or this is not the client's encoding.
+    if (raw[row] !== 0) return null;
+    for (let x = 0; x < dims.width; x++) {
+      if (raw[row + 1 + x * channels] >= 128) ink += 1;
+    }
+  }
+  return ink / (dims.width * dims.height);
+}
+
+/**
  * Whatever shape the binding answers in — the documented ReadableStream, or a
  * buffer from a stub or a future runtime — normalised to bytes, or null.
  */
@@ -192,6 +310,13 @@ async function resultBytes(output: unknown): Promise<Uint8Array | null> {
 }
 
 async function inpaint(request: Request, env: Env): Promise<Response> {
+  // Refused off the declared length BEFORE the body is buffered — see
+  // MAX_BODY_BYTES for why parse-then-check is the wrong order here.
+  const declared = Number(request.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    return json(413, 'the request is larger than this service accepts');
+  }
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -224,10 +349,26 @@ async function inpaint(request: Request, env: Env): Promise<Response> {
     return json(422, 'the image and its mask disagree about their size');
   }
   if (
-    imageDims.width < MODEL_MIN_EDGE || imageDims.width > MODEL_MAX_EDGE
-    || imageDims.height < MODEL_MIN_EDGE || imageDims.height > MODEL_MAX_EDGE
+    imageDims.width !== imageDims.height
+    || imageDims.width < MODEL_MIN_EDGE || imageDims.width > MAX_PATCH_EDGE
   ) {
-    return json(422, `the patch must be between ${MODEL_MIN_EDGE} and ${MODEL_MAX_EDGE} pixels on each edge`);
+    return json(422, `the patch must be square, between ${MODEL_MIN_EDGE} and ${MAX_PATCH_EDGE} pixels`);
+  }
+
+  /*
+   * The mask is DECODED and measured, not merely sniffed: a mask that paints
+   * most of the patch is not a badge repair, whatever sent it. See
+   * MAX_MASK_INK_SHARE — this is the backstop behind the Supabase side's own
+   * frame-level ceiling, and it is what keeps a leaked token from being a
+   * free-form image generator on this account's credit.
+   */
+  const inkShare = await maskInkShare(mask);
+  if (inkShare === null) {
+    return json(422, "the 'mask' part is not a PNG this service reads");
+  }
+  if (inkShare > MAX_MASK_INK_SHARE) {
+    return json(422, `the mask would rebuild ${(inkShare * 100).toFixed(0)}% of the patch, `
+      + 'which is not a badge repair');
   }
 
   /*
@@ -254,8 +395,15 @@ async function inpaint(request: Request, env: Env): Promise<Response> {
   }
 
   const bytes = await resultBytes(output);
-  if (!bytes || !pngDimensions(bytes)) {
+  const resultDims = bytes ? pngDimensions(bytes) : null;
+  if (!bytes || !resultDims) {
     return json(502, 'the model returned something that was not an image');
+  }
+  // The answer must be the size of the question: a model that resized the
+  // patch has not repaired it, and compositing a resized answer would smear
+  // the builder's own pixels.
+  if (resultDims.width !== imageDims.width || resultDims.height !== imageDims.height) {
+    return json(502, 'the model returned an image of a different size');
   }
 
   return new Response(bytes as unknown as BodyInit, {
@@ -264,6 +412,7 @@ async function inpaint(request: Request, env: Env): Promise<Response> {
       'content-type': 'image/png',
       'x-inpaint-model': INPAINT_MODEL,
       'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
     },
   });
 }

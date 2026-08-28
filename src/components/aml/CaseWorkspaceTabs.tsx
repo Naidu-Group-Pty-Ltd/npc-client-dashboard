@@ -33,6 +33,11 @@ import {
   type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { decisionPath, reasonHint } from "@/lib/aml/decisionPath.pure";
+import { describeClearanceReason } from "@/lib/aml/clearanceReasons.pure";
+import { DECISION_CHOICES, RECOMMENDATION_CHOICES } from "@/lib/aml/gateOptions.pure";
+import { DecisionPathCard } from "@/components/aml/workspace/DecisionPathCard";
+import { ServiceGateCard } from "@/components/aml/ServiceGateCard";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
@@ -524,26 +529,40 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
 
 /* -------------------- Risk & Decision -------------------- */
 
-const RECOMMENDATION_OUTCOMES: Array<{ value: AmlAnalystRecommendation["recommended_outcome"]; label: string }> = [
-  { value: "cleared", label: "Clear" },
-  { value: "cleared_with_conditions", label: "Clear with conditions" },
-  { value: "edd_required", label: "Enhanced due diligence" },
-  { value: "escalated", label: "Escalate to MLRO" },
-  { value: "blocked", label: "Block" },
-];
+/**
+ * One choice, readable: what it is called and what it DOES. Replaces the
+ * bare <select> over enum spellings — a choice an operator cannot read the
+ * consequence of is a choice they hesitate over, and the production table
+ * showed the hesitation: zero gate decisions ever recorded.
+ */
+function ChoiceCard({ selected, label, meaning, onSelect }: {
+  selected: boolean; label: string; meaning: string; onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        "rounded-md border p-2.5 text-left transition-colors",
+        selected ? "border-primary bg-primary/5" : "border-border/60 hover:border-primary/50",
+      )}
+    >
+      <span className="block text-sm font-medium">{label}</span>
+      <span className="block text-xs text-muted-foreground">{meaning}</span>
+    </button>
+  );
+}
 
-const GATE_OPTION_LABELS: Record<string, string> = {
-  cdd_incomplete: "CDD incomplete",
-  information_outstanding: "Information outstanding",
-  under_review: "Under review",
-  conditions_outstanding: "Conditions outstanding",
-  approved_with_controls: "Approved with controls",
-  approved: "Approved",
-  locked: "Locked",
-  terminated: "Terminated",
-};
-
-export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssignedMlro }: {
+  caseId: string; canWrite: boolean; onChanged: () => void;
+  /** Route a clearance blocker to the section that resolves it. */
+  onOpenSection?: (section: string) => void;
+  /** Whether the case names an MLRO — the escalate directive says where an
+   *  escalation actually lands. */
+  hasAssignedMlro?: boolean;
+}) {
   const access = useAmlAccess();
   const canReview = access.roles.has("reviewer") || access.roles.has("mlro");
   const isMlro = access.isMlro;
@@ -558,23 +577,30 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
   const [recRationale, setRecRationale] = useState("");
   const [decideOutcome, setDecideOutcome] = useState<"cleared" | "blocked" | "escalated">("cleared");
   const [decideRationale, setDecideRationale] = useState("");
-  const [gateStatus, setGateStatus] = useState<string>("under_review");
-  const [gateReason, setGateReason] = useState("");
+  /*
+   * What stands between this case and clearance, from the SAME server
+   * computation the decide op enforces (`clearance_readiness`). Null means
+   * the reading was unavailable (an old server, a failed read) — which
+   * renders as nothing, never as "ready": a failed read is not a clean bill.
+   */
+  const [clearance, setClearance] = useState<{ ready: boolean; reasons: string[] } | null>(null);
 
   const load = async () => {
     try {
-      const [a, c, d, r, g, rc] = await Promise.all([
+      const [a, c, d, r, g, rc, cl] = await Promise.all([
         amlRiskApi.listAssessments(caseId),
         amlRiskApi.listConditions(caseId),
         amlRiskApi.latestDecision(caseId),
         amlRiskApi.listRecommendations(caseId).catch(() => ({ recommendations: [] })),
         amlRiskApi.gateContract(caseId).catch(() => ({ gate: null as any })),
         amlRiskApi.recalcStatus(caseId).catch(() => ({ recalc: null as any })),
+        amlRiskApi.clearanceReadiness(caseId).catch(() => null),
       ]);
       setAssessments(a.assessments); setConditions(c.conditions); setLatestDecision(d.decision);
       setRecommendations(r.recommendations ?? []);
       setGate(g.gate ?? null);
       setRecalc(rc.recalc ?? null);
+      setClearance(cl);
     } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
   useEffect(() => { load();   }, [caseId]);
@@ -611,26 +637,70 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
       toast({ title: "Decision recorded" });
       setDecideRationale("");
       await load(); onChanged();
-    } catch (e: any) { toast({ title: "Decision failed", description: e.message, variant: "destructive" }); }
-    finally { setBusy(false); }
-  };
-
-  const applyGate = async () => {
-    setBusy(true);
-    try {
-      await amlRiskApi.setServiceGate({ case_id: caseId, status: gateStatus, reason: gateReason.trim() });
-      toast({ title: "Service gate updated" });
-      setGateReason("");
-      await load(); onChanged();
-    } catch (e: any) { toast({ title: "Gate change failed", description: e.message, variant: "destructive" }); }
+    } catch (e: any) {
+      /*
+       * A refusal names its reasons — the server sends them and the panel
+       * lists them beside these controls. Reload so the list is current at
+       * the moment of the refusal, and say where to look.
+       */
+      toast({
+        title: "Decision failed",
+        description: clearance !== null
+          ? `${e.message}. The named blockers are listed beside the decision controls.`
+          : e.message,
+        variant: "destructive",
+      });
+      await load();
+    }
     finally { setBusy(false); }
   };
 
   const latest = assessments?.[0];
   const pendingRecommendation = recommendations.find((r) => r.status === "pending") ?? null;
+  const openConditionCount = conditions.filter((c) => c.status === "open").length;
+
+  /*
+   * The path: the same facts as the cards below, arranged in order with one
+   * step open (decisionPath.pure.ts). Derives nothing — the audited actions
+   * stay on the cards.
+   */
+  const pathSteps = decisionPath({
+    assessment: latest
+      ? { created_at: latest.created_at, risk_rating: latest.risk_rating ?? null }
+      : null,
+    recalcStale: recalc?.stale ?? false,
+    recalcReasons: recalc?.reasons ?? [],
+    openConditions: openConditionCount,
+    pendingRecommendation: pendingRecommendation !== null,
+    decision: latestDecision
+      ? { outcome: latestDecision.outcome, decided_at: latestDecision.decided_at }
+      : null,
+    gate: gate ? { status: gate.status, effective_at: gate.effective_at ?? null } : null,
+    canWrite,
+    canReview,
+    isMlro,
+  });
+
+  /* Each path step lands on the card that performs it. For a decision-maker
+   * the recommendation has no card of its own — anything waiting is shown
+   * beside the decision — so its step falls through to the decision card.
+   * Optional call: jsdom implements getElementById but not scrollIntoView. */
+  const scrollToStep = (key: string) => {
+    (document.getElementById(`decision-step-${key}`)
+      ?? document.getElementById("decision-step-decision"))
+      ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  };
+
+  /* Why each disabled control is disabled, in words. */
+  const recRationaleHint = reasonHint(recRationale, "rationale");
 
   return (
     <div className="space-y-4">
+      <DecisionPathCard
+        steps={pathSteps}
+        onStepClick={scrollToStep}
+        onContinue={onOpenSection ? () => onOpenSection("passport") : undefined}
+      />
       {recalc?.stale && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
           <div className="flex items-start gap-2">
@@ -649,7 +719,7 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
         </div>
       )}
 
-      <Card>
+      <Card id="decision-step-assessment" className="scroll-mt-24">
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
             <CardTitle className="text-sm">Latest risk assessment</CardTitle>
@@ -748,92 +818,201 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-sm">Analyst recommendation</CardTitle></CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          {pendingRecommendation ? (
-            <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">Awaiting review</div>
-              <div className="mt-1 font-medium capitalize">
-                {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+      {/*
+        ── One act per role — the "double-up" resolved ───────────────────
+        The recommendation is not a duplicate of the decision: it is the
+        ANALYST's half of a two-role workflow (the server stamps each
+        recommendation `actioned` by the decision that weighed it). The
+        double-up FEELING came from showing the form to an operator who can
+        decide — recommending to yourself is noise. So: the form renders
+        only for operators who cannot decide, as their own act in the same
+        choice-card language; a decision-maker sees anything waiting INSIDE
+        the decision card, beside the act it informs. History stays on the
+        audit trail, where records live.
+      */}
+      {canWrite && !canReview && (
+        <Card id="decision-step-recommendation" className="scroll-mt-24">
+          <CardHeader><CardTitle className="text-sm">Your recommendation</CardTitle></CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {pendingRecommendation ? (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                <div className="text-xs font-semibold uppercase text-muted-foreground">Awaiting the reviewer</div>
+                <div className="mt-1 font-medium capitalize">
+                  {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  Recorded {new Date(pendingRecommendation.created_at).toLocaleString()} — recording
+                  another replaces it as the one awaiting review.
+                </div>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                Recorded {new Date(pendingRecommendation.created_at).toLocaleString()}
-              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Your recommended outcome goes to the reviewer or MLRO beside their decision.
+              </p>
+            )}
+            <div role="radiogroup" aria-label="Recommended outcome" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {RECOMMENDATION_CHOICES.map((c) => (
+                <ChoiceCard
+                  key={c.value}
+                  selected={recOutcome === c.value}
+                  label={c.label}
+                  meaning={c.meaning}
+                  onSelect={() => setRecOutcome(c.value)}
+                />
+              ))}
             </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">
-              No recommendation awaiting review.
-              {recommendations.length > 0 && ` ${recommendations.length} previous recommendation${recommendations.length === 1 ? "" : "s"} on record.`}
-            </p>
-          )}
-          {canWrite && (
-            <div className="space-y-2 border-t border-border/50 pt-3">
-              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                  aria-label="Recommended outcome"
-                  value={recOutcome}
-                  onChange={(e) => setRecOutcome(e.target.value as typeof recOutcome)}
-                >
-                  {RECOMMENDATION_OUTCOMES.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-                <Button
-                  size="sm" variant="outline" className="sm:justify-self-start"
-                  disabled={busy || recRationale.trim().length < 10}
-                  onClick={recordRecommendation}
-                >
-                  Record recommendation
-                </Button>
-              </div>
-              <textarea
-                className="min-h-[64px] w-full rounded-md border border-input bg-background p-2 text-sm"
-                aria-label="Recommendation rationale"
-                placeholder="Rationale (required, minimum 10 characters) — what the reviewer needs to know."
-                value={recRationale}
-                onChange={(e) => setRecRationale(e.target.value)}
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            <textarea
+              className="min-h-[64px] w-full rounded-md border border-input bg-background p-2 text-sm"
+              aria-label="Recommendation rationale"
+              placeholder="Rationale (required, minimum 10 characters) — what the reviewer needs to know."
+              value={recRationale}
+              onChange={(e) => setRecRationale(e.target.value)}
+            />
+            {/* A silent disabled button reads as a broken one — the hint
+                names exactly what enables it. */}
+            {recRationaleHint && (
+              <p className="text-[11px] text-muted-foreground" aria-live="polite">{recRationaleHint}</p>
+            )}
+            <Button
+              size="sm"
+              disabled={busy || recRationale.trim().length < 10}
+              onClick={recordRecommendation}
+            >
+              Record recommendation — {RECOMMENDATION_CHOICES.find((c) => c.value === recOutcome)?.label}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-      <Card>
+      <Card id="decision-step-decision" className="scroll-mt-24">
         <CardHeader><CardTitle className="text-sm">Latest decision</CardTitle></CardHeader>
         <CardContent className="text-sm space-y-3">
+          {/* The recorded fact as one readable line, not a ledger of rows. */}
           {!latestDecision ? (
             <p className="text-muted-foreground">No decision recorded.</p>
           ) : (
-            <div>
-              <Row k="Outcome" v={latestDecision.outcome} />
-              <Row k="Decided" v={new Date(latestDecision.decided_at).toLocaleString()} />
-              {latestDecision.program_version && <Row k="Policy" v={latestDecision.program_version} />}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <Badge variant={latestDecision.outcome === "cleared" ? "default" : latestDecision.outcome === "blocked" ? "destructive" : "outline"}>
+                  {latestDecision.outcome.replace(/_/g, " ")}
+                </Badge>
+                <span className="text-xs text-muted-foreground">
+                  Decided {new Date(latestDecision.decided_at).toLocaleString()}
+                  {latestDecision.program_version ? ` · Policy ${latestDecision.program_version}` : ""}
+                </span>
+              </div>
               {latestDecision.rationale && (
-                <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
+                <div className="rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
               )}
             </div>
+          )}
+          {/*
+            ── The path to clearance, named BEFORE the click ──────────────
+            The decide op refused with "unresolved mandatory holds" while the
+            page showed a LOW rating, no holds and no open conditions — the
+            reasons existed only inside the 409, and the client discarded
+            them. This block reads the SAME server computation as the refusal
+            (clearance_readiness → clearanceBlockReasons), names each blocker
+            in words, and routes to the section that resolves it. Absent when
+            the reading is unavailable — a failed read is never a clean bill.
+          */}
+          {clearance !== null && !latestDecision && (
+            clearance.ready ? (
+              <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/5 p-2.5 text-xs text-success">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>Nothing stands between this case and clearance — the server will accept a cleared decision.</span>
+              </div>
+            ) : (
+              <div className="space-y-1.5 rounded-md border border-warning/40 bg-warning/5 p-2.5">
+                <p className="text-xs font-medium text-warning">
+                  {clearance.reasons.length === 1
+                    ? "One thing stands between this case and clearance:"
+                    : `${clearance.reasons.length} things stand between this case and clearance:`}
+                </p>
+                <ul className="space-y-1">
+                  {clearance.reasons.map((code) => {
+                    const view = describeClearanceReason(code);
+                    return (
+                      <li key={code} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span>
+                          {view.label}
+                          <span className="text-muted-foreground"> — {view.action}.</span>
+                        </span>
+                        {view.section && onOpenSection && (
+                          <Button
+                            size="sm" variant="outline" className="h-6 px-2 text-[11px]"
+                            onClick={() => onOpenSection(view.section!)}
+                          >
+                            Open
+                          </Button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="text-[11px] text-muted-foreground">
+                  Escalating or blocking is not gated by these — only clearance is.
+                </p>
+              </div>
+            )
           )}
           {canReview && (
             <div className="space-y-2 border-t border-border/50 pt-3">
               <div className="text-xs font-semibold uppercase text-muted-foreground">Record decision</div>
-              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                  aria-label="Decision outcome"
-                  value={decideOutcome}
-                  onChange={(e) => setDecideOutcome(e.target.value as typeof decideOutcome)}
-                >
-                  <option value="cleared">Clear</option>
-                  <option value="escalated">Escalate to MLRO</option>
-                  <option value="blocked">Block</option>
-                </select>
-                <Button size="sm" className="sm:justify-self-start" disabled={busy} onClick={recordDecision}>
-                  Record decision
-                </Button>
+              {/* The analyst's recommendation, beside the act it informs —
+                  not in a separate card the decider has to correlate. */}
+              {pendingRecommendation && (
+                <div className="rounded-md border border-primary/30 bg-primary/5 p-2.5">
+                  <div className="text-[11px] font-semibold uppercase text-muted-foreground">
+                    Analyst recommendation — awaiting your review
+                  </div>
+                  <div className="mt-0.5 text-sm font-medium capitalize">
+                    {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    Recorded {new Date(pendingRecommendation.created_at).toLocaleString()} · your decision
+                    marks it actioned.
+                  </p>
+                </div>
+              )}
+              {/*
+                The outcome is a CHOICE READ, not an enum picked: each option
+                says what it does before it is chosen, and the button names
+                the act it will record.
+              */}
+              <div role="radiogroup" aria-label="Decision outcome" className="grid gap-2 sm:grid-cols-3">
+                {DECISION_CHOICES.map((c) => (
+                  <ChoiceCard
+                    key={c.value}
+                    selected={decideOutcome === c.value}
+                    label={c.label}
+                    meaning={c.meaning}
+                    onSelect={() => setDecideOutcome(c.value)}
+                  />
+                ))}
               </div>
+              {/*
+                An escalation must say where it goes. The option read
+                "Escalate to MLRO" and the click just… recorded — no word on
+                who that is, what changes, or what happens next.
+              */}
+              {decideOutcome === "escalated" && (
+                <div className="space-y-1 rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs text-muted-foreground">
+                  <p>
+                    Escalating hands the final decision to the <span className="font-medium">Money
+                    Laundering Reporting Officer</span>: the case moves to <span className="font-medium">Decision
+                    pending</span>, this screen shows the decision as theirs to make, and only their
+                    cleared or blocked decision moves the case on.
+                  </p>
+                  <p className={hasAssignedMlro ? undefined : "text-warning"}>
+                    {hasAssignedMlro
+                      ? "An MLRO is assigned to this case and will find it waiting under their cases."
+                      : "No MLRO is assigned to this case yet — assign one on the case record so the escalation reaches somebody."}
+                  </p>
+                </div>
+              )}
               <textarea
                 className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
                 aria-label="Decision rationale"
@@ -841,73 +1020,40 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
                 value={decideRationale}
                 onChange={(e) => setDecideRationale(e.target.value)}
               />
-              <p className="text-[11px] text-muted-foreground">
-                Clearance is refused while mandatory holds or open conditions remain.
-              </p>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button size="sm" disabled={busy} onClick={recordDecision}>
+                  Record decision — {DECISION_CHOICES.find((c) => c.value === decideOutcome)?.label}
+                </Button>
+                <p className="text-[11px] text-muted-foreground">
+                  Clearance is refused while mandatory holds or open conditions remain.
+                </p>
+              </div>
             </div>
+          )}
+          {/* Hidden controls read as a missing feature; a named requirement
+              reads as a rule. */}
+          {!canReview && (
+            <p className="border-t border-border/50 pt-3 text-xs text-muted-foreground">
+              Recording the decision requires a reviewer or the MLRO. Record an analyst
+              recommendation above for them to weigh.
+            </p>
           )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-sm">Service gate</CardTitle></CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          {gate ? (
-            <div>
-              <Row k="Status" v={GATE_OPTION_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")} />
-              <Row k="Effective" v={gate.effective_at ? new Date(gate.effective_at).toLocaleString() : "—"} />
-              {gate.policy_version && <Row k="Policy" v={gate.policy_version} />}
-              {gate.reason && <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{gate.reason}</div>}
-              {gate.conditions.length > 0 && (
-                <div className="mt-2">
-                  <div className="text-[11px] text-muted-foreground">Attached conditions</div>
-                  <ul className="mt-0.5 space-y-0.5 text-xs">
-                    {gate.conditions.map((c, i) => <li key={c.id ?? i}>• {c.label}</li>)}
-                  </ul>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-muted-foreground">Gate state unavailable.</p>
-          )}
-          {canReview && (
-            <div className="space-y-2 border-t border-border/50 pt-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">Change service gate</div>
-              <p className="text-[11px] text-muted-foreground">
-                The gate controls service entitlement separately from case stage and risk.
-                Approval requires a recorded cleared decision; approval with controls requires
-                open conditions documenting those controls.
-              </p>
-              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
-                <select
-                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
-                  aria-label="New service-gate status"
-                  value={gateStatus}
-                  onChange={(e) => setGateStatus(e.target.value)}
-                >
-                  {Object.entries(GATE_OPTION_LABELS)
-                    .filter(([k]) => (isMlro ? true : k !== "locked" && k !== "terminated"))
-                    .map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-                </select>
-                <Button
-                  size="sm" variant="outline" className="sm:justify-self-start"
-                  disabled={busy || gateReason.trim().length < 10}
-                  onClick={applyGate}
-                >
-                  Apply gate change
-                </Button>
-              </div>
-              <textarea
-                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
-                aria-label="Gate change reason"
-                placeholder="Reason (required, minimum 10 characters) — recorded on the gate decision and audit trail."
-                value={gateReason}
-                onChange={(e) => setGateReason(e.target.value)}
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* The Decision stage's full gate card — the one place every gate
+          status can be recorded; approval doors forward to Stage 9. */}
+      <ServiceGateCard
+        caseId={caseId}
+        gate={gate}
+        decisionOutcome={latestDecision?.outcome ?? null}
+        openConditionCount={openConditionCount}
+        canReview={canReview}
+        isMlro={isMlro}
+        onChanged={async () => { await load(); onChanged(); }}
+        onOpenSection={onOpenSection}
+        anchorId="decision-step-gate"
+      />
     </div>
   );
 }

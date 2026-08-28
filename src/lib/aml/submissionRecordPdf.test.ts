@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { buildSubmissionRecord, type SubmissionRecordInput } from "./submissionRecord";
 import { generateSubmissionRecordPdf, submissionRecordPdfFilename } from "./submissionRecordPdf";
+import { resolveRecordBrand, type RecordBrand } from "./submissionRecordBrand";
 
 /**
  * The PDF is a PRESENTATION of the record structure, never a second source —
@@ -107,5 +109,40 @@ describe("the record renders as a real PDF", () => {
 describe("the filename is the record's own rule, extension swapped", () => {
   it("swaps .html for .pdf and changes nothing else", () => {
     expect(submissionRecordPdfFilename(record())).toBe("AML-2026-00005-submission-v1-record.pdf");
+  });
+});
+
+describe("the branded document", () => {
+  // The real fallback identity, from the real resolver — the render under
+  // test is exactly the one an unbranded workspace produces.
+  const testBrand = (over: Partial<RecordBrand> = {}): RecordBrand => ({
+    ...resolveRecordBrand({ companyName: "", brandColor: null }),
+    ...over,
+  });
+
+  it("renders both audiences under a brand as parseable documents", async () => {
+    const { PDFDocument } = await import("pdf-lib");
+    // The real Aurixa delta emblem, embedded from its real bytes — the
+    // addImage path runs against the actual asset, not a stub.
+    const emblem = "data:image/png;base64,"
+      + readFileSync(join(__dirname, "../../../public/brand/aurixa-emblem-240.png")).toString("base64");
+    for (const audience of ["internal", "client"] as const) {
+      const rec = buildSubmissionRecord(input(), {
+        generatedAt: "2026-08-26T03:48:00Z", generatedBy: "a.reviewer@npcservices.com.au", audience,
+      });
+      const bytes = await blobBytes(await generateSubmissionRecordPdf(rec, testBrand({ logoDataUrl: emblem })));
+      const parsed = await PDFDocument.load(bytes);
+      expect(parsed.getPageCount()).toBeGreaterThanOrEqual(1);
+      if (process.env.RECORD_PDF_OUT) {
+        writeFileSync(process.env.RECORD_PDF_OUT.replace(/\.pdf$/, `-${audience}-branded.pdf`), bytes);
+      }
+    }
+  });
+
+  it("an undrawable logo degrades to the wordmark instead of failing the download", async () => {
+    const rec = record();
+    const bytes = await blobBytes(await generateSubmissionRecordPdf(
+      rec, testBrand({ logoDataUrl: "data:image/png;base64,not-actually-a-png" })));
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe("%PDF-");
   });
 });

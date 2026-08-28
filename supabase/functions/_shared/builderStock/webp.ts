@@ -22,11 +22,18 @@
  * a different picture, and a frame budget is a way for a crafted file to spend
  * a worker's wall clock.
  *
- * ALPHA IS COMPOSITED ONTO WHITE, not decoded. The `ALPH` chunk beside a lossy
- * frame is its own compressed plane; a transparent WebP is almost always a logo
- * or a cut-out on a light page, so treating it as opaque is closer to what a
- * reader sees than inventing a black background would be — and the classifier
- * measures shapes and flat regions, neither of which alpha creates.
+ * ALPHA DIVERGES BETWEEN THE TWO BITSTREAMS, AND HONESTLY SO. The LOSSLESS
+ * path decodes its alpha and composites it onto white (`webpLossless.ts`).
+ * The LOSSY path does NOT: the `ALPH` chunk beside a VP8 frame is its own
+ * independently-compressed plane, it is never read, and the pixels used are
+ * whatever the VP8 stream stored under the transparency — this docstring
+ * used to claim white compositing for both, which was true of neither the
+ * code nor the pixels. A transparent lossy WebP is rare in anything a
+ * builder publishes; when one arrives, its background decodes as the
+ * encoder's understorey (commonly black), the same failure the PNG path had
+ * until its alpha was composited — and decoding ALPH (a filtered,
+ * optionally VP8L-compressed second plane) is a project, not a patch. Known,
+ * disclosed, and deliberately not guessed at.
  */
 import { decodeVp8l, type WebpRaster } from './webpLossless.ts';
 import { decodeVp8 } from './webpLossy.ts';

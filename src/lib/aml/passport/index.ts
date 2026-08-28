@@ -75,17 +75,21 @@ export {
 } from '../../../../supabase/functions/_shared/aml/passport/passportIdv.pure';
 
 export {
+  BOOKLET_ZOOM_STEPS,
   LEAF_H,
   LEAF_W,
   bookletCover,
   bookletGeometry,
   bookletLabel,
   bookletSpreads,
+  bookletZoom,
   buildBooklet,
+  nextBookletZoom,
   type BookletGeometry,
   type BookletBlock,
   type BookletPage,
   type BookletTone,
+  type BookletZoom,
 } from '../../../../supabase/functions/_shared/aml/passport/passportBooklet.pure';
 
 export {

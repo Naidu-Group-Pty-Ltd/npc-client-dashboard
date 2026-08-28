@@ -32,6 +32,15 @@ export function cropRows(
  * Filter type 0 on every scanline: no prediction, so the bytes in the file are
  * the bytes that came in. CMYK has no PNG colour type and is refused rather
  * than converted — a colour conversion is a change to the builder's pixels.
+ *
+ * DELIBERATELY UNTAGGED: no iCCP, no sRGB, no gAMA, no eXIf. Every raster in
+ * this pipeline is decoded without colour management and measured, repaired
+ * and re-encoded as the same untagged bytes, so the derivative is treated as
+ * sRGB end-to-end exactly as its measurement was. A wide-gamut original will
+ * render marginally differently as an untagged derivative than as its tagged
+ * self — a uniform saturation shift, no geometry, no threshold moved — and
+ * writing a profile here without honouring profiles at decode would claim a
+ * fidelity the pipeline does not have.
  */
 export async function encodePng(
   pixels: Uint8Array,

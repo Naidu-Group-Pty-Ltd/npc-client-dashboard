@@ -67,7 +67,10 @@ import {
   CLEARANCE_KEY, SANITIZATION_VERSION, type SanitizationClearance, type SanitizationFailure,
   type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
-import { readRepairRegion, type RepairRegionBox } from './repairRegion.pure.ts';
+import {
+  oversizedRepairRegionShare, readRepairRegion, MAX_REPAIRED_SHARE,
+  type RepairRegionBox,
+} from './repairRegion.pure.ts';
 import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
@@ -240,21 +243,133 @@ export async function settleImageSanitization(
    * key cannot settle a row, cannot blank a card and cannot survive a version
    * bump into meaning anything. It records only that we tried and could not
    * look, and it expires.
+   *
+   * AND IT IS NOW ALSO THE CLAIM. Nothing here ran under a lock, and nothing
+   * needed to until there was more than one caller: the cron tick, the
+   * portal's enrichment loop and a manual dispatch can all scan the same
+   * organisation in the same minute, and each would have built the same
+   * shortlist and spent its own allowance on the same rows — the expensive
+   * work doubled (a full decode, up to four model calls billed to a real
+   * vendor account) and two whole-column `source_detail` writes racing at the
+   * end. So the stamp is written as a COMPARE-AND-SET: the update carries a
+   * filter on the stamp this scan read (`->>at` equals what we saw, or is
+   * absent), and `RETURNING id` says whether it applied. An invocation whose
+   * filter matches nothing lost the row to another one — it does no download,
+   * no decode, no model call, writes nothing and records nothing, because
+   * "somebody else is repairing this" is not a fault and not an outcome: the
+   * row stays outstanding, the loser's sweep stays incomplete, and the next
+   * tick reads the answer the winner settled.
+   *
+   * The cooldown doubles as the lease: a claim whose holder died is a stamp
+   * that ages past `OPERATIONAL_RETRY_AFTER_MS`, after which the next claim
+   * compares against the stale stamp's own value and takes the row over. An
+   * orphaned claim therefore costs one cooldown window — exactly what an
+   * operational failure already cost.
+   *
+   * THE FILTER IS COMPOSED BY THE CLIENT, NEVER AS A STRING. The screening
+   * consumer's claim is the precedent and the warning: an interpolated
+   * `.or()` filter never parsed on the server while its test double accepted
+   * it, so that claim had never once succeeded. This one is `.eq()`/`.is()`
+   * on one JSON path, and the test doubles resolve that path against the row
+   * the way the server resolves it against the column.
    */
-  const noteOperationalFailure = async (row: ImageRow): Promise<void> => {
-    outcome.unresolved += 1;
+  const claimAttempt = async (
+    row: ImageRow, scanDetail: Record<string, unknown>,
+  ): Promise<Record<string, unknown> | null> => {
+    const stamp = { at: new Date().toISOString(), operational: true };
     try {
-      await db.from('builder_stock_item_images')
+      const raw = scanDetail[ATTEMPT_KEY];
+      const priorAt = raw && typeof raw === 'object'
+        && typeof (raw as { at?: unknown }).at === 'string'
+        ? (raw as { at: string }).at
+        : null;
+      let update = db.from('builder_stock_item_images')
         .update({
-          source_detail: {
-            ...(row.source_detail ?? {}),
-            [ATTEMPT_KEY]: { at: new Date().toISOString(), operational: true },
-          },
+          source_detail: { ...scanDetail, [ATTEMPT_KEY]: stamp },
         })
         .eq('id', row.id);
-    } catch {
-      /* Recording the attempt is an optimisation; failing to is not a fault. */
+      update = priorAt === null
+        ? update.is(`source_detail->${ATTEMPT_KEY}->>at`, null)
+        : update.eq(`source_detail->${ATTEMPT_KEY}->>at`, priorAt);
+      const { data: won, error } = await update.select('id').maybeSingle();
+      /*
+       * A REFUSED STAMP IS NOT A NON-EVENT, and it used to be an invisible
+       * one: the returned `error` was never read, so a policy change, a
+       * constraint or a PostgREST fault took the cooldown away silently and
+       * the settler went back to spending every tick on the same row with
+       * nothing anywhere saying why. It says so — and now it also declines
+       * the row: a repair that proceeded without the stamp would also be
+       * proceeding without the claim, which is the race this exists to close.
+       * The row stays outstanding and visible; the next tick tries again.
+       */
+      if (error) {
+        console.warn('[builderStock] the repair attempt stamp was not recorded', {
+          image_id: row.id,
+          phase: 'image_sanitization',
+          detail: String((error as { message?: unknown }).message ?? error).slice(0, 200),
+        });
+        return null;
+      }
+      // No row back and no error: the compare-and-set matched nothing, so
+      // another invocation holds this row. Silent by design — a lost race is
+      // ordinary operation, not something to warn about every tick.
+      if (!won) return null;
+      return stamp;
+    } catch (error) {
+      console.warn('[builderStock] the repair attempt stamp was not recorded', {
+        image_id: row.id,
+        phase: 'image_sanitization',
+        detail: String(error).slice(0, 200),
+      });
+      return null;
     }
+  };
+
+  /**
+   * Write the keys that settle a row, onto the row AS IT STANDS NOW.
+   *
+   * Every settling write used to rebuild the whole column from the snapshot
+   * the scan read, which was taken before this repair stamped its attempt —
+   * so settling put the pre-stamp column back and the cooldown died inside
+   * the tick that created it. Harmless while the row then counted as settled;
+   * the original starvation again the moment it could not, because a row that
+   * cannot satisfy `sanitizationSettled` came back as the oldest waiter on the
+   * very next tick, for ever, one model call each time.
+   *
+   * Re-reading first is what makes this safe against the other direction too:
+   * an overlapping invocation that stamped the row while this repair was in
+   * flight keeps its stamp, rather than being rewound to an older one. The
+   * caller's own detail is the fallback for a read that fails, and it now
+   * carries the stamp, so neither path can erase it.
+   */
+  const settleWrite = async (
+    row: ImageRow,
+    fallbackDetail: Record<string, unknown>,
+    settlingKeys: Record<string, unknown>,
+  ): Promise<{ error: unknown }> => {
+    let base = fallbackDetail;
+    try {
+      const { data, error } = await db.from('builder_stock_item_images')
+        .select('source_detail').eq('id', row.id).limit(1);
+      const current = (data as Array<{ source_detail?: Record<string, unknown> | null }> | null)
+        ?.[0]?.source_detail;
+      if (!error && current && typeof current === 'object') base = current;
+    } catch {
+      /* The fallback already carries everything this repair knows. */
+    }
+    return await db.from('builder_stock_item_images')
+      .update({ source_detail: { ...base, ...settlingKeys } })
+      .eq('id', row.id);
+  };
+
+  /*
+   * The attempt was stamped before the work began, so there is nothing to
+   * record here. Finishing badly is not a second attempt: the stamp this used
+   * to write bought no extra cooldown and widened the window in which a
+   * concurrent write could be reverted.
+   */
+  const noteOperationalFailure = (): void => {
+    outcome.unresolved += 1;
   };
 
   /** True while a recent operational attempt says to spend the tick elsewhere. */
@@ -273,9 +388,44 @@ export async function settleImageSanitization(
    */
   const repairOne = async (
     row: ImageRow & { storage_path: string },
-    detail: Record<string, unknown>,
-    region: RepairRegionBox | null,
+    scanDetail: Record<string, unknown>,
+    region: RepairRegionBox[] | null,
+    /*
+     * THE ATTEMPT WAS STAMPED — AS THE CLAIM — BEFORE THE WORK BEGAN, in the
+     * spend loop, because the worst way a repair ends is one this function
+     * never sees. A tick that exceeds its CPU allowance mid-repair is killed
+     * by the runtime — no result, no catch, no write — and before the stamp
+     * moved ahead of the work, the row it died on kept its old attempt stamp,
+     * stayed the longest waiter, and was picked again by every subsequent
+     * tick: the same 546 forever, one worker call spent each time, and every
+     * row queued behind it starved. Production found the case the day the
+     * generative route went live: Lot 914 Covella's persisted-region repair
+     * is a five-megabyte PDF-page crop whose full-frame composite and
+     * re-encode alone outrun the allowance, and three consecutive ticks died
+     * on it before anything else was reached. Stamped first, a death
+     * mid-repair leaves the cooldown — and the claim — behind it, so the next
+     * tick spends the allowance on a DIFFERENT row and the oversized one is
+     * retried at the cooldown's pace instead of every tick.
+     *
+     * ONE STAMP PER ATTEMPT, AND IT OUTLIVES THE OUTCOME. Every path that
+     * finishes settles BESIDE this stamp rather than over it — see
+     * `settleWrite`, which was the second half of this defect: a settling
+     * write built from the scan's pre-stamp snapshot put the cooldown back to
+     * absent, and a row that could not then count as settled was the oldest
+     * waiter again on the very next tick. The stamp still cannot settle a
+     * row, blank a card, or outlive its meaning.
+     */
+    attempt: Record<string, unknown>,
   ): Promise<void> => {
+    /*
+     * Everything below settles onto THIS object, which carries the stamp — so
+     * a settling write can no longer put a pre-stamp column back on the row.
+     * `settleWrite` re-reads the live column as well; this is the fallback for
+     * a read that fails, and the two together are what make the cooldown
+     * survive every outcome.
+     */
+    const detail = { ...scanDetail, [ATTEMPT_KEY]: attempt };
+
     const bucket = row.storage_bucket || STOCK_IMAGE_BUCKET;
     const { data: blob, error: downloadError } = await db.storage
       .from(bucket).download(row.storage_path);
@@ -334,7 +484,7 @@ export async function settleImageSanitization(
           phase: 'image_sanitization',
           detail: String(result.detail ?? '').slice(0, 200),
         });
-        await noteOperationalFailure(row);
+        noteOperationalFailure();
         return;
       }
 
@@ -373,9 +523,9 @@ export async function settleImageSanitization(
           },
           cleared_at: new Date().toISOString(),
         };
-        const { error: clearError } = await db.from('builder_stock_item_images')
-          .update({ source_detail: { ...detail, ...clearanceDetail(clearance) } })
-          .eq('id', row.id);
+        const { error: clearError } = await settleWrite(
+          row, detail, clearanceDetail(clearance),
+        );
         if (clearError) {
           outcome.unresolved += 1;
           return;
@@ -391,7 +541,7 @@ export async function settleImageSanitization(
        * a refusal would park it until the next version bump.
        */
       if (result.operational) {
-        await noteOperationalFailure(row);
+        noteOperationalFailure();
         return;
       }
 
@@ -439,9 +589,9 @@ export async function settleImageSanitization(
         failed_at: new Date().toISOString(),
         rejected_path: rejectedPath,
       };
-      const { error: writeError } = await db.from('builder_stock_item_images')
-        .update({ source_detail: { ...detail, ...failureDetail(failure) } })
-        .eq('id', row.id);
+      const { error: writeError } = await settleWrite(
+        row, detail, failureDetail(failure),
+      );
       if (writeError) {
         outcome.unresolved += 1;
         return;
@@ -483,9 +633,9 @@ export async function settleImageSanitization(
       classifier_state: result.classifierState,
     };
 
-    const { error: recordError } = await db.from('builder_stock_item_images')
-      .update({ source_detail: { ...detail, ...derivativeDetail(derivative) } })
-      .eq('id', row.id);
+    const { error: recordError } = await settleWrite(
+      row, detail, derivativeDetail(derivative),
+    );
     if (recordError) {
       // The bytes are in the bucket and the record is not, so nothing will
       // serve them. Unresolved: the next pass remakes and re-records, and
@@ -527,7 +677,7 @@ export async function settleImageSanitization(
   const shortlist: Array<{
     row: ImageRow & { storage_path: string };
     detail: Record<string, unknown>;
-    region: RepairRegionBox | null;
+    region: RepairRegionBox[] | null;
     waitingSince: number;
   }> = [];
   /** Same truthiness test the loop always used, expressed so it narrows `row`. */
@@ -536,7 +686,7 @@ export async function settleImageSanitization(
   const consider = (
     row: ImageRow & { storage_path: string },
     detail: Record<string, unknown>,
-    region: RepairRegionBox | null,
+    region: RepairRegionBox[] | null,
   ): void => {
     if (slots <= 0) return;
     const waitingSince = attemptedAt(detail);
@@ -599,6 +749,22 @@ export async function settleImageSanitization(
        * origin test, which is the same one a derivative gets.
        */
       const region = readRepairRegion(detail, storedOriginalSha(detail));
+      /*
+       * A rectangle somebody recorded against these exact bytes and the area
+       * ceiling refused. `readRepairRegion` fails closed, which makes it
+       * indistinguishable from no rectangle at all — so say it once, because
+       * whoever wrote it down is owed an answer other than silence.
+       */
+      const oversized = region ? null : oversizedRepairRegionShare(
+        detail, storedOriginalSha(detail));
+      if (oversized !== null) {
+        console.warn('[builderStock] a recorded repair region asks for too much of the picture', {
+          image_id: row.id,
+          phase: 'image_sanitization',
+          detail: `region covers ${(oversized * 100).toFixed(1)}% of the frame; the ceiling `
+            + `is ${(MAX_REPAIRED_SHARE * 100).toFixed(0)}%`,
+        });
+      }
 
       /*
        * ONLY A PICTURE THE GATE CONVICTED — OR ONE CARRYING A REGION.
@@ -694,8 +860,19 @@ export async function settleImageSanitization(
   for (const candidate of shortlist) {
     if (budget.remaining <= 0) break;
     if (options.deadlineAt && Date.now() > options.deadlineAt) break;
+    /*
+     * THE CLAIM COMES BEFORE THE SPEND. A lost claim is another invocation
+     * already doing this exact work, so this one moves on with its allowance
+     * intact — nothing expensive has happened, one filtered UPDATE is all a
+     * lost race costs, and the shortlist bounds how many can be attempted.
+     * The allowance still may not grow: `MAX_REPAIRS_PER_RUN` bounds the
+     * repairs a tick performs exactly as before; what a lost claim frees is
+     * spent on the tick's OTHER work, never on a third attempt here.
+     */
+    const attempt = await claimAttempt(candidate.row, candidate.detail);
+    if (!attempt) continue;
     budget.remaining -= 1;
-    await repairOne(candidate.row, candidate.detail, candidate.region);
+    await repairOne(candidate.row, candidate.detail, candidate.region, attempt);
   }
 
   /*

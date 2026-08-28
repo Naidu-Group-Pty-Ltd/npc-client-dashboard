@@ -179,6 +179,7 @@ async function decodePng(bytes: Uint8Array): Promise<DecodedRaster | null> {
   let colour = 0;
   let interlace = 0;
   let palette: Uint8Array | null = null;
+  let transparency: Uint8Array | null = null;
   const idat: Uint8Array[] = [];
 
   while (offset + 8 <= bytes.length) {
@@ -196,6 +197,12 @@ async function decodePng(bytes: Uint8Array): Promise<DecodedRaster | null> {
       interlace = bytes[body + 12];
     } else if (type === 'PLTE') {
       palette = bytes.slice(body, body + length);
+    } else if (type === 'tRNS') {
+      // Palette transparency: one alpha byte per palette entry. (For the
+      // greyscale/truecolour forms tRNS names a single transparent COLOUR —
+      // rare in anything a builder publishes, and ignoring it errs toward
+      // showing the pixel's own value rather than inventing one.)
+      transparency = bytes.slice(body, body + length);
     } else if (type === 'IDAT') {
       idat.push(bytes.slice(body, body + length));
     } else if (type === 'IEND') {
@@ -290,14 +297,38 @@ async function decodePng(bytes: Uint8Array): Promise<DecodedRaster | null> {
     }
   }
 
+  /*
+   * ALPHA IS COMPOSITED ONTO WHITE, never dropped. The alpha sample used to
+   * be read for its stride and then ignored, so a transparent background —
+   * which most encoders store over black — decoded as a large flat BLACK
+   * region: exactly the substrate the flat-colour detector convicts, on a
+   * picture whose browser rendering (over the page) never showed it. White,
+   * because white is what the marketplace card and the portal page paint
+   * behind an image, and because it is what the WebP lossless path already
+   * composites onto — one concept, one answer, whatever the container.
+   */
+  const over = (value: number, alpha: number): number =>
+    alpha >= 255 ? value : Math.round((value * alpha + 255 * (255 - alpha)) / 255);
+
   const read = (x: number, y: number): [number, number, number] => {
     const at = y * rowBytes + x * bpp;
     const s = (index: number) => image[at + index * sampleBytes];
     if (colour === 3) {
-      const entry = s(0) * 3;
-      return [palette![entry], palette![entry + 1], palette![entry + 2]];
+      const index = s(0);
+      const entry = index * 3;
+      const alpha = transparency && index < transparency.length ? transparency[index] : 255;
+      return [
+        over(palette![entry], alpha),
+        over(palette![entry + 1], alpha),
+        over(palette![entry + 2], alpha),
+      ];
     }
-    if (colour === 0 || colour === 4) { const g = s(0); return [g, g, g]; }
+    if (colour === 0) { const g = s(0); return [g, g, g]; }
+    if (colour === 4) { const g = over(s(0), s(1)); return [g, g, g]; }
+    if (colour === 6) {
+      const alpha = s(3);
+      return [over(s(0), alpha), over(s(1), alpha), over(s(2), alpha)];
+    }
     return [s(0), s(1), s(2)];
   };
 
@@ -385,6 +416,75 @@ interface JpegComponent {
  * from the coefficients every scan contributed to. That is also the only way
  * progressive CAN be decoded: its scans each carry a slice of the same blocks.
  */
+/**
+ * The stored raster, turned the way the camera said to display it.
+ *
+ * A phone photograph is usually stored sideways with an EXIF orientation tag,
+ * and every browser honours the tag — so the builder's ORIGINAL renders
+ * upright while a derivative made from the stored pixels rendered rotated,
+ * on the same grid. The classifier and the repair are internally consistent
+ * either way (both read the same raster); what the tag changes is which
+ * pixels a DERIVATIVE carries, because a derivative is served as its own
+ * PNG with no EXIF to correct it. So the decode itself is oriented, once,
+ * for measurement and repair alike.
+ */
+function orientRaster(raster: DecodedRaster, orientation: number): DecodedRaster {
+  const { width, height, read } = raster;
+  switch (orientation) {
+    case 2: return { width, height, read: (x, y) => read(width - 1 - x, y) };
+    case 3: return { width, height, read: (x, y) => read(width - 1 - x, height - 1 - y) };
+    case 4: return { width, height, read: (x, y) => read(x, height - 1 - y) };
+    case 5: return { width: height, height: width, read: (x, y) => read(y, x) };
+    case 6: return { width: height, height: width, read: (x, y) => read(y, height - 1 - x) };
+    case 7: return {
+      width: height, height: width,
+      read: (x, y) => read(width - 1 - y, height - 1 - x),
+    };
+    case 8: return { width: height, height: width, read: (x, y) => read(width - 1 - y, x) };
+    default: return raster;
+  }
+}
+
+/**
+ * The EXIF orientation out of an APP1 segment, or 1 when it carries none.
+ *
+ * Only the one tag is read: a six-byte Exif marker, the TIFF byte order, and
+ * a walk of IFD0's entries for tag 0x0112. Anything malformed reads as 1 —
+ * an unreadable orientation is an image displayed as stored, which is what
+ * every decode here did before this existed.
+ */
+function exifOrientation(bytes: Uint8Array, body: number, length: number): number {
+  const end = body + length - 2;
+  if (body + 14 > end) return 1;
+  // 'Exif\0\0'
+  if (bytes[body] !== 0x45 || bytes[body + 1] !== 0x78 || bytes[body + 2] !== 0x69
+    || bytes[body + 3] !== 0x66 || bytes[body + 4] !== 0 || bytes[body + 5] !== 0) {
+    return 1;
+  }
+  const tiff = body + 6;
+  const little = bytes[tiff] === 0x49 && bytes[tiff + 1] === 0x49;
+  const big = bytes[tiff] === 0x4d && bytes[tiff + 1] === 0x4d;
+  if (!little && !big) return 1;
+  const u16 = (at: number) => little
+    ? bytes[at] | (bytes[at + 1] << 8)
+    : (bytes[at] << 8) | bytes[at + 1];
+  const u32 = (at: number) => little
+    ? (bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16) | (bytes[at + 3] << 24)) >>> 0
+    : ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 2] << 8) | bytes[at + 3]) >>> 0;
+  if (u16(tiff + 2) !== 42) return 1;
+  const ifd = tiff + u32(tiff + 4);
+  if (ifd + 2 > end) return 1;
+  const entries = u16(ifd);
+  for (let i = 0; i < entries; i++) {
+    const entry = ifd + 2 + i * 12;
+    if (entry + 12 > end) return 1;
+    if (u16(entry) !== 0x0112) continue;
+    const value = u16(entry + 8);
+    return value >= 1 && value <= 8 ? value : 1;
+  }
+  return 1;
+}
+
 function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
   const dcTables: Record<number, HuffTable> = {};
   const acTables: Record<number, HuffTable> = {};
@@ -395,6 +495,8 @@ function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
     components: JpegComponent[];
   } | null = null;
   let restartInterval = 0;
+  // 0 = not yet read; 1..8 once an APP1 answered (1 = display as stored).
+  let orientation = 0;
 
   let offset = 2;
   while (offset + 3 < bytes.length) {
@@ -477,6 +579,10 @@ function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
       }
     } else if (marker === 0xdd) {
       restartInterval = (bytes[body] << 8) | bytes[body + 1];
+    } else if (marker === 0xe1) {
+      // APP1 — EXIF, when it is. The first orientation wins; a later APP1
+      // (XMP shares the marker) never overrides a tag already read.
+      if (orientation === 0) orientation = exifOrientation(bytes, body, length);
     } else if (marker === 0xda) {
       if (!frame) return null;
       const count = bytes[body];
@@ -508,7 +614,9 @@ function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
   }
 
   if (!frame) return null;
-  return reconstruct(frame, quantisers);
+  const raster = reconstruct(frame, quantisers);
+  if (!raster) return null;
+  return orientation > 1 ? orientRaster(raster, orientation) : raster;
 }
 
 /**
@@ -848,10 +956,19 @@ async function decodeGif(bytes: Uint8Array): Promise<DecodedRaster | null> {
   }
 
   // Walk the blocks until the first image descriptor.
+  let transparentIndex = -1;
   while (offset < bytes.length) {
     const introducer = bytes[offset];
     if (introducer === 0x3b) return null;            // trailer: no frame
-    if (introducer === 0x21) {                        // an extension: skip it
+    if (introducer === 0x21) {                        // an extension
+      // The Graphic Control Extension carries the frame's transparency: a
+      // flag and the palette index that means "show what is behind me". It
+      // used to be skipped with the rest, so a transparent background drew
+      // as whatever colour its index happened to name.
+      if (bytes[offset + 1] === 0xf9 && bytes[offset + 2] >= 4
+        && offset + 6 < bytes.length && (bytes[offset + 3] & 0x01)) {
+        transparentIndex = bytes[offset + 6];
+      }
       offset += 2;
       while (offset < bytes.length && bytes[offset] !== 0) offset += bytes[offset] + 1;
       offset += 1;
@@ -892,8 +1009,11 @@ async function decodeGif(bytes: Uint8Array): Promise<DecodedRaster | null> {
     const indices = lzwDecode(data, minimumCodeSize, frameWidth * frameHeight);
     if (!indices) return null;
 
-    // The frame may be smaller than the screen, and may be interlaced.
-    const canvas = new Uint8Array(screenWidth * screenHeight * 3);
+    // The frame may be smaller than the screen, and may be interlaced. The
+    // canvas is WHITE, and a transparent pixel stays white — the same answer
+    // alpha gets in every other container here: what shows through a
+    // transparent picture is the page it sits on, and the page is white.
+    const canvas = new Uint8Array(screenWidth * screenHeight * 3).fill(255);
     const rows = flags & 0x40
       ? interlacedRowOrder(frameHeight)
       : Array.from({ length: frameHeight }, (_, i) => i);
@@ -903,7 +1023,9 @@ async function decodeGif(bytes: Uint8Array): Promise<DecodedRaster | null> {
       for (let x = 0; x < frameWidth; x++) {
         const px = left + x;
         if (px < 0 || px >= screenWidth) continue;
-        const entry = indices[source * frameWidth + x] * 3;
+        const index = indices[source * frameWidth + x];
+        if (index === transparentIndex) continue;
+        const entry = index * 3;
         const to = (y * screenWidth + px) * 3;
         canvas[to] = palette[entry] ?? 0;
         canvas[to + 1] = palette[entry + 1] ?? 0;

@@ -61,6 +61,15 @@ export interface ImportOutcome {
    * rather than leaving a reader to infer it from an empty frame later.
    */
   withSourceImage: number;
+  /**
+   * IMAGERY THIS IMPORT DELIBERATELY LEFT FOR THE ENRICHMENT PASS.
+   *
+   * The properties are saved either way; this says only that their pictures
+   * are not all attached yet, so the caller keeps the upload's settlement
+   * markers open and the browser's existing loop finishes the job. See
+   * `IMAGE_BUDGET_MS`.
+   */
+  imageryOutstanding: boolean;
 }
 
 interface ExistingItem {
@@ -160,6 +169,42 @@ async function buildInventoryIndex(db: any, organisationId: string): Promise<{
   return { projectByName, unitByProjectAndNumber };
 }
 
+/**
+ * HOW LONG AN IMPORT MAY SPEND ATTACHING PICTURES.
+ *
+ * MEASURED IN PRODUCTION, AND IT IS THE DEFECT THIS CONSTANT EXISTS FOR. This
+ * function's own comment further down says "The page enriches next. Images
+ * never block the import." That was the intent and it was not true: every
+ * stored image is downloaded here, hashed three times and put through
+ * `eligibilityDetailFor`, which decodes a thumbnail and runs the marketing
+ * overlay classifier. On 27 Aug 2026 a 23-row Notion stock list did that
+ * inline and the worker was killed on its RESOURCE limit ~16s in — twice, on
+ * consecutive attempts.
+ *
+ * A KILLED WORKER IS THE WORST WAY FOR THIS TO FAIL. It emits no body and no
+ * CORS headers, so the browser's fetch REJECTS rather than reading a status:
+ * the portal showed "Failed to fetch" while the server had already committed
+ * the upload and every property in it. The user is told the import failed by
+ * the one path that cannot tell them anything else.
+ *
+ * So the image phase is BUDGETED and the records are not. Properties are
+ * cheap and are always saved in full; pictures are expensive, are attached
+ * while there is room, and whatever is left is reported as outstanding —
+ * which is a state this system already knows how to finish, because
+ * `enrich_images` settles exactly this and `repairSourceImagesForUpload`
+ * re-reads the source (including re-fetching a Notion page for its row
+ * covers) to do it.
+ */
+const IMAGE_BUDGET_MS = 8_000;
+
+/**
+ * And a ceiling on the COUNT, because the limit that killed the worker is CPU
+ * rather than wall clock and a deadline only measures the latter. Each stored
+ * image is a decode plus a classifier pass; twenty of them is the most one
+ * request may take on. The rest are outstanding, not lost.
+ */
+const MAX_IMAGES_PER_IMPORT = 20;
+
 export async function importStockRecords(
   db: any,
   input: {
@@ -170,6 +215,11 @@ export async function importStockRecords(
     media: ExtractedMedia[];
     /** Imagery the source published against one of its own rows. */
     rowAssets?: AnchoredAssets[];
+    /**
+     * When the image phase must stop. Defaults to `IMAGE_BUDGET_MS` from now.
+     * The records are never subject to it — see that constant.
+     */
+    imageDeadlineAt?: number;
     /**
      * The document's prose, one entry per page, for a format that paginates.
      * A PDF's properties are read out of prose and carry no anchor of their
@@ -198,6 +248,24 @@ export async function importStockRecords(
   const outcome: ImportOutcome = {
     detected: 0, imported: 0, updated: 0, failed: 0, itemIds: [], failures: [],
     withSourceImage: 0,
+    imageryOutstanding: false,
+  };
+
+  /**
+   * The image phase's allowance, spent by every step that stores a picture.
+   *
+   * `room()` is asked BEFORE each expensive step rather than after it, so the
+   * step that would exceed the budget is the one that does not run. Anything
+   * it declines is recorded as outstanding rather than dropped.
+   */
+  const imageDeadlineAt = (input.imageDeadlineAt ?? Date.now() + IMAGE_BUDGET_MS);
+  let imagesStored = 0;
+  const room = (): boolean => {
+    if (Date.now() > imageDeadlineAt || imagesStored >= MAX_IMAGES_PER_IMPORT) {
+      outcome.imageryOutstanding = true;
+      return false;
+    }
+    return true;
   };
 
   /**
@@ -347,7 +415,8 @@ export async function importStockRecords(
        * `sourceImages.ts` — so the card does not depend on somebody else's
        * server months later.
        */
-      if (record.image_urls.length) {
+      if (record.image_urls.length && room()) {
+        imagesStored += record.image_urls.length;
         await storeSourceImages(db, {
           organisationId: input.organisationId,
           uploadId: input.uploadId,
@@ -390,6 +459,8 @@ export async function importStockRecords(
   for (const anchored of input.rowAssets ?? []) {
     const itemId = itemIdByAnchor.get(anchored.anchor);
     if (!itemId) continue;
+    if (!room()) break;
+    imagesStored += anchored.assets.length;
     await storeSourceImages(db, {
       organisationId: input.organisationId,
       uploadId: input.uploadId,
@@ -398,8 +469,14 @@ export async function importStockRecords(
     }, { fetchImage: deps.fetchImage });
   }
 
-  await attachDocumentMedia(
-    db, input, outcome.itemIds, itemIdByAnchor,
+  if (input.media.length && !room()) {
+    // The document's own media is the same expensive work by another route.
+    // Left whole for the enrichment pass rather than half-attributed here:
+    // `attachDocumentMedia` decides roles across the WHOLE set, so running it
+    // against a truncated one would be attribution on partial evidence.
+    outcome.imageryOutstanding = true;
+  } else await attachDocumentMedia(
+    db, { ...input, documentRowCount: records.length }, outcome.itemIds, itemIdByAnchor,
     input.pageTexts?.length
       ? {
         labelByItemId,
@@ -489,6 +566,14 @@ export async function attachDocumentMedia(
     organisationId: string; uploadId: string; media: ExtractedMedia[];
     /** The document these pictures came out of, recorded on each of them. */
     filename?: string | null;
+    /**
+     * How many property rows the DOCUMENT stated — which can exceed the
+     * imported list when rows failed to import or, in the repair, when only
+     * some re-matched. The one-property containment fallback keys on this,
+     * so a caller holding one match out of a twelve-row file cannot present
+     * the file as a one-property document.
+     */
+    documentRowCount?: number;
   },
   itemIdsInOrder: string[],
   itemIdByAnchor: Map<string, string | null>,
@@ -524,6 +609,7 @@ export async function attachDocumentMedia(
     anchors: input.media.map((media) => media.anchor ?? null),
     itemIdByAnchor: resolvedAnchors,
     itemIdsInOrder: pageAnchored ? [] : itemIdsInOrder,
+    rowCount: input.documentRowCount,
   });
 
   /**
@@ -543,6 +629,7 @@ export async function attachDocumentMedia(
     : settleContainerMediaRoles({
       media: input.media.map((media) => ({ name: media.name, anchor: media.anchor ?? null })),
       stockItemIds: attributions.map((attribution) => attribution.stockItemId),
+      structural: attributions.map((attribution) => attribution.structural),
       container: 'the container in the builder\'s own document',
     });
 
@@ -573,10 +660,18 @@ export async function attachDocumentMedia(
         processing_status: 'ready',
         position: index,
         source_detail: {
+          // The origin every embedded-document image shares, stamped so a
+          // census can SEE this path — it used to write no origin at all, and
+          // every row it produced landed in the legacy no-origin bucket.
+          origin: 'document_media',
           attributed: !!stockItemId,
           structural: attribution.structural,
           anchor: media.anchor ?? null,
           reason: attribution.reason,
+          // What the enumeration that produced this entry looked like, when
+          // the extractor recorded one. A truncated read is a fact about the
+          // row, not a silence.
+          ...(media.enumeration ? { enumeration: media.enumeration } : {}),
           ...roleDetail(roles[index]),
           // Whether the marketplace may DRAW it. Every format lands here or
           // in `sourceImages.ts`, and both ask the same question of the bytes.

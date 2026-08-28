@@ -48,9 +48,19 @@
  * project/unit linkage is touched. Those guarantees are `repairSourceImages.ts`'s
  * and are not restated here — this only decides WHICH uploads it runs for.
  *
+ * AND ONE THING THAT IS NOT A SWEEP AT ALL: `preview_sanitization`, which
+ * produces a repair candidate for one image and hands back the PNG without
+ * writing anything anywhere. It lives here because this is the function that
+ * already holds the worker credential and already refuses every caller that is
+ * not internally signed; it exists because the generative route's model is
+ * behind a deployment secret, so before it the only way to SEE a candidate was
+ * to let production write one over a picture a client was already being shown.
+ * See `previewSanitization.ts`.
+ *
  * SECURITY. Internal callers only, through the signed envelope
  * (`verifyInternal`). It holds a service-role client and crosses organisations,
- * which is exactly why it must not be reachable by a portal session.
+ * which is exactly why it must not be reachable by a portal session. The
+ * preview is behind that same gate and adds no other way in.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { choosePhase } from '../_shared/builderStock/settlementPhase.pure.ts';
@@ -66,6 +76,10 @@ import {
   type SettlementCandidate,
 } from '../_shared/builderStock/settleSourceImages.ts';
 import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
+import {
+  settleFallbackImages, MAX_FALLBACK_ITEMS_PER_TICK,
+} from '../_shared/builderStock/settleFallbackImages.ts';
+import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 
@@ -130,6 +144,72 @@ Deno.serve(async (req: Request) => {
       errorCode: (gate as { errorCode?: string }).errorCode,
     });
     return json({ error: 'Forbidden' }, 403);
+  }
+
+  /**
+   * LOOK AT A CANDIDATE WITHOUT LETTING IT BECOME A PICTURE.
+   *
+   * The generative route is the only one that can clean some facades, its model
+   * lives behind the private worker, and the worker's token is a deployment
+   * secret — so before this existed the only way to SEE a candidate was to let
+   * production write one over the picture a client is already being shown.
+   *
+   * It is here rather than anywhere else because this is the function that
+   * already holds the worker credential, already refuses everything that is not
+   * an internally-signed caller, and already imports the repair. Nothing about
+   * it reaches a portal session or the marketplace, and it writes nothing at
+   * all — see `previewSanitization.ts`, where that is the enforced property.
+   *
+   * Placed AFTER `verifyInternal` and before any settlement work, so an
+   * unsigned caller is refused exactly as it always was and a tick with no
+   * `operation` behaves precisely as it did before this block existed.
+   */
+  let body: Record<string, unknown> = {};
+  try {
+    body = bounded.raw ? JSON.parse(bounded.raw) as Record<string, unknown> : {};
+  } catch {
+    body = {};
+  }
+
+  if (String(body.operation ?? '') === 'preview_sanitization') {
+    const preview = await previewSanitization(supabase, {
+      organisationId: String(body.organisation_id ?? ''),
+      imageId: String(body.image_id ?? ''),
+      originalSha256: String(body.original_sha256 ?? ''),
+      boxes: (Array.isArray(body.boxes) ? body.boxes : []) as never,
+    });
+
+    if (preview.ok === false) {
+      console.warn('[builder-stock-image-settler] preview refused', {
+        phase: 'preview_sanitization',
+        image_id: String(body.image_id ?? '').slice(0, 64),
+        reason: preview.reason,
+      });
+      return json({ success: false, error: preview.reason, detail: preview.detail },
+        preview.status);
+    }
+
+    /*
+     * The candidate itself, and facts about how it was made. No path, no
+     * bucket, no credential and no worker address: an operator needs to see
+     * the picture and know what it cost, not where the secrets are.
+     */
+    const headers: Record<string, string> = {
+      ...corsHeaders,
+      'Content-Type': 'image/png',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'x-builder-stock-preview': 'true',
+      'x-repaired-share': preview.repairedShare.toFixed(5),
+      'x-repair-route': preview.transformation,
+      'x-regions-removed': String(preview.regionsRemoved),
+    };
+    // Reported only when the metering ledger could actually be read. A count
+    // nobody measured is worse than no count at all.
+    if (preview.modelCalls !== null) headers['x-model-calls'] = String(preview.modelCalls);
+    if (preview.model) headers['x-inpaint-model'] = preview.model;
+
+    return new Response(preview.bytes as unknown as BodyInit, { status: 200, headers });
   }
 
   const startedAt = Date.now();
@@ -202,9 +282,75 @@ Deno.serve(async (req: Request) => {
     const outstanding = queue.rows;
 
     if (!outstanding.length) {
-      // Quiet path. The migration's job unschedules itself on this.
+      /**
+       * SETTLEMENT IS DONE. THE WORK IS NOT NECESSARILY DONE.
+       *
+       * This used to answer `complete: true` here, and the migration's job
+       * unschedules itself on that — so the sweep went permanently quiet the
+       * moment the last upload's provenance, eligibility and sanitization
+       * markers were current. `readOutstandingUploads` reads
+       * `builder_stock_uploads` and nothing else; it has never known that a
+       * PROPERTY can still be owed the fallback ladder.
+       *
+       * That is how three properties came to sit blank for ever with a
+       * terminal `no_deterministic_image` and not one image row: their builder
+       * supplied no usable photograph, stage A said so honestly, and the only
+       * thing that would have looked anywhere else was `enrich_images` in the
+       * Builder Portal — a loop that runs while somebody has the page open.
+       * Close the browser after an import and the ladder never ran.
+       *
+       * So the empty settlement queue is where the fallback phase belongs, and
+       * it is also the one place it is unconditionally SAFE: no upload is
+       * still being read, so no property is about to gain the builder's own
+       * render, and stage B or C cannot be bought against a card that is about
+       * to have the real picture. That is #2305's rule, kept rather than
+       * traded for speed.
+       */
+      const fallback = await settleFallbackImages(supabase, {
+        limit: MAX_FALLBACK_ITEMS_PER_TICK,
+        deadlineAt,
+      });
+
+      if (fallback.problems.length) {
+        console.warn('[builder-stock-image-settler] fallback problems', {
+          phase: 'fallback_enrichment', problems: fallback.problems.slice(0, 3),
+        });
+      }
+
+      /*
+       * An unreadable queue is not an empty one. Answering `complete` on a
+       * failed read would unschedule the cron on a database fault — the same
+       * shape as the missing-column bug above, and just as silent.
+       */
+      if (fallback.unavailable) {
+        console.error('[builder-stock-image-settler] fallback queue unreadable', {
+          phase: 'fallback_enrichment',
+        });
+        return json({
+          success: false, error: 'fallback_queue_unreadable', deploymentReady: true,
+        }, 503);
+      }
+
+      console.log('[builder-stock-image-settler] fallback tick', {
+        phase: 'fallback_enrichment',
+        attempted: fallback.attempted,
+        resolved: fallback.resolved,
+        remaining: fallback.remaining,
+      });
+
+      /*
+       * THE COMPLETION RULE. Quiet requires BOTH queues empty. A settlement
+       * queue at zero with fallback work outstanding keeps the cron alive.
+       */
       return json({
-        success: true, settled: 0, remaining: 0, complete: true,
+        success: true,
+        phase: 'fallback_enrichment',
+        settled: 0,
+        remaining: 0,
+        fallbackAttempted: fallback.attempted,
+        fallbackResolved: fallback.resolved,
+        fallbackRemaining: fallback.remaining,
+        complete: fallback.remaining === 0,
         deploymentReady: true, eligibilityTarget, sanitizationTarget,
       });
     }

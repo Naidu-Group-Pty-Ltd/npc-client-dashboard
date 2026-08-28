@@ -81,6 +81,8 @@ export interface RunImportSuccess {
     failed: number;
     /** Properties whose card now shows the builder's own picture. */
     withSourceImage: number;
+    /** Pictures the import budget left for the enrichment pass. */
+    imageryOutstanding: boolean;
     warnings: string[];
     failures: Array<{ label: string; reason: string }>;
   };
@@ -260,7 +262,8 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
   const sawImagery = extraction.media.length > 0
     || (extraction.rowAssets ?? []).some((row) => row.assets.length > 0)
     || (input.rowAssets ?? []).some((row) => row.assets.length > 0);
-  if (outcome.itemIds.length && sawImagery && !outcome.withSourceImage) {
+  if (outcome.itemIds.length && sawImagery && !outcome.withSourceImage
+    && !outcome.imageryOutstanding) {
     warnings.push(
       'No supplied image could be identified for these properties, so their cards '
       + 'will show no photograph.');
@@ -274,6 +277,7 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
       updated: outcome.updated,
       failed: outcome.failed,
       withSourceImage: outcome.withSourceImage,
+      imageryOutstanding: outcome.imageryOutstanding,
       warnings,
       failures: outcome.failures,
     },

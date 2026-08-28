@@ -50,8 +50,9 @@ import { decodeFullRaster } from './sourceImageRaster.ts';
 import { encodePng } from './rasterPng.ts';
 import {
   blendWeights, compositePatch, cropMask, cropRgb, outsidePermittedRegionUnchanged,
-  planInpaintPatches, resampleRgb,
+  permittedShare, planInpaintPatches, resampleRgb,
 } from './inpaintOverlay.pure.ts';
+import { MAX_REPAIRED_SHARE } from './repairRegion.pure.ts';
 
 /**
  * The model, named for the derivative record.
@@ -92,7 +93,8 @@ export type InpaintResult =
   | {
     ok: false;
     reason: 'inpaint_unavailable' | 'inpaint_failed' | 'validation_failed'
-      | 'nothing_to_remove' | 'too_many_regions' | 'uncoverable';
+      | 'nothing_to_remove' | 'too_many_regions' | 'uncoverable'
+      | 'too_much_to_rebuild';
     detail: string;
   };
 
@@ -266,6 +268,39 @@ export async function inpaintOverlay(input: InpaintInput): Promise<InpaintResult
   }
 
   const weights = blendWeights(mask, width, height);
+
+  /*
+   * BARRIER B, AND IT IS CHECKED BEFORE THE FIRST MODEL CALL.
+   *
+   * `weights` is the whole of what the repair may write and the whole of what
+   * the integrity gate below then skips, so it is the only honest measure of
+   * how much photograph is at stake. Left unbounded it is also the way every
+   * other guarantee here quietly empties: at full coverage
+   * `outsidePermittedRegionUnchanged` compares no pixels at all and returns
+   * `changed: 0`, which reads as a pass. The gate does not fail on a
+   * whole-frame edit — it has nothing left to fail on.
+   *
+   * Refused here rather than after the fact for two reasons. Nothing is spent:
+   * a request too large to be a badge never reaches Workers AI. And the answer
+   * is deterministic in the picture's own geometry, so the settler records it
+   * as a terminal `too_much_to_rebuild` and the row is not retried into the
+   * same refusal for ever.
+   *
+   * WHAT THIS DOES NOT ESTABLISH: that the permitted set is the RIGHT set. A
+   * wrong mask inside the ceiling passes here and passes the integrity gate,
+   * which inspects only the pixels outside it. Correctness of the region is
+   * `overlayPlate.pure.ts`'s burden — every plate held to its own text.
+   */
+  const permitted = permittedShare(weights, width, height);
+  if (permitted > MAX_REPAIRED_SHARE) {
+    return {
+      ok: false,
+      reason: 'too_much_to_rebuild',
+      detail: `the repair would rebuild ${(permitted * 100).toFixed(1)}% of the picture, `
+        + `and no repair may rebuild more than ${(MAX_REPAIRED_SHARE * 100).toFixed(0)}%`,
+    };
+  }
+
   let masked = 0;
   for (let i = 0; i < mask.length; i++) masked += mask[i];
 

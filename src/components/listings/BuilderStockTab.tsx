@@ -25,7 +25,8 @@ import {
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
 import {
-  primaryStockImage, SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
+  primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
+  SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
   STOCK_IMAGE_STAGE_BADGES, STOCK_IMAGE_STAGE_LABELS, STOCK_SELECTION_STATUS_LABELS,
   type BuilderStockImage, type BuilderStockItem, type StockAvailability,
@@ -391,7 +392,16 @@ function StockCardImage({ image }: { image: BuilderStockImage | null }) {
     );
   }
 
-  const unverified = image.source_stage === 'internet_search';
+  /**
+   * THE BADGE IS DERIVED FROM THE SAME DECISION THAT PICKED THE IMAGE.
+   *
+   * `stockImageProvenance` is the client mirror of the server's ranking, so a
+   * card cannot say "Builder supplied" over a picture the ranking took from a
+   * web search or from Street View. That is the whole reason a fallback is
+   * allowed to reach a card at all: it is shown as what it is.
+   */
+  const provenance = stockImageProvenance(image);
+  const fallback = provenance === 'web_sourced' || provenance === 'street_view';
 
   return (
     <div className="relative h-40 overflow-hidden border-b border-border/60 bg-muted/30">
@@ -414,14 +424,16 @@ function StockCardImage({ image }: { image: BuilderStockImage | null }) {
       <span
         className={cn(
           'absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[10px] font-semibold backdrop-blur',
-          unverified
+          fallback
             ? 'border-warning/40 bg-warning/15 text-warning'
             : 'border-border/60 bg-background/80 text-foreground',
         )}
       >
-        {STOCK_IMAGE_STAGE_BADGES[image.source_stage]}
+        {provenance
+          ? STOCK_PROVENANCE_LABEL[provenance]
+          : STOCK_IMAGE_STAGE_BADGES[image.source_stage]}
       </span>
-      {unverified && image.source_page_url ? (
+      {fallback && image.source_page_url ? (
         <a
           href={image.source_page_url}
           target="_blank"

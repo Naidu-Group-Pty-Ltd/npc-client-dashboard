@@ -32,16 +32,23 @@
  * byte for byte.
  */
 
-
+import { MAX_REPAIRED_SHARE } from './repairRegion.pure.ts';
 
 /**
- * How far the mask is grown before filling.
+ * How far the mask is grown before filling, IN THUMBNAIL PIXELS.
  *
  * A badge is composited with soft edges, so the pixels just outside the
  * detector's region are a blend of graphic and photograph. Leaving them behind
  * draws a ghost outline exactly where the badge was — the one artefact that
- * makes a repair obvious. Three pixels covers the anti-aliasing on the sizes
- * builders actually publish without eating into the picture.
+ * makes a repair obvious.
+ *
+ * THREE IS NOT THE EFFECTIVE RADIUS AT PRODUCTION SIZE. The mask was measured
+ * on a 400px reduction and `growOverlayMask` grows it by `EDGE_GROW` TIMES THE
+ * SCALE — one thumbnail pixel of badge edge lands several full-resolution
+ * pixels wide, so the anti-aliasing does too. On a 1200px cover the dilation
+ * radius is 9 full-resolution pixels; at 2048px it is 15; at 4000px it is 30.
+ * Reading "three pixels" as the geometry of a production repair understates it
+ * by an order of magnitude, and a test pins the scaled behaviour.
  */
 const EDGE_GROW = 3;
 
@@ -180,6 +187,15 @@ function grow(mask: Uint8Array, width: number, height: number, by: number): Uint
  * Measured on the pixels that will BE the boundary condition, because those are
  * the ones the reconstruction has to agree with. A high number means the fill
  * would be interpolating across detail it cannot know.
+ *
+ * THE RING IS SIX FULL-RESOLUTION PIXELS AND DOES NOT SCALE, while the
+ * dilation it surrounds does (`EDGE_GROW * spread` in `growOverlayMask`). That
+ * is an inconsistency, and it is deliberately left standing: the thresholds
+ * below (`MAX_BOUNDARY_DETAIL`, `MAX_BOUNDARY_SPREAD`) were fitted against
+ * real 1200px covers, where the ring was already 6px around a 9px dilation.
+ * Scaling the ring would change what both measures read on every production
+ * image and would un-fit both constants; do not "fix" this without refitting
+ * them against the same covers.
  */
 function boundaryDetail(
   pixels: Uint8Array, mask: Uint8Array, width: number, height: number,
@@ -388,6 +404,23 @@ export function sanitizeOverlay(input: SanitizeInput): SanitizeResult {
   const repairedShare = masked / count;
   if (largestRegion(mask, width, height) / count > MAX_REGION_SHARE) {
     // One hole too wide to fill, however quiet its edges are.
+    return { ok: false, reason: 'too_much_to_rebuild' };
+  }
+  /*
+   * AND A CEILING ON THE TOTAL, THE SAME ONE EVERY OTHER ROUTE ANSWERS TO.
+   *
+   * The per-region cap above is about what a diffusion can FILL; it says
+   * nothing about how much of the picture is being replaced in aggregate, and
+   * `overlayPlateMask` has no cap on plate count — N separate modest holes are
+   * N × their share with no gate here at all. The generative route refuses
+   * this at Barrier B before its first model call, and the serving gate
+   * refuses any derivative whose recorded share exceeds the ceiling — so
+   * without this check the smear is computed, written to storage, and only
+   * then discovered to be unservable, which is the paid-for blank card this
+   * area exists to avoid. Refused up front instead, with the same terminal
+   * reason the generative route records.
+   */
+  if (repairedShare > MAX_REPAIRED_SHARE) {
     return { ok: false, reason: 'too_much_to_rebuild' };
   }
 

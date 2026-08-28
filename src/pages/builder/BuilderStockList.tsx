@@ -153,10 +153,27 @@ export default function BuilderStockList() {
   const reportImportFailure = useCallback((error: unknown) => {
     const failure = error as Error & { code?: string };
     const duplicate = failure.code === 'duplicate_file';
+    /**
+     * A REQUEST THAT NEVER ANSWERED DID NOT NECESSARILY FAIL.
+     *
+     * `transport_failed` means the browser got no response at all, so this
+     * page does not know whether the import ran — and in production it HAD
+     * run. Announcing "could not be imported" there is not a cautious message,
+     * it is a false one, and it is what led to the same list being imported
+     * twice. The sources list is refreshed below either way, so the honest
+     * heading sends the reader to the answer rather than away from it.
+     */
+    const undetermined = failure.code === 'transport_failed';
     toast({
-      title: duplicate ? 'Already imported' : 'The stock list could not be imported',
-      description: failure.message,
-      variant: duplicate ? 'default' : 'destructive',
+      title: duplicate
+        ? 'Already imported'
+        : undetermined
+          ? 'This import did not report back'
+          : 'The stock list could not be imported',
+      description: undetermined
+        ? `${failure.message} If it appears in your sources below, it worked.`
+        : failure.message,
+      variant: duplicate || undetermined ? 'default' : 'destructive',
     });
     void uploadsQuery.refetch();
   }, [toast, uploadsQuery]);

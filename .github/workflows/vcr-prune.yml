@@ -1,0 +1,127 @@
+# Prune the Vercel container registry.
+#
+# Every deploy of this project builds and pushes an `aml-verification-service`
+# image to Vercel's container registry (vcr). The registry has a hard cap on
+# images per repository and NO native retention setting — nothing on Vercel's
+# side ever deletes anything. On 2026-08-27 the repository hit its cap and
+# every deployment (production included) failed at the image push with
+# "denied: repository has reached the maximum allowed number of images",
+# while the site silently kept serving the last successful build.
+#
+# This workflow is the retention policy Vercel does not provide: it keeps the
+# newest KEEP images and deletes the rest, via the documented REST API
+# (DELETE /v1/vcr/repository/{repo}/images/{id} answers 202 and reclaims
+# asynchronously). It runs weekly, and can be dispatched by hand with
+# dry_run=true to see the deletion plan without acting on it.
+#
+# Two rules:
+#   - The FIRST manual prune should be followed immediately by a redeploy:
+#     the image backing the currently-running sandbox may be old, and only a
+#     fresh deploy re-anchors "current" among the newest images this keeps.
+#   - Requires the VERCEL_TOKEN Actions secret (a Vercel account token with
+#     access to the team below). Absent token fails loudly here rather than
+#     silently skipping — a retention job that quietly stops running is how
+#     the cap gets hit again.
+
+name: Prune the Vercel container registry
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Container registry repository name"
+        required: false
+        default: "aml-verification-service"
+      keep:
+        description: "How many newest images to keep"
+        required: false
+        default: "3"
+      dry_run:
+        description: "true = only print the deletion plan"
+        required: false
+        default: "true"
+      team_id:
+        description: "Vercel team id (or slug)"
+        required: false
+        default: "team_BB42Om64UtSiFwVLxVvcMYob"
+      project_id:
+        description: "Vercel project id"
+        required: false
+        default: "prj_Mi3Wyu1ZsY7C9u6Q3ElzR7xRS3tj"
+  schedule:
+    # Weekly, Sunday 18:20 UTC (Monday 04:20 AEST) — off-peak, and a more
+    # generous keep than the manual default so a scheduled run can never
+    # delete anything close to current.
+    - cron: "20 18 * * 0"
+
+permissions: {}
+
+concurrency:
+  group: vcr-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      # Scheduled runs take no inputs: fall back to safe defaults (keep 5,
+      # not a dry run — a scheduled retention job that only ever plans is
+      # the same as no retention job).
+      REPOSITORY: ${{ inputs.repository || 'aml-verification-service' }}
+      KEEP: ${{ inputs.keep || '5' }}
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      TEAM_ID: ${{ inputs.team_id || 'team_BB42Om64UtSiFwVLxVvcMYob' }}
+      PROJECT_ID: ${{ inputs.project_id || 'prj_Mi3Wyu1ZsY7C9u6Q3ElzR7xRS3tj' }}
+    steps:
+      - name: Fail loudly when there is no token
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo '::error title=No Vercel token::The VERCEL_TOKEN Actions secret is not set. Create a token at vercel.com → Account Settings → Tokens (scoped to the Naidu Group Pty Ltd team) and store it as VERCEL_TOKEN in this repository. Without it this retention job cannot run, and the registry will hit its image cap again.'
+            exit 1
+          fi
+
+      - name: List images and compute the deletion plan
+        id: plan
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS --fail-with-body \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v1/vcr/repository/$REPOSITORY/images?projectId=$PROJECT_ID&teamId=$TEAM_ID&limit=100&untagged=true")
+          # Newest first; anything still "preparing" is never touched.
+          echo "$resp" | jq -r '
+            [.images[] | select(.status != "preparing")]
+            | sort_by(.createdAt) | reverse
+            | to_entries[]
+            | "\(.key)\t\(.value.id)\t\(.value.createdAt)\t\((.value.sizeInBytes|tonumber)/1048576|floor)MB\t\(.value.kind // "image")\t\(.value.tags|join(","))"
+          ' | tee images.tsv
+          total=$(wc -l < images.tsv)
+          delete=$(awk -F'\t' -v keep="$KEEP" '$1 >= keep {print $2}' images.tsv)
+          printf '%s\n' "$delete" | sed '/^$/d' > delete.txt
+          echo "Images: $total — keeping newest $KEEP, deleting $(wc -l < delete.txt)."
+
+      - name: Delete (or report, when dry_run)
+        run: |
+          set -euo pipefail
+          if [ ! -s delete.txt ]; then
+            echo "Nothing to delete — the repository is within the keep window."
+            exit 0
+          fi
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN — these image ids would be deleted:"
+            cat delete.txt
+            exit 0
+          fi
+          failed=0
+          while read -r id; do
+            code=$(curl -sS -o /tmp/del-body -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v1/vcr/repository/$REPOSITORY/images/$id?projectId=$PROJECT_ID&teamId=$TEAM_ID")
+            if [ "$code" -ge 200 ] && [ "$code" -lt 300 ]; then
+              echo "deleted $id ($code)"
+            else
+              echo "::error::delete $id answered $code: $(cat /tmp/del-body)"
+              failed=1
+            fi
+          done < delete.txt
+          exit $failed

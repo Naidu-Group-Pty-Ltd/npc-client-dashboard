@@ -291,3 +291,254 @@ export function selectPackageDocument(
 
   return named.length === 1 ? named[0] : null;
 }
+
+// ---------------------------------------------------------------------------
+// The rest of the builder's own material
+//
+// PRODUCTION, 28 AUGUST 2026. Everything above reads PDFs, and the live library
+// does not only hold PDFs. Lot 13 Hummock Rise links a folder containing
+//
+//     Display Home - 13 Hummock Rise Werribee/Property Photos/
+//         Kaye_7341_HR.jpg  … 38 photographs
+//
+// and the marketplace showed a Street View of the road, because
+// `selectPackageDocument` filters `mimeType === 'application/pdf'` and the
+// photographs were never candidates at all. The same row also failed the other
+// half of the rule: this builder names its files by STREET ADDRESS — "Package -
+// 13 Hummock Rise Werribee (995).pdf" — and the selector requires the literal
+// token "lot 13", which appears nowhere in the folder.
+//
+// NOTHING BELOW WEAKENS ATTRIBUTION. Identity still comes from the source
+// naming the property; what changes is that a street address counts as the
+// source naming it, and that a photograph counts as a candidate. Two candidates
+// is still the source declining to say.
+// ---------------------------------------------------------------------------
+
+/** Image types the pipeline can already store and serve. */
+export const PACKAGE_IMAGE_MIMES: ReadonlySet<string> = new Set([
+  'image/jpeg', 'image/png', 'image/webp',
+]);
+
+export function isPackageImage(entry: DriveEntry): boolean {
+  return PACKAGE_IMAGE_MIMES.has(String(entry?.mimeType ?? '').toLowerCase());
+}
+
+/**
+ * Names that declare a picture to be something other than the house.
+ *
+ * The same shape as `NOT_A_PACKAGE` and for the same reason: it reads the name
+ * the BUILDER gave the file, and it only ever EXCLUDES. A photograph called
+ * "Kaye_7341_HR.jpg" says nothing and stays a candidate; "Master Plan.jpg" and
+ * "Aerial Photo 1.jpg" say what they are.
+ *
+ * Yamanto's folder is the case that matters: five images, every one of them an
+ * aerial or a plan, and the correct answer for Lot 3 is still no picture.
+ * A rule that admitted them would have put a site plan on a client's card.
+ */
+const NOT_A_PROPERTY_PHOTOGRAPH = new RegExp(
+  '\\b(aerial|site\\s*plan|master\\s*plan|masterplan|stage\\s*plan|lot\\s*plan'
+  + '|floor\\s*plan|floorplan|elevation\\s*plan|subdivision|survey|contour'
+  + '|logo|letterhead|map|locality|clubhouse|club\\s*house|sales\\s*office'
+  + '|display\\s*suite|estate\\s*marketing|community|amenit|signage|render\\s*board)'
+  // "Lot Plans" and "Site Plans" are the same declaration in the plural, and a
+  // trailing \b after "plan" refuses them. Production's Yamanto folder holds
+  // exactly "Lot Plans.jpg".
+  + 's?\\b',
+);
+
+/** Does this file name declare itself to be something other than the house? */
+export function isNonFacadeImageName(name: string): boolean {
+  return NOT_A_PROPERTY_PHOTOGRAPH.test(normaliseDriveName(name));
+}
+
+/**
+ * The street number and street name a stock row states.
+ *
+ * "Lot 13 - Hummock Rise, Werribee, VIC - 3030" gives 13 / "hummock rise", and
+ * the builder's "Display Home - 13 Hummock Rise Werribee" states both. This is
+ * the SAME kind of evidence the lot token is — the source naming the property —
+ * expressed the way this builder writes it.
+ *
+ * The number is required. An address with no street number identifies a street
+ * and not a house, and this repository has already paid once for merging on a
+ * street name alone.
+ */
+export function streetAddressFrom(label: string): { number: string; street: string } | null {
+  const text = String(label ?? '');
+  // Take the part after a leading "Lot N -" so the lot number is never read as
+  // the street number, then the first "<number> <words>" that follows.
+  const lotPrefix = /^\s*lot\s*([0-9]{1,6})[a-z]?\s*[-–—,]?\s*/i.exec(text);
+  const withoutLot = lotPrefix ? text.slice(lotPrefix[0].length) : text;
+
+  const numbered = /(?:^|[^0-9a-z])([0-9]{1,5})[a-z]?\s+([a-z][a-z' -]{2,40}?)\s*(?:,|$|\bvic\b|\bnsw\b|\bqld\b|\bsa\b|\bwa\b|\bnt\b|\btas\b|\bact\b)/i
+    .exec(withoutLot);
+  if (numbered) {
+    const street = normaliseDriveName(numbered[2]);
+    if (street.length >= 3) return { number: normaliseDriveName(numbered[1]), street };
+  }
+
+  /*
+   * A HOUSE-AND-LAND ROW STATES ITS STREET NUMBER AS THE LOT NUMBER.
+   *
+   * "Lot 13 - Hummock Rise, Werribee" has no separate street number because on
+   * a new estate there is not one yet: the lot IS the number, and the builder
+   * writes the finished address the same way — "Display Home - 13 Hummock Rise
+   * Werribee". Reading the row's own convention is what ties the two together;
+   * without it the folder naming this exact house matches nothing.
+   */
+  if (lotPrefix) {
+    const bare = /^\s*([a-z][a-z' -]{2,40}?)\s*(?:,|$|\bvic\b|\bnsw\b|\bqld\b|\bsa\b|\bwa\b|\bnt\b|\btas\b|\bact\b)/i
+      .exec(withoutLot);
+    const street = bare ? normaliseDriveName(bare[1]) : '';
+    if (street.length >= 3) return { number: normaliseDriveName(lotPrefix[1]), street };
+  }
+  return null;
+}
+
+/**
+ * Does this name state THIS property?
+ *
+ * Either the source's lot token, or the exact street number and street name
+ * together. Both are the source naming the property; neither is a resemblance.
+ */
+export function namesThisProperty(
+  name: string,
+  key: { lot: string | null; street: { number: string; street: string } | null },
+): boolean {
+  const clean = ` ${normaliseDriveName(name)} `;
+  if (key.lot && clean.includes(` lot ${normaliseDriveName(key.lot)} `)) return true;
+  if (key.street) {
+    const { number, street } = key.street;
+    if (clean.includes(` ${number} ${street} `)) return true;
+  }
+  return false;
+}
+
+/** Metres² a file name states, for telling two variants of one lot apart. */
+export function buildingSizeFrom(name: string): number | null {
+  const match = /(\d{2,4})\s*(?:sqm|sq m|m2|m²)/i.exec(String(name ?? ''));
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+/**
+ * The candidate whose stated size is this property's.
+ *
+ * PRODUCTION. Lot 1663 Ringer Street links a folder holding
+ * "(178 SqM) Lot 1663, Ringer Street, Lara, VIC 3212.pdf" and
+ * "(207 SqM) Lot 1663, …", both naming the lot, so the selector saw two and
+ * correctly refused — while the row itself carries `building_size_sqm: 178`.
+ * The source states which one it is; nothing was reading it.
+ *
+ * Exactly one match, or nothing: two candidates claiming the same size is the
+ * source declining to say, exactly as before.
+ */
+export function selectByBuildingSize(
+  entries: DriveEntry[],
+  buildingSqm: number | null | undefined,
+): DriveEntry | null {
+  const wanted = Number(buildingSqm);
+  if (!Number.isFinite(wanted) || wanted <= 0) return null;
+  const hits = entries.filter((entry) => {
+    const stated = buildingSizeFrom(entry.name);
+    return stated !== null && Math.round(stated) === Math.round(wanted);
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** A file together with the folder path it was found under, root first. */
+export interface ScopedEntry {
+  entry: DriveEntry;
+  /** Ancestor folder names, outermost first. Empty at the linked folder itself. */
+  path: string[];
+}
+
+/** The package documents in this listing that name this property. */
+export function namedPackageCandidates(
+  entries: DriveEntry[],
+  identity: {
+    lot: string | null;
+    street: { number: string; street: string } | null;
+    /**
+     * THE DESIGN IS NEVER DROPPED.
+     *
+     * Widening WHICH names count as this property must not widen which
+     * documents count as this row. Seven Sandpiper rows share Lot 43, and
+     * "Lot 43 - Bishop 258" names that lot exactly as truly as "Lot 43 -
+     * Stradbroke 180" does — so a rule that asked only "does this name the
+     * property" would hand a Stradbroke row the Bishop package.
+     */
+    design?: string | null;
+  },
+): DriveEntry[] {
+  return entries.filter((entry) => {
+    if (entry.mimeType !== 'application/pdf') return false;
+    if (!namesThisProperty(entry.name, identity)) return false;
+    if (driveDocumentKind(entry.name) !== 'package_candidate') return false;
+    if (!identity.design) return true;
+    return ` ${normaliseDriveName(entry.name)} `.includes(` ${identity.design} `);
+  });
+}
+
+/**
+ * The one document this property's own source names, where the lot token alone
+ * could not decide.
+ *
+ * Two additions, both of them the SOURCE speaking rather than us inferring:
+ * a street address counts as naming the property, and where several packages
+ * name it the row's own building size picks between them. Everything else is
+ * unchanged — one candidate or nothing.
+ */
+export function selectNamedDocument(
+  entries: DriveEntry[],
+  identity: {
+    lot: string | null;
+    street: { number: string; street: string } | null;
+    design?: string | null;
+  },
+  buildingSqm?: number | null,
+): DriveEntry | null {
+  const candidates = namedPackageCandidates(entries, identity);
+  if (candidates.length === 1) return candidates[0];
+  return selectByBuildingSize(candidates, buildingSqm);
+}
+
+/**
+ * The photograph the builder filed under this property.
+ *
+ * IDENTITY COMES FROM THE FOLDER, NOT THE FILE NAME. "Kaye_7341_HR.jpg" states
+ * nothing about which house it is, and no filename rule could make it. What
+ * states it is where the builder PUT it:
+ *
+ *     Display Home - 13 Hummock Rise Werribee/Property Photos/Kaye_7341_HR.jpg
+ *
+ * — an ancestor folder naming this exact property. That is the same class of
+ * evidence as a document naming the lot, and it is why a shared library cannot
+ * leak: Yamanto's five images sit at the root of a folder three lots share, no
+ * ancestor names any one of them, and the answer stays no picture.
+ *
+ * The name is still read, but only to REJECT: an aerial, a site plan or a logo
+ * is not a facade however confidently it is filed.
+ */
+export function selectPropertyPhotograph(
+  scoped: ScopedEntry[],
+  identity: { lot: string | null; street: { number: string; street: string } | null },
+): ScopedEntry | null {
+  const usable = scoped.filter(({ entry, path }) =>
+    isPackageImage(entry)
+    && !isNonFacadeImageName(entry.name)
+    && !path.some((folder) => isNonFacadeImageName(folder))
+    && (path.some((folder) => namesThisProperty(folder, identity))
+      || namesThisProperty(entry.name, identity)));
+  if (!usable.length) return null;
+
+  /*
+   * DETERMINISTIC, NOT CLEVER. Nothing here can tell a front elevation from a
+   * side one — the builder's own numbering is a camera roll — so the choice is
+   * the source's own order, stably. Guessing an angle from "7341" would be the
+   * filename-hint mistake this repository has already made once.
+   */
+  return usable.slice().sort((a, b) =>
+    a.entry.name.localeCompare(b.entry.name) || a.entry.id.localeCompare(b.entry.id))[0];
+}

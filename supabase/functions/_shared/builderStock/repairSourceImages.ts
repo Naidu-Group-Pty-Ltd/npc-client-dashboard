@@ -940,7 +940,13 @@ export async function repairSourceImagesForUpload(
     let recovered: PackageOutcome;
     try {
       recovered = await recoverPackageImage(
-        { packageUrl, label: stockRecordLabel(record) },
+        {
+          packageUrl,
+          label: stockRecordLabel(record),
+          // Tells "(178 SqM)" from "(207 SqM)" where a lot has two packages.
+          buildingSqm: Number((record as { building_size_sqm?: unknown })?.building_size_sqm)
+            || null,
+        },
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
     } catch (error) {
@@ -979,6 +985,62 @@ export async function repairSourceImagesForUpload(
      * upload settled on the strength of an answer that was never persisted, so
      * the run reports itself incomplete.
      */
+    /*
+     * A PHOTOGRAPH THE BUILDER FILED, STORED AS IT STANDS.
+     *
+     * The same store, the same convicting, the same clearing of a stale
+     * negative — what differs is only that there is no page to cite, because
+     * the source is a file rather than a document. Recorded as
+     * `linked_package_photo` so the row says which of the two it was.
+     */
+    if (recovered.status === 'recovered_photograph') {
+      await clearAttempt();
+      const photo = recovered.photograph;
+      if (!all.length) {
+        outcome.rowsWithImagery += 1;
+        outcome.matched += 1;
+      }
+      const storedPhoto = await storeSourceImageBytes(db, {
+        organisationId: input.organisationId,
+        uploadId: upload.id,
+        stockItemId: itemId,
+        bytes: photo.bytes,
+        contentType: photo.contentType,
+        reference: photo.reference,
+        provider: 'linked_package',
+        origin: 'linked_package_photo',
+        pageUrl: packageUrl,
+        position: 0,
+        detail: {
+          ...roleDetail(photo.role),
+          document: photo.fileName,
+          document_url: photo.fileUrl,
+          source_row_anchor: anchor,
+          folder_path: photo.folderPath,
+          extraction_method: 'filed_as_is',
+        },
+      });
+      if (storedPhoto) {
+        outcome.imagesStored += 1;
+        outcome.fromPackage += 1;
+        prove(itemId, photo.reference);
+        touched.add(itemId);
+        if (negativeBefore.has(itemId)) {
+          await db.from('builder_stock_items')
+            .update({ source_provenance_result: null })
+            .eq('id', itemId)
+            .eq('organisation_id', input.organisationId);
+          negativeBefore.delete(itemId);
+        }
+      } else {
+        outcome.problems.push({
+          reference: photo.reference,
+          reason: 'The recovered photograph could not be stored.',
+        });
+      }
+      continue;
+    }
+
     if (recovered.status !== 'recovered') {
       outcome.packageNotIdentified += 1;
       const { error: writeError } = await db

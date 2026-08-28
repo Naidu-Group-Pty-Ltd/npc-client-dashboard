@@ -12,13 +12,31 @@ interface BrandLogoProps {
   settings?: WhiteLabelSettings;
 }
 
+/**
+ * A mark with no size is a mark at its natural size, which for an uploaded
+ * asset means whatever pixels the tenant happened to export.
+ *
+ * Every layout in the product passes its own `logoClassName`. The three pages
+ * that did not are the three an OUTSIDER sees — the public passport, the
+ * referral consent and (until it was fixed) the compliance agreement — and on
+ * each of them the brand rendered several times the height of the heading
+ * beside it, making the logo the subject of the page and the document its
+ * footnote.
+ *
+ * The floor is here rather than at each call site because the call sites are
+ * exactly what was forgotten. `cn` is tailwind-merge, so a caller's own
+ * height, width or max-width still wins: nothing that already sizes its mark
+ * changes, and nothing new can be unbounded.
+ */
+const LOGO_DEFAULT = 'h-10 w-auto max-w-[220px] object-contain';
+
 export function BrandLogo({ slot, alt, className, fallbackClassName, settings: settingsOverride }: BrandLogoProps) {
   const { settings: brandSettings } = useBrand();
   const settings = settingsOverride ?? brandSettings;
   const src = getBrandAssetSrc(settings, slot);
 
   if (src) {
-    return <img src={src} alt={alt || settings.companyName} className={className} />;
+    return <img src={src} alt={alt || settings.companyName} className={cn(LOGO_DEFAULT, className)} />;
   }
 
   const fallbackIcon = slot === 'favicon' ? Globe : Building2;

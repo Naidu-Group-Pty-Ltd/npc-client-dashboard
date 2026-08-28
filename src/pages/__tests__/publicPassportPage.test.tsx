@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +32,7 @@ import PublicPassport from "@/pages/PublicPassport";
 const redemption = {
   attestation_sha256: "28099ae9048b1397aa11bb22cc33dd44ee55ff6677889900aabbccddeeff0011",
   issued_at: "2026-08-27T08:28:28.000Z",
+  attestation_version: 1,
   agreement: {
     partner_org_name: "Testing Pty Ltd",
     agreement_reference: "AML/CTF Compliance Passport Agreement",
@@ -79,10 +81,25 @@ describe("the partner is handed a document", () => {
     render(<PublicPassport />);
     await screen.findByLabelText("Passport cover");
 
-    // Every leaf the disclosure supports is reachable from the page chips.
-    for (const title of ["Reliance basis", "Customer identity", "Screening performed"]) {
+    // Every leaf of the instrument is reachable from the page chips — the
+    // same leaves, in the same order, as the Command Centre's document.
+    for (const title of [
+      "Client Identity", "Compliance Summary", "Identity Verification",
+      "Screening", "Disclosure & Access", "Review & Renewal",
+    ]) {
       expect(screen.getByRole("button", { name: new RegExp(title, "i") })).toBeInTheDocument();
     }
+    // Including the ones a relying entity may not read: present and named,
+    // never silently dropped.
+    expect(screen.getByRole("button", { name: /Funding & Due Diligence/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Journey Record/i })).toBeInTheDocument();
+  });
+
+  it("names the credential exactly as the Command Centre does", async () => {
+    render(<PublicPassport />);
+    await screen.findByLabelText("Passport cover");
+
+    expect(screen.getAllByText(/AUX-AML-2026-00005-V1/).length).toBeGreaterThan(0);
   });
 
   it("keeps the raw payload as a disclosure rather than as the offer", async () => {
@@ -143,5 +160,20 @@ describe("the reader can enlarge it", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /Show two pages side by side/i }))
         .toBeInTheDocument());
+  });
+});
+
+describe("the mark on a page an outsider sees", () => {
+  it("is constrained, so the document is the subject of the page", () => {
+    // `BrandLogo` sets a size floor now, because the three pages that forgot
+    // to pass one are the three an outsider sees. The page constrains it
+    // explicitly as well — this is its letterhead, not its subject.
+    const source = readFileSync("src/pages/PublicPassport.tsx", "utf8");
+    expect(source).toContain('logoClassName="h-10 w-auto object-contain sm:h-12"');
+
+    const brand = readFileSync("src/components/branding/BrandAssets.tsx", "utf8");
+    expect(brand).toContain("const LOGO_DEFAULT =");
+    // The floor must not win over a caller that sizes its own mark.
+    expect(brand).toContain("cn(LOGO_DEFAULT, className)");
   });
 });

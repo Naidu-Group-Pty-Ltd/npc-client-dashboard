@@ -53,6 +53,8 @@ export interface PassportRedemption {
   attestation_sha256: string;
   issued_at: string;
   schema_version?: number;
+  /** The attestation version this grant is bound to — part of the credential. */
+  attestation_version?: number | null;
   agreement: { partner_org_name: string; agreement_reference: string; scope: string[] };
   /** The statutory position, restated by the server at the point of use. */
   notice: string;

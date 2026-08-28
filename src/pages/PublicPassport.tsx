@@ -133,9 +133,18 @@ export default function PublicPassport() {
       {/* Wider than a reading column, because the artefact on this page is a
           two-up booklet spread rather than prose. */}
       <div className="mx-auto w-full max-w-5xl space-y-4">
-        <div className="flex justify-center">
-          <BrandLockup slot="auth" meta="Compliance Passport" />
-        </div>
+        {/* The mark is constrained explicitly as well as by the floor in
+            `BrandLogo`: this page's own header is a compliance document's
+            letterhead, and the document is the subject of it. */}
+        <header className="flex justify-center border-b border-border/50 pb-5">
+          <BrandLockup
+            slot="auth"
+            meta="Compliance Passport"
+            logoClassName="h-10 w-auto object-contain sm:h-12"
+            fallbackClassName="h-10 w-10 sm:h-12 sm:w-12"
+            companyClassName="text-sm sm:text-base"
+          />
+        </header>
         {children}
       </div>
     </div>

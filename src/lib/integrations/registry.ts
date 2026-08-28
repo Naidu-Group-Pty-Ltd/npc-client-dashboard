@@ -1134,7 +1134,7 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
       + 'Both values must be set before AML › Configuration › Providers can move IDV to live.',
     category: 'compliance',
     tags: ['kyc', 'aml', 'identity', 'biometric', 'liveness', 'self-hosted', 'face match'],
-    docsUrl: 'https://github.com/lavan96/npc-property-dashbord/blob/main/docs/aml/kyc-go-live-runbook.md',
+    docsUrl: 'https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/blob/main/docs/aml/kyc-go-live-runbook.md',
     fallbackIcon: 'shield',
     fields: [
       { key: 'AML_VERIFICATION_SERVICE_URL', label: 'Service URL', placeholder: 'https://aml-verify.internal', type: 'text', required: true },

@@ -506,10 +506,16 @@ jobs:
       - name: WP-15 launch-gate aggregator
         run: node scripts/security/wp15-launch-gate.mjs
 
+      # The action is free on user-owned repos but demands a license key the
+      # moment the owner is an organisation — which this repository's owner
+      # became when it moved to Naidu-Group-Pty-Ltd. The GITLEAKS_LICENSE
+      # secret must be set on the org (or repo) or this step fails before
+      # scanning anything.
       - name: Secret scan (gitleaks)
         uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
   # The render container is the only place a report font can come from, and a
   # missing face substitutes silently — the PDF renders, every test passes, and

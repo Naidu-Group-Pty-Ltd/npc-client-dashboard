@@ -26,6 +26,7 @@ import { PricingMockBanner } from "@/components/billing/PricingMockBanner";
 import { PushNotificationPrompt } from "./components/PushNotificationPrompt";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
 import { DashboardErrorFallback } from "@/components/layout/DashboardErrorFallback";
+import { PublicLinkErrorFallback } from "@/components/portal/PublicLinkErrorFallback";
 import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { HarveyCountdown } from "@/components/HarveyCountdown";
 import { Button } from "@/components/ui/button";
@@ -166,6 +167,8 @@ const PartnerCompliance = lazyWithRetry(() => import("./pages/PartnerCompliance"
 const PartnerReferrals = lazyWithRetry(() => import("./pages/PartnerReferrals"));
 const LoanWriterUndertakings = lazyWithRetry(() => import("./pages/LoanWriterUndertakings"));
 const PublicPartnerConsent = lazyWithRetry(() => import("./pages/PublicPartnerConsent"));
+const PartnerAcknowledgement = lazyWithRetry(() => import("./pages/PartnerAcknowledgement"));
+const PublicPassport = lazyWithRetry(() => import("./pages/PublicPassport"));
 
 const GamePlan = lazyWithRetry(() => import("./pages/GamePlan"));
 const Commissions = lazyWithRetry(() => import("./pages/Commissions"));
@@ -419,6 +422,42 @@ const App = () => (
                         <Route path="/template-share/:token" element={<TemplateSharePreview />} />
                         {/* Public partner referral consent signing (no auth) */}
                         <Route path="/partner-consent/:token" element={<PublicPartnerConsent />} />
+                        {/* AML/CTF Compliance Passport Agreement for a partner
+                            outside the portals. Public and token-addressed:
+                            the link is the whole credential.
+
+                            Both link pages carry their OWN boundary. The
+                            recipient has no account and no support channel, so
+                            the application's generic "Something went wrong"
+                            reads to them as a broken link and leaves them with
+                            no step; this one names the re-send.
+
+                            Brought across by hand from the prime. `src/App.tsx`
+                            is `manual_reconcile` in this clone's sync
+                            exclusions — it carries RouteExcludedFromBuild and
+                            __CLIENT_FACING__ gates the prime does not — so a
+                            new upstream route arrives here only when somebody
+                            adds it. These two are public links a recipient
+                            opens; they are not developer surfaces, so they are
+                            not gated. */}
+                        <Route
+                          path="/partner-acknowledgement/:token"
+                          element={(
+                            <ErrorBoundary fallback={<PublicLinkErrorFallback />}>
+                              <PartnerAcknowledgement />
+                            </ErrorBoundary>
+                          )}
+                        />
+                        {/* The Compliance Passport itself, opened from a
+                            link. The grant token is the whole credential. */}
+                        <Route
+                          path="/passport/:token"
+                          element={(
+                            <ErrorBoundary fallback={<PublicLinkErrorFallback />}>
+                              <PublicPassport />
+                            </ErrorBoundary>
+                          )}
+                        />
 
                         {/* Client Portal Routes */}
                         <Route path="/client/login" element={

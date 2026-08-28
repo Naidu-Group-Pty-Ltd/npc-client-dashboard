@@ -40,6 +40,10 @@ on:
         description: "true = only print the deletion plan"
         required: false
         default: "true"
+      redeploy:
+        description: "true = after pruning, create a fresh production deployment of main (a git deployment via the Vercel API, identical to the dashboard's Redeploy)"
+        required: false
+        default: "false"
       team_id:
         description: "Vercel team id (or slug)"
         required: false
@@ -71,6 +75,7 @@ jobs:
       # not a dry run — a scheduled retention job that only ever plans is
       # the same as no retention job).
       REPOSITORY: ${{ inputs.repository || 'aml-verification-service' }}
+      REDEPLOY: ${{ inputs.redeploy || 'false' }}
       KEEP: ${{ inputs.keep || '5' }}
       DRY_RUN: ${{ inputs.dry_run || 'false' }}
       TEAM_ID: ${{ inputs.team_id || 'team_BB42Om64UtSiFwVLxVvcMYob' }}
@@ -140,3 +145,17 @@ jobs:
             fi
           done < delete.txt
           exit $failed
+
+      # The dashboard's Redeploy button, as an API call: a git deployment of
+      # main on the linked repository, so provenance stays with git — never a
+      # file upload from a runner.
+      - name: Redeploy production from main (when asked)
+        if: ${{ env.REDEPLOY == 'true' }}
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS --fail-with-body -X POST \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.vercel.com/v13/deployments?teamId=$TEAM_ID&forceNew=1" \
+            -d '{"name":"npc-client-dashboard","project":"'"$PROJECT_ID"'","target":"production","gitSource":{"type":"github","repoId":1338873436,"ref":"main"}}')
+          echo "$resp" | jq -r '"created deployment \(.id) (\(.readyState // .status)) → https://\(.url)"'

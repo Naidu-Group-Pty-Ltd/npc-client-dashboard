@@ -102,10 +102,17 @@ function orgTypeKey(t: string | null | undefined): "finance" | "solicitor" | "bu
  * `audience` narrows what a client may be told: partner reliance milestones
  * are shown to a client as the fact that a partner accepted, never with the
  * partner's internal assessment vocabulary.
+ *
+ * A relying entity reads the Command Centre's own wording. The client
+ * rewordings exist because a client is not a compliance reader; a partner is,
+ * and softening "Screening completed" for them would be a different account
+ * of the same due diligence — which is the one thing the two documents may
+ * not have. What a partner does not see is decided by the view assembler and
+ * its allow-list, never by paraphrase here.
  */
 export function derivePassportJourney(
   input: PassportStampInput,
-  audience: "command" | "client" = "command",
+  audience: "command" | "client" | "partner" = "command",
 ): PassportJourney {
   const atts = [...(input.attestations ?? [])].sort((a, b) => a.version - b.version);
   const firstIssue = atts.find((a) => a.issued_at)?.issued_at ?? null;
@@ -154,7 +161,9 @@ export function derivePassportJourney(
   const settledAt = maxDate(settled.map((t) => t.settlement_date));
 
   const partnerActor = (a: { assessor_name: string | null; partner_org_name: string | null } | null) =>
-    audience === "client" ? (a?.partner_org_name ?? null) : (a?.assessor_name ?? a?.partner_org_name ?? null);
+    // The individual assessor at ANOTHER organisation is that organisation's
+    // record, so only the Command Centre reads a name here.
+    audience === "command" ? (a?.assessor_name ?? a?.partner_org_name ?? null) : (a?.partner_org_name ?? null);
 
   /**
    * Client-safe overrides. A client may know a milestone happened; they must

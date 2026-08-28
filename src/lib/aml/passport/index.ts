@@ -36,8 +36,10 @@ export {
   derivePassportStamps,
   derivePendingStamps,
   stampFaceTone,
+  stampInk,
   stampRotation,
   type StampFaceTone,
+  type StampInk,
   type PassportStamp,
   type PassportStampCode,
   type PassportStampInput,
@@ -49,8 +51,10 @@ export {
 
 export {
   assertClientSafe,
+  assertPartnerSafe,
   buildPassportView,
   findClientRestrictedKeys,
+  findPartnerRestrictedKeys,
   type PassportAudience,
   type PassportCaseFact,
   type PassportClientRequestFact,

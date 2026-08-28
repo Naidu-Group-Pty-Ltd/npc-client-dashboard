@@ -11,8 +11,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertClientSafe,
+  assertPartnerSafe,
   buildPassportView,
   findClientRestrictedKeys,
+  findPartnerRestrictedKeys,
   type PassportView,
   type PassportViewInput,
 } from './index';
@@ -280,5 +282,120 @@ describe('fail-closed tripwire', () => {
     const a = JSON.stringify(buildPassportView('client', richInput()));
     const b = JSON.stringify(buildPassportView('client', richInput()));
     expect(a).toBe(b);
+  });
+});
+
+/**
+ * The PARTNER audience — the relying entity under a written CDD arrangement.
+ *
+ * It exists because reliance under s 37A means the partner does not repeat
+ * the customer due diligence. A partner who cannot see what was performed and
+ * what it concluded has been given nothing to rely ON, and has to do the CDD
+ * again — which is the cost the arrangement exists to avoid.
+ *
+ * These tests are the contract for the line between an OUTCOME, which they
+ * receive, and the issuing organisation's REASONING, which they never do.
+ */
+describe('the partner audience carries the due diligence, not the reasoning', () => {
+  const view = buildPassportView('partner', richInput());
+
+  it('is built by the same assembler, and says which audience it is', () => {
+    expect(view.audience).toBe('partner');
+  });
+
+  it('carries the screening OUTCOME — that it ran, and how current the lists were', () => {
+    expect(view.screening).toBeTruthy();
+    expect(view.screening?.performed).toBe(true);
+    expect(typeof view.screening?.subjects_completed).toBe('number');
+    expect(view.screening?.list_freshness).toBeTruthy();
+  });
+
+  it('carries the PEP determination, because it is a conclusion and not a match', () => {
+    expect(view.screening?.pep_result).toBe(richInput().screening?.pep_result);
+  });
+
+  it('carries the funding and ownership outcomes', () => {
+    expect(view.funding).toBeTruthy();
+    expect(typeof view.funding?.sof_verified).toBe('number');
+    expect(Array.isArray(view.ownership)).toBe(true);
+  });
+
+  it('never carries the register of OTHER partners', () => {
+    // Which competitors hold this customer's passport, and what each of them
+    // decided, is not a due-diligence outcome about the customer.
+    expect(view.partners).toBeUndefined();
+  });
+
+  it('never carries the state machine reasons the Command Centre diagnoses with', () => {
+    expect(view.header.state.reasons).toEqual([]);
+    expect(buildPassportView('command', richInput()).header.state.reasons.length)
+      .toBeGreaterThanOrEqual(0);
+  });
+
+  it('builds its history rather than repeating staff-written event summaries', () => {
+    const command = buildPassportView('command', richInput());
+    const commandTitles = command.history.map((h) => h.title);
+    const partnerTitles = view.history.map((h) => h.title);
+    // A summary written for staff can carry reviewer vocabulary.
+    expect(partnerTitles).not.toEqual(commandTitles);
+    expect(view.history.every((h) => h.id === null || typeof h.id === 'string')).toBe(true);
+  });
+
+  it('fails CLOSED if reasoning ever reaches it', () => {
+    const poisoned = { ...view, header: { ...view.header, mlro_note: 'escalate' } } as unknown as PassportView;
+    expect(() => assertPartnerSafe(poisoned)).toThrow(/restricted keys/);
+    expect(findPartnerRestrictedKeys(poisoned)).toContain('header.mlro_note');
+  });
+
+  it.each([
+    'risk_rating', 'risk_score', 'match_detail', 'adverse_media', 'reviewer_note',
+    'internal_note', 'decision_note', 'rationale', 'biometric_template',
+    'liveness_score', 'face_match_score', 'provider_payload', 'storage_path',
+    'access_token', 'api_key', 'smr_reference', 'austrac_report',
+  ])('refuses %s wherever it appears', (key) => {
+    expect(findPartnerRestrictedKeys({ nested: { [key]: 'x' } })).toContain(`nested.${key}`);
+  });
+
+  it('admits the two PEP keys that are determinations, and no other', () => {
+    expect(findPartnerRestrictedKeys({ pep_result: 'not_pep' })).toEqual([]);
+    expect(findPartnerRestrictedKeys({ pep_determined_at: NOW })).toEqual([]);
+    expect(findPartnerRestrictedKeys({ pep_rationale: 'because' })).toContain('pep_rationale');
+    expect(findPartnerRestrictedKeys({ pep_sources: [] })).toContain('pep_sources');
+  });
+
+  it('is stricter than the command view and looser than the client view', () => {
+    // The client list forbids the screening vocabulary outright; the partner
+    // list must not, or reliance has nothing to stand on.
+    expect(findClientRestrictedKeys({ screening: {} }).length).toBeGreaterThan(0);
+    expect(findPartnerRestrictedKeys({ screening: {} })).toEqual([]);
+  });
+});
+
+describe('the partner assertion cannot be tripped by data that looks like a field', () => {
+  it('walks list codes as DATA, so a new list never takes the document down', () => {
+    // `list_freshness` is keyed by sanctions list code. An `austrac` list is
+    // entirely plausible, and because the assertion fails CLOSED a false hit
+    // there would take a partner's whole document down.
+    expect(findPartnerRestrictedKeys({
+      screening: { list_freshness: { un: NOW, austrac: NOW, smr: NOW } },
+    })).toEqual([]);
+  });
+
+  it('still refuses restricted material INSIDE that object', () => {
+    expect(findPartnerRestrictedKeys({
+      screening: { list_freshness: { un: { reviewer_note: 'x' } } },
+    }).length).toBeGreaterThan(0);
+  });
+
+  it('the questionnaire self-declarations never reach a partner either', () => {
+    // `richInput` carries `pep`, `adverse`, `internal_note` and `risk_score`
+    // in the payloads a client typed. The allow-list is what stops them, and
+    // `assertPartnerSafe` is the tripwire behind it.
+    const view = buildPassportView('partner', richInput());
+    const json = JSON.stringify(view);
+    expect(json).not.toContain('internal_note');
+    expect(json).not.toContain('risk_score');
+    expect(view.identity.fields.map((f) => f.key)).not.toContain('pep');
+    expect(view.identity.fields.map((f) => f.key)).not.toContain('adverse');
   });
 });

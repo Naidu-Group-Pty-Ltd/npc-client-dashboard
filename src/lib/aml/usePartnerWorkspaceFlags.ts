@@ -52,3 +52,27 @@ export function usePartnerWorkspaceEnabled(surface: WorkspaceSurfaceKey): {
   }, [surface]);
   return state;
 }
+
+/**
+ * Whether ANY partner portal has the in-portal compliance workspace enabled.
+ *
+ * The Command Centre needs this to be honest about where a Passport actually
+ * appears. On a deployment with every `aml_partner_workspace_*` flag off — as
+ * production is — a partner has no in-portal surface at all, so the emailed
+ * link is not one channel among several, it is the only one. An operator who
+ * believes otherwise waits for a partner to "see it in their portal", which
+ * is how a Passport that was never emailed went unnoticed.
+ *
+ * Fails CLOSED like the per-surface hook, and says `null` while it is still
+ * reading rather than asserting "off".
+ */
+export function useAnyPartnerWorkspaceEnabled(): { loading: boolean; enabled: boolean | null } {
+  const finance = usePartnerWorkspaceEnabled("finance");
+  const builder = usePartnerWorkspaceEnabled("builder");
+  const solicitor = usePartnerWorkspaceEnabled("solicitor");
+  const loading = finance.loading || builder.loading || solicitor.loading;
+  return {
+    loading,
+    enabled: loading ? null : (finance.enabled || builder.enabled || solicitor.enabled),
+  };
+}

@@ -18,13 +18,18 @@ import { PartnerOnboardingWizard } from "@/components/aml/PartnerOnboardingWizar
 import {
   PassportIssuedDialog, type PassportIssueResult,
 } from "@/components/aml/PassportIssuedDialog";
+import { PassportRecipientsPanel } from "@/components/aml/PassportRecipientsPanel";
+import type { RecipientRow } from "@/lib/aml/passport/passportRecipients.pure";
+import { useAnyPartnerWorkspaceEnabled } from "@/lib/aml/usePartnerWorkspaceFlags";
 import { passportActions, type PassportActionRow } from "@/lib/aml/passportActions.pure";
 import {
   amlRelianceApi, type ComplianceAttestation, type DirectPartnerAcknowledgement,
   type IndependentAssessment, type PartnerCaseLink, type PartnerOrganisation,
   type PartnerRecordsRequest, type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
-import { describeAcknowledgement, grantStanding } from "@/lib/aml/partnerOnboarding.pure";
+import {
+  describeAcknowledgement, grantStanding, isValidEmail,
+} from "@/lib/aml/partnerOnboarding.pure";
 import {
   newlyAccepted, readHandover, shouldWatchForAcceptance,
   type AcceptedPartner,
@@ -69,7 +74,14 @@ export function ReliancePassportSection({
   const [wizardOpen, setWizardOpen] = useState(false);
   /** The one moment the credential exists — see `PassportIssuedDialog`. */
   const [issued, setIssued] = useState<PassportIssueResult | null>(null);
+  /** The arrangement currently mid-send, so only its own button spins. */
+  const [sending, setSending] = useState<string | null>(null);
   const { prompt, dialog } = usePromptDialog();
+  /* Where a Passport actually appears for a partner. With every
+     `aml_partner_workspace_*` flag off — as production has them — there is no
+     in-portal surface at all, so the emailed link is the only channel and the
+     panel says so rather than leaving an operator waiting on a portal. */
+  const partnerWorkspace = useAnyPartnerWorkspaceEnabled();
 
   const refresh = useCallback(async () => {
     try {
@@ -214,64 +226,84 @@ export function ReliancePassportSection({
     } finally { setBusy(null); }
   };
 
-  const grant = async () => {
-    const active = agreements.filter((a) => a.status === "active");
-    if (active.length === 0) {
+  /**
+   * Send this Passport to one partner — the whole distribution act, once.
+   *
+   * ── What this replaces ────────────────────────────────────────────
+   * A prompt that asked the operator to TYPE the partner organisation's
+   * name into a free-text box and matched it case-insensitively against
+   * the active arrangements, then displayed the minted token in a second
+   * prompt whose "value" was a placeholder — so the box holding the
+   * one-time credential was, in the DOM, empty.
+   *
+   * Here the partner is a row that was clicked, the address opens
+   * pre-filled with the one the platform already knows, delivery is
+   * REQUIRED rather than optional, and the credential is handed to a
+   * dialog that can actually be copied from.
+   *
+   * It decides nothing. `grant_access` re-checks that the arrangement is
+   * active, that its review is not overdue, that the client consented to
+   * sharing and that an attestation exists, and refuses in its own words
+   * if any of that has lapsed since this row was drawn.
+   */
+  const sendPassport = async (row: RecipientRow) => {
+    const values = await prompt({
+      title: `${row.actionLabel} — ${row.partnerName}`,
+      description:
+        `${row.actionMeaning} They open the whole Passport from the link without a portal ` +
+        "account, and see what was performed — never this case's risk assessment.",
+      confirmLabel: row.actionLabel,
+      fields: [{
+        name: "deliver_to",
+        label: "Email the Passport link to",
+        type: "email",
+        required: true,
+        // The address the platform already holds, as a VALUE — an operator
+        // confirming what is in front of them, not retyping it.
+        value: row.suggestedEmail ?? "",
+        placeholder: "name@partner.com.au",
+        helpText: row.lastDeliveredTo
+          ? `Last sent to ${row.lastDeliveredTo}. Change it to send this one somewhere else.`
+          : "Delivery is part of the act — a grant nobody was emailed is access with no channel.",
+      }],
+    });
+    if (!values) return;
+    const deliverTo = values.deliver_to.trim().toLowerCase();
+    if (!isValidEmail(deliverTo)) {
       toast({
-        title: "No active CDD arrangement",
-        description: "Reliance requires a written agreement with the partner organisation (Pt 2 Div 7). Record one first.",
+        title: "That does not look like an email address",
+        description: "The link is the credential — it has to go somewhere real.",
         variant: "destructive",
       });
       return;
     }
-    const values = await prompt({
-      title: "Grant partner access",
-      description:
-        "The partner receives the current attestation — what procedures were performed, never our " +
-        "assessments. Requires the client's sharing consent and a current written agreement.",
-      confirmLabel: "Grant access",
-      fields: [
-        {
-          name: "partner", label: `Partner organisation (${active.map((a) => a.partner_org_name).join(" · ")})`,
-          required: true, placeholder: "Exact partner name from the list above…",
-          helpText: "Must match an active agreement.",
-        },
-        {
-          // The token exists for one moment only — emailing it here is the
-          // only chance to deliver it without an operator copying it by hand.
-          name: "deliver_to", label: "Email the passport link to (optional)",
-          required: false, placeholder: "name@partner.com.au",
-          helpText: "They open it without a portal login. Leave blank to hand the link over yourself.",
-        },
-      ],
-    });
-    if (!values) return;
-    const agreement = active.find(
-      (a) => a.partner_org_name.toLowerCase() === values.partner.trim().toLowerCase());
-    if (!agreement) {
-      toast({ title: "No active agreement matches that name", variant: "destructive" });
-      return;
-    }
-    setBusy("grant");
+    setSending(row.agreementId);
     try {
-      const res = await amlRelianceApi.grantAccess(caseId, agreement.id, {
-        deliver_to: values.deliver_to?.trim() || undefined,
+      const res = await amlRelianceApi.grantAccess(caseId, row.agreementId, {
+        deliver_to: deliverTo,
+        // A live link cannot be re-read, so a holder's row supersedes; a row
+        // with nothing live mints outright and supersedes nothing.
+        ...(row.reissueOf ? { reissue_of: row.reissueOf } : {}),
       });
-      // The raw token exists only in this moment — surface it once, plainly.
-      await prompt({
-        title: "Partner access token — shown once",
-        description:
-          `${res.note} Expires ${new Date(res.grant.expires_at).toLocaleDateString()}.`,
-        confirmLabel: "I have delivered it",
-        fields: [{
-          name: "token", label: "Access token (copy now)", type: "textarea",
-          required: false, placeholder: res.access_token, helpText: res.access_token,
-        }],
+      setIssued({
+        partnerName: row.partnerName,
+        recipientEmail: deliverTo,
+        passportLink: res.passport_link ?? res.access_token,
+        expiresAt: res.grant.expires_at,
+        emailSent: res.link_email_sent,
+        emailError: res.link_email_error,
       });
+      if (res.link_email_sent === false) {
+        toast({
+          title: "The Passport was issued, but the email did not send",
+          description: `Send the link to ${deliverTo} yourself — it is shown once and cannot be read again.`,
+          variant: "destructive",
+        });
+      }
       await refresh();
     } catch (e: any) {
-      toast({ title: "Could not grant access", description: e?.message, variant: "destructive" });
-    } finally { setBusy(null); }
+      toast({ title: `Could not send the Passport to ${row.partnerName}`, description: e?.message, variant: "destructive" });
+    } finally { setSending(null); }
   };
 
   /**
@@ -368,59 +400,13 @@ export function ReliancePassportSection({
     } finally { setBusy(null); }
   };
 
-  /**
-   * Re-issue a passport link.
-   *
-   * The token is stored only as a hash, so a link can never be re-read: a
-   * re-issue MINTS A NEW GRANT and revokes the old one. That is also why it
-   * re-runs every precondition — arrangement current, client consent,
-   * attestation issued — and will refuse if any has lapsed since. It binds
-   * to the CURRENT attestation, so the partner receives today's record.
-   */
-  const reissueGrant = async (row: RelianceGrant) => {
-    const values = await prompt({
-      title: "Re-issue the passport link",
-      description:
-        "A new link is issued and the previous one stops working. The partner receives the CURRENT attestation, and every condition is re-checked — if the arrangement's review has lapsed, this will refuse and say so.",
-      confirmLabel: "Re-issue link",
-      fields: [{
-        name: "deliver_to", label: "Email the new link to",
-        required: false,
-        placeholder: row.delivered_to_email ?? "name@partner.com.au",
-        helpText: row.delivered_to_email
-          ? `Leave blank to use ${row.delivered_to_email} again.`
-          : "Leave blank to hand the link over yourself.",
-      }],
-    });
-    if (!values) return;
-    setBusy("reissue");
-    try {
-      const res = await amlRelianceApi.grantAccess(caseId, row.agreement_id, {
-        deliver_to: values.deliver_to?.trim() || row.delivered_to_email || undefined,
-        reissue_of: row.id,
-      });
-      if (res.link_email_sent) {
-        toast({
-          title: "New link sent",
-          description: `Emailed ${res.delivered_to}. The previous link no longer works.`,
-        });
-      } else {
-        // The one-time link must never be lost to a mail outage.
-        await prompt({
-          title: "New link issued — deliver it yourself",
-          description: `${res.link_email_error ?? "No delivery address was given."} Copy the link below; it is shown once.`,
-          confirmLabel: "I have delivered it",
-          fields: [{
-            name: "link", label: "Passport link", type: "textarea", required: false,
-            placeholder: res.passport_link, helpText: res.passport_link,
-          }],
-        });
-      }
-      await refresh();
-    } catch (e: any) {
-      toast({ title: "Could not re-issue the link", description: e?.message, variant: "destructive" });
-    } finally { setBusy(null); }
-  };
+  /* Re-issuing a link is not a second operation and no longer a second code
+     path: it is `sendPassport` with `reissue_of` set, which is why every
+     precondition, the pre-filled address and the copyable one-time link are
+     shared with a first send. The standalone `reissueGrant` this replaced
+     showed the new link as a prompt field PLACEHOLDER — the same
+     uncopyable-empty-box defect that was fixed on the issue path and
+     survived here, because there were two paths. */
 
   /**
    * The executed agreement as a document. Rendered on first request and
@@ -737,24 +723,18 @@ export function ReliancePassportSection({
           </Button>
         );
       case "grant":
-        /* The paved road is the onboarding wizard — it records the
-         * organisation, the arrangement and the case link on the way to
-         * the grant, so a brand-new partner is one pass, not four
-         * dialogs. The direct grant stays for partners whose arrangement
-         * already exists. */
+        /* The wizard is for a partner who does not exist yet — it records
+         * the organisation, the arrangement and the case link on the way
+         * to the grant. Sending to a partner who ALREADY has an
+         * arrangement is a row in "Who holds this Passport" above, with
+         * the address pre-filled: it used to be a free-text box that had
+         * to match an organisation name exactly, which is why sending the
+         * same Passport to a second partner had no usable path. */
         return (
-          <div className="flex flex-wrap justify-end gap-2">
-            {activeAgreementCount > 0 && (
-              <Button size="sm" variant="outline" onClick={grant}
-                disabled={busy !== null || row.state === "blocked"}>
-                {spinning("grant")} Grant to existing partner
-              </Button>
-            )}
-            <Button size="sm" onClick={() => setWizardOpen(true)}
-              disabled={busy !== null || row.state === "blocked"}>
-              Onboard partner &amp; grant
-            </Button>
-          </div>
+          <Button size="sm" onClick={() => setWizardOpen(true)}
+            disabled={busy !== null || row.state === "blocked"}>
+            Onboard partner &amp; grant
+          </Button>
         );
       case "material":
         return (
@@ -857,6 +837,27 @@ export function ReliancePassportSection({
           </div>
         )}
 
+        {/* ── distribution, as a list of partners ──────────────────────
+            The Passport exists to be given to several partners at once, and
+            that had no surface: one summary column said "live" beside a
+            partner who had been sent nothing, and the only way to send to a
+            second partner was a five-step wizard for a partner who already
+            existed. Each row here is an active written arrangement with
+            exactly one act, and its address opens pre-filled. */}
+        <PassportRecipientsPanel
+          facts={{
+            agreements,
+            grants,
+            acknowledgements,
+            hasAttestation: Boolean(current),
+            isMlro,
+          }}
+          busyAgreementId={sending}
+          onSend={sendPassport}
+          onOnboard={() => setWizardOpen(true)}
+          workspaceEnabled={partnerWorkspace.enabled}
+        />
+
         {/*
           The acts, in order and in words. What each button DOES sits
           beside it, a blocked act names its enabler before the click, and
@@ -906,7 +907,10 @@ export function ReliancePassportSection({
             ) : <div className="text-muted-foreground">Not issued</div>}
           </div>
           <div>
-            <div className="font-medium">Passport links</div>
+            {/* The register, kept as HISTORY. Sending is the recipients
+                panel's act — two buttons that mint the same credential from
+                two places is how one of them ends up out of date. */}
+            <div className="font-medium">Link history</div>
             {grants.length === 0 ? (
               <div className="text-muted-foreground">None</div>
             ) : grants
@@ -937,13 +941,6 @@ export function ReliancePassportSection({
                     <div className="text-muted-foreground">{standing.detail}</div>
                     {g.delivered_to_email && (
                       <div className="text-muted-foreground/80">Sent to {g.delivered_to_email}</div>
-                    )}
-                    {isMlro && standing.canReissue && (
-                      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs"
-                        onClick={() => reissueGrant(g)} disabled={busy !== null}>
-                        {busy === "reissue" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
-                        Re-issue link
-                      </Button>
                     )}
                   </div>
                 );

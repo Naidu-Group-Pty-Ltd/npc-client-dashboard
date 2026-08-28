@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { buildPartnerBooklet, type PartnerDisclosure } from "./partnerBooklet.pure";
+import { BOOKLET_LEAVES, buildPartnerBooklet, type PartnerDisclosure } from "./partnerBooklet.pure";
 import { BOOKLET_ZOOM_STEPS, bookletGeometry, bookletZoom, nextBookletZoom } from "./index";
 
 /**
@@ -16,6 +16,7 @@ import { BOOKLET_ZOOM_STEPS, bookletGeometry, bookletZoom, nextBookletZoom } fro
 const disclosure = (over: Partial<PartnerDisclosure> = {}): PartnerDisclosure => ({
   attestation_sha256: "28099ae9048b1397aa11bb22cc33dd44ee55ff6677889900aabbccddeeff0011",
   issued_at: "2026-08-27T08:28:28.000Z",
+  attestation_version: 1,
   agreement: {
     partner_org_name: "Testing Pty Ltd",
     agreement_reference: "AML/CTF Compliance Passport Agreement",
@@ -60,21 +61,25 @@ const idsOf = (d: PartnerDisclosure) => buildPartnerBooklet(d).map((p) => p.id);
 const flat = (d: PartnerDisclosure) => JSON.stringify(buildPartnerBooklet(d));
 
 describe("the partner opens a bound document", () => {
-  it("opens on the cover, naming its bearer", () => {
+  it("opens on the cover, naming its bearer with the ISSUER's own credential", () => {
     const [cover] = buildPartnerBooklet(disclosure());
     expect(cover.variant).toBe("cover");
     expect(cover.sub).toBe("Rugesh Naidu");
-    expect(cover.foot).toContain("AML-2026-00005");
-    expect(cover.fingerprint).toBe("28099AE9048B1397");
+    // Character-identical to the Command Centre's, because both derive it
+    // from `passportCredential`. "AML-2026-00005" and "AUX-AML-2026-00005-V1"
+    // look like two documents to a partner comparing their copy.
+    expect(cover.foot).toContain("AUX-AML-2026-00005-V1");
+    expect(cover.foot).toContain("v1");
+    expect(cover.fingerprint).toBe("2809·9AE9·048B·1397");
   });
 
-  it("leads with the reliance basis and the responsibility notice", () => {
+  it("carries the reliance basis on the leaf the instrument keeps it on", () => {
     const pages = buildPartnerBooklet(disclosure());
-    const basis = pages.find((p) => p.id === "basis")!;
-    expect(basis.numeral).toBe("I");
-    expect(JSON.stringify(basis.blocks)).toContain("under your written");
+    const leaf = pages.find((p) => p.id === "disclosure")!;
+    expect(leaf.title).toBe("Disclosure & Access");
+    expect(JSON.stringify(leaf.blocks)).toContain("under your written");
     // Who it was issued to, under what, by whom, when.
-    expect(JSON.stringify(basis.blocks)).toContain("Testing Pty Ltd");
+    expect(JSON.stringify(leaf.blocks)).toContain("Testing Pty Ltd");
   });
 
   it("renders each party's identification in words a person reads", () => {
@@ -122,10 +127,10 @@ describe("what the document may not say", () => {
     expect(flat(disclosure())).toContain("carries no match content");
   });
 
-  it("prints no page for records the disclosure does not hold", () => {
-    // An empty "Screening" leaf in a bound document reads as "screening found
-    // nothing", which is a different and far worse claim than "screening is
-    // not part of this record".
+  it("keeps every leaf even when the disclosure carries none of them", () => {
+    // Dropping a leaf is what produced two documents of different lengths.
+    // A leaf that is present and says why it is empty cannot be mistaken for
+    // a document that is missing pages.
     const d = disclosure();
     delete (d.attestation as any).screening;
     delete (d.attestation as any).limitations;
@@ -133,25 +138,30 @@ describe("what the document may not say", () => {
     (d.attestation.customer_identification as any).consents_held = [];
 
     const ids = idsOf(d);
-    expect(ids).not.toContain("screening");
-    expect(ids).not.toContain("limitations");
-    expect(ids).not.toContain("identification");
-    expect(ids).not.toContain("consents");
-    // What always exists still does: a bearer, a basis and a way to verify.
-    expect(ids).toEqual(["cover", "basis", "customer", "verify"]);
+    expect(ids).toEqual(["cover", ...BOOKLET_LEAVES.map((l) => l.id)]);
+    const screening = buildPartnerBooklet(d).find((p) => p.id === "screening")!;
+    expect(JSON.stringify(screening.blocks)).toContain("Not part of this disclosure");
+    // And it never reads as a screening that found nothing.
+    expect(JSON.stringify(screening.blocks)).not.toContain("Not performed");
   });
 
-  it("does not print a screening page for a screening that was not performed", () => {
-    const d = disclosure();
-    (d.attestation.screening as any).performed = false;
-    expect(idsOf(d)).not.toContain("screening");
+  it("says WITHHELD and NOT-DISCLOSED differently, because they are different", () => {
+    const pages = buildPartnerBooklet(disclosure());
+    const funding = pages.find((p) => p.id === "funding")!;
+    const ownership = pages.find((p) => p.id === "ownership")!;
+
+    // "We do not share this" …
+    expect(JSON.stringify(funding.blocks)).toContain("Not disclosed to a relying entity");
+    expect(JSON.stringify(funding.blocks)).toContain("own due diligence");
+    // … is not the same sentence as "this was not shared with you".
+    expect(JSON.stringify(ownership.blocks)).toContain("Not part of this disclosure");
   });
 
   it("survives a payload that is missing everything", () => {
     const bare = disclosure({ attestation: {} });
     const pages = buildPartnerBooklet(bare);
     expect(pages[0].variant).toBe("cover");
-    expect(pages.length).toBeGreaterThanOrEqual(3);
+    expect(pages).toHaveLength(BOOKLET_LEAVES.length + 1);
     expect(JSON.stringify(pages)).not.toContain("undefined");
   });
 
@@ -165,12 +175,60 @@ describe("what the document may not say", () => {
 });
 
 describe("the fingerprint a verifier checks", () => {
-  it("prints in full on the verification leaf, short on the cover", () => {
+  it("prints in full on the renewal leaf, short on the cover", () => {
     const d = disclosure();
     const pages = buildPartnerBooklet(d);
-    expect(pages[0].fingerprint).toHaveLength(16);
-    expect(JSON.stringify(pages.find((p) => p.id === "verify")))
+    expect(pages[0].fingerprint).toBe("2809·9AE9·048B·1397");
+    expect(JSON.stringify(pages.find((p) => p.id === "renewal")))
       .toContain(d.attestation_sha256);
+  });
+});
+
+/**
+ * One instrument.
+ *
+ * The partner's copy and the Command Centre's are the same document. That is
+ * asserted against the composer's SOURCE rather than against a list somebody
+ * remembered to update: a leaf added to `buildBooklet` and not to
+ * `BOOKLET_LEAVES` would silently go missing from every partner's copy, which
+ * is exactly the defect this replaces.
+ */
+describe("the partner's copy is the Command Centre's document", () => {
+  const composer = readFileSync(
+    "supabase/functions/_shared/aml/passport/passportBooklet.pure.ts", "utf8",
+  );
+  const commandIds = [...composer.slice(composer.indexOf("export function buildBooklet"))
+    .matchAll(/\n\s+id: "([a-z-]+)",\n\s+kicker:/g)].map((m) => m[1]);
+
+  it("finds the composer's leaves at all", () => {
+    // A regex that stops matching would make this pass vacuously.
+    expect(commandIds.length).toBeGreaterThanOrEqual(10);
+    expect(commandIds).toContain("identity");
+  });
+
+  it("carries every leaf the Command Centre can print, in the same order", () => {
+    expect(BOOKLET_LEAVES.map((l) => l.id)).toEqual(commandIds);
+  });
+
+  it("gives each leaf the Command Centre's own title and numeral", () => {
+    const pages = buildPartnerBooklet(disclosure());
+    const identity = pages.find((p) => p.id === "identity")!;
+    expect(identity.title).toBe("Client Identity");
+    expect(identity.numeral).toBe("I");
+    expect(composer).toContain('title: "Client Identity"');
+
+    const leaves = pages.filter((p) => p.variant === "leaf");
+    expect(leaves.map((p) => p.numeral).slice(0, 4)).toEqual(["I", "II", "III", "IV"]);
+  });
+
+  it("prints the same eight identity fields the Command Centre prints", () => {
+    const identity = buildPartnerBooklet(disclosure()).find((p) => p.id === "identity")!;
+    const fields = identity.blocks.find((b) => b.kind === "fields") as
+      Extract<typeof identity.blocks[number], { kind: "fields" }>;
+    expect(fields.items.map((f) => f.k)).toEqual([
+      "Client name", "Credential ID", "Customer type", "AML case",
+      "Issue date", "Version", "Disclosed to", "Fingerprint",
+    ]);
   });
 });
 

@@ -1450,6 +1450,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             attestation: disclosed,
             attestation_sha256: attestation.payload_sha256,
             schema_version: 2,
+            // The version this grant is bound to. The Command Centre prints
+            // its credential as `AUX-<case>-V<n>`, and a partner comparing
+            // their copy with the issuer's must not have to work out whether
+            // two differently-spelled identifiers name one instrument.
+            attestation_version: attestation.version ?? null,
             issued_at: attestation.issued_at,
             agreement: {
               partner_org_name: agreement.partner_org_name,
@@ -1468,6 +1473,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({
           attestation: attestation.payload,
           attestation_sha256: attestation.payload_sha256,
+          attestation_version: attestation.version ?? null,
           issued_at: attestation.issued_at,
           agreement: {
             partner_org_name: agreement.partner_org_name,

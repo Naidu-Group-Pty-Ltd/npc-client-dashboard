@@ -64,7 +64,9 @@ jobs:
   prune:
     runs-on: ubuntu-latest
     env:
-      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      # Either name works — the token was stored as VERCEL_API_TOKEN when it
+      # was first set up, and renaming a live secret buys nothing.
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN || secrets.VERCEL_API_TOKEN }}
       # Scheduled runs take no inputs: fall back to safe defaults (keep 5,
       # not a dry run — a scheduled retention job that only ever plans is
       # the same as no retention job).
@@ -77,7 +79,7 @@ jobs:
       - name: Fail loudly when there is no token
         run: |
           if [ -z "$VERCEL_TOKEN" ]; then
-            echo '::error title=No Vercel token::The VERCEL_TOKEN Actions secret is not set. Create a token at vercel.com → Account Settings → Tokens (scoped to the Naidu Group Pty Ltd team) and store it as VERCEL_TOKEN in this repository. Without it this retention job cannot run, and the registry will hit its image cap again.'
+            echo '::error title=No Vercel token::Neither the VERCEL_API_TOKEN nor the VERCEL_TOKEN Actions secret is set. Create a token at vercel.com → Account Settings → Tokens (scoped to the Naidu Group Pty Ltd team) and store it in this repository. Without it this retention job cannot run, and the registry will hit its image cap again.'
             exit 1
           fi
 

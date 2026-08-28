@@ -9,7 +9,7 @@
  * Colour lives in `src/styles/passport-tokens.css`, never here — see that
  * file's header for why.
  */
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /* ── tone ─────────────────────────────────────────────────────────────── */
@@ -57,11 +57,21 @@ export function TonePill({
 
 export type WaxTone = "gold" | "green" | "navy" | "blue" | "red";
 
+/** The same mark, and the same 240px silhouette, the struck die is masked with. */
+const WAX_EMBLEM = "/brand/aurixa-emblem-240.png";
+
 /**
  * The embossed seal. `earned={false}` renders the *impression* of a seal that
  * has not been applied — greyed and dashed. A register that drew unearned
  * seals the same as earned ones would assert certifications no record
  * supports, which is the one thing a compliance artefact must never do.
+ *
+ * It carries the Aurixa emblem for the same reason the struck die does: every
+ * seal on this document is pressed by the same system, and one that is not
+ * marked reads as belonging to something else. Drawn the same way too — the
+ * emblem as a mask, the seal's own ink as the fill — so it survives the cream
+ * leaf and the dark register without a blend mode to get wrong. An UNEARNED
+ * seal carries none, because nothing pressed it.
  */
 export function Wax({
   tone = "gold",
@@ -94,6 +104,14 @@ export function Wax({
     >
       <span aria-hidden="true" className="passport-wax__ring" />
       <span aria-hidden="true" className="passport-wax__ticks" />
+      {earned && (
+        <span
+          aria-hidden="true"
+          className="passport-wax__watermark"
+          data-emblem={WAX_EMBLEM}
+          style={{ "--stamp-watermark-src": `url("${WAX_EMBLEM}")` } as CSSProperties}
+        />
+      )}
       <div className="relative px-2 text-center">
         <div className="passport-wax__org" style={{ fontSize: small ? 5 : 5.8 }}>
           {org}

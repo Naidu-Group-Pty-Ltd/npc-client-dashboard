@@ -292,7 +292,13 @@ export function PassportWorkspace({
         />
       )}
       {bookletOpen && <PassportBooklet view={view} onClose={() => setBookletOpen(false)} />}
-      {openStamp && <StampRecordDialog stamp={openStamp} onClose={() => setOpenStamp(null)} />}
+      {openStamp && (
+        <StampRecordDialog
+          stamp={openStamp}
+          issuerOrg={view.header.issuer_org}
+          onClose={() => setOpenStamp(null)}
+        />
+      )}
     </div>
   );
 }

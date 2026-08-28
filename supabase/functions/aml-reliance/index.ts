@@ -167,6 +167,338 @@ async function notifyCommandCentre(
 }
 
 /**
+ * The case's Passport view, built once for every audience that may read it.
+ *
+ * This gathering used to live inside `get_passport_view` and nowhere else,
+ * which is why a partner's copy of the document was composed by hand from the
+ * attestation payload and came out as a different booklet. Two assemblies of
+ * one document eventually disagree about it — they did — so there is one, and
+ * the audience is a parameter.
+ *
+ * `buildPassportView` decides what each audience may hold; nothing here does.
+ * That separation is the whole safety property: this function fetches the
+ * case's records and the pure assembler builds an audience-safe projection
+ * from them, failing closed if any restricted vocabulary survives.
+ *
+ * Returns null when the case does not exist, so the caller answers 404 in its
+ * own words.
+ */
+async function buildCasePassportView(
+  admin: any, caseId: string, audience: "command" | "client" | "partner",
+) {
+  const { data: caseRow } = await admin.schema("aml").from("cases")
+    .select("id, case_reference, subject_display_name, subject_type, status, case_stage, service_gate_status, opened_at, closed_at, assigned_mlro_id")
+    .eq("id", caseId).maybeSingle();
+  if (!caseRow) return null;
+
+  const [
+    { data: attRows }, { data: consents }, { data: checks }, { data: docs },
+    { data: reqs }, { data: subjects }, { data: pep }, { data: syncs },
+    { data: entityLinks }, { data: sof }, { data: sow }, { data: edd },
+    { data: txns }, { data: links }, { data: grants }, { data: assessments },
+    { data: refreshObs }, { data: events }, { data: requests }, { data: tenant },
+  ] = await Promise.all([
+    admin.schema("aml").from("compliance_attestations")
+      .select("id, version, issued_at, superseded_at, payload_sha256, schema_version, refresh_required_at")
+      .eq("case_id", caseId).order("version", { ascending: true }),
+    admin.schema("aml").from("consents")
+      .select("id, kind, accepted_at, actor_label").eq("case_id", caseId),
+    admin.schema("aml").from("verification_checks")
+      .select("id, party_label, check_type, status, completed_at").eq("case_id", caseId),
+    admin.schema("aml").from("documents")
+      .select("id, requirement_id, status, created_at, reviewed_at, version_number")
+      .eq("case_id", caseId).neq("status", "deleted"),
+    admin.schema("aml").from("document_requirements")
+      .select("id, code, label, required").eq("case_id", caseId),
+    admin.schema("aml").from("party_screening_subjects")
+      .select("state, last_screened_at, adjudicated_at, screened_name").eq("case_id", caseId),
+    admin.schema("aml").from("pep_determinations")
+      .select("result, determined_at").eq("case_id", caseId)
+      .is("superseded_at", null).order("determined_at", { ascending: false }).limit(1),
+    admin.schema("aml").from("sanctions_list_syncs")
+      .select("list_code, completed_at").eq("status", "succeeded")
+      .order("completed_at", { ascending: false }).limit(10),
+    admin.schema("aml").from("entity_case_links")
+      .select("entity_id").eq("case_id", caseId),
+    admin.schema("aml").from("source_of_funds")
+      .select("verified, verified_at").eq("case_id", caseId),
+    admin.schema("aml").from("source_of_wealth")
+      .select("verified, verified_at").eq("case_id", caseId),
+    admin.schema("aml").from("edd_cases")
+      .select("status, completed_at").eq("case_id", caseId),
+    admin.schema("aml").from("transactions")
+      .select("id, kind, status, property_address, contract_date, settlement_date, purchase_price")
+      .eq("case_id", caseId).is("archived_at", null),
+    admin.schema("aml").from("partner_case_links")
+      .select("state, legal_route, portal_type, partner_org_id, partner_organisations:partner_org_id(legal_name, organisation_type)")
+      .eq("case_id", caseId),
+    admin.schema("aml").from("reliance_grants")
+      .select("id, granted_at, expires_at, revoked_at, attestation_id, reliance_agreements:agreement_id(partner_org_name, partner_org_type)")
+      .eq("case_id", caseId),
+    admin.schema("aml").from("independent_assessments")
+      .select("id, status, decided_at, assessor_name, reliance_agreements:agreement_id(partner_org_name, partner_org_type)")
+      .eq("case_id", caseId),
+    admin.schema("aml").from("partner_refresh_obligations")
+      .select("id, created_at, status, completed_at, cancelled_at, due_at").eq("case_id", caseId),
+    admin.schema("aml").from("case_events")
+      .select("id, category, summary, actor_label, created_at")
+      .eq("case_id", caseId).order("created_at", { ascending: false }).limit(300),
+    admin.schema("aml").from("client_requests")
+      .select("id, kind, subject, status, created_at").eq("case_id", caseId)
+      .order("created_at", { ascending: false }),
+    admin.schema("aml").from("tenant_settings")
+      .select("display_name, mlro_contact_name").eq("tenant_id", "default").maybeSingle(),
+  ]);
+
+  // Beneficial owners hang off entities, which link to the case through
+  // entity_case_links — a two-step read, not a PostgREST embed.
+  const entityIds = [...new Set((entityLinks ?? []).map((l: any) => l.entity_id).filter(Boolean))];
+  const [{ data: owners }, { data: reps }, { data: entityRows }] = entityIds.length
+    ? await Promise.all([
+        admin.schema("aml").from("beneficial_owners")
+          .select("full_name, ownership_percent, control_type, is_ubo, verification_state, updated_at")
+          .in("entity_id", entityIds),
+        admin.schema("aml").from("authorised_representatives")
+          .select("full_name, role_title, is_director, is_signatory, verification_state")
+          .in("entity_id", entityIds),
+        admin.schema("aml").from("entities")
+          .select("legal_name, entity_type, abn, acn, jurisdiction, registered_address")
+          .in("id", entityIds),
+      ])
+    : [{ data: [] as any[] }, { data: [] as any[] }, { data: [] as any[] }];
+
+  // Control structure: owners and representatives as ONE party list.
+  // Names and roles only — risk flags, PEP linkage and notes stay in
+  // the case file and are never projected.
+  const ownership = [
+    ...(owners ?? []).map((o: any) => ({
+      name: o.full_name ?? "Beneficial owner",
+      party_kind: "beneficial_owner",
+      relationship: o.control_type ?? null,
+      ownership_percent: typeof o.ownership_percent === "number" ? o.ownership_percent : null,
+      control_type: o.control_type ?? null,
+      is_ubo: o.is_ubo ?? null,
+      verification_state: o.verification_state ?? null,
+    })),
+    ...(reps ?? []).map((r: any) => ({
+      name: r.full_name ?? "Authorised representative",
+      party_kind: "authorised_representative",
+      relationship: r.role_title ?? (r.is_director ? "Director" : r.is_signatory ? "Signatory" : null),
+      ownership_percent: null,
+      control_type: r.is_director ? "director" : r.is_signatory ? "signatory" : null,
+      is_ubo: false,
+      verification_state: r.verification_state ?? null,
+    })),
+  ];
+
+  const attFacts = (attRows ?? []).map((a: any) => ({
+    version: a.version,
+    issued_at: a.issued_at,
+    superseded_at: a.superseded_at,
+    payload_sha256: a.payload_sha256,
+    schema_version: a.schema_version ?? 1,
+  }));
+  const current = (attRows ?? []).filter((a: any) => !a.superseded_at)
+    .sort((a: any, b: any) => b.version - a.version)[0] ?? null;
+  // Material currency: the canonical signal is `refresh_required_at`
+  // stamped by apply_partner_material_change. v1 attestations are not
+  // assessable (null) and never force a caution state on their own.
+  const materialCurrent = current
+    ? (current.refresh_required_at ? false : ((current.schema_version ?? 1) === 2 ? true : null))
+    : null;
+
+  const versionByAttId = new Map<string, number>((attRows ?? []).map((a: any) => [a.id, a.version]));
+  const grantView = grants ?? [];
+  const lastViewByGrant = new Map<string, string>();
+  if ((grants ?? []).length > 0) {
+    const { data: views } = await admin.schema("aml").from("reliance_access_log")
+      .select("grant_id, created_at").eq("case_id", caseId)
+      .in("action", ["redeem", "view_attestation"])
+      .order("created_at", { ascending: false }).limit(500);
+    for (const v of (views ?? [])) {
+      if (v.grant_id && !lastViewByGrant.has(v.grant_id)) lastViewByGrant.set(v.grant_id, v.created_at);
+    }
+  }
+  // Authorised disclosure per organisation. Read from the stored v2
+  // manifest: allowed codes minus denied classes, with denied winning.
+  // A v1 grant has no manifest and therefore discloses no matrix — the
+  // page says so rather than implying an empty matrix means "nothing".
+  const manifestByGrant = new Map<string, any>();
+  if ((grants ?? []).length > 0) {
+    const { data: manifests } = await admin.schema("aml").from("disclosure_manifests")
+      .select("grant_id, allowed_attribute_codes, allowed_record_classes, denied_classes, revoked_at")
+      .in("grant_id", (grants ?? []).map((g: any) => g.id));
+    for (const m of (manifests ?? [])) {
+      if (!m.revoked_at) manifestByGrant.set(m.grant_id, m);
+    }
+  }
+  const disclosureFor = (grantId: string | null | undefined) => {
+    const m = grantId ? manifestByGrant.get(grantId) : null;
+    if (!m) return [];
+    const denied = new Set<string>((m.denied_classes ?? []) as string[]);
+    const codes = [
+      ...((m.allowed_attribute_codes ?? []) as string[]),
+      ...((m.allowed_record_classes ?? []) as string[]),
+    ];
+    const seen = new Set<string>();
+    const out: Array<{ code: string; state: "granted" | "limited" | "withheld" }> = [];
+    for (const code of codes) {
+      if (seen.has(code)) continue;
+      seen.add(code);
+      out.push({ code, state: denied.has(code) ? "withheld" : "granted" });
+    }
+    for (const code of denied) {
+      if (!seen.has(code)) { seen.add(code); out.push({ code, state: "withheld" }); }
+    }
+    return out;
+  };
+
+  const grantByOrg = new Map<string, any>();
+  for (const g of grantView) {
+    const org = (g as any).reliance_agreements?.partner_org_name ?? "";
+    const prev = grantByOrg.get(org);
+    if (!prev || String(g.granted_at) > String(prev.granted_at)) grantByOrg.set(org, g);
+  }
+  const assessByOrg = new Map<string, any>();
+  for (const a of (assessments ?? [])) {
+    const org = (a as any).reliance_agreements?.partner_org_name ?? "";
+    const prev = assessByOrg.get(org);
+    if (!prev || String(a.decided_at) > String(prev.decided_at)) assessByOrg.set(org, a);
+  }
+  const partners = (links ?? []).map((l: any) => {
+    const orgName = l.partner_organisations?.legal_name ?? null;
+    const g = orgName ? grantByOrg.get(orgName) : undefined;
+    const a = orgName ? assessByOrg.get(orgName) : undefined;
+    return {
+      org_name: orgName,
+      org_type: l.partner_organisations?.organisation_type ?? null,
+      portal_type: l.portal_type ?? null,
+      link_state: l.state ?? null,
+      legal_route: l.legal_route ?? null,
+      grant_created_at: g?.granted_at ?? null,
+      grant_expires_at: g?.expires_at ?? null,
+      grant_revoked_at: g?.revoked_at ?? null,
+      attestation_version: g ? (versionByAttId.get(g.attestation_id) ?? null) : null,
+      last_viewed_at: g ? (lastViewByGrant.get(g.id) ?? null) : null,
+      assessment_status: a?.status ?? null,
+      assessment_decided_at: a?.decided_at ?? null,
+      assessor_name: a?.assessor_name ?? null,
+      disclosure: disclosureFor(g?.id),
+    };
+  });
+
+  const reqById = new Map<string, any>((reqs ?? []).map((r: any) => [r.id, r]));
+  const issuerOrg = tenant?.display_name ?? "NPC Services command centre";
+  const entityDetailsTyped = await questionnairePayload(admin, caseId, "entity_details");
+  const view = buildPassportView(audience, {
+    issuer_org: issuerOrg,
+    officer_label: tenant?.mlro_contact_name ?? null,
+    case: caseRow,
+    attestations: attFacts,
+    material_inputs_current: materialCurrent,
+    open_refresh_obligations: (refreshObs ?? []).filter((r: any) => r.status === "open").length,
+    personal_details: await questionnairePayload(admin, caseId, "personal_details"),
+    // The entity REGISTER is canonical for particulars; the questionnaire
+    // is what the client typed. Register values win where both exist.
+    entity_details: (() => {
+      const typed = entityDetailsTyped ?? {};
+      const reg = (entityRows ?? [])[0];
+      if (!reg) return Object.keys(typed).length ? typed : null;
+      return {
+        ...typed,
+        entity_name: reg.legal_name ?? typed.entity_name,
+        abn_acn: reg.acn ?? reg.abn ?? typed.abn_acn,
+        registration_place: reg.jurisdiction ?? typed.registration_place,
+        registered_address: reg.registered_address ?? typed.registered_address,
+      };
+    })(),
+    documents: (docs ?? []).map((d: any) => ({
+      id: d.id,
+      requirement_label: reqById.get(d.requirement_id)?.label ?? null,
+      requirement_code: reqById.get(d.requirement_id)?.code ?? null,
+      required: reqById.get(d.requirement_id)?.required ?? null,
+      status: d.status,
+      created_at: d.created_at,
+      version_number: d.version_number,
+    })),
+    transactions: txns ?? [],
+    ownership,
+    screening: {
+      subjects: (subjects ?? []).map((s: any) => ({
+        state: s.state,
+        completed_at: s.adjudicated_at ?? s.last_screened_at ?? null,
+        party_label: s.screened_name ?? null,
+      })),
+      pep_result: (pep ?? [])[0]?.result ?? null,
+      pep_determined_at: (pep ?? [])[0]?.determined_at ?? null,
+      list_freshness: Object.fromEntries(
+        (syncs ?? []).reduce((m: Map<string, string>, s: any) => {
+          if (!m.has(s.list_code)) m.set(s.list_code, s.completed_at);
+          return m;
+        }, new Map()),
+      ),
+    },
+    funding: {
+      sof: (sof ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
+      sow: (sow ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
+      edd: (edd ?? []).map((e: any) => ({ status: e.status, completed_at: e.completed_at })),
+    },
+    partners,
+    events: events ?? [],
+    client_requests: requests ?? [],
+    stamp_input: {
+      issuer_org: issuerOrg,
+      attestations: attFacts.map((a: any) => ({
+        version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
+      })),
+      consents: consents ?? [],
+      verification_checks: checks ?? [],
+      documents: (docs ?? []).map((d: any) => ({
+        status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
+      })),
+      screening_subjects: (subjects ?? []).map((s: any) => ({
+        state: s.state, completed_at: s.adjudicated_at ?? s.last_screened_at ?? null,
+      })),
+      owners: (owners ?? []).map((o: any) => ({
+        verification_state: o.verification_state, verified_at: o.updated_at ?? null,
+      })),
+
+      source_of_funds: (sof ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
+      source_of_wealth: (sow ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
+      edd_cases: (edd ?? []).map((e: any) => ({ status: e.status, completed_at: e.completed_at })),
+      grants: grantView.map((g: any) => ({
+        id: g.id,
+        created_at: g.granted_at,
+        revoked_at: g.revoked_at,
+        partner_org_name: g.reliance_agreements?.partner_org_name ?? null,
+        partner_org_type: g.reliance_agreements?.partner_org_type ?? null,
+        attestation_version: versionByAttId.get(g.attestation_id) ?? null,
+      })),
+      assessments: (assessments ?? []).map((a: any) => ({
+        id: a.id, status: a.status, decided_at: a.decided_at, assessor_name: a.assessor_name,
+        partner_org_name: a.reliance_agreements?.partner_org_name ?? null,
+        partner_org_type: a.reliance_agreements?.partner_org_type ?? null,
+      })),
+      // completed_at / cancelled_at / due_at were dropped here, so the
+      // stamp engine could not tell a finished refresh from an
+      // outstanding one and every completed obligation still read as a
+      // standing request.
+      refresh_obligations: (refreshObs ?? []).map((r: any) => ({
+        id: r.id, created_at: r.created_at, status: r.status,
+        completed_at: r.completed_at ?? null,
+        cancelled_at: r.cancelled_at ?? null,
+        due_at: r.due_at ?? null,
+      })),
+      transactions: (txns ?? []).map((t: any) => ({
+        id: t.id, status: t.status, settlement_date: t.settlement_date,
+        property_address: t.property_address,
+      })),
+    },
+  });
+  return view;
+}
+
+/**
  * An unexpected fault on a PUBLIC link, answered so that both sides learn.
  *
  * `internalError` is right about what it withholds — an anonymous caller is
@@ -1448,6 +1780,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           });
           return jr({
             attestation: disclosed,
+            // The DOCUMENT, from the same assembler and the same composer the
+            // Command Centre uses. Built for the partner audience, which
+            // carries the due-diligence outcomes and none of the reasoning —
+            // `assertPartnerSafe` throws rather than serve a widened one.
+            passport: await buildCasePassportView(admin, grant.case_id, "partner"),
             attestation_sha256: attestation.payload_sha256,
             schema_version: 2,
             // The version this grant is bound to. The Command Centre prints
@@ -1472,6 +1809,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         });
         return jr({
           attestation: attestation.payload,
+          passport: await buildCasePassportView(admin, grant.case_id, "partner"),
           attestation_sha256: attestation.payload_sha256,
           attestation_version: attestation.version ?? null,
           issued_at: attestation.issued_at,
@@ -2068,315 +2406,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
         const caseId = String(body.case_id ?? "");
         if (!caseId) return jr({ error: "case_id required" }, 400);
-        const { data: caseRow } = await admin.schema("aml").from("cases")
-          .select("id, case_reference, subject_display_name, subject_type, status, case_stage, service_gate_status, opened_at, closed_at, assigned_mlro_id")
-          .eq("id", caseId).maybeSingle();
-        if (!caseRow) return jr({ error: "Case not found" }, 404);
-
-        const [
-          { data: attRows }, { data: consents }, { data: checks }, { data: docs },
-          { data: reqs }, { data: subjects }, { data: pep }, { data: syncs },
-          { data: entityLinks }, { data: sof }, { data: sow }, { data: edd },
-          { data: txns }, { data: links }, { data: grants }, { data: assessments },
-          { data: refreshObs }, { data: events }, { data: requests }, { data: tenant },
-        ] = await Promise.all([
-          admin.schema("aml").from("compliance_attestations")
-            .select("id, version, issued_at, superseded_at, payload_sha256, schema_version, refresh_required_at")
-            .eq("case_id", caseId).order("version", { ascending: true }),
-          admin.schema("aml").from("consents")
-            .select("id, kind, accepted_at, actor_label").eq("case_id", caseId),
-          admin.schema("aml").from("verification_checks")
-            .select("id, party_label, check_type, status, completed_at").eq("case_id", caseId),
-          admin.schema("aml").from("documents")
-            .select("id, requirement_id, status, created_at, reviewed_at, version_number")
-            .eq("case_id", caseId).neq("status", "deleted"),
-          admin.schema("aml").from("document_requirements")
-            .select("id, code, label, required").eq("case_id", caseId),
-          admin.schema("aml").from("party_screening_subjects")
-            .select("state, last_screened_at, adjudicated_at, screened_name").eq("case_id", caseId),
-          admin.schema("aml").from("pep_determinations")
-            .select("result, determined_at").eq("case_id", caseId)
-            .is("superseded_at", null).order("determined_at", { ascending: false }).limit(1),
-          admin.schema("aml").from("sanctions_list_syncs")
-            .select("list_code, completed_at").eq("status", "succeeded")
-            .order("completed_at", { ascending: false }).limit(10),
-          admin.schema("aml").from("entity_case_links")
-            .select("entity_id").eq("case_id", caseId),
-          admin.schema("aml").from("source_of_funds")
-            .select("verified, verified_at").eq("case_id", caseId),
-          admin.schema("aml").from("source_of_wealth")
-            .select("verified, verified_at").eq("case_id", caseId),
-          admin.schema("aml").from("edd_cases")
-            .select("status, completed_at").eq("case_id", caseId),
-          admin.schema("aml").from("transactions")
-            .select("id, kind, status, property_address, contract_date, settlement_date, purchase_price")
-            .eq("case_id", caseId).is("archived_at", null),
-          admin.schema("aml").from("partner_case_links")
-            .select("state, legal_route, portal_type, partner_org_id, partner_organisations:partner_org_id(legal_name, organisation_type)")
-            .eq("case_id", caseId),
-          admin.schema("aml").from("reliance_grants")
-            .select("id, granted_at, expires_at, revoked_at, attestation_id, reliance_agreements:agreement_id(partner_org_name, partner_org_type)")
-            .eq("case_id", caseId),
-          admin.schema("aml").from("independent_assessments")
-            .select("id, status, decided_at, assessor_name, reliance_agreements:agreement_id(partner_org_name, partner_org_type)")
-            .eq("case_id", caseId),
-          admin.schema("aml").from("partner_refresh_obligations")
-            .select("id, created_at, status, completed_at, cancelled_at, due_at").eq("case_id", caseId),
-          admin.schema("aml").from("case_events")
-            .select("id, category, summary, actor_label, created_at")
-            .eq("case_id", caseId).order("created_at", { ascending: false }).limit(300),
-          admin.schema("aml").from("client_requests")
-            .select("id, kind, subject, status, created_at").eq("case_id", caseId)
-            .order("created_at", { ascending: false }),
-          admin.schema("aml").from("tenant_settings")
-            .select("display_name, mlro_contact_name").eq("tenant_id", "default").maybeSingle(),
-        ]);
-
-        // Beneficial owners hang off entities, which link to the case through
-        // entity_case_links — a two-step read, not a PostgREST embed.
-        const entityIds = [...new Set((entityLinks ?? []).map((l: any) => l.entity_id).filter(Boolean))];
-        const [{ data: owners }, { data: reps }, { data: entityRows }] = entityIds.length
-          ? await Promise.all([
-              admin.schema("aml").from("beneficial_owners")
-                .select("full_name, ownership_percent, control_type, is_ubo, verification_state, updated_at")
-                .in("entity_id", entityIds),
-              admin.schema("aml").from("authorised_representatives")
-                .select("full_name, role_title, is_director, is_signatory, verification_state")
-                .in("entity_id", entityIds),
-              admin.schema("aml").from("entities")
-                .select("legal_name, entity_type, abn, acn, jurisdiction, registered_address")
-                .in("id", entityIds),
-            ])
-          : [{ data: [] as any[] }, { data: [] as any[] }, { data: [] as any[] }];
-
-        // Control structure: owners and representatives as ONE party list.
-        // Names and roles only — risk flags, PEP linkage and notes stay in
-        // the case file and are never projected.
-        const ownership = [
-          ...(owners ?? []).map((o: any) => ({
-            name: o.full_name ?? "Beneficial owner",
-            party_kind: "beneficial_owner",
-            relationship: o.control_type ?? null,
-            ownership_percent: typeof o.ownership_percent === "number" ? o.ownership_percent : null,
-            control_type: o.control_type ?? null,
-            is_ubo: o.is_ubo ?? null,
-            verification_state: o.verification_state ?? null,
-          })),
-          ...(reps ?? []).map((r: any) => ({
-            name: r.full_name ?? "Authorised representative",
-            party_kind: "authorised_representative",
-            relationship: r.role_title ?? (r.is_director ? "Director" : r.is_signatory ? "Signatory" : null),
-            ownership_percent: null,
-            control_type: r.is_director ? "director" : r.is_signatory ? "signatory" : null,
-            is_ubo: false,
-            verification_state: r.verification_state ?? null,
-          })),
-        ];
-
-        const attFacts = (attRows ?? []).map((a: any) => ({
-          version: a.version,
-          issued_at: a.issued_at,
-          superseded_at: a.superseded_at,
-          payload_sha256: a.payload_sha256,
-          schema_version: a.schema_version ?? 1,
-        }));
-        const current = (attRows ?? []).filter((a: any) => !a.superseded_at)
-          .sort((a: any, b: any) => b.version - a.version)[0] ?? null;
-        // Material currency: the canonical signal is `refresh_required_at`
-        // stamped by apply_partner_material_change. v1 attestations are not
-        // assessable (null) and never force a caution state on their own.
-        const materialCurrent = current
-          ? (current.refresh_required_at ? false : ((current.schema_version ?? 1) === 2 ? true : null))
-          : null;
-
-        const versionByAttId = new Map<string, number>((attRows ?? []).map((a: any) => [a.id, a.version]));
-        const grantView = grants ?? [];
-        const lastViewByGrant = new Map<string, string>();
-        if ((grants ?? []).length > 0) {
-          const { data: views } = await admin.schema("aml").from("reliance_access_log")
-            .select("grant_id, created_at").eq("case_id", caseId)
-            .in("action", ["redeem", "view_attestation"])
-            .order("created_at", { ascending: false }).limit(500);
-          for (const v of (views ?? [])) {
-            if (v.grant_id && !lastViewByGrant.has(v.grant_id)) lastViewByGrant.set(v.grant_id, v.created_at);
-          }
-        }
-        // Authorised disclosure per organisation. Read from the stored v2
-        // manifest: allowed codes minus denied classes, with denied winning.
-        // A v1 grant has no manifest and therefore discloses no matrix — the
-        // page says so rather than implying an empty matrix means "nothing".
-        const manifestByGrant = new Map<string, any>();
-        if ((grants ?? []).length > 0) {
-          const { data: manifests } = await admin.schema("aml").from("disclosure_manifests")
-            .select("grant_id, allowed_attribute_codes, allowed_record_classes, denied_classes, revoked_at")
-            .in("grant_id", (grants ?? []).map((g: any) => g.id));
-          for (const m of (manifests ?? [])) {
-            if (!m.revoked_at) manifestByGrant.set(m.grant_id, m);
-          }
-        }
-        const disclosureFor = (grantId: string | null | undefined) => {
-          const m = grantId ? manifestByGrant.get(grantId) : null;
-          if (!m) return [];
-          const denied = new Set<string>((m.denied_classes ?? []) as string[]);
-          const codes = [
-            ...((m.allowed_attribute_codes ?? []) as string[]),
-            ...((m.allowed_record_classes ?? []) as string[]),
-          ];
-          const seen = new Set<string>();
-          const out: Array<{ code: string; state: "granted" | "limited" | "withheld" }> = [];
-          for (const code of codes) {
-            if (seen.has(code)) continue;
-            seen.add(code);
-            out.push({ code, state: denied.has(code) ? "withheld" : "granted" });
-          }
-          for (const code of denied) {
-            if (!seen.has(code)) { seen.add(code); out.push({ code, state: "withheld" }); }
-          }
-          return out;
-        };
-
-        const grantByOrg = new Map<string, any>();
-        for (const g of grantView) {
-          const org = (g as any).reliance_agreements?.partner_org_name ?? "";
-          const prev = grantByOrg.get(org);
-          if (!prev || String(g.granted_at) > String(prev.granted_at)) grantByOrg.set(org, g);
-        }
-        const assessByOrg = new Map<string, any>();
-        for (const a of (assessments ?? [])) {
-          const org = (a as any).reliance_agreements?.partner_org_name ?? "";
-          const prev = assessByOrg.get(org);
-          if (!prev || String(a.decided_at) > String(prev.decided_at)) assessByOrg.set(org, a);
-        }
-        const partners = (links ?? []).map((l: any) => {
-          const orgName = l.partner_organisations?.legal_name ?? null;
-          const g = orgName ? grantByOrg.get(orgName) : undefined;
-          const a = orgName ? assessByOrg.get(orgName) : undefined;
-          return {
-            org_name: orgName,
-            org_type: l.partner_organisations?.organisation_type ?? null,
-            portal_type: l.portal_type ?? null,
-            link_state: l.state ?? null,
-            legal_route: l.legal_route ?? null,
-            grant_created_at: g?.granted_at ?? null,
-            grant_expires_at: g?.expires_at ?? null,
-            grant_revoked_at: g?.revoked_at ?? null,
-            attestation_version: g ? (versionByAttId.get(g.attestation_id) ?? null) : null,
-            last_viewed_at: g ? (lastViewByGrant.get(g.id) ?? null) : null,
-            assessment_status: a?.status ?? null,
-            assessment_decided_at: a?.decided_at ?? null,
-            assessor_name: a?.assessor_name ?? null,
-            disclosure: disclosureFor(g?.id),
-          };
-        });
-
-        const reqById = new Map<string, any>((reqs ?? []).map((r: any) => [r.id, r]));
-        const issuerOrg = tenant?.display_name ?? "NPC Services command centre";
-        const entityDetailsTyped = await questionnairePayload(admin, caseId, "entity_details");
-        const view = buildPassportView("command", {
-          issuer_org: issuerOrg,
-          officer_label: tenant?.mlro_contact_name ?? null,
-          case: caseRow,
-          attestations: attFacts,
-          material_inputs_current: materialCurrent,
-          open_refresh_obligations: (refreshObs ?? []).filter((r: any) => r.status === "open").length,
-          personal_details: await questionnairePayload(admin, caseId, "personal_details"),
-          // The entity REGISTER is canonical for particulars; the questionnaire
-          // is what the client typed. Register values win where both exist.
-          entity_details: (() => {
-            const typed = entityDetailsTyped ?? {};
-            const reg = (entityRows ?? [])[0];
-            if (!reg) return Object.keys(typed).length ? typed : null;
-            return {
-              ...typed,
-              entity_name: reg.legal_name ?? typed.entity_name,
-              abn_acn: reg.acn ?? reg.abn ?? typed.abn_acn,
-              registration_place: reg.jurisdiction ?? typed.registration_place,
-              registered_address: reg.registered_address ?? typed.registered_address,
-            };
-          })(),
-          documents: (docs ?? []).map((d: any) => ({
-            id: d.id,
-            requirement_label: reqById.get(d.requirement_id)?.label ?? null,
-            requirement_code: reqById.get(d.requirement_id)?.code ?? null,
-            required: reqById.get(d.requirement_id)?.required ?? null,
-            status: d.status,
-            created_at: d.created_at,
-            version_number: d.version_number,
-          })),
-          transactions: txns ?? [],
-          ownership,
-          screening: {
-            subjects: (subjects ?? []).map((s: any) => ({
-              state: s.state,
-              completed_at: s.adjudicated_at ?? s.last_screened_at ?? null,
-              party_label: s.screened_name ?? null,
-            })),
-            pep_result: (pep ?? [])[0]?.result ?? null,
-            pep_determined_at: (pep ?? [])[0]?.determined_at ?? null,
-            list_freshness: Object.fromEntries(
-              (syncs ?? []).reduce((m: Map<string, string>, s: any) => {
-                if (!m.has(s.list_code)) m.set(s.list_code, s.completed_at);
-                return m;
-              }, new Map()),
-            ),
-          },
-          funding: {
-            sof: (sof ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
-            sow: (sow ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
-            edd: (edd ?? []).map((e: any) => ({ status: e.status, completed_at: e.completed_at })),
-          },
-          partners,
-          events: events ?? [],
-          client_requests: requests ?? [],
-          stamp_input: {
-            issuer_org: issuerOrg,
-            attestations: attFacts.map((a) => ({
-              version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
-            })),
-            consents: consents ?? [],
-            verification_checks: checks ?? [],
-            documents: (docs ?? []).map((d: any) => ({
-              status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
-            })),
-            screening_subjects: (subjects ?? []).map((s: any) => ({
-              state: s.state, completed_at: s.adjudicated_at ?? s.last_screened_at ?? null,
-            })),
-            owners: (owners ?? []).map((o: any) => ({
-              verification_state: o.verification_state, verified_at: o.updated_at ?? null,
-            })),
-
-            source_of_funds: (sof ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
-            source_of_wealth: (sow ?? []).map((r: any) => ({ verified: r.verified, verified_at: r.verified_at })),
-            edd_cases: (edd ?? []).map((e: any) => ({ status: e.status, completed_at: e.completed_at })),
-            grants: grantView.map((g: any) => ({
-              id: g.id,
-              created_at: g.granted_at,
-              revoked_at: g.revoked_at,
-              partner_org_name: g.reliance_agreements?.partner_org_name ?? null,
-              partner_org_type: g.reliance_agreements?.partner_org_type ?? null,
-              attestation_version: versionByAttId.get(g.attestation_id) ?? null,
-            })),
-            assessments: (assessments ?? []).map((a: any) => ({
-              id: a.id, status: a.status, decided_at: a.decided_at, assessor_name: a.assessor_name,
-              partner_org_name: a.reliance_agreements?.partner_org_name ?? null,
-              partner_org_type: a.reliance_agreements?.partner_org_type ?? null,
-            })),
-            // completed_at / cancelled_at / due_at were dropped here, so the
-            // stamp engine could not tell a finished refresh from an
-            // outstanding one and every completed obligation still read as a
-            // standing request.
-            refresh_obligations: (refreshObs ?? []).map((r: any) => ({
-              id: r.id, created_at: r.created_at, status: r.status,
-              completed_at: r.completed_at ?? null,
-              cancelled_at: r.cancelled_at ?? null,
-              due_at: r.due_at ?? null,
-            })),
-            transactions: (txns ?? []).map((t: any) => ({
-              id: t.id, status: t.status, settlement_date: t.settlement_date,
-              property_address: t.property_address,
-            })),
-          },
-        });
+        const view = await buildCasePassportView(admin, caseId, "command");
+        if (!view) return jr({ error: "Case not found" }, 404);
         return jr({ passport: view });
       }
 

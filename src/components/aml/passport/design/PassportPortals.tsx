@@ -20,7 +20,8 @@
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { PassportStamp, PassportView } from "@/lib/aml/passport";
 import { formatPassportDateTime } from "../format";
-import { TonePill, Wax } from "./primitives";
+import { TonePill } from "./primitives";
+import { StampFace } from "./StampFace";
 import { derivePortalRows } from "./portalRows";
 
 
@@ -54,12 +55,27 @@ export function PassportPortalStrip({ view }: { view: PassportView }) {
  * A seal that cannot be opened is decoration. This is what makes the stamp
  * register auditable: every seal names the record it was earned from, with the
  * actor, the portal and the time that record carries — not a re-description.
+ *
+ * ── Why the die is `StampFace` and no longer `Wax` ────────────────────
+ * Clicking an impression opened a dialog headed by a DIFFERENT seal: `Wax`,
+ * a plain ring with a title in it, no grain, no ticks, no watermark, and
+ * "AURIXA SYSTEMS" hard-coded as its issuer whoever had actually struck the
+ * record. So the one surface whose whole job is "here is that impression,
+ * and here is what it was earned from" showed a specimen that did not match
+ * the impression the reader had just clicked.
+ *
+ * It draws the real die now, upright — the register is tilted because a page
+ * of hand-pressed impressions is not a grid, and a single specimen is not a
+ * register.
  */
 export function StampRecordDialog({
   stamp,
+  issuerOrg,
   onClose,
 }: {
   stamp: PassportStamp;
+  /** The issuer, so the ink rule resolves exactly as it does on the page. */
+  issuerOrg: string;
   onClose: () => void;
 }) {
   return (
@@ -67,12 +83,7 @@ export function StampRecordDialog({
       <DialogContent className="passport-scope max-w-md p-0">
         <DialogTitle className="sr-only">{stamp.title} — underlying record</DialogTitle>
         <div className="flex flex-col items-center gap-4 p-6">
-          <Wax
-            tone={stamp.tone as "gold" | "green" | "navy" | "blue" | "red"}
-            title={stamp.title}
-            caption={stamp.portal}
-            size={112}
-          />
+          <StampFace stamp={stamp} issuerOrg={issuerOrg} upright />
           <div className="w-full">
             <div className="passport-kicker mb-2">Underlying record</div>
             <dl className="space-y-0">

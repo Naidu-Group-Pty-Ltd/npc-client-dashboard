@@ -6,10 +6,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Loader2, ShieldCheck, XCircle, Clock, CheckCircle2, AlertTriangle, ScrollText, Code2,
+  Loader2, ShieldCheck, XCircle, Clock, CheckCircle2, AlertTriangle,
 } from "lucide-react";
 import { BrandLockup } from "@/components/branding/BrandAssets";
 import { PassportBook } from "@/components/aml/passport/design/PassportBook";
+import { buildBooklet, type PassportView } from "@/lib/aml/passport";
 import { buildPartnerBooklet } from "@/lib/aml/passport/partnerBooklet.pure";
 import {
   passportPublicApi, type PassportRedemption,
@@ -78,14 +79,23 @@ export default function PublicPassport() {
 
   useEffect(() => { void load(); }, [load]);
 
-  /* The document's pages, composed from the disclosure alone.
+  /* The document's pages.
+     `buildBooklet` is the Command Centre's own composer and the server now
+     sends the partner-audience view it takes, so the two documents are the
+     same document rather than two compositions that resemble each other.
+     `buildPartnerBooklet` remains the fallback for a deployment still serving
+     a build that predates the view — it composes the same leaf sequence from
+     the attestation payload, so an older server degrades to a thinner
+     document rather than to no document.
+
      Kept with the other hooks so it precedes every early return — the loading
      and error branches below return before this point in the JSX, and a hook
      after them would run on some renders and not others. */
-  const bookletPages = useMemo(
-    () => (data ? buildPartnerBooklet(data) : []),
-    [data],
-  );
+  const bookletPages = useMemo(() => {
+    if (!data) return [];
+    if (data.passport) return buildBooklet(data.passport as PassportView);
+    return buildPartnerBooklet(data);
+  }, [data]);
 
   const requestNewLink = async () => {
     if (!token) return;
@@ -235,27 +245,12 @@ export default function PublicPassport() {
         </CardContent>
       </Card>
 
-      {/* The payload, still available and no longer the only thing offered.
-          A relying entity may want to check the exact object the fingerprint
-          is taken over, and taking that away to make the page prettier would
-          remove the one artefact an integration verifies against. */}
-      <details className="rounded-md border border-border/60 bg-muted/20">
-        <summary className="flex cursor-pointer items-center gap-2 p-3 text-xs text-muted-foreground">
-          <Code2 className="h-3.5 w-3.5" aria-hidden />
-          View the underlying record (JSON) — what the fingerprint is taken over
-        </summary>
-        <div className="border-t border-border/60 px-3 pb-3 pt-2">
-          <div className="flex items-center gap-2 pb-2 text-[11px] text-muted-foreground">
-            <ScrollText className="h-3.5 w-3.5 shrink-0" aria-hidden />
-            Under arrangement {data.agreement.agreement_reference}. It states what was performed —
-            it does not contain the issuing organisation&apos;s risk assessment, screening match
-            content or internal notes, and it never will.
-          </div>
-          <pre className="max-h-[22rem] overflow-auto rounded-md border border-border/60 bg-background/60 p-3 text-[11px] leading-relaxed">
-            {JSON.stringify(data.attestation, null, 2)}
-          </pre>
-        </div>
-      </details>
+      {/* The raw payload used to sit here behind a disclosure. It is gone:
+          the document IS the record now, page for page with the issuing
+          organisation's own, and a fold-out of the object it was drawn from
+          invited a relying entity to read the source instead of the
+          instrument. An integration that needs the object still redeems the
+          same token through `redeem_attestation` and receives it. */}
 
       {/* 2 · Their own determination — always available, at their prerogative. */}
       <Card className="glass-panel">

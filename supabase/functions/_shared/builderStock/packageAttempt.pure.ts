@@ -113,6 +113,31 @@ export function recordPackageAttempt(
   };
 }
 
+/**
+ * What the column must hold once the guarded step RETURNED.
+ *
+ * The claim is spent, so it is cleared — but "cleared" means back to the answer
+ * the property held before ANY claim, not back to whatever the column happened
+ * to contain when this run read it. After a kill the column contains a
+ * SURVIVING ATTEMPT, and restoring that resurrects a spent claim.
+ *
+ * PRODUCTION, 28 AUGUST 2026, upload `55d12d53`. Lot 1342 Austin Estate
+ * (`a9f231f3`, folder `1jlUkB8O…`) sat at `attempts: 1` with
+ * `started_at 05:35:02` while its row was still being written at 05:55:10 —
+ * twenty minutes and four ticks later. Each tick read the surviving attempt,
+ * wrote attempt 2, and then rolled the counter back to 1 on the return path,
+ * so `packageAttemptsExhausted` could never fire. The sweep re-entered the same
+ * package for ever and the three properties after it in `created_at` order were
+ * never touched at all. The counter has to be monotonic across kills or the
+ * exhaustion guard is unreachable.
+ */
+export function provenanceAfterAttempt(
+  stored: unknown,
+  question: ProvenanceQuestion,
+): unknown {
+  return attemptFor(stored, question) ? null : (stored ?? null);
+}
+
 /** Has this package had its chances? */
 export function packageAttemptsExhausted(
   stored: unknown,

@@ -29,6 +29,7 @@ import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
+import { headingToProperty, readLatLng } from './streetViewHeading.pure.ts';
 
 /**
  * The SAME circuit scope `street-view` uses.
@@ -272,10 +273,27 @@ export async function enrichFromGoogle(
     }
 
     if (meta?.status === 'OK' && await spend()) {
+      /*
+       * AIM THE CAMERA AT THE HOUSE.
+       *
+       * Without `heading` Google serves the panorama's own stored orientation
+       * — the way the capture vehicle was pointing — which on Lot 13 Hummock
+       * Rise produced a correct exact-address photograph looking down the
+       * street rather than at the property. The panorama's location comes back
+       * on the metadata call already made and the property's on the geocode
+       * already made, so the bearing between them costs no extra request.
+       *
+       * `null` means the inputs cannot support a bearing, and then no heading
+       * is sent at all: Google's default is a real orientation of a real
+       * panorama, which is better than one this code invented.
+       */
+      const heading = headingToProperty(
+        readLatLng(meta?.location), { lat: location.lat, lng: location.lng });
       const params = new URLSearchParams({
         size: '640x400', location: point, fov: '80', pitch: '0',
         return_error_code: 'true', key: apiKey,
       });
+      if (heading !== null) params.set('heading', String(heading));
       const image = await meteredFetch(
         `https://maps.googleapis.com/maps/api/streetview?${params.toString()}`,
         {}, { feature: 'builder-stock/streetview' },
@@ -635,18 +653,29 @@ export async function enrichStockItem(
     sourceSettlementComplete: item.sourceSettlementComplete !== false,
   });
 
-  if (stage === 'none' || stage === 'wait') {
-    // Both paid stages are recorded as skipped, which is what they were. A
-    // `wait` is not a finding about the property and writes no verdict.
+  /*
+   * ONLY A STAGE THAT WAS GENUINELY UNNECESSARY IS RECORDED AS SKIPPED.
+   *
+   * A skip row is byte-identical to a "ran and found nothing" row — same
+   * `stage-status` reference, same `unavailable` status — so writing one for a
+   * stage the ladder simply had not REACHED yet made an untried stage
+   * indistinguishable from an exhausted one. Lot 1663 Ringer Street carried
+   * `google_maps: "Skipped: the builder supplied an image for this property."`
+   * while holding no builder image at all, and Street View was never attempted.
+   *
+   * So the skip is written only where stage 1 actually answered. A stage the
+   * ladder has not reached gets NO row, and its absence is what says so.
+   */
+  if (stage === 'none') {
     for (const skipped of ['google_maps', 'internet_search'] as const) {
       outcomes.push(await recordStageSkipped(db, item, skipped));
     }
+  } else if (stage === 'wait') {
+    // Not a finding about the property. It writes nothing, as it says.
   } else if (stage === 'web_search') {
     outcomes.push(await enrichFromInternetSearch(db, item, builderName));
-    outcomes.push(await recordStageSkipped(db, item, 'google_maps'));
   } else {
     outcomes.push(await enrichFromGoogle(db, item));
-    outcomes.push(await recordStageSkipped(db, item, 'internet_search'));
   }
 
   const primaryImageId = await chooseAndStorePrimaryImage(db, item.id);
@@ -654,9 +683,31 @@ export async function enrichStockItem(
   const anyProblem = outcomes.some(
     (outcome) => outcome.status !== 'ready' && outcome.status !== 'skipped');
 
+  /*
+   * `failed` IS TERMINAL, SO IT MUST NOT BE WRITTEN OVER AN UNTRIED STAGE.
+   *
+   * `readFallbackQueue` selects `pending`/`enriching` only, so a `failed` row
+   * never comes back. One invocation runs ONE stage of the ladder, so writing
+   * `failed` the moment that stage produced nothing retired the property with
+   * the stages below it never attempted — which is how three cards reached the
+   * live Marketplace blank while Street View had never been asked.
+   *
+   * Re-reading is what makes this honest: the answer must come from the rows
+   * as they now stand, not from the plan made before the stage ran.
+   */
+  const { data: settledRows } = await db
+    .from('builder_stock_item_images')
+    .select('id, source_stage, verification_status, processing_status, position, '
+      + 'storage_path, external_url, source_detail')
+    .eq('stock_item_id', item.id);
+  const remainingStage = nextImageStage((settledRows ?? []) as never, {
+    sourceSettlementComplete: item.sourceSettlementComplete !== false,
+  });
+  const ladderHasMore = remainingStage !== 'none';
+
   const enrichmentStatus = anyReady
     ? (anyProblem ? 'partial' : 'complete')
-    : 'failed';
+    : (ladderHasMore ? 'pending' : 'failed');
 
   await db.from('builder_stock_items')
     .update({ enrichment_status: enrichmentStatus, enriched_at: new Date().toISOString() })

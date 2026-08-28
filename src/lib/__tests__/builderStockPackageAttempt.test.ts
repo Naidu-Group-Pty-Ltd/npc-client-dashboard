@@ -31,7 +31,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   attemptsSoFar, packageAttemptsExhausted, recordPackageAttempt,
-  recordPackageUnprocessable, MAX_PACKAGE_ATTEMPTS, PACKAGE_RECOVERY_ATTEMPT,
+  recordPackageUnprocessable, provenanceAfterAttempt,
+  MAX_PACKAGE_ATTEMPTS, PACKAGE_RECOVERY_ATTEMPT,
 } from '../../../supabase/functions/_shared/builderStock/packageAttempt.pure';
 import {
   negativeProvenanceStillStands, recordNoDeterministicImage,
@@ -191,5 +192,97 @@ describe('the settler wires the claim before the uninterruptible step', () => {
     const recover = source.indexOf('await recoverPackageImage(');
     expect(exhausted).toBeGreaterThan(-1);
     expect(exhausted).toBeLessThan(recover);
+  });
+});
+
+/**
+ * THE COUNTER MUST BE MONOTONIC ACROSS KILLS, OR THE GUARD IS UNREACHABLE.
+ *
+ * PRODUCTION, 28 AUGUST 2026, upload `55d12d53`. #2323 was deployed and had
+ * already retired Lot 104 correctly — and the sweep still could not advance.
+ * Lot 1342 Austin Estate [4 Bed 184 m2] (`a9f231f3`, folder `1jlUkB8O…`) held:
+ *
+ *   { result: "package_recovery_attempt", attempts: 1,
+ *     started_at: "2026-08-28T05:35:02.698Z" }        updated_at 05:55:10
+ *
+ * `attempts` frozen at 1 and `started_at` twenty minutes stale while the row
+ * was still being written — the signature of a rollback, because
+ * `recordPackageAttempt` always stamps a fresh `started_at` and only the undo
+ * path rewrites a record it did not author. Four ticks (05:40, 05:45, 05:50,
+ * 05:55) each wrote attempt 2 and each rolled it back to 1, so
+ * `packageAttemptsExhausted` never fired and the three properties after it in
+ * `created_at` order — Lot 3 Yamanto, Lot 1663 Ringer St, Lot 13 Hummock Rise —
+ * were never touched at all: `updated_at` still 02:53:19, import time.
+ *
+ * `source outstanding` therefore never reached 0, so stage B never began.
+ */
+describe('a returned step never resurrects the claim a kill left behind', () => {
+  const folder = 'https://drive.google.com/drive/folders/1jlUkB8OR5Uq6msBjnBDJg1mmMQmWoLaB';
+  const anchor = 'notion:38fcabf9-2010-8012-aa84-dc649c24903f';
+  const lot1342 = {
+    provenanceVersion: PROVENANCE_VERSION,
+    packageReference: folder,
+    sourceAnchor: anchor,
+  };
+
+  it('clears a surviving attempt rather than restoring it', () => {
+    const survived = recordPackageAttempt(null, lot1342);
+    expect(survived.attempts).toBe(1);
+    // The undo path used to hand this straight back, which is the defect.
+    expect(provenanceAfterAttempt(survived, lot1342)).toBeNull();
+  });
+
+  it('reaches exhaustion even when returns and kills alternate', () => {
+    // Tick 1: nothing stored, killed. The attempt survives.
+    let stored: unknown = recordPackageAttempt(null, lot1342);
+    expect(attemptsSoFar(stored, lot1342)).toBe(1);
+
+    // Tick 2: claims attempt 2, then the step RETURNS unreachable and undoes.
+    const claimed = recordPackageAttempt(stored, lot1342);
+    expect(claimed.attempts).toBe(2);
+    stored = provenanceAfterAttempt(stored, lot1342);
+
+    // Production rolled back to 1 here and looped for ever. It must not.
+    expect(attemptsSoFar(stored, lot1342)).toBe(0);
+
+    // Tick 3 and 4 are two clean kills, which is what the guard counts.
+    stored = recordPackageAttempt(stored, lot1342);
+    stored = recordPackageAttempt(stored, lot1342);
+    expect(attemptsSoFar(stored, lot1342)).toBe(MAX_PACKAGE_ATTEMPTS);
+    expect(packageAttemptsExhausted(stored, lot1342)).toBe(true);
+  });
+
+  it('never counts more kills than actually happened', () => {
+    // Two kills in a row must exhaust, and no undo ran between them.
+    let stored: unknown = recordPackageAttempt(null, lot1342);
+    expect(packageAttemptsExhausted(stored, lot1342)).toBe(false);
+    stored = recordPackageAttempt(stored, lot1342);
+    expect(packageAttemptsExhausted(stored, lot1342)).toBe(true);
+  });
+
+  it('gives back a real verdict untouched — only a claim is cleared', () => {
+    const verdict = recordNoDeterministicImage(lot1342, 'That folder names no document.');
+    expect(provenanceAfterAttempt(verdict, lot1342)).toBe(verdict);
+    expect(provenanceAfterAttempt(null, lot1342)).toBeNull();
+  });
+
+  it('leaves another question\'s attempt alone', () => {
+    // A different package is a different question; clearing this claim must not
+    // silently discard the record a neighbouring one is relying on.
+    const other = recordPackageAttempt(null, { ...lot1342, packageReference: 'https://drive.google.com/drive/folders/OTHER' });
+    expect(provenanceAfterAttempt(other, lot1342)).toBe(other);
+  });
+});
+
+describe('the settler undoes its claim through the pure rule', () => {
+  const source = readFileSync(
+    join(__dirname, '..', '..', '..',
+      'supabase/functions/_shared/builderStock/repairSourceImages.ts'), 'utf8');
+
+  it('does not hand negativeBefore back verbatim', () => {
+    // The exact expression that froze Lot 1342 at attempts: 1.
+    expect(source).not.toContain(
+      'source_provenance_result: negativeBefore.get(itemId) ?? null');
+    expect(source).toContain('provenanceAfterAttempt(');
   });
 });

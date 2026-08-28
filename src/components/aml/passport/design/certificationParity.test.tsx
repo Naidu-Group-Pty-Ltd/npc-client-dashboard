@@ -122,9 +122,14 @@ describe('certification parity — register page vs Digital Passport leaf', () =
     const leaf = renderLeaf(viewFor(withIdentity()));
     const struck = leaf.container.querySelector('.passport-stamp:not(.passport-stamp--pending)')!;
 
-    expect(struck.querySelector('.passport-stamp__watermark'))
-      .toHaveAttribute('src', '/brand/aurixa-emblem.png');
+    const watermark = struck.querySelector('.passport-stamp__watermark') as HTMLElement;
+    expect(watermark).not.toBeNull();
+    // Masked and inked, so it survives cream paper as well as the dark
+    // register — the surface change that used to erase it entirely.
+    expect(watermark.style.getPropertyValue('--stamp-watermark-src'))
+      .toContain('/brand/aurixa-emblem-240.png');
     expect(struck.querySelector('.passport-stamp__grain')).not.toBeNull();
+    expect(struck.querySelector('.passport-stamp__burnish')).not.toBeNull();
     expect(struck.querySelector('.passport-stamp__tick')).not.toBeNull();
     expect(struck.querySelector('.passport-stamp__inner')).not.toBeNull();
 

@@ -6,9 +6,19 @@
  *   command — richest AUTHORISED view (still not raw database access);
  *   client  — a dedicated server-side sanitised projection. Never the command
  *             payload with fields hidden by the browser;
- *   partner — NOT built here. Partner disclosure continues through the
- *             existing reliance engine (`intersectPayloadWithManifest` on
- *             `aml-reliance`); the Passport only re-presents that payload.
+ *   partner — a relying entity under a written CDD arrangement. It carries
+ *             the CDD OUTCOMES, because that is the whole point of s 37A
+ *             reliance: a partner who cannot see what was performed and what
+ *             it concluded has to repeat the customer due diligence, which
+ *             is the cost the arrangement exists to avoid. It is built from
+ *             the same records as the command view and stripped by its own
+ *             allow-list; `assertPartnerSafe` fails closed.
+ *
+ * The partner audience replaced a hand-composed booklet built from the
+ * attestation payload. Two assemblies of one document eventually disagree
+ * about it — these did: one had sixteen leaves and the other eight, with
+ * different titles, and a partner holding both had no way to tell which was
+ * the real one. There is one assembler now, and the audience is a parameter.
  *
  * Sanitisation is structural, not cosmetic:
  *   - the client view is BUILT from allow-lists (identity fields, stamp
@@ -45,7 +55,7 @@ import {
 import { passportCredential, passportVersionLabel, shortFingerprint } from "./passportCredential.pure.ts";
 import { derivePassportJourney, type PassportJourney } from "./passportJourney.pure.ts";
 
-export type PassportAudience = "command" | "client";
+export type PassportAudience = "command" | "client" | "partner";
 
 /* ── input row shapes (tight selects, fetched by the edge function) ─────── */
 
@@ -362,6 +372,78 @@ export function assertClientSafe(view: PassportView): void {
   }
 }
 
+/**
+ * What a relying entity may never hold, whatever the arrangement says.
+ *
+ * Deliberately SHORTER than the client list, and the difference is the point.
+ * A client is protected from vocabulary written about them; a partner relying
+ * under s 37A has to see the customer due diligence — that screening ran,
+ * what the PEP determination concluded, which documents were held, who the
+ * beneficial owners are — or the reliance is worthless and they must repeat
+ * the CDD themselves.
+ *
+ * What stays out is the issuing organisation's own REASONING and anything
+ * that could identify a report or a suspicion: risk ratings and scores,
+ * screening MATCH content, adverse-media findings, MLRO and reviewer notes,
+ * SMR/AUSTRAC material, biometric media and scores, provider payloads,
+ * storage paths and credentials. None of that is a due-diligence outcome and
+ * none of it may leave this building.
+ */
+const PARTNER_RESTRICTED_KEYS =
+  /(risk_(rating|score)|match_|mlro|suspic|smr(\b|_)|austrac|adverse|reviewer_note|internal_note|decision_note|rationale|biometric|liveness_score|face_match|provider_(payload|reference|secret)|storage_(path|bucket)|access_token|secret|api_key)/i;
+
+/**
+ * PEP keys are allowed by exception rather than by pattern.
+ *
+ * `pep_result` and `pep_determined_at` are the determination — an outcome a
+ * relying entity needs. Anything else beginning `pep_` is the reasoning
+ * behind it, which is not disclosed. Listing the two that may travel is
+ * safer than a pattern that tries to describe the rest.
+ */
+const PARTNER_ALLOWED_PEP_KEYS = new Set(["pep_result", "pep_determined_at"]);
+
+/**
+ * One object whose KEYS are data rather than field names.
+ *
+ * `list_freshness` is keyed by sanctions list code — `un`, `dfat`, `ofac`
+ * today, whatever is loaded tomorrow. A code that happened to match the
+ * restricted pattern (an `austrac` list is entirely plausible) would make
+ * this assertion throw on a perfectly safe projection, and because it fails
+ * CLOSED that would take the partner's whole document down. Its values are
+ * timestamps and are still walked.
+ */
+const PARTNER_DATA_KEYED = new Set(["list_freshness"]);
+
+export function findPartnerRestrictedKeys(value: unknown, path = ""): string[] {
+  const hits: string[] = [];
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => hits.push(...findPartnerRestrictedKeys(v, `${path}[${i}]`)));
+    return hits;
+  }
+  if (value && typeof value === "object") {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const p = path ? `${path}.${k}` : k;
+      const dataKeyed = PARTNER_DATA_KEYED.has(k);
+      if (!dataKeyed) {
+        if (PARTNER_RESTRICTED_KEYS.test(k)) hits.push(p);
+        else if (/^pep(\b|_)/i.test(k) && !PARTNER_ALLOWED_PEP_KEYS.has(k)) hits.push(p);
+      }
+      hits.push(...(dataKeyed
+        ? Object.values(v && typeof v === "object" ? v as Record<string, unknown> : {})
+          .flatMap((inner, i) => findPartnerRestrictedKeys(inner, `${p}[${i}]`))
+        : findPartnerRestrictedKeys(v, p)));
+    }
+  }
+  return hits;
+}
+
+export function assertPartnerSafe(view: PassportView): void {
+  const hits = findPartnerRestrictedKeys(view);
+  if (hits.length > 0) {
+    throw new Error(`partner passport view carries restricted keys: ${hits.slice(0, 5).join(", ")}`);
+  }
+}
+
 /* ── assembler ──────────────────────────────────────────────────────────── */
 
 const METHOD_ACCEPTED = new Set(["electronic_idv", "document_sighting", "dvs"]);
@@ -378,7 +460,10 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
   });
 
   const allStamps = derivePassportStamps(input.stamp_input);
-  const stamps = audience === "client" ? clientSafeStamps(allStamps) : allStamps;
+  /* A partner reads the same certification impressions a client does. The
+     command-only stamps name internal review steps rather than the customer's
+     due diligence, and a relying entity has no use for them. */
+  const stamps = audience === "command" ? allStamps : clientSafeStamps(allStamps);
 
   // What the case is still on track to earn. Kept in its OWN field rather
   // than folded in beside the earned stamps: everything downstream that
@@ -390,12 +475,12 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     case_stage: input.case.case_stage ?? null,
     service_gate_status: input.case.service_gate_status ?? null,
   });
-  const pending_stamps = audience === "client" ? clientSafePending(allPending) : allPending;
+  const pending_stamps = audience === "command" ? allPending : clientSafePending(allPending);
 
   // State derivation reasons are Command diagnostics. The client sees the
   // label and tone; the machine codes (e.g. `service_gate_regressed`) name
   // internal workflow the client view must not carry.
-  const stateForAudience = audience === "client" ? { ...state, reasons: [] } : state;
+  const stateForAudience = audience === "command" ? state : { ...state, reasons: [] };
 
   // Verification parties: collapse checks per party label; no provider, no
   // scores — component status and timing only.
@@ -481,6 +566,10 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     })),
     stamps,
     pending_stamps,
+    /* Raw event summaries are written by and for staff and can carry
+       reviewer vocabulary, so only the Command Centre reads them. The client
+       and the partner get the CONSTRUCTED journey — the same milestones,
+       assembled from stamps, which is what a Journey Record leaf is for. */
     history: audience === "command"
       ? (input.events ?? []).map((e) => ({
           id: e.id,
@@ -511,7 +600,20 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     open_requests: (input.client_requests ?? []).filter((r) => r.status === "open"),
   };
 
-  if (audience === "command") {
+  /* ── the families that answer "what was performed, and what did it
+     conclude" ───────────────────────────────────────────────────────────
+     The Command Centre holds them, and so does a relying entity: reliance
+     under s 37A means the partner does not repeat the customer due diligence,
+     and a partner who cannot see the screening, the funding enquiries or the
+     ownership tracing has been given nothing to rely ON. What they do not
+     get is the reasoning — no match content, no notes, no scores — and
+     `assertPartnerSafe` enforces that structurally below.
+
+     `partners` is the exception, and it is not a due-diligence outcome: it is
+     a register of which OTHER organisations hold this record and what each of
+     them decided. That belongs to the issuing organisation and to those
+     partners, never to a competitor holding the same customer's passport. */
+  if (audience === "command" || audience === "partner") {
     if (input.screening) {
       const subjects = input.screening.subjects ?? [];
       const terminal = new Set(["completed", "false_positive", "confirmed_match", "not_required"]);
@@ -538,17 +640,19 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
         edd_completed: input.funding.edd.some((e) => e.status === "completed"),
       };
     }
-    if (input.partners) {
+    if (input.partners && audience === "command") {
       view.partners = input.partners.map((p) => ({
         ...p,
         version_label: passportVersionLabel(p.attestation_version),
         disclosure: p.disclosure ?? [],
       }));
     }
-  } else {
-    // Structural, not cosmetic: the client view never had these sections.
-    assertClientSafe(view);
   }
+
+  // Structural, not cosmetic: neither view was ever built by copying the
+  // command payload and hiding fields, and both fail closed on a widening.
+  if (audience === "client") assertClientSafe(view);
+  if (audience === "partner") assertPartnerSafe(view);
 
   return view;
 }

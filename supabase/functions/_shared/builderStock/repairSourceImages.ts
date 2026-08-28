@@ -46,7 +46,7 @@ import {
 } from './negativeProvenance.pure.ts';
 import {
   attemptsSoFar, packageAttemptsExhausted, recordPackageAttempt,
-  recordPackageUnprocessable,
+  recordPackageUnprocessable, provenanceAfterAttempt,
 } from './packageAttempt.pure.ts';
 import {
   demoteUnprovenSourceImage, hasReadySourceImage, readPrimaryImageStanding,
@@ -883,16 +883,25 @@ export async function repairSourceImagesForUpload(
 
     /**
      * Undo the claim below. The attempt must survive ONLY a kill, so every path
-     * on which `recoverPackageImage` actually RETURNED restores the column to
-     * exactly what it held before — which for an unreadable package is nothing
-     * at all, keeping it retryable for ever as it always was. Counting a
-     * sign-in wall towards exhaustion would retire a document that reads
-     * perfectly well tomorrow.
+     * on which `recoverPackageImage` actually RETURNED gives the column back
+     * the answer the property held before any claim — nothing at all for an
+     * unreadable package, keeping it retryable for ever as it always was.
+     * Counting a sign-in wall towards exhaustion would retire a document that
+     * reads perfectly well tomorrow.
+     *
+     * WHAT IT MUST NOT GIVE BACK IS A SURVIVING ATTEMPT. This restored
+     * `negativeBefore` verbatim, and after a kill that value IS an attempt
+     * record — so each return rolled the counter back to the value the kill had
+     * left and `packageAttemptsExhausted` became unreachable. See
+     * `provenanceAfterAttempt`, which is why this is not a raw `?? null`.
      */
     const clearAttempt = async () => {
       await db
         .from('builder_stock_items')
-        .update({ source_provenance_result: negativeBefore.get(itemId) ?? null })
+        .update({
+          source_provenance_result: provenanceAfterAttempt(
+            negativeBefore.get(itemId), question),
+        })
         .eq('id', itemId)
         .eq('organisation_id', input.organisationId);
     };

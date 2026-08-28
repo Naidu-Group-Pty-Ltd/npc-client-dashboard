@@ -28,6 +28,71 @@ vi.mock("@/lib/aml/partnerAcknowledgementPublic", () => ({
 }));
 
 import PublicPassport from "@/pages/PublicPassport";
+import { buildBooklet, buildPassportView, type PassportViewInput } from "@/lib/aml/passport";
+
+/** A case with every family populated, as the server would send it. */
+function partnerViewInput(): PassportViewInput {
+  return {
+    issuer_org: "NPC Services command centre",
+    officer_label: "P. Naidu · MLRO",
+    case: {
+      id: "case-1", case_reference: "AML-2026-00005",
+      subject_display_name: "Rugesh Naidu", subject_type: "individual",
+      status: "cleared", case_stage: "cleared", service_gate_status: "approved",
+      opened_at: "2026-08-01T00:00:00Z", closed_at: null,
+    },
+    attestations: [{
+      version: 1, issued_at: "2026-08-27T08:28:28.000Z", superseded_at: null,
+      payload_sha256: "b".repeat(64), schema_version: 2,
+    }],
+    material_inputs_current: true,
+    open_refresh_obligations: 0,
+    personal_details: { full_name: "Rugesh Naidu", date_of_birth: "1980-01-01" },
+    entity_details: null,
+    documents: [{
+      id: "doc-1", requirement_label: "Passport", requirement_code: "passport",
+      required: true, status: "accepted", created_at: "2026-08-10T00:00:00Z", version_number: 1,
+    }],
+    transactions: [],
+    ownership: [{
+      name: "Rugesh Naidu", party_kind: "beneficial_owner", relationship: "sole",
+      ownership_percent: 100, control_type: "ownership", is_ubo: true,
+      verification_state: "verified",
+    }],
+    screening: {
+      subjects: [{ state: "completed", completed_at: "2026-08-20T15:16:00Z", party_label: "Rugesh Naidu" }],
+      pep_result: "not_pep", pep_determined_at: "2026-08-20T00:00:00Z",
+      list_freshness: { un: "2026-08-26T20:01:53Z", dfat: "2026-08-26T20:02:33Z" },
+    },
+    funding: {
+      sof: [{ verified: true, verified_at: "2026-08-18T00:00:00Z" }],
+      sow: [{ verified: true, verified_at: "2026-08-18T00:00:00Z" }],
+      edd: [],
+    },
+    partners: null,
+    events: [{ id: "e1", category: "system", summary: "internal", actor_label: "MLRO", created_at: "2026-08-20T00:00:00Z" }],
+    client_requests: [],
+    stamp_input: {
+      issuer_org: "NPC Services command centre",
+      attestations: [{ version: 1, issued_at: "2026-08-27T08:28:28.000Z", superseded_at: null }],
+      consents: [{ kind: "compliance_sharing", accepted_at: "2026-08-15T16:51:54Z", actor_label: "Client" }],
+      verification_checks: [{
+        party_label: "Rugesh Naidu", check_type: "electronic_idv", status: "passed",
+        completed_at: "2026-08-20T15:16:00Z",
+      }],
+      documents: [{ status: "accepted", reviewed_at: "2026-08-11T00:00:00Z", created_at: "2026-08-10T00:00:00Z" }],
+      screening_subjects: [{ state: "completed", completed_at: "2026-08-20T15:16:00Z" }],
+      owners: [{ verification_state: "verified", verified_at: "2026-08-19T00:00:00Z" }],
+      source_of_funds: [{ verified: true, verified_at: "2026-08-18T00:00:00Z" }],
+      source_of_wealth: [{ verified: true, verified_at: "2026-08-18T00:00:00Z" }],
+      edd_cases: [],
+      grants: [],
+      assessments: [],
+      refresh_obligations: [],
+      transactions: [],
+    },
+  } as PassportViewInput;
+}
 
 const redemption = {
   attestation_sha256: "28099ae9048b1397aa11bb22cc33dd44ee55ff6677889900aabbccddeeff0011",
@@ -102,16 +167,16 @@ describe("the partner is handed a document", () => {
     expect(screen.getAllByText(/AUX-AML-2026-00005-V1/).length).toBeGreaterThan(0);
   });
 
-  it("keeps the raw payload as a disclosure rather than as the offer", async () => {
+  it("offers no raw payload — the document IS the record", async () => {
     render(<PublicPassport />);
     await screen.findByLabelText("Passport cover");
 
-    // An integration verifies the fingerprint against the exact object, so
-    // removing it to make the page prettier would take away the one artefact
-    // that can be checked.
-    const details = screen.getByText(/View the underlying record \(JSON\)/i);
-    expect(details).toBeInTheDocument();
-    expect(document.querySelector("details")?.hasAttribute("open")).toBe(false);
+    // A fold-out of the object the document was drawn from invited a relying
+    // entity to read the source instead of the instrument. An integration
+    // that needs the object still redeems the same token and receives it.
+    expect(screen.queryByText(/View the underlying record/i)).not.toBeInTheDocument();
+    expect(document.querySelector("details")).toBeNull();
+    expect(document.querySelector("pre")).toBeNull();
   });
 
   it("still leads with the responsibility notice", async () => {
@@ -175,5 +240,52 @@ describe("the mark on a page an outsider sees", () => {
     expect(brand).toContain("const LOGO_DEFAULT =");
     // The floor must not win over a caller that sizes its own mark.
     expect(brand).toContain("cn(LOGO_DEFAULT, className)");
+  });
+});
+
+/**
+ * One document, proved by construction.
+ *
+ * The partner's copy is not a composition that resembles the Command
+ * Centre's — it is `buildBooklet` over the same projection, so "identical" is
+ * a property of the code rather than a claim in a comment.
+ */
+describe("the partner's document IS the Command Centre's", () => {
+  it("renders the command composer's pages when the server sends the view", async () => {
+    const view = buildPassportView("partner", partnerViewInput());
+    redeem.mockResolvedValue({ ...redemption, passport: view });
+
+    render(<PublicPassport />);
+    await screen.findByLabelText("Passport cover");
+
+    // Every leaf `buildBooklet` emits for this projection is on the page.
+    for (const page of buildBooklet(view).filter((p) => p.variant === "leaf")) {
+      expect(
+        screen.getByRole("button", { name: new RegExp(page.title.replace(/[&]/g, "\\&"), "i") }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("shows the due-diligence leaves a relying entity needs, in full", async () => {
+    const view = buildPassportView("partner", partnerViewInput());
+    redeem.mockResolvedValue({ ...redemption, passport: view });
+
+    render(<PublicPassport />);
+    await screen.findByLabelText("Passport cover");
+
+    // Not "withheld" placeholders: the actual leaves, from the actual records.
+    for (const title of ["Screening", "Funding & Due Diligence", "Ownership & Control"]) {
+      expect(screen.getByRole("button", { name: new RegExp(title, "i") })).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/Not disclosed to a relying entity/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the payload composition when an older server sends no view", async () => {
+    // A deployment mid-publish must degrade to a thinner document, never to
+    // no document.
+    redeem.mockResolvedValue(redemption);
+    render(<PublicPassport />);
+    expect(await screen.findByLabelText("Passport cover")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Client Identity/i })).toBeInTheDocument();
   });
 });

@@ -13,6 +13,8 @@
  *   NOTHING BUT THE BUILDER'S OWN FILE IS EVER "Builder supplied".
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   chooseCardImage, nextImageStage, provenanceOf, rankImage,
   isVerifiedWebImage, isStreetViewImage,
@@ -362,5 +364,111 @@ describe('21,22 — identity is bound to the item and the organisation', () => {
     const chosen = chooseCardImage([verifiedWeb()] as never);
     expect(chosen?.image.id).toBe('web-verified');
     expect(chooseCardImage([] as never)).toBeNull();
+  });
+});
+
+/**
+ * A STAGE THAT RAN AND FOUND NOTHING IS NOT A STAGE THAT WAS NEVER RUN.
+ *
+ * PRODUCTION, 28 AUGUST 2026, upload `55d12d53`. Three cards were blank on the
+ * live Marketplace with Street View NEVER ATTEMPTED behind them:
+ *
+ *   Lot 1663 Ringer Street   4 x internet_search ready, all unverified
+ *                            (Coridale estate renders — a club, a sales
+ *                            office, a landscape), google_maps: "Skipped: the
+ *                            builder supplied an image for this property."
+ *   Lot 3 Yamanto            1 x internet_search ready, unverified
+ *   Lot 1342 Austin Estate   internet_search unavailable, no rows at all
+ *
+ * None of the three held a builder image, so that skip message was false. The
+ * skip row is byte-identical to a "ran and found nothing" row, so an untried
+ * stage and an exhausted one could not be told apart; and `nextImageStage`
+ * counted a stage as attempted only where it had left a READY row, so a search
+ * that returned nothing was asked for again while Street View waited below it.
+ * Then `failed` — terminal in `readFallbackQueue` — retired the property.
+ */
+describe('the ladder reaches every stage before a property is called blank', () => {
+  const searchedAndFoundNothing = () => ({
+    id: 'web-none',
+    source_stage: 'internet_search',
+    source_reference: 'stage-status',
+    verification_status: 'unverified',
+    processing_status: 'unavailable',
+    position: 0,
+    source_detail: {},
+  });
+  const streetViewSearchedAndFoundNothing = () => ({
+    id: 'sv-none',
+    source_stage: 'google_maps',
+    source_reference: 'stage-status',
+    verification_status: 'location_derived',
+    processing_status: 'unavailable',
+    position: 0,
+    source_detail: {},
+  });
+
+  it('moves to Street View after a search that returned nothing', () => {
+    // Lot 1342 Austin Estate: "No published imagery was found for this property."
+    expect(nextImageStage([searchedAndFoundNothing()] as never, {
+      sourceSettlementComplete: true,
+    })).toBe('street_view');
+  });
+
+  it('moves to Street View after a search that returned only unverified hits', () => {
+    // Lot 1663 Ringer Street: four Coridale estate renders, none of them it.
+    expect(nextImageStage([unverifiedWeb(), unverifiedWeb()] as never, {
+      sourceSettlementComplete: true,
+    })).toBe('street_view');
+  });
+
+  it('does not ask for the same empty search twice', () => {
+    const after = nextImageStage([searchedAndFoundNothing()] as never, {
+      sourceSettlementComplete: true,
+    });
+    expect(after).not.toBe('web_search');
+  });
+
+  it('is genuinely finished only when BOTH paid stages have run', () => {
+    expect(nextImageStage(
+      [searchedAndFoundNothing(), streetViewSearchedAndFoundNothing()] as never,
+      { sourceSettlementComplete: true },
+    )).toBe('none');
+  });
+
+  it('still spends nothing while the builder source is unsettled', () => {
+    expect(nextImageStage([pendingSource()] as never, {
+      sourceSettlementComplete: false,
+    })).toBe('wait');
+  });
+
+  it('still spends nothing once the builder supplied a usable image', () => {
+    expect(nextImageStage([cleanSource()] as never, {
+      sourceSettlementComplete: true,
+    })).toBe('none');
+  });
+
+  it('a verified web photograph still stops the ladder before Street View', () => {
+    expect(nextImageStage([verifiedWeb()] as never, {
+      sourceSettlementComplete: true,
+    })).toBe('none');
+  });
+});
+
+describe('the settler does not retire a property with a stage left to try', () => {
+  const source = readFileSync(
+    join(__dirname, '..', '..', '..',
+      'supabase/functions/_shared/builderStock/images.ts'), 'utf8');
+
+  it('does not record an unreached stage as skipped', () => {
+    // The two calls that wrote a false "the builder supplied an image".
+    expect(source).not.toContain("recordStageSkipped(db, item, 'google_maps'));");
+    expect(source).not.toContain("recordStageSkipped(db, item, 'internet_search'));");
+  });
+
+  it('only writes failed when the ladder is exhausted', () => {
+    expect(source).toContain('ladderHasMore');
+    expect(source).not.toContain(`anyReady
+    ? (anyProblem ? 'partial' : 'complete')
+    : 'failed';`);
   });
 });

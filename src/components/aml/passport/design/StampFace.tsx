@@ -18,9 +18,9 @@
  *
  * The geometry lives in `passport-tokens.css`; nothing here carries a colour.
  * The two things this component decides are per-stamp and derived: which of
- * the three inks the impression takes (`stampFaceTone` — by what the stamp
- * speaks for, never by a per-code palette) and its angle (`stampRotation` —
- * fixed by position, because a random one would move on every render).
+ * the seven inks the impression takes (`stampInk` — authority first, then
+ * what the certification is ABOUT) and its angle (`stampRotation` — fixed by
+ * position, because a random one would move on every render).
  *
  * `StampSeal` is deliberately NOT replaced. It still draws the partner
  * compliance strip, which is a different, already-shipped surface with no
@@ -29,7 +29,7 @@
  */
 import type { CSSProperties } from "react";
 import {
-  stampFaceTone,
+  stampInk,
   stampRotation,
   type PassportStamp,
   type PendingStamp,
@@ -37,7 +37,15 @@ import {
 import { cn } from "@/lib/utils";
 import { formatStampStruck } from "../format";
 
-const EMBLEM = "/brand/aurixa-emblem.png";
+/**
+ * The emblem, at 240px rather than the 700px original.
+ *
+ * It is a MASK now, not a picture, and a mask needs a silhouette rather than
+ * detail: 240px covers the largest die at more than twice its drawn size, for
+ * 78KB instead of 482KB. The same file, for the same reason, that the
+ * submission record already chose.
+ */
+const EMBLEM = "/brand/aurixa-emblem-240.png";
 
 /** The design steps a long title down so it still fits the die. */
 const LONG_TITLE = 22;
@@ -98,21 +106,43 @@ function Inscription({
   );
 }
 
-/** The four decorative layers, shared by struck and unstruck faces. */
+/**
+ * The decorative layers, shared by struck and unstruck faces.
+ *
+ * ── Why the watermark is a MASK and no longer an image ────────────────
+ * It was an `<img>` of the emblem laid over the die under
+ * `mix-blend-mode: screen`, and it was invisible on both surfaces for two
+ * different reasons. `screen` LIGHTENS, so on the booklet's cream leaf it
+ * pushed a near-white surface to white and erased the mark outright; a later
+ * fix swapped the leaf to `multiply` at 0.15, which is fainter than the
+ * paper's own texture. And on the dark register it screened a dark artwork
+ * over a dark field, which lifts almost nothing. The layer the whole design
+ * is built around was, in practice, never on screen.
+ *
+ * A real stamp is ONE ink. So the emblem is now the mask and the ink is the
+ * fill: the watermark takes `--stamp-ink`, the same colour as the lettering
+ * of the impression it sits inside. That is why it survives both surfaces
+ * without a blend mode to get wrong — gold on the dark register, the same
+ * gold darkened for paper on the leaf — and why it cannot be erased again by
+ * a change of background.
+ *
+ * The source rides as an inline custom property rather than living in the
+ * stylesheet, so the asset a die is struck with stays visible in this file
+ * and assertable from a test.
+ */
 function Layers({ watermark }: { watermark: boolean }) {
   return (
     <>
       <span aria-hidden="true" className="passport-stamp__grain" />
+      <span aria-hidden="true" className="passport-stamp__burnish" />
       <span aria-hidden="true" className="passport-stamp__tick" />
       <span aria-hidden="true" className="passport-stamp__inner" />
       {watermark && (
-        <img
-          src={EMBLEM}
-          alt=""
+        <span
           aria-hidden="true"
           className="passport-stamp__watermark"
-          width={104}
-          height={104}
+          data-emblem={EMBLEM}
+          style={{ "--stamp-watermark-src": `url("${EMBLEM}")` } as CSSProperties}
         />
       )}
     </>
@@ -120,16 +150,25 @@ function Layers({ watermark }: { watermark: boolean }) {
 }
 
 export function StampFace({
-  stamp, issuerOrg, index = 0, className,
+  stamp, issuerOrg, index = 0, upright = false, className,
 }: {
   stamp: PassportStamp;
   /** Decides the partner ink: a stamp that speaks for somebody else. */
   issuerOrg: string;
   /** Position in the register — fixes the angle. */
   index?: number;
+  /**
+   * Presented on its own rather than struck into a register.
+   *
+   * The angle exists because a register of impressions pressed by hand is not
+   * a grid. A single die shown as the SPECIMEN of one record — the dialog
+   * behind a stamp — is not a register, and tilting it there reads as a
+   * misaligned dialog rather than as a stamp.
+   */
+  upright?: boolean;
   className?: string;
 }) {
-  const tone = stampFaceTone(stamp, issuerOrg);
+  const ink = stampInk(stamp, issuerOrg);
   const sub = [stamp.version ? `v${stamp.version}` : null, stamp.actor]
     .filter(Boolean)
     .join(" · ");
@@ -137,11 +176,11 @@ export function StampFace({
     <div
       className={cn(
         "passport-stamp",
-        `passport-stamp--${tone}`,
+        `passport-stamp--${ink}`,
         `passport-stamp--${stamp.shape}`,
         className,
       )}
-      style={{ "--stamp-rot": `${stampRotation(index)}deg` } as CSSProperties}
+      style={{ "--stamp-rot": `${upright ? 0 : stampRotation(index)}deg` } as CSSProperties}
     >
       <Layers watermark />
       <Inscription

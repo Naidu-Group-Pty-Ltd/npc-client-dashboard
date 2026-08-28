@@ -90,10 +90,19 @@ describe('StampsPage', () => {
     // The layer the approved design is built around, and the one the previous
     // face omitted entirely: an impression carries the mark of the system that
     // struck it. An unstruck die does not — nothing pressed it.
+    //
+    // The emblem is the MASK now and the impression's ink is the fill, so the
+    // assertion is on the mask source rather than on an `<img src>`. That is
+    // the change that made the layer visible at all: as an image under
+    // `mix-blend-mode: screen` it was erased by the cream leaf and lost in the
+    // dark register.
     const { container } = pageFor();
     const struck = container.querySelector('.passport-stamp:not(.passport-stamp--pending)')!;
-    expect(struck.querySelector('.passport-stamp__watermark'))
-      .toHaveAttribute('src', '/brand/aurixa-emblem.png');
+    const watermark = struck.querySelector('.passport-stamp__watermark') as HTMLElement;
+    expect(watermark).not.toBeNull();
+    expect(watermark.getAttribute('data-emblem')).toBe('/brand/aurixa-emblem-240.png');
+    expect(watermark.style.getPropertyValue('--stamp-watermark-src'))
+      .toContain('/brand/aurixa-emblem-240.png');
     expect(struck.querySelector('.passport-stamp__grain')).not.toBeNull();
     expect(struck.querySelector('.passport-stamp__inner')).not.toBeNull();
 
@@ -101,12 +110,57 @@ describe('StampsPage', () => {
     expect(unstruck.querySelector('.passport-stamp__watermark')).toBeNull();
   });
 
-  it('inks a stamp by what it speaks for, in the design’s three tones', () => {
+  it('inks a stamp by authority first, then by what it certifies', () => {
+    // Consent is the customer's authority and takes its own ink. With
+    // nothing else earned, nothing else is struck — so gold, which is the
+    // issuer's identity and document work, is absent rather than default.
     const { container } = pageFor();
-    // The issuer's own certification.
-    expect(container.querySelector('.passport-stamp--gold')).not.toBeNull();
-    // …and the terminal one, which the design inks green.
+    expect(container.querySelector('.passport-stamp--violet')).not.toBeNull();
+    expect(container.querySelector('.passport-stamp--gold')).toBeNull();
     expect(container.querySelector('.passport-stamp--final')).toBeNull(); // not yet issued
+  });
+
+  it('a real register is not one colour', () => {
+    // THE defect. `STAMP_VOCABULARY` has carried a per-code tone since it was
+    // written and the die threw all of it away, collapsing twenty-two
+    // certifications into three inks — so a case with a full programme
+    // rendered as a row of gold rectangles and one green circle.
+    const { container } = pageFor({
+      attestations: [{
+        version: 1, issued_at: NOW, superseded_at: null,
+        payload_sha256: 'a'.repeat(64), schema_version: 2,
+      }],
+      stamp_input: {
+        issuer_org: 'Naidu Property Consulting Services',
+        attestations: [{ version: 1, issued_at: NOW, superseded_at: null }],
+        consents: [{ id: 'c1', kind: 'privacy_notice', accepted_at: NOW }],
+        verification_checks: [{
+          party_label: 'Meridian', check_type: 'electronic_idv',
+          status: 'passed', completed_at: NOW,
+        }],
+        documents: [{ status: 'accepted', reviewed_at: NOW, created_at: NOW }],
+        screening_subjects: [{ state: 'completed', completed_at: NOW }],
+        owners: [],
+        source_of_funds: [{ verified: true, verified_at: NOW }],
+        source_of_wealth: [], edd_cases: [], grants: [],
+        assessments: [], refresh_obligations: [], transactions: [],
+      },
+    } as Partial<PassportViewInput>);
+
+    const inks = new Set(
+      [...container.querySelectorAll('.passport-stamp:not(.passport-stamp--pending)')]
+        .flatMap((el) => [...el.classList])
+        .filter((c) => /^passport-stamp--(gold|azure|violet|emerald|final|partner|alert)$/.test(c)),
+    );
+
+    // Consent, identity/documents, screening, funding and the issuance —
+    // five subjects, and a reader can tell them apart at a glance.
+    expect(inks.size).toBeGreaterThanOrEqual(4);
+    expect(inks.has('passport-stamp--violet')).toBe(true);   // consent
+    expect(inks.has('passport-stamp--gold')).toBe(true);     // identity & documents
+    expect(inks.has('passport-stamp--azure')).toBe(true);    // screening
+    expect(inks.has('passport-stamp--emerald')).toBe(true);  // funding
+    expect(inks.has('passport-stamp--final')).toBe(true);    // the Passport issued
   });
 
   it('says what each outstanding certification is waiting for', () => {

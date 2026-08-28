@@ -128,9 +128,13 @@ describe("what the workspace says about a grant", () => {
 });
 
 describe("the passport page discloses nothing of its own", () => {
-  it("it renders the server's payload and never filters or relabels it", () => {
+  it("it renders the server's own projection and never filters or relabels it", () => {
     expect(page).toContain("passportPublicApi.redeem(token)");
-    expect(page).toContain("JSON.stringify(data.attestation, null, 2)");
+    // The page used to print the payload. It now renders the DOCUMENT the
+    // server built — the same `PassportView` the Command Centre renders,
+    // through the same composer — so the boundary is decided by the
+    // audience-safe assembler and never by this page.
+    expect(page).toContain("buildBooklet(data.passport as PassportView)");
     // It must not carry its own idea of what may be shown.
     expect(page).not.toMatch(/risk_rating|screening_match|reviewer_note/);
   });

@@ -32,15 +32,34 @@ describe('get_passport_view (Command, aml-reliance)', () => {
   const block = opBlock(relianceSource, 'get_passport_view', 'grant_access');
 
   it('is flag-gated before any case data is read', () => {
+    // The gathering moved into `buildCasePassportView` so the partner
+    // audience reads the SAME records rather than a second assembly. The
+    // property is unchanged and is asserted the same way: nothing may touch
+    // the case before the flag, and the op reads no case of its own.
     const flagAt = block.indexOf('aml_passport_command_view');
-    const firstRead = block.indexOf('.from("cases")');
+    const buildAt = block.indexOf('buildCasePassportView(');
     expect(flagAt).toBeGreaterThan(-1);
-    expect(firstRead).toBeGreaterThan(flagAt);
+    expect(buildAt).toBeGreaterThan(flagAt);
+    expect(block).not.toContain('.from("cases")');
     expect(block).toContain('passport_disabled');
   });
 
   it('builds through the shared pure assembler — no ad-hoc view shaping', () => {
-    expect(block).toContain('buildPassportView("command"');
+    expect(block).toContain('buildCasePassportView(admin, caseId, "command")');
+    // And that helper is the one place the assembler is called from.
+    const helper = relianceSource.slice(
+      relianceSource.indexOf('async function buildCasePassportView'));
+    expect(helper.slice(0, 12_000)).toContain('buildPassportView(audience, {');
+    expect(relianceSource.match(/buildPassportView\(/g) ?? []).toHaveLength(1);
+  });
+
+  it('serves the partner audience from that same assembly', () => {
+    // Two assemblies of one document eventually disagree about it — these
+    // did, and a partner held a booklet with different pages and titles.
+    const redeem = relianceSource.slice(
+      relianceSource.indexOf('if (op === "redeem_attestation")'));
+    expect(redeem.slice(0, 6_000))
+      .toContain('buildCasePassportView(admin, grant.case_id, "partner")');
   });
 
   it('is read-only: no inserts, updates or event appends', () => {

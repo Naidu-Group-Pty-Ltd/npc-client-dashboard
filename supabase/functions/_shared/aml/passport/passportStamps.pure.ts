@@ -128,6 +128,94 @@ export function stampFaceTone(
   return "gold";
 }
 
+/* ── the ink a die is charged with ─────────────────────────────────────── */
+
+/**
+ * Seven inks, and every one of them means something.
+ *
+ * ── Why this exists ──────────────────────────────────────────────────
+ * `STAMP_VOCABULARY` has carried a per-code `tone` since it was written —
+ * navy, gold, green, blue, red — and the die threw all of it away.
+ * `stampFaceTone` collapsed twenty-two certifications into three inks, and
+ * because the issuer strikes nearly all of them, a real register rendered as
+ * five gold rectangles and one green circle. The colour was in the data; the
+ * page simply never asked for it.
+ *
+ * ── The two axes, and why they stay separate ─────────────────────────
+ * AUTHORITY comes first and is unchanged: a stamp that speaks for somebody
+ * else is inked `partner`, whatever it certifies. That is a security property
+ * — a reader must be able to see at a glance which impressions are ours — so
+ * it is still decided by `stampFaceTone` and this function defers to it
+ * rather than re-deriving it.
+ *
+ * SUBJECT decides the rest. What a certification is ABOUT is the most useful
+ * thing a colour can say on a page of them, and it is stable: a code's
+ * subject cannot change without the code changing.
+ *
+ *   gold      the issuer's own identity and document work
+ *   azure     screening against an external register
+ *   violet    consent and authority given by the customer
+ *   emerald   funding — source of funds, wealth, enhanced due diligence
+ *   final     terminal certifications: the Passport issued, the matter done
+ *   partner   somebody else's decision recorded in our register
+ *   alert     something withdrawn, superseded or outstanding
+ *
+ * ── Why not just use the vocabulary's own tone ───────────────────────
+ * Because it is coarser than the meaning. It inks `source_of_funds_reviewed`
+ * green, the same green as `passport_issued`, and a funding review that looks
+ * identical to the terminal certification is exactly the confusion a colour
+ * system is supposed to remove. The vocabulary's tone drives the wax seals,
+ * which are decorative; the die needs the finer reading.
+ */
+export type StampInk =
+  | "gold" | "azure" | "violet" | "emerald" | "final" | "partner" | "alert";
+
+const STAMP_INK: Record<PassportStampCode, StampInk> = {
+  client_consent_recorded: "violet",
+
+  identity_verified: "gold",
+  documents_verified: "gold",
+  ownership_verified: "gold",
+  passport_updated: "gold",
+  passport_refresh_completed: "gold",
+
+  screening_completed: "azure",
+
+  source_of_funds_reviewed: "emerald",
+  source_of_wealth_reviewed: "emerald",
+  edd_completed: "emerald",
+
+  passport_issued: "final",
+  transaction_completed: "final",
+
+  passport_shared_finance: "partner",
+  passport_shared_solicitor: "partner",
+  passport_shared_builder: "partner",
+  reliance_accepted_finance: "partner",
+  reliance_accepted_solicitor: "partner",
+  reliance_accepted_builder: "partner",
+  independent_cdd_recorded: "partner",
+
+  access_revoked: "alert",
+  passport_superseded: "alert",
+  passport_refresh_requested: "alert",
+};
+
+/**
+ * The ink for one impression.
+ *
+ * Authority is asked first and answered by `stampFaceTone`, so there is one
+ * rule about whose certification a stamp is and this cannot drift from it.
+ * Everything else is the subject.
+ */
+export function stampInk(
+  stamp: { code: PassportStampCode; org: string },
+  issuerOrg: string,
+): StampInk {
+  if (stampFaceTone(stamp, issuerOrg) === "partner") return "partner";
+  return STAMP_INK[stamp.code] ?? "gold";
+}
+
 /**
  * The design rotates each impression by a fixed amount taken from its position
  * — `[-6, 3, -2.5, 4.5, -4][i % 5]`. Struck impressions are never square to

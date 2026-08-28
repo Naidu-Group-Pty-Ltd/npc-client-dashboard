@@ -227,13 +227,23 @@ export function nextImageStage(
     && !isDisplayableSourceImage(image));
   if (sourcePending || !options.sourceSettlementComplete) return 'wait';
 
+  /*
+   * A STAGE THAT RAN AND FOUND NOTHING HAS BEEN TRIED.
+   *
+   * This used to count a stage as attempted only where it had left a `ready`
+   * row, so a search that returned nothing — or returned only candidates the
+   * identity check refused — read as a stage never run, and the ladder asked
+   * for it again instead of moving down. Lot 1663 Ringer Street spent both of
+   * its passes on `web_search`, was marked `failed`, and left the queue with
+   * Street View NEVER ATTEMPTED; Lot 3 Yamanto and Lot 1342 Austin Estate the
+   * same. All three showed blank on the live Marketplace with an untried stage
+   * behind them. Any row for a stage is now the record that it ran.
+   */
   if (rows.some((image) => isVerifiedWebImage(image))) return 'none';
-  if (!rows.some((image) => image.source_stage === WEB_SEARCH_STAGE
-    && image.processing_status === 'ready')) return 'web_search';
+  if (!rows.some((image) => image.source_stage === WEB_SEARCH_STAGE)) return 'web_search';
 
   if (rows.some((image) => isStreetViewImage(image))) return 'none';
-  if (!rows.some((image) => image.source_stage === STREET_VIEW_STAGE
-    && image.processing_status === 'ready')) return 'street_view';
+  if (!rows.some((image) => image.source_stage === STREET_VIEW_STAGE)) return 'street_view';
 
   // Every stage has been tried and none produced a displayable picture.
   return 'none';

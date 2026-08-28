@@ -50,6 +50,13 @@ export const partnerAcknowledgementPublicApi = {
 
 export interface PassportRedemption {
   attestation: Record<string, unknown>;
+  /**
+   * The DOCUMENT — the same `PassportView` the Command Centre renders, built
+   * for the partner audience. Optional only because a deployment may be
+   * serving a build that predates it; the page falls back to composing from
+   * the payload when it is absent.
+   */
+  passport?: unknown;
   attestation_sha256: string;
   issued_at: string;
   schema_version?: number;

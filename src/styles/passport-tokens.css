@@ -349,6 +349,23 @@
   mask: radial-gradient(circle, transparent 0 78%, hsl(0 0% 0%) 78% 88%, transparent 88%);
 }
 
+/* The same mark the struck die carries, drawn the same way: the emblem as a
+   mask, the seal's own ink as the fill. A seal on this document that is not
+   marked reads as belonging to something else. */
+.passport-wax__watermark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74%;
+  height: 74%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: var(--seal-watermark-opacity, 0.16);
+  background-color: var(--seal-ink);
+  -webkit-mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
+  mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
+}
+
 .passport-wax__org {
   font-size: 0.3125rem;
   letter-spacing: 0.15em;
@@ -1128,31 +1145,74 @@
    struck it. `mix-blend-mode: screen` is what makes it read as part of the
    ink rather than a picture sitting on top.
 
-   Ink is decided by what the stamp SPEAKS FOR, not by a per-code palette —
-   `stampFaceTone()` carries that rule. Values are the design's own, converted
-   to HSL per this repo's convention. */
+   Ink is decided by `stampInk()`: AUTHORITY first — a stamp that speaks for
+   somebody else is always `partner`, which is a security property — and then
+   by what the certification is ABOUT. Seven inks, because a register where
+   the issuer strikes nearly everything rendered as five gold rectangles and
+   one green circle while the vocabulary had carried a per-code tone all
+   along. Gold's values are the design's own, converted to HSL per this
+   repo's convention; the families added beside it are built to the same
+   recipe — a bright ink, a dimmed one for secondary lines, a line, an edge,
+   a wash and a glow — so every family is legible at the same weight. */
 
 .passport-scope {
   --stamp-gold-ink: hsl(43 71% 73%);
-  --stamp-gold-dim: hsl(42 42% 44%);
+  --stamp-gold-dim: hsl(42 46% 62%);
   --stamp-gold-line: hsl(44 75% 49% / 0.42);
   --stamp-gold-edge: hsl(44 75% 49% / 0.62);
   --stamp-gold-wash: hsl(44 75% 49% / 0.055);
   --stamp-gold-glow: hsl(44 75% 49% / 0.16);
 
   --stamp-partner-ink: hsl(218 51% 86%);
-  --stamp-partner-dim: hsl(219 27% 60%);
+  --stamp-partner-dim: hsl(219 34% 72%);
   --stamp-partner-line: hsl(216 56% 69% / 0.34);
   --stamp-partner-edge: hsl(216 56% 69% / 0.52);
   --stamp-partner-wash: hsl(216 56% 69% / 0.045);
   --stamp-partner-glow: hsl(216 56% 69% / 0.12);
 
   --stamp-final-ink: hsl(99 36% 83%);
-  --stamp-final-dim: hsl(98 15% 51%);
+  --stamp-final-dim: hsl(98 22% 66%);
   --stamp-final-line: hsl(100 29% 59% / 0.34);
   --stamp-final-edge: hsl(100 32% 63% / 0.5);
   --stamp-final-wash: hsl(100 29% 59% / 0.045);
   --stamp-final-glow: hsl(100 29% 59% / 0.12);
+
+  /* Screening — checked against somebody else's register. A cold, instrument
+     blue, deliberately far from the partner's warmer cornflower so "we
+     screened this" and "they decided this" are never confused. */
+  --stamp-azure-ink: hsl(191 68% 78%);
+  --stamp-azure-dim: hsl(193 34% 52%);
+  --stamp-azure-line: hsl(192 62% 56% / 0.38);
+  --stamp-azure-edge: hsl(192 62% 56% / 0.56);
+  --stamp-azure-wash: hsl(192 62% 56% / 0.05);
+  --stamp-azure-glow: hsl(192 62% 56% / 0.14);
+
+  /* Consent and authority — what the customer gave us. */
+  --stamp-violet-ink: hsl(268 62% 85%);
+  --stamp-violet-dim: hsl(268 28% 60%);
+  --stamp-violet-line: hsl(268 55% 66% / 0.34);
+  --stamp-violet-edge: hsl(268 55% 66% / 0.52);
+  --stamp-violet-wash: hsl(268 55% 66% / 0.05);
+  --stamp-violet-glow: hsl(268 55% 66% / 0.13);
+
+  /* Funding — source of funds, wealth, enhanced due diligence. Teal rather
+     than the terminal green, because a funding review is not an ending. */
+  --stamp-emerald-ink: hsl(163 52% 76%);
+  --stamp-emerald-dim: hsl(165 26% 49%);
+  --stamp-emerald-line: hsl(164 48% 52% / 0.36);
+  --stamp-emerald-edge: hsl(164 48% 52% / 0.54);
+  --stamp-emerald-wash: hsl(164 48% 52% / 0.05);
+  --stamp-emerald-glow: hsl(164 48% 52% / 0.13);
+
+  /* Withdrawn, superseded or outstanding. Amber-red rather than a warning
+     red: the record is real and correctly struck, it simply says something
+     was taken back. */
+  --stamp-alert-ink: hsl(16 74% 80%);
+  --stamp-alert-dim: hsl(15 38% 55%);
+  --stamp-alert-line: hsl(14 66% 58% / 0.38);
+  --stamp-alert-edge: hsl(14 66% 58% / 0.58);
+  --stamp-alert-wash: hsl(14 66% 58% / 0.055);
+  --stamp-alert-glow: hsl(14 66% 58% / 0.15);
 }
 
 .passport-stamp--gold {
@@ -1169,6 +1229,26 @@
   --stamp-ink: var(--stamp-final-ink); --stamp-dim: var(--stamp-final-dim);
   --stamp-line: var(--stamp-final-line); --stamp-edge: var(--stamp-final-edge);
   --stamp-wash: var(--stamp-final-wash); --stamp-glow: var(--stamp-final-glow);
+}
+.passport-stamp--azure {
+  --stamp-ink: var(--stamp-azure-ink); --stamp-dim: var(--stamp-azure-dim);
+  --stamp-line: var(--stamp-azure-line); --stamp-edge: var(--stamp-azure-edge);
+  --stamp-wash: var(--stamp-azure-wash); --stamp-glow: var(--stamp-azure-glow);
+}
+.passport-stamp--violet {
+  --stamp-ink: var(--stamp-violet-ink); --stamp-dim: var(--stamp-violet-dim);
+  --stamp-line: var(--stamp-violet-line); --stamp-edge: var(--stamp-violet-edge);
+  --stamp-wash: var(--stamp-violet-wash); --stamp-glow: var(--stamp-violet-glow);
+}
+.passport-stamp--emerald {
+  --stamp-ink: var(--stamp-emerald-ink); --stamp-dim: var(--stamp-emerald-dim);
+  --stamp-line: var(--stamp-emerald-line); --stamp-edge: var(--stamp-emerald-edge);
+  --stamp-wash: var(--stamp-emerald-wash); --stamp-glow: var(--stamp-emerald-glow);
+}
+.passport-stamp--alert {
+  --stamp-ink: var(--stamp-alert-ink); --stamp-dim: var(--stamp-alert-dim);
+  --stamp-line: var(--stamp-alert-line); --stamp-edge: var(--stamp-alert-edge);
+  --stamp-wash: var(--stamp-alert-wash); --stamp-glow: var(--stamp-alert-glow);
 }
 
 /* ── the face ── */
@@ -1280,21 +1360,61 @@
 .passport-stamp--rect .passport-stamp__tick { top: 9px; }
 .passport-stamp--rect .passport-stamp__inner { bottom: 9px; }
 
-/* ── the watermark ── */
+/* ── the burnish ──
+   A die pressed into a surface is never evenly inked: it takes more at the
+   shoulder the hand leaned on and less where it lifted. One off-centre
+   highlight and one opposing shade is the whole trick, and it is what stops
+   the impression reading as a flat coloured shape with type on it. Drawn in
+   the impression's own ink so it inherits every tone, and set BELOW the ticks
+   and the inner rule so those stay crisp over it. */
+.passport-stamp__burnish {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--stamp-burnish-opacity, 0.5);
+  background:
+    radial-gradient(60% 52% at 34% 26%, var(--stamp-relief, hsl(0 0% 100% / 0.09)), transparent 70%),
+    radial-gradient(64% 56% at 72% 82%, var(--stamp-depth, hsl(0 0% 0% / 0.4)), transparent 72%);
+}
+.passport-stamp--circle .passport-stamp__burnish { border-radius: 50%; }
+.passport-stamp--seal .passport-stamp__burnish {
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+.passport-stamp--rect .passport-stamp__burnish { border-radius: 2px; }
+
+/* ── the watermark ──
+   The emblem is the MASK and the impression's ink is the fill, so the mark is
+   the same colour as the lettering it sits behind. It was an image under
+   `mix-blend-mode: screen`, which lightens: on the cream leaf that pushed a
+   near-white surface to white and erased it, and on the dark register it
+   screened dark artwork over a dark field and lifted almost nothing. The
+   layer the whole design is built around was never actually on screen.
+
+   Inking it removes the blend mode from the problem entirely — there is no
+   surface on which "the stamp's own ink" disappears — and it is also the
+   truer drawing: a stamp is one ink, not artwork with a picture behind it. */
 .passport-stamp__watermark {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  height: auto;
   pointer-events: none;
-  opacity: 0.26;
-  mix-blend-mode: screen;
-  filter: brightness(1.5) saturate(1.15) drop-shadow(0 0 6px var(--stamp-glow));
+  opacity: var(--stamp-watermark-opacity, 0.36);
+  background-color: var(--stamp-ink);
+  /* The fallback is not decoration. An unset custom property inside a
+     shorthand makes the whole declaration invalid at computed-value time, so
+     `mask` would resolve to none and the ink would paint as a solid disc over
+     the inscription. Naming the emblem here as well means the worst case is
+     the right mark rather than a blot. */
+  -webkit-mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
+  mask: var(--stamp-watermark-src, url("/brand/aurixa-emblem-240.png")) center / contain no-repeat;
 }
+/* It fills the die rather than sitting in the middle of it: a watermark is the
+   GROUND an impression is struck over, and at 63% it read as a small logo
+   somebody had placed there. */
 .passport-stamp--circle .passport-stamp__watermark,
-.passport-stamp--seal .passport-stamp__watermark { width: 104px; }
-.passport-stamp--rect .passport-stamp__watermark { width: 84px; }
+.passport-stamp--seal .passport-stamp__watermark { width: 122px; height: 122px; }
+.passport-stamp--rect .passport-stamp__watermark { width: 98px; height: 98px; }
 
 /* ── the inscription ── */
 .passport-stamp__body {
@@ -1320,7 +1440,7 @@
 .passport-stamp__orgname {
   font-size: 6.8px;
   letter-spacing: 0.2em;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--stamp-dim);
   white-space: nowrap;
   /* The design's own data is already capitals ("AURIXA SYSTEMS"), so its CSS
@@ -1376,6 +1496,7 @@
   font-family: var(--passport-font-mono);
   font-size: 8px;
   letter-spacing: 0.04em;
+  font-weight: 600;
   color: var(--stamp-ink);
 }
 .passport-stamp__sub {
@@ -1477,25 +1598,57 @@
    (`stampFaceTone`) is untouched, it just resolves to paper values here. */
 .passport-leaf {
   --stamp-gold-ink: hsl(38 58% 27%);
-  --stamp-gold-dim: hsl(38 34% 42%);
+  --stamp-gold-dim: hsl(38 40% 34%);
   --stamp-gold-line: hsl(42 59% 41% / 0.5);
   --stamp-gold-edge: hsl(42 59% 41% / 0.72);
   --stamp-gold-wash: hsl(42 59% 41% / 0.07);
   --stamp-gold-glow: hsl(42 59% 41% / 0.13);
 
   --stamp-partner-ink: hsl(218 46% 30%);
-  --stamp-partner-dim: hsl(219 25% 46%);
+  --stamp-partner-dim: hsl(219 30% 38%);
   --stamp-partner-line: hsl(216 45% 42% / 0.42);
   --stamp-partner-edge: hsl(216 45% 42% / 0.6);
   --stamp-partner-wash: hsl(216 45% 42% / 0.06);
   --stamp-partner-glow: hsl(216 45% 42% / 0.11);
 
   --stamp-final-ink: hsl(99 32% 26%);
-  --stamp-final-dim: hsl(98 18% 40%);
+  --stamp-final-dim: hsl(98 24% 32%);
   --stamp-final-line: hsl(100 30% 34% / 0.42);
   --stamp-final-edge: hsl(100 30% 34% / 0.58);
   --stamp-final-wash: hsl(100 30% 34% / 0.06);
   --stamp-final-glow: hsl(100 30% 34% / 0.11);
+
+  /* The same seven inks, re-mixed for paper. A hue that reads as a bright
+     ink on a near-black field is a wash on cream, so each family drops its
+     lightness and holds its hue — the register and the leaf strike the same
+     die in the same colours, at the two weights the two surfaces need. */
+  --stamp-azure-ink: hsl(193 62% 25%);
+  --stamp-azure-dim: hsl(193 30% 40%);
+  --stamp-azure-line: hsl(192 55% 34% / 0.44);
+  --stamp-azure-edge: hsl(192 55% 34% / 0.62);
+  --stamp-azure-wash: hsl(192 55% 34% / 0.06);
+  --stamp-azure-glow: hsl(192 55% 34% / 0.12);
+
+  --stamp-violet-ink: hsl(268 46% 34%);
+  --stamp-violet-dim: hsl(268 24% 47%);
+  --stamp-violet-line: hsl(268 44% 44% / 0.4);
+  --stamp-violet-edge: hsl(268 44% 44% / 0.58);
+  --stamp-violet-wash: hsl(268 44% 44% / 0.055);
+  --stamp-violet-glow: hsl(268 44% 44% / 0.12);
+
+  --stamp-emerald-ink: hsl(166 52% 23%);
+  --stamp-emerald-dim: hsl(166 26% 38%);
+  --stamp-emerald-line: hsl(165 46% 31% / 0.42);
+  --stamp-emerald-edge: hsl(165 46% 31% / 0.6);
+  --stamp-emerald-wash: hsl(165 46% 31% / 0.06);
+  --stamp-emerald-glow: hsl(165 46% 31% / 0.12);
+
+  --stamp-alert-ink: hsl(13 62% 36%);
+  --stamp-alert-dim: hsl(14 34% 48%);
+  --stamp-alert-line: hsl(13 58% 44% / 0.42);
+  --stamp-alert-edge: hsl(13 58% 44% / 0.62);
+  --stamp-alert-wash: hsl(13 58% 44% / 0.06);
+  --stamp-alert-glow: hsl(13 58% 44% / 0.12);
 
   --stamp-emboss: hsl(221 48% 17% / 0.07);
   --stamp-depth: hsl(221 48% 17% / 0.06);
@@ -1503,18 +1656,22 @@
   --stamp-relief: hsl(42 62% 96% / 0.6);
 }
 
-/* `screen` LIGHTENS, which on cream erases the mark entirely — the watermark
-   is the layer the whole design is built around, so it must survive the change
-   of surface. Paper takes ink out of the sheet: both screened layers multiply
-   into it instead. */
+/* The watermark needs no blend mode on either surface now — it is the die's
+   own ink through a mask — so the leaf sets only how much of it the paper
+   takes. Cream shows a dark ink at a lower opacity than a dark field shows a
+   light one, which is why this is a number rather than nothing.
+
+   The grain still multiplies: it is a texture rather than an ink, and on
+   paper a screened texture is the same erasure the watermark used to suffer. */
 .passport-leaf .passport-stamp__watermark {
-  mix-blend-mode: multiply;
-  filter: none;
-  opacity: 0.15;
+  --stamp-watermark-opacity: 0.26;
 }
 .passport-leaf .passport-stamp__grain {
   mix-blend-mode: multiply;
   opacity: 0.14;
+}
+.passport-leaf .passport-stamp__burnish {
+  --stamp-burnish-opacity: 0.7;
 }
 
 /* An unstruck die on paper: the register's greys are drawn for near-black. */

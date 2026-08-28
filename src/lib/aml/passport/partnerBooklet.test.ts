@@ -298,12 +298,20 @@ describe("the partner page draws the document, not the payload", () => {
     // Three renderers of one instrument eventually disagree about what it
     // looks like.
     expect(page).toContain("PassportBook");
-    expect(page).toContain("buildPartnerBooklet");
   });
 
-  it("keeps the raw record available rather than removing it", () => {
-    // An integration verifies the fingerprint against the exact object.
-    expect(page).toContain("JSON.stringify(data.attestation, null, 2)");
-    expect(page).toContain("View the underlying record (JSON)");
+  it("prefers the Command Centre's own composer over any local composition", () => {
+    // The server sends the partner-audience view; `buildBooklet` is the only
+    // thing that turns a view into pages. This composer is the fallback for a
+    // deployment still serving a build that predates it.
+    expect(page).toContain("buildBooklet(data.passport as PassportView)");
+    expect(page).toContain("return buildPartnerBooklet(data)");
+  });
+
+  it("offers no raw payload at all", () => {
+    // A fold-out of the object the document was drawn from invited a relying
+    // entity to read the source instead of the instrument.
+    expect(page).not.toContain("JSON.stringify(data.attestation");
+    expect(page).not.toContain("View the underlying record");
   });
 });

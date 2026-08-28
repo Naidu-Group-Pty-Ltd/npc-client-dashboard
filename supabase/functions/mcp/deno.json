@@ -73,8 +73,8 @@
     "  problem was that it could not deploy. Verify with `deno info` instead."
   ],
   "imports": {
-    "npm:@lovable.dev/mcp-js@0.26.2": "https://esm.sh/@lovable.dev/mcp-js@0.26.2?target=denonext&deps=zod@3.25.76&bundle=all",
-    "npm:@lovable.dev/mcp-js@0.26.2/stacks/supabase": "https://esm.sh/@lovable.dev/mcp-js@0.26.2/stacks/supabase?target=denonext&deps=zod@3.25.76&bundle=all",
+    "npm:@lovable.dev/mcp-js@0.26.3": "https://esm.sh/@lovable.dev/mcp-js@0.26.3?target=denonext&deps=zod@3.25.76&bundle=all",
+    "npm:@lovable.dev/mcp-js@0.26.3/stacks/supabase": "https://esm.sh/@lovable.dev/mcp-js@0.26.3/stacks/supabase?target=denonext&deps=zod@3.25.76&bundle=all",
     "npm:zod@^3.25.76": "https://esm.sh/zod@3.25.76?target=denonext"
   }
 }

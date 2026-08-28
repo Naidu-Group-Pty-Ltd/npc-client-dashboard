@@ -188,9 +188,31 @@ describe("wired at the source", () => {
     expect(wizard).toMatch(/already exists/i);
   });
 
-  it("the token is handed over as shown-once, with the no-sign-up rule stated", () => {
-    expect(wizard).toContain("One-time access token");
+  it("the grant is DELIVERED — the omitted argument that emailed nobody", () => {
+    /* `grant_access` emails the link only when it is given a `deliver_to`,
+       and the wizard called it without one. Nothing failed: the grant was
+       minted, the register was correct, `delivered_to_email` was null, and
+       the partner was told nothing at all. The address is the one the portal
+       invite went to, so the Passport and the account it is read alongside
+       reach the same person. */
+    expect(wizard).toContain("deliver_to: deliverTo");
+    expect(wizard).toContain("const deliverTo = (chosenContact?.email ?? contactEmail)");
+    expect(wizard).not.toMatch(/grantAccess\(caseId, agreement\.id\)/);
+    // Delivery is stated before the click, and reported after it.
+    expect(wizard).toContain("Passport link:");
+    expect(wizard).toContain("link_email_sent");
+  });
+
+  it("the LINK is the artefact a person is handed; the token is a disclosure", () => {
+    // The link, as a real value in a read-only field — not a placeholder.
+    expect(wizard).toContain("id=\"pow-passport-link\"");
+    expect(wizard).toContain("value={grantResult.link}");
     expect(wizard).toMatch(/shown once/i);
+    // The raw token still exists and is still shown once, but it answers a
+    // question an everyday operator does not have, so it is behind a
+    // disclosure that says who it is for.
+    expect(wizard).toContain("One-time access token — for system-to-system integrations");
+    expect(wizard).toMatch(/<details/);
     expect(wizard).toMatch(/no prior\s+sign-up is needed/i);
     // What the partner receives is procedures, never the risk assessment.
     expect(wizard).toMatch(/never this case(?:'|&apos;)s risk assessment/);

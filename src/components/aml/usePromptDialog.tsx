@@ -32,6 +32,17 @@ export interface PromptField {
   minLength?: number;
   placeholder?: string;
   helpText?: string;
+  /**
+   * The value the field OPENS with.
+   *
+   * Placeholder text is not a value: it cannot be selected, cannot be
+   * copied, and is not submitted. A dialog that "pre-fills" an address by
+   * placeholder alone forces the operator to retype something the platform
+   * already knows, and a dialog that shows a one-time credential that way
+   * shows an empty box — which is exactly how a Passport link came to be
+   * displayed at the one moment it existed and could not be copied.
+   */
+  value?: string;
 }
 
 export interface PromptConfig {
@@ -66,7 +77,7 @@ export function usePromptDialog() {
 
   const prompt = useCallback((next: PromptConfig) => {
     setConfig(next);
-    setValues(Object.fromEntries(next.fields.map((f) => [f.name, ""])));
+    setValues(Object.fromEntries(next.fields.map((f) => [f.name, f.value ?? ""])));
     setShowErrors(false);
     return new Promise<PromptValues | null>((resolve) => {
       setResolver({ fn: resolve });

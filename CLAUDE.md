@@ -256,6 +256,33 @@ the server disagreed, and a contract test now fails any interpolated filter.
 And **production never runs the simulator and never screens against an empty
 or stale list** — refusal is visible, a confident clear against nothing is not.
 
+## Distributing a Passport to several partners
+Read [`docs/aml/PASSPORT_DISTRIBUTION.md`](./docs/aml/PASSPORT_DISTRIBUTION.md)
+before touching `passportRecipients.pure.ts`, `PassportRecipientsPanel`, the
+`deliver_to` argument on `grantAccess` or the wizard's grant step. Reliance on
+one completed CDD process by several partners is the product, and it had no
+surface: the register held two correct, active grants for the same case while
+`delivered_to_email` was **null** on both, because `grant_access` emails the
+link only when handed a `deliver_to` and the wizard called
+`grantAccess(caseId, agreement.id)`. Nothing failed — the grant minted, the
+audit event wrote, the badge went green, and the partner was told nothing.
+
+Three rules carry it. **Delivery is part of the act** — a grant nobody was
+emailed is access with no channel and is indistinguishable from a healthy one
+in every register, so `undelivered` is its own state and the panel leads with
+it. **A live link can never be re-read** (only its hash is stored), so a
+holder's send is a REPLACEMENT carrying `reissue_of`, said before the click.
+And **there is exactly one send path**, because there were two and that is why
+one was wrong: `reissueGrant` passed the one-time link as a prompt field's
+`placeholder`, which is not a value — the uncopyable-empty-box defect that was
+reported, fixed on the other path, and survived here. `PromptField.value`
+exists for the same reason.
+
+The raw bearer token and the `/passport/<token>` link are the **same
+credential**; the link is what a person opens and the token is for a partner
+system with no browser, so it sits behind a disclosure rather than being
+presented as the deliverable.
+
 ## Stage 5 — the screening resolution centre
 Read [`docs/aml/STAGE_5_SCREENING_RESOLUTION.md`](./docs/aml/STAGE_5_SCREENING_RESOLUTION.md)
 before touching `ScreeningStageCard`, `screeningResolution.pure.ts`,

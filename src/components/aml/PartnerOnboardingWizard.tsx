@@ -184,7 +184,26 @@ export function PartnerOnboardingWizard({
   } | null>(null);
 
   /* The one-time token, shown exactly once. */
-  const [grantResult, setGrantResult] = useState<{ token: string; expires_at: string; version: number } | null>(null);
+  /**
+   * What the grant actually produced — including where the link WENT.
+   *
+   * The link is the human artefact and the token is the machine one, and
+   * this used to carry only the token: the wizard minted a grant with no
+   * `deliver_to`, so nothing was emailed to anybody, and the final screen
+   * handed the operator a bearer token with the instruction to "deliver it
+   * through their usual channel". That is not a channel, and it is why a
+   * partner with a perfectly good grant in the register received nothing.
+   */
+  const [grantResult, setGrantResult] = useState<{
+    token: string;
+    link: string;
+    expires_at: string;
+    version: number;
+    deliveredTo: string;
+    emailSent: boolean | null;
+    emailError: string | null;
+  } | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const portalChoice = PARTNER_PORTAL_CHOICES.find((p) => p.value === portal)!;
@@ -230,7 +249,7 @@ export function PartnerOnboardingWizard({
     setCreatedOrgId(null); setCreatedAgreement(null); setLinkRecorded(false);
     provisionCache.current = {};
     setInviteOutcome(null); setAckResult(null);
-    setGrantResult(null); setCopied(false);
+    setGrantResult(null); setCopied(false); setLinkCopied(false);
   }, [open]);
 
   /* The client's sharing consent, read softly — unknown stays unknown. */
@@ -575,12 +594,26 @@ export function PartnerOnboardingWizard({
         setInviteOutcome(outcome);
       }
 
-      // 5 · The grant — the server re-checks every precondition.
-      const res = await amlRelianceApi.grantAccess(caseId, agreement.id);
+      // 5 · The grant — the server re-checks every precondition, and the
+      //     link is EMAILED at mint time, the only moment it exists.
+      //
+      //     `deliver_to` was omitted here, and omitting it is silent: the
+      //     grant succeeds, the register is correct, `delivered_to_email`
+      //     is null and the partner is told nothing. The address is the one
+      //     the portal invite went to, so the Passport and the account it
+      //     is read alongside reach the same person.
+      const deliverTo = (chosenContact?.email ?? contactEmail).toLowerCase().trim();
+      const res = await amlRelianceApi.grantAccess(caseId, agreement.id, {
+        deliver_to: deliverTo,
+      });
       setGrantResult({
         token: res.access_token,
+        link: res.passport_link ?? res.access_token,
         expires_at: res.grant.expires_at,
         version: res.grant.attestation_version,
+        deliveredTo: res.delivered_to ?? deliverTo,
+        emailSent: res.link_email_sent,
+        emailError: res.link_email_error,
       });
       setStep("token");
       await onDone();
@@ -618,6 +651,20 @@ export function PartnerOnboardingWizard({
     }
   };
 
+  /** The link is the artefact a person is given; the token is not. */
+  const copyLink = async () => {
+    if (!grantResult) return;
+    try {
+      await navigator.clipboard.writeText(grantResult.link);
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 2500);
+    } catch {
+      const field = document.getElementById("pow-passport-link") as HTMLInputElement | null;
+      field?.focus();
+      field?.select();
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       {/*
@@ -642,7 +689,7 @@ export function PartnerOnboardingWizard({
           </DialogTitle>
           <DialogDescription>
             {step === "token"
-              ? "The token below is shown once. The partner's portal redeems it — their invite email is how they get in."
+              ? "The Passport link has been emailed to the partner. A spare copy is below — it is shown once."
               : step === "ack_sent"
                 ? "The partner reviews and accepts by email. The passport can be issued once they have."
                 : directAck
@@ -884,12 +931,22 @@ export function PartnerOnboardingWizard({
                 </div>
               )}
               {!directAck && (
-                <div>
-                  <span className="font-medium">Portal access:</span>{" "}
-                  {chosenContact?.active
-                    ? `${chosenContact.email} already has ${portalChoice.label} access — no invite is sent.`
-                    : `${(chosenContact?.email ?? contactEmail) || "—"} receives the ${portalChoice.label} invite email.`}
-                </div>
+                <>
+                  <div>
+                    <span className="font-medium">Portal access:</span>{" "}
+                    {chosenContact?.active
+                      ? `${chosenContact.email} already has ${portalChoice.label} access — no invite is sent.`
+                      : `${(chosenContact?.email ?? contactEmail) || "—"} receives the ${portalChoice.label} invite email.`}
+                  </div>
+                  {/* Said BEFORE the click, because the invite and the
+                      Passport are two different emails and a partner who
+                      already had portal access used to receive neither. */}
+                  <div>
+                    <span className="font-medium">Passport link:</span>{" "}
+                    emailed to {(chosenContact?.email ?? contactEmail) || "—"} — a separate email
+                    from the portal invite, and the only way they reach this record.
+                  </div>
+                </>
               )}
               <div>
                 <span className="font-medium">They will receive:</span>{" "}
@@ -956,12 +1013,37 @@ export function PartnerOnboardingWizard({
 
         {step === "token" && grantResult && (
           <div className="space-y-3 text-sm">
-            <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/5 p-3">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+            {/* Delivery first, because delivery is the thing that was
+                missing. A grant nobody was emailed is access with no
+                channel, and it reads identically to a healthy one in every
+                register — so this states what became of the email rather
+                than assuming it went. */}
+            <div className={cn(
+              "flex items-start gap-2 rounded-md border p-3",
+              grantResult.emailSent === false
+                ? "border-warning/40 bg-warning/5"
+                : "border-success/40 bg-success/5",
+            )}>
+              {grantResult.emailSent === false
+                ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+                : <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />}
               <p className="text-xs">
-                {partnerName} now holds a grant on attestation v{grantResult.version}, expiring{" "}
-                {new Date(grantResult.expires_at).toLocaleDateString()}. Their portal redeems the
-                token below — they see what was performed, never this case&apos;s risk assessment.
+                {grantResult.emailSent === false ? (
+                  <>
+                    {partnerName} holds a grant on attestation v{grantResult.version}, but the email
+                    to <span className="font-medium">{grantResult.deliveredTo}</span> did not send
+                    {grantResult.emailError ? ` (${grantResult.emailError})` : ""}. Copy the link
+                    below and send it yourself — it is shown once and cannot be read again.
+                  </>
+                ) : (
+                  <>
+                    The Passport link has been emailed to{" "}
+                    <span className="font-medium">{grantResult.deliveredTo}</span>. It opens the
+                    whole record without a portal login, on attestation v{grantResult.version},
+                    until {new Date(grantResult.expires_at).toLocaleDateString()} — they see what
+                    was performed, never this case&apos;s risk assessment.
+                  </>
+                )}
               </p>
             </div>
 
@@ -1002,22 +1084,64 @@ export function PartnerOnboardingWizard({
               </div>
             )}
 
+            {/* ── the artefact a PERSON is given ───────────────────────
+                The link, held as a real value in a read-only field: it can
+                be selected, it can be copied, and it is what the partner
+                opens. Nothing an everyday operator does requires the token
+                underneath it. */}
             <div className="space-y-1.5">
-              <Label className="text-xs">One-time access token — copy it now</Label>
+              <Label htmlFor="pow-passport-link" className="text-xs">
+                Their Passport link — a spare copy, shown once
+              </Label>
               <div className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 break-all rounded-md border border-border/60 bg-muted/40 p-2 text-xs">
-                  {grantResult.token}
-                </code>
-                <Button size="sm" variant="outline" onClick={copyToken} aria-label="Copy access token">
-                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                <Input
+                  id="pow-passport-link"
+                  readOnly
+                  value={grantResult.link}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="font-mono text-xs"
+                />
+                <Button size="sm" variant="outline" className="shrink-0"
+                  onClick={copyLink} aria-label="Copy Passport link">
+                  {linkCopied
+                    ? <><Check className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Copied</>
+                    : <><Copy className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Copy</>}
                 </Button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Deliver it to the partner through their usual channel. It is shown once — the
-                platform stores only its hash, and a lost token means revoking this grant and
-                issuing another.
+                Only its hash is stored, so it can never be read again — but nothing is lost if
+                you close this: the Passport can be re-issued to them at any time from
+                &ldquo;Who holds this Passport&rdquo; in the case workspace.
               </p>
             </div>
+
+            {/* ── the machine artefact, out of the everyday path ────────
+                The raw bearer token answered a question nobody had asked
+                ("what is this for, and do I need it?") at the exact moment
+                an operator was trying to finish. It is the same credential
+                the link carries, and a person never needs it — so it is
+                disclosed, labelled for what it is, rather than presented as
+                a step. */}
+            <details className="rounded-md border border-border/60 p-2.5">
+              <summary className="cursor-pointer text-xs font-medium">
+                One-time access token — for system-to-system integrations
+              </summary>
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[11px] text-muted-foreground">
+                  The same credential the link carries, as a bearer token. It exists for a partner
+                  system that reads the Passport over the API without a browser. If a person is
+                  opening this, send them the link above instead — they never need this.
+                </p>
+                <div className="flex items-center gap-2">
+                  <code className="min-w-0 flex-1 break-all rounded-md border border-border/60 bg-muted/40 p-2 text-xs">
+                    {grantResult.token}
+                  </code>
+                  <Button size="sm" variant="outline" onClick={copyToken} aria-label="Copy access token">
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  </Button>
+                </div>
+              </div>
+            </details>
           </div>
         )}
 

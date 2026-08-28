@@ -50,7 +50,27 @@ describe("a re-issue is a new grant, never a re-read link", () => {
     const grantOp = reliance.slice(reliance.indexOf('case "grant_access"'));
     expect(grantOp).toContain("passport_link: passportLink");
     expect(grantOp).toContain("link_email_error: linkEmailError");
-    expect(panel).toContain("New link issued — deliver it yourself");
+    /* And the workspace never loses it to a mail outage: the link goes to
+       `PassportIssuedDialog` on EVERY send, delivered or not, and a refused
+       email is said out loud rather than left to be inferred from silence. */
+    expect(panel).toContain("passportLink: res.passport_link ?? res.access_token");
+    expect(panel).toContain("The Passport was issued, but the email did not send");
+  });
+
+  it("the workspace has ONE send path, and it carries the link as a value", () => {
+    /* There used to be two: `issuePassportTo`, which handed the link to a
+       dialog, and `reissueGrant`, which passed it as a prompt field's
+       PLACEHOLDER — unselectable, uncopyable and absent from the DOM. The
+       placeholder defect was reported and fixed on the first path and
+       survived on the second, because there were two. There is now one
+       (`sendPassport`), and a re-issue is that same act with `reissue_of`. */
+    expect(panel).toContain("const sendPassport = async (row: RecipientRow)");
+    expect(panel).not.toContain("const reissueGrant");
+    // Never again: a one-time credential shown only as placeholder text.
+    expect(panel).not.toMatch(/placeholder:\s*res\.passport_link/);
+    expect(panel).not.toMatch(/placeholder:\s*res\.access_token/);
+    // Delivery is part of the act rather than an optional extra.
+    expect(panel).toContain("deliver_to: deliverTo");
   });
 
   it("delivery columns are additive — every existing insert keeps working", () => {

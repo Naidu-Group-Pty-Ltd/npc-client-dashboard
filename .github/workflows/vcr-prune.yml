@@ -87,9 +87,18 @@ jobs:
         id: plan
         run: |
           set -euo pipefail
-          resp=$(curl -sS --fail-with-body \
-            -H "Authorization: Bearer $VERCEL_TOKEN" \
-            "https://api.vercel.com/v1/vcr/repository/$REPOSITORY/images?projectId=$PROJECT_ID&teamId=$TEAM_ID&limit=100&untagged=true")
+          # `untagged` FILTERS to tagless images rather than including them
+          # (the CLI documents --untagged as "only list images that have no
+          # tags", and the REST parameter behaves the same — a first run with
+          # untagged=true listed 0 of a visibly full repository). So: query
+          # both ways and union by id, which is correct under either reading.
+          list() {
+            curl -sS --fail-with-body \
+              -H "Authorization: Bearer $VERCEL_TOKEN" \
+              "https://api.vercel.com/v1/vcr/repository/$REPOSITORY/images?projectId=$PROJECT_ID&teamId=$TEAM_ID&limit=100$1"
+          }
+          resp=$(jq -s '{images: (map(.images) | add | unique_by(.id))}' \
+            <(list "") <(list "&untagged=true"))
           # Newest first; anything still "preparing" is never touched.
           echo "$resp" | jq -r '
             [.images[] | select(.status != "preparing")]
@@ -101,6 +110,10 @@ jobs:
           delete=$(awk -F'\t' -v keep="$KEEP" '$1 >= keep {print $2}' images.tsv)
           printf '%s\n' "$delete" | sed '/^$/d' > delete.txt
           echo "Images: $total — keeping newest $KEEP, deleting $(wc -l < delete.txt)."
+          if [ "$total" -eq 0 ]; then
+            echo "Empty listing — raw response for diagnosis:"
+            echo "$resp" | jq .
+          fi
 
       - name: Delete (or report, when dry_run)
         run: |

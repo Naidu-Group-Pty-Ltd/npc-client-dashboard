@@ -76,7 +76,7 @@ that expires with the job.
 ```bash
 PROJECT_ID=your-gcp-project
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
-REPO=lavan96/npc-property-dashbord
+REPO=Naidu-Group-Pty-Ltd/npc-property-dashbord
 POOL=github
 PROVIDER=npc-property-dashbord
 SA=weasyprint-deployer

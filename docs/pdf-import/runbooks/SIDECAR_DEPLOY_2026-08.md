@@ -138,7 +138,7 @@ curl -s "$PDF_PARSE_SERVICE_URL/capabilities" \
 
 Then confirm the dispatcher pair. The merge in step 0 should have deployed it
 via `deploy-supabase-functions.yml` — check the run succeeded at
-<https://github.com/lavan96/npc-property-dashbord/actions/workflows/deploy-supabase-functions.yml>.
+<https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/actions/workflows/deploy-supabase-functions.yml>.
 The `lane` value above must equal the dispatcher's `LANE_POLICY_VERSION`
 (`extractor-lane-policy-v3` in `supabase/functions/pdf-parse-dispatch/index.ts`).
 A mismatch means the cache fingerprint is serving stale-semantics artifacts —

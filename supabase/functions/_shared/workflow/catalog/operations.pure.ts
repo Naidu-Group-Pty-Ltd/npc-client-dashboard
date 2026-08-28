@@ -79,7 +79,7 @@ export const OPERATIONS_NODES: CatalogNode[] = [
   ]),
 
   // ── Identity and compliance ──────────────────────────────────────────────
-  ...provider({ integrationId: 'npc_aml_verification', category: 'compliance', docs: 'https://github.com/lavan96/npc-property-dashbord/blob/main/services/aml-verification-service/README.md' }, [
+  ...provider({ integrationId: 'npc_aml_verification', category: 'compliance', docs: 'https://github.com/Naidu-Group-Pty-Ltd/npc-property-dashbord/blob/main/services/aml-verification-service/README.md' }, [
     {
       op: 'verify',
       name: 'Verify an identity document',

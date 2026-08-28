@@ -27,6 +27,8 @@ import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
+import { nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
+import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
 
 /**
  * The SAME circuit scope `street-view` uses.
@@ -50,6 +52,18 @@ export interface EnrichableStockItem {
   project_name: string | null;
   lot_number: string | null;
   unit_number: string | null;
+  /**
+   * Has the builder's own source finished being read for this property?
+   *
+   * FALSE MEANS "DO NOT PAY YET". A property whose source settlement is still
+   * outstanding may be about to gain the builder's own render, and buying a
+   * search or a Street View against it spends money to be discarded — or
+   * worse, puts a fallback on a card that is about to have the real picture.
+   * Defaults to true so a caller that has not looked behaves as before.
+   */
+  sourceSettlementComplete?: boolean;
+  /** The builder's trading name, for the identity check on a web result. */
+  builder_name?: string | null;
 }
 
 export interface StageOutcome {
@@ -273,10 +287,18 @@ export async function enrichFromGoogle(
       }
     }
 
+    /**
+     * NO SATELLITE PROMOTION. The product requirement is STREET VIEW, and a
+     * satellite tile is not a photograph of a house — it is a roof. It is
+     * still fetched and kept, because it is honest location imagery and other
+     * surfaces may show it, but `imagePriority.pure.ts` ranks only
+     * `streetview`, so a tile can never become a marketplace card image.
+     *
+     * Where there is no Street View coverage — normal on a new estate whose
+     * road has not been driven — the card shows nothing, which is what the
+     * rule asks for.
+     */
     if (!bytes && await spend()) {
-      // No Street View coverage is normal on a new estate — the road may not
-      // have been driven. A satellite still of the lot is still location
-      // imagery of the right place.
       product = 'staticmap';
       const params = new URLSearchParams({
         center: point, zoom: '18', size: '640x400', maptype: 'satellite',
@@ -442,7 +464,35 @@ export async function enrichFromInternetSearch(
         'No published imagery was found for this property.', 'perplexity');
     }
 
+    /**
+     * EVERY CANDIDATE IS CHECKED AGAINST THE PROPERTY BEFORE IT MAY BE SHOWN.
+     *
+     * Finding a URL is not verifying a property. A candidate that passes
+     * `verifyWebImageIdentity` is written with the positive verification state
+     * and the evidence that earned it; one that does not is still recorded —
+     * with its refusal reason — as `unverified`, which is the state every
+     * historical row has and which nothing displays. So a rejection is
+     * auditable and is never a card image.
+     */
+    let verified = 0;
     for (const [index, candidate] of candidates.entries()) {
+      const verdict = verifyWebImageIdentity({
+        imageUrl: candidate.imageUrl,
+        pageUrl: candidate.pageUrl,
+        title: candidate.title,
+      }, {
+        addressLine: item.address_line,
+        lotNumber: item.lot_number,
+        unitNumber: item.unit_number,
+        developmentName: item.development_name,
+        projectName: item.project_name,
+        suburb: item.suburb,
+        state: item.state,
+        postcode: item.postcode,
+        builderName,
+      });
+      if (verdict.ok) verified += 1;
+
       await db.from('builder_stock_item_images').upsert({
         stock_item_id: item.id,
         organisation_id: item.organisation_id,
@@ -450,18 +500,36 @@ export async function enrichFromInternetSearch(
         source_reference: candidate.imageUrl.slice(0, 400),
         source_provider: 'perplexity',
         source_page_url: candidate.pageUrl,
-        // NOT stored. An unverified internet image is kept as a link with its
-        // provenance; copying it into our bucket would make it look like ours.
+        // NOT stored. An internet image is kept as a link with its provenance;
+        // copying it into our bucket would make it look like ours.
         external_url: candidate.imageUrl,
-        verification_status: 'unverified',
-        confidence: 0.3,
+        verification_status: verdict.ok ? WEB_VERIFIED_VERIFICATION : 'unverified',
+        confidence: verdict.ok ? 0.6 : 0.3,
         processing_status: 'ready',
         position: index,
-        source_detail: { query, title: candidate.title },
+        source_detail: {
+          query, title: candidate.title,
+          ...(verdict.ok
+            ? {
+              property_identity: {
+                matched: verdict.matched,
+                verified_at: new Date().toISOString(),
+                stock_item_id: item.id,
+                organisation_id: item.organisation_id,
+                source_page_url: candidate.pageUrl ?? null,
+                query_fingerprint: query,
+              },
+            }
+            : { identity_refused: verdict.reason, identity_matched: verdict.matched }),
+        },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
     }
 
-    return { stage: 'internet_search', status: 'ready', detail: `${candidates.length} candidate(s)` };
+    return {
+      stage: 'internet_search',
+      status: verified ? 'ready' : 'unavailable',
+      detail: `${candidates.length} candidate(s), ${verified} verified`,
+    };
   } catch (error) {
     console.warn('[builderStock] internet search failed', {
       item: item.id, message: String((error as { message?: string })?.message ?? error),
@@ -541,13 +609,44 @@ export async function enrichStockItem(
    * they were skipped and why — so the audit row reads as three stages, which
    * is what it is.
    */
-  if (await hasReadySourceImage(db, item.id)) {
-    for (const stage of ['google_maps', 'internet_search'] as const) {
-      outcomes.push(await recordStageSkipped(db, item, stage));
+  /**
+   * ONE STAGE AT A TIME, IN PRIORITY ORDER — never all three ranked afterwards.
+   *
+   * What changed: this used to run BOTH paid stages whenever stage 1 produced
+   * nothing, and the selector then discarded whatever they wrote, because the
+   * old rule was builder-supplied-or-nothing. So every property without a
+   * source picture bought a geocode, a Street View metadata call, a Street
+   * View still (or a satellite tile) AND a Perplexity search, to display none
+   * of them.
+   *
+   * `nextImageStage` decides instead, from the rows this property already
+   * holds. Its `wait` answer is the one that matters most: a source image
+   * whose display verdict has not been measured yet is evidence that has not
+   * ARRIVED, and paying for a search against it is how a builder's own render
+   * loses to a photograph of somebody else's estate.
+   */
+  const { data: rows } = await db
+    .from('builder_stock_item_images')
+    .select('id, source_stage, verification_status, processing_status, position, '
+      + 'storage_path, external_url, source_detail')
+    .eq('stock_item_id', item.id);
+
+  const stage = nextImageStage((rows ?? []) as never, {
+    sourceSettlementComplete: item.sourceSettlementComplete !== false,
+  });
+
+  if (stage === 'none' || stage === 'wait') {
+    // Both paid stages are recorded as skipped, which is what they were. A
+    // `wait` is not a finding about the property and writes no verdict.
+    for (const skipped of ['google_maps', 'internet_search'] as const) {
+      outcomes.push(await recordStageSkipped(db, item, skipped));
     }
+  } else if (stage === 'web_search') {
+    outcomes.push(await enrichFromInternetSearch(db, item, builderName));
+    outcomes.push(await recordStageSkipped(db, item, 'google_maps'));
   } else {
     outcomes.push(await enrichFromGoogle(db, item));
-    outcomes.push(await enrichFromInternetSearch(db, item, builderName));
+    outcomes.push(await recordStageSkipped(db, item, 'internet_search'));
   }
 
   const primaryImageId = await chooseAndStorePrimaryImage(db, item.id);

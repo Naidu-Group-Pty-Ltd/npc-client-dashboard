@@ -27,6 +27,8 @@
  * Pure: no imports, no IO, no clock.
  */
 
+import { MAX_REPAIRED_SHARE } from './repairRegion.pure.ts';
+
 /**
  * Bumped when a repair would come out differently for bytes already handled.
  *
@@ -311,6 +313,27 @@ export function readServableDerivative(
   if (!originalSha256 || record.original_sha256 !== originalSha256) return null;
 
   if (record.verdict !== 'eligible') return null;
+
+  /*
+   * AND A FIFTH, ADDED AFTER THE FACT: HOW MUCH OF IT WAS REBUILT.
+   *
+   * The area ceiling is enforced twice before a derivative is ever made — on
+   * the region that asks for the repair, and on the pixels the repair is
+   * permitted to write. Neither reaches backwards. A derivative recorded
+   * before those existed, or by any build that predates them, carries its own
+   * `repaired_share` and is the only evidence available at serve time about
+   * how much photograph the model replaced, so it is checked here too.
+   *
+   * A record with no readable share is refused rather than assumed small: an
+   * unmeasurable repair is exactly the one that cannot be vouched for. The
+   * cost of refusing is that the card falls back — to the builder's own clean
+   * original where there is one, and otherwise to blank, which is the failure
+   * this whole area exists to avoid but is still better than showing a client
+   * a house the model mostly drew.
+   */
+  const share = Number(record.repaired_share);
+  if (!Number.isFinite(share) || share < 0) return null;
+  if (share > MAX_REPAIRED_SHARE) return null;
 
   return record as SanitizedDerivative;
 }

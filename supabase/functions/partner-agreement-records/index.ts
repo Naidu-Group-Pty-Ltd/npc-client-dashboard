@@ -11,6 +11,9 @@
  *   download_record  { portal, portal_user_id }     — the same, for whoever that
  *                                                     partner's most recent
  *                                                     acceptance belongs to
+ *   download_direct_acknowledgement { acknowledgement_id }
+ *                                    — the executed copy for a partner outside
+ *                                      the portals, who acknowledged by link
  *   save_missing_copies { portal }     — generate and store the copy for every
  *                                        executed agreement in this portal that
  *                                        does not have one yet
@@ -40,7 +43,7 @@ import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.
 import { fetchReportBrandSnapshot } from '../_shared/reportDesign/fetchBrandSnapshot.ts';
 import { renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import { renderMarkdown } from '../_shared/reports/markdown.pure.ts';
-import { PORTAL_TERMS_ACKNOWLEDGEMENTS } from '../_shared/portalAgreement.ts';
+import { acknowledgementsForChannel } from '../_shared/portalAgreement.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import {
   agreementFileName,
@@ -94,7 +97,8 @@ Deno.serve(async (req) => {
 
     // 2. `download_record` can write the artefact, so it is a mutation and the
     //    staff session is cookie-carried.
-    if (operation === 'download_record' || operation === 'save_missing_copies') {
+    if (operation === 'download_record' || operation === 'save_missing_copies'
+      || operation === 'download_direct_acknowledgement') {
       const csrf = enforceCsrf(req);
       if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
     }
@@ -224,6 +228,99 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (operation === 'download_direct_acknowledgement') {
+      // A partner OUTSIDE the three portals, who acknowledged the same
+      // instrument through a one-time emailed link. There is no portal admin
+      // module to gate this on, and it is an AML artefact — so it is gated on
+      // an AML role, the same authority that sent the agreement in the first
+      // place.
+      const acknowledgementId = typeof body.acknowledgement_id === 'string'
+        ? body.acknowledgement_id : null;
+      if (!acknowledgementId) {
+        return json({ error: 'An acknowledgement id is required' }, 400);
+      }
+
+      const { data: hasAmlRole } = await supabase.rpc('has_any_aml_role', {
+        _user_id: auth.userId === 'service_role' ? null : auth.userId,
+      });
+      if (!hasAmlRole) {
+        return createForbiddenResponse('AML role required', corsHeaders);
+      }
+
+      const { data: ack, error: ackError } = await supabase
+        .schema('aml')
+        .from('direct_partner_acknowledgements')
+        .select('*, partner_organisations:partner_org_id(legal_name, trading_name)')
+        .eq('id', acknowledgementId)
+        .maybeSingle();
+      if (ackError) throw ackError;
+      if (!ack) return json({ error: 'Acknowledgement not found' }, 404);
+
+      // Only an ACCEPTED acknowledgement is an executed agreement. A sent,
+      // declined or expired one has nothing to produce, and saying so is
+      // better than rendering a document for an instrument nobody signed.
+      if (ack.status !== 'accepted' || !ack.accepted_at) {
+        return json({
+          error: 'This partner has not accepted the agreement, so there is no executed copy to supply.',
+          code: 'NO_AGREEMENT_ON_RECORD',
+        }, 404);
+      }
+
+      // The generator reads a portal-acceptance shape, so the row is
+      // presented in that shape rather than the generator learning a second
+      // one. `portal: 'direct'` drives both the storage prefix and the
+      // execution label on the page.
+      const record = {
+        acceptance_id: ack.id,
+        portal: 'direct',
+        terms_version_id: ack.terms_version_id,
+        accepted_at: ack.accepted_at,
+        organisation_name: ack.partner_organisations?.legal_name ?? ack.recipient_name,
+        organisation_trading_name: ack.partner_organisations?.trading_name ?? null,
+        accepted_by_name: ack.accepted_by_name,
+        accepted_by_email: ack.recipient_email,
+        acknowledgements: ack.acknowledgements,
+        agreement_storage_path: ack.agreement_storage_path,
+        ip_hash: ack.ip_hash,
+        user_agent_hash: ack.user_agent_hash,
+      };
+
+      const path = hasCurrentAgreementCopy(record.agreement_storage_path)
+        ? record.agreement_storage_path
+        : await generateAgreementCopy(supabase, record, 'direct');
+
+      const { data: signed, error: signError } = await supabase.storage
+        .from(BUCKET)
+        .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, {
+          download: agreementFileName(record.organisation_name, record.accepted_at),
+        });
+      if (signError || !signed?.signedUrl) {
+        throw new Error(`signing failed: ${signError?.message ?? 'no url returned'}`);
+      }
+
+      await supabase.from('security_audit_log').insert({
+        user_id: auth.userId === 'service_role' ? null : auth.userId,
+        action: 'partner_agreement_downloaded',
+        resource_type: 'direct_partner_acknowledgement',
+        resource_id: acknowledgementId,
+        metadata: {
+          portal: 'direct',
+          organisation: record.organisation_name,
+          case_id: ack.case_id,
+        },
+      }).then(({ error }: { error: unknown }) => {
+        if (error) console.error('[partner-agreement-records] audit insert failed:', error);
+      });
+
+      return json({
+        success: true,
+        url: signed.signedUrl,
+        file_name: agreementFileName(record.organisation_name, record.accepted_at),
+        expires_in: SIGNED_URL_TTL_SECONDS,
+        document_revision: AGREEMENT_DOCUMENT_REVISION,
+      });
+    }
+
     if (operation === 'save_missing_copies') {
       const portal = typeof body.portal === 'string' ? body.portal : null;
       if (!portal || !PORTALS.includes(portal)) {
@@ -290,7 +387,9 @@ Deno.serve(async (req) => {
  * party names are snapshotted onto the acceptance in the same write, because
  * both are editable and an executed agreement must keep saying what it said.
  */
-async function generateAgreementCopy(supabase: any, record: any): Promise<string> {
+async function generateAgreementCopy(
+  supabase: any, record: any, source: 'portal' | 'direct' = 'portal',
+): Promise<string> {
   const weasyprint = weasyPrintConfig((key) => Deno.env.get(key));
   if (!weasyprint) throw new Error('The PDF renderer is not configured');
 
@@ -337,13 +436,20 @@ async function generateAgreementCopy(supabase: any, record: any): Promise<string
   // the agreement defines. An acceptance taken before acknowledgments were
   // recorded prints none rather than inventing four.
   const asserted = new Set<string>(Array.isArray(record.acknowledgements) ? record.acknowledgements : []);
-  const acknowledgements = PORTAL_TERMS_ACKNOWLEDGEMENTS.filter((item) => asserted.has(item.key));
+  // The wording the person actually assented to. A direct partner never saw
+  // the portal statements, so printing them would misdescribe their copy.
+  const acknowledgements = acknowledgementsForChannel(String(record.portal))
+    .filter((item) => asserted.has(item.key));
 
-  const { data: acceptance } = await supabase
-    .from('portal_terms_acceptances')
-    .select('ip_hash, user_agent_hash')
-    .eq('id', record.acceptance_id)
-    .maybeSingle();
+  // A direct acknowledgement keeps its own fingerprints on its own row; a
+  // portal acceptance keeps them on the portal store.
+  const { data: acceptance } = source === 'direct'
+    ? { data: { ip_hash: record.ip_hash, user_agent_hash: record.user_agent_hash } }
+    : await supabase
+        .from('portal_terms_acceptances')
+        .select('ip_hash, user_agent_hash')
+        .eq('id', record.acceptance_id)
+        .maybeSingle();
 
   const { html, gaps } = buildPartnerAgreementDocument({
     snapshot,
@@ -403,8 +509,10 @@ async function generateAgreementCopy(supabase: any, record: any): Promise<string
   // path for the current one. Either way a concurrent writer that got there
   // first is not overwritten, and no stored object is ever replaced — only
   // which one the acceptance points at changes.
-  const stamp = supabase
-    .from('portal_terms_acceptances')
+  const stampTable = source === 'direct'
+    ? supabase.schema('aml').from('direct_partner_acknowledgements')
+    : supabase.from('portal_terms_acceptances');
+  const stamp = stampTable
     .update({
       agreement_storage_path: path,
       agreement_generated_at: generatedAt,

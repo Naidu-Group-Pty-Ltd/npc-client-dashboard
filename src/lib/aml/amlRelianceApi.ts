@@ -55,6 +55,13 @@ export interface RelianceGrant {
   expires_at: string;
   revoked_at: string | null;
   revoke_reason: string | null;
+  /** Where the one-time link was emailed. The link itself is never stored. */
+  delivered_to_email?: string | null;
+  delivered_at?: string | null;
+  /** Set when the partner asked for a replacement from an expired link. */
+  link_requested_at?: string | null;
+  link_request_count?: number | null;
+  reissued_by_grant_id?: string | null;
   reliance_agreements?: { partner_org_name: string; partner_org_type: string; status: string };
 }
 
@@ -115,6 +122,26 @@ export interface PartnerCaseLink {
     legal_name: string; organisation_type: string;
     classification_status: string; status: string;
   };
+}
+
+export interface DirectPartnerAcknowledgement {
+  id: string;
+  case_id: string;
+  partner_org_id: string;
+  recipient_name: string;
+  recipient_email: string;
+  status: "sent" | "viewed" | "accepted" | "declined" | "expired" | "superseded";
+  sent_at: string;
+  resend_count: number;
+  viewed_at: string | null;
+  accepted_at: string | null;
+  declined_at: string | null;
+  decline_reason: string | null;
+  expires_at: string;
+  /** Written on acceptance only — this is the passport gate. */
+  agreement_id: string | null;
+  accepted_by_name: string | null;
+  partner_organisations?: { legal_name: string } | null;
 }
 
 export interface ArrangementAssessment {
@@ -239,12 +266,27 @@ export const amlRelianceApi = {
   listAttestations: (case_id: string) =>
     invoke<{ attestations: ComplianceAttestation[] }>({ op: "list_attestations", case_id }),
 
-  /** Returns the raw partner token exactly once. */
-  grantAccess: (case_id: string, agreement_id: string) =>
+  /**
+   * Returns the raw partner token exactly once.
+   *
+   * `deliver_to` emails the passport link at mint time — the only moment it
+   * exists, since only its hash is stored. `reissue_of` revokes the named
+   * predecessor once the replacement exists, so a failure leaves the
+   * partner with working access rather than none, and every precondition is
+   * re-run by construction.
+   */
+  grantAccess: (
+    case_id: string, agreement_id: string,
+    options: { deliver_to?: string; reissue_of?: string } = {},
+  ) =>
     invoke<{
       grant: { id: string; expires_at: string; attestation_version: number };
       access_token: string; note: string;
-    }>({ op: "grant_access", case_id, agreement_id }),
+      passport_link: string;
+      delivered_to: string | null;
+      link_email_sent: boolean | null;
+      link_email_error: string | null;
+    }>({ op: "grant_access", case_id, agreement_id, ...options }),
   revokeGrant: (grant_id: string, reason: string) =>
     invoke<{ grant: RelianceGrant }>({ op: "revoke_grant", grant_id, reason }),
   listGrants: (case_id: string) =>
@@ -359,6 +401,35 @@ export const amlRelianceApi = {
     request_id: string; record_code: string; safe_label: string;
     delivered_sha256?: string; expires_days?: number;
   }) => invoke<{ delivery: PartnerEvidenceDelivery }>({ op: "record_partner_evidence_delivery", ...params }),
+
+  /* ── direct partner acknowledgement ───────────────────────────────────
+     A partner outside the portals accepts the AML/CTF Compliance Passport
+     Agreement through a one-time emailed link. The acceptance CREATES the
+     reliance arrangement, which is what `grant_access` already requires —
+     so no acknowledgement means no passport, enforced by a rule that
+     already existed rather than a new one. */
+
+  listPartnerAcknowledgements: (case_id: string) =>
+    invoke<{ acknowledgements: DirectPartnerAcknowledgement[] }>(
+      { op: "list_partner_acknowledgements", case_id }),
+  /**
+   * Sends (or re-sends) the agreement for acceptance. Re-sending supersedes
+   * the live request, so an older link stops working — which is what makes
+   * "send it to a different address" safe.
+   */
+  sendPartnerAcknowledgement: (params: {
+    case_id: string; partner_org_id: string;
+    recipient_name: string; recipient_email: string; force?: boolean;
+  }) => invoke<{
+    acknowledgement: {
+      id: string; status: string; expires_at: string;
+      recipient_email: string; resend_count: number;
+    };
+    email_sent: boolean;
+    email_error: string | null;
+    /** Returned so a failed send can still be delivered by hand. */
+    link: string;
+  }>({ op: "send_partner_acknowledgement", ...params }),
 
   /* ── arrangement governance (Phase 2) ─────────────────────────────────── */
 

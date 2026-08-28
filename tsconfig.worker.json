@@ -1,0 +1,13 @@
+{
+  "//": "The Builder Stock Cloudflare worker, typechecked on its own: it ships outside src/ and supabase/functions/, deliberately imports nothing, and types its AI binding locally — so the app tsconfig never sees it and vite never checks it. Strict, DOM-lib (workerd exposes the same fetch/streams/crypto surface), no emit.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["cloudflare"]
+}

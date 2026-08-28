@@ -37,7 +37,13 @@ export default function PublicPartnerConsent() {
     <div className="min-h-screen bg-background px-4 py-10">
       <div className="mx-auto w-full max-w-2xl space-y-6">
         <div className="flex justify-center">
-          <BrandLockup slot="auth" meta="Referral Consent" />
+          <BrandLockup
+            slot="auth"
+            meta="Referral Consent"
+            logoClassName="h-10 w-auto object-contain sm:h-12"
+            fallbackClassName="h-10 w-10 sm:h-12 sm:w-12"
+            companyClassName="text-sm sm:text-base"
+          />
         </div>
 
         {isLoading ? (

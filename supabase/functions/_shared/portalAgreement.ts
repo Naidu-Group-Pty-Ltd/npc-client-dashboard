@@ -86,3 +86,49 @@ export const PORTAL_TERMS_ACKNOWLEDGEMENTS = [
       'I acknowledge and agree that, where the applicable eligibility and legislative requirements are satisfied, this Agreement is intended to constitute a binding customer due-diligence agreement or arrangement between the Originating Organisation and Partner Organisation for the purposes of section 37A of the AML/CTF Act and section 6-29 of the AML/CTF Rules.',
   },
 ] as const;
+
+
+/**
+ * The same four acknowledgments, written for the LINK channel.
+ *
+ * The server side of `DIRECT_TERMS_ACKNOWLEDGEMENTS` in
+ * `src/lib/portalAgreement.ts`; the two must agree, and a test asserts they
+ * do. This exists so the EXECUTED AGREEMENT prints the statement the person
+ * actually assented to — a direct partner never sees the portal wording, so
+ * printing it on their copy would misdescribe what they signed.
+ *
+ * The KEYS are identical to the portal set on purpose: they are identifiers,
+ * `REQUIRED_TERMS_ACKNOWLEDGEMENTS` is unchanged, and every stored acceptance
+ * across all three portals keeps its meaning.
+ */
+export const DIRECT_TERMS_ACKNOWLEDGEMENTS = [
+  {
+    key: 'global_confidentiality_privacy',
+    heading: 'Global confidentiality and privacy',
+    statement:
+      'I acknowledge that all information made available through the Compliance Passport Link is confidential and may include personal, sensitive, commercially confidential or legally privileged information. I agree that my organisation will access, use, protect and disclose that information only for an authorised client, transaction and lawful professional purpose.',
+  },
+  {
+    key: 'authority_binding_acceptance',
+    heading: 'Authority and binding acceptance',
+    statement:
+      'I confirm that I am authorised to accept this Agreement and legally bind the Partner Organisation identified above. I agree that my electronic acceptance will constitute execution of this Agreement on behalf of the Partner Organisation.',
+  },
+  {
+    key: 'portal_access',
+    heading: 'Compliance Passport Link access',
+    statement:
+      'I acknowledge that access is provided as a single, time-limited link rather than a portal account, that the link is itself the credential and must not be forwarded outside authorised personnel, and that it will expire — ordinarily after 90 days — unless a replacement is issued.',
+  },
+  {
+    key: 'binding_amlctf_arrangement',
+    heading: 'Binding AML/CTF arrangement',
+    statement:
+      'I acknowledge and agree that, where the applicable eligibility and legislative requirements are satisfied, this Agreement is intended to constitute a binding customer due-diligence agreement or arrangement between the Originating Organisation and Partner Organisation for the purposes of section 37A of the AML/CTF Act and section 6-29 of the AML/CTF Rules.',
+  },
+] as const;
+
+/** The statements to print for a channel. Portal wording is the default. */
+export function acknowledgementsForChannel(portal: string) {
+  return portal === 'direct' ? DIRECT_TERMS_ACKNOWLEDGEMENTS : PORTAL_TERMS_ACKNOWLEDGEMENTS;
+}

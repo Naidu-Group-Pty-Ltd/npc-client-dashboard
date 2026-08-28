@@ -195,12 +195,27 @@ export function decideMarketplaceEligibility(
  */
 export function marketplaceEligibilityDetail(
   eligibility: MarketplaceEligibility,
+  /**
+   * The SHA-256 of the bytes that were actually measured, where the caller
+   * has them — which every writer does, because judging requires the bytes.
+   *
+   * THE VERDICT WAS THE ONE SERVING RECORD NOT BOUND TO ITS BYTES. A
+   * derivative, a clearance and a repair region all name the exact original
+   * by hash and stop resolving when the object changes; the eligibility
+   * verdict — the record that lets an ORIGINAL be served — named nothing, so
+   * a row re-stored with different bytes kept a verdict reached about the old
+   * ones, and the settler saw a current version and never looked again.
+   * Optional so a caller that genuinely lacks the bytes writes an unbound
+   * verdict (read exactly as before), never a wrong one.
+   */
+  measuredSha256?: string | null,
 ): Record<string, unknown> {
   return {
     marketplace_display_eligible: eligibility.state === 'eligible',
     marketplace_eligibility_state: eligibility.state,
     marketplace_rejection_reason: eligibility.reason,
     marketplace_measured: eligibility.measured,
+    marketplace_measured_sha256: measuredSha256 ?? null,
     marketplace_overlay: eligibility.overlay
       ? {
         largest_share: eligibility.overlay.largestShare,
@@ -228,6 +243,29 @@ export function marketplaceEligibilityDetail(
 export function readMarketplaceState(
   sourceDetail: Record<string, unknown> | null | undefined,
 ): MarketplaceEligibilityState {
+  /*
+   * A VERDICT ABOUT OTHER BYTES IS NO VERDICT. Where the decision recorded
+   * which bytes it measured AND the row records which bytes it holds, and the
+   * two disagree, the current bytes are unjudged — `pending`, the fail-closed
+   * answer, whatever the stored state says. This is the same hash binding a
+   * derivative and a clearance already refuse on; the eligibility verdict was
+   * the one serving record without it. GRANDFATHERED DELIBERATELY: a verdict
+   * written before the measured hash existed, or a row without a stored hash,
+   * reads exactly as it always did — nothing in production changes until a
+   * new verdict is written, and only a REPLACED object can differ then.
+   *
+   * (This binds detail to detail. An object swapped in the bucket underneath
+   * an unchanged row is caught for derivatives by the settler re-hashing real
+   * bytes; catching it here would mean hashing on every card read.)
+   */
+  const measured = (sourceDetail ?? {}).marketplace_measured_sha256;
+  const stored = (sourceDetail ?? {}).stored_sha256;
+  if (typeof measured === 'string' && measured
+    && typeof stored === 'string' && stored
+    && measured !== stored) {
+    return 'pending';
+  }
+
   const raw = (sourceDetail ?? {}).marketplace_eligibility_state;
   if (raw === 'eligible' || raw === 'ineligible' || raw === 'pending') return raw;
   // A row written by the first shape of this feature, which stored only the
@@ -276,5 +314,16 @@ export function isMarketplaceEligible(
 export function needsEligibilityAssessment(
   sourceDetail: Record<string, unknown> | null | undefined,
 ): boolean {
+  /*
+   * DELIBERATELY NOT EXTENDED WITH THE HASH-MISMATCH TEST above. Where the
+   * bucket's bytes genuinely disagree with the row's recorded hash, a
+   * re-judge writes a fresh verdict bound to the actual bytes — still
+   * mismatched against `stored_sha256` — and a sweep keyed on that mismatch
+   * would re-download and re-judge the same row on every pass for ever,
+   * which is exactly the never-quiet failure the version-terminal rule
+   * exists to prevent. The read side already fails such a row closed; what
+   * brings every stored verdict through the binding is the next version
+   * bump, which re-judges everything under the current rules once.
+   */
   return readEligibilityVersion(sourceDetail) < MARKETPLACE_ELIGIBILITY_VERSION;
 }

@@ -94,6 +94,15 @@ const MIN_CHROMA = 0.28;
  * source, the largest neutral block that is ordinary presentation is a
  * disclaimer bar at 3.4% of its picture, and a promotional banner runs from
  * 4.5% up.
+ *
+ * A NEUTRAL BADGE BETWEEN 1% AND 4.5% IS THEREFORE INVISIBLE TO THIS ARM, and
+ * that is a known, accepted blind spot rather than an oversight: the floor
+ * sits 1.1 points above a real disclaimer bar, so lowering it convicts clean
+ * renders for their own presentation. Four production derivatives carry
+ * exactly this residue — a white "HOUSE & LAND" plate that measures nothing
+ * here. The remedy for a mark below the measured floors is the persisted
+ * `repair_region` (`repairRegion.pure.ts`), recorded by a person against the
+ * exact bytes, never a lower floor.
  */
 const MIN_NEUTRAL_REGION_SHARE = 0.045;
 
@@ -103,6 +112,18 @@ const MIN_NEUTRAL_REGION_SHARE = 0.045;
  * Letterboxing, pillarboxing and a full-bleed border are all large, flat,
  * perfectly straight-sided rectangles, and none of them is a badge. A banner
  * sits inside the picture; framing surrounds it.
+ *
+ * A BANNER DRAWN EDGE TO EDGE IS THEREFORE EXEMPT, whatever its colour — a
+ * known blind spot, weighed and kept. The obvious repair, exempting only
+ * NEUTRAL spans, convicts clean renders: a graded sky fragments into
+ * full-width chromatic bands under `SEED_TOLERANCE`, and a flat blue sky cut
+ * by a roofline is itself a full-width chromatic region with straight sides.
+ * Every discriminator tried (boundary contrast, band height) still convicts
+ * some clean sky, and a false positive here is not a hidden card — the region
+ * enters the repair mask, and a diffused sky strip on a clean render is served
+ * as a "sanitized" derivative. A full-bleed band this cannot see is caught by
+ * its type when the type is readable, and by a recorded `repair_region` when
+ * it is not.
  */
 const MAX_SPAN_SHARE = 0.9;
 
@@ -130,6 +151,18 @@ const MIN_REGION_SHARE = 0.01;
  * Measured across the live source: every promotional block scores 0.015–0.031,
  * every sky, lawn and canopy scores 0.171–0.258. The threshold sits in a gap
  * five times wider than either group's spread.
+ *
+ * THE RECTANGLE ASSUMPTION EXEMPTS TWO PROMOTIONAL SHAPES, knowingly. A 45°
+ * corner ribbon's per-row extents march across its box (edgeSpread ≈ 0.25,
+ * rowFill under a half — doubly exempt), and a circular price roundel scores
+ * ≈ 0.105. Both are left unguarded HERE because every accepting geometry
+ * tried admits real architecture with it: a gabled roof face has straight
+ * sloped sides, a stylised tree canopy is a disc, and a false positive on
+ * this arm puts the region in the repair mask — a diffused roof on a clean
+ * render, served. No ribbon or roundel exists in the production set to fit a
+ * safer rule against; if one arrives, it is a `repair_region` case, and the
+ * fixtures pin both shapes as measured-and-exempt so the exemption stays a
+ * decision rather than an accident.
  */
 const MAX_EDGE_SPREAD = 0.08;
 

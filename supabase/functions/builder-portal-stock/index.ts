@@ -63,6 +63,7 @@ import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage
 import {
   settleUploadSourceImages, uploadsNeedingSettlement,
 } from '../_shared/builderStock/settleSourceImages.ts';
+import { newRepairBudget } from '../_shared/builderStock/settleImageSanitization.ts';
 import {
   BUILDER_SELECTION_SELECT, STOCK_AVAILABILITY_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, STOCK_UPLOAD_SELECT, stockPagination,
@@ -841,12 +842,25 @@ Deno.serve(async (req) => {
           uploadId: uploadId || null,
           limit: SETTLEMENT_MAX_UPLOADS,
         });
+        /*
+         * ONE overlay-repair allowance for the whole call, not one per upload
+         * — the same rule, for the same measured reason, as the settler's own
+         * tick. A repair is a full-resolution decode plus a reconstruction or
+         * up to four model calls, and this worker dies on its RESOURCE limit
+         * long before `ENRICHMENT_BUDGET_MS` does; five uploads each minting
+         * the module's default allowance is ten of them, which is a 546 with
+         * nothing written. `settleImageSanitization` defaults to a fresh
+         * budget only for a caller repairing ONE upload by hand — a loop must
+         * bring its own and thread it, so the call spends it once.
+         */
+        const repairBudget = newRepairBudget();
         for (const id of outstanding) {
           if (Date.now() - startedAt > ENRICHMENT_BUDGET_MS) break;
           const settlement = await settleUploadSourceImages(supabase, {
             organisationId: activeOrganisationId,
             uploadId: id,
             deadlineAt: startedAt + ENRICHMENT_BUDGET_MS,
+            repairBudget,
           });
           /**
            * PROGRESS, not completion. The browser stops looping on a batch
@@ -878,7 +892,21 @@ Deno.serve(async (req) => {
       for (const item of pending ?? []) {
         if (Date.now() - startedAt > ENRICHMENT_BUDGET_MS) break;
         try {
-          await enrichStockItem(supabase, item as EnrichableStockItem, organisationName);
+          /*
+           * WHILE ANY SOURCE IS STILL BEING READ, THE PAID STAGES WAIT.
+           *
+           * `settlementRemaining` is the count of uploads whose imagery has
+           * not finished settling, and a property in one of them may be about
+           * to gain the builder's own render. Buying a search or a Street View
+           * against it spends money to be discarded — and worse, can put a
+           * fallback on a card that is about to have the real picture. The
+           * browser's loop keeps calling until this reaches zero, so nothing
+           * is skipped, only deferred.
+           */
+          await enrichStockItem(supabase, {
+            ...(item as EnrichableStockItem),
+            sourceSettlementComplete: settlementRemaining === 0,
+          }, organisationName);
         } catch (error) {
           // Enrichment is allowed to fail. The property stays.
           console.warn('[builder-portal-stock] enrichment failed', {

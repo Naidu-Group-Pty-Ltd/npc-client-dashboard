@@ -144,6 +144,11 @@ export const amlRiskApi = {
     invoke<{ gate: AmlServiceGateContract }>({ op: "gate_contract", case_id }),
   recalcStatus: (case_id: string) =>
     invoke<{ recalc: AmlRecalcStatus }>({ op: "recalc_status", case_id }),
+  /** What stands between this case and clearance — the same reasons the
+   *  decide/gate ops enforce, as a read (`clearanceBlockReasons`, one
+   *  implementation), so the screen names the blockers before the 409. */
+  clearanceReadiness: (case_id: string) =>
+    invoke<{ ready: boolean; reasons: string[] }>({ op: "clearance_readiness", case_id }),
 
   listConditions: (case_id: string) => invoke<{ conditions: AmlCaseCondition[] }>({ op: "list_conditions", case_id }),
   upsertCondition: (condition: Partial<AmlCaseCondition> & { case_id: string; label: string }) =>

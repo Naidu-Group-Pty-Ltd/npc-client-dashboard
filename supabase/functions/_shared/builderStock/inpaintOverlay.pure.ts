@@ -444,3 +444,39 @@ export function outsidePermittedRegionUnchanged(
   }
   return { ok: changed === 0, changed };
 }
+
+/**
+ * How much of the frame the model would be permitted to touch.
+ *
+ * BARRIER B MEASURES THE FINAL SET, NOT THE REQUEST. The number that matters
+ * is not the rectangle somebody asked for, nor the mask the detector drew: it
+ * is `weights`, the exact pixels `compositePatch` may write and the exact
+ * pixels `outsidePermittedRegionUnchanged` then declines to check. Between the
+ * source rectangle and that set sit `growOverlayMask`'s dilation and this
+ * module's own FEATHER ring, both of which only ever add area. (The merge of
+ * overlapping patches does NOT: it widens what the model is SHOWN, never what
+ * may be written, because `compositePatch` gates every pixel on `weights` and
+ * `weights` is derived from the mask alone.) A ceiling applied to the request
+ * would be a ceiling with a gap in it exactly the width of everything that
+ * grows.
+ *
+ * Counting the permitted set also makes the multi-region case fall out for
+ * free: four separate rectangles, individually modest, are one number here.
+ *
+ * AND THE CEILING BOUNDS HOW MUCH, NEVER WHICH. Inside it the system is free
+ * to rebuild the wrong pixels — a wall-sized mask consumes budget exactly as a
+ * correct one does — so this number is a blast-radius cap, not evidence that
+ * the permitted set is the right set. Region correctness is the mask
+ * derivation's burden (`overlayPlate.pure.ts`, which holds every plate to its
+ * own text), and the integrity gate below proves containment in the mask, not
+ * correctness of it.
+ */
+export function permittedShare(
+  weights: Uint8Array, width: number, height: number,
+): number {
+  const count = width * height;
+  if (count <= 0 || weights.length !== count) return 0;
+  let permitted = 0;
+  for (let i = 0; i < count; i++) if (weights[i]) permitted += 1;
+  return permitted / count;
+}

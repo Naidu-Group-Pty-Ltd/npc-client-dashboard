@@ -390,6 +390,19 @@ describe("owner — whose move is it", () => {
     expect(candidate.attention).toBe("attention");
   });
 
+  it("turns complete on a cleared STATUS even when case_stage lags at staff_review", () => {
+    // The decide op used to write only the legacy status, so a cleared case
+    // carried case_stage = staff_review forever and the Decision stage never
+    // turned green in the rail. The server now syncs both; this dual read
+    // keeps every row that predates the fix — and any old server — correct.
+    const s = stage(
+      bare({ caseRow: caseRow({ case_stage: "staff_review", status: "cleared" }) }),
+      "decision",
+    );
+    expect(s.status).toBe("complete");
+    expect(s.summary).toContain("A decision has been recorded");
+  });
+
   it("waits on the MLRO once the case is escalated", () => {
     const s = stage(
       bare({ caseRow: caseRow({ case_stage: "decision_pending", status: "escalated_mlro" }) }),

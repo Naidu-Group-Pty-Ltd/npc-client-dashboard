@@ -89,7 +89,10 @@ import {
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
 import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
-import { progressRail, type ProgressRailState } from "@/lib/aml/caseDimensions";
+import { caseStage, progressRail, serviceGateStatus, type ProgressRailState } from "@/lib/aml/caseDimensions";
+import { gatePassportPath } from "@/lib/aml/gatePassportPath.pure";
+import { GatePassportPathCard } from "@/components/aml/workspace/GatePassportPathCard";
+import { GateApprovalCard } from "@/components/aml/GateApprovalCard";
 import {
   ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
@@ -98,7 +101,7 @@ import { AmlLoadingState } from "@/components/aml/primitives";
 import {
   AmlComplianceSummary, AmlConnectedPortals, AmlContextActionPanel, AmlJourneyFooter,
   AmlJourneyRail, AmlJourneyStageHeader, AmlLivePositionRail, AmlNextActionCard,
-  AmlOutstandingItems, AmlRecentActivity, AmlServiceReadinessCard, AmlWorkspaceHeader,
+  AmlOutstandingItems, AmlRecentActivity, AmlWorkspaceHeader,
   MlroDecisionDossier, SECTION_LABELS,
 } from "@/components/aml/workspace";
 import { AmlPortalAccessCard } from "@/components/aml/AmlPortalAccessCard";
@@ -603,6 +606,27 @@ export default function AmlCaseWorkspace() {
           block: "start", behavior: "smooth",
         });
         return;
+      case "complete_assessment":
+        /*
+         * Stage 8's primary act: land on the decision work, not merely the
+         * section the operator is already viewing. The guided path at the
+         * top of the risk panel then names the open step.
+         */
+        window.setTimeout(() => {
+          document.getElementById("aml-risk-decision")
+            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 0);
+        return;
+      case "record_gate":
+        /* Stage 9's primary act is recorded ON Stage 9 — the approval
+         * card is mounted in this section when the act is owed; when it
+         * is not, the guided path narrates why, so land there instead. */
+        window.setTimeout(() => {
+          (document.getElementById("aml-passport-gate")
+            ?? document.getElementById("aml-passport-path"))
+            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 0);
+        return;
       case "adjudicate_match":
       case "escalate":
       default:
@@ -1059,18 +1083,101 @@ export default function AmlCaseWorkspace() {
                 events={events}
                 onOpenSection={setSection}
               />
-              <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
+              <div id="aml-risk-decision" className="scroll-mt-24">
+                <RiskTab
+                  caseId={caseRow.id}
+                  canWrite={canWrite}
+                  onChanged={load}
+                  onOpenSection={(s) => setSection(s as SectionKey)}
+                  hasAssignedMlro={Boolean(caseRow.assigned_mlro_id)}
+                />
+              </div>
             </div>
           )}
 
           {/* ── Stage 9 · Service gate & Passport ───────────────────── */}
           {section === "passport" && (
             <div className="space-y-4">
-              <AmlServiceReadinessCard readiness={summary.readiness} />
+              {/*
+                ── The road to an issued Passport, in order ──────────────
+                Stage 9 kept silent about the Stage 8 outcome — a cleared
+                case read "Under review — not yet decided" about the gate
+                and looked like the decision had not pulled through. The
+                path pulls it through as step 1, orders gate → preview →
+                issue, and every step lands where the act is done: the
+                Decision stage, the digital passport page, the reliance
+                panel below. The passport state is the SERVER's own code —
+                nothing here derives one.
+              */}
+              <div id="aml-passport-path" className="scroll-mt-24">
+                <GatePassportPathCard
+                  steps={gatePassportPath({
+                    decisionOutcome:
+                      caseStage(caseRow) === "cleared" || caseRow.status === "cleared"
+                        ? "cleared"
+                        : caseStage(caseRow) === "blocked" || caseRow.status === "blocked"
+                          ? "blocked"
+                          : null,
+                    gateStatus: serviceGateStatus(caseRow),
+                    passportState: facts.passport?.state?.code ?? null,
+                    passportVersion: facts.passport?.version ?? null,
+                    canReview: access.isMlro || access.roles.has("reviewer"),
+                  })}
+                  onStepClick={(key) => {
+                    if (key === "decision") {
+                      // The decision is Stage 8's act — it stays there.
+                      setSection("risk");
+                      window.setTimeout(() => {
+                        document.getElementById("decision-step-decision")
+                          ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                      }, 0);
+                    } else if (key === "gate") {
+                      // The approval act is on this stage; when nothing is
+                      // owed the card is absent and the path stays put.
+                      (document.getElementById("aml-passport-gate")
+                        ?? document.getElementById("aml-passport-path"))
+                        ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                    } else if (key === "preview") {
+                      // The digital passport, exactly as the client and
+                      // partners will see it — before anything is issued.
+                      navigate(`/admin/aml/passport?case=${caseRow.id}`);
+                    } else {
+                      document.getElementById("aml-passport-issue")
+                        ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                    }
+                  }}
+                  onContinue={() => setSection("monitoring")}
+                />
+              </div>
+              {/*
+                The ONE act this stage owes — approving a cleared case's
+                gate — and nothing else. The full gate card (all eight
+                statuses) lives on the Decision stage alone; repeating it
+                here read as a duplicate of Stage 8 and is exactly what
+                this compact card replaces. It renders nothing when there
+                is nothing to approve.
+              */}
+              <GateApprovalCard
+                caseId={caseRow.id}
+                cleared={caseStage(caseRow) === "cleared" || caseRow.status === "cleared"}
+                canReview={access.isMlro || access.roles.has("reviewer")}
+                isMlro={access.isMlro}
+                onChanged={load}
+                onOpenDecision={() => {
+                  setSection("risk");
+                  window.setTimeout(() => {
+                    document.getElementById("decision-step-gate")
+                      ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                  }, 0);
+                }}
+                anchorId="aml-passport-gate"
+              />
               {/* The full journey map keeps its place in the product — it
                   sits where the credential is worked on. */}
               <ComplianceJourneyMap caseRow={caseRow} />
-              <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
+              <div id="aml-passport-issue" className="scroll-mt-24">
+                <ReliancePassportSection caseId={caseRow.id} isMlro={access.isMlro} />
+              </div>
             </div>
           )}
 

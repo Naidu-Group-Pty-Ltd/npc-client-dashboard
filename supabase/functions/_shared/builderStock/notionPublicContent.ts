@@ -240,15 +240,17 @@ function collectRowAssets(
     if (assets.length) {
       out.push({
         anchor: `notion:${rowId}`,
-        // The cover wins where the row has one; otherwise a single explicitly
-        // named property-image property does, and anything else designates
-        // nothing.
+        // A single explicitly named property-image property wins — that rule
+        // lives in `settleRowAssetRoles`, which reads the LEVEL 1 evidence off
+        // the assets themselves. The cover is the row's STRUCTURAL preference,
+        // consulted only when no explicit field settles it: it leads a row
+        // that names nothing, and it leads a row whose explicit fields
+        // contradict each other, because between two equal claims the row's
+        // own cover slot is the only designation left standing.
         assets: settleRowAssetRoles(assets, {
           container: 'the Notion row for this property',
           designation: coverIndex >= 0 ? 'page cover' : 'property image',
-          preferredIndex: coverIndex >= 0
-            ? coverIndex
-            : assets.findIndex((asset) => asset.role.evidenceLevel === 1),
+          preferredIndex: coverIndex >= 0 ? coverIndex : undefined,
         }),
       });
     }

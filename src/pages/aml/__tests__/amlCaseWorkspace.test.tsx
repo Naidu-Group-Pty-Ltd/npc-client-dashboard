@@ -42,6 +42,12 @@ vi.mock("@/components/aml/ReliancePassportSection", () => ({
 vi.mock("@/components/aml/ComplianceJourneyMap", () => ({
   ComplianceJourneyMap: () => <div data-testid="journey-map" />,
 }));
+// Stage 9's approval act fetches its own facts (gate contract, open
+// conditions); the shell suite only cares that the stage mounts the ACT,
+// not the full gate card or the readiness ledger both removed before it.
+vi.mock("@/components/aml/GateApprovalCard", () => ({
+  GateApprovalCard: () => <div data-testid="gate-approval-card" />,
+}));
 vi.mock("@/components/aml/CaseWorkspaceTabs", () => ({
   VerificationTab: () => <div data-testid="tab-verification" />,
   ScreeningTab: () => <div data-testid="tab-screening" />,
@@ -159,11 +165,15 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     expect(screen.getByText("Compliance evidence")).toBeInTheDocument();
   });
 
-  it("keeps the service-gate card, and its 'evidence does not move the gate' wording, on the Passport stage", async () => {
+  it("mounts only the approval ACT on the Passport stage — no full gate card, no readiness ledger", async () => {
     setup(`/admin/aml/cases/${CASE_ID}?section=passport`);
     await screen.findByRole("heading", { name: "Avery Client" });
-    expect(screen.getByText("Service readiness")).toBeInTheDocument();
-    expect(screen.getByText(/The service gate is an explicit decision/)).toBeInTheDocument();
+    // The readiness ledger restated gate facts without offering the act;
+    // the full eight-status gate card read as a duplicate of the Decision
+    // stage. Stage 9 keeps exactly the act it owes.
+    expect(screen.getByTestId("gate-approval-card")).toBeInTheDocument();
+    expect(screen.queryByText("Service readiness")).not.toBeInTheDocument();
+    expect(screen.queryByText("Change service gate")).not.toBeInTheDocument();
   });
 
   it("selecting a stage writes its section to the URL so refresh and sharing keep it", async () => {

@@ -303,17 +303,14 @@ export function stockItemConfiguration(item: Pick<BuilderStockItem,
 }
 
 /**
- * The image a Builder Stock card shows — the builder's own, or none.
+ * Is this the builder's OWN photograph, designated for this property?
  *
- * ONE RULE, MIRRORING THE SERVER'S `primaryImage.ts`: a card may show the
- * photograph the builder supplied, or an empty frame. Street View, a satellite
- * still and a search result are none of them a photograph of the property, and
- * a card showing one tells a client something untrue about a house.
- *
- * There is deliberately NO ordering across stages any more, because there is
- * nothing to order: `google_maps` and `internet_search` are not candidates.
- * They stay in the payload — the source panel still reports what each stage
- * found — they are simply never what the card draws.
+ * Tier 1 and 2 of the card ranking, mirroring the server's `primaryImage.ts`.
+ * It is no longer the whole rule — a property with no builder image may now
+ * fall back to a VERIFIED web photograph and then to Street View, in that
+ * order and never above this one; see `primaryStockImage` and the server's
+ * `imagePriority.pure.ts`. What has not changed is that nothing below this
+ * tier may ever be badged "Builder supplied".
  */
 export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
   return image.source_stage === 'uploaded_document'
@@ -358,19 +355,100 @@ export function isDisplayableSourceImage(image: BuilderStockImage): boolean {
  * ranks only images that already passed the role check above, so there is
  * nothing for it to fall back TO unless the source designated one.
  */
+/**
+ * Does this image serve the builder's ORIGINAL bytes, untouched? Mirrors the
+ * server's `primaryImage.ts`, as `isDisplayableSourceImage` above already
+ * does: true for a measured-clean picture and for a cleared one; false for an
+ * image that reaches a card only through its sanitized derivative.
+ */
+function servesCleanOriginal(image: BuilderStockImage): boolean {
+  return isMarketplaceEligible(image.source_detail)
+    || !!servableClearanceFor(image.source_detail);
+}
+
+/**
+ * Is this a web-search image whose identity against THIS property was checked?
+ * Mirrors the server's `imagePriority.pure.ts`. Every historical row is
+ * `unverified` and none of them satisfies this.
+ */
+export function isVerifiedWebImage(image: BuilderStockImage): boolean {
+  if (image.source_stage !== 'internet_search') return false;
+  if (image.verification_status !== 'property_identity_verified') return false;
+  if (image.processing_status !== 'ready') return false;
+  if (!(image.storage_path || image.external_url)) return false;
+  const identity = (image.source_detail ?? {} as Record<string, unknown>)
+    .property_identity as Record<string, unknown> | undefined;
+  return !!identity && Array.isArray(identity.matched) && identity.matched.length > 0;
+}
+
+/**
+ * Is this a Street View still of the property's own address? Satellite tiles
+ * live in the same stage and are never a photograph of a house.
+ */
+export function isStreetViewImage(image: BuilderStockImage): boolean {
+  if (image.source_stage !== 'google_maps') return false;
+  if (image.processing_status !== 'ready') return false;
+  if (!(image.storage_path || image.external_url)) return false;
+  const detail = (image.source_detail ?? {}) as Record<string, unknown>;
+  return detail.product === 'streetview' && typeof detail.address === 'string'
+    && !!detail.address;
+}
+
+/** What a card may honestly say about where its picture came from. */
+export type StockImageProvenance = 'builder_supplied' | 'web_sourced' | 'street_view';
+
+export const STOCK_PROVENANCE_LABEL: Record<StockImageProvenance, string> = {
+  builder_supplied: 'Builder supplied',
+  web_sourced: 'Web sourced',
+  street_view: 'Street View',
+};
+
+/** The provenance of one image, or null where it may not be shown at all. */
+export function stockImageProvenance(
+  image: BuilderStockImage,
+): StockImageProvenance | null {
+  if (isDisplayableSourceImage(image)) return 'builder_supplied';
+  if (isVerifiedWebImage(image)) return 'web_sourced';
+  if (isStreetViewImage(image)) return 'street_view';
+  return null;
+}
+
 export function primaryStockImage(item: BuilderStockItem): BuilderStockImage | null {
   const displayable = (item.images ?? []).filter(isDisplayableSourceImage);
-  if (!displayable.length) return null;
+
+  /*
+   * NO BUILDER IMAGE: THE FALLBACKS, IN ORDER. A verified web photograph of
+   * this exact property first, a Street View of its address second, nothing
+   * third. Both are ranked BELOW every builder row, so a source image
+   * arriving later always takes the card back.
+   */
+  if (!displayable.length) {
+    const fallback = (item.images ?? []).filter(isVerifiedWebImage);
+    const tier = fallback.length ? fallback : (item.images ?? []).filter(isStreetViewImage);
+    if (!tier.length) return null;
+    if (item.primary_image_id) {
+      const chosen = tier.find((image) => image.id === item.primary_image_id);
+      if (chosen) return chosen;
+    }
+    return [...tier].sort((a, b) =>
+      (a.position ?? 0) - (b.position ?? 0)
+      || String(a.id).localeCompare(String(b.id)))[0] ?? null;
+  }
 
   if (item.primary_image_id) {
     const chosen = displayable.find((image) => image.id === item.primary_image_id);
     if (chosen) return chosen;
   }
   // The stored choice is missing or stale. Ranked exactly as the server ranks
-  // it — the strength of the source's own evidence first, then the order the
-  // SOURCE gave them, then the id — so the two never disagree.
+  // it — a clean builder original ahead of a cleaned promotional derivative,
+  // then the strength of the source's own evidence, then the order the SOURCE
+  // gave them, then the id — so the two never disagree. (The clean-first key
+  // is the one this mirror was missing after the server gained it: the same
+  // property's clean render and repaired page cover sorted differently here
+  // and there, and two surfaces showed two pictures.)
   return [...displayable].sort((a, b) =>
-    comparePrimaryEvidence(
+    (servesCleanOriginal(a) ? 0 : 1) - (servesCleanOriginal(b) ? 0 : 1)
+    || comparePrimaryEvidence(
       readStoredEvidenceLevel(a.source_detail), readStoredEvidenceLevel(b.source_detail))
     || (a.position ?? 0) - (b.position ?? 0)
     || String(a.id).localeCompare(String(b.id)))[0] ?? null;

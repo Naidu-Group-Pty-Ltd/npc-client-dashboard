@@ -46,7 +46,7 @@ import {
   MARKETPLACE_ELIGIBILITY_VERSION,
 } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 import {
-  SANITIZATION_VERSION,
+  SANITIZATION_VERSION, derivativeDetail, servableDerivativeFor,
 } from '../../../supabase/functions/_shared/builderStock/sanitizedDerivative.pure';
 import {
   assessMarketplaceEligibility, eligibilityDetailFor,
@@ -55,7 +55,7 @@ import {
   decodeThumbnailResult, DECODABLE_CONTAINERS,
 } from '../../../supabase/functions/_shared/builderStock/sourceImageRaster';
 import {
-  chooseDisplayableImage, isDisplayableSourceImage,
+  chooseDisplayableImage, derivativeToServe, isDisplayableSourceImage,
 } from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import {
   eligibilitySweepCompleted, settleMarketplaceEligibility,
@@ -65,6 +65,7 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/settleSourceImages';
 import { decodeWebp } from '../../../supabase/functions/_shared/builderStock/webp';
 import { lossyWebpOf } from './fixtures/vp8Encoder';
+import { encodePng, sha256Hex } from '../../../supabase/functions/_shared/builderStock/rasterPng';
 import { primaryStockImage } from '../../lib/builderStock';
 import {
   annotatedPicture, cleanPicture, jpegOf, losslessWebpOf, photograph, withCaption,
@@ -1242,5 +1243,185 @@ describe('TEST AQ — nothing stands in for a refused or pending primary', () =>
     };
     expect(chooseDisplayableImage([uncertain])).toBeNull();
     expect(chooseDisplayableImage([uncertain, other('interior', 'interior')])).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verdict is bound to its bytes, and a clean original outranks its repair
+// ---------------------------------------------------------------------------
+
+describe('the eligibility verdict names the bytes it judged', () => {
+  const SHA_A = 'a'.repeat(64);
+  const SHA_B = 'b'.repeat(64);
+
+  /*
+   * THE ONE SERVING RECORD THAT WAS NOT HASH-BOUND. A derivative, a clearance
+   * and a repair region all name the exact original by SHA-256 and stop
+   * resolving when the object changes; the eligibility verdict — the record
+   * that lets an ORIGINAL be served — named nothing, so a row re-stored with
+   * different bytes kept a verdict reached about the old ones, and the
+   * settler saw a current version and never looked again.
+   */
+  it('a verdict about other bytes reads as pending, never as its stored state', () => {
+    const judged = {
+      role: 'primary_property',
+      stored_sha256: SHA_B,
+      ...marketplaceEligibilityDetail(
+        decideMarketplaceEligibility(readMarketingOverlay(CLEAN)), SHA_A),
+    };
+    expect(judged.marketplace_eligibility_state).toBe('eligible');
+    expect(readMarketplaceState(judged)).toBe('pending');
+    expect(isMarketplaceEligible(judged)).toBe(false);
+  });
+
+  it('a matching hash reads exactly as it always did', () => {
+    const judged = {
+      stored_sha256: SHA_A,
+      ...marketplaceEligibilityDetail(
+        decideMarketplaceEligibility(readMarketingOverlay(CLEAN)), SHA_A),
+    };
+    expect(readMarketplaceState(judged)).toBe('eligible');
+  });
+
+  it('GRANDFATHERED: a verdict that recorded no hash, or a row without one, is untouched', () => {
+    // Every production verdict predates the binding. Nothing about them may
+    // change until a new verdict is written — and only a replaced object can
+    // differ then.
+    const unbound = {
+      stored_sha256: SHA_A,
+      ...marketplaceEligibilityDetail(
+        decideMarketplaceEligibility(readMarketingOverlay(CLEAN))),
+    };
+    expect(unbound.marketplace_measured_sha256).toBeNull();
+    expect(readMarketplaceState(unbound)).toBe('eligible');
+
+    const noRowHash = {
+      ...marketplaceEligibilityDetail(
+        decideMarketplaceEligibility(readMarketingOverlay(CLEAN)), SHA_A),
+    };
+    expect(readMarketplaceState(noRowHash)).toBe('eligible');
+  });
+
+  it('the display gate fails closed on a mismatched verdict', () => {
+    const image = eligible({ id: 'swapped' });
+    (image.source_detail as Record<string, unknown>).stored_sha256 = SHA_B;
+    (image.source_detail as Record<string, unknown>).marketplace_measured_sha256 = SHA_A;
+    expect(isDisplayableSourceImage(image)).toBe(false);
+  });
+
+  it('every writer stamps the hash of the bytes it actually judged', async () => {
+    const picture = cleanPicture(640, 332);
+    const bytes = (await encodePng(picture.pixels,
+      { width: picture.width, height: picture.height, components: 3 }))!;
+    const detail = await eligibilityDetailFor(bytes, 'primary_property');
+    expect(detail.marketplace_measured_sha256).toBe(await sha256Hex(bytes));
+  });
+
+  it('a mismatch does NOT re-enter the sweep — the version bump is what re-judges', () => {
+    // Deliberate: a row whose bucket bytes never match its recorded hash
+    // would otherwise be re-downloaded and re-judged on every pass for ever —
+    // the never-quiet failure the version-terminal rule exists to prevent.
+    // The read side hides such a row; the next version bump re-judges it.
+    const judged = {
+      stored_sha256: SHA_B,
+      ...marketplaceEligibilityDetail(
+        decideMarketplaceEligibility(readMarketingOverlay(CLEAN)), SHA_A),
+    };
+    expect(readMarketplaceState(judged)).toBe('pending');
+    expect(needsEligibilityAssessment(judged)).toBe(false);
+  });
+});
+
+describe('a clean original outranks its own repair, on every surface', () => {
+  const SHA = 'c'.repeat(64);
+  const derivativeRecord = () => ({
+    transformation: 'deterministic_overlay_reconstruction' as const,
+    sanitization_version: SANITIZATION_VERSION,
+    original_image_id: 'image-1',
+    original_sha256: SHA,
+    stock_item_id: 'item-1',
+    organisation_id: 'org-a',
+    source_reference: null,
+    storage_bucket: 'builder-stock-images',
+    storage_path: 'org/items/item-1/source/sanitized/v2/image-1.png',
+    derivative_sha256: 'd'.repeat(64),
+    width: 400,
+    height: 200,
+    repaired_share: 0.08,
+    regions_removed: 1,
+    model: null,
+    generated_at: '2026-08-20T00:00:00Z',
+    verdict: 'eligible' as const,
+    classifier_state: 'ineligible' as const,
+  });
+
+  /** A row whose ONLY claim to a card is its derivative. */
+  const derivativeOnly = (over: Partial<Candidate> = {}): Candidate => {
+    const image = rejected(over);
+    image.source_detail = {
+      ...image.source_detail,
+      stored_sha256: SHA,
+      ...derivativeDetail(derivativeRecord() as never),
+    };
+    return image;
+  };
+
+  it('an image carrying both an eligible verdict and a derivative signs the ORIGINAL', () => {
+    const both = eligible({ id: 'rejudged' });
+    both.source_detail = {
+      ...both.source_detail,
+      stored_sha256: SHA,
+      ...derivativeDetail(derivativeRecord() as never),
+    };
+    // The derivative genuinely resolves — this is not a stale record...
+    expect(servableDerivativeFor(both.source_detail)).toBeTruthy();
+    // ...and is still not the object to sign: the platform itself judges the
+    // original clean, and the builder's own file is the better picture.
+    expect(derivativeToServe(both)).toBeNull();
+  });
+
+  it('an image whose only claim IS its derivative still serves it', () => {
+    const only = derivativeOnly({ id: 'repaired' });
+    expect(isDisplayableSourceImage(only)).toBe(true);
+    expect(derivativeToServe(only)?.storage_path)
+      .toBe(derivativeRecord().storage_path);
+  });
+
+  it('the client fallback prefers the clean-original row, exactly as the server does', () => {
+    // Same evidence level, and the derivative row EARLIER by position — the
+    // order that used to win the client's fallback while the server preferred
+    // the clean row: two surfaces, two pictures.
+    const repaired = derivativeOnly({ id: 'repaired', position: 0 });
+    const clean = eligible({ id: 'clean', position: 9 });
+
+    expect(chooseDisplayableImage([repaired, clean])!.id).toBe('clean');
+
+    const asImage = (c: Candidate): BuilderStockImage => ({
+      id: c.id,
+      stock_item_id: 'item-1',
+      source_stage: c.source_stage as BuilderStockImage['source_stage'],
+      source_reference: null, source_provider: null, source_page_url: null, external_url: null,
+      storage_path: c.storage_path ?? null,
+      content_type: 'image/png',
+      verification_status: c.verification_status as BuilderStockImage['verification_status'],
+      confidence: 1,
+      processing_status: c.processing_status as BuilderStockImage['processing_status'],
+      error_message: null,
+      position: c.position ?? 0,
+      source_detail: c.source_detail ?? null,
+      created_at: '2026-08-18T00:00:00Z',
+    });
+    const item = {
+      id: 'item-1', primary_image_id: null,
+      images: [repaired, clean].map(asImage),
+    } as unknown as BuilderStockItem;
+    expect(primaryStockImage(item)!.id).toBe('clean');
+
+    // And a derivative-only property keeps its picture: ordering, never
+    // filtering.
+    const alone = {
+      id: 'item-1', primary_image_id: null, images: [asImage(repaired)],
+    } as unknown as BuilderStockItem;
+    expect(primaryStockImage(alone)!.id).toBe('repaired');
   });
 });

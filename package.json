@@ -10,6 +10,7 @@
     "build": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build",
     "build:dev": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build --mode development",
     "lint": "eslint .",
+    "check:src-names": "node scripts/security/check-src-missing-names.mjs",
     "audit:style": "node scripts/audit-style-tokens.cjs",
     "brand:icons": "node scripts/brand/build-aurixa-icons.mjs",
     "brand:icons:check": "node scripts/brand/build-aurixa-icons.mjs --check",

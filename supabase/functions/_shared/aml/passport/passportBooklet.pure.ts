@@ -798,3 +798,84 @@ export function bookletGeometry(input: {
   }
   return build(1, fit(1));
 }
+
+/* ── reading it ────────────────────────────────────────────────────────
+ * `bookletGeometry` answers "how large can this document be drawn in the
+ * space available". That is a fitting question, and it has one answer.
+ *
+ * It is not the same question as "how large does this reader need it".
+ * The design authors a leaf at 470x648 with 9.5-11px body copy, so a spread
+ * fitted into a dialog on a laptop renders that copy at 6-7px — legible in
+ * the sense that the glyphs are distinct, and unreadable in the sense that
+ * nobody reads it. The document was reported as "the wording on the pages
+ * is not clearly visible", which is exactly right and is not a fault in the
+ * fit: the fit is correct and the page is simply too small for a person.
+ *
+ * So the reader gets a magnification of their own, applied ON TOP of the
+ * fit. Three rules make it safe:
+ *
+ *   · **Fit is still the baseline.** Zoom 1 is whatever the space allows, so
+ *     every existing surface is unchanged until somebody asks for more.
+ *   · **Zooming never reflows.** It multiplies the same uniform transform the
+ *     fit uses, so a magnified leaf is the same drawing larger — never a
+ *     narrower column with rewrapped text.
+ *   · **Overflow is the caller's to scroll.** This reports the drawn size and
+ *     whether it now exceeds the board, and the board pans; nothing here
+ *     crops, because a passport that silently loses its margin is worse than
+ *     one that scrolls.
+ */
+
+/** What a reader may ask for, in the order the control steps through. */
+export const BOOKLET_ZOOM_STEPS = [1, 1.25, 1.5, 2, 2.5, 3] as const;
+
+export interface BookletZoom {
+  /** The fit scale multiplied by the reader's magnification. */
+  scale: number;
+  /** Drawn size of the spread at that scale. */
+  width: number;
+  height: number;
+  /** True once the drawing exceeds the space — the board must pan. */
+  overflows: boolean;
+  /** For the control: what the reader is currently asking for. */
+  zoom: number;
+  percent: number;
+  canZoomIn: boolean;
+  canZoomOut: boolean;
+}
+
+/**
+ * Compose the reader's magnification with the fitted geometry.
+ *
+ * `zoom` is clamped to the declared steps' range rather than trusted: it
+ * arrives from a control, and a scale of 0 draws nothing while a scale of 40
+ * draws a leaf no scrollbar can rescue.
+ */
+export function bookletZoom(
+  geometry: BookletGeometry,
+  zoom: number,
+): BookletZoom {
+  const min = BOOKLET_ZOOM_STEPS[0];
+  const max = BOOKLET_ZOOM_STEPS[BOOKLET_ZOOM_STEPS.length - 1];
+  const clamped = Number.isFinite(zoom) ? Math.min(max, Math.max(min, zoom)) : min;
+  const scale = geometry.scale * clamped;
+  return {
+    scale,
+    width: geometry.spreadWidth * scale,
+    height: LEAF_H * scale,
+    overflows: clamped > min,
+    zoom: clamped,
+    percent: Math.round(clamped * 100),
+    canZoomIn: clamped < max,
+    canZoomOut: clamped > min,
+  };
+}
+
+/** The next step up or down from wherever the reader currently is. */
+export function nextBookletZoom(current: number, direction: 1 | -1): number {
+  const steps = BOOKLET_ZOOM_STEPS;
+  if (direction === 1) {
+    return steps.find((s) => s > current + 1e-6) ?? steps[steps.length - 1];
+  }
+  const below = steps.filter((s) => s < current - 1e-6);
+  return below.length > 0 ? below[below.length - 1] : steps[0];
+}

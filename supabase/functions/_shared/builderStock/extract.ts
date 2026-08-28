@@ -41,10 +41,20 @@ export interface ExtractedMedia {
   contentType: string;
   /**
    * Where the CONTAINER said this image sits — a sheet row, a table row, a
-   * slide. Null when the format stated nothing, which is the only case where
-   * attribution may fall back to counting.
+   * slide. Null when the format stated nothing — and only a document that
+   * stated nothing anywhere, for its one imported property, is ever
+   * attributed without one.
    */
   anchor?: string | null;
+  /**
+   * What the enumeration that produced this entry looked like, so a truncated
+   * read is a recorded fact rather than a silent one. `discovered` counts the
+   * image parts the container held; `kept` how many survived the caps; a
+   * truncated list changes `media.length`, and `media.length` used to be one
+   * side of a count-equality test that decided which property a picture
+   * belonged to.
+   */
+  enumeration?: { discovered: number; kept: number; index: number; truncated: boolean };
   /**
    * How this picture was taken out of the document, when the format can say —
    * which page, which object, what it hashes to, what was done to it. Recorded
@@ -133,22 +143,6 @@ function mediaContentType(name: string): string | null {
   return null;
 }
 
-/**
- * Pull `xl/media/*` or `word/media/*` out of an OOXML container.
- *
- * Anything that is not a raster image we can serve is skipped: an EMF chart or
- * a WMF logo would store a file the browser cannot render, which is worse than
- * having no stage-1 image.
- */
-async function readContainerMedia(
-  bytes: Uint8Array,
-  prefix: string,
-  anchors?: Map<string, string | null>,
-): Promise<ExtractedMedia[]> {
-  const zip = await openZip(bytes);
-  return await readZipMedia(zip, prefix, anchors);
-}
-
 /** esm.sh types the module as the JSZip class itself, so the default export
  *  has to be reached through the namespace rather than destructured. */
 async function openZip(bytes: Uint8Array): Promise<any> {
@@ -157,23 +151,84 @@ async function openZip(bytes: Uint8Array): Promise<any> {
   return await zipModule.default.loadAsync(bytes);
 }
 
+/**
+ * Compare two media part names the way the documents number them: digit runs
+ * numerically, everything else byte-wise — so `image2.png` sorts before
+ * `image10.png`. Written out rather than `localeCompare(..., { numeric })`
+ * because the order of an import must not depend on a runtime's locale data.
+ */
+export function compareMediaPartNames(a: string, b: string): number {
+  const pattern = /(\d+)|(\D+)/g;
+  const left = a.match(pattern) ?? [];
+  const right = b.match(pattern) ?? [];
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    const l = left[i];
+    const r = right[i];
+    const ln = /^\d/.test(l) ? Number(l) : null;
+    const rn = /^\d/.test(r) ? Number(r) : null;
+    if (ln !== null && rn !== null) {
+      if (ln !== rn) return ln - rn;
+    } else if (l !== r) {
+      return l < r ? -1 : 1;
+    }
+  }
+  return left.length - right.length;
+}
+
+/**
+ * Pull the image parts out of a zip container, IN DOCUMENT ORDER.
+ *
+ * Parts the document references (the `anchors` map is built by walking the
+ * document, so its insertion order IS the document's) come first, in that
+ * order; unreferenced parts follow, by a numeric-aware name compare — a plain
+ * lexicographic sort put `image10.png` before `image2.png`, which was
+ * harmless while attribution was structural and load-bearing the moment
+ * anything read the list as an ordering. Deterministic for byte-identical
+ * files either way; this makes it also mean something.
+ *
+ * A truncated read says so: it is recorded on every entry and pushed as a
+ * warning, because the caps change `media.length` silently and a silent count
+ * is what a count coincidence is made of.
+ */
 async function readZipMedia(
   zip: any,
   prefix: string,
   anchors?: Map<string, string | null>,
+  warnings?: string[],
 ): Promise<ExtractedMedia[]> {
   const media: ExtractedMedia[] = [];
+  const referenced = new Map<string, number>();
+  if (anchors) {
+    let order = 0;
+    for (const key of anchors.keys()) referenced.set(key, order++);
+  }
   const names = Object.keys(zip.files)
     .filter((name: string) => name.startsWith(prefix) && !zip.files[name].dir)
-    .sort();
+    .sort((a: string, b: string) =>
+      (referenced.get(a) ?? Number.MAX_SAFE_INTEGER)
+        - (referenced.get(b) ?? Number.MAX_SAFE_INTEGER)
+      || compareMediaPartNames(a, b));
 
+  let skipped = 0;
+  let capped = false;
   for (const name of names) {
-    if (media.length >= MAX_MEDIA) break;
+    if (media.length >= MAX_MEDIA) { capped = true; break; }
     const contentType = mediaContentType(name);
-    if (!contentType) continue;
+    if (!contentType) { skipped += 1; continue; }
     const content: Uint8Array = await zip.files[name].async('uint8array');
-    if (!content.length || content.length > MAX_MEDIA_BYTES) continue;
+    if (!content.length || content.length > MAX_MEDIA_BYTES) { skipped += 1; continue; }
     media.push({ name, bytes: content, contentType, anchor: anchors?.get(name) ?? null });
+  }
+
+  const discovered = names.length;
+  const truncated = capped || skipped > 0;
+  media.forEach((entry, index) => {
+    entry.enumeration = { discovered, kept: media.length, index, truncated };
+  });
+  if (truncated && warnings) {
+    warnings.push(`Only ${media.length} of ${discovered} images embedded in this file `
+      + 'were read; the rest were skipped as oversize or unsupported, or fell past '
+      + 'the per-file ceiling.');
   }
   return media;
 }
@@ -395,7 +450,7 @@ export async function extractStockFile(
     try {
       const zip = await openZip(bytes);
       const anchors = await readSpreadsheetAnchors(zip).catch(() => new Map<string, string | null>());
-      result.media = await readZipMedia(zip, 'xl/media/', anchors);
+      result.media = await readZipMedia(zip, 'xl/media/', anchors, result.warnings);
     } catch {
       result.warnings.push('Images inside the spreadsheet could not be read.');
     }
@@ -432,7 +487,7 @@ export async function extractStockFile(
               docxRowAnchor(image.table, image.row));
           }
         }
-        result.media = await readZipMedia(zip, 'word/media/', anchors);
+        result.media = await readZipMedia(zip, 'word/media/', anchors, result.warnings);
       } catch {
         result.warnings.push('Images inside the document could not be read.');
       }
@@ -496,9 +551,11 @@ export async function extractStockFile(
        */
       const found = await discoverPdfSourceAssets(bytes);
       result.pageOrderAuthoritative = found.pageOrderAuthoritative;
+      let pdfSkipped = 0;
+      let pdfCapped = false;
       for (const asset of found.assets) {
-        if (result.media.length >= MAX_MEDIA) break;
-        if (asset.bytes.length > MAX_MEDIA_BYTES) continue;
+        if (result.media.length >= MAX_MEDIA) { pdfCapped = true; break; }
+        if (asset.bytes.length > MAX_MEDIA_BYTES) { pdfSkipped += 1; continue; }
         /**
          * THE OBJECT NUMBER IS PART OF THE NAME, and it has to be.
          *
@@ -525,6 +582,19 @@ export async function extractStockFile(
           provenance: asset.provenance,
           placement: asset.placement,
         });
+      }
+      // A truncated read is a recorded fact, exactly as it is for the zip
+      // containers: the caps change the count silently otherwise.
+      if (pdfCapped || pdfSkipped > 0) {
+        result.media.forEach((entry, index) => {
+          entry.enumeration = {
+            discovered: found.assets.length, kept: result.media.length,
+            index, truncated: true,
+          };
+        });
+        result.warnings.push(`Only ${result.media.length} of ${found.assets.length} `
+          + 'images discovered in this PDF were read; the rest were oversize or fell '
+          + 'past the per-file ceiling.');
       }
     } catch {
       result.warnings.push('Images inside this PDF could not be read.');
@@ -569,7 +639,7 @@ export async function extractStockFile(
       for (const image of parseOdfTableImages(xml)) {
         noteAnchor(anchors, image.href, odfRowAnchor(image.table, image.row));
       }
-      result.media = await readZipMedia(zip, 'Pictures/', anchors);
+      result.media = await readZipMedia(zip, 'Pictures/', anchors, result.warnings);
     } catch {
       result.warnings.push('Images inside the document could not be read.');
     }
@@ -615,7 +685,7 @@ export async function extractStockFile(
           noteAnchor(anchors, resolveOoxmlPath(name, target), slideAnchor(slideIndex));
         }
       }
-      result.media = await readZipMedia(zip, 'ppt/media/', anchors);
+      result.media = await readZipMedia(zip, 'ppt/media/', anchors, result.warnings);
     } catch {
       result.warnings.push('Images inside the presentation could not be read.');
     }

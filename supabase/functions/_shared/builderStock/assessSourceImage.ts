@@ -13,6 +13,7 @@
  * spending an inverse DCT to answer a question nobody asked.
  */
 import { decodeThumbnailResult } from './sourceImageRaster.ts';
+import { sha256Hex } from './rasterPng.ts';
 import { readMarketingOverlay } from './marketingOverlay.pure.ts';
 import {
   decideMarketplaceEligibility, marketplaceEligibilityDetail, unmeasured,
@@ -57,5 +58,8 @@ export async function eligibilityDetailFor(
   role: unknown,
 ): Promise<Record<string, unknown>> {
   if (!isPrimaryRole(role)) return {};
-  return marketplaceEligibilityDetail(await assessMarketplaceEligibility(bytes));
+  // The verdict names the bytes it judged, so a later re-store of different
+  // bytes cannot inherit it — see `marketplaceEligibilityDetail`.
+  return marketplaceEligibilityDetail(
+    await assessMarketplaceEligibility(bytes), await sha256Hex(bytes));
 }

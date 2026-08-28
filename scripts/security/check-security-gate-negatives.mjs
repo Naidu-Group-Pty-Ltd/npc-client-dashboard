@@ -339,6 +339,29 @@ const CASES = [
     find: "JSON.stringify(internalError(error, 'send-email-reply'))",
     replace: "JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' })",
   },
+
+  // ── The Cloudflare worker's own gate ─────────────────────────────────────
+  {
+    gate: 'check-cloudflare-worker-hardening.mjs',
+    file: 'cloudflare/builder-stock-image-worker/src/index.ts',
+    what: 'the worker stops measuring the mask it is asked to paint',
+    find: 'const inkShare = await maskInkShare(mask);',
+    replace: 'const inkShare = 0;',
+  },
+  {
+    gate: 'check-cloudflare-worker-hardening.mjs',
+    file: 'cloudflare/builder-stock-image-worker/src/index.ts',
+    what: 'the worker stops refusing oversized declared bodies before parsing',
+    find: "const declared = Number(request.headers.get('content-length') ?? '');",
+    replace: "const declared = 0;",
+  },
+  {
+    gate: 'check-cloudflare-worker-hardening.mjs',
+    file: 'cloudflare/builder-stock-image-worker/src/index.ts',
+    what: 'a vendor endpoint URL appears in the worker source',
+    find: "export const INPAINT_MODEL = '@cf/runwayml/stable-diffusion-v1-5-inpainting';",
+    replace: "export const INPAINT_MODEL = 'https://api.example.com/v1/inpaint';",
+  },
 ];
 
 /**

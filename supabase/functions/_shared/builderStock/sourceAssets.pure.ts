@@ -116,14 +116,51 @@ export function settleRowAssetRoles(
   if (!all.length) return all;
 
   const named = all.map((asset) => roleFromAssetName(asset.reference));
+  /**
+   * WHAT THE SOURCE'S OWN FIELD SAYS THIS IS, when it says it is not a hero.
+   *
+   * An asset that arrived under a "Floorplan" or "Masterplan" field is the
+   * source stating a role, exactly as a filename does — and the module header
+   * has always promised that everything the source NAMES as non-hero is set
+   * aside before anyone is designated. Only the filename half was enforced: a
+   * lone floor plan under an explicit "Floor Plan" field was the row's only
+   * candidate, so the container "designated" it and a plan drawing became a
+   * card's primary image. Set aside here, it keeps the role the source gave
+   * it and can never lead a card by being the last one standing.
+   */
+  const labelled = all.map((asset, index) => !named[index]
+    && asset.role && asset.role.role !== 'unknown' && !isPrimaryRole(asset.role.role)
+    ? asset.role : null);
   const candidates = all
     .map((asset, index) => ({ asset, index }))
-    .filter(({ index }) => !named[index]);
+    .filter(({ index }) => !named[index] && !labelled[index]);
+
+  /**
+   * LEVEL 1 OUTRANKS THE CONTAINER'S OWN PREFERENCE, and only here is the
+   * difference visible. "The row's `Property Image` field names this file"
+   * and "the row's cover slot holds this file" are both the source speaking,
+   * but the first is the builder answering the exact question this function
+   * exists to settle, and the second is where a picture happens to sit. The
+   * Notion caller used to pass the page cover as `preferredIndex` whenever
+   * the row had one, which inverted the documented hierarchy: a promotional
+   * cover took the card and the clean facade the builder explicitly filed
+   * was demoted to `property_secondary` — undisplayable, and never repaired
+   * because nothing promotional was ever chosen.
+   *
+   * ONE explicit claim outranks; TWO contradict each other and outrank
+   * nothing — the preferred structural designation (or ambiguity) stands,
+   * because picking between equal explicit claims by position would be this
+   * function guessing, which is the one thing it exists never to do.
+   */
+  const explicitPrimaries = candidates.filter(({ asset }) =>
+    asset.role?.evidenceLevel === 1 && isPrimaryRole(asset.role?.role));
 
   const preferred = container.preferredIndex ?? -1;
-  const chosen = candidates.some(({ index }) => index === preferred)
-    ? preferred
-    : candidates.length === 1 ? candidates[0].index : -1;
+  const chosen = explicitPrimaries.length === 1
+    ? explicitPrimaries[0].index
+    : candidates.some(({ index }) => index === preferred)
+      ? preferred
+      : candidates.length === 1 ? candidates[0].index : -1;
 
   return all.map((asset, index) => {
     if (named[index]) {
@@ -131,6 +168,10 @@ export function settleRowAssetRoles(
         ...asset,
         role: secondaryRole(named[index]!, `the source names this image "${asset.reference}"`),
       };
+    }
+    if (labelled[index]) {
+      // The source named this one's job. That statement stands as recorded.
+      return asset;
     }
     if (index === chosen) {
       /**
@@ -146,11 +187,16 @@ export function settleRowAssetRoles(
     }
     // A named-hero asset that lost is still property imagery, just not the one.
     if (isPrimaryRole(asset.role?.role)) {
+      const explicitWinner = explicitPrimaries.length === 1
+        && chosen === explicitPrimaries[0].index;
       return {
         ...asset,
         role: secondaryRole('property_secondary',
-          'the source carries several photographs on this row and does not say which is '
-          + 'the property\'s listing image'),
+          explicitWinner
+            ? 'the row\'s own property-image field designates the listing image, so this '
+              + 'one is kept as additional property imagery'
+            : 'the source carries several photographs on this row and does not say which is '
+              + 'the property\'s listing image'),
       };
     }
     return {
@@ -290,6 +336,20 @@ export function settleContainerMediaRoles(input: {
   media: Array<{ name: string; anchor?: string | null }>;
   /** The property each picture reached, index-aligned. Null is unattributed. */
   stockItemIds: Array<string | null>;
+  /**
+   * Whether the SOURCE stated each relationship, index-aligned — the
+   * `structural` half of the attribution that produced `stockItemIds`.
+   *
+   * REQUIRED, BECAUSE THIS MODULE'S CLAIM DEPENDS ON IT. The role written for
+   * a lone unnamed picture says "the container in the builder's own document
+   * designates this image as its property image" — LEVEL 3, enough to reach a
+   * card. That sentence is only true of an attribution the source actually
+   * stated; written over a positional guess it laundered the guess into a
+   * container designation nothing ever made. An attribution the caller
+   * cannot vouch for as structural gets no primary here, whatever else is
+   * true of it.
+   */
+  structural: boolean[];
   container: string;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
@@ -306,7 +366,7 @@ export function settleContainerMediaRoles(input: {
 
   const primaries = new Set<number>();
   for (const indexes of byProperty.values()) {
-    if (indexes.length === 1) primaries.add(indexes[0]);
+    if (indexes.length === 1 && input.structural[indexes[0]]) primaries.add(indexes[0]);
   }
 
   return media.map((entry, index) => {
@@ -323,6 +383,11 @@ export function settleContainerMediaRoles(input: {
       return noPrimaryEvidence(
         'the source did not tie this image to a property, so it is kept against the '
         + 'upload and shown against nobody');
+    }
+    if (!input.structural[index]) {
+      return noPrimaryEvidence(
+        'the source did not state this relationship itself, so nothing may present '
+        + 'the image as the property\'s designated picture');
     }
     return noPrimaryEvidence(
       'the source places several photographs against this property and does not say '
@@ -351,27 +416,51 @@ export interface MediaAttribution {
  * null when the format said nothing. `itemIdByAnchor` is the same vocabulary,
  * built from the rows that were actually imported.
  *
- * THE ORDERING FALLBACK IS SWITCHED OFF BY EVIDENCE. If any image in this
- * document carried an anchor, then the document DOES state relationships, and
- * an unanchored image is one the document deliberately did not tie to a row —
- * a letterhead, an estate map, a floor-plan legend. Attributing it by position
- * would contradict the very structure that placed its neighbours.
+ * ATTRIBUTION IS FROM STRUCTURE, NEVER FROM COUNTS OR ORDERING. This used to
+ * carry a fallback that paired image `i` with property `i` whenever the two
+ * lists happened to be the same length — and "happened" is the word: the
+ * media list is capped at forty, skips oversize and non-raster parts
+ * silently, and was sorted lexicographically (`image10` before `image2`), so
+ * the count coincidence could be MANUFACTURED by a truncation and the pairing
+ * order was not even the document's. One twelve-lot deck with unanchored
+ * photographs was enough to put lot 10's render on lot 2's card, badged
+ * "Builder supplied", with the correct answer sitting unused in every
+ * anchor. The one thing positional pairing ever asserted — that the source
+ * stated a relationship — is exactly what it cannot assert.
+ *
+ * THE ORDERING FALLBACK IS ALSO SWITCHED OFF BY THE PRESENCE OF ANCHORS, NOT
+ * ONLY BY THEIR RESOLUTION. A document that anchors its images DOES state
+ * relationships, even when none of its anchors matched an imported row (a
+ * deck whose properties came from prose rather than a table, a drawing
+ * anchored to the spacer row above its property): falling back to counting
+ * there would contradict the very structure the document supplied.
+ *
+ * WHAT REMAINS is the one case containment itself decides: a document that
+ * stated no relationships anywhere and holds exactly ONE property. Every
+ * image in that file is contained by that property's own document — the same
+ * kind of claim a slide or a table row states, at document granularity — so
+ * it is `structural`, and `rowCount` exists so a CALLER whose one-item list
+ * is a subset of a larger document (the repair, which lists only re-matched
+ * rows) cannot present a twelve-row file as a one-property one.
  */
 export function attributeDocumentMedia(input: {
   anchors: Array<string | null>;
   itemIdByAnchor: Record<string, string>;
   itemIdsInOrder: string[];
+  /**
+   * How many property rows the DOCUMENT stated, where the caller knows it.
+   * Defaults to the attribution list's own length, which is exact for the
+   * import (it lists every imported row) and conservative for nobody.
+   */
+  rowCount?: number;
 }): MediaAttribution[] {
   const { anchors, itemIdByAnchor, itemIdsInOrder } = input;
+  const rowCount = input.rowCount ?? itemIdsInOrder.length;
 
-  const anyStructural = anchors.some(
-    (anchor) => !!anchor && !!itemIdByAnchor[anchor],
-  );
+  const anyAnchor = anchors.some((anchor) => !!anchor);
+  const oneProperty = !anyAnchor && itemIdsInOrder.length === 1 && rowCount === 1;
 
-  const orderedAttribution = !anyStructural
-    && (itemIdsInOrder.length === 1 || itemIdsInOrder.length === anchors.length);
-
-  return anchors.map((anchor, index) => {
+  return anchors.map((anchor) => {
     const anchored = anchor ? itemIdByAnchor[anchor] : undefined;
     if (anchored) {
       return {
@@ -380,20 +469,19 @@ export function attributeDocumentMedia(input: {
         structural: true,
       };
     }
-    if (orderedAttribution) {
+    if (oneProperty) {
       return {
-        stockItemId: itemIdsInOrder.length === 1
-          ? itemIdsInOrder[0]
-          : itemIdsInOrder[index],
-        reason: 'one image per property in file order',
-        structural: false,
+        stockItemId: itemIdsInOrder[0],
+        reason: 'contained by the one property this document imported',
+        structural: true,
       };
     }
     return {
       stockItemId: null,
-      reason: anyStructural
+      reason: anyAnchor
         ? 'the source anchors its images and did not anchor this one; kept against the upload'
-        : 'image count does not match property count; kept against the upload',
+        : 'the format stated no relationships between its images and its properties; '
+          + 'kept against the upload',
       structural: false,
     };
   });

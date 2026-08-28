@@ -49,6 +49,10 @@ export function PortalAgreementConsent({
   onAccept,
   scrollHeightClassName = 'h-80 md:h-[28rem]',
   footerNote,
+  acknowledgements = PORTAL_TERMS_ACKNOWLEDGEMENTS,
+  acceptanceNotice = PORTAL_AGREEMENT_ACCEPTANCE_NOTICE,
+  fallbackTitle = PORTAL_AGREEMENT_TITLE,
+  beforeAccept,
 }: {
   terms: PortalTermsVersion | null;
   loading: boolean;
@@ -58,14 +62,32 @@ export function PortalAgreementConsent({
   scrollHeightClassName?: string;
   /** Rendered beside the version line; the portals use it for a security note. */
   footerNote?: ReactNode;
+  /**
+   * The statements to present, in the agreement's own order. Defaults to the
+   * portal wording, so all three portals are unchanged. The link channel
+   * passes its own — SAME KEYS, different words — because a partner with no
+   * portal account cannot meaningfully acknowledge portal obligations.
+   */
+  acknowledgements?: ReadonlyArray<{ key: string; heading: string; statement: string }>;
+  acceptanceNotice?: string;
+  fallbackTitle?: string;
+  /**
+   * Rendered immediately above the notice and the accept button.
+   *
+   * A portal knows who is accepting — they are signed in. The link channel
+   * does not, so it has to ask; and the place to ask is here, where the act
+   * happens, rather than at the top of the page above a long document the
+   * person then scrolls past and forgets.
+   */
+  beforeAccept?: ReactNode;
 }) {
   const [acknowledged, setAcknowledged] = useState<Record<string, boolean>>({});
 
   const acceptedKeys = useMemo(
-    () => PORTAL_TERMS_ACKNOWLEDGEMENTS.filter((item) => acknowledged[item.key]).map((item) => item.key),
-    [acknowledged],
+    () => acknowledgements.filter((item) => acknowledged[item.key]).map((item) => item.key),
+    [acknowledged, acknowledgements],
   );
-  const canProceed = Boolean(terms) && acceptedKeys.length === PORTAL_TERMS_ACKNOWLEDGEMENTS.length && !busy;
+  const canProceed = Boolean(terms) && acceptedKeys.length === acknowledgements.length && !busy;
 
   return (
     <div className="space-y-6">
@@ -74,7 +96,7 @@ export function PortalAgreementConsent({
           <div className="flex min-w-0 items-center gap-2">
             <FileText className="h-4 w-4 shrink-0 text-primary" aria-hidden />
             <h2 className="text-sm font-semibold text-foreground">
-              {terms?.title || PORTAL_AGREEMENT_TITLE}
+              {terms?.title || fallbackTitle}
             </h2>
           </div>
           <span className="text-xs text-muted-foreground">Version {terms?.version || 'current'}</span>
@@ -107,7 +129,7 @@ export function PortalAgreementConsent({
       {/* Mandatory acknowledgments — presented in the order the agreement sets. */}
       <div className="space-y-4">
         <h3 className="text-sm font-semibold text-foreground">Mandatory acknowledgments</h3>
-        {PORTAL_TERMS_ACKNOWLEDGEMENTS.map((item, index) => (
+        {acknowledgements.map((item, index) => (
           <div key={item.key} className="flex items-start gap-3">
             <Checkbox
               id={`acknowledge-${item.key}`}
@@ -130,8 +152,9 @@ export function PortalAgreementConsent({
       </div>
 
       <div className="space-y-4 border-t border-border pt-4">
+        {beforeAccept}
         <p className="text-sm leading-relaxed text-muted-foreground">
-          {PORTAL_AGREEMENT_ACCEPTANCE_NOTICE}
+          {acceptanceNotice}
         </p>
         <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground/60">

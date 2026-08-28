@@ -67,6 +67,17 @@ export const ELIGIBILITY_SETTLED_VERSION_COLUMN = 'marketplace_eligibility_settl
  */
 export const SANITIZATION_SETTLED_VERSION_COLUMN = 'image_sanitization_settled_version';
 
+/**
+ * How long ONE upload's source re-read may take before it stops itself.
+ *
+ * Fitted to the two production kills of 27 Aug 2026 rather than chosen: the
+ * import died at ~16s and this path at ~20s, both on the edge worker's
+ * resource limit. Twelve seconds leaves the invocation room to write its
+ * marker and answer, which is the difference between a sweep that converges
+ * and one that repeats itself for ever.
+ */
+const PROVENANCE_BUDGET_MS = 12_000;
+
 export interface SettlementOutcome {
   uploadId: string;
   /** True when this upload is now at BOTH current versions. */
@@ -723,7 +734,32 @@ export async function settleUploadSourceImages(
     repair = await repairSourceImagesForUpload(db, {
       organisationId: input.organisationId,
       uploadId: input.uploadId,
-      deadlineAt: input.deadlineAt,
+      /*
+       * ITS OWN BUDGET, NOT THE TICK'S WALL CLOCK.
+       *
+       * The tick allows itself 100 seconds, and this step never gets near
+       * that: re-reading a source means fetching a page, recovering its
+       * content, downloading pictures, hashing them and running the display
+       * classifier over each one — and where a row links a package, parsing a
+       * multi-megabyte PDF. That is CPU and memory, and the edge worker's
+       * RESOURCE limit ends the invocation long before any wall clock does.
+       *
+       * MEASURED, TWICE, ON THE SAME DAY. The import path died exactly this
+       * way at ~16s (POST | 546) and was fixed by budgeting its image phase.
+       * This path then died the same way at ~20s on the same stock list, with
+       * NOTHING stored and NOT ONE LINE LOGGED — a killed worker writes no
+       * marker, so the sweep repeated the whole thing every tick and never
+       * converged.
+       *
+       * `repairSourceImagesForUpload` already reports `incomplete` and is
+       * resumable by design; it simply was never given a deadline it could
+       * reach. Given one, the run ends of its own accord, banks the properties
+       * it did reach, and the next tick continues.
+       */
+      deadlineAt: Math.min(
+        input.deadlineAt ?? Number.MAX_SAFE_INTEGER,
+        Date.now() + PROVENANCE_BUDGET_MS,
+      ),
     }, deps);
   } catch (error) {
     const message = String((error as { safeMessage?: string; message?: string })?.safeMessage

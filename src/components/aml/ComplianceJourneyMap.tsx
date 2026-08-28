@@ -7,6 +7,7 @@ import {
   Building2, Scale, Check, Circle,
 } from "lucide-react";
 import type { AmlCase } from "@/lib/aml/amlCasesApi";
+import { stageStates } from "@/lib/aml/journeyMapStages.pure";
 import { amlRelianceApi, type IndependentAssessment, type RelianceGrant } from "@/lib/aml/amlRelianceApi";
 
 /**
@@ -24,22 +25,9 @@ import { amlRelianceApi, type IndependentAssessment, type RelianceGrant } from "
  * classes, so the map inherits both themes for free.
  */
 
-type StageState = "done" | "active" | "todo";
-
-function stageStates(caseRow: AmlCase, hasAttestation: boolean, activeGrants: number): StageState[] {
-  const portal = String(caseRow.client_portal_status ?? "not_started");
-  const gate = String(caseRow.service_gate_status ?? "");
-  const submitted = ["submitted", "under_review", "complete"].includes(portal)
-    || !["draft", "kyc_in_progress"].includes(String(caseRow.status));
-  const approved = ["approved", "approved_with_controls"].includes(gate);
-  const shared = hasAttestation && activeGrants > 0;
-
-  const submit: StageState = submitted ? "done" : "active";
-  const verify: StageState = approved ? "done" : submitted ? "active" : "todo";
-  const approve: StageState = approved ? "done" : submitted ? "active" : "todo";
-  const share: StageState = shared ? "done" : approved ? "active" : "todo";
-  return [submit, verify, approve, share];
-}
+/* The node states are derived in `journeyMapStages.pure.ts` — each node
+ * answered by its own dimension (decision ≠ gate ≠ sharing), pinned by
+ * tests there. This component only renders the answer. */
 
 const STAGES = [
   { icon: FileText, label: "Client submits", sub: "KYC & onboarding" },

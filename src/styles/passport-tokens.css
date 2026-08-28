@@ -826,10 +826,21 @@
   background: var(--passport-surface-hover);
   color: var(--passport-text);
 }
-.passport-pagechip[aria-current="true"] {
+.passport-pagechip[aria-current="true"],
+.passport-pagechip[aria-pressed="true"] {
   border-color: rgba(217, 166, 31, 0.55);
   background: rgba(217, 166, 31, 0.12);
   color: var(--passport-gold-bright);
+}
+/* A control at its limit stays legible rather than disappearing: the reader
+   needs to see that 100% IS the fit, not wonder where the button went. */
+.passport-pagechip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.passport-pagechip:disabled:hover {
+  background: var(--passport-surface-raised);
+  color: var(--passport-text-muted);
 }
 
 .passport-sync {

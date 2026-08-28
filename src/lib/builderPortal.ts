@@ -127,7 +127,35 @@ export async function invokeBuilderFunction<T = any>(
     }
     return { data, error: null };
   } catch (error: any) {
-    return { data: null, error: { message: error?.message || 'Network error' } };
+    /**
+     * THE REQUEST NEVER PRODUCED A RESPONSE, and the browser cannot say why.
+     *
+     * `fetch` rejects identically for an offline client, a DNS failure, a CORS
+     * refusal and — the case this wording exists for — an edge worker KILLED
+     * mid-request on its resource limit, which emits no body and no CORS
+     * headers. The browser surfaces all of them as "Failed to fetch", which is
+     * a statement about this tab and not about the server.
+     *
+     * That mattered in production on 27 Aug 2026: a stock import was killed
+     * after it had already committed the upload and every property in it, the
+     * portal reported "Failed to fetch", and the builder — reasonably reading
+     * that as "nothing happened" — imported the same list again.
+     *
+     * So the message says what is actually known: the request did not
+     * complete, and whether the work happened is UNDETERMINED. `abort` is
+     * separated because that one the caller did on purpose.
+     */
+    const aborted = error?.name === 'AbortError';
+    return {
+      data: null,
+      error: {
+        message: aborted
+          ? 'The request was cancelled.'
+          : 'The server did not answer this request, so whether it completed is '
+            + 'unknown. Refresh before trying again.',
+        code: aborted ? 'request_aborted' : 'transport_failed',
+      },
+    };
   }
 }
 

@@ -113,8 +113,12 @@ jobs:
 
       # Scoped to the Template Builder test surface (all editor logic). The wider
       # repo has pre-existing failing/flaky suites (e.g. src/utils finance scenario
-      # tests) unrelated to this rehaul; `npm run build` below still type-checks the
-      # entire app, including the editor edits.
+      # tests) unrelated to this rehaul.
+      #
+      # `npm run build` below does NOT type-check the app, whatever this comment
+      # used to say: Vite strips types rather than checking them, which is how an
+      # identifier that does not exist reached production through a green build.
+      # The undefined-identifier gate further down is what covers that.
       - name: Unit tests (Template Builder surface)
         run: npx vitest run src/lib/reportTemplate
 
@@ -218,7 +222,44 @@ jobs:
             src/lib/__tests__/builderStockSourceImages.test.ts \
             src/lib/__tests__/builderStockNotion.test.ts \
             src/lib/__tests__/builderStockNormalise.test.ts \
-            src/lib/__tests__/builderStockUrlSource.test.ts
+            src/lib/__tests__/builderStockUrlSource.test.ts \
+            src/lib/__tests__/builderStockMarketplaceEligibility.test.ts \
+            src/lib/__tests__/builderStockOverlayInpaint.test.ts \
+            src/lib/__tests__/builderStockDetectionResidue.test.ts \
+            src/lib/__tests__/builderStockSanitizeOverlay.test.ts \
+            src/lib/__tests__/builderStockDecodeFidelity.test.ts \
+            src/lib/__tests__/builderStockPreviewSanitization.test.ts \
+            src/lib/__tests__/builderStockImportBoundary.test.ts \
+            src/lib/__tests__/builderStockImagePriority.test.ts \
+            src/lib/__tests__/builderPortalTransport.test.ts \
+            src/lib/__tests__/builderStockSettlementLiveness.test.ts \
+            src/lib/__tests__/builderStockFallbackDriver.test.ts \
+            src/lib/__tests__/builderStockCronGate.test.ts \
+            src/lib/__tests__/builderStockPackageAttempt.test.ts \
+            src/lib/__tests__/builderStockCloudflareWorker.test.ts
+
+      # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
+      # scanner, lint run or typecheck ever reached it — its test file sat
+      # beside the list above without being on it, and every proof in it (the
+      # no-external-URL assertion, the constant-time construction, the
+      # wrangler-has-no-credentials pin) ran on no runner. The test is named
+      # above; these two give the worker the lint and typecheck every other
+      # deployed process gets.
+      - name: Cloudflare worker — lint and typecheck
+        run: |
+          npx eslint cloudflare
+          npx tsc --noEmit -p tsconfig.worker.json
+
+      # An identifier that does not exist is not type debt, and `npm run build`
+      # cannot see it — Vite strips types instead of checking them, and the
+      # obvious `tsc -p tsconfig.json` compiles nothing because that file
+      # declares `"files": []` and delegates to project references. So the app
+      # project is type-checked here, and exactly one class is fatal: a name
+      # that does not exist throws a ReferenceError the moment it renders, and
+      # a React component that throws on render takes its whole page with it.
+      # That shipped once, to a public page reached from an emailed link.
+      - name: Undefined identifiers in src/ (never type debt)
+        run: node scripts/security/check-src-missing-names.mjs
 
       - name: Build
         run: npm run build
@@ -367,6 +408,7 @@ jobs:
           node scripts/security/check-step-up-audit-schema.mjs
           node scripts/security/check-step-up-session-binding.mjs
           node scripts/security/check-storage-upload-hardening.mjs
+          node scripts/security/check-cloudflare-worker-hardening.mjs
           node scripts/security/check-ghl-message-authz.mjs
           node scripts/security/check-market-qa-internal-auth.mjs
           node scripts/security/check-market-digest-authz.mjs

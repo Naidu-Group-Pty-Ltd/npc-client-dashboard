@@ -28,13 +28,15 @@
 import {
   driveDownloadUrl, driveFileId, driveFolderId, driveFolderUrl, isGoogleDriveHost,
   lotAndDesignFrom, parseDriveFolderListing, selectLotFolder, selectPackageDocument,
+  selectNamedDocument, selectPropertyPhotograph, streetAddressFrom,
+  type ScopedEntry,
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from './drivePackage.pure.ts';
 import {
   selectPdfPropertyPrimary, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
-import type { SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
+import { PRIMARY_ROLE, type SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
 /** Folder listings one repair run may read. Shared and cached across rows. */
 const MAX_LISTINGS_PER_RUN = 40;
@@ -99,8 +101,30 @@ export interface RecoveredPackageImage {
   role: SourceImageRoleAssignment;
 }
 
+/**
+ * A photograph the builder FILED under this property, taken as it stands.
+ *
+ * Deliberately not a `RecoveredPackageImage`: that type's provenance is a PDF
+ * page, an object number and a crop, and a JPEG sitting in a folder has none of
+ * those. Recording a page number of 1 for a file that has no pages would make
+ * the audit row say something untrue about where the picture came from, so this
+ * carries what is actually known — the file, and the folders that attribute it.
+ */
+export interface RecoveredPackagePhotograph {
+  bytes: Uint8Array;
+  contentType: string;
+  reference: string;
+  fileName: string;
+  fileUrl: string;
+  /** Ancestor folders, outermost first. This is the attribution. */
+  folderPath: string[];
+  role: SourceImageRoleAssignment;
+}
+
 export type PackageOutcome =
   | { status: 'recovered'; image: RecoveredPackageImage }
+  /** A photograph filed under this property, used as the file stands. */
+  | { status: 'recovered_photograph'; photograph: RecoveredPackagePhotograph }
   /** The link was read and stated nothing that identifies this property. */
   | { status: 'not_identified'; detail: string }
   /** The link could not be read at all without credentials. */
@@ -113,7 +137,12 @@ export type PackageOutcome =
  * design, and both have to appear on the document before it is accepted.
  */
 export async function recoverPackageImage(
-  input: { packageUrl: string; label: string },
+  input: {
+    packageUrl: string;
+    label: string;
+    /** The row's own building size, for telling two variants of one lot apart. */
+    buildingSqm?: number | null;
+  },
   deps: {
     fetchPackage?: PackageFetcher;
     cache?: DriveListingCache;
@@ -191,10 +220,42 @@ export async function recoverPackageImage(
    * lot, this design, and of a kind that can be a package. Two candidates is
    * still the source declining to say, and the answer is still no image.
    */
-  const document = selectPackageDocument(entries, { lot, design })
+  let document = selectPackageDocument(entries, { lot, design })
     ?? (lotFolderId
       ? null
       : selectPackageDocument(await subtreeEntries(cache, root), { lot, design }));
+
+  /*
+   * THE REST OF WHAT THE BUILDER ACTUALLY SENT.
+   *
+   * Everything above asks one question — which PDF names this lot and this
+   * design — and on the live list it is the right question for nineteen rows
+   * and the wrong one for four. Lot 1663 Ringer Street links two packages that
+   * both name the lot, "(178 SqM)" and "(207 SqM)", so the count was two and
+   * the answer was nothing, while the row itself says `building_size_sqm: 178`.
+   * Lot 13 Hummock Rise links a folder whose every file is named by STREET
+   * ADDRESS and whose "Property Photos" folder holds thirty-eight photographs
+   * of the house; the lot token appears nowhere, and the card showed a Street
+   * View of the road.
+   *
+   * These run ONLY where the rules above returned nothing, so no selection that
+   * works today can change. Each is still the source naming the property, and
+   * each still refuses on ambiguity.
+   */
+  const identity = { lot, street: streetAddressFrom(input.label), design };
+  let photograph: ScopedEntry | null = null;
+  if (!document) {
+    const scope = lotFolderId ? entries : await subtreeEntries(cache, root);
+    document = selectNamedDocument(scope, identity, input.buildingSqm);
+    if (!document) {
+      photograph = selectPropertyPhotograph(await scopedSubtree(cache, root), identity);
+    }
+  }
+
+  if (photograph) {
+    return await takePhotographAsFiled(fetchPackage, photograph);
+  }
+
   if (!document) {
     return {
       status: 'not_identified',
@@ -225,6 +286,35 @@ export async function recoverPackageImage(
  * does. Every listing it asks for was asked for by that search first, so the
  * cache answers all of them and this costs no request.
  */
+/**
+ * Every entry inside the linked folder WITH the folders it sits under.
+ *
+ * `subtreeEntries` flattens, which is all a document selector needs — a file
+ * that names the lot names it wherever it is. A photograph does not name
+ * anything, so where the builder filed it IS its attribution, and the path has
+ * to survive the walk. Same bound, same cache, same tree.
+ */
+async function scopedSubtree(
+  cache: DriveListingCache,
+  root: DriveEntry[],
+): Promise<ScopedEntry[]> {
+  const out: ScopedEntry[] = root.map((entry) => ({ entry, path: [] }));
+  let level: ScopedEntry[] = out.slice();
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    const folders = level.filter(({ entry }) => entry.mimeType === DRIVE_FOLDER_MIME);
+    if (!folders.length) break;
+    const next: ScopedEntry[] = [];
+    for (const { entry, path } of folders) {
+      for (const child of await cache.list(entry.id)) {
+        next.push({ entry: child, path: [...path, entry.name] });
+      }
+    }
+    out.push(...next);
+    level = next;
+  }
+  return out;
+}
+
 async function subtreeEntries(
   cache: DriveListingCache,
   root: DriveEntry[],
@@ -287,6 +377,49 @@ async function findLotFolder(
  * a link and a brochure uploaded through the portal cannot disagree about
  * which picture is the property.
  */
+/**
+ * Take a photograph the builder filed under this property, exactly as it is.
+ *
+ * NO EXTRACTION AND NO INTERPRETATION. The bytes are the builder's own file;
+ * nothing is cropped, re-encoded or classified here. The role is stated at
+ * evidence level 3 because the ATTRIBUTION is structural — an ancestor folder
+ * names this property — and not because anything looked at the picture.
+ */
+async function takePhotographAsFiled(
+  fetchPackage: PackageFetcher,
+  found: ScopedEntry,
+): Promise<PackageOutcome> {
+  const url = driveDownloadUrl(found.entry.id);
+  let fetched: { bytes: Uint8Array; finalUrl: string };
+  try {
+    fetched = await fetchPackage(url);
+  } catch {
+    return { status: 'unreachable', detail: 'That photograph could not be downloaded.' };
+  }
+  if (!fetched?.bytes?.length) {
+    return { status: 'unreachable', detail: 'That photograph came back empty.' };
+  }
+
+  const where = [...found.path, found.entry.name].join('/');
+  return {
+    status: 'recovered_photograph',
+    photograph: {
+      bytes: fetched.bytes,
+      contentType: found.entry.mimeType,
+      reference: where,
+      fileName: found.entry.name,
+      fileUrl: url,
+      folderPath: found.path,
+      role: {
+        role: PRIMARY_ROLE,
+        evidenceLevel: 3,
+        evidence: where,
+        reason: 'The builder filed this photograph in a folder naming this property.',
+      },
+    },
+  };
+}
+
 async function extractFromDocument(
   fetchPackage: PackageFetcher,
   readPageTexts: (bytes: Uint8Array) => Promise<

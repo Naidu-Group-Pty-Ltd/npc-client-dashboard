@@ -28,8 +28,18 @@ import {
 } from '../compileTemplateForPdf';
 import { parseTemplate } from '../templateSchema';
 import { assertSafeRenderResources } from '../../../../supabase/functions/_shared/renderResourcePolicy.pure';
+import { SUPABASE_URL } from '@/integrations/supabase/env';
 
-const PROJECT = 'https://dduzbchuswwbefdunfct.supabase.co';
+/**
+ * THIS deployment's own project, resolved rather than typed.
+ *
+ * It was the prime's ref as a literal, inherited verbatim when this repository
+ * was mirrored — so the one case that asserts a project-storage URL is left
+ * alone was pointing at a FOREIGN project, and the code correctly dropped it.
+ * The test failed while the behaviour it describes was right, which is the
+ * worst way for a fixture to be wrong.
+ */
+const PROJECT = SUPABASE_URL;
 
 const templateWith = (blocks: unknown[]) => parseTemplate({
   version: 1,

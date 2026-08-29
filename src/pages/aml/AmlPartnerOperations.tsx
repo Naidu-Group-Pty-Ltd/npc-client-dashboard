@@ -157,7 +157,7 @@ export default function AmlPartnerOperations() {
                       {q.count}
                     </td>
                     <td className={`py-1.5 pr-3 text-xs ${ageTone(q.age)}`}>
-                      {q.oldestAt ? new Date(q.oldestAt).toLocaleDateString() : "—"}
+                      {q.oldestAt ? new Date(q.oldestAt).toLocaleDateString('en-AU') : "—"}
                       {q.age !== "ok" && <span className="ml-1 uppercase">{q.age}</span>}
                     </td>
                     <td className="py-1.5 pr-3 text-xs text-muted-foreground">

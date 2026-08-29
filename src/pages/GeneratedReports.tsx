@@ -1002,7 +1002,7 @@ export default function GeneratedReports() {
             <div className="flex flex-col gap-3 rounded-lg border border-warning/50 bg-warning/10 p-4 sm:flex-row sm:items-center sm:justify-between" role="alert">
               <div>
                 <p className="font-medium text-foreground">The latest investment reports could not be loaded.</p>
-                <p className="text-sm text-muted-foreground">Showing data from {investmentLastSuccessfulLoad.toLocaleString()}. {investmentError.message}{investmentError.correlationId ? ` Reference: ${investmentError.correlationId}` : ''}</p>
+                <p className="text-sm text-muted-foreground">Showing data from {investmentLastSuccessfulLoad.toLocaleString('en-AU')}. {investmentError.message}{investmentError.correlationId ? ` Reference: ${investmentError.correlationId}` : ''}</p>
               </div>
               <Button variant="outline" size="sm" onClick={() => void fetchInvestmentReports()}>Retry</Button>
             </div>

@@ -151,7 +151,7 @@ export function DataIntegrityPanel({
               </Badge>
               {lastValidation && (
                 <span className="text-sm text-muted-foreground">
-                  Last check: {lastValidation.toLocaleTimeString()}
+                  Last check: {lastValidation.toLocaleTimeString('en-AU')}
                 </span>
               )}
             </div>

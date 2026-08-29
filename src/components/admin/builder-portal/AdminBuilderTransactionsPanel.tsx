@@ -470,7 +470,7 @@ export function AdminBuilderTransactionsPanel({ canEdit }: { canEdit: boolean })
             <div className="rounded-lg border p-3 text-sm">
               <p className="font-medium">Currently linked</p>
               <p className="text-xs text-muted-foreground">
-                Source {caseLink.link_source} · {new Date(caseLink.linked_at).toLocaleString()}
+                Source {caseLink.link_source} · {new Date(caseLink.linked_at).toLocaleString('en-AU')}
               </p>
               <Button
                 className="mt-3" size="sm" variant="outline" disabled={busy}

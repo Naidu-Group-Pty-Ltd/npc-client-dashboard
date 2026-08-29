@@ -3045,7 +3045,7 @@ export function StrategyScenarioModeling({
                   </div>
                   <p className="text-xs text-muted-foreground">
                     Capacity: {formatCapacity(preset.result.borrowingCapacity)}
-                    {!preset.isBase && ` · Saved ${new Date(preset.createdAt).toLocaleDateString()}`}
+                    {!preset.isBase && ` · Saved ${new Date(preset.createdAt).toLocaleDateString('en-AU')}`}
                     {preset.replayAudit?.baseAssessmentId && ` · Base ${preset.replayAudit.baseAssessmentId.slice(0, 8)}`}
                   </p>
                   {drift?.isStale && (

@@ -172,3 +172,50 @@ export async function readItemWorkPending(db: any): Promise<ItemWorkPending> {
     outstanding: Number(row.outstanding ?? 0) || 0,
   };
 }
+
+export interface PublicationOutcome {
+  available: boolean;
+  published: boolean;
+  reason?: string;
+  promoted?: number;
+  archived?: number;
+  staged?: number;
+  sourceOutstanding?: number;
+}
+
+/**
+ * Publish this upload, IF it is ready.
+ *
+ * The readiness rule is evaluated inside the same statement that flips the
+ * rows, so nothing can change between the check and the act — which is why
+ * this is one RPC rather than a read here and a write after it. A caller may
+ * ask on every completed item; asking is cheap and refusing is the normal
+ * answer.
+ *
+ * `available: false` is deployment skew, exactly as for the claim: the
+ * publication migration is not applied yet, the upload's rows are simply not
+ * staged, and the caller carries on. It is never an outage.
+ */
+export async function publishUploadIfReady(
+  db: any,
+  uploadId: string,
+): Promise<PublicationOutcome> {
+  const { data, error } = await db.rpc('publish_builder_stock_upload', {
+    p_upload_id: uploadId,
+  });
+  if (error) {
+    if (isMissingCapability(error)) return { available: false, published: false };
+    throw new Error(`builder stock publication failed: ${
+      (error as { message?: string }).message ?? 'unknown'}`);
+  }
+  const row = (data ?? {}) as Record<string, unknown>;
+  return {
+    available: true,
+    published: row.published === true,
+    reason: typeof row.reason === 'string' ? row.reason : undefined,
+    promoted: Number(row.promoted ?? 0) || 0,
+    archived: Number(row.archived ?? 0) || 0,
+    staged: Number(row.staged ?? 0) || 0,
+    sourceOutstanding: Number(row.source_outstanding ?? 0) || 0,
+  };
+}

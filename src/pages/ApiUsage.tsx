@@ -645,7 +645,7 @@ export default function ApiUsage() {
           <ApiUsageMetricCard
             icon={<Zap className="h-4 w-4 text-primary" />}
             label="API Calls"
-            value={data.summary.totalCalls.toLocaleString()}
+            value={data.summary.totalCalls.toLocaleString('en-AU')}
             caption={`${data.summary.successRate}% success`}
           />
           <ApiUsageMetricCard
@@ -710,7 +710,7 @@ export default function ApiUsage() {
                   icon={<CheckCircle2 className="h-4 w-4" />}
                   label="Reliability"
                   value={`${data.summary.successRate}%`}
-                  detail={`${data.summary.successCalls.toLocaleString()} successful / ${data.summary.errorCalls.toLocaleString()} errors`}
+                  detail={`${data.summary.successCalls.toLocaleString('en-AU')} successful / ${data.summary.errorCalls.toLocaleString('en-AU')} errors`}
                 />
                 <ApiUsageInsightTile
                   icon={<Clock className="h-4 w-4" />}
@@ -862,7 +862,7 @@ export default function ApiUsage() {
                 <ApiUsageMetricCard
                   icon={<Activity className="h-4 w-4 text-primary" />}
                   label="LLM Requests"
-                  value={data.consumption.summary.totalRequests.toLocaleString()}
+                  value={data.consumption.summary.totalRequests.toLocaleString('en-AU')}
                   caption="Tracked API calls"
                 />
                 <ApiUsageMetricCard
@@ -1047,7 +1047,7 @@ export default function ApiUsage() {
                               </div>
                             </td>
                             <td className="hidden min-w-0 truncate p-3 font-mono text-xs text-muted-foreground sm:table-cell" title={log.model || '—'}>{log.model || '—'}</td>
-                            <td className="p-3 text-xs font-medium text-foreground tabular-nums">{(log.tokens || 0).toLocaleString()}</td>
+                            <td className="p-3 text-xs font-medium text-foreground tabular-nums">{(log.tokens || 0).toLocaleString('en-AU')}</td>
                             <td className="hidden p-3 text-xs text-muted-foreground tabular-nums md:table-cell">{log.cost ? `$${log.cost.toFixed(4)}` : '—'}</td>
                             <td className="p-3">
                               <ApiUsageStatusBadge status={log.status} />
@@ -1343,18 +1343,18 @@ export default function ApiUsage() {
                   icon={<CheckCircle2 className="h-4 w-4 text-success-foreground0" />}
                   label="Success Rate"
                   value={`${data.summary.successRate}%`}
-                  caption={`${data.summary.successCalls.toLocaleString()} successful`}
+                  caption={`${data.summary.successCalls.toLocaleString('en-AU')} successful`}
                 />
                 <ApiUsageMetricCard
                   icon={<XCircle className="h-4 w-4 text-destructive-foreground0" />}
                   label="Errors"
-                  value={data.summary.errorCalls.toLocaleString()}
+                  value={data.summary.errorCalls.toLocaleString('en-AU')}
                   caption="Failed health interactions"
                 />
                 <ApiUsageMetricCard
                   icon={<Activity className="h-4 w-4 text-primary" />}
                   label="Throughput"
-                  value={data.summary.totalCalls.toLocaleString()}
+                  value={data.summary.totalCalls.toLocaleString('en-AU')}
                   caption="Total API calls"
                 />
               </div>
@@ -1523,19 +1523,19 @@ export default function ApiUsage() {
                 <ApiUsageMetricCard
                   icon={<Activity className="h-4 w-4 text-primary" />}
                   label="Log Entries"
-                  value={filteredHealthLogs.length.toLocaleString()}
+                  value={filteredHealthLogs.length.toLocaleString('en-AU')}
                   caption="Matching current filters"
                 />
                 <ApiUsageMetricCard
                   icon={<CheckCircle2 className="h-4 w-4 text-success-foreground0" />}
                   label="Successful"
-                  value={filteredHealthLogs.filter(log => log.status === 'success').length.toLocaleString()}
+                  value={filteredHealthLogs.filter(log => log.status === 'success').length.toLocaleString('en-AU')}
                   caption="Existing success severity"
                 />
                 <ApiUsageMetricCard
                   icon={<XCircle className="h-4 w-4 text-destructive-foreground0" />}
                   label="Errors"
-                  value={filteredHealthLogs.filter(log => log.status !== 'success').length.toLocaleString()}
+                  value={filteredHealthLogs.filter(log => log.status !== 'success').length.toLocaleString('en-AU')}
                   caption="Existing error severity"
                 />
               </div>

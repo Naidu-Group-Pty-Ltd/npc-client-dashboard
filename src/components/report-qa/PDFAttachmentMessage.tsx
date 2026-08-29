@@ -70,7 +70,7 @@ export const PDFAttachmentMessage: React.FC<PDFAttachmentMessageProps> = ({
               {attachment.fileName}
             </h4>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {formatFileSize(attachment.fileSize)} • Generated {new Date(attachment.createdAt).toLocaleString()}
+              {formatFileSize(attachment.fileSize)} • Generated {new Date(attachment.createdAt).toLocaleString('en-AU')}
             </p>
             
             {/* Action Buttons */}

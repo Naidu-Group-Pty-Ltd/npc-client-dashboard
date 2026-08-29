@@ -155,7 +155,7 @@ export function UserTableRow({
       </TableCell>
       <TableCell className="py-4">
         {u.last_login_at ? (
-          <div className="flex items-center gap-1 text-sm text-muted-foreground" title={new Date(u.last_login_at).toLocaleString()}>
+          <div className="flex items-center gap-1 text-sm text-muted-foreground" title={new Date(u.last_login_at).toLocaleString('en-AU')}>
             <Clock className="h-3 w-3" />
             {formatDistanceToNow(new Date(u.last_login_at), { addSuffix: true })}
           </div>
@@ -164,7 +164,7 @@ export function UserTableRow({
         )}
       </TableCell>
       <TableCell className="py-4 text-sm text-muted-foreground">
-        {new Date(u.created_at).toLocaleDateString()}
+        {new Date(u.created_at).toLocaleDateString('en-AU')}
       </TableCell>
       <TableCell className="py-4 pr-5 text-right">
         <TooltipProvider>

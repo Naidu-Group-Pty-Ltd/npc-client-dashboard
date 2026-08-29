@@ -452,13 +452,13 @@ export function applyDelta(delta: ScenarioDelta, context: ScenarioContext): Delt
         const saving = Math.max(0, currentRepayment - newRepayment);
         if (saving > 0) effect.commitmentAdjustment = -saving;
         const repayLabel = Number.isFinite(manualRepayment as number)
-          ? `manual $${Math.round(manualRepayment as number).toLocaleString()}/mo`
+          ? `manual $${Math.round(manualRepayment as number).toLocaleString('en-AU')}/mo`
           : `IO @ ${propertyRatePct.toFixed(2)}%`;
         const periodLabel = Number.isFinite(ioPeriodYears as number) && (ioPeriodYears as number) > 0
           ? ` (${ioPeriodYears}yr IO period)`
           : '';
         effect.acquisitionNotes.push(
-          `Refinance ${property.address?.slice(0, 30) || 'property'} → ${repayLabel}${periodLabel}: monthly servicing −$${Math.round(saving).toLocaleString()}`
+          `Refinance ${property.address?.slice(0, 30) || 'property'} → ${repayLabel}${periodLabel}: monthly servicing −$${Math.round(saving).toLocaleString('en-AU')}`
         );
         effect.description = `Refinance ${property.address?.slice(0, 30) || 'property'} to IO${periodLabel}`;
       }
@@ -496,7 +496,7 @@ export function applyDelta(delta: ScenarioDelta, context: ScenarioContext): Delt
         const delta$ = newRepayment - currentRepayment;
         effect.commitmentAdjustment = delta$;
         effect.acquisitionNotes.push(
-          `Reprice ${property.address?.slice(0, 30) || 'property'}: ${oldRatePct.toFixed(2)}% → ${newRatePct.toFixed(2)}% ${isIo ? '(IO)' : '(P&I)'}, monthly servicing ${delta$ >= 0 ? '+' : '−'}$${Math.round(Math.abs(delta$)).toLocaleString()}`
+          `Reprice ${property.address?.slice(0, 30) || 'property'}: ${oldRatePct.toFixed(2)}% → ${newRatePct.toFixed(2)}% ${isIo ? '(IO)' : '(P&I)'}, monthly servicing ${delta$ >= 0 ? '+' : '−'}$${Math.round(Math.abs(delta$)).toLocaleString('en-AU')}`
         );
         effect.description = `Reprice ${property.address?.slice(0, 30) || 'property'} to ${newRatePct.toFixed(2)}%`;
       }
@@ -659,12 +659,12 @@ export function applyDelta(delta: ScenarioDelta, context: ScenarioContext): Delt
 
       effect.releasedCapital = netRelease;
       const repayLabel = Number.isFinite(manualRepayment as number)
-        ? `manual $${Math.round(manualRepayment as number).toLocaleString()}/mo`
+        ? `manual $${Math.round(manualRepayment as number).toLocaleString('en-AU')}/mo`
         : repaymentType === 'principal_and_interest'
           ? `P&I @ ${assessmentRatePct.toFixed(2)}% over ${termYears}y`
           : `IO @ ${assessmentRatePct.toFixed(2)}% (buffered)`;
       effect.acquisitionNotes.push(
-        `Equity release on ${property.address?.slice(0, 30) || 'property'} @ ${ratePct.toFixed(2)}%: gross $${Math.round(grossRelease).toLocaleString()} × deploy ${(deploymentPercent * 100).toFixed(0)}% = $${Math.round(deployedGross).toLocaleString()} − LMI $${Math.round(deployedLmi).toLocaleString()} = $${Math.round(netRelease).toLocaleString()} usable. New LVR ${newLvr.toFixed(1)}% (cap: ${lvrResult.reason}). Servicing +$${Math.round(newSliceRepayment).toLocaleString()}/mo (${repayLabel}).`
+        `Equity release on ${property.address?.slice(0, 30) || 'property'} @ ${ratePct.toFixed(2)}%: gross $${Math.round(grossRelease).toLocaleString('en-AU')} × deploy ${(deploymentPercent * 100).toFixed(0)}% = $${Math.round(deployedGross).toLocaleString('en-AU')} − LMI $${Math.round(deployedLmi).toLocaleString('en-AU')} = $${Math.round(netRelease).toLocaleString('en-AU')} usable. New LVR ${newLvr.toFixed(1)}% (cap: ${lvrResult.reason}). Servicing +$${Math.round(newSliceRepayment).toLocaleString('en-AU')}/mo (${repayLabel}).`
       );
       effect.description = `Release equity from ${property.address?.slice(0, 30) || 'property'}`;
       break;
@@ -691,7 +691,7 @@ export function applyDelta(delta: ScenarioDelta, context: ScenarioContext): Delt
       const source = (delta.meta?.source as string | undefined) || '—';
       const pct = oldValue > 0 ? ((newValue - oldValue) / oldValue) * 100 : 0;
       effect.acquisitionNotes.push(
-        `Revalue ${property.address?.slice(0, 30) || 'property'}: $${Math.round(oldValue).toLocaleString()} → $${Math.round(newValue).toLocaleString()} (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%, basis: ${basis}, source: ${source})`
+        `Revalue ${property.address?.slice(0, 30) || 'property'}: $${Math.round(oldValue).toLocaleString('en-AU')} → $${Math.round(newValue).toLocaleString('en-AU')} (${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%, basis: ${basis}, source: ${source})`
       );
       effect.description = `Revalue ${property.address?.slice(0, 30) || 'property'}`;
       break;
@@ -817,7 +817,7 @@ export function applyDelta(delta: ScenarioDelta, context: ScenarioContext): Delt
         const matchedHeadroom = headroom.find(h => h.property.id === a.property.id);
         const capPctNote = matchedHeadroom ? ` cap ${(matchedHeadroom.capPct * 100).toFixed(0)}%` : '';
         securityNotes.push(
-          `${a.property.address?.slice(0, 25) || 'property'}: +$${Math.round(a.allocation).toLocaleString()} (LVR → ${newLvr.toFixed(1)}%${lmiSlice > 0 ? `, LMI $${Math.round(lmiSlice).toLocaleString()}` : ''}${capPctNote})`
+          `${a.property.address?.slice(0, 25) || 'property'}: +$${Math.round(a.allocation).toLocaleString('en-AU')} (LVR → ${newLvr.toFixed(1)}%${lmiSlice > 0 ? `, LMI $${Math.round(lmiSlice).toLocaleString('en-AU')}` : ''}${capPctNote})`
         );
       }
 
@@ -830,13 +830,13 @@ export function applyDelta(delta: ScenarioDelta, context: ScenarioContext): Delt
       const blendedNow = totalValue > 0 ? (totalDebt / totalValue) * 100 : 0;
       const blendedAfter = totalValue > 0 ? ((totalDebt + totalGross) / totalValue) * 100 : 0;
       effect.acquisitionNotes.push(
-        `Cross-collat pool (${members.length} properties, ${allocationStrategy}): blended LVR ${blendedNow.toFixed(1)}% → ${blendedAfter.toFixed(1)}% (target ${(safeBlended * 100).toFixed(1)}%). Gross $${Math.round(totalGross).toLocaleString()} − LMI $${Math.round(totalLmi).toLocaleString()} = $${Math.round(netPool).toLocaleString()} usable. Servicing +$${Math.round(totalIo).toLocaleString()}/mo IO.`
+        `Cross-collat pool (${members.length} properties, ${allocationStrategy}): blended LVR ${blendedNow.toFixed(1)}% → ${blendedAfter.toFixed(1)}% (target ${(safeBlended * 100).toFixed(1)}%). Gross $${Math.round(totalGross).toLocaleString('en-AU')} − LMI $${Math.round(totalLmi).toLocaleString('en-AU')} = $${Math.round(netPool).toLocaleString('en-AU')} usable. Servicing +$${Math.round(totalIo).toLocaleString('en-AU')}/mo IO.`
       );
       for (const n of securityNotes) effect.acquisitionNotes.push(`  · ${n}`);
       if (cappedPool < grossPool) {
         const minCap = headroom.length ? Math.min(...headroom.map(h => h.capPct)) : 0.95;
         effect.acquisitionNotes.push(
-          `  · ⚠ Pool capped at $${Math.round(cappedPool).toLocaleString()} (target wanted $${Math.round(grossPool).toLocaleString()}, lender per-security caps min ${(minCap * 100).toFixed(0)}% — see I7 cap matrix).`
+          `  · ⚠ Pool capped at $${Math.round(cappedPool).toLocaleString('en-AU')} (target wanted $${Math.round(grossPool).toLocaleString('en-AU')}, lender per-security caps min ${(minCap * 100).toFixed(0)}% — see I7 cap matrix).`
         );
       }
       effect.description = `Cross-collat release pool @ ${(safeBlended * 100).toFixed(0)}% blended LVR`;
@@ -979,9 +979,9 @@ export function computeAcquisitionCapacity(
   // Final settle-pass refreshes stampDuty/lmi/loanAvail at the converged price.
   purchasePrice = stepFn(purchasePrice);
 
-  if (lmi > 0) notes.push(`LMI ${lmiMode === 'debt_capitalised' ? 'capitalised onto loan' : 'deducted from settlement cash'}: $${Math.round(lmi).toLocaleString()}`);
-  if (stampDuty > 0) notes.push(`${state} stamp duty: $${Math.round(stampDuty).toLocaleString()} (${intent}${isFhb ? ', FHB' : ''})`);
-  if (otherCosts > 0) notes.push(`Acquisition costs (legals, inspections, registrations): $${Math.round(otherCosts).toLocaleString()}`);
+  if (lmi > 0) notes.push(`LMI ${lmiMode === 'debt_capitalised' ? 'capitalised onto loan' : 'deducted from settlement cash'}: $${Math.round(lmi).toLocaleString('en-AU')}`);
+  if (stampDuty > 0) notes.push(`${state} stamp duty: $${Math.round(stampDuty).toLocaleString('en-AU')} (${intent}${isFhb ? ', FHB' : ''})`);
+  if (otherCosts > 0) notes.push(`Acquisition costs (legals, inspections, registrations): $${Math.round(otherCosts).toLocaleString('en-AU')}`);
   // Phase I9 — surface the binding LVR cap so the PDF + UI can show
   // "max LVR for this security: 90%" alongside the dollar release.
   notes.push(`Acquisition LVR cap (${lvrCapResult.matrix.lenderId}, ${acqIntent}, ${acqKind}): ${(acquisitionLvrCap * 100).toFixed(0)}% — ${lvrCapResult.reason}`);
@@ -1088,11 +1088,11 @@ export function computeAcquisitionCapacity(
 
     if (cappedRequiredLoan < requiredLoanRaw) {
       loanCappedByLvr = true;
-      notes.push(`⚠ Target $${Math.round(target).toLocaleString()} requires loan > LVR cap (${(acquisitionLvrCap * 100).toFixed(0)}% × $${Math.round(target).toLocaleString()} = $${Math.round(lvrCapDollarTarget).toLocaleString()}). Increase deposit by $${Math.round(requiredLoanRaw - cappedRequiredLoan).toLocaleString()} to settle.`);
+      notes.push(`⚠ Target $${Math.round(target).toLocaleString('en-AU')} requires loan > LVR cap (${(acquisitionLvrCap * 100).toFixed(0)}% × $${Math.round(target).toLocaleString('en-AU')} = $${Math.round(lvrCapDollarTarget).toLocaleString('en-AU')}). Increase deposit by $${Math.round(requiredLoanRaw - cappedRequiredLoan).toLocaleString('en-AU')} to settle.`);
     }
     if (meetsTarget) {
       notes.push(
-        `✅ Target $${Math.round(target).toLocaleString()} achievable: needs loan $${Math.round(loanRequiredForPurchase).toLocaleString()} (capacity $${Math.round(borrowingCapacity).toLocaleString()}); net cash post-settlement $${Math.round(netCashAfterSettlement).toLocaleString()}.`
+        `✅ Target $${Math.round(target).toLocaleString('en-AU')} achievable: needs loan $${Math.round(loanRequiredForPurchase).toLocaleString('en-AU')} (capacity $${Math.round(borrowingCapacity).toLocaleString('en-AU')}); net cash post-settlement $${Math.round(netCashAfterSettlement).toLocaleString('en-AU')}.`
       );
     } else {
       const loanShort = Math.max(0, (loanRequiredForPurchase ?? 0) - borrowingCapacity);
@@ -1102,16 +1102,16 @@ export function computeAcquisitionCapacity(
       // "short by $0" whenever a non-price constraint was the blocker, which
       // reads as a contradiction of the ❌ in front of it.
       const binding = [
-        loanShort > 0 ? `serviceable capacity short $${Math.round(loanShort).toLocaleString()}` : null,
-        lvrShort > 0 ? `LVR cap short $${Math.round(lvrShort).toLocaleString()}` : null,
-        cashShort > 0 ? `settlement cash short $${Math.round(cashShort).toLocaleString()}` : null,
+        loanShort > 0 ? `serviceable capacity short $${Math.round(loanShort).toLocaleString('en-AU')}` : null,
+        lvrShort > 0 ? `LVR cap short $${Math.round(lvrShort).toLocaleString('en-AU')}` : null,
+        cashShort > 0 ? `settlement cash short $${Math.round(cashShort).toLocaleString('en-AU')}` : null,
       ].filter(Boolean);
       notes.push(
-        `❌ Target $${Math.round(target).toLocaleString()} NOT met: ` +
+        `❌ Target $${Math.round(target).toLocaleString('en-AU')} NOT met: ` +
         (binding.length > 0 ? binding.join('; ') : 'blocked by an acquisition constraint') +
         (shortfallToTarget > 0
-          ? `. Ceiling is $${Math.round(Math.max(0, purchasePrice)).toLocaleString()} — $${Math.round(shortfallToTarget).toLocaleString()} below target.`
-          : `. Total funds still reach $${Math.round(Math.max(0, purchasePrice)).toLocaleString()}.`)
+          ? `. Ceiling is $${Math.round(Math.max(0, purchasePrice)).toLocaleString('en-AU')} — $${Math.round(shortfallToTarget).toLocaleString('en-AU')} below target.`
+          : `. Total funds still reach $${Math.round(Math.max(0, purchasePrice)).toLocaleString('en-AU')}.`)
       );
     }
   } else {
@@ -1394,14 +1394,14 @@ function negativeGearingChange(
   return {
     net,
     notes: [
-      `Negative-gearing add-back moves $${Math.abs(net).toLocaleString()}/yr ` +
+      `Negative-gearing add-back moves $${Math.abs(net).toLocaleString('en-AU')}/yr ` +
       `${net > 0 ? 'up' : 'down'} under this scenario ` +
-      `($${base.annualAddBack.toLocaleString()} → $${scenario.annualAddBack.toLocaleString()}/yr) — ` +
+      `($${base.annualAddBack.toLocaleString('en-AU')} → $${scenario.annualAddBack.toLocaleString('en-AU')}/yr) — ` +
       `the assessed marginal rate changed from ` +
       `${(marginalTaxRateFor(ctx.baseInputs.grossAnnualIncome) * 100).toFixed(1)}% to ` +
       `${(marginalTaxRateFor(scenarioGrossAnnualIncome) * 100).toFixed(1)}%. ` +
       `Only the change is applied; the base position already carries ` +
-      `$${base.annualAddBack.toLocaleString()}/yr.`,
+      `$${base.annualAddBack.toLocaleString('en-AU')}/yr.`,
       ...scenario.notes,
     ],
   };
@@ -1499,7 +1499,7 @@ export function runScenario(
     dtiAdjustedIncome = dtiDen.dtiAdjustedAnnualIncome;
     if (dtiDen.dtiAdjustedAnnualIncome < newGross * 0.95 && dtiDen.dtiAdjustedAnnualIncome > 0) {
       total.acquisitionNotes.push(
-        `DTI denominator (APS 220-aligned): $${Math.round(dtiDen.dtiAdjustedAnnualIncome).toLocaleString()}/yr (${((dtiDen.dtiAdjustedAnnualIncome / newGross) * 100).toFixed(0)}% of gross). Bound into DTI cap path — capacity may be tighter than headline gross suggests.`
+        `DTI denominator (APS 220-aligned): $${Math.round(dtiDen.dtiAdjustedAnnualIncome).toLocaleString('en-AU')}/yr (${((dtiDen.dtiAdjustedAnnualIncome / newGross) * 100).toFixed(0)}% of gross). Bound into DTI cap path — capacity may be tighter than headline gross suggests.`
       );
     }
   }
@@ -1565,11 +1565,11 @@ export function runScenario(
   );
   if (refinedDti.exceedsApraTrigger || refinedDti.exceedsLenderCap) {
     total.acquisitionNotes.push(
-      `⚠ Honest DTI ${refinedDti.dtiRatio.toFixed(2)}× (${refinedDti.exceedsApraTrigger ? 'exceeds APRA 6× review trigger' : ''}${refinedDti.exceedsApraTrigger && refinedDti.exceedsLenderCap ? '; ' : ''}${refinedDti.exceedsLenderCap ? `exceeds lender cap ${ctx.baseInputs.dtiCapLimit}×` : ''}). Numerator $${Math.round(refinedDti.numerator).toLocaleString()} = existing $${Math.round(ctx.baseInputs.totalDebtBalances || 0).toLocaleString()} + proposed $${Math.round(proposedAcqLoan).toLocaleString()} + released $${Math.round(debtMoves.releasedCapitalDebt).toLocaleString()} − removed $${Math.round(debtMoves.debtRemovedByScenario).toLocaleString()}. Denominator $${Math.round(refinedDti.denominator).toLocaleString()}.`
+      `⚠ Honest DTI ${refinedDti.dtiRatio.toFixed(2)}× (${refinedDti.exceedsApraTrigger ? 'exceeds APRA 6× review trigger' : ''}${refinedDti.exceedsApraTrigger && refinedDti.exceedsLenderCap ? '; ' : ''}${refinedDti.exceedsLenderCap ? `exceeds lender cap ${ctx.baseInputs.dtiCapLimit}×` : ''}). Numerator $${Math.round(refinedDti.numerator).toLocaleString('en-AU')} = existing $${Math.round(ctx.baseInputs.totalDebtBalances || 0).toLocaleString('en-AU')} + proposed $${Math.round(proposedAcqLoan).toLocaleString('en-AU')} + released $${Math.round(debtMoves.releasedCapitalDebt).toLocaleString('en-AU')} − removed $${Math.round(debtMoves.debtRemovedByScenario).toLocaleString('en-AU')}. Denominator $${Math.round(refinedDti.denominator).toLocaleString('en-AU')}.`
     );
   } else if (debtMoves.debtRemovedByScenario > 0 || debtMoves.releasedCapitalDebt > 0) {
     total.acquisitionNotes.push(
-      `Honest DTI ${refinedDti.dtiRatio.toFixed(2)}× — numerator $${Math.round(refinedDti.numerator).toLocaleString()} (released $${Math.round(debtMoves.releasedCapitalDebt).toLocaleString()}, removed $${Math.round(debtMoves.debtRemovedByScenario).toLocaleString()}).`
+      `Honest DTI ${refinedDti.dtiRatio.toFixed(2)}× — numerator $${Math.round(refinedDti.numerator).toLocaleString('en-AU')} (released $${Math.round(debtMoves.releasedCapitalDebt).toLocaleString('en-AU')}, removed $${Math.round(debtMoves.debtRemovedByScenario).toLocaleString('en-AU')}).`
     );
   }
 
@@ -1681,7 +1681,7 @@ export function runScenarioWithInputs(
       deltaId: 'dti-cap',
       deltaType: 'dti_cap_change',
       severity: 'warning',
-      message: `Lender flipped to "${targetProfile2.displayName}" — income re-shaded to $${Math.round(computedShadedAnnual2).toLocaleString()}/yr (was $${Math.round(ctx.baseInputs.shadedAnnualIncome).toLocaleString()}). Confirm 2yr history before submission.`,
+      message: `Lender flipped to "${targetProfile2.displayName}" — income re-shaded to $${Math.round(computedShadedAnnual2).toLocaleString('en-AU')}/yr (was $${Math.round(ctx.baseInputs.shadedAnnualIncome).toLocaleString('en-AU')}). Confirm 2yr history before submission.`,
     });
   } else {
     computedShadedAnnual2 = Math.max(0, ctx.baseInputs.shadedAnnualIncome + total.shadedIncomeAdjustment);
@@ -1712,7 +1712,7 @@ export function runScenarioWithInputs(
       deltaId: expChange?.id ?? 'expense_change',
       deltaType: 'expense_change',
       severity: 'warning',
-      message: `Expense reduction floored at HEM benchmark $${Math.round(hemBenchmark2).toLocaleString()}/mo (requested $${Math.round(requestedExp2).toLocaleString()}). Banks use MAX(declared, HEM).`,
+      message: `Expense reduction floored at HEM benchmark $${Math.round(hemBenchmark2).toLocaleString('en-AU')}/mo (requested $${Math.round(requestedExp2).toLocaleString('en-AU')}). Banks use MAX(declared, HEM).`,
     });
     finalExpenses2 = hemBenchmark2;
   }
@@ -1729,7 +1729,7 @@ export function runScenarioWithInputs(
         deltaId: 'dti-denominator',
         deltaType: 'income_change',
         severity: 'warning',
-        message: `DTI denominator (APS 220): $${Math.round(dtiDen.dtiAdjustedAnnualIncome).toLocaleString()}/yr (${((dtiDen.dtiAdjustedAnnualIncome / newGross2) * 100).toFixed(0)}% of gross). Bound into cap path — capacity may be tighter than headline gross suggests.`,
+        message: `DTI denominator (APS 220): $${Math.round(dtiDen.dtiAdjustedAnnualIncome).toLocaleString('en-AU')}/yr (${((dtiDen.dtiAdjustedAnnualIncome / newGross2) * 100).toFixed(0)}% of gross). Bound into cap path — capacity may be tighter than headline gross suggests.`,
       });
     }
   }
@@ -1781,7 +1781,7 @@ export function runScenarioWithInputs(
       deltaId: 'dti-honest',
       deltaType: 'dti_cap_change',
       severity: 'warning',
-      message: `Honest DTI ${refinedDti2.dtiRatio.toFixed(2)}× ${refinedDti2.exceedsApraTrigger ? '(>6× APRA trigger)' : ''}${refinedDti2.exceedsLenderCap ? ` (>lender cap ${ctx.baseInputs.dtiCapLimit}×)` : ''}. Numerator $${Math.round(refinedDti2.numerator).toLocaleString()} (existing+proposed+released−removed).`,
+      message: `Honest DTI ${refinedDti2.dtiRatio.toFixed(2)}× ${refinedDti2.exceedsApraTrigger ? '(>6× APRA trigger)' : ''}${refinedDti2.exceedsLenderCap ? ` (>lender cap ${ctx.baseInputs.dtiCapLimit}×)` : ''}. Numerator $${Math.round(refinedDti2.numerator).toLocaleString('en-AU')} (existing+proposed+released−removed).`,
     });
   }
 
@@ -2028,7 +2028,7 @@ export function recommendSolutions(
       candidates.push({
         id: 'release-equity',
         title: 'Release Equity',
-        description: `Unlock ~$${Math.round(top.equity).toLocaleString()} from ${top.p.address?.slice(0, 28) || 'top property'} to seed the next deposit.`,
+        description: `Unlock ~$${Math.round(top.equity).toLocaleString('en-AU')} from ${top.p.address?.slice(0, 28) || 'top property'} to seed the next deposit.`,
         projectedCapacity: r.borrowingCapacity,
         capacityDelta: r.borrowingCapacity - baseCapacity,
         deltas,

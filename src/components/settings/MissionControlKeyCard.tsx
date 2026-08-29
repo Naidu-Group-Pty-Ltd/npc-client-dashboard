@@ -90,7 +90,7 @@ export function MissionControlKeyCard() {
       const bal = await fetchTokenBalance();
       toast({
         title: "Connection OK",
-        description: `Available: ${bal.available.toLocaleString()} · Reserved: ${bal.reserved.toLocaleString()}`,
+        description: `Available: ${bal.available.toLocaleString('en-AU')} · Reserved: ${bal.reserved.toLocaleString('en-AU')}`,
       });
       load();
     } catch (e: any) {
@@ -116,7 +116,7 @@ export function MissionControlKeyCard() {
       );
       if (error) throw new Error(error.message ?? "Failed");
       const revoke = data?.revokeAt
-        ? new Date(data.revokeAt).toLocaleString()
+        ? new Date(data.revokeAt).toLocaleString('en-AU')
         : "soon";
       toast({
         title: "Key rotated",
@@ -187,14 +187,14 @@ export function MissionControlKeyCard() {
               <Field label="Last successful call">
                 <span className="text-sm text-muted-foreground">
                   {info?.lastSuccessfulCallAt
-                    ? new Date(info.lastSuccessfulCallAt).toLocaleString()
+                    ? new Date(info.lastSuccessfulCallAt).toLocaleString('en-AU')
                     : "Never"}
                 </span>
               </Field>
               <Field label="Last rotation">
                 <span className="text-sm text-muted-foreground">
                   {info?.lastRotatedAt
-                    ? new Date(info.lastRotatedAt).toLocaleString()
+                    ? new Date(info.lastRotatedAt).toLocaleString('en-AU')
                     : "—"}
                 </span>
               </Field>

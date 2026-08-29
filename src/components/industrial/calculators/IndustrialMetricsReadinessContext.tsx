@@ -199,9 +199,9 @@ function SaveBackDialog({ open, onOpenChange, snapshot, saving, onConfirm }: { o
   const rows = [
     ['Base Rent p.a.', formatCurrency(snapshot.values.baseRent, 0)],
     ['Outgoings p.a.', formatCurrency(snapshot.values.outgoings, 0)],
-    ['GLA m²', snapshot.values.gla?.toLocaleString() ?? 'Pending'],
-    ['Site Area m²', snapshot.values.siteArea?.toLocaleString() ?? 'Pending'],
-    ['Hardstand m²', snapshot.values.hardstand?.toLocaleString() ?? 'Pending'],
+    ['GLA m²', snapshot.values.gla?.toLocaleString('en-AU') ?? 'Pending'],
+    ['Site Area m²', snapshot.values.siteArea?.toLocaleString('en-AU') ?? 'Pending'],
+    ['Hardstand m²', snapshot.values.hardstand?.toLocaleString('en-AU') ?? 'Pending'],
     ['Office %', formatPercent(snapshot.values.officePct)],
     ['Price', formatCurrency(snapshot.values.price, 0)],
     ['Net rent / m²', formatCurrency(snapshot.calculated.netRentPerSqm)],

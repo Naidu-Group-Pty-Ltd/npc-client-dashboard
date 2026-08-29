@@ -99,7 +99,7 @@ export function SiteCoverCard() {
       buildPreview: () => {
         const candidate = parsed.site ?? prefillValue(prefill, 'titleSiteAreaSqm') ?? prefillValue(prefill, 'scrapedSiteAreaSqm');
         if (!candidate || !prefill) return null;
-        return buildPreview('estimate-site-area', 'Estimate site area from scrape / title', String(candidate), `${Math.round(candidate * 0.98).toLocaleString()}–${Math.round(candidate * 1.02).toLocaleString()} m²`, 'AI Estimate', 'Uses linked title, property profile or scraped site-area references where available.', [`Address ${prefill.address}`, `Site area ${candidate} m²`], ['Current title plan confirmation'], ['Confirm against title, survey or contract before relying on site-based benchmarks.'], site);
+        return buildPreview('estimate-site-area', 'Estimate site area from scrape / title', String(candidate), `${Math.round(candidate * 0.98).toLocaleString('en-AU')}–${Math.round(candidate * 1.02).toLocaleString('en-AU')} m²`, 'AI Estimate', 'Uses linked title, property profile or scraped site-area references where available.', [`Address ${prefill.address}`, `Site area ${candidate} m²`], ['Current title plan confirmation'], ['Confirm against title, survey or contract before relying on site-based benchmarks.'], site);
       },
     },
     {
@@ -108,7 +108,7 @@ export function SiteCoverCard() {
       buildPreview: () => {
         const candidate = parsed.hardstand ?? prefillValue(prefill, 'aiEstimatedHardstandSqm') ?? (parsed.site !== null && parsed.gla !== null ? Number(Math.max(parsed.site - parsed.gla, 0).toFixed(2)) : null);
         if (candidate === null || !prefill) return null;
-        return buildPreview('estimate-hardstand', 'Estimate hardstand area', String(candidate), `${Math.round(candidate * 0.8).toLocaleString()}–${Math.round(candidate * 1.2).toLocaleString()} m²`, 'AI Estimate', 'Uses hardstand profile data, listing/site description or residual site area after building footprint as a preliminary yard proxy.', [`Site area ${parsed.site ?? 'unknown'} m²`, `GLA ${parsed.gla ?? 'unknown'} m²`], ['Measured hardstand plan', 'Hardstand quality and surface condition'], ['Confirm sealed usable yard area and exclude landscaping, easements and unusable circulation.'], hardstand);
+        return buildPreview('estimate-hardstand', 'Estimate hardstand area', String(candidate), `${Math.round(candidate * 0.8).toLocaleString('en-AU')}–${Math.round(candidate * 1.2).toLocaleString('en-AU')} m²`, 'AI Estimate', 'Uses hardstand profile data, listing/site description or residual site area after building footprint as a preliminary yard proxy.', [`Site area ${parsed.site ?? 'unknown'} m²`, `GLA ${parsed.gla ?? 'unknown'} m²`], ['Measured hardstand plan', 'Hardstand quality and surface condition'], ['Confirm sealed usable yard area and exclude landscaping, easements and unusable circulation.'], hardstand);
       },
     },
     {

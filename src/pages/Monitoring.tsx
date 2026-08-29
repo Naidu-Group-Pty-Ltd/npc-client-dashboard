@@ -178,7 +178,7 @@ export default function Monitoring() {
             {isLoading ? (
               <Skeleton className="h-8 w-24 rounded-lg" />
             ) : (
-              <div className="text-2xl font-bold tabular-nums text-foreground">{totalCalls.toLocaleString()}</div>
+              <div className="text-2xl font-bold tabular-nums text-foreground">{totalCalls.toLocaleString('en-AU')}</div>
             )}
             <p className="text-xs text-muted-foreground">Last 7 days</p>
           </CardContent>
@@ -212,7 +212,7 @@ export default function Monitoring() {
             {isLoading ? (
               <Skeleton className="h-8 w-24 rounded-lg" />
             ) : (
-              <div className="text-2xl font-bold tabular-nums text-foreground">{totalCacheEntries.toLocaleString()}</div>
+              <div className="text-2xl font-bold tabular-nums text-foreground">{totalCacheEntries.toLocaleString('en-AU')}</div>
             )}
             {isLoading ? (
               <Skeleton className="mt-1 h-3 w-20 rounded" />
@@ -305,7 +305,7 @@ export default function Monitoring() {
                   <div className="grid min-w-0 grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     <div className="min-w-0 rounded-xl border border-border/60 bg-card/55 p-3">
                       <p className="truncate text-muted-foreground">Total Calls</p>
-                      <p className="break-words font-semibold tabular-nums">{stat.total_calls.toLocaleString()}</p>
+                      <p className="break-words font-semibold tabular-nums">{stat.total_calls.toLocaleString('en-AU')}</p>
                     </div>
                     <div className="min-w-0 rounded-xl border border-border/60 bg-card/55 p-3">
                       <p className="truncate text-muted-foreground">Avg Response</p>
@@ -398,7 +398,7 @@ export default function Monitoring() {
                       )}
                       {stat.total_entries > 0 && (
                         <Badge variant="default" className="min-w-0 max-w-full rounded-full border border-primary/30 bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground shadow-sm shadow-primary/10">
-                          <span className="truncate tabular-nums">{stat.total_entries.toLocaleString()} entries</span>
+                          <span className="truncate tabular-nums">{stat.total_entries.toLocaleString('en-AU')} entries</span>
                         </Badge>
                       )}
                     </div>
@@ -409,11 +409,11 @@ export default function Monitoring() {
                       <div className="grid min-w-0 grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
                         <div className="min-w-0 rounded-xl border border-border/60 bg-card/55 p-3">
                           <p className="truncate text-muted-foreground">Live Data</p>
-                          <p className="break-words font-semibold tabular-nums text-foreground">{stat.live_data.toLocaleString()}</p>
+                          <p className="break-words font-semibold tabular-nums text-foreground">{stat.live_data.toLocaleString('en-AU')}</p>
                         </div>
                         <div className="min-w-0 rounded-xl border border-border/60 bg-card/55 p-3">
                           <p className="truncate text-muted-foreground">Estimated</p>
-                          <p className="break-words font-semibold tabular-nums text-foreground">{stat.estimated_data.toLocaleString()}</p>
+                          <p className="break-words font-semibold tabular-nums text-foreground">{stat.estimated_data.toLocaleString('en-AU')}</p>
                         </div>
                         <div className="min-w-0 rounded-xl border border-border/60 bg-card/55 p-3">
                           <p className="truncate text-muted-foreground">Avg Age</p>
@@ -487,7 +487,7 @@ export default function Monitoring() {
                     <CheckCircle2 className="h-4 w-4" />
                   </span>
                 </div>
-                <p className="break-words text-3xl font-bold tabular-nums text-foreground">{totalLiveData.toLocaleString()}</p>
+                <p className="break-words text-3xl font-bold tabular-nums text-foreground">{totalLiveData.toLocaleString('en-AU')}</p>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
                   From official sources
                 </p>
@@ -500,7 +500,7 @@ export default function Monitoring() {
                     <Zap className="h-4 w-4" />
                   </span>
                 </div>
-                <p className="break-words text-3xl font-bold tabular-nums text-foreground">{totalEstimatedData.toLocaleString()}</p>
+                <p className="break-words text-3xl font-bold tabular-nums text-foreground">{totalEstimatedData.toLocaleString('en-AU')}</p>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
                   Statistical estimates
                 </p>
@@ -522,7 +522,7 @@ export default function Monitoring() {
 
       {/* Footer */}
       <div aria-live="polite" className="mx-auto flex min-w-0 max-w-xl flex-col items-center rounded-2xl border border-border/60 bg-card/55 px-4 py-3 text-center text-sm text-muted-foreground shadow-sm">
-        <p className="min-w-0 break-words tabular-nums">Last refreshed: {lastRefresh.toLocaleTimeString()}</p>
+        <p className="min-w-0 break-words tabular-nums">Last refreshed: {lastRefresh.toLocaleTimeString('en-AU')}</p>
         <p className="mt-1 min-w-0 break-words leading-5">Data updates in real-time as services are used</p>
       </div>
     </DashboardThemeFrame>

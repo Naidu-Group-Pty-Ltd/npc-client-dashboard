@@ -114,7 +114,7 @@ export function DataQualityIndicator({ dataSources, inline = false, showDetails 
                 
                 <div className="flex items-center gap-1 text-xs text-muted-foreground pt-2 border-t">
                   <Clock className="h-3 w-3" />
-                  <span>Last updated: {new Date(sourceEntries[0][1]?.timestamp || Date.now()).toLocaleString()}</span>
+                  <span>Last updated: {new Date(sourceEntries[0][1]?.timestamp || Date.now()).toLocaleString('en-AU')}</span>
                 </div>
               </div>
             )}

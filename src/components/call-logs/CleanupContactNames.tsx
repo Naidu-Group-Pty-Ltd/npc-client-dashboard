@@ -52,7 +52,7 @@ export const CleanupContactNames: React.FC<{ onComplete?: () => void; triggerCla
   const [logs, setLogs] = useState<string[]>([]);
 
   const addLog = (message: string) => {
-    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
+    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('en-AU')}] ${message}`]);
   };
 
   const runCleanup = async () => {

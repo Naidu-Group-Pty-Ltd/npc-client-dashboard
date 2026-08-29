@@ -108,7 +108,7 @@ export function LenderSubmissionsPanel({ clientId, dealId }: Props) {
                 <div className="min-w-0">
                   <div className="font-medium truncate">{s.lender_name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {s.loan_amount ? `$${s.loan_amount.toLocaleString()}` : '—'}
+                    {s.loan_amount ? `$${s.loan_amount.toLocaleString('en-AU')}` : '—'}
                     {s.interest_rate ? ` · ${s.interest_rate.toFixed(2)}%` : ''}
                   </div>
                 </div>
@@ -247,7 +247,7 @@ function SubmissionDetailDialog({
                   ) : (timeline ?? []).map((e) => (
                     <div key={e.id} className="flex gap-3 text-sm">
                       <div className="text-xs text-muted-foreground tabular-nums shrink-0 w-24">
-                        {new Date(e.created_at).toLocaleDateString()}
+                        {new Date(e.created_at).toLocaleDateString('en-AU')}
                       </div>
                       <div className="flex-1">
                         <div className="font-medium">{e.event_label}</div>

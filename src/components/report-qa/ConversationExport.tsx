@@ -37,10 +37,10 @@ export function ConversationExport({ messages, title, reportNames, conversationI
   const template = useReportTemplateMenu('qa');
 
   const exportAsText = () => {
-    const header = `# ${title}\n\nReports: ${reportNames.join(', ')}\nExported: ${new Date().toLocaleString()}\n\n---\n\n`;
+    const header = `# ${title}\n\nReports: ${reportNames.join(', ')}\nExported: ${new Date().toLocaleString('en-AU')}\n\n---\n\n`;
     
     const content = messages.map(m => {
-      const timestamp = m.timestamp.toLocaleString();
+      const timestamp = m.timestamp.toLocaleString('en-AU');
       const role = m.role === 'user' ? '👤 You' : '🤖 Assistant';
       return `[${timestamp}] ${role}:\n${m.content}`;
     }).join('\n\n---\n\n');
@@ -55,10 +55,10 @@ export function ConversationExport({ messages, title, reportNames, conversationI
   };
 
   const exportAsMarkdown = () => {
-    const header = `# ${title}\n\n**Reports:** ${reportNames.join(', ')}\n\n**Exported:** ${new Date().toLocaleString()}\n\n---\n\n`;
+    const header = `# ${title}\n\n**Reports:** ${reportNames.join(', ')}\n\n**Exported:** ${new Date().toLocaleString('en-AU')}\n\n---\n\n`;
     
     const content = messages.map(m => {
-      const timestamp = m.timestamp.toLocaleString();
+      const timestamp = m.timestamp.toLocaleString('en-AU');
       const role = m.role === 'user' ? '**You**' : '**Assistant**';
       return `### ${role}\n*${timestamp}*\n\n${m.content}`;
     }).join('\n\n---\n\n');
@@ -96,7 +96,7 @@ export function ConversationExport({ messages, title, reportNames, conversationI
   const exportAsCSV = () => {
     const escapeCSV = (value: string) => `"${value.replace(/"/g, '""')}"`;
     const headers = ['First Name', 'Last Name', 'Email', 'Phone', 'Tags', 'Source', 'Conversation Title', 'Reports', 'Exported At', 'Timestamp', 'Role', 'Content'];
-    const exportedAt = new Date().toLocaleString();
+    const exportedAt = new Date().toLocaleString('en-AU');
 
     const rows = messages.map((message) => [
       '',
@@ -108,7 +108,7 @@ export function ConversationExport({ messages, title, reportNames, conversationI
       title,
       reportNames.join(', '),
       exportedAt,
-      message.timestamp.toLocaleString(),
+      message.timestamp.toLocaleString('en-AU'),
       message.role === 'user' ? 'User' : 'Assistant',
       message.content,
     ]);

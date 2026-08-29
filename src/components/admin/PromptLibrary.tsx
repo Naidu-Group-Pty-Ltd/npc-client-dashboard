@@ -329,7 +329,7 @@ export default function PromptLibrary() {
               )}
               {selected.updated_at && (
                 <div className="text-[10px] text-muted-foreground mt-1">
-                  Override last saved {new Date(selected.updated_at).toLocaleString()}
+                  Override last saved {new Date(selected.updated_at).toLocaleString('en-AU')}
                 </div>
               )}
             </div>

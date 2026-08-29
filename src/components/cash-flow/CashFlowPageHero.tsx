@@ -69,15 +69,15 @@ export function CashFlowPageHero({ reports, filteredReports, dateRangeLabel, bui
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5">
-            <HeroMetric icon={BarChart3} label="Cash-flow-ready reports" value={reports.length.toLocaleString()} />
-            <HeroMetric icon={Filter} label="Visible reports" value={filteredReports.length.toLocaleString()} />
+            <HeroMetric icon={BarChart3} label="Cash-flow-ready reports" value={reports.length.toLocaleString('en-AU')} />
+            <HeroMetric icon={Filter} label="Visible reports" value={filteredReports.length.toLocaleString('en-AU')} />
             <HeroMetric icon={CalendarDays} label="Date range" value={dateRangeLabel} />
-            <HeroMetric icon={Building2} label="Build types represented" value={representedBuildTypes.length.toLocaleString()} detail={getFilterDetail(buildTypeFilter)} />
+            <HeroMetric icon={Building2} label="Build types represented" value={representedBuildTypes.length.toLocaleString('en-AU')} detail={getFilterDetail(buildTypeFilter)} />
             {weakRentCount > 0 && (
               <HeroMetric
                 icon={AlertTriangle}
                 label="Missing/zero rent"
-                value={weakRentCount.toLocaleString()}
+                value={weakRentCount.toLocaleString('en-AU')}
                 detail="Loaded reports needing rent review"
                 warning
               />

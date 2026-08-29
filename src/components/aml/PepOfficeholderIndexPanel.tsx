@@ -49,11 +49,11 @@ function CoverageNote({ verdict }: { verdict: PepIndexVerdict }) {
             <span className="font-medium text-foreground">{c.label}</span>
             {" — "}
             {c.entryCount > 0 && c.lastSyncStatus === "succeeded"
-              ? `${c.entryCount.toLocaleString()} people`
+              ? `${c.entryCount.toLocaleString('en-AU')} people`
               : "not loaded"}
             {/* MEASURED, not claimed. A load holding two offices used to read
                 identically to one holding seven hundred. */}
-            {c.officeCount !== null && ` across ${c.officeCount.toLocaleString()} offices`}
+            {c.officeCount !== null && ` across ${c.officeCount.toLocaleString('en-AU')} offices`}
             {c.sourceAsAt && `, current to ${c.sourceAsAt}`}.
             <span className="block">Covers {c.covers}</span>
             {c.sampleOffices.length > 0 && (

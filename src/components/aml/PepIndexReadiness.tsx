@@ -87,8 +87,8 @@ export function PepIndexReadiness({ className }: { className?: string }) {
    */
   const asAt = loaded.map((c) => c.sourceAsAt).filter(Boolean).sort().reverse()[0] ?? null;
   const describe = (c: PepIndexCoverage) =>
-    `${c.label} — ${c.entryCount.toLocaleString()} people`
-    + (c.officeCount ? ` across ${c.officeCount.toLocaleString()} offices` : "");
+    `${c.label} — ${c.entryCount.toLocaleString('en-AU')} people`
+    + (c.officeCount ? ` across ${c.officeCount.toLocaleString('en-AU')} offices` : "");
 
   return (
     <p

@@ -155,7 +155,7 @@ export function ClientAmlSummaryCard({ clientId, clientName, isActive }: Props) 
                   ? ` · ${openRequests} open request${openRequests === 1 ? "" : "s"} with the client`
                   : ""}
               </span>
-              <span>Updated {new Date(c.updated_at).toLocaleDateString()}</span>
+              <span>Updated {new Date(c.updated_at).toLocaleDateString('en-AU')}</span>
             </div>
 
             <div className="flex flex-wrap gap-2">

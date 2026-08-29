@@ -117,7 +117,7 @@ export default function Feedback() {
                     Carries a single-use handoff, so the form knows this workspace and you, scales
                     its questions to your plan, and grants{' '}
                     <span className="font-medium text-foreground">
-                      {prompt?.rewardTokens?.toLocaleString() ?? 100} credits
+                      {prompt?.rewardTokens?.toLocaleString('en-AU') ?? 100} credits
                     </span>{' '}
                     on submit
                     {prompt?.rewardAvailable === false &&

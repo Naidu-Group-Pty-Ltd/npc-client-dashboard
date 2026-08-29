@@ -283,8 +283,20 @@ describe('TEST A — a public Notion stock list', () => {
     expect(outcome.detected).toBe(2);
     expect(outcome.imported).toBe(2);
     expect(outcome.failed).toBe(0);
-    // One table, the platform's own. No `notion_*` anything.
-    expect(new Set(writes.map((write) => write.table))).toEqual(new Set(['builder_stock_items']));
+    /*
+     * THE PLATFORM'S OWN TABLES AND NOBODY ELSE'S. No `notion_*` anything — a
+     * Notion list is a SOURCE, never a schema.
+     *
+     * Asserted as a rule about the names rather than as a fixed set: safe
+     * publication added a write to `builder_stock_uploads` (the uploads this
+     * one replaces, recorded before `upload_id` is re-pointed), which is the
+     * platform's own table and satisfies the rule this test exists for. A
+     * hard-coded list would have failed for a change that is exactly what it
+     * was asking for.
+     */
+    const written = new Set(writes.map((write) => write.table));
+    expect([...written].every((table) => table.startsWith('builder_stock_'))).toBe(true);
+    expect(written).toContain('builder_stock_items');
     expect(writes[0].row.organisation_id).toBe('org-1');
     expect(writes[0].row.upload_id).toBe('upload-1');
   });

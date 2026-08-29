@@ -190,10 +190,10 @@ export function InvoicesPanel() {
                       <TableRow key={r.id} className="transition-colors hover:bg-primary/5">
                         <TableCell className="align-top text-xs text-muted-foreground">
                           <span className="block whitespace-nowrap font-medium text-foreground">
-                            {new Date(r.issuedAt ?? r.createdAt).toLocaleDateString()}
+                            {new Date(r.issuedAt ?? r.createdAt).toLocaleDateString('en-AU')}
                           </span>
                           <span className="block truncate">
-                            {new Date(r.issuedAt ?? r.createdAt).toLocaleTimeString()}
+                            {new Date(r.issuedAt ?? r.createdAt).toLocaleTimeString('en-AU')}
                           </span>
                         </TableCell>
                         <TableCell className="align-top font-mono text-xs">{r.number ?? "—"}</TableCell>
@@ -203,7 +203,7 @@ export function InvoicesPanel() {
                           </span>
                           {r.periodStart && r.periodEnd && (
                             <span className="block truncate pt-1 text-xs text-muted-foreground">
-                              {new Date(r.periodStart).toLocaleDateString()} – {new Date(r.periodEnd).toLocaleDateString()}
+                              {new Date(r.periodStart).toLocaleDateString('en-AU')} – {new Date(r.periodEnd).toLocaleDateString('en-AU')}
                             </span>
                           )}
                         </TableCell>
@@ -212,7 +212,7 @@ export function InvoicesPanel() {
                         </TableCell>
                         <TableCell className="align-top"><StatusBadge status={r.status} /></TableCell>
                         <TableCell className="align-top text-xs text-muted-foreground">
-                          {r.paidAt ? new Date(r.paidAt).toLocaleDateString() : "—"}
+                          {r.paidAt ? new Date(r.paidAt).toLocaleDateString('en-AU') : "—"}
                         </TableCell>
                         <TableCell className="min-w-0 align-top text-xs">
                           <span className="block truncate" title={r.originUsername ?? undefined}>
@@ -249,7 +249,7 @@ export function InvoicesPanel() {
 
             <div className="flex min-w-0 flex-col justify-between gap-3 pt-1 sm:flex-row sm:items-center">
               <span className="text-xs text-muted-foreground">
-                {total.toLocaleString()} invoice{total === 1 ? "" : "s"}
+                {total.toLocaleString('en-AU')} invoice{total === 1 ? "" : "s"}
               </span>
               <div className="flex items-center gap-1">
                 <Button

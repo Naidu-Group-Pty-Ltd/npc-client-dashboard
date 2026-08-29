@@ -340,11 +340,11 @@ function resolveByRecency(sources: DataSource[]): ConflictResolutionResult {
       source: s.name,
       value: s.value,
       confidence: s.confidence,
-      reason: `Older data (${new Date(s.timestamp).toLocaleDateString()})`
+      reason: `Older data (${new Date(s.timestamp).toLocaleDateString('en-AU')})`
     })),
     resolutionMethod: 'most_recent',
     recommendation: sorted.length > 1 
-      ? `Using most recent data from ${new Date(selected.timestamp).toLocaleDateString()}`
+      ? `Using most recent data from ${new Date(selected.timestamp).toLocaleDateString('en-AU')}`
       : undefined
   };
 }

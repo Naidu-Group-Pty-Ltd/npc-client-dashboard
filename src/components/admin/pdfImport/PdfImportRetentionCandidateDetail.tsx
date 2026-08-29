@@ -78,8 +78,8 @@ export function PdfImportRetentionCandidateDetail({
           {event.importId && <Row label="Import" value={<code className="text-xs">{event.importId}</code>} />}
           {event.templateId && <Row label="Template" value={<code className="text-xs">{event.templateId}</code>} />}
           <Row label="Estimated bytes" value={formatEstimatedBytes(event.estimatedBytes)} />
-          {event.objectCreatedAt && <Row label="Object created" value={new Date(event.objectCreatedAt).toLocaleString()} />}
-          {event.objectUpdatedAt && <Row label="Object updated" value={new Date(event.objectUpdatedAt).toLocaleString()} />}
+          {event.objectCreatedAt && <Row label="Object created" value={new Date(event.objectCreatedAt).toLocaleString('en-AU')} />}
+          {event.objectUpdatedAt && <Row label="Object updated" value={new Date(event.objectUpdatedAt).toLocaleString('en-AU')} />}
           <Row label="Occurrences" value={event.occurrenceCount} />
           <Row label="Recommended" value={<span className="text-xs">{event.recommendedAction}</span>} />
         </div>

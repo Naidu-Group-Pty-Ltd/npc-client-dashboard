@@ -204,7 +204,7 @@ export function SanctionsPerimeterControl({
             <p className="text-muted-foreground">
               Recorded by {perimeter.recorded_by_label ?? "an authorised reviewer"}
               {perimeter.recorded_at
-                ? ` on ${new Date(perimeter.recorded_at).toLocaleDateString()}` : ""}
+                ? ` on ${new Date(perimeter.recorded_at).toLocaleDateString('en-AU')}` : ""}
             </p>
             <div>
               <span className="text-muted-foreground">Scopes not required:</span>

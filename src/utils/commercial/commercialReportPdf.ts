@@ -321,7 +321,7 @@ export async function generateCommercialInvestmentReport(propertyId: string): Pr
     ['WALE (income)', `${rentRoll.wale.waleByIncome.toFixed(2)} yrs`],
     ['WALE (area)', `${rentRoll.wale.waleByArea.toFixed(2)} yrs`],
     ['Occupancy', `${(rentRoll.occupancy * 100).toFixed(1)}%`],
-    ['Total NLA', rentRoll.totalNla ? `${rentRoll.totalNla.toLocaleString()} m²` : '—'],
+    ['Total NLA', rentRoll.totalNla ? `${rentRoll.totalNla.toLocaleString('en-AU')} m²` : '—'],
   ]);
 
   // ── 3. ASSET OVERVIEW ──────────────────────────────────────────────────
@@ -331,9 +331,9 @@ export async function generateCommercialInvestmentReport(propertyId: string): Pr
     ['Tenure', property.tenure.toUpperCase()],
     ['Zoning', property.zoning ?? '—'],
     ['Year Built', fmtNum(property.year_built)],
-    ['GFA', property.gfa_sqm ? `${property.gfa_sqm.toLocaleString()} m²` : '—'],
-    ['NLA', property.nla_sqm ? `${property.nla_sqm.toLocaleString()} m²` : '—'],
-    ['Site Area', property.site_area_sqm ? `${property.site_area_sqm.toLocaleString()} m²` : '—'],
+    ['GFA', property.gfa_sqm ? `${property.gfa_sqm.toLocaleString('en-AU')} m²` : '—'],
+    ['NLA', property.nla_sqm ? `${property.nla_sqm.toLocaleString('en-AU')} m²` : '—'],
+    ['Site Area', property.site_area_sqm ? `${property.site_area_sqm.toLocaleString('en-AU')} m²` : '—'],
     ['Parking', fmtNum(property.parking_bays)],
     ['Acquisition Date', fmtDate(property.acquisition_date)],
     ['Acquisition Price', fmtAud(property.purchase_price || 0)],
@@ -351,7 +351,7 @@ export async function generateCommercialInvestmentReport(propertyId: string): Pr
       leases.map(l => [
         l.tenant_name || '—',
         l.suite_unit || '—',
-        l.nla_sqm ? l.nla_sqm.toLocaleString() : '—',
+        l.nla_sqm ? l.nla_sqm.toLocaleString('en-AU') : '—',
         fmtAud(l.base_rent_pa || 0),
         l.rent_basis,
         fmtDate(l.lease_end),

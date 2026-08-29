@@ -364,6 +364,6 @@ export function grantStanding(f: GrantStandingFacts, now: Date = new Date()): Gr
   }
   return {
     state: "live", canReissue: true,
-    detail: `Active until ${new Date(f.expiresAt).toLocaleDateString()}.`,
+    detail: `Active until ${new Date(f.expiresAt).toLocaleDateString('en-AU')}.`,
   };
 }

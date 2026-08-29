@@ -134,7 +134,7 @@ export function ValidationFlagsDisplay({ flags, qualityScore, showEmpty = true }
                                 <div className="text-xs bg-destructive/10 p-2 rounded mb-2">
                                   <strong>Expected:</strong> {flag.expected_range}
                                   <br />
-                                  <strong>Current:</strong> {typeof flag.value === 'number' ? flag.value.toLocaleString() : flag.value}
+                                  <strong>Current:</strong> {typeof flag.value === 'number' ? flag.value.toLocaleString('en-AU') : flag.value}
                                 </div>
                               )}
                               {flag.recommendation && (
@@ -176,7 +176,7 @@ export function ValidationFlagsDisplay({ flags, qualityScore, showEmpty = true }
                                 <div className="text-xs bg-destructive/10 p-2 rounded mb-2">
                                   <strong>Expected:</strong> {flag.expected_range}
                                   <br />
-                                  <strong>Current:</strong> {typeof flag.value === 'number' ? flag.value.toLocaleString() : flag.value}
+                                  <strong>Current:</strong> {typeof flag.value === 'number' ? flag.value.toLocaleString('en-AU') : flag.value}
                                 </div>
                               )}
                               {flag.recommendation && (
@@ -218,7 +218,7 @@ export function ValidationFlagsDisplay({ flags, qualityScore, showEmpty = true }
                                 <div className="text-xs bg-muted p-2 rounded mb-2">
                                   <strong>Expected:</strong> {flag.expected_range}
                                   <br />
-                                  <strong>Current:</strong> {typeof flag.value === 'number' ? flag.value.toLocaleString() : flag.value}
+                                  <strong>Current:</strong> {typeof flag.value === 'number' ? flag.value.toLocaleString('en-AU') : flag.value}
                                 </div>
                               )}
                               {flag.recommendation && (

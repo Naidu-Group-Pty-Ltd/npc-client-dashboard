@@ -249,7 +249,7 @@ export default function AmlGovernance() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-3 text-sm">
                     {statusBadge(latest.status)}
-                    <span className="text-muted-foreground">{new Date(latest.ran_at).toLocaleString()}</span>
+                    <span className="text-muted-foreground">{new Date(latest.ran_at).toLocaleString('en-AU')}</span>
                     {latest.duration_ms != null && <span className="text-muted-foreground">· {latest.duration_ms} ms</span>}
                     {latest.triggered_by_label && <span className="text-muted-foreground">· {latest.triggered_by_label}</span>}
                   </div>
@@ -286,7 +286,7 @@ export default function AmlGovernance() {
                     <div key={g.id} className="flex items-center justify-between border rounded-md p-2 text-sm">
                       <div className="flex items-center gap-3">
                         {statusBadge(g.status)}
-                        <span className="text-muted-foreground">{new Date(g.ran_at).toLocaleString()}</span>
+                        <span className="text-muted-foreground">{new Date(g.ran_at).toLocaleString('en-AU')}</span>
                       </div>
                       <div className="text-xs text-muted-foreground">{g.summary}</div>
                     </div>
@@ -326,7 +326,7 @@ export default function AmlGovernance() {
                           <span className="font-mono text-xs">{a.tool_name}</span>
                           <span className="text-xs text-muted-foreground">· by {a.proposer}</span>
                         </div>
-                        <span className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString()}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(a.created_at).toLocaleString('en-AU')}</span>
                       </div>
                       <div className="text-sm">{a.action_summary}</div>
                       {a.arguments && Object.keys(a.arguments).length > 0 && (
@@ -373,7 +373,7 @@ export default function AmlGovernance() {
                           {statusBadge(live ? "approved" : s.revoked_at ? "rejected" : "expired")}
                           <span className="font-mono text-xs">{s.capability}</span>
                           <span className="text-xs text-muted-foreground">
-                            {live ? `expires ${new Date(s.expires_at).toLocaleTimeString()}` : new Date(s.expires_at).toLocaleString()}
+                            {live ? `expires ${new Date(s.expires_at).toLocaleTimeString('en-AU')}` : new Date(s.expires_at).toLocaleString('en-AU')}
                           </span>
                           {s.ip && <span className="text-xs text-muted-foreground">· {s.ip}</span>}
                         </div>
@@ -443,7 +443,7 @@ export default function AmlGovernance() {
                           <span className="font-medium">{d.title}</span>
                         </div>
                         <span className="text-xs text-muted-foreground">
-                          {(d.executed_at ?? d.created_at) ? new Date(d.executed_at ?? d.created_at).toLocaleString() : ""}
+                          {(d.executed_at ?? d.created_at) ? new Date(d.executed_at ?? d.created_at).toLocaleString('en-AU') : ""}
                           {d.executed_by_label ? ` · ${d.executed_by_label}` : ""}
                         </span>
                       </div>

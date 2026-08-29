@@ -1106,7 +1106,7 @@ export function PartnerOnboardingWizard({
                 The AML/CTF Compliance Passport Agreement has been sent to{" "}
                 <span className="font-medium">{ackResult.email}</span> for acceptance. They need no
                 account — the link opens the agreement itself, and it expires{" "}
-                {new Date(ackResult.expires_at).toLocaleDateString()}.
+                {new Date(ackResult.expires_at).toLocaleDateString('en-AU')}.
               </p>
             </div>
             {/* The passport is deliberately NOT issued yet: their acceptance
@@ -1161,7 +1161,7 @@ export function PartnerOnboardingWizard({
                     The Passport link has been emailed to{" "}
                     <span className="font-medium">{grantResult.deliveredTo}</span>. It opens the
                     whole record without a portal login, on attestation v{grantResult.version},
-                    until {new Date(grantResult.expires_at).toLocaleDateString()} — they see what
+                    until {new Date(grantResult.expires_at).toLocaleDateString('en-AU')} — they see what
                     was performed, never this case&apos;s risk assessment.
                   </>
                 )}

@@ -104,7 +104,7 @@ export function GeographicAnalysis({ listings }: GeographicAnalysisProps) {
                   <div className="min-w-0 flex-1">
                     <div className="reports-location-label">{suburb.suburb}</div>
                     <div className="reports-location-meta">
-                      {suburb.count} listings • ${suburb.avgPrice.toLocaleString()} avg
+                      {suburb.count} listings • ${suburb.avgPrice.toLocaleString('en-AU')} avg
                       {suburb.state && ` • ${suburb.state}`}
                       {suburb.postcode && ` ${suburb.postcode}`}
                     </div>
@@ -198,7 +198,7 @@ export function GeographicAnalysis({ listings }: GeographicAnalysisProps) {
                     content={<ChartTooltipContent
                       className="reports-geographic-tooltip"
                       formatter={(value: any, name: string, props: any) => {
-                        if (name === 'y') return [`$${parseInt(value).toLocaleString()}`, 'Avg Price'];
+                        if (name === 'y') return [`$${parseInt(value).toLocaleString('en-AU')}`, 'Avg Price'];
                         if (name === 'x') return [value, 'Listings'];
                         return [value, name];
                       }}

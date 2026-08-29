@@ -257,7 +257,7 @@ export default function FigmaTemplates() {
                       <p className="text-xs text-destructive line-clamp-2">{t.last_sync_error}</p>
                     )}
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{t.last_synced_at ? `Synced ${new Date(t.last_synced_at).toLocaleString()}` : 'Never synced'}</span>
+                      <span>{t.last_synced_at ? `Synced ${new Date(t.last_synced_at).toLocaleString('en-AU')}` : 'Never synced'}</span>
                       {t.figma_url && (
                         <a href={t.figma_url} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5">
                           Figma <ExternalLink className="h-3 w-3" />
@@ -434,7 +434,7 @@ function FigmaTemplateDetail({
                   <dt className="text-muted-foreground">Version</dt><dd>v{tpl.version}</dd>
                   <dt className="text-muted-foreground">Active</dt><dd>{tpl.is_active ? 'Yes' : 'No'}</dd>
                   <dt className="text-muted-foreground">Default</dt><dd>{tpl.is_default ? 'Yes' : 'No'}</dd>
-                  <dt className="text-muted-foreground">Last synced</dt><dd>{tpl.last_synced_at ? new Date(tpl.last_synced_at).toLocaleString() : '—'}</dd>
+                  <dt className="text-muted-foreground">Last synced</dt><dd>{tpl.last_synced_at ? new Date(tpl.last_synced_at).toLocaleString('en-AU') : '—'}</dd>
                   <dt className="text-muted-foreground">Last status</dt><dd>{tpl.last_sync_status || '—'}</dd>
                   <dt className="text-muted-foreground">Pages</dt><dd>{tpl.compiled_schema?.pages?.length ?? 0}</dd>
                 </dl>
@@ -475,7 +475,7 @@ function FigmaTemplateDetail({
                       <div className="flex items-center gap-2 mb-1">
                         <Badge variant={l.status === 'success' ? 'outline' : 'destructive'}>{l.status}</Badge>
                         <span className="font-medium">{l.operation}</span>
-                        <span className="text-muted-foreground ml-auto">{new Date(l.created_at).toLocaleString()}</span>
+                        <span className="text-muted-foreground ml-auto">{new Date(l.created_at).toLocaleString('en-AU')}</span>
                       </div>
                       {l.summary && <p>{l.summary}</p>}
                       {l.error && <p className="text-destructive">{l.error}</p>}

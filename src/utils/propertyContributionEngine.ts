@@ -161,10 +161,10 @@ export function assessPropertyContribution(
 
     if (repaymentType === 'principal_and_interest' && rawMonthlyRepayment > 0) {
       assessedMonthlyDebt = rawMonthlyRepayment;
-      auditNotes.push(`Loan: $${rawLoanBalance.toLocaleString()} P&I (user-supplied) → Using: $${assessedMonthlyDebt.toFixed(2)}/mo`);
+      auditNotes.push(`Loan: $${rawLoanBalance.toLocaleString('en-AU')} P&I (user-supplied) → Using: $${assessedMonthlyDebt.toFixed(2)}/mo`);
     } else {
       assessedMonthlyDebt = Math.max(piRepayment, rawMonthlyRepayment);
-      auditNotes.push(`Loan: $${rawLoanBalance.toLocaleString()} → P&I @ ${(policy.loanAssessmentRate * 100).toFixed(1)}%: $${piRepayment.toFixed(2)}/mo, actual: $${rawMonthlyRepayment}/mo → Using: $${assessedMonthlyDebt.toFixed(2)}/mo${repaymentType === 'interest_only' ? ' (IO stress-tested to P&I)' : ''}`);
+      auditNotes.push(`Loan: $${rawLoanBalance.toLocaleString('en-AU')} → P&I @ ${(policy.loanAssessmentRate * 100).toFixed(1)}%: $${piRepayment.toFixed(2)}/mo, actual: $${rawMonthlyRepayment}/mo → Using: $${assessedMonthlyDebt.toFixed(2)}/mo${repaymentType === 'interest_only' ? ' (IO stress-tested to P&I)' : ''}`);
     }
   }
 

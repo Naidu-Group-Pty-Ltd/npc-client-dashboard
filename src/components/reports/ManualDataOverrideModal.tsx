@@ -1202,7 +1202,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
       return value;
     }
     const numValue = typeof value === 'string' ? parseFloat(value) : value;
-    return `${prefix || ''}${numValue.toLocaleString()}${suffix || ''}`;
+    return `${prefix || ''}${numValue.toLocaleString('en-AU')}${suffix || ''}`;
   };
 
   const getFieldValue = (field: OverrideField) => {
@@ -1509,7 +1509,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                         {overrides.stampDuty && overrides.stampDuty > 0 && (
                           <div className="flex items-center gap-2 rounded-lg border border-success/20 bg-success/10 p-2 text-sm text-success">
                             <Check className="h-4 w-4" />
-                            <span>Stamp duty of ${overrides.stampDuty.toLocaleString()} applied to this analysis</span>
+                            <span>Stamp duty of ${overrides.stampDuty.toLocaleString('en-AU')} applied to this analysis</span>
                           </div>
                         )}
                       </div>
@@ -1573,7 +1573,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                               setHasChanges(true);
                               toast({
                                 title: "Land Tax Applied",
-                                description: `$${landTax.toLocaleString()} annual land tax has been applied.`,
+                                description: `$${landTax.toLocaleString('en-AU')} annual land tax has been applied.`,
                               });
                             }
                           }}
@@ -2001,7 +2001,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                             setHasChanges(true);
                             toast({
                               title: "Year 1 Depreciation Applied",
-                              description: `$${value.toLocaleString()} has been applied and schedule generated.`,
+                              description: `$${value.toLocaleString('en-AU')} has been applied and schedule generated.`,
                             });
                           }}
                           onApplySchedule={(schedule, method) => {
@@ -2184,7 +2184,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
                             <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
                               <span className="text-sm font-medium">Total 10-Year Depreciation</span>
                               <span className="text-lg font-bold text-primary">
-                                ${Object.values(depreciationSchedule).reduce((sum, val) => sum + (val || 0), 0).toLocaleString()}
+                                ${Object.values(depreciationSchedule).reduce((sum, val) => sum + (val || 0), 0).toLocaleString('en-AU')}
                               </span>
                             </div>
 

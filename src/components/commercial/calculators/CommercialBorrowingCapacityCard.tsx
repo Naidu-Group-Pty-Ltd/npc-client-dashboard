@@ -594,8 +594,8 @@ export function CommercialBorrowingCapacityCard({ initialAssetCategory = 'commer
   }), [scenarioName, scenarioType, scenarioStatus, purchasePrice, result, assetSubtype]);
   const activeScenario = useMemo(() => buildClientScenario(scenarioClient, scenarioInputs), [scenarioClient, scenarioInputs]);
   const auditTrailRows = [
-    { label: 'Created date', value: savedScenario?.createdAt ? new Date(savedScenario.createdAt).toLocaleString() : 'Current session draft' },
-    { label: 'Last updated date', value: savedScenario?.auditLog.length ? new Date(savedScenario.auditLog[savedScenario.auditLog.length - 1].timestamp).toLocaleString() : new Date().toLocaleString() },
+    { label: 'Created date', value: savedScenario?.createdAt ? new Date(savedScenario.createdAt).toLocaleString('en-AU') : 'Current session draft' },
+    { label: 'Last updated date', value: savedScenario?.auditLog.length ? new Date(savedScenario.auditLog[savedScenario.auditLog.length - 1].timestamp).toLocaleString('en-AU') : new Date().toLocaleString('en-AU') },
     { label: 'User who changed assumptions', value: activeScenario.auditLog[activeScenario.auditLog.length - 1]?.user || 'Calculator user' },
     { label: 'Scenario save history', value: savedScenario ? `${savedScenario.status} saved${lastPersistedScenarioId ? ` (${lastPersistedScenarioId})` : ''}` : 'Not saved yet' },
     { label: 'Import history', value: profileImported ? `${selectedClient.clientName} portfolio imported` : 'No client profile import' },
@@ -1146,7 +1146,7 @@ export function CommercialBorrowingCapacityCard({ initialAssetCategory = 'commer
               <CardHeader><CardTitle className="text-base">Audit Trail</CardTitle><CardDescription>Scenario events and calculation metadata for report governance.</CardDescription></CardHeader>
               <CardContent className="space-y-3 text-xs">
                 <div className="grid md:grid-cols-2 gap-2">{auditTrailRows.map(row => <div key={row.label} className="rounded border bg-muted/10 p-2"><span className="text-muted-foreground">{row.label}: </span><span className="font-medium">{row.value}</span></div>)}</div>
-                <div className="rounded-md border bg-muted/10 p-3"><p className="font-medium text-sm">Scenario event history</p>{activeScenario.auditLog.length ? <ul className="mt-2 space-y-1 text-muted-foreground">{activeScenario.auditLog.map((event, index) => <li key={`${event.timestamp}-${index}`}>• {new Date(event.timestamp).toLocaleString()} — {event.user}: {event.action} ({event.source})</li>)}</ul> : <p className="mt-2 text-muted-foreground">No scenario events recorded.</p>}</div>
+                <div className="rounded-md border bg-muted/10 p-3"><p className="font-medium text-sm">Scenario event history</p>{activeScenario.auditLog.length ? <ul className="mt-2 space-y-1 text-muted-foreground">{activeScenario.auditLog.map((event, index) => <li key={`${event.timestamp}-${index}`}>• {new Date(event.timestamp).toLocaleString('en-AU')} — {event.user}: {event.action} ({event.source})</li>)}</ul> : <p className="mt-2 text-muted-foreground">No scenario events recorded.</p>}</div>
               </CardContent>
             </Card>
           </TabsContent>

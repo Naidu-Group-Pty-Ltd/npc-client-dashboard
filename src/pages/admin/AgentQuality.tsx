@@ -145,7 +145,7 @@ export default function AgentQuality() {
             {traces.map(t => (
               <div key={t.id} className="flex items-center gap-3 p-2 rounded border border-border/40 text-xs">
                 <Badge variant="outline" className="text-[10px] shrink-0">{t.tool_name}</Badge>
-                <span className="text-muted-foreground shrink-0">{new Date(t.created_at).toLocaleString()}</span>
+                <span className="text-muted-foreground shrink-0">{new Date(t.created_at).toLocaleString('en-AU')}</span>
                 <span className="text-muted-foreground shrink-0">{t.execution_time_ms}ms</span>
                 <Badge variant={t.status === 'success' ? 'secondary' : 'destructive'} className="text-[10px] shrink-0">{t.status || 'unknown'}</Badge>
                 <span className="truncate flex-1 opacity-70">{JSON.stringify(t.tool_arguments).slice(0, 120)}</span>

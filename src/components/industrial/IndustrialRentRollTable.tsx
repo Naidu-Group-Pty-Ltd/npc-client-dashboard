@@ -47,7 +47,7 @@ export function IndustrialRentRollTable({ propertyId }: Props) {
           <div>
             <CardTitle>Rent Roll</CardTitle>
             <div className="text-sm text-muted-foreground mt-1">
-              {tenancies.length} tenancies · {fmtMoney(totalRent)} PA · {totalArea.toLocaleString()} m² · WALE {wale.waleByIncome}y (income), {wale.waleByArea}y (area)
+              {tenancies.length} tenancies · {fmtMoney(totalRent)} PA · {totalArea.toLocaleString('en-AU')} m² · WALE {wale.waleByIncome}y (income), {wale.waleByArea}y (area)
             </div>
           </div>
           <Button onClick={() => { setEditing(null); setOpen(true); }}>
@@ -82,7 +82,7 @@ export function IndustrialRentRollTable({ propertyId }: Props) {
                       {t.anzsic_industry && <div className="text-xs text-muted-foreground">{t.anzsic_industry}</div>}
                     </TableCell>
                     <TableCell>{t.unit_label || '—'}</TableCell>
-                    <TableCell className="text-right">{t.gla_sqm?.toLocaleString() || '—'}</TableCell>
+                    <TableCell className="text-right">{t.gla_sqm?.toLocaleString('en-AU') || '—'}</TableCell>
                     <TableCell className="text-right">{t.base_rent_per_sqm_pa ? `$${Number(t.base_rent_per_sqm_pa).toFixed(2)}` : '—'}</TableCell>
                     <TableCell className="text-right">{fmtMoney(t.base_rent_pa)}</TableCell>
                     <TableCell><Badge variant="secondary" className="capitalize">{t.outgoings_recovery_type.replace('_', ' ')}</Badge></TableCell>

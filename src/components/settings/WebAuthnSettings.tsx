@@ -16,7 +16,7 @@ import {
 
 function formatDate(iso: string | null | undefined) {
   if (!iso) return '—';
-  try { return new Date(iso).toLocaleString(); } catch { return '—'; }
+  try { return new Date(iso).toLocaleString('en-AU'); } catch { return '—'; }
 }
 
 export function WebAuthnSettings({ disabled }: { disabled?: boolean }) {

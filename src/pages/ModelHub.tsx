@@ -482,7 +482,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
                           )}
                         </TableCell>
                         <TableCell className="py-4 align-top text-xs text-muted-foreground">
-                          <span className="block max-w-[140px] leading-5">{a.last_used_at ? new Date(a.last_used_at).toLocaleString() : '—'}</span>
+                          <span className="block max-w-[140px] leading-5">{a.last_used_at ? new Date(a.last_used_at).toLocaleString('en-AU') : '—'}</span>
                         </TableCell>
                         <TableCell className="py-4 text-right align-top">
                           <Button
@@ -636,7 +636,7 @@ function OpenRouterCatalog({ models, lastProbedAt }: { models: CatalogModel[]; l
               </span>
               {lastProbedAt && (
                 <span className="font-mono text-[10px] text-muted-foreground">
-                  probed {new Date(lastProbedAt).toLocaleString()}
+                  probed {new Date(lastProbedAt).toLocaleString('en-AU')}
                 </span>
               )}
             </div>
@@ -881,7 +881,7 @@ export default function ModelHub() {
                 </Button>
               </div>
               <p className="text-center text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:text-right">
-                {data?.checkedAt ? `${data.cached ? 'Cached' : 'Live'} probe • ${new Date(data.checkedAt).toLocaleString()}` : 'Awaiting latest probe metadata'}
+                {data?.checkedAt ? `${data.cached ? 'Cached' : 'Live'} probe • ${new Date(data.checkedAt).toLocaleString('en-AU')}` : 'Awaiting latest probe metadata'}
               </p>
             </div>
           </div>
@@ -986,7 +986,7 @@ export default function ModelHub() {
 
       {data?.checkedAt && (
         <p className="text-center text-xs text-muted-foreground">
-          {data.cached ? 'Cached' : 'Live'} • Last probe: {new Date(data.checkedAt).toLocaleString()}
+          {data.cached ? 'Cached' : 'Live'} • Last probe: {new Date(data.checkedAt).toLocaleString('en-AU')}
         </p>
       )}
       </DashboardThemeFrame>

@@ -78,7 +78,7 @@ export function PlanChangeBanner() {
             {granted ? (
               <>
                 <span className="font-medium text-foreground">
-                  {notice.creditsGranted.toLocaleString()} credits
+                  {notice.creditsGranted.toLocaleString('en-AU')} credits
                 </span>{" "}
                 have been added to your balance
                 {expires && (

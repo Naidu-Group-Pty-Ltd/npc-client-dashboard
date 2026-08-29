@@ -90,8 +90,8 @@ export default function IndustrialProperties() {
                       </div>
                     </TableCell>
                     <TableCell><Badge variant="secondary">{SUBTYPE_LABEL[p.asset_subtype] || p.asset_subtype}</Badge></TableCell>
-                    <TableCell className="text-right">{p.gla_sqm?.toLocaleString() || '—'}</TableCell>
-                    <TableCell className="text-right">{p.site_area_sqm?.toLocaleString() || '—'}</TableCell>
+                    <TableCell className="text-right">{p.gla_sqm?.toLocaleString('en-AU') || '—'}</TableCell>
+                    <TableCell className="text-right">{p.site_area_sqm?.toLocaleString('en-AU') || '—'}</TableCell>
                     <TableCell className="text-right">{fmtMoney(p.current_valuation || p.purchase_price)}</TableCell>
                     <TableCell><Badge variant="outline" className="capitalize">{p.status.replace('_', ' ')}</Badge></TableCell>
                     <TableCell onClick={e => e.stopPropagation()}>

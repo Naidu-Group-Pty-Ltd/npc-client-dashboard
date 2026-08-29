@@ -494,7 +494,7 @@ export default function QualityAssurance() {
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                            <span className="break-words">{new Date(report.created_at).toLocaleString()}</span>
+                            <span className="break-words">{new Date(report.created_at).toLocaleString('en-AU')}</span>
                             <span className="text-border" aria-hidden="true">•</span>
                             <span className="font-medium text-muted-foreground">v{report.calculation_version || '1.0.0'}</span>
                           </div>
@@ -576,7 +576,7 @@ export default function QualityAssurance() {
                             )}
                           </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                            <span className="break-words">{new Date(report.created_at).toLocaleString()}</span>
+                            <span className="break-words">{new Date(report.created_at).toLocaleString('en-AU')}</span>
                             <span className="text-border" aria-hidden="true">•</span>
                             <span className="font-medium text-muted-foreground">v{report.calculation_version || '1.0.0'}</span>
                           </div>
@@ -645,7 +645,7 @@ export default function QualityAssurance() {
                           )}
                         </div>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                          <span className="break-words">{new Date(report.created_at).toLocaleString()}</span>
+                          <span className="break-words">{new Date(report.created_at).toLocaleString('en-AU')}</span>
                           <span className="text-border" aria-hidden="true">•</span>
                           <span className="font-medium text-muted-foreground">v{report.calculation_version || '1.0.0'}</span>
                         </div>
@@ -697,7 +697,7 @@ export default function QualityAssurance() {
                 </div>
               </div>
               <div className="text-sm text-muted-foreground">
-                {new Date(selectedReport.created_at).toLocaleString()}
+                {new Date(selectedReport.created_at).toLocaleString('en-AU')}
               </div>
             </CardHeader>
             <CardContent className="min-w-0 p-4 sm:p-6">

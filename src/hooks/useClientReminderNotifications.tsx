@@ -77,7 +77,7 @@ export function useClientReminderNotifications() {
             await addNotification({
               type: 'client_reminder_overdue',
               title: `Overdue: ${reminder.title}`,
-              message: `Reminder for ${clientName} was due on ${dueDate.toLocaleDateString()}`,
+              message: `Reminder for ${clientName} was due on ${dueDate.toLocaleDateString('en-AU')}`,
               entityId: reminder.client_id
             });
           } else if (isDueToday) {

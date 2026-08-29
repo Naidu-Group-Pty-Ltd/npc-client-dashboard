@@ -49,9 +49,21 @@ describe("the reported case", () => {
   });
 
   it("counts these steps, in these units", () => {
-    // decision done · gate owed · issue done. Preview is not counted at all.
+    /* decision done · gate owed · issue done. Preview and Share are not
+       counted at all: a look is not a debt, and a case may legitimately
+       have no partner, so a stage that would not complete without one
+       invents an obligation nobody has. */
     mount();
     expect(screen.getByText("2 of 3 done")).toBeTruthy();
+  });
+
+  it("names sharing as the last phase, without inventing a debt", () => {
+    mount();
+    expect(screen.getByText(/5\. Share it with partners/)).toBeTruthy();
+    expect(screen.getByText(/roster below/)).toBeTruthy();
+    // And it states no numbers — the roster is the one place that counts
+    // who holds this Passport.
+    expect(screen.getByText(/roster below/).textContent ?? "").not.toMatch(/\d+ partner/);
   });
 });
 
@@ -84,7 +96,10 @@ describe("the promise is exact, or it is absent", () => {
     );
     expect(screen.queryByTestId("gate-passport-finishing-step")).toBeNull();
     expect(screen.getByText(/The service may proceed and the Passport is in force/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Continue to Partners/ })).toBeTruthy();
+    /* The onward door names the stage that actually comes next. Partners
+       are on THIS stage now, with the Passport they hold; what follows is
+       what keeps the case current afterwards. */
+    expect(screen.getByRole("button", { name: /Continue to Ongoing CDD/ })).toBeTruthy();
     expect(screen.getByText("3 of 3 done")).toBeTruthy();
   });
 });

@@ -155,7 +155,7 @@ export default function AmlLaunchOps() {
                     <div className="text-xs text-muted-foreground">Stage {i + 1}</div>
                     <div className="font-medium">{stageLabel[s]}</div>
                     {i === stageIdx && summary?.rollout.rollout_stage_since && (
-                      <div className="text-xs text-muted-foreground mt-1">since {new Date(summary.rollout.rollout_stage_since).toLocaleString()}</div>
+                      <div className="text-xs text-muted-foreground mt-1">since {new Date(summary.rollout.rollout_stage_since).toLocaleString('en-AU')}</div>
                     )}
                   </div>
                 ))}
@@ -187,7 +187,7 @@ export default function AmlLaunchOps() {
                 <ReadinessRow
                   ok={summary.readiness.gate_pass}
                   label="Latest release gate PASS"
-                  detail={`Status: ${summary.readiness.gate_status}${summary.readiness.gate_ran_at ? ` · ran ${new Date(summary.readiness.gate_ran_at).toLocaleString()}` : ""}`}
+                  detail={`Status: ${summary.readiness.gate_status}${summary.readiness.gate_ran_at ? ` · ran ${new Date(summary.readiness.gate_ran_at).toLocaleString('en-AU')}` : ""}`}
                 />
                 <ReadinessRow
                   ok={summary.readiness.failing_scenarios.length === 0}
@@ -222,7 +222,7 @@ export default function AmlLaunchOps() {
                         {badgeFor(h.to_stage)}
                         <span className="text-xs text-muted-foreground">from {h.from_stage ?? "—"} · {h.changed_by_label ?? "system"}</span>
                       </div>
-                      <div className="text-xs text-muted-foreground">{new Date(h.created_at).toLocaleString()}</div>
+                      <div className="text-xs text-muted-foreground">{new Date(h.created_at).toLocaleString('en-AU')}</div>
                       {h.reason && <div className="w-full text-xs text-muted-foreground italic">{h.reason}</div>}
                     </div>
                   ))}
@@ -377,7 +377,7 @@ function ScenarioRow({ s, isMlro, onChanged }: { s: Scenario; isMlro: boolean; o
           )}
         </div>
         <div className="text-xs text-muted-foreground text-right">
-          {s.last_run_at ? <>Last run {new Date(s.last_run_at).toLocaleString()}{s.last_run_by_label ? ` · ${s.last_run_by_label}` : ""}</> : "Never run"}
+          {s.last_run_at ? <>Last run {new Date(s.last_run_at).toLocaleString('en-AU')}{s.last_run_by_label ? ` · ${s.last_run_by_label}` : ""}</> : "Never run"}
         </div>
       </div>
       {isMlro && (
@@ -459,7 +459,7 @@ function RiskRow({ r, isMlro, onChanged }: { r: Risk; isMlro: boolean; onChanged
           <div>Likelihood {badgeFor(r.likelihood)}</div>
           <div>Impact {badgeFor(r.impact)}</div>
           {r.owner_label && <div className="text-muted-foreground">Owner: {r.owner_label}</div>}
-          {r.next_review_at && <div className="text-muted-foreground">Review {new Date(r.next_review_at).toLocaleDateString()}</div>}
+          {r.next_review_at && <div className="text-muted-foreground">Review {new Date(r.next_review_at).toLocaleDateString('en-AU')}</div>}
         </div>
       </div>
       {isMlro && r.status !== "retired" && (
@@ -596,7 +596,7 @@ function LaunchCertificationPanel({
               <CheckCircle2 className="h-4 w-4 text-success" />
               <AlertTitle>Active launch certification</AlertTitle>
               <AlertDescription className="space-y-1">
-                <div>Issued by <span className="font-medium">{activeCert.attested_by_label ?? "—"}</span> on {new Date(activeCert.created_at).toLocaleString()}.</div>
+                <div>Issued by <span className="font-medium">{activeCert.attested_by_label ?? "—"}</span> on {new Date(activeCert.created_at).toLocaleString('en-AU')}.</div>
                 <div className="text-xs text-muted-foreground">Stage at certification: {activeCert.rollout_stage ?? "—"} · release gate {activeCert.release_gate_status ?? "—"}.</div>
                 <div className="italic text-xs">"{activeCert.attestation}"</div>
               </AlertDescription>
@@ -659,7 +659,7 @@ function LaunchCertificationPanel({
                         ? <StatusBadge tone="success" dot>issued</StatusBadge>
                         : <StatusBadge tone="neutral" dot>revoked</StatusBadge>}
                       <span className="font-medium">{c.attested_by_label ?? "—"}</span>
-                      <span className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleString('en-AU')}</span>
                     </div>
                     {isMlro && c.status === "issued" && (
                       <Button size="sm" variant="outline" onClick={() => setRevokeFor(c)}>
@@ -675,7 +675,7 @@ function LaunchCertificationPanel({
                   <div className="italic text-xs">"{c.attestation}"</div>
                   {c.status === "revoked" && (
                     <div className="text-xs text-destructive">
-                      Revoked {c.revoked_at ? new Date(c.revoked_at).toLocaleString() : ""} by {c.revoked_by_label ?? "—"} — {c.revoked_reason}
+                      Revoked {c.revoked_at ? new Date(c.revoked_at).toLocaleString('en-AU') : ""} by {c.revoked_by_label ?? "—"} — {c.revoked_reason}
                     </div>
                   )}
                 </div>

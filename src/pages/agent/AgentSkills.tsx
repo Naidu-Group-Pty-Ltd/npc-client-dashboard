@@ -62,7 +62,7 @@ function relativeTime(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 30) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toLocaleDateString('en-AU');
 }
 
 export default function AgentSkills() {
@@ -169,7 +169,7 @@ export default function AgentSkills() {
             {installed.length} installed
           </StatusPill>
           <StatusPill tone="info" icon={<TrendingUp />}>
-            {totalRuns.toLocaleString()} runs
+            {totalRuns.toLocaleString('en-AU')} runs
           </StatusPill>
         </div>
       </section>
@@ -373,8 +373,8 @@ function SkillCard({
 
       {/* Stats row */}
       <dl className="mt-4 grid grid-cols-3 gap-2">
-        <Stat label="Installs" value={(skill.install_count ?? 0).toLocaleString()} />
-        <Stat label="Runs" value={(skill.run_count ?? 0).toLocaleString()} />
+        <Stat label="Installs" value={(skill.install_count ?? 0).toLocaleString('en-AU')} />
+        <Stat label="Runs" value={(skill.run_count ?? 0).toLocaleString('en-AU')} />
         <Stat
           label="Success"
           value={successPct != null ? `${successPct}%` : '—'}

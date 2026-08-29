@@ -30,7 +30,7 @@ export interface DraftRecoveryDialogProps {
 function formatWhen(iso: string | undefined): string {
   if (!iso) return 'recently';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? 'recently' : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? 'recently' : d.toLocaleString('en-AU');
 }
 
 /**

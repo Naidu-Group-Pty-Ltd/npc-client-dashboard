@@ -71,7 +71,7 @@ export function ProcedureEvidenceViewer({ workspace }: { workspace: PartnerWorks
                   )}
                   {p.completed_at != null && (
                     <span className="text-muted-foreground">
-                      {new Date(String(p.completed_at)).toLocaleDateString()}
+                      {new Date(String(p.completed_at)).toLocaleDateString('en-AU')}
                     </span>
                   )}
                   {p.document_type != null && (
@@ -88,12 +88,12 @@ export function ProcedureEvidenceViewer({ workspace }: { workspace: PartnerWorks
             <div className="text-muted-foreground">
               {screening.performed ? "Screening performed" : "Screening not yet performed"}
               {screening.last_performed_at &&
-                ` · last run ${new Date(screening.last_performed_at).toLocaleDateString()}`}
+                ` · last run ${new Date(screening.last_performed_at).toLocaleDateString('en-AU')}`}
             </div>
             {screening.list_freshness && Object.keys(screening.list_freshness).length > 0 && (
               <div className="text-muted-foreground">
                 Lists: {Object.entries(screening.list_freshness).map(([code, at]) =>
-                  `${code.toUpperCase()} ${new Date(at).toLocaleDateString()}`).join(" · ")}
+                  `${code.toUpperCase()} ${new Date(at).toLocaleDateString('en-AU')}`).join(" · ")}
               </div>
             )}
           </div>

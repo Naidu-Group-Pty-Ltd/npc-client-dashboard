@@ -55,7 +55,7 @@ export default function Billing() {
   const stats = [
     {
       label: "Available",
-      value: balance ? balance.available.toLocaleString() : "—",
+      value: balance ? balance.available.toLocaleString('en-AU') : "—",
       className: criticalBalance
         ? "text-destructive"
         : lowBalance
@@ -66,7 +66,7 @@ export default function Billing() {
       label: balance && balance.allowance > 0 ? "Allowance" : "Plan",
       value: balance
         ? balance.allowance > 0
-          ? balance.allowance.toLocaleString()
+          ? balance.allowance.toLocaleString('en-AU')
           : balance.exempt
             ? "Exempt"
             : (balance.planName ?? "Top-up credits")
@@ -75,12 +75,12 @@ export default function Billing() {
     },
     {
       label: "Reserved",
-      value: balance ? balance.reserved.toLocaleString() : "—",
+      value: balance ? balance.reserved.toLocaleString('en-AU') : "—",
       className: "text-brand-700 dark:text-brand-300",
     },
     {
       label: "Lifetime used",
-      value: balance ? balance.used.toLocaleString() : "—",
+      value: balance ? balance.used.toLocaleString('en-AU') : "—",
       className: "text-success dark:text-success",
     },
   ];

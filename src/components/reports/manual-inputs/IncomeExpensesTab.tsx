@@ -173,7 +173,7 @@ export function IncomeExpensesTab({
             {annualRent > 0 && (
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Annual Income</p>
-                <p className="text-lg font-bold text-success">${annualRent.toLocaleString()}</p>
+                <p className="text-lg font-bold text-success">${annualRent.toLocaleString('en-AU')}</p>
               </div>
             )}
           </div>
@@ -477,11 +477,11 @@ export function IncomeExpensesTab({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-muted-foreground">Annual Net Position</p>
-              <p className="text-xs text-muted-foreground">Income ${annualRent.toLocaleString()} - Expenses ${totalAnnualExpenses.toLocaleString()}</p>
+              <p className="text-xs text-muted-foreground">Income ${annualRent.toLocaleString('en-AU')} - Expenses ${totalAnnualExpenses.toLocaleString('en-AU')}</p>
             </div>
             <div className="text-right">
               <p className={`text-2xl font-bold ${netAnnualIncome >= 0 ? 'text-success' : 'text-destructive'}`}>
-                {netAnnualIncome >= 0 ? '+' : ''}${netAnnualIncome.toLocaleString()}/yr
+                {netAnnualIncome >= 0 ? '+' : ''}${netAnnualIncome.toLocaleString('en-AU')}/yr
               </p>
               <p className="text-sm text-muted-foreground">{grossYield}% gross yield</p>
             </div>

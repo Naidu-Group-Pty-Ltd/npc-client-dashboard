@@ -483,7 +483,7 @@ export function ActivateClientDialog({
                     <ShieldCheck className="h-4 w-4" />
                     <AlertTitle>Pre-service activation — program v{program?.program_version}</AlertTitle>
                     <AlertDescription>
-                      Legal approval recorded{program?.approved_at ? ` on ${new Date(program.approved_at).toLocaleDateString()}` : ""}.
+                      Legal approval recorded{program?.approved_at ? ` on ${new Date(program.approved_at).toLocaleDateString('en-AU')}` : ""}.
                       The designated service stays locked until the compliance gate is approved.
                     </AlertDescription>
                   </Alert>

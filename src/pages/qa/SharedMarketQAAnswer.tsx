@@ -63,7 +63,7 @@ export default function SharedMarketQAAnswer() {
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Market Q&amp;A · Shared answer</p>
           <h1 className="text-2xl font-semibold mt-1">{q.question}</h1>
           <p className="text-xs text-muted-foreground mt-2">
-            {q.created_at ? new Date(q.created_at).toLocaleString() : ''} · {q.model ?? 'model'} {typeof q.confidence === 'number' ? `· confidence ${(q.confidence * 100).toFixed(0)}%` : ''}
+            {q.created_at ? new Date(q.created_at).toLocaleString('en-AU') : ''} · {q.model ?? 'model'} {typeof q.confidence === 'number' ? `· confidence ${(q.confidence * 100).toFixed(0)}%` : ''}
           </p>
         </div>
         <Card>
@@ -85,7 +85,7 @@ export default function SharedMarketQAAnswer() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="font-medium text-sm">{s.title}</div>
-                      <div className="text-xs text-muted-foreground">{s.source_name} {s.published_at ? `· ${new Date(s.published_at).toLocaleDateString()}` : ''}</div>
+                      <div className="text-xs text-muted-foreground">{s.source_name} {s.published_at ? `· ${new Date(s.published_at).toLocaleDateString('en-AU')}` : ''}</div>
                     </div>
                     {s.impact_level && <Badge variant="outline" className="text-[10px] uppercase">{s.impact_level}</Badge>}
                   </div>

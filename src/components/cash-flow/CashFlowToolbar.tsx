@@ -83,7 +83,7 @@ export function CashFlowToolbar({
             </Select>
 
             <div className="rounded-xl border bg-muted/40 px-3 py-2 text-sm text-muted-foreground sm:min-w-[150px]">
-              <span className="font-semibold tabular-nums text-foreground">{filteredCount.toLocaleString()}</span> of {loadedCount.toLocaleString()} visible
+              <span className="font-semibold tabular-nums text-foreground">{filteredCount.toLocaleString('en-AU')}</span> of {loadedCount.toLocaleString('en-AU')} visible
             </div>
           </div>
         </div>

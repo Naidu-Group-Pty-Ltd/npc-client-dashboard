@@ -72,7 +72,7 @@ export function RentPerSqmCard() {
           actionId: 'estimate-gla',
           label: 'Estimate GLA from listing / floor plan',
           suggestedValue: String(candidate),
-          suggestedBenchmarkRange: `${Math.round(candidate * 0.9).toLocaleString()}–${Math.round(candidate * 1.1).toLocaleString()} m²`,
+          suggestedBenchmarkRange: `${Math.round(candidate * 0.9).toLocaleString('en-AU')}–${Math.round(candidate * 1.1).toLocaleString('en-AU')} m²`,
           confidence: prefill.glaSqm || prefillValue(prefill, 'scrapedGlaSqm') ? 'High' : 'Low',
           source: 'AI Estimate',
           sourceBasis: 'Uses linked property profile, scraped area fields, building description or a site-area-derived industrial footprint estimate where direct GLA is unavailable.',

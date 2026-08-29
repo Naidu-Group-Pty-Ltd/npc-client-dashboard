@@ -113,7 +113,7 @@ export function DataValidationPanel({ dashboardData, reportsData, className = ''
           <div className="flex items-center gap-2">
             {lastValidation && (
               <span className="text-sm text-muted-foreground">
-                Last checked: {lastValidation.toLocaleTimeString()}
+                Last checked: {lastValidation.toLocaleTimeString('en-AU')}
               </span>
             )}
           </div>
@@ -154,7 +154,7 @@ export function DataValidationPanel({ dashboardData, reportsData, className = ''
                     <CardTitle className="text-sm font-medium">Dashboard</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold">{comparison.dashboardCount.toLocaleString()}</div>
+                    <div className="text-2xl font-bold">{comparison.dashboardCount.toLocaleString('en-AU')}</div>
                     <p className="text-xs text-muted-foreground">listings</p>
                   </CardContent>
                 </Card>
@@ -164,7 +164,7 @@ export function DataValidationPanel({ dashboardData, reportsData, className = ''
                     <CardTitle className="text-sm font-medium">Reports</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold">{comparison.reportsCount.toLocaleString()}</div>
+                    <div className="text-2xl font-bold">{comparison.reportsCount.toLocaleString('en-AU')}</div>
                     <p className="text-xs text-muted-foreground">listings</p>
                   </CardContent>
                 </Card>

@@ -159,7 +159,7 @@ export const CallToolCalls = ({ artifactMessages }: CallToolCallsProps) => {
                 {tc.timestamp && (
                   <span className="text-xs text-muted-foreground flex items-center gap-1 ml-auto mr-2">
                     <Clock className="w-3 h-3" />
-                    {new Date(tc.timestamp).toLocaleTimeString()}
+                    {new Date(tc.timestamp).toLocaleTimeString('en-AU')}
                   </span>
                 )}
               </div>

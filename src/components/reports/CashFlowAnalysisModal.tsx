@@ -1625,7 +1625,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       insights: [
         `${winner.name} scores highest for ${investorProfile}-focused investors`,
         winner.metrics?.roi ? `10-Year ROI: ${winner.metrics.roi.toFixed(1)}%` : '',
-        winner.metrics?.totalCashFlow ? `Total Cash Flow: $${winner.metrics.totalCashFlow.toLocaleString()}` : ''
+        winner.metrics?.totalCashFlow ? `Total Cash Flow: $${winner.metrics.totalCashFlow.toLocaleString('en-AU')}` : ''
       ].filter(Boolean).slice(0, 3)
     };
   }, [primaryMetrics, allComparisonMetrics, report, comparisonReports, investorProfile, projections]);
@@ -1661,7 +1661,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         pdf.text(`Property ${idx + 2}: ${compReport.property_address}`, margin, yPos);
         yPos += 5;
       });
-      pdf.text(`Generated: ${new Date().toLocaleDateString()}`, margin, yPos);
+      pdf.text(`Generated: ${new Date().toLocaleDateString('en-AU')}`, margin, yPos);
       yPos += 10;
 
       // Capture and add charts
@@ -1709,7 +1709,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       const formatValue = (value: number | null | undefined, format: string) => {
         if (value === null || value === undefined) return 'N/A';
         switch (format) {
-          case 'currency': return `$${Math.round(value).toLocaleString()}`;
+          case 'currency': return `$${Math.round(value).toLocaleString('en-AU')}`;
           case 'percent': return `${value.toFixed(2)}%`;
           case 'year': return value === null ? 'N/A' : `Year ${value}`;
           case 'multiple': return `${value.toFixed(2)}x`;
@@ -2002,7 +2002,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         yPos += 5;
       });
       yPos += 3;
-      pdf.text(`Generated: ${new Date().toLocaleDateString()}`, margin, yPos);
+      pdf.text(`Generated: ${new Date().toLocaleDateString('en-AU')}`, margin, yPos);
       yPos += 12;
 
       // Executive Summary
@@ -3829,7 +3829,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         
         <h1>10-Year Cash Flow Analysis</h1>
         <h2>${report.property_address}</h2>
-        <p class="meta">Generated: ${new Date().toLocaleDateString()}</p>
+        <p class="meta">Generated: ${new Date().toLocaleDateString('en-AU')}</p>
         
         <div class="metrics">
           <div class="metric">
@@ -4391,7 +4391,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                             {entry.name}
                                           </span>
                                           <span className="font-medium">
-                                            ${Number(entry.value).toLocaleString()}
+                                            ${Number(entry.value).toLocaleString('en-AU')}
                                             {yoyVal !== null && yoyVal !== 0 && (
                                               <span className={`ml-1.5 ${yoyVal > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
                                                 {yoyVal > 0 ? '↑' : '↓'}{Math.abs(yoyVal).toFixed(1)}%
@@ -4519,8 +4519,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         const kpis = [
                           { 
                             label: 'Property Value', 
-                            yr1: `$${yr1.propertyMarketValue.toLocaleString()}`, 
-                            yr10: `$${yr10.propertyMarketValue.toLocaleString()}`,
+                            yr1: `$${yr1.propertyMarketValue.toLocaleString('en-AU')}`, 
+                            yr10: `$${yr10.propertyMarketValue.toLocaleString('en-AU')}`,
                             change: `+${totalGrowth}%`,
                             positive: true,
                             sparkData: values.map(v => v.propertyMarketValue),
@@ -4528,26 +4528,26 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           },
                           { 
                             label: 'Equity', 
-                            yr1: `$${yr1.equityInProperty.toLocaleString()}`, 
-                            yr10: `$${yr10.equityInProperty.toLocaleString()}`,
-                            change: `+$${(yr10.equityInProperty - yr1.equityInProperty).toLocaleString()}`,
+                            yr1: `$${yr1.equityInProperty.toLocaleString('en-AU')}`, 
+                            yr10: `$${yr10.equityInProperty.toLocaleString('en-AU')}`,
+                            change: `+$${(yr10.equityInProperty - yr1.equityInProperty).toLocaleString('en-AU')}`,
                             positive: true,
                             sparkData: values.map(v => v.equityInProperty),
                             color: '#22c55e'
                           },
                           { 
                             label: 'Loan Balance', 
-                            yr1: `$${yr1.loanAmount.toLocaleString()}`, 
-                            yr10: `$${yr10.loanAmount.toLocaleString()}`,
-                            change: `-$${(yr1.loanAmount - yr10.loanAmount).toLocaleString()}`,
+                            yr1: `$${yr1.loanAmount.toLocaleString('en-AU')}`, 
+                            yr10: `$${yr10.loanAmount.toLocaleString('en-AU')}`,
+                            change: `-$${(yr1.loanAmount - yr10.loanAmount).toLocaleString('en-AU')}`,
                             positive: yr10.loanAmount < yr1.loanAmount,
                             sparkData: values.map(v => v.loanAmount),
                             color: '#ef4444'
                           },
                           { 
                             label: 'Cash Flow', 
-                            yr1: `$${yr1.afterTaxCashFlowPA.toLocaleString()}`, 
-                            yr10: `$${yr10.afterTaxCashFlowPA.toLocaleString()}`,
+                            yr1: `$${yr1.afterTaxCashFlowPA.toLocaleString('en-AU')}`, 
+                            yr10: `$${yr10.afterTaxCashFlowPA.toLocaleString('en-AU')}`,
                             change: yr10.afterTaxCashFlowPA >= 0 ? 'Positive' : 'Negative',
                             positive: yr10.afterTaxCashFlowPA >= 0,
                             sparkData: values.map(v => v.afterTaxCashFlowPA),
@@ -4616,9 +4616,9 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <CollapsibleContent>
                               <div className="p-3 bg-brand-50 dark:bg-brand-950/30 border border-t-0 border-brand-200 dark:border-brand-800/40 rounded-b-lg -mt-[1px]">
                                 <div className="text-xs text-brand-900/80 dark:text-brand-200/70 space-y-2 leading-relaxed">
-                                  <p><strong>Property Value Growth:</strong> Projected to appreciate by {propGrowth}% over 10 years (from ${baseFinancialData.purchasePrice.toLocaleString()} to ${yr10d.propertyMarketValue.toLocaleString()}), reflecting configured capital growth assumptions.</p>
-                                  <p><strong>Equity Accumulation:</strong> Equity increases by {eqGrowth}% (${yr1d.equityInProperty.toLocaleString()} → ${yr10d.equityInProperty.toLocaleString()}), driven by capital appreciation and principal repayments reducing the loan by {loanRed}%.</p>
-                                  <p><strong>Cash Flow:</strong> After-tax cash flow moves from ${yr1d.afterTaxCashFlowPA.toLocaleString()}/yr (Year 1) to ${yr10d.afterTaxCashFlowPA.toLocaleString()}/yr (Year 10).
+                                  <p><strong>Property Value Growth:</strong> Projected to appreciate by {propGrowth}% over 10 years (from ${baseFinancialData.purchasePrice.toLocaleString('en-AU')} to ${yr10d.propertyMarketValue.toLocaleString('en-AU')}), reflecting configured capital growth assumptions.</p>
+                                  <p><strong>Equity Accumulation:</strong> Equity increases by {eqGrowth}% (${yr1d.equityInProperty.toLocaleString('en-AU')} → ${yr10d.equityInProperty.toLocaleString('en-AU')}), driven by capital appreciation and principal repayments reducing the loan by {loanRed}%.</p>
+                                  <p><strong>Cash Flow:</strong> After-tax cash flow moves from ${yr1d.afterTaxCashFlowPA.toLocaleString('en-AU')}/yr (Year 1) to ${yr10d.afterTaxCashFlowPA.toLocaleString('en-AU')}/yr (Year 10).
                                     {bey && ` The investment becomes cash-flow positive in Year ${bey.year}.`}
                                     {coy && ` Equity exceeds remaining debt in Year ${coy.year} — a key wealth milestone.`}
                                   </p>
@@ -4926,7 +4926,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           }}
                         />
                         <Tooltip 
-                          formatter={(value: number) => [`$${value.toLocaleString()}`, undefined]}
+                          formatter={(value: number) => [`$${value.toLocaleString('en-AU')}`, undefined]}
                           contentStyle={{ 
                             backgroundColor: 'hsl(var(--background))', 
                             border: '1px solid hsl(var(--border))',
@@ -4973,10 +4973,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                     ];
                     
                     const categories = [
-                      { label: 'Highest Growth', icon: '📈', getValue: (p: any) => p.yr10Value, format: (v: number) => `$${v.toLocaleString()}` },
-                      { label: 'Most Equity', icon: '🏠', getValue: (p: any) => p.yr10Equity, format: (v: number) => `$${v.toLocaleString()}` },
+                      { label: 'Highest Growth', icon: '📈', getValue: (p: any) => p.yr10Value, format: (v: number) => `$${v.toLocaleString('en-AU')}` },
+                      { label: 'Most Equity', icon: '🏠', getValue: (p: any) => p.yr10Equity, format: (v: number) => `$${v.toLocaleString('en-AU')}` },
                       { label: 'Best Yield', icon: '💰', getValue: (p: any) => p.yr10Yield, format: (v: number) => `${v.toFixed(2)}%` },
-                      { label: 'Best Cash Flow', icon: '💵', getValue: (p: any) => p.totalCashFlow, format: (v: number) => `$${v.toLocaleString()}` },
+                      { label: 'Best Cash Flow', icon: '💵', getValue: (p: any) => p.totalCashFlow, format: (v: number) => `$${v.toLocaleString('en-AU')}` },
                     ];
 
                     return (
@@ -5053,12 +5053,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           {[
                             { label: '10-Year ROI', key: 'roi', format: (v: number) => `${v?.toFixed(1)}%`, higherBetter: true },
                             { label: 'Annualized ROI', key: 'annualizedRoi', format: (v: number) => `${v?.toFixed(2)}%`, higherBetter: true },
-                            { label: 'Total Return', key: 'totalReturn', format: (v: number) => `$${(v || 0).toLocaleString()}`, higherBetter: true },
+                            { label: 'Total Return', key: 'totalReturn', format: (v: number) => `$${(v || 0).toLocaleString('en-AU')}`, higherBetter: true },
                             { label: 'Break-Even Year', key: 'breakEvenYear', format: (v: number) => v ? `Year ${v}` : 'N/A', higherBetter: false },
                             { label: 'Cash-on-Cash (Y1)', key: 'cashOnCash', format: (v: number) => `${v?.toFixed(2)}%`, higherBetter: true },
                             { label: 'Equity Multiple', key: 'equityMultiple', format: (v: number) => `${v?.toFixed(2)}x`, higherBetter: true },
-                            { label: 'Capital Gain', key: 'capitalGain', format: (v: number) => `$${(v || 0).toLocaleString()}`, higherBetter: true },
-                            { label: 'Total Cash Flow', key: 'totalCashFlow', format: (v: number) => `$${(v || 0).toLocaleString()}`, higherBetter: true },
+                            { label: 'Capital Gain', key: 'capitalGain', format: (v: number) => `$${(v || 0).toLocaleString('en-AU')}`, higherBetter: true },
+                            { label: 'Total Cash Flow', key: 'totalCashFlow', format: (v: number) => `$${(v || 0).toLocaleString('en-AU')}`, higherBetter: true },
                           ].map(({ label, key, format, higherBetter }) => {
                             const allValues = [
                               (primaryMetrics as any)?.[key] || (key === 'breakEvenYear' ? 99 : 0),
@@ -5085,22 +5085,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <TableRow className="bg-muted/30">
                             <TableCell className="font-medium sticky left-0 bg-muted/30">Year 10 Property Value</TableCell>
                             <TableCell className="text-center">
-                              ${(projections[10]?.propertyMarketValue || 0).toLocaleString()}
+                              ${(projections[10]?.propertyMarketValue || 0).toLocaleString('en-AU')}
                             </TableCell>
                             {allComparisonProjections.map(({ report: compReport, projections: compProjs }) => (
                               <TableCell key={compReport.id} className="text-center">
-                                ${(compProjs[10]?.propertyMarketValue || 0).toLocaleString()}
+                                ${(compProjs[10]?.propertyMarketValue || 0).toLocaleString('en-AU')}
                               </TableCell>
                             ))}
                           </TableRow>
                           <TableRow className="bg-muted/30">
                             <TableCell className="font-medium sticky left-0 bg-muted/30">Year 10 Equity</TableCell>
                             <TableCell className="text-center">
-                              ${(projections[10]?.equityInProperty || 0).toLocaleString()}
+                              ${(projections[10]?.equityInProperty || 0).toLocaleString('en-AU')}
                             </TableCell>
                             {allComparisonProjections.map(({ report: compReport, projections: compProjs }) => (
                               <TableCell key={compReport.id} className="text-center">
-                                ${(compProjs[10]?.equityInProperty || 0).toLocaleString()}
+                                ${(compProjs[10]?.equityInProperty || 0).toLocaleString('en-AU')}
                               </TableCell>
                             ))}
                           </TableRow>
@@ -5982,7 +5982,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               p.year,
                               'propertyMarketValue',
                               p.propertyMarketValue,
-                              (v) => v.toLocaleString()
+                              (v) => v.toLocaleString('en-AU')
                             )}
                           </TableCell>
                         ))}
@@ -5991,7 +5991,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Loan Amount $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.loanAmount.toLocaleString()}</TableCell>
+                          <TableCell key={p.year} className="text-center">{p.loanAmount.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
@@ -6002,7 +6002,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Equity $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center text-success">{p.equityInProperty.toLocaleString()}</TableCell>
+                          <TableCell key={p.year} className="text-center text-success">{p.equityInProperty.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
@@ -6022,7 +6022,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               p.year,
                               'rentalIncome',
                               p.rentalIncome,
-                              (v) => v.toLocaleString()
+                              (v) => v.toLocaleString('en-AU')
                             )}
                           </TableCell>
                         ))}
@@ -6055,7 +6055,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               p.year,
                               'propertyExpenses',
                               p.propertyExpenses,
-                              (v) => v.toLocaleString()
+                              (v) => v.toLocaleString('en-AU')
                             )}
                           </TableCell>
                         ))}
@@ -6071,7 +6071,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                 p.year,
                                 'landTax',
                                 p.landTax,
-                                (v) => v.toLocaleString()
+                                (v) => v.toLocaleString('en-AU')
                               )}
                             </TableCell>
                           ))}
@@ -6102,7 +6102,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               p.year,
                               'interestPayment',
                               p.interestPayments,
-                              (v) => v.toLocaleString()
+                              (v) => v.toLocaleString('en-AU')
                             )}
                           </TableCell>
                         ))}
@@ -6117,7 +6117,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               p.year,
                               'principalPayment',
                               p.principalPayments,
-                              (v) => v.toLocaleString()
+                              (v) => v.toLocaleString('en-AU')
                             )}
                           </TableCell>
                         ))}
@@ -6127,7 +6127,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
-                            {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString()}
+                            {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>
@@ -6136,7 +6136,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
-                            {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString()}
+                            {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>
@@ -6154,7 +6154,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                               p.year,
                               'depreciation',
                               p.depreciation,
-                              (v) => v.toLocaleString()
+                              (v) => v.toLocaleString('en-AU')
                             )}
                           </TableCell>
                         ))}
@@ -6167,7 +6167,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Total Deductions $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.year === 0 ? '' : p.totalDeductions.toLocaleString()}</TableCell>
+                          <TableCell key={p.year} className="text-center">{p.year === 0 ? '' : p.totalDeductions.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
@@ -6175,7 +6175,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Profit/Loss $</TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`text-center ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
-                            {p.year === 0 ? '' : p.netProfitLoss.toLocaleString()}
+                            {p.year === 0 ? '' : p.netProfitLoss.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>
@@ -6183,7 +6183,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Tax Refund $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center text-success">{p.year === 0 ? '' : p.taxRefund.toLocaleString()}</TableCell>
+                          <TableCell key={p.year} className="text-center text-success">{p.year === 0 ? '' : p.taxRefund.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
@@ -6191,7 +6191,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
-                            {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString()}
+                            {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>
@@ -6200,7 +6200,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
-                            {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString()}
+                            {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>

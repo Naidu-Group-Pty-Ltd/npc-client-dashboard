@@ -36,6 +36,7 @@ import {
 import {
   servableClearanceFor, servableDerivativeFor, type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
+import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -333,7 +334,7 @@ export async function enforceStrictPrimaryImages(
     .from('builder_stock_items')
     .select('id, primary_image_id')
     .eq('organisation_id', organisationId)
-    .eq('lifecycle_status', 'active')
+    .in('lifecycle_status', PROCESSED_LIFECYCLE)
     .limit(20000);
   if (!items?.length) return outcome;
 

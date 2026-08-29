@@ -474,7 +474,7 @@ export function PropertyComparisonModal({
       setHistoryOpen(false);
       toast({
         title: "Historical Analysis Loaded",
-        description: `Loaded analysis from ${new Date(data.created_at).toLocaleString()}`,
+        description: `Loaded analysis from ${new Date(data.created_at).toLocaleString('en-AU')}`,
       });
     } catch (error) {
       console.error('Error loading historical comparison:', error);
@@ -1187,7 +1187,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                                       <div className="flex items-center gap-2 mb-1">
                                         <Clock className="h-3 w-3 text-muted-foreground" />
                                         <span className="text-xs font-medium">
-                                          {createdDate.toLocaleDateString()} at {createdDate.toLocaleTimeString()}
+                                          {createdDate.toLocaleDateString('en-AU')} at {createdDate.toLocaleTimeString('en-AU')}
                                         </span>
                                         {isCurrentAnalysis && (
                                           <Badge variant="default" className="text-xs">Current</Badge>
@@ -1368,7 +1368,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         )}
                         <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
                           <Clock className="h-3 w-3" />
-                          <span>Created {new Date(template.created_at).toLocaleDateString()}</span>
+                          <span>Created {new Date(template.created_at).toLocaleDateString('en-AU')}</span>
                         </div>
                       </div>
                       <Button

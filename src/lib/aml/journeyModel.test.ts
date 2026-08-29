@@ -307,13 +307,23 @@ describe("unknown is never satisfied", () => {
     expect(deriveAmlLivePosition(facts, deriveAmlJourney(facts)).passportLabel).toBeNull();
   });
 
-  it("distribution switched off for the deployment is not a compliance blocker", () => {
+  it("a deployment flag is never a fact about a customer's case", () => {
+    /* This used to assert the stage WARNED that "Passport distribution is
+       not enabled here". It was a true statement about the deployment and a
+       meaningless one about the case — and on a deployment where partners
+       are onboarded one at a time through `grant_access`, that flag is off
+       while partners are being given the Passport successfully, so the
+       stage contradicted the roster on the stage before it.
+
+       The stage answers one question now: what keeps this case current. The
+       flag's state is not part of the answer, in either direction. */
     const facts = settled({
       passport: { enabled: false, state: null, version: null, partners: [], summary: null },
     });
     const s = stage(facts, "distribution");
     expect(s.blockers).toHaveLength(0);
-    expect(s.warnings.map((w) => w.key)).toContain("dist_disabled");
+    expect(s.warnings.map((w) => w.key)).not.toContain("dist_disabled");
+    expect(`${s.summary} ${JSON.stringify(s.warnings)}`).not.toMatch(/distribution/i);
   });
 
   it("an unread consent catalogue does not become 'consents accepted'", () => {
@@ -533,31 +543,41 @@ describe("stage readings", () => {
     expect(blocker?.detail).toMatch(/does not move the gate/);
   });
 
-  it("counts partner distribution from the server summary and never recomputes it", () => {
-    const s = stage(
-      settled({
-        passport: {
-          enabled: true,
-          state: { code: "issued_current", label: "Issued · Current" },
-          version: 2,
-          partners: [
-            { partner: { org_name: "Bank" }, state: "READY", ready: true, blockers: [] },
-            { partner: { org_name: "Solicitor" }, state: "ACTION_REQUIRED", ready: false, blockers: ["PARTNER_CLASSIFICATION_REQUIRED"] },
-          ],
-          summary: { total: 2, ready: 1, already_current: 0, blocked: 1 },
-        },
-      }),
-      "distribution",
-    );
-    expect(s.summary).toBe("0 current · 1 ready to share · 1 blocked.");
-    expect(s.outstandingItems.map((o) => o.key)).toContain("share");
-    expect(s.warnings.map((w) => w.key)).toContain("blocked_partners");
+  it("the ongoing-CDD stage reads monitoring, and nothing about partners", () => {
+    /* It used to read partner distribution readiness as well, which made it
+       a second partner register — the roster on Passport & Partners is the
+       first, and the only one with any act on it. Handing this stage a full
+       partner summary must change nothing it says. */
+    const partners = {
+      enabled: true,
+      state: { code: "issued_current", label: "Issued · Current" },
+      version: 2,
+      partners: [
+        { partner: { org_name: "Bank" }, state: "READY", ready: true, blockers: [] },
+        { partner: { org_name: "Solicitor" }, state: "ACTION_REQUIRED", ready: false, blockers: ["PARTNER_CLASSIFICATION_REQUIRED"] },
+      ],
+      summary: { total: 2, ready: 1, already_current: 0, blocked: 1 },
+    };
+    const withPartners = stage(settled({ passport: partners }), "distribution");
+    const without = stage(settled(), "distribution");
+
+    expect(withPartners.summary).toBe(without.summary);
+    expect(withPartners.outstandingItems.map((o) => o.key)).not.toContain("share");
+    expect(withPartners.warnings.map((w) => w.key)).not.toContain("blocked_partners");
+    expect(JSON.stringify(withPartners)).not.toMatch(/Bank|Solicitor/);
   });
 
-  it("treats an unlinked case as nothing to distribute, not as a failure", () => {
+  it("but it still names where the partners are", () => {
+    // Removing a duplicate must not remove the route to the real thing.
     const s = stage(settled(), "distribution");
+    expect(s.secondaryActions.map((a) => a.section)).toContain("passport");
+  });
+
+  it("an unread monitoring summary is unknown, never 'nothing to do'", () => {
+    const s = stage(bare(), "distribution");
+    expect(s.unavailableFacts).toContain("monitoring summary");
+    expect(s.status).toBe("unknown");
     expect(s.blockers).toHaveLength(0);
-    expect(s.completedItems.map((c) => c.key)).toContain("no_partners");
   });
 
   it("keeps ongoing CDD alive after issuance", () => {

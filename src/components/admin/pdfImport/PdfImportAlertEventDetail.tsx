@@ -78,11 +78,11 @@ export function PdfImportAlertEventDetail({ event, canManage, busy, onAction }: 
           <Row label="Owner" value={getMonitoringOwnerLabel(event.owner)} />
           <Row label="Metric / threshold" value={`${event.metricValue ?? '—'} / ${event.threshold ?? '—'}`} />
           <Row label="Occurrences" value={event.occurrenceCount} />
-          <Row label="First seen" value={event.firstSeenAt ? new Date(event.firstSeenAt).toLocaleString() : '—'} />
-          <Row label="Last seen" value={event.lastSeenAt ? new Date(event.lastSeenAt).toLocaleString() : '—'} />
-          {event.acknowledgedAt && <Row label="Acknowledged" value={new Date(event.acknowledgedAt).toLocaleString()} />}
-          {event.resolvedAt && <Row label="Resolved" value={new Date(event.resolvedAt).toLocaleString()} />}
-          {event.suppressedUntil && <Row label="Suppressed until" value={new Date(event.suppressedUntil).toLocaleString()} />}
+          <Row label="First seen" value={event.firstSeenAt ? new Date(event.firstSeenAt).toLocaleString('en-AU') : '—'} />
+          <Row label="Last seen" value={event.lastSeenAt ? new Date(event.lastSeenAt).toLocaleString('en-AU') : '—'} />
+          {event.acknowledgedAt && <Row label="Acknowledged" value={new Date(event.acknowledgedAt).toLocaleString('en-AU')} />}
+          {event.resolvedAt && <Row label="Resolved" value={new Date(event.resolvedAt).toLocaleString('en-AU')} />}
+          {event.suppressedUntil && <Row label="Suppressed until" value={new Date(event.suppressedUntil).toLocaleString('en-AU')} />}
           <Row label="Runbook" value={<code className="text-xs">{event.runbookAnchor}</code>} />
         </div>
 

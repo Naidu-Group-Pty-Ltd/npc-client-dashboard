@@ -102,7 +102,7 @@ export function assessIndustrialBenchmark(inputs: AssessmentInputs, config = ind
 
   if (pricingOutsideRange) {
     status = 'Pricing Review Required';
-    notes.push(`Pricing is outside configured benchmark ranges ($/m² GLA ${config.pricePerSqmGla.min.toLocaleString()}–${config.pricePerSqmGla.max.toLocaleString()}, $/m² site ${config.pricePerSqmSite.min.toLocaleString()}–${config.pricePerSqmSite.max.toLocaleString()}).`);
+    notes.push(`Pricing is outside configured benchmark ranges ($/m² GLA ${config.pricePerSqmGla.min.toLocaleString('en-AU')}–${config.pricePerSqmGla.max.toLocaleString('en-AU')}, $/m² site ${config.pricePerSqmSite.min.toLocaleString('en-AU')}–${config.pricePerSqmSite.max.toLocaleString('en-AU')}).`);
   }
 
   if (inputs.verified && status === 'Balanced') status = 'Verified';

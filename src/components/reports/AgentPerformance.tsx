@@ -138,7 +138,7 @@ export function AgentPerformance({ listings }: AgentPerformanceProps) {
                   </div>
                   <div className="reports-agent-metric">
                     <div className="reports-agent-count">{agent.count} listings</div>
-                    <div className="reports-agent-submetric">${agent.avgPrice.toLocaleString()} avg</div>
+                    <div className="reports-agent-submetric">${agent.avgPrice.toLocaleString('en-AU')} avg</div>
                   </div>
                   <Badge variant={
                     agent.performance === 'High' ? 'default' :

@@ -284,7 +284,7 @@ export default function AmlV3Cutover() {
                       <p className="text-sm text-muted-foreground mt-1">{spec.summary}</p>
                       {row?.updated_at && (
                         <p className="text-xs text-muted-foreground mt-1">
-                          Last change: {new Date(row.updated_at).toLocaleString()}
+                          Last change: {new Date(row.updated_at).toLocaleString('en-AU')}
                         </p>
                       )}
                     </div>
@@ -373,7 +373,7 @@ export default function AmlV3Cutover() {
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-muted-foreground">
-                      last {new Date(h.lastSeen).toLocaleString()}
+                      last {new Date(h.lastSeen).toLocaleString('en-AU')}
                     </span>
                     <Badge variant="secondary">{h.count}</Badge>
                   </div>

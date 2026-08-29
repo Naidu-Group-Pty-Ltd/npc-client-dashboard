@@ -164,17 +164,17 @@ export class AuditTrailBuilder {
 
   /** Add a credit card assessment entry */
   addCreditCardAssessment(balance: number, limit: number, monthlyServicing: number, rate: number): void {
-    this.add('liability', 'credit_card_limit_rate', 'Credit Card', balance, monthlyServicing, `${(rate * 100).toFixed(1)}% of $${limit.toLocaleString()} limit`);
+    this.add('liability', 'credit_card_limit_rate', 'Credit Card', balance, monthlyServicing, `${(rate * 100).toFixed(1)}% of $${limit.toLocaleString('en-AU')} limit`);
   }
 
   /** Add HECS assessment */
   addHecsAssessment(balance: number, monthlyRepayment: number, rate: number, annualIncome: number): void {
-    this.add('liability', 'hecs_threshold_applied', 'HECS/HELP', balance, monthlyRepayment, `${(rate * 100).toFixed(1)}% of $${annualIncome.toLocaleString()} income`);
+    this.add('liability', 'hecs_threshold_applied', 'HECS/HELP', balance, monthlyRepayment, `${(rate * 100).toFixed(1)}% of $${annualIncome.toLocaleString('en-AU')} income`);
   }
 
   /** Add tax calculation entry */
   addTaxCalculation(grossIncome: number, totalTax: number, afterTax: number, effectiveRate: number): void {
-    this.add('tax', 'tax_calculated', 'Income Tax', grossIncome, afterTax, `${(effectiveRate * 100).toFixed(1)}% effective rate`, `Tax $${totalTax.toLocaleString()}`);
+    this.add('tax', 'tax_calculated', 'Income Tax', grossIncome, afterTax, `${(effectiveRate * 100).toFixed(1)}% effective rate`, `Tax $${totalTax.toLocaleString('en-AU')}`);
   }
 
   /** Add Medicare levy entry */
@@ -184,7 +184,7 @@ export class AuditTrailBuilder {
 
   /** Add DTI cap constraint */
   addDtiCapApplied(uncappedCapacity: number, cappedCapacity: number, dtiCap: number): void {
-    this.add('constraint', 'dti_cap_applied', 'DTI Cap', uncappedCapacity, cappedCapacity, `DTI capped at ${dtiCap}x`, `Capacity reduced by $${(uncappedCapacity - cappedCapacity).toLocaleString()}`);
+    this.add('constraint', 'dti_cap_applied', 'DTI Cap', uncappedCapacity, cappedCapacity, `DTI capped at ${dtiCap}x`, `Capacity reduced by $${(uncappedCapacity - cappedCapacity).toLocaleString('en-AU')}`);
   }
 
   /** Add conservative mode adjustments */

@@ -649,14 +649,14 @@ export default function ClientManagement() {
   const kpiCards = [
     {
       label: 'Total Clients',
-      value: totalClients.toLocaleString(),
-      hint: `${starredClientCount.toLocaleString()} starred`,
+      value: totalClients.toLocaleString('en-AU'),
+      hint: `${starredClientCount.toLocaleString('en-AU')} starred`,
       icon: Users,
       tone: 'accent' as const,
     },
     {
       label: 'Total Properties',
-      value: totalProperties.toLocaleString(),
+      value: totalProperties.toLocaleString('en-AU'),
       hint: 'Across all client portfolios',
       icon: Building2,
       tone: 'info' as const,
@@ -670,7 +670,7 @@ export default function ClientManagement() {
     },
     {
       label: 'Pending GHL Sync',
-      value: pendingSyncCount.toLocaleString(),
+      value: pendingSyncCount.toLocaleString('en-AU'),
       hint: pendingSyncCount > 0 ? 'Awaiting push to GoHighLevel' : 'Everything is up to date',
       icon: TrendingUp,
       tone: pendingSyncCount > 0 ? ('warning' as const) : ('neutral' as const),
@@ -733,7 +733,7 @@ export default function ClientManagement() {
               )}
               <span className="hidden sm:inline">
                 {isImportingFromGHL && importProgress
-                  ? `Importing… (${importProgress.imported.toLocaleString()})`
+                  ? `Importing… (${importProgress.imported.toLocaleString('en-AU')})`
                   : 'Import from GHL'}
               </span>
               <span className="sm:hidden">Import</span>
@@ -892,7 +892,7 @@ export default function ClientManagement() {
           <p className="px-1 text-xs text-muted-foreground" aria-live="polite">
             {isLoading
               ? 'Loading clients…'
-              : `Showing ${displayClients.length.toLocaleString()} of ${totalClients.toLocaleString()} clients`}
+              : `Showing ${displayClients.length.toLocaleString('en-AU')} of ${totalClients.toLocaleString('en-AU')} clients`}
           </p>
 
           {/* Client List */}

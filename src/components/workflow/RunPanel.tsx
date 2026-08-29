@@ -303,7 +303,7 @@ export function RunPanel({
                     <StepIcon status={run.status === 'succeeded' ? 'succeeded' : run.status === 'failed' ? 'failed' : 'halted'} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium text-foreground">
-                        {new Date(run.startedAt).toLocaleString()}
+                        {new Date(run.startedAt).toLocaleString('en-AU')}
                       </p>
                       <p className="truncate text-[11px] text-muted-foreground">
                         {run.stepCount} step{run.stepCount === 1 ? '' : 's'}
@@ -363,7 +363,7 @@ export function RunPanel({
                         {event.status}
                       </Badge>
                       <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                        {new Date(event.occurredAt).toLocaleString()}
+                        {new Date(event.occurredAt).toLocaleString('en-AU')}
                       </span>
                     </div>
                     {event.lastError && (

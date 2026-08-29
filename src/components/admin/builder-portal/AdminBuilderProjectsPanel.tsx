@@ -381,7 +381,7 @@ export function AdminBuilderProjectsPanel({ canEdit }: { canEdit: boolean }) {
                       <p className="text-xs text-muted-foreground">
                         {ACCESS_ROLE_LABELS[grant.access_role] || grant.access_role}
                         {' · '}via {grant.organisation_side}
-                        {grant.valid_until ? ` · expires ${new Date(grant.valid_until).toLocaleDateString()}` : ''}
+                        {grant.valid_until ? ` · expires ${new Date(grant.valid_until).toLocaleDateString('en-AU')}` : ''}
                       </p>
                     </div>
                     {!grant.revoked_at && canEdit ? (

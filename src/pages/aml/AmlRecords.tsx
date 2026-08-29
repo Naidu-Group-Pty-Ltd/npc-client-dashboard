@@ -27,7 +27,7 @@ import {
   type AmlSuppressionMode, type AmlTippingOffRule, type AmlTippingSurface,
 } from "@/lib/aml/amlRecordsApi";
 
-const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString() : "—");
+const fmt = (d?: string | null) => (d ? new Date(d).toLocaleString('en-AU') : "—");
 
 const SCAN_STATUS_TONE: Record<string, string> = {
   dry_run: "bg-muted text-muted-foreground",

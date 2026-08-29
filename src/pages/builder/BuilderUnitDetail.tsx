@@ -512,7 +512,7 @@ export default function BuilderUnitDetail() {
                           </TableCell>
                           <TableCell className="hidden sm:table-cell">
                             {reservation.expires_at
-                              ? new Date(reservation.expires_at).toLocaleDateString()
+                              ? new Date(reservation.expires_at).toLocaleDateString('en-AU')
                               : '—'}
                           </TableCell>
                           <TableCell className="text-right">
@@ -554,7 +554,7 @@ export default function BuilderUnitDetail() {
                       <div>
                         <p className="font-medium">{hold.hold_reference || 'Hold'}</p>
                         <p className="text-xs text-muted-foreground">
-                          Expires {new Date(hold.expires_at).toLocaleString()}
+                          Expires {new Date(hold.expires_at).toLocaleString('en-AU')}
                         </p>
                       </div>
                       <Badge variant="outline">{hold.status}</Badge>
@@ -598,7 +598,7 @@ export default function BuilderUnitDetail() {
                           {entry.from_status ? `${entry.from_status} → ` : ''}{entry.to_status}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.created_at).toLocaleString('en-AU')}
                         </span>
                       </div>
                       {entry.reason ? (

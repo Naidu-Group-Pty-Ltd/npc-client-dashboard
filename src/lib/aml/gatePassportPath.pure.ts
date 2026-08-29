@@ -32,7 +32,7 @@ export type GatePassportStepState =
   | "anytime";
 
 export interface GatePassportStep {
-  key: "decision" | "gate" | "preview" | "issue";
+  key: "decision" | "gate" | "preview" | "issue" | "share";
   label: string;
   state: GatePassportStepState;
   detail: string;
@@ -182,6 +182,31 @@ export function gatePassportPath(f: GatePassportFacts): GatePassportStep[] {
               : gateApproved
                 ? "The gate is approved — issue the attestation from the reliance panel below."
                 : "Issued from the reliance panel once the gate approves the service.",
+    blockedBy: null,
+  });
+
+  /* 5 · Handing it over — the reason the credential exists.
+   *
+   *     ── Why this step is here and not on the next stage ────────────
+   *     The partner roster, and every act on it, has always lived on this
+   *     stage; the next one carried a read-only echo of the same
+   *     organisations with no act attached, which is what made "am I
+   *     doubling up on partners?" the right question to ask. Issuing a
+   *     credential and handing it to the partners entitled to rely on it
+   *     are one piece of work — you cannot share what has not been issued.
+   *
+   *     ── Why it is `anytime` and never owed ─────────────────────────
+   *     A case may legitimately have no partner at all, and a stage that
+   *     will not complete until somebody is given a Passport would invent
+   *     an obligation nobody has. It orders the work without counting it,
+   *     and it states no numbers: the roster below is the one place that
+   *     says who holds this Passport, and two counts of one fact is a
+   *     defect this stage has already had once. */
+  steps.push({
+    key: "share",
+    label: "Share it with partners",
+    state: "anytime",
+    detail: "The organisations entitled to rely on this record receive it from the roster below — one at a time, each under its own written arrangement. Withdrawing access lives there too.",
     blockedBy: null,
   });
 

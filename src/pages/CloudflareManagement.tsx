@@ -75,12 +75,12 @@ function AnalyticsTab() {
   const timeseries = analytics.data?.result?.timeseries;
 
   const stats = totals ? [
-    { label: 'Total Requests', value: totals.requests?.all?.toLocaleString() || '0', icon: <Globe className="h-5 w-5" />, color: 'text-info' },
-    { label: 'Cached Requests', value: totals.requests?.cached?.toLocaleString() || '0', icon: <HardDrive className="h-5 w-5" />, color: 'text-success' },
+    { label: 'Total Requests', value: totals.requests?.all?.toLocaleString('en-AU') || '0', icon: <Globe className="h-5 w-5" />, color: 'text-info' },
+    { label: 'Cached Requests', value: totals.requests?.cached?.toLocaleString('en-AU') || '0', icon: <HardDrive className="h-5 w-5" />, color: 'text-success' },
     { label: 'Total Bandwidth', value: formatBytes(totals.bandwidth?.all || 0), icon: <TrendingUp className="h-5 w-5" />, color: 'text-accent' },
-    { label: 'Threats Blocked', value: totals.threats?.all?.toLocaleString() || '0', icon: <ShieldAlert className="h-5 w-5" />, color: 'text-destructive' },
-    { label: 'Page Views', value: totals.pageviews?.all?.toLocaleString() || '0', icon: <Eye className="h-5 w-5" />, color: 'text-brand-400' },
-    { label: 'Unique Visitors', value: totals.uniques?.all?.toLocaleString() || '0', icon: <Activity className="h-5 w-5" />, color: 'text-info' },
+    { label: 'Threats Blocked', value: totals.threats?.all?.toLocaleString('en-AU') || '0', icon: <ShieldAlert className="h-5 w-5" />, color: 'text-destructive' },
+    { label: 'Page Views', value: totals.pageviews?.all?.toLocaleString('en-AU') || '0', icon: <Eye className="h-5 w-5" />, color: 'text-brand-400' },
+    { label: 'Unique Visitors', value: totals.uniques?.all?.toLocaleString('en-AU') || '0', icon: <Activity className="h-5 w-5" />, color: 'text-info' },
   ] : [];
 
   return (
@@ -166,7 +166,7 @@ function AnalyticsTab() {
                   code.startsWith('4') ? 'border-brand-500/30 text-brand-400' :
                   'border-destructive/30 text-destructive'
                 }>
-                  {code}: {(count as number).toLocaleString()}
+                  {code}: {(count as number).toLocaleString('en-AU')}
                 </Badge>
               ))}
             </div>
@@ -391,7 +391,7 @@ function WorkersTab() {
                           <div className="min-w-0">
                             <p className="truncate text-xs font-medium sm:text-sm" title={w.id}>{w.id}</p>
                             <p className="text-[11px] text-muted-foreground sm:text-xs">
-                              Modified: {w.modified_on ? new Date(w.modified_on).toLocaleDateString() : 'N/A'}
+                              Modified: {w.modified_on ? new Date(w.modified_on).toLocaleDateString('en-AU') : 'N/A'}
                             </p>
                           </div>
                         </div>

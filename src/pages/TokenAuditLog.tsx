@@ -74,10 +74,10 @@ function TokenSummary({ row }: { row: AuditRow }) {
   return (
     <div
       className="text-right text-sm"
-      aria-label={`Used ${row.used_tokens.toLocaleString()} tokens`}
+      aria-label={`Used ${row.used_tokens.toLocaleString('en-AU')} tokens`}
     >
       <span className="font-semibold tabular-nums text-foreground" title={`${row.used_tokens}`}>
-        {row.used_tokens.toLocaleString()}
+        {row.used_tokens.toLocaleString('en-AU')}
       </span>
     </div>
   );
@@ -92,7 +92,7 @@ function AuditEventMobileCard({ row, userLabel, isOpen, onOpen }: { row: AuditRo
       <div className="flex min-w-0 items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <p className="truncate text-sm font-semibold text-foreground" title={row.created_at}>{format(new Date(row.created_at), "MMM d, yyyy • HH:mm:ss")}</p>
-          <p className="truncate text-xs text-muted-foreground" title={row.created_at}>{new Date(row.created_at).toLocaleString()}</p>
+          <p className="truncate text-xs text-muted-foreground" title={row.created_at}>{new Date(row.created_at).toLocaleString('en-AU')}</p>
         </div>
         <EventBadge event={row.event} />
       </div>
@@ -125,7 +125,7 @@ function AuditEventMobileCard({ row, userLabel, isOpen, onOpen }: { row: AuditRo
         <TokenSummary row={row} />
         <div className="rounded-2xl border border-border/55 bg-background/70 px-3 py-2 text-right text-xs">
           <span className="block text-muted-foreground">Available</span>
-          <span className="mt-1 block font-semibold tabular-nums text-foreground">{row.available_tokens.toLocaleString()}</span>
+          <span className="mt-1 block font-semibold tabular-nums text-foreground">{row.available_tokens.toLocaleString('en-AU')}</span>
         </div>
       </div>
 
@@ -264,7 +264,7 @@ export default function TokenAuditLog() {
                 </div>
               </div>
               <Badge variant="outline" className="w-fit rounded-full border-primary/20 bg-primary/10 px-3 py-1 text-primary">
-                {filtered.length.toLocaleString()} visible
+                {filtered.length.toLocaleString('en-AU')} visible
               </Badge>
             </div>
           </CardHeader>
@@ -309,14 +309,14 @@ export default function TokenAuditLog() {
                   </div>
                 </div>
               </div>
-              <div className="grid shrink-0 grid-cols-2 gap-2 rounded-2xl border border-border/60 bg-card/70 p-2 text-xs shadow-sm sm:min-w-[220px]" aria-label={`Loaded ${rows.length.toLocaleString()} events, ${filtered.length.toLocaleString()} visible`}>
+              <div className="grid shrink-0 grid-cols-2 gap-2 rounded-2xl border border-border/60 bg-card/70 p-2 text-xs shadow-sm sm:min-w-[220px]" aria-label={`Loaded ${rows.length.toLocaleString('en-AU')} events, ${filtered.length.toLocaleString('en-AU')} visible`}>
                 <div className="rounded-xl bg-muted/35 px-3 py-2">
                   <span className="block text-muted-foreground">Loaded</span>
-                  <span className="font-semibold tabular-nums text-foreground">{rows.length.toLocaleString()}</span>
+                  <span className="font-semibold tabular-nums text-foreground">{rows.length.toLocaleString('en-AU')}</span>
                 </div>
                 <div className="rounded-xl bg-primary/10 px-3 py-2">
                   <span className="block text-primary/80">Visible</span>
-                  <span className="font-semibold tabular-nums text-primary">{filtered.length.toLocaleString()}</span>
+                  <span className="font-semibold tabular-nums text-primary">{filtered.length.toLocaleString('en-AU')}</span>
                 </div>
               </div>
             </DashboardThemeFrame>
@@ -331,7 +331,7 @@ export default function TokenAuditLog() {
               ].map((item) => (
                 <div key={item.label} className={cn("rounded-3xl border px-4 py-3 shadow-sm", item.className)}>
                   <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] opacity-80"><Sparkles className="h-3.5 w-3.5" />{item.label}</span>
-                  <span className="mt-2 block text-2xl font-semibold tabular-nums">{item.value.toLocaleString()}</span>
+                  <span className="mt-2 block text-2xl font-semibold tabular-nums">{item.value.toLocaleString('en-AU')}</span>
                 </div>
               ))}
             </div>
@@ -455,7 +455,7 @@ export default function TokenAuditLog() {
                     </div>
                   </div>
                   <div className="shrink-0 rounded-full border border-border/60 bg-background/75 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                    {filtered.length.toLocaleString()} rows
+                    {filtered.length.toLocaleString('en-AU')} rows
                   </div>
                 </div>
                 <div className="space-y-3 p-3 lg:hidden" aria-label="Token audit event cards">
@@ -519,7 +519,7 @@ export default function TokenAuditLog() {
                                 />
                                 <div className="min-w-0">
                                   <span className="block whitespace-nowrap font-medium text-foreground" title={r.created_at}>{format(new Date(r.created_at), "MMM d, HH:mm:ss")}</span>
-                                  <span className="block truncate" title={r.created_at}>{new Date(r.created_at).toLocaleString()}</span>
+                                  <span className="block truncate" title={r.created_at}>{new Date(r.created_at).toLocaleString('en-AU')}</span>
                                 </div>
                               </div>
                             </TableCell>
@@ -549,7 +549,7 @@ export default function TokenAuditLog() {
                               </button>
                             </TableCell>
                             <TableCell className="align-top"><TokenSummary row={r} /></TableCell>
-                            <TableCell className="align-top text-right tabular-nums text-muted-foreground">{r.available_tokens.toLocaleString()}</TableCell>
+                            <TableCell className="align-top text-right tabular-nums text-muted-foreground">{r.available_tokens.toLocaleString('en-AU')}</TableCell>
                             <TableCell className="min-w-0 align-top text-xs">
                               <OutcomeBadge status={r.status} error={r.error_message} />
                               {r.reason ? <span className="block truncate pt-1.5 text-muted-foreground" title={r.reason}>{r.reason}</span> : null}

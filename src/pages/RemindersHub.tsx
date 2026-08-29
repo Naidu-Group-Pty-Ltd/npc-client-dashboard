@@ -28,6 +28,8 @@ import {
   Filter,
   Sparkles,
   Loader2,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -78,6 +80,22 @@ const TYPE_ICONS: Record<string, React.ReactNode> = {
   finance: <TrendingUp className="h-3.5 w-3.5" />,
   clawback: <AlertTriangle className="h-3.5 w-3.5" />,
   construction: <Building2 className="h-3.5 w-3.5" />,
+  /* AML/CTF obligations, written by the compliance module. A scheduled
+     ongoing-CDD review used to appear on one card at the foot of one case
+     stage and on no reminder list in the product — the one obligation with
+     a statutory character and a multi-year horizon was the one nobody would
+     see coming. They read as compliance work here rather than as
+     indistinguishable "client reminders". */
+  aml_periodic_review: <ShieldCheck className="h-3.5 w-3.5" />,
+  aml_trigger_review: <ShieldAlert className="h-3.5 w-3.5" />,
+  aml_passport_issued: <ShieldCheck className="h-3.5 w-3.5" />,
+};
+
+/** What an AML reminder is called on screen, where the type alone is a slug. */
+const AML_REMINDER_LABELS: Record<string, string> = {
+  aml_periodic_review: 'AML/CTF review',
+  aml_trigger_review: 'AML/CTF trigger review',
+  aml_passport_issued: 'Compliance Passport',
 };
 
 export default function RemindersHub() {
@@ -648,8 +666,10 @@ export default function RemindersHub() {
                                     <span className="max-w-full truncate rounded-full border border-border dark:border-white/10 bg-background dark:bg-black/20 px-2 py-0.5 font-medium text-foreground dark:text-foreground sm:max-w-[220px]">{reminder.client_name}</span>
                                     <span className="hidden text-brand-300/35 min-[420px]:inline">•</span>
                                     <span className="inline-flex min-w-0 max-w-full items-center gap-1 truncate rounded-full border border-border dark:border-white/10 bg-card/5 dark:bg-white/5 px-2 py-0.5 text-[10px] font-medium text-muted-foreground dark:text-foreground">
-                                      {SOURCE_ICONS[reminder.source]}
-                                      <span className="truncate">{reminder.source_label}</span>
+                                      {TYPE_ICONS[reminder.reminder_type] ?? SOURCE_ICONS[reminder.source]}
+                                      <span className="truncate">
+                                        {AML_REMINDER_LABELS[reminder.reminder_type] ?? reminder.source_label}
+                                      </span>
                                     </span>
                                     {reminder.description && (
                                       <>

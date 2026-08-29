@@ -66,7 +66,7 @@ export function IndependentAssessmentForm({
             <span className="text-muted-foreground">Latest recorded: </span>
             <Badge variant="outline">{current.status.replace(/_/g, " ")}</Badge>
             {current.decided_at && (
-              <span className="text-muted-foreground"> · {new Date(current.decided_at).toLocaleString()}</span>
+              <span className="text-muted-foreground"> · {new Date(current.decided_at).toLocaleString('en-AU')}</span>
             )}
             {current.refresh_required && (
               <Badge variant="outline" className="text-warning ml-2">refresh required</Badge>

@@ -671,16 +671,16 @@ export function useReviewWizard(
       nextReviewDue.setDate(nextReviewDue.getDate() + frequencyDays);
 
       // Generate executive summary
-      const executiveSummary = `Portfolio review for ${clientName} completed on ${new Date().toLocaleDateString()}. ` +
+      const executiveSummary = `Portfolio review for ${clientName} completed on ${new Date().toLocaleDateString('en-AU')}. ` +
         `Overall portfolio score: ${scorecard.overallScore}/100. ` +
         `Risk level: ${scorecard.riskLevel}. ` +
-        `Total portfolio value: $${metrics.portfolioTotals.totalValue.toLocaleString()}. ` +
-        `Monthly cash flow: $${metrics.portfolioTotals.totalMonthlyCashflow.toLocaleString()}.`;
+        `Total portfolio value: $${metrics.portfolioTotals.totalValue.toLocaleString('en-AU')}. ` +
+        `Monthly cash flow: $${metrics.portfolioTotals.totalMonthlyCashflow.toLocaleString('en-AU')}.`;
 
       const keyFindings = [
-        `Portfolio consists of ${properties.length} properties worth $${metrics.portfolioTotals.totalValue.toLocaleString()}`,
+        `Portfolio consists of ${properties.length} properties worth $${metrics.portfolioTotals.totalValue.toLocaleString('en-AU')}`,
         `Current LVR: ${metrics.portfolioTotals.portfolioLvr.toFixed(1)}%`,
-        `Monthly net cash flow: $${metrics.portfolioTotals.totalMonthlyCashflow.toLocaleString()}`,
+        `Monthly net cash flow: $${metrics.portfolioTotals.totalMonthlyCashflow.toLocaleString('en-AU')}`,
         `${scorecard.propertyScores.filter(p => p.classification === 'Star').length} star performer(s)`,
         `${flags.filter(f => f.severity === 'critical' || f.severity === 'high').length} high-priority issue(s) identified`
       ];

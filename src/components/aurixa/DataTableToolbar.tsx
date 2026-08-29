@@ -80,9 +80,9 @@ export function DataTableToolbar({
         <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
           {count && (
             <span className="rounded-lg border border-border/60 bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
-              <span className="font-semibold text-foreground">{count.filtered.toLocaleString()}</span>
+              <span className="font-semibold text-foreground">{count.filtered.toLocaleString('en-AU')}</span>
               <span className="mx-1 opacity-60">/</span>
-              {count.total.toLocaleString()}
+              {count.total.toLocaleString('en-AU')}
             </span>
           )}
 

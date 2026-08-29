@@ -367,7 +367,7 @@ export function PaymentMethodsPanel() {
                         {expiring && " · expiring soon"}
                         {m.billingName && ` · ${m.billingName}`}
                         {m.originUsername && ` · added by ${m.originUsername}`}
-                        {` · ${new Date(m.createdAt).toLocaleDateString()}`}
+                        {` · ${new Date(m.createdAt).toLocaleDateString('en-AU')}`}
                       </p>
                     </div>
                   </div>

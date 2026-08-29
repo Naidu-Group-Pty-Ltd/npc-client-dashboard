@@ -682,7 +682,7 @@ export function useReportGenerator() {
             <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium">
               <span className="rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-success">Completed</span>
               <span className="rounded-full border border-primary/35 bg-primary/10 px-2.5 py-1 text-primary">Quantitative</span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background/50 px-2.5 py-1 text-muted-foreground"><BarChart3 className="h-3 w-3" aria-hidden="true" />{Number((data as any).chartCount || selectedChartKeys.length || 0).toLocaleString()} charts</span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-background/50 px-2.5 py-1 text-muted-foreground"><BarChart3 className="h-3 w-3" aria-hidden="true" />{Number((data as any).chartCount || selectedChartKeys.length || 0).toLocaleString('en-AU')} charts</span>
               <span className="inline-flex items-center gap-1 text-muted-foreground"><Clock3 className="h-3 w-3" aria-hidden="true" />{new Date(data.generatedAt || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
@@ -1030,7 +1030,7 @@ export function useReportGenerator() {
 
       pdf.setFontSize(9); pdf.setFont('helvetica', 'bold'); setColor(white);
       pdf.text(new Date().toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' }), margin + 10, metaY + 5);
-      pdf.text(totalListings.toLocaleString(), margin + contentWidth * 0.35, metaY + 5);
+      pdf.text(totalListings.toLocaleString('en-AU'), margin + contentWidth * 0.35, metaY + 5);
       if (config.companyName) { setColor(gold); pdf.text(config.companyName, pageWidth - margin - 10, metaY + 5, { align: 'right' }); }
       if (config.authorName) { pdf.setFontSize(7); pdf.setFont('helvetica', 'normal'); setColor(mutedText); pdf.text(`Author: ${config.authorName}`, margin + 10, metaY + 12); }
 
@@ -1044,10 +1044,10 @@ export function useReportGenerator() {
         const kpiW = (contentWidth - 12) / 4;
         const kpiH = 36;
         const kpis = [
-          { label: 'Total Listings', value: totalListings.toLocaleString(), sub: 'Properties analyzed' },
-          { label: 'Average Price', value: `$${avgPrice.toLocaleString()}`, sub: 'Market average' },
-          { label: 'Recent (30d)', value: recentListings.toLocaleString(), sub: 'New to market' },
-          { label: 'Unique Suburbs', value: Object.keys(suburbData).length.toLocaleString(), sub: 'Geographic spread' },
+          { label: 'Total Listings', value: totalListings.toLocaleString('en-AU'), sub: 'Properties analyzed' },
+          { label: 'Average Price', value: `$${avgPrice.toLocaleString('en-AU')}`, sub: 'Market average' },
+          { label: 'Recent (30d)', value: recentListings.toLocaleString('en-AU'), sub: 'New to market' },
+          { label: 'Unique Suburbs', value: Object.keys(suburbData).length.toLocaleString('en-AU'), sub: 'Geographic spread' },
         ];
         kpis.forEach((kpi, i) => drawKPIBox(margin + i * (kpiW + 4), currentY, kpiW, kpiH, kpi.label, kpi.value, kpi.sub));
         currentY += kpiH + 10;
@@ -1107,7 +1107,7 @@ export function useReportGenerator() {
       pdf.setFontSize(9); pdf.setFont('helvetica', 'bold'); setColor(gold);
       pdf.text('MARKET SNAPSHOT', margin + 10, currentY + 10);
       pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); setColor(softWhite);
-      const snapshotNarrative = `This quantitative analysis encompasses ${totalListings.toLocaleString()} property listings across ${Object.keys(suburbData).length} distinct suburbs. The market is currently exhibiting ${velocityLabel.toLowerCase()} momentum with a ${Math.abs(velocityChange).toFixed(1)}% ${velocityChange >= 0 ? 'increase' : 'decrease'} in listing volume over the previous 30-day period. The median listing price stands at $${median.toLocaleString()}, with an average price of $${avgPrice.toLocaleString()}. Data confidence across the dataset averages ${(avgConfidence * 100).toFixed(1)}%. A total of ${recentListings} new listings have entered the market in the past 30 days.`;
+      const snapshotNarrative = `This quantitative analysis encompasses ${totalListings.toLocaleString('en-AU')} property listings across ${Object.keys(suburbData).length} distinct suburbs. The market is currently exhibiting ${velocityLabel.toLowerCase()} momentum with a ${Math.abs(velocityChange).toFixed(1)}% ${velocityChange >= 0 ? 'increase' : 'decrease'} in listing volume over the previous 30-day period. The median listing price stands at $${median.toLocaleString('en-AU')}, with an average price of $${avgPrice.toLocaleString('en-AU')}. Data confidence across the dataset averages ${(avgConfidence * 100).toFixed(1)}%. A total of ${recentListings} new listings have entered the market in the past 30 days.`;
       const snapLines = pdf.splitTextToSize(snapshotNarrative, contentWidth - 22);
       pdf.text(snapLines, margin + 10, currentY + 18);
 
@@ -1134,8 +1134,8 @@ export function useReportGenerator() {
       const hlW = (contentWidth - 8) / 3;
       const hlH = 38;
       const highlights = [
-        { icon: '▲', title: 'Price Insights', line1: `Median: $${median.toLocaleString()}`, line2: `Average: $${avgPrice.toLocaleString()}`, line3: `IQR: $${(q3 - q1).toLocaleString()}`, accent: gold },
-        { icon: '◉', title: 'Market Activity', line1: `${recentListings} new (30d)`, line2: `${totalListings.toLocaleString()} total`, line3: `${Object.keys(suburbData).length} suburbs`, accent: { r: 16, g: 185, b: 129 } },
+        { icon: '▲', title: 'Price Insights', line1: `Median: $${median.toLocaleString('en-AU')}`, line2: `Average: $${avgPrice.toLocaleString('en-AU')}`, line3: `IQR: $${(q3 - q1).toLocaleString('en-AU')}`, accent: gold },
+        { icon: '◉', title: 'Market Activity', line1: `${recentListings} new (30d)`, line2: `${totalListings.toLocaleString('en-AU')} total`, line3: `${Object.keys(suburbData).length} suburbs`, accent: { r: 16, g: 185, b: 129 } },
         { icon: '◆', title: 'Data Integrity', line1: `${(avgConfidence * 100).toFixed(1)}% confidence`, line2: `${withConfidence.length} scored records`, line3: 'AI-analyzed charts', accent: { r: 59, g: 130, b: 246 } },
       ];
       highlights.forEach((hl, i) => {
@@ -1157,9 +1157,9 @@ export function useReportGenerator() {
 
       const analyticsRows = [
         { label: 'Market Velocity', value: velocityLabel, detail: `${velocityChange > 0 ? '+' : ''}${velocityChange.toFixed(1)}% vs prev 30d` },
-        { label: 'Median Price', value: `$${median.toLocaleString()}`, detail: `IQR: $${(q3 - q1).toLocaleString()}` },
-        { label: 'Q1 (25th percentile)', value: `$${q1.toLocaleString()}`, detail: 'Lower quartile boundary' },
-        { label: 'Q3 (75th percentile)', value: `$${q3.toLocaleString()}`, detail: 'Upper quartile boundary' },
+        { label: 'Median Price', value: `$${median.toLocaleString('en-AU')}`, detail: `IQR: $${(q3 - q1).toLocaleString('en-AU')}` },
+        { label: 'Q1 (25th percentile)', value: `$${q1.toLocaleString('en-AU')}`, detail: 'Lower quartile boundary' },
+        { label: 'Q3 (75th percentile)', value: `$${q3.toLocaleString('en-AU')}`, detail: 'Upper quartile boundary' },
         { label: 'Avg Confidence', value: `${(avgConfidence * 100).toFixed(1)}%`, detail: `${withConfidence.length} of ${totalListings} scored` },
         { label: 'Market Coverage', value: `${Object.keys(suburbData).length} suburbs`, detail: `Avg ${(totalListings / Math.max(Object.keys(suburbData).length, 1)).toFixed(1)} per suburb` },
       ];
@@ -1205,7 +1205,7 @@ export function useReportGenerator() {
       const dqKpis = [
         { label: 'Overall Confidence', value: `${confPct.toFixed(1)}%`, sub: confPct > 70 ? 'HIGH QUALITY' : confPct > 50 ? 'MODERATE' : 'NEEDS REVIEW', accent: confPct > 70 ? { r: 16, g: 185, b: 129 } : confPct > 50 ? gold : { r: 239, g: 68, b: 68 } },
         { label: 'Field Completeness', value: `${Math.round(dataCompleteness)}%`, sub: dataCompleteness > 80 ? 'EXCELLENT' : dataCompleteness > 60 ? 'GOOD' : 'INCOMPLETE', accent: dataCompleteness > 80 ? { r: 16, g: 185, b: 129 } : dataCompleteness > 60 ? gold : { r: 239, g: 68, b: 68 } },
-        { label: 'Records Analyzed', value: totalListings.toLocaleString(), sub: `${Object.keys(suburbData).length} suburbs`, accent: gold },
+        { label: 'Records Analyzed', value: totalListings.toLocaleString('en-AU'), sub: `${Object.keys(suburbData).length} suburbs`, accent: gold },
       ];
 
       dqKpis.forEach((kpi, i) => {
@@ -1318,7 +1318,7 @@ export function useReportGenerator() {
         pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); setColor(white);
         pdf.text(d.label, lgX + 8, lgY + 0.5);
         pdf.setFontSize(7); pdf.setFont('helvetica', 'normal'); setColor(gold);
-        pdf.text(`${d.value.toLocaleString()} listings`, lgX + 8, lgY + 6);
+        pdf.text(`${d.value.toLocaleString('en-AU')} listings`, lgX + 8, lgY + 6);
         pdf.setFontSize(6); setColor(mutedText);
         pdf.text(`${((d.value / confTotal) * 100).toFixed(1)}% of total`, lgX + 8, lgY + 11);
         lgY += 16;
@@ -1407,7 +1407,7 @@ export function useReportGenerator() {
           setColor(gold); pdf.setFont('helvetica', 'bold');
           pdf.text(count.toString(), rx, currentY + 6.5); rx += colWidths[1];
           setColor(softWhite); pdf.setFont('helvetica', 'normal');
-          pdf.text(subMedian > 0 ? `$${subMedian.toLocaleString()}` : 'N/A', rx, currentY + 6.5); rx += colWidths[2];
+          pdf.text(subMedian > 0 ? `$${subMedian.toLocaleString('en-AU')}` : 'N/A', rx, currentY + 6.5); rx += colWidths[2];
           setColor(mutedText);
           pdf.text(`${((count / totalListings) * 100).toFixed(1)}%`, rx, currentY + 6.5); rx += colWidths[3];
           const activity = count > 10 ? 'High' : count > 5 ? 'Medium' : 'Low';
@@ -1423,7 +1423,7 @@ export function useReportGenerator() {
         let stx = margin + 6;
         pdf.text('TOTAL', stx, currentY + 6.5); stx += colWidths[0];
         pdf.text(totalListings.toString(), stx, currentY + 6.5); stx += colWidths[1];
-        pdf.text(`$${median.toLocaleString()}`, stx, currentY + 6.5); stx += colWidths[2];
+        pdf.text(`$${median.toLocaleString('en-AU')}`, stx, currentY + 6.5); stx += colWidths[2];
         pdf.text('100%', stx, currentY + 6.5);
         currentY += 16;
       }
@@ -1627,7 +1627,7 @@ export function useReportGenerator() {
               description: config.description,
               author_name: config.authorName,
               company_name: config.companyName,
-              generation_date: new Date().toLocaleString(),
+              generation_date: new Date().toLocaleString('en-AU'),
               custom_notes: config.customNotes,
               include_kpis: config.includeKPIs,
               include_suburb_chart: config.includeSuburbChart,
@@ -1900,7 +1900,7 @@ export function useReportGenerator() {
                       .slice(-30);
                     
                     chartDataForAnalysis.data = last30Days.length > 0 ? last30Days.map(([date, count]) => ({
-                      label: new Date(date).toLocaleDateString(),
+                      label: new Date(date).toLocaleDateString('en-AU'),
                       value: count,
                       date: date
                     })) : [

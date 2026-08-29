@@ -232,7 +232,7 @@ function WipeJobRow({ job, onCancel }: { job: WipeJob; onCancel: () => void }) {
               <Badge variant="default" className="bg-success text-[10px]">cutover ✓</Badge>
             )}
             <span className="text-xs text-muted-foreground">
-              {new Date(job.created_at).toLocaleString()}
+              {new Date(job.created_at).toLocaleString('en-AU')}
             </span>
           </div>
           <div className="mt-2">
@@ -247,7 +247,7 @@ function WipeJobRow({ job, onCancel }: { job: WipeJob; onCancel: () => void }) {
                       if (!cur) return null;
                       return (
                         <span className="ml-1 text-foreground/80">
-                          ({cur.found.toLocaleString()} found{job.dry_run ? '' : `, ${cur.deleted.toLocaleString()} deleted`})
+                          ({cur.found.toLocaleString('en-AU')} found{job.dry_run ? '' : `, ${cur.deleted.toLocaleString('en-AU')} deleted`})
                         </span>
                       );
                     })()}
@@ -256,8 +256,8 @@ function WipeJobRow({ job, onCancel }: { job: WipeJob; onCancel: () => void }) {
               </span>
               <span>
                 {job.dry_run
-                  ? `total found ${Object.values(job.progress || {}).reduce((s, p: any) => s + (p?.found || 0), 0).toLocaleString()}`
-                  : `deleted ${job.total_deleted.toLocaleString()} · failed ${job.total_failed.toLocaleString()}`}
+                  ? `total found ${Object.values(job.progress || {}).reduce((s, p: any) => s + (p?.found || 0), 0).toLocaleString('en-AU')}`
+                  : `deleted ${job.total_deleted.toLocaleString('en-AU')} · failed ${job.total_failed.toLocaleString('en-AU')}`}
               </span>
             </div>
             <Progress value={pct} className="h-1.5" />
@@ -275,8 +275,8 @@ function WipeJobRow({ job, onCancel }: { job: WipeJob; onCancel: () => void }) {
                 : p.skipped_no_endpoint
                   ? 'skip'
                   : job.dry_run
-                    ? p.found.toLocaleString()
-                    : `${p.deleted.toLocaleString()}/${p.found.toLocaleString()}`;
+                    ? p.found.toLocaleString('en-AU')
+                    : `${p.deleted.toLocaleString('en-AU')}/${p.found.toLocaleString('en-AU')}`;
               return (
                 <div
                   key={r}

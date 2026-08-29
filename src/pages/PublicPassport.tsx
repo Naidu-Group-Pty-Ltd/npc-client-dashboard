@@ -277,7 +277,7 @@ export default function PublicPassport() {
                 <div className="passport-mono passport-faint mt-0.5 truncate text-[10px]">
                   {[
                     data.agreement.agreement_reference,
-                    `Issued ${new Date(data.issued_at).toLocaleDateString()}`,
+                    `Issued ${new Date(data.issued_at).toLocaleDateString('en-AU')}`,
                   ].filter(Boolean).join("  ·  ")}
                 </div>
               </div>

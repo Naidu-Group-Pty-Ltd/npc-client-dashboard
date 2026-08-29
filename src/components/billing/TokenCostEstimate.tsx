@@ -57,19 +57,19 @@ export function TokenCostEstimate({
       )}
       title={
         available != null
-          ? `Cost: ${need.toLocaleString()} tokens · ${available.toLocaleString()} available`
-          : `Cost: ${need.toLocaleString()} tokens`
+          ? `Cost: ${need.toLocaleString('en-AU')} tokens · ${available.toLocaleString('en-AU')} available`
+          : `Cost: ${need.toLocaleString('en-AU')} tokens`
       }
     >
       <Coins className="h-3.5 w-3.5 opacity-80" />
       {compact ? (
-        <span>~{need.toLocaleString()}</span>
+        <span>~{need.toLocaleString('en-AU')}</span>
       ) : (
         <span>
-          Est. cost <span className="font-semibold">~{need.toLocaleString()}</span> tokens
+          Est. cost <span className="font-semibold">~{need.toLocaleString('en-AU')}</span> tokens
           {available != null && (
             <span className="ml-1.5 font-normal opacity-80">
-              · {available.toLocaleString()} available
+              · {available.toLocaleString('en-AU')} available
             </span>
           )}
         </span>

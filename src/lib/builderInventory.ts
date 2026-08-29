@@ -307,7 +307,7 @@ export function allowedReservationTransitions(
 }
 
 export function formatUnitArea(value: number | null | undefined): string {
-  return value === null || value === undefined ? '—' : `${Number(value).toLocaleString()} m²`;
+  return value === null || value === undefined ? '—' : `${Number(value).toLocaleString('en-AU')} m²`;
 }
 
 export function formatListPrice(

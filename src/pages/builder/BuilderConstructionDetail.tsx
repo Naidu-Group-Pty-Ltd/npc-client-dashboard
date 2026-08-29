@@ -688,7 +688,7 @@ export default function BuilderConstructionDetail() {
                           {entry.from_status ? `${entry.from_status} → ` : ''}{entry.to_status}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.created_at).toLocaleString('en-AU')}
                         </span>
                       </div>
                       {entry.reason ? (
@@ -723,7 +723,7 @@ export default function BuilderConstructionDetail() {
                           {formatConstructionDate(entry.from_date)} → {formatConstructionDate(entry.to_date)}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.created_at).toLocaleString('en-AU')}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">{entry.reason}</p>

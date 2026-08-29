@@ -537,7 +537,7 @@ export function MessageReportEditor({
 
       const fileName = reportNames.length > 0 
         ? `Summary - ${reportNames.join(', ')}.pdf`
-        : `Q&A Summary - ${new Date().toLocaleDateString()}.pdf`;
+        : `Q&A Summary - ${new Date().toLocaleDateString('en-AU')}.pdf`;
       
       doc.save(fileName);
 

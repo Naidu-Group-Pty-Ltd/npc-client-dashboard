@@ -84,8 +84,8 @@ export function EvidenceDeliveriesPanel({
                     {state}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    delivered {new Date(d.delivered_at).toLocaleDateString()}
-                    {" · "}access until {new Date(d.expires_at).toLocaleDateString()}
+                    delivered {new Date(d.delivered_at).toLocaleDateString('en-AU')}
+                    {" · "}access until {new Date(d.expires_at).toLocaleDateString('en-AU')}
                   </span>
                 </div>
 
@@ -137,7 +137,7 @@ export function EvidenceDeliveriesPanel({
                     </a>
                     <span className="text-muted-foreground">
                       {" — access expires at "}
-                      {new Date(granted.expires_at).toLocaleTimeString()}
+                      {new Date(granted.expires_at).toLocaleTimeString('en-AU')}
                       {". The link is not stored; request access again if it lapses."}
                     </span>
                   </p>

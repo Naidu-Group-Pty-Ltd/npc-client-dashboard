@@ -423,7 +423,7 @@ function VersionsDialog({ magnet, onClose, onChanged }: { magnet: LeadMagnet | n
                           <span className="text-xs text-muted-foreground">{v.file_size ? `${(v.file_size / 1024 / 1024).toFixed(2)} MB` : ''}</span>
                         </div>
                         {v.notes && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{v.notes}</p>}
-                        <p className="text-xs text-muted-foreground mt-0.5">{new Date(v.created_at).toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{new Date(v.created_at).toLocaleString('en-AU')}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-1 shrink-0">
                         {!isActive && (
@@ -514,7 +514,7 @@ function DownloadsDialog({ magnet, onClose }: { magnet: LeadMagnet | null; onClo
                 <div key={r.id} className="text-sm border border-border/70 bg-background/45 rounded-2xl p-2 flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <p className="font-medium truncate" title={`${r.full_name} — ${r.email}`}>{r.full_name} <span className="text-muted-foreground font-normal">— {r.email}</span></p>
-                    <p className="text-xs text-muted-foreground">{r.phone || 'no phone'} · {new Date(r.created_at).toLocaleString()}</p>
+                    <p className="text-xs text-muted-foreground">{r.phone || 'no phone'} · {new Date(r.created_at).toLocaleString('en-AU')}</p>
                   </div>
                   <Badge variant={r.ghl_synced ? 'default' : 'secondary'} className="shrink-0 rounded-full">{r.ghl_synced ? 'GHL synced' : 'Pending'}</Badge>
                 </div>

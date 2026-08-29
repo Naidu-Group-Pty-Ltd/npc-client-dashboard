@@ -199,7 +199,7 @@ export function WorkflowLibrary({
                       <span className="tabular-nums">
                         {workflow.graph.nodes.length} {workflow.graph.nodes.length === 1 ? 'step' : 'steps'}
                       </span>
-                      <span>Edited {new Date(workflow.updatedAt).toLocaleDateString()}</span>
+                      <span>Edited {new Date(workflow.updatedAt).toLocaleDateString('en-AU')}</span>
                     </div>
                   </div>
                 </DashboardThemeFrame>

@@ -92,6 +92,27 @@ export interface AmlContextActionPanelProps {
    * passed in rather than performed here.
    */
   onReopen?: () => void;
+  /**
+   * Whether this stage offers the ordinary status advances.
+   *
+   * ── Why a stage may say no ────────────────────────────────────────
+   * After the compliance decision is recorded, the case's status is a
+   * CONSEQUENCE of decisions with their own recorded reasons — the MLRO
+   * decision, the service gate, a reopening. The rail's shortcut let an
+   * operator send a cleared case back to "Under review" from Passport &
+   * Partners or Ongoing CDD with an OPTIONAL reason and no confirmation,
+   * and that regresses four things at once: `status`, `case_stage`,
+   * `client_portal_status` and — through `STATUS_TO_SERVICE_GATE` —
+   * `service_gate_status`, which flips a live Passport to "Refresh
+   * required". A one-click, reason-optional undo of a recorded decision,
+   * on the two stages that exist because the decision was made.
+   *
+   * The act is not removed: re-deciding a case is the Decision stage's own
+   * control, with its rationale, and closing is the case header's. This is
+   * presentation only — hiding a button was never authorisation, and the
+   * server enforces every transition exactly as before.
+   */
+  allowStatusTransitions?: boolean;
 }
 
 export function AmlContextActionPanel({
@@ -100,6 +121,7 @@ export function AmlContextActionPanel({
   isMlro,
   onChanged,
   onReopen,
+  allowStatusTransitions = true,
 }: AmlContextActionPanelProps) {
   const [reason, setReason] = useState("");
   const [transitioning, setTransitioning] = useState(false);
@@ -170,7 +192,7 @@ export function AmlContextActionPanel({
       )}
 
       {/* ── Case status transitions ────────────────────────────────── */}
-      {canWrite && nextOptions.length > 0 && (
+      {canWrite && allowStatusTransitions && nextOptions.length > 0 && (
         <Card>
           <CardContent className="space-y-2 p-4">
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">

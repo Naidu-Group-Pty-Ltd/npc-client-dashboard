@@ -107,7 +107,7 @@ export function useDealDateNotifications() {
               await addNotification({
                 type: check.overdueType,
                 title: `Overdue: ${check.label}`,
-                message: `${clientName}'s ${check.label.toLowerCase()} was due on ${date.toLocaleDateString()}`,
+                message: `${clientName}'s ${check.label.toLowerCase()} was due on ${date.toLocaleDateString('en-AU')}`,
                 entityId: deal.client_id,
               });
             } else if (daysAway <= 7) {
@@ -115,7 +115,7 @@ export function useDealDateNotifications() {
               await addNotification({
                 type: check.warningType,
                 title: `${check.label} in ${daysAway} day${daysAway !== 1 ? 's' : ''}`,
-                message: `${clientName}'s ${check.label.toLowerCase()} is on ${date.toLocaleDateString()}`,
+                message: `${clientName}'s ${check.label.toLowerCase()} is on ${date.toLocaleDateString('en-AU')}`,
                 entityId: deal.client_id,
               });
             }

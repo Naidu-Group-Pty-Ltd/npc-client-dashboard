@@ -265,7 +265,7 @@ export function ManyChatPanel() {
                   {pageInfo.subscribers !== undefined && (
                     <span className="flex items-center gap-1">
                       <Users className="h-3.5 w-3.5" />
-                      {Number(pageInfo.subscribers).toLocaleString()} subscribers
+                      {Number(pageInfo.subscribers).toLocaleString('en-AU')} subscribers
                     </span>
                   )}
                 </div>

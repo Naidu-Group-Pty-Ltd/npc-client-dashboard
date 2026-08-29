@@ -1200,7 +1200,7 @@ export default function WhiteLabel() {
             </div>
             <p className="max-w-2xl break-words text-sm text-muted-foreground">Review the draft control centre before publishing. Logos, colours, browser identity, email signature, and theme defaults continue to flow through the existing brand resolver.</p>
             {lastDraftSavedAt ? (
-              <p className="mt-1 w-fit max-w-full rounded-full border border-success/25 bg-success/5 px-3 py-1 text-xs text-success shadow-sm shadow-success/10">Draft saved locally at {new Date(lastDraftSavedAt).toLocaleString()}.</p>
+              <p className="mt-1 w-fit max-w-full rounded-full border border-success/25 bg-success/5 px-3 py-1 text-xs text-success shadow-sm shadow-success/10">Draft saved locally at {new Date(lastDraftSavedAt).toLocaleString('en-AU')}.</p>
             ) : null}
           </div>
           <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
@@ -1237,7 +1237,7 @@ export default function WhiteLabel() {
           <AlertTitle className="text-warning">Saved local draft available</AlertTitle>
           <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span className="min-w-0 break-words">
-              Restore the draft you saved locally on {new Date(availablePersistedDraft.savedAt).toLocaleString()} without changing the current live brand settings.
+              Restore the draft you saved locally on {new Date(availablePersistedDraft.savedAt).toLocaleString('en-AU')} without changing the current live brand settings.
             </span>
             <div className="flex min-w-0 flex-wrap gap-2">
               <Button variant="outline" size="sm" onClick={() => {
@@ -1847,7 +1847,7 @@ export default function WhiteLabel() {
                   <div key={preset.id} className="dashboard-section-band flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
                       <p className="break-words text-sm font-semibold text-foreground">{preset.name}</p>
-                      <p className="text-xs text-muted-foreground">Saved {new Date(preset.savedAt).toLocaleString()}</p>
+                      <p className="text-xs text-muted-foreground">Saved {new Date(preset.savedAt).toLocaleString('en-AU')}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <Button variant="outline" size="sm" onClick={() => handleDeletePreset(preset.id)}>Remove</Button>

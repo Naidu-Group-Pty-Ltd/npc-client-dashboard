@@ -94,7 +94,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
             Borrowing Capacity Assessment
           </h3>
           <p className="text-sm text-muted-foreground">
-            Last calculated: {new Date(latestAssessment.created_at).toLocaleDateString()}
+            Last calculated: {new Date(latestAssessment.created_at).toLocaleDateString('en-AU')}
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={handleRecalculate} disabled={isCalculating} className="self-start sm:self-auto">
@@ -162,7 +162,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
                 Gross Income
               </div>
               <p className="font-semibold">
-                ${(latestAssessment.gross_annual_income || 0).toLocaleString()}/yr
+                ${(latestAssessment.gross_annual_income || 0).toLocaleString('en-AU')}/yr
               </p>
             </div>
             <div className="space-y-1">
@@ -171,7 +171,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
                 Shaded Income
               </div>
               <p className="font-semibold">
-                ${(latestAssessment.shaded_annual_income || 0).toLocaleString()}/yr
+                ${(latestAssessment.shaded_annual_income || 0).toLocaleString('en-AU')}/yr
               </p>
             </div>
             <div className="space-y-1">
@@ -180,7 +180,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
                 Living Expenses
               </div>
               <p className="font-semibold">
-                ${(latestAssessment.living_expenses_monthly || 0).toLocaleString()}/mo
+                ${(latestAssessment.living_expenses_monthly || 0).toLocaleString('en-AU')}/mo
               </p>
             </div>
             <div className="space-y-1">
@@ -189,7 +189,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
                 Commitments
               </div>
               <p className="font-semibold">
-                ${(latestAssessment.existing_commitments_monthly || 0).toLocaleString()}/mo
+                ${(latestAssessment.existing_commitments_monthly || 0).toLocaleString('en-AU')}/mo
               </p>
             </div>
           </div>
@@ -202,7 +202,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
               <p className="text-xs text-muted-foreground">Available for loan servicing</p>
             </div>
             <p className={`text-xl font-bold ${(latestAssessment.monthly_surplus || 0) >= 0 ? 'text-success' : 'text-destructive'}`}>
-              ${(latestAssessment.monthly_surplus || 0).toLocaleString()}
+              ${(latestAssessment.monthly_surplus || 0).toLocaleString('en-AU')}
             </p>
           </div>
 

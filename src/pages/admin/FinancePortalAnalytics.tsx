@@ -520,7 +520,7 @@ function KpiCard({
             <div className="truncate text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               {label}
             </div>
-            <div className={`mt-2 text-3xl font-bold tracking-tight tabular-nums ${toneClasses.text}`}>{value.toLocaleString()}</div>
+            <div className={`mt-2 text-3xl font-bold tracking-tight tabular-nums ${toneClasses.text}`}>{value.toLocaleString('en-AU')}</div>
             {subtitle && <div className="mt-1 max-w-full truncate text-xs text-muted-foreground" title={subtitle}>{subtitle}</div>}
           </div>
           <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ${toneClasses.surface}`}>

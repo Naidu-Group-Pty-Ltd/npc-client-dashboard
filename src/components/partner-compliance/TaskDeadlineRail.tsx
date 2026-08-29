@@ -23,7 +23,7 @@ export function TaskDeadlineRail({
               <span>{adapter.deadlineLabels?.[t.kind] ?? t.label}</span>
               {t.due_at && (
                 <span className="text-muted-foreground">
-                  {new Date(t.due_at).toLocaleDateString()}
+                  {new Date(t.due_at).toLocaleDateString('en-AU')}
                 </span>
               )}
             </li>

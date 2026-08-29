@@ -104,7 +104,7 @@ export function ServiceGateCard({
                 {GATE_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")}
               </span>
               <span className="text-xs text-muted-foreground">
-                {gate.effective_at ? `Effective ${new Date(gate.effective_at).toLocaleString()}` : "No explicit gate decision recorded yet"}
+                {gate.effective_at ? `Effective ${new Date(gate.effective_at).toLocaleString('en-AU')}` : "No explicit gate decision recorded yet"}
                 {gate.policy_version ? ` · Policy ${gate.policy_version}` : ""}
               </span>
             </div>

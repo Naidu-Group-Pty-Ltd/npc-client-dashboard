@@ -246,7 +246,7 @@ export function allowedMilestoneTransitions(
 export function formatConstructionDate(value: string | null | undefined): string {
   if (!value) return '—';
   const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString() : '—';
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString('en-AU') : '—';
 }
 
 export function formatPercentComplete(value: number | null | undefined): string {

@@ -85,7 +85,7 @@ export function TokenBalanceBanner() {
                 isCritical ? "text-destructive-foreground" : "text-foreground",
               )}
             >
-              {balance.available.toLocaleString()} tokens remaining
+              {balance.available.toLocaleString('en-AU')} tokens remaining
               {pct != null ? ` (${pct}% of allowance)` : ""}.
             </span>{" "}
             {isCritical

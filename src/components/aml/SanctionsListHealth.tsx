@@ -93,7 +93,7 @@ function LoadListControl({ onLoaded }: { onLoaded: () => void }) {
        */
       const pruning = res.pruned_skipped
         ? res.reason
-        : `${res.pruned.toLocaleString()} superseded entries removed.`;
+        : `${res.pruned.toLocaleString('en-AU')} superseded entries removed.`;
       /*
        * State how current the DATA is, not just how many rows arrived. An
        * operator reading "7,840 entries" cannot tell the operative register
@@ -107,8 +107,8 @@ function LoadListControl({ onLoaded }: { onLoaded: () => void }) {
           : "";
       toast({
         title: res.screening?.changed
-          ? `Loaded ${res.entries.toLocaleString()} entries — screening is now live`
-          : `Loaded ${res.entries.toLocaleString()} entries`,
+          ? `Loaded ${res.entries.toLocaleString('en-AU')} entries — screening is now live`
+          : `Loaded ${res.entries.toLocaleString('en-AU')} entries`,
         description: [pruning, currency, res.screening?.reason].filter(Boolean).join(" "),
       });
       onLoaded();
@@ -228,7 +228,7 @@ export function SanctionsListHealth() {
         {syncs && (
           <>
             <div className="text-sm text-muted-foreground">
-              <span className="font-medium text-foreground">{entryCount.toLocaleString()}</span> entries held across all lists
+              <span className="font-medium text-foreground">{entryCount.toLocaleString('en-AU')}</span> entries held across all lists
             </div>
 
             <Table>
@@ -251,10 +251,10 @@ export function SanctionsListHealth() {
                         <div className="font-medium">{label}</div>
                         <div className="text-xs text-muted-foreground">{note}</div>
                       </TableCell>
-                      <TableCell>{sync?.status === "succeeded" ? sync.entry_count.toLocaleString() : "—"}</TableCell>
+                      <TableCell>{sync?.status === "succeeded" ? sync.entry_count.toLocaleString('en-AU') : "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {sync
-                          ? `${new Date(sync.completed_at ?? sync.started_at).toLocaleDateString()}${
+                          ? `${new Date(sync.completed_at ?? sync.started_at).toLocaleDateString('en-AU')}${
                               ageDays != null ? ` (${Math.floor(ageDays)}d ago)` : ""}`
                           : "Never"}
                       </TableCell>

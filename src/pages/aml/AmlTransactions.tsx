@@ -188,7 +188,7 @@ export default function AmlTransactions() {
                             <p className="truncate text-sm font-medium">{t.reference || t.property_address || `${t.kind} transaction`}</p>
                             <p className="truncate text-xs text-muted-foreground">
                               {t.settlement_date ? `Settle ${t.settlement_date}` : "No settlement date"}
-                              {t.purchase_price ? ` · $${Number(t.purchase_price).toLocaleString()}` : ""}
+                              {t.purchase_price ? ` · $${Number(t.purchase_price).toLocaleString('en-AU')}` : ""}
                             </p>
                           </div>
                           {statusBadge(t.status)}
@@ -255,7 +255,7 @@ export default function AmlTransactions() {
               <div className="min-w-0">
                 <h2 className="truncate text-lg font-semibold">{selectedTx.reference || selectedTx.property_address || "Transaction"}</h2>
                 <p className="text-xs text-muted-foreground">
-                  {selectedTx.kind.replace(/_/g, " ")} · {currentCase?.case_reference} · updated {new Date(selectedTx.updated_at).toLocaleString()}
+                  {selectedTx.kind.replace(/_/g, " ")} · {currentCase?.case_reference} · updated {new Date(selectedTx.updated_at).toLocaleString('en-AU')}
                 </p>
               </div>
               <div className="ml-auto flex items-center gap-2">
@@ -421,12 +421,12 @@ export default function AmlTransactions() {
                           </Badge>
                           {o.observed_amount != null && (
                             <span className="text-xs text-muted-foreground">
-                              Observed: AUD {o.observed_amount.toLocaleString()}
-                              {o.threshold_amount != null && ` / threshold AUD ${o.threshold_amount.toLocaleString()}`}
+                              Observed: AUD {o.observed_amount.toLocaleString('en-AU')}
+                              {o.threshold_amount != null && ` / threshold AUD ${o.threshold_amount.toLocaleString('en-AU')}`}
                             </span>
                           )}
                           <span className="ml-auto text-xs text-muted-foreground">
-                            {new Date(o.created_at).toLocaleString()}
+                            {new Date(o.created_at).toLocaleString('en-AU')}
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">Reason: {o.trigger_reason.replace(/_/g, " ")}</p>
@@ -481,7 +481,7 @@ export default function AmlTransactions() {
                         <li key={e.id} className="rounded border p-2 text-xs">
                           <div className="flex items-center justify-between">
                             <span className="font-medium">{e.category}</span>
-                            <span className="text-muted-foreground">{new Date(e.created_at).toLocaleString()}</span>
+                            <span className="text-muted-foreground">{new Date(e.created_at).toLocaleString('en-AU')}</span>
                           </div>
                           <p>{e.summary}</p>
                           {e.actor_label && <p className="text-muted-foreground">by {e.actor_label}</p>}

@@ -165,7 +165,7 @@ export default function PartnerAcknowledgement() {
         tone="text-success"
         title="Agreement accepted"
         body={`Thank you. ${view.issuer_name} has recorded your organisation's acceptance${
-          view.accepted_at ? ` on ${new Date(view.accepted_at).toLocaleDateString()}` : ""
+          view.accepted_at ? ` on ${new Date(view.accepted_at).toLocaleDateString('en-AU')}` : ""
         }${view.accepted_by_name ? `, signed by ${view.accepted_by_name}` : ""}.`}
         after={(
           <div className="mx-auto max-w-prose space-y-3 pt-1 text-left">
@@ -257,7 +257,7 @@ export default function PartnerAcknowledgement() {
             </div>
             <div>
               <dt className="text-muted-foreground">This request expires</dt>
-              <dd className="font-medium">{new Date(view.expires_at).toLocaleDateString()}</dd>
+              <dd className="font-medium">{new Date(view.expires_at).toLocaleDateString('en-AU')}</dd>
             </div>
           </dl>
         </CardContent>

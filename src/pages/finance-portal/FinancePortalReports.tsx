@@ -57,7 +57,7 @@ function fmtMoney(n: number): string {
   if (!n) return '$0';
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${Math.round(n / 1_000)}k`;
-  return `$${n.toLocaleString()}`;
+  return `$${n.toLocaleString('en-AU')}`;
 }
 
 function csvDownload(filename: string, headers: string[], rows: any[]) {

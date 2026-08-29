@@ -276,10 +276,10 @@ export function CommercialPropertyRegister() {
                       </Value>
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      <Value>{area?.toLocaleString() || '—'}</Value>
+                      <Value>{area?.toLocaleString('en-AU') || '—'}</Value>
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      <Value>{property.site_area_sqm?.toLocaleString() || '—'}</Value>
+                      <Value>{property.site_area_sqm?.toLocaleString('en-AU') || '—'}</Value>
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold tabular-nums">
                       <Value>{money(value)}</Value>

@@ -292,7 +292,7 @@ export function calculateDepreciation(
   // Log top comp details
   console.log('📋 Top 3 comps used:');
   topComps.slice(0, 3).forEach((comp, i) => {
-    console.log(`  ${i + 1}. Price: $${comp.purchase_price.toLocaleString()}, Year: ${comp.build_year}, Score: ${comp.score.toFixed(3)}`);
+    console.log(`  ${i + 1}. Price: $${comp.purchase_price.toLocaleString('en-AU')}, Year: ${comp.build_year}, Score: ${comp.score.toFixed(3)}`);
   });
   
   // Step D: Blend results
@@ -338,10 +338,10 @@ export function calculateDepreciation(
   console.log('  Property Age:', propertyAge, 'years');
   console.log('  Starting Year:', ageAdjusted.startingYear);
   console.log('  Extrapolated:', ageAdjusted.isExtrapolated);
-  console.log('  DV Year 1 (of projection):', roundToThousand(ageAdjusted.dv[0]).toLocaleString());
-  console.log('  PC Year 1 (of projection):', roundToThousand(ageAdjusted.pc[0]).toLocaleString());
-  console.log('  DV 10-Year Total:', roundToThousand(dvTotal).toLocaleString());
-  console.log('  PC 10-Year Total:', roundToThousand(pcTotal).toLocaleString());
+  console.log('  DV Year 1 (of projection):', roundToThousand(ageAdjusted.dv[0]).toLocaleString('en-AU'));
+  console.log('  PC Year 1 (of projection):', roundToThousand(ageAdjusted.pc[0]).toLocaleString('en-AU'));
+  console.log('  DV 10-Year Total:', roundToThousand(dvTotal).toLocaleString('en-AU'));
+  console.log('  PC 10-Year Total:', roundToThousand(pcTotal).toLocaleString('en-AU'));
   console.log('  Confidence:', confidenceScore.toFixed(0) + '%');
   console.log('  Projection Years:', projectionYears.join(', '));
   console.groupEnd();
@@ -366,5 +366,5 @@ export function calculateDepreciation(
  */
 export function formatDepreciationValue(value: number): string {
   const rounded = roundToThousand(value);
-  return `$${rounded.toLocaleString()}`;
+  return `$${rounded.toLocaleString('en-AU')}`;
 }

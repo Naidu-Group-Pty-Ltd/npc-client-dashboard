@@ -83,7 +83,8 @@ import { previewSanitization } from '../_shared/builderStock/previewSanitization
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import {
-  claimOneImageWorkItem, completeItemWork, isMissingCapability, readItemWorkPending,
+  claimOneImageWorkItem, completeItemWork, isMissingCapability, publishUploadIfReady,
+  readItemWorkPending,
 } from '../_shared/builderStock/itemWorkClaim.ts';
 import { settleClaimedItem } from '../_shared/builderStock/settleItemImages.ts';
 
@@ -317,6 +318,31 @@ Deno.serve(async (req: Request) => {
       }, 503);
     }
 
+    /*
+     * AND ASK WHETHER THIS PROPERTY'S UPLOAD CAN NOW BE PUBLISHED.
+     *
+     * Asked after every completed item because the item that just finished may
+     * be the last one its upload was waiting on, and there is nothing else
+     * watching. Refusing is the normal answer and costs one cheap call; the
+     * readiness rule lives inside the function, evaluated in the same statement
+     * that flips the rows, so nothing can change between the check and the act.
+     *
+     * A replacement upload therefore publishes itself, minutes after the
+     * builder closed the browser, with no operator anywhere in the loop.
+     */
+    let publication: Awaited<ReturnType<typeof publishUploadIfReady>> | null = null;
+    if (claimed.upload_id && claimed.lifecycle_status === 'staged') {
+      publication = await publishUploadIfReady(supabase, claimed.upload_id);
+      if (publication.published) {
+        console.log('[builder-stock-image-settler] stock list published', {
+          phase: 'publication',
+          upload_id: claimed.upload_id,
+          promoted: publication.promoted,
+          archived: publication.archived,
+        });
+      }
+    }
+
     const pending = await readItemWorkPending(supabase);
     console.log('[builder-stock-image-settler] item tick', {
       phase: 'item_work',
@@ -335,6 +361,9 @@ Deno.serve(async (req: Request) => {
       stage: settlement.stage, nextStage: settlement.nextStage,
       progressed: settlement.progressed, primarySet: settlement.primarySet,
       error: settlement.error ?? undefined,
+      published: publication?.published ?? false,
+      promoted: publication?.promoted ?? 0,
+      archivedOnCutover: publication?.archived ?? 0,
       claimable: pending.claimable, outstanding: pending.outstanding,
       complete: pending.outstanding === 0, deploymentReady: true,
     });

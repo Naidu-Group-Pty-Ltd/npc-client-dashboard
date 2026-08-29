@@ -829,12 +829,12 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
       {
         pattern: /\*\*Total Annual Costs\*\*.*?\$[\d,]+\.?\d*/gi,
         getValue: () => totalAnnualCostsWithLandTax,
-        format: (v) => `$${Math.round(v || 0).toLocaleString()}`
+        format: (v) => `$${Math.round(v || 0).toLocaleString('en-AU')}`
       },
       {
         pattern: /Total Annual Costs.*?\$[\d,]+\.?\d*/gi,
         getValue: () => totalAnnualCostsWithLandTax,
-        format: (v) => `$${Math.round(v || 0).toLocaleString()}`
+        format: (v) => `$${Math.round(v || 0).toLocaleString('en-AU')}`
       },
       // Annual Expenses row in Gross & Net Yield table - handle table rows starting with |
       {
@@ -842,12 +842,12 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
         getValue: () => {
           // Build breakdown components for display (include strataFees if present)
           const components = [];
-          if (councilRates > 0) components.push(`$${councilRates.toLocaleString()}`);
-          if (waterRates > 0) components.push(`$${waterRates.toLocaleString()}`);
-          if (strataFees > 0) components.push(`$${strataFees.toLocaleString()}`);
-          if (propertyManagement > 0) components.push(`$${propertyManagement.toLocaleString()}`);
-          if (landlordInsurance > 0) components.push(`$${landlordInsurance.toLocaleString()}`);
-          if (maintenance > 0) components.push(`$${maintenance.toLocaleString()}`);
+          if (councilRates > 0) components.push(`$${councilRates.toLocaleString('en-AU')}`);
+          if (waterRates > 0) components.push(`$${waterRates.toLocaleString('en-AU')}`);
+          if (strataFees > 0) components.push(`$${strataFees.toLocaleString('en-AU')}`);
+          if (propertyManagement > 0) components.push(`$${propertyManagement.toLocaleString('en-AU')}`);
+          if (landlordInsurance > 0) components.push(`$${landlordInsurance.toLocaleString('en-AU')}`);
+          if (maintenance > 0) components.push(`$${maintenance.toLocaleString('en-AU')}`);
           
           console.log('📊 Annual Expenses breakdown:', {
             councilRates,
@@ -865,7 +865,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
             total: totalAnnualCostsExcludingLandTax 
           };
         },
-        format: (v) => `| Annual Expenses | ${v.breakdown} | $${v.total?.toLocaleString() || '0'} |`,
+        format: (v) => `| Annual Expenses | ${v.breakdown} | $${v.total?.toLocaleString('en-AU') || '0'} |`,
         isFullLineReplacement: true
       },
       // Note: Removed generic "Annual Expenses" pattern that was corrupting table breakdown display
@@ -877,7 +877,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
           const netAnnualReturn = annualRent - totalAnnualCostsExcludingLandTax;
           return { annualRent, totalExpenses: totalAnnualCostsExcludingLandTax, netReturn: netAnnualReturn };
         },
-        format: (v) => `| Net Annual Return | $${v.annualRent?.toLocaleString() || '0'} - $${v.totalExpenses?.toLocaleString() || '0'} | $${v.netReturn?.toLocaleString() || '0'} |`,
+        format: (v) => `| Net Annual Return | $${v.annualRent?.toLocaleString('en-AU') || '0'} - $${v.totalExpenses?.toLocaleString('en-AU') || '0'} | $${v.netReturn?.toLocaleString('en-AU') || '0'} |`,
         isFullLineReplacement: true
       },
       // Net Rental Yield row in Gross & Net Yield table - handle table rows starting with |
@@ -889,7 +889,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
           const netYield = purchasePrice > 0 ? ((netAnnualReturn / purchasePrice) * 100).toFixed(2) : '0.00';
           return { netReturn: netAnnualReturn, purchasePrice, netYield };
         },
-        format: (v) => `| Net Rental Yield | $${v.netReturn?.toLocaleString() || '0'} ÷ $${v.purchasePrice?.toLocaleString() || '0'} × 100 | ${v.netYield}% |`,
+        format: (v) => `| Net Rental Yield | $${v.netReturn?.toLocaleString('en-AU') || '0'} ÷ $${v.purchasePrice?.toLocaleString('en-AU') || '0'} × 100 | ${v.netYield}% |`,
         isFullLineReplacement: true
       },
     ];
@@ -1594,7 +1594,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
               console.log('✅ Fixing malformed Total row:', cells);
               // Extract the numeric value, parse it, round it, and reformat to prevent duplicate decimals
               const numericValue = parseFloat(firstCellClean.replace(/[$,]/g, '')) || 0;
-              const formattedValue = Math.round(numericValue).toLocaleString();
+              const formattedValue = Math.round(numericValue).toLocaleString('en-AU');
               // Restructure to: [Label, Amount, Description]
               return ['**Total Annual Costs**', '**$' + formattedValue + '**', '**Sum of ALL ongoing costs**'];
             }
@@ -1949,7 +1949,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
               console.log('🔧 BACKUP FIX: Restructuring malformed Total row at draw time:', row);
               // Extract the numeric value, parse it, round it, and reformat to prevent duplicate decimals
               const numericValue = parseFloat(firstCellClean.replace(/[$,]/g, '')) || 0;
-              const formattedValue = Math.round(numericValue).toLocaleString();
+              const formattedValue = Math.round(numericValue).toLocaleString('en-AU');
               row = ['**Total Annual Costs**', '**$' + formattedValue + '**', '**Sum of ALL ongoing costs**'];
             }
           }

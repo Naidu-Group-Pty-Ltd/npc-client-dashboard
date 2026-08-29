@@ -124,7 +124,7 @@ export function computeNegativeGearingAddBack(input: NegativeGearingInput): Nega
       ? ` (loss assessed at IO + ${buffer.toFixed(2)}pp APRA buffer for ${bufferUsedFor}/${perProperty.length} ${bufferUsedFor === 1 ? 'property' : 'properties'})`
       : '';
     notes.push(
-      `Negative-gearing add-back: $${Math.round(totalAnnualAddBack).toLocaleString()}/yr ` +
+      `Negative-gearing add-back: $${Math.round(totalAnnualAddBack).toLocaleString('en-AU')}/yr ` +
       `from ${perProperty.length} investment ${perProperty.length === 1 ? 'property' : 'properties'} ` +
       `at marginal rate ${(mrt * 100).toFixed(1)}%${shading < 1 ? ` (shaded ${(shading * 100).toFixed(0)}%)` : ''}${bufNote}.`
     );

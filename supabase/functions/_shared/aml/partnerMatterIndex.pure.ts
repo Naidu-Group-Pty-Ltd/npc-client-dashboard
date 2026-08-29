@@ -121,7 +121,10 @@ const shortRef = (value: string | null | undefined): string | null =>
 const fmtDate = (iso: string | null | undefined): string => {
   if (!iso) return "";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
+  /* Day/Month/Year, pinned. An un-localed call takes the reader's machine,
+     which for an Australian reporting entity's compliance date is how
+     29/08 comes to read as 8/29 — see `src/lib/aml/displayDate.ts`. */
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("en-AU");
 };
 
 /** A role like `builder_developer` is a column name, not a word. */

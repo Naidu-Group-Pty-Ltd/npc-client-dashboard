@@ -206,7 +206,7 @@ export function TemplateList({ templates, isLoading, templateType }: TemplateLis
 
       toast({
         title: 'Conversion complete!',
-        description: `Extracted ${data.extractedLength.toLocaleString()} characters, created ${data.chunksCreated} embeddings`,
+        description: `Extracted ${data.extractedLength.toLocaleString('en-AU')} characters, created ${data.chunksCreated} embeddings`,
       });
       
       queryClient.invalidateQueries({ queryKey: ['report-structure-templates'] });
@@ -510,7 +510,7 @@ export function TemplateList({ templates, isLoading, templateType }: TemplateLis
               Extracted Content: {previewTemplate?.name}
             </DialogTitle>
             <DialogDescription>
-              {previewTemplate?.parsed_content?.length.toLocaleString()} characters of Markdown content
+              {previewTemplate?.parsed_content?.length.toLocaleString('en-AU')} characters of Markdown content
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="h-[50vh] sm:h-[60vh] w-full rounded-md border p-3 sm:p-4">

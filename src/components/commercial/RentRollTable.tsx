@@ -58,7 +58,7 @@ export function RentRollTable({ propertyId }: Props) {
           <div>
             <CardTitle>Rent Roll</CardTitle>
             <div className="text-sm text-muted-foreground mt-1">
-              {leases.length} tenancies · Total {fmtMoney(totalRent)} PA · {totalArea.toLocaleString()} m² · WALE {wale.waleByIncome}y (income), {wale.waleByArea}y (area)
+              {leases.length} tenancies · Total {fmtMoney(totalRent)} PA · {totalArea.toLocaleString('en-AU')} m² · WALE {wale.waleByIncome}y (income), {wale.waleByArea}y (area)
             </div>
           </div>
           <Button onClick={() => { setEditing(null); setOpen(true); }}>
@@ -90,7 +90,7 @@ export function RentRollTable({ propertyId }: Props) {
                   <TableRow key={l.id}>
                     <TableCell className="font-medium">{l.tenant_name}</TableCell>
                     <TableCell>{l.suite_unit || '—'}</TableCell>
-                    <TableCell className="text-right">{l.nla_sqm?.toLocaleString() || '—'}</TableCell>
+                    <TableCell className="text-right">{l.nla_sqm?.toLocaleString('en-AU') || '—'}</TableCell>
                     <TableCell className="text-right">{fmtMoney(l.base_rent_pa)}</TableCell>
                     <TableCell className="capitalize">{l.rent_basis}</TableCell>
                     <TableCell>{fmtDate(l.lease_end)}</TableCell>

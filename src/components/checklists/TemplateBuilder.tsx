@@ -179,7 +179,7 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
             <Button size="sm" variant="secondary" onClick={handleApplyCron}>Save Schedule</Button>
             {template.last_generated_at && (
               <p className="text-xs text-muted-foreground">
-                Last generated: {new Date(template.last_generated_at).toLocaleString()}
+                Last generated: {new Date(template.last_generated_at).toLocaleString('en-AU')}
               </p>
             )}
           </CardContent>

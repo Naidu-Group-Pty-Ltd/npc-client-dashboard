@@ -955,7 +955,7 @@ export default function ReportQA() {
         ? `Comparison: ${uploadedReports.map(r => r.name.replace('.pdf', '')).join(' vs ')}`
         : uploadedReports.length === 1
           ? `Q&A: ${uploadedReports[0].name}`
-          : `Open Chat: ${new Date().toLocaleDateString()}`;
+          : `Open Chat: ${new Date().toLocaleDateString('en-AU')}`;
 
       const { data, error } = await invokeSecureFunction('report-qa', {
         action: 'create-conversation',
@@ -3824,7 +3824,7 @@ export default function ReportQA() {
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm truncate">{pendingPDFAttachment.fileName}</p>
                     <p className="text-xs text-muted-foreground">
-                      {(pendingPDFAttachment.fileSize / 1024).toFixed(1)} KB • Generated {new Date(pendingPDFAttachment.createdAt).toLocaleTimeString()}
+                      {(pendingPDFAttachment.fileSize / 1024).toFixed(1)} KB • Generated {new Date(pendingPDFAttachment.createdAt).toLocaleTimeString('en-AU')}
                     </p>
                   </div>
                   {isValidatingPDF ? (

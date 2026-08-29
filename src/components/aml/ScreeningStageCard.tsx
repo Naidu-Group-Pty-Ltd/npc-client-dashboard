@@ -527,14 +527,14 @@ export function ScreeningStageCard({
                 <dd className="font-medium">
                   {source.entryCount === null
                     ? "Not established"
-                    : source.entryCount.toLocaleString()}
+                    : source.entryCount.toLocaleString('en-AU')}
                 </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Last loaded</dt>
                 <dd className="font-medium">
                   {source.lastLoadedAt
-                    ? new Date(source.lastLoadedAt).toLocaleDateString()
+                    ? new Date(source.lastLoadedAt).toLocaleDateString('en-AU')
                     : "Never"}
                 </dd>
               </div>
@@ -631,7 +631,7 @@ export function ScreeningStageCard({
               Recorded{sync.perimeter.recorded_by_label
                 ? ` by ${sync.perimeter.recorded_by_label}` : ""}
               {sync.perimeter.recorded_at
-                ? ` on ${new Date(sync.perimeter.recorded_at).toLocaleDateString()}` : ""}
+                ? ` on ${new Date(sync.perimeter.recorded_at).toLocaleDateString('en-AU')}` : ""}
               {sync.perimeter.reason_code ? ` (${sync.perimeter.reason_code})` : ""}.
               This is a statement about obligation, not a screening result.
             </p>

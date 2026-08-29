@@ -567,6 +567,138 @@
   background: linear-gradient(90deg, transparent, rgba(166, 130, 43, 0.65), transparent);
 }
 
+/* ── the holder's portrait ─────────────────────────────────────────────
+ * Drawn as a photograph MOUNTED on the leaf rather than as an avatar placed
+ * on top of it: a recessed well, a gold hairline, the paper's own ink for
+ * the legend. The proportion is 35:45 — the ICAO 35×45mm passport-photograph
+ * ratio — so the frame reads as the thing it is even before the image loads.
+ *
+ * The leaf is authored at 470x648 and SCALED by transform, so every value
+ * here is in leaf pixels and must never be a viewport unit: a portrait sized
+ * in `vh` would be the one element on the page that ignored the fit.        */
+
+.passport-portrait__mount {
+  position: relative;
+  flex: 0 0 auto;
+  width: 84px;
+  height: 108px;               /* 35:45 */
+  padding: 3px;
+  /* The photograph is INSIDE its frame. Without this the image paints over
+     the bottom hairline and the mount stops reading as a mount. */
+  overflow: hidden;
+  border: 1px solid rgba(166, 130, 43, 0.55);
+  border-radius: 2px;
+  background: rgba(22, 35, 63, 0.04);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5),
+    0 1px 2px rgba(22, 35, 63, 0.12);
+}
+
+.passport-portrait__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* The photograph is printed, not pasted: a touch of the paper's warmth
+     over it keeps it inside the document's own colour. */
+  filter: saturate(0.94) contrast(1.02);
+  border-radius: 1px;
+  display: block;
+  /* A document portrait is a head-and-shoulders crop. Where the aspect ratio
+     is not exactly 35:45, losing the bottom of the shoulders is right and
+     losing the top of the head is not. */
+  object-position: center top;
+}
+
+.passport-portrait__empty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(22, 35, 63, 0.045) 0 4px,
+      transparent 4px 8px
+    );
+}
+
+.passport-portrait__empty-mark {
+  font-size: 14px;
+  color: rgba(166, 130, 43, 0.5);
+}
+
+/* ── The bio panel on the Client Identity leaf ────────────────────────
+   An identity document's own layout: the photograph mounted at the left,
+   the fields that name the holder set beside it. Everything is in LEAF
+   pixels — the leaf is authored at 470x648 and scaled by one transform, so a
+   value in viewport units would be the single element on the page that
+   ignored the fit.
+
+   The mount is wider here than a marginal portrait would be (96x123, the
+   35:45 ICAO ratio) because on this leaf the photograph is the subject of
+   the page rather than an ornament beside it. */
+.passport-bio {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.passport-bio__figure {
+  margin: 0;
+  flex: 0 0 auto;
+  width: 96px;
+}
+
+.passport-bio__mount {
+  width: 96px;
+  height: 123px;               /* 35:45 */
+}
+
+.passport-bio__caption {
+  margin-top: 5px;
+  font-size: 7.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--passport-ink-faint);
+  line-height: 1.35;
+}
+
+.passport-bio__fields {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  /* Optically level with the top of the mount rather than with its border:
+     the frame carries 3px of padding and a hairline, and matching the box
+     leaves the first label sitting a shade high. */
+  padding-top: 1px;
+}
+
+.passport-bio__field {
+  min-width: 0;
+}
+
+.passport-bio__v {
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--passport-ink);
+  overflow-wrap: anywhere;
+}
+
+/* Why the frame is empty, said on the page rather than left to the reader.
+   Set as a printed remark — the paper's faint ink, not an error colour: a
+   photograph that was never retained says nothing about the holder. */
+.passport-bio__absence {
+  margin: 2px 0 0;
+  font-size: 8.5px;
+  line-height: 1.4;
+  font-style: italic;
+  color: var(--passport-ink-faint);
+}
+
 .passport-leaf__k {
   font-size: 0.4375rem;
   letter-spacing: 0.16em;

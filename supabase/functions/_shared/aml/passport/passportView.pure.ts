@@ -53,6 +53,10 @@ import {
   type PendingStamp,
 } from "./passportStamps.pure.ts";
 import { passportCredential, passportVersionLabel, shortFingerprint } from "./passportCredential.pure.ts";
+import {
+  describeIdentityPortrait, describeIdentityPortraitSlot,
+  type IdentityPortraitDescriptor, type IdentityPortraitSlot,
+} from "./identityPortrait.pure.ts";
 import { derivePassportJourney, type PassportJourney } from "./passportJourney.pure.ts";
 
 export type PassportAudience = "command" | "client" | "partner";
@@ -206,7 +210,21 @@ export type PassportView = {
     opened_at: string | null;
   };
   versions: PassportVersionRow[];
-  identity: { fields: Array<{ key: string; label: string; value: string }> };
+  identity: {
+    fields: Array<{ key: string; label: string; value: string }>;
+    /**
+     * The holder's photograph, on the page that bears their identity.
+     *
+     * A SLOT rather than a descriptor, and always present: a bio page whose
+     * portrait block simply disappears when there is no image reads as a
+     * broken page, and gives the reader no way to tell "we hold no
+     * photograph" from "this document does not carry one". The slot names
+     * which absence it is, including the transient one while the sweep is
+     * fetching it. `url` is minted for one reader at the moment of service —
+     * see `identityPortrait.pure.ts`.
+     */
+    portrait: IdentityPortraitSlot;
+  };
   verification: {
     parties: Array<{
       party: string;
@@ -214,6 +232,18 @@ export type PassportView = {
       method: string | null;
       completed_at: string | null;
       components: Array<{ check_type: string; status: string; completed_at: string | null }>;
+      /**
+       * The face printed on the identity document, where one is stored.
+       *
+       * A DESCRIPTOR, never bytes and never a URL: `url` is filled in by the
+       * edge function serving this view, for that reader, with a short
+       * lifetime. A signed storage URL is a bearer credential, and a
+       * credential inside a projection can be persisted, cached or embedded
+       * in an attestation payload. See `identityPortrait.pure.ts`.
+       *
+       * Null is the ordinary case and every surface renders unchanged on it.
+       */
+      portrait: IdentityPortraitDescriptor | null;
     }>;
   };
   documents: Array<{
@@ -485,17 +515,63 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
   // Verification parties: collapse checks per party label; no provider, no
   // scores — component status and timing only.
   const partyMap = new Map<string, PassportView["verification"]["parties"][number]>();
+  /* The facts behind the PASSED check, kept per party.
+     The Client Identity page needs more than the descriptor: where there is
+     no portrait it has to say WHY, and that answer lives in the capture
+     objects rather than in the (null) descriptor they produce. */
+  const portraitFacts = new Map<string, {
+    captureObjects: unknown; documentChoice: unknown; issuingState: unknown;
+    completedAt: string | null; backfillStamp: unknown;
+  }>();
   for (const c of input.stamp_input.verification_checks ?? []) {
     const key = c.party_label ?? input.case.subject_display_name ?? "Subject";
-    const entry = partyMap.get(key) ?? { party: key, verified: false, method: null, completed_at: null, components: [] };
+    const entry = partyMap.get(key)
+      ?? { party: key, verified: false, method: null, completed_at: null, components: [], portrait: null };
     entry.components.push({ check_type: c.check_type, status: c.status, completed_at: c.completed_at });
     if (c.status === "passed" && METHOD_ACCEPTED.has(c.check_type)) {
       entry.verified = true;
       entry.method = c.check_type;
       entry.completed_at = c.completed_at;
+      /* Only from the check that PASSED. A portrait extracted during a failed
+         or superseded attempt is not the evidence this party was verified
+         on, and putting it on the document would say it was. */
+      entry.portrait = describeIdentityPortrait({
+        captureObjects: c.capture_objects,
+        documentChoice: c.document_choice,
+        issuingState: c.issuing_state,
+        completedAt: c.completed_at,
+      }) ?? entry.portrait;
+      portraitFacts.set(key, {
+        captureObjects: c.capture_objects,
+        documentChoice: c.document_choice,
+        issuingState: c.issuing_state,
+        completedAt: c.completed_at,
+        backfillStamp: c.portrait_backfill,
+      });
     }
     partyMap.set(key, entry);
   }
+
+  /* ── The holder's photograph, for the Client Identity page ───────────
+     The bio page is about the SUBJECT, so the slot follows the subject's own
+     party where there is one and the first party otherwise — a sole trader's
+     case labels the party with their name, an entity's with the individual
+     who was verified, and neither should leave the page blank. */
+  const subjectPartyKey = input.case.subject_display_name ?? "Subject";
+  const subjectParty = partyMap.get(subjectPartyKey) ?? [...partyMap.values()][0] ?? null;
+  const subjectFacts = subjectParty ? portraitFacts.get(subjectParty.party) : undefined;
+  const identityPortrait = describeIdentityPortraitSlot({
+    captureObjects: subjectFacts?.captureObjects ?? null,
+    documentChoice: subjectFacts?.documentChoice as string | null | undefined,
+    issuingState: subjectFacts?.issuingState as string | null | undefined,
+    completedAt: subjectFacts?.completedAt ?? null,
+    verified: Boolean(subjectParty?.verified),
+    /* Distinguishes "on its way" from "read and there was none". Every
+       audience gets the same reading: the Command Centre's document and the
+       partner's are the same document, and a photograph that is arriving is
+       not a staff-only fact. */
+    backfillStamp: subjectFacts?.backfillStamp ?? null,
+  });
 
   const versions: PassportVersionRow[] = attestations.map((a) => ({
     version: a.version,
@@ -530,6 +606,7 @@ export function buildPassportView(audience: PassportAudience, input: PassportVie
     },
     versions,
     identity: {
+      portrait: identityPortrait,
       fields: [
         ...allowListedFields(input.personal_details, PERSONAL_FIELDS),
         ...allowListedFields(input.entity_details, ENTITY_FIELDS),

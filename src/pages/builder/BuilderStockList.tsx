@@ -32,7 +32,7 @@ import {
   useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections,
   useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages,
   useRecoverStockSourceImages, useSetBuilderStockAvailability, uploadBuilderStockFile,
-  type StockImportSummary, type StockUploadProgress,
+  type StockImportSummary, type StockUploadProgress, type StockUploadResult,
 } from '@/lib/builderStockQueries';
 import {
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
@@ -76,19 +76,24 @@ const SETTABLE_AVAILABILITY: StockAvailability[] = [
   'available', 'on_hold', 'reserved', 'contracted', 'sold', 'settled', 'withdrawn',
 ];
 
+/**
+ * Only the steps a builder is actually waiting on.
+ *
+ * "Processing supplied images" and "Finding images" used to sit at the end of
+ * this list. They were not steps of the import — they were the browser driving
+ * image work, and one of them held this dialog open for twenty minutes on a
+ * list that had already imported in nineteen seconds. Imagery is the backend's
+ * now, so the last thing the builder waits for is the properties being saved.
+ */
 const PHASE_LABEL: Record<StockUploadProgress['phase'], string> = {
   requesting: 'Preparing the upload',
   uploading: 'Uploading the file',
   processing: 'Reading the properties',
-  // The builder's OWN imagery, named separately because it is the only stage
-  // whose output a marketplace card may draw.
-  settling: 'Processing supplied images',
-  enriching: 'Finding images',
   done: 'Finished',
 };
 
 const PHASE_PERCENT: Record<StockUploadProgress['phase'], number> = {
-  requesting: 10, uploading: 30, processing: 55, settling: 75, enriching: 90, done: 100,
+  requesting: 15, uploading: 45, processing: 80, done: 100,
 };
 
 export default function BuilderStockList() {
@@ -103,6 +108,14 @@ export default function BuilderStockList() {
 
   const [progress, setProgress] = useState<StockUploadProgress | null>(null);
   const [lastSummary, setLastSummary] = useState<StockImportSummary | null>(null);
+  /**
+   * Properties the backend still owes imagery, as the import reported it.
+   *
+   * Held beside the summary rather than inside it because it is a fact about
+   * the QUEUE and not about the file: the summary says what was read and
+   * saved, this says what is still being worked on without anybody waiting.
+   */
+  const [lastImageWorkPending, setLastImageWorkPending] = useState(0);
   const [addOpen, setAddOpen] = useState(false);
   const [sourceUrl, setSourceUrl] = useState('');
   const [pendingDelete, setPendingDelete] = useState<BuilderStockUpload | null>(null);
@@ -141,11 +154,16 @@ export default function BuilderStockList() {
     void selectionsQuery.refetch();
   }, [itemsQuery, uploadsQuery, selectionsQuery]);
 
-  const reportImport = useCallback((imported: StockImportSummary) => {
+  const reportImport = useCallback((result: StockUploadResult) => {
+    const imported = result.summary;
     setLastSummary(imported);
+    setLastImageWorkPending(result.imageWorkPending);
     toast({
       title: 'Stock list imported',
-      description: `${imported.imported} new and ${imported.updated} updated from ${imported.detected} propert${imported.detected === 1 ? 'y' : 'ies'}.`,
+      description: `${imported.imported} new and ${imported.updated} updated from ${imported.detected} propert${imported.detected === 1 ? 'y' : 'ies'}.`
+        + (result.imageWorkPending
+          ? ' Images are still being found — you can close this page.'
+          : ''),
     });
     refreshAll();
   }, [refreshAll, toast]);
@@ -163,7 +181,15 @@ export default function BuilderStockList() {
      * twice. The sources list is refreshed below either way, so the honest
      * heading sends the reader to the answer rather than away from it.
      */
-    const undetermined = failure.code === 'transport_failed';
+    /*
+     * A DEADLINE IS THE SAME KIND OF SILENCE. `deadline_exceeded` is this
+     * page's own clock giving up on a request that never answered — which is
+     * precisely the state `transport_failed` describes, reached deliberately
+     * rather than by the socket dying. Both mean the browser does not know,
+     * and neither may be reported as a failed import.
+     */
+    const undetermined = failure.code === 'transport_failed'
+      || failure.code === 'deadline_exceeded';
     toast({
       title: duplicate
         ? 'Already imported'
@@ -229,9 +255,10 @@ export default function BuilderStockList() {
     }
 
     setLastSummary(null);
+    setLastImageWorkPending(0);
     try {
       const result = await uploadBuilderStockFile(file, setProgress);
-      reportImport(result.summary);
+      reportImport(result);
     } catch (error) {
       reportImportFailure(error);
     } finally {
@@ -248,9 +275,10 @@ export default function BuilderStockList() {
     const value = sourceUrl.trim();
     if (!value) return;
     setLastSummary(null);
+    setLastImageWorkPending(0);
     try {
       const result = await importBuilderStockUrl(value, setProgress);
-      reportImport(result.summary);
+      reportImport(result);
       setSourceUrl('');
       setAddOpen(false);
     } catch (error) {
@@ -312,21 +340,18 @@ export default function BuilderStockList() {
       {progress ? (
         <Card>
           <CardContent className="space-y-3 p-4">
-            <div className="flex items-center justify-between text-sm font-medium">
-              <span>{PHASE_LABEL[progress.phase]}</span>
-              {progress.phase === 'enriching' && progress.remaining ? (
-                <span className="text-muted-foreground">{progress.remaining} propert{progress.remaining === 1 ? 'y' : 'ies'} left</span>
-              ) : null}
-            </div>
+            <div className="text-sm font-medium">{PHASE_LABEL[progress.phase]}</div>
             <Progress value={PHASE_PERCENT[progress.phase]} />
             <p className="text-xs text-muted-foreground">
-              Images are found after the properties are saved. If image lookup fails, your stock is still imported.
+              Images are found in the background once the properties are saved. You can close this page as soon as the import finishes.
             </p>
           </CardContent>
         </Card>
       ) : null}
 
-      {lastSummary ? <ImportSummaryCard summary={lastSummary} /> : null}
+      {lastSummary
+        ? <ImportSummaryCard summary={lastSummary} imageWorkPending={lastImageWorkPending} />
+        : null}
 
       {pendingSelections.length ? (
         <Card>
@@ -858,7 +883,9 @@ export default function BuilderStockList() {
   );
 }
 
-function ImportSummaryCard({ summary }: { summary: StockImportSummary }) {
+function ImportSummaryCard(
+  { summary, imageWorkPending }: { summary: StockImportSummary; imageWorkPending: number },
+) {
   return (
     <Card>
       <CardHeader>
@@ -877,6 +904,22 @@ function ImportSummaryCard({ summary }: { summary: StockImportSummary }) {
             </span>
           ) : null}
         </div>
+        {/*
+          * SAID PLAINLY, BECAUSE A FINISHED IMPORT IS NOT A FINISHED PICTURE.
+          *
+          * The dialog no longer waits for imagery, so this is the only place a
+          * builder learns there is still work — and the only honest reading of
+          * a successful import is "the properties are saved, the pictures are
+          * coming". Claiming otherwise by saying nothing is what a summary of
+          * a completed import would otherwise imply.
+          */}
+        {imageWorkPending ? (
+          <p className="flex items-start gap-2 text-xs text-muted-foreground">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            Images are still being found for {imageWorkPending} propert{imageWorkPending === 1 ? 'y' : 'ies'}. This continues on our
+            servers — you do not need to keep this page open.
+          </p>
+        ) : null}
         {summary.warnings.map((warning) => (
           <p key={warning} className="flex items-start gap-2 text-xs text-muted-foreground">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />

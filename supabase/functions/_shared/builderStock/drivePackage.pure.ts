@@ -288,8 +288,60 @@ export function selectPackageDocument(
    */
   const packages = named.filter((entry) => driveDocumentKind(entry.name) === 'package_candidate');
   if (named.length !== 1 && packages.length === 1) return packages[0];
+  if (named.length === 1) return named[0];
 
-  return named.length === 1 ? named[0] : null;
+  /*
+   * ONE LIBRARY MARKS ITS PACKAGE BY SUFFIXING THE FAMILY'S OWN NAME.
+   *
+   * PRODUCTION, 29 AUGUST 2026, Lot 209 Satinwood Crescent. Its folder holds
+   * three documents naming that exact property:
+   *
+   *     Lot 209, 44 Satinwood Crescent Donnybrook VIC .pdf            candidate
+   *     Lot 209, 44 Satinwood Crescent Donnybrook VIC _Inclusions.pdf reference
+   *     Lot 209, 44 Satinwood Crescent Donnybrook VIC _package.pdf    candidate
+   *
+   * `named` is 3 and `packages` is 2, so both tests above fail and the folder
+   * was reported as naming NO document for the property. The card fell through
+   * to a Street View of the street — with the builder's own package sitting one
+   * link away, in a file whose name is the word `package`.
+   *
+   * WHY "CONTAINS THE WORD PACKAGE" IS THE WRONG RULE, and was written here
+   * first. Covella's folder is
+   *
+   *     LOT 914 • COVELLA • GREENBANK QLD.pdf          <- this IS the package
+   *     OTP_Land_Contract_..._Lot_914_Covella.pdf
+   *     Rental Appraisal_ Lot 914, Covella Estate.pdf
+   *
+   * so THERE the package is the BARE-named file, and a second document called
+   * "Property Package" beside it would be a different document rather than the
+   * same one marked. Two libraries, opposite conventions; a filename-word rule
+   * cannot tell them apart, and would have fixed Satinwood by breaking
+   * Covella — which is what the two tests that pin the Covella shape caught.
+   *
+   * THE DISCRIMINATOR IS THE FAMILY, NOT THE WORD. Satinwood's package name is
+   * another candidate's name PLUS the marker: strike `package` out and the two
+   * are one document family, one member of which the builder has labelled.
+   * Covella's two names are not each other with a marker added — `lot 914
+   * covella estate` is not `lot 914 covella greenbank qld` — so nothing there
+   * has been marked and the refusal stands untouched.
+   *
+   * STRICTLY ADDITIVE. Reached only after both earlier tests decline, so every
+   * folder that already resolved to a document resolves to the SAME document
+   * and only a refusal can become a selection. It still demands the document
+   * name this exact lot, still refuses anything the kind table calls a
+   * contract, an appraisal or a reference, and still refuses when two members
+   * of a family are both marked.
+   */
+  const marked = packages.filter((entry) => {
+    const tokens = normaliseDriveName(entry.name).split(' ');
+    if (!tokens.includes('package')) return false;
+    const base = tokens.filter((token) => token !== 'package').join(' ');
+    return packages.some(
+      (other) => other !== entry && normaliseDriveName(other.name) === base);
+  });
+  if (marked.length === 1) return marked[0];
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------

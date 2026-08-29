@@ -121,3 +121,26 @@ export {
   type MembershipInput,
   type PassportCurrency,
 } from '../../../../supabase/functions/_shared/aml/passport/passportDistribution.pure';
+
+export {
+  DISCLOSABLE_CAPTURE_KEY,
+  WITHHELD_CAPTURE_KEYS,
+  describeIdentityPortrait,
+  describeIdentityPortraitSlot,
+  identityPortraitObject,
+  backfillPending,
+  backfillStampFor,
+  captureObjectsFor,
+  parseBackfillStamp,
+  portraitAbsenceNote,
+  portraitBackfillCandidate,
+  portraitCaption,
+  portraitRecoverable,
+  readBackfillStamp,
+  slotCaption,
+  type IdentityDocumentKind,
+  type IdentityPortraitDescriptor,
+  type IdentityPortraitSlot,
+  type PortraitAbsenceReason,
+  type PortraitBackfillStamp,
+} from '../../../../supabase/functions/_shared/aml/passport/identityPortrait.pure';

@@ -51,6 +51,7 @@
 
 import {
   getStandaloneIdvProvider,
+  isStandaloneIdvProvider,
   resolveTenantProvider,
   runWithMetrics,
   currentEnvironment,
@@ -76,6 +77,10 @@ import { canonicalOutcome } from './verificationOutcome.pure.ts';
 import { stripImagePayloads } from './verificationEvidence.pure.ts';
 import { buildVendorData } from './providers/didit.pure.ts';
 import {
+  backfillPending, backfillStampFor, captureObjectsFor, identityPortraitObject,
+  readBackfillStamp,
+} from './passport/identityPortrait.pure.ts';
+import {
   parseDocumentChoice, identityDocumentCapturePlan,
   type IdentityDocumentChoice,
 } from './identityDocuments.pure.ts';
@@ -100,6 +105,19 @@ export interface StandaloneCapturePlan {
     document_front: { bucket: string; path: string };
     document_back: { bucket: string; path: string } | null;
     selfie: { bucket: string; path: string };
+    /**
+     * The face the provider extracted from the DOCUMENT.
+     *
+     * Not a capture: the customer never takes this one. It is derived during
+     * processing from the document they photographed, and it is the only one
+     * of the four images that may appear on a Compliance Passport — a face
+     * crop carries no document number, no MRZ, no date of birth and no
+     * signature. See `passport/identityPortrait.pure.ts`.
+     *
+     * Optional throughout: every verification recorded before this existed
+     * has none, and every surface renders exactly as it did.
+     */
+    id_portrait?: { bucket: string; path: string } | null;
   };
 }
 
@@ -124,8 +142,49 @@ export function readCapturePlan(check: any): StandaloneCapturePlan | null {
       document_front: front,
       document_back: object(objects.document_back),
       selfie,
+      id_portrait: object(objects.id_portrait),
     },
   };
+}
+
+/**
+ * Store the extracted document portrait beside the captures it came from.
+ *
+ * ── Where, and why it matters ──────────────────────────────────────────
+ * `aml-biometrics`, under the same case/attempt prefix as the selfie. Two
+ * reasons, and the second is the important one: the bucket is private, and it
+ * is one of the two buckets `aml-idv-retention` may delete from — so the
+ * portrait is destroyed on the same clock as everything else about the
+ * attempt, by the job that already exists, with `id_portrait` added to the
+ * objects it enumerates. An image this product stores and never deletes would
+ * be a worse defect than not storing it at all.
+ *
+ * Returns null on any failure. The caller treats null as "no portrait", which
+ * is the ordinary state for every verification recorded before this existed.
+ */
+async function storeIdentityPortrait(
+  db: any,
+  plan: StandaloneCapturePlan,
+  caseId: string,
+  checkId: string,
+  bytes: Uint8Array,
+): Promise<{ bucket: string; path: string } | null> {
+  try {
+    /* Beside the selfie, in the selfie's bucket — derived from the plan
+       rather than rebuilt, so the prefix can never drift from the attempt's
+       own. */
+    const bucket = plan.objects.selfie.bucket;
+    const prefix = plan.objects.selfie.path.replace(/\/[^/]*$/, '');
+    if (!bucket || !prefix) return null;
+    const path = `${prefix}/id-portrait.jpg`;
+    const { error } = await db.storage.from(bucket).upload(path, bytes, {
+      contentType: 'image/jpeg', upsert: true,
+    });
+    if (error) return null;
+    return { bucket, path };
+  } catch {
+    return null;
+  }
 }
 
 async function download(db: any, bucket: string, path: string): Promise<Uint8Array> {
@@ -337,6 +396,17 @@ export async function runStandaloneVerification(
     await db.schema('aml').from('verification_checks').update({
       outcome_detail: stripImagePayloads({
         ...(check.outcome_detail ?? {}),
+        /* The PLAN, re-persisted from the in-memory copy.
+           `aml-idv-retention` reads its object list from
+           `standalone_capture` — not from `standalone.capture_objects` — so
+           an object added during processing (the extracted portrait) has to
+           be written back here or the retention job would never enumerate
+           it, and the one image this product derives would be the one it
+           never deletes. */
+        standalone_capture: {
+          ...((check.outcome_detail ?? {}).standalone_capture ?? {}),
+          objects: plan.objects,
+        },
         standalone: { ...evidenceBase, ...extra },
       }),
       updated_at: new Date().toISOString(),
@@ -403,6 +473,27 @@ export async function runStandaloneVerification(
    * the database) has the field removed by name, whether it held bytes or a URL.
    */
   const portraitBytes = await resolveReferenceImage(id.portraitBase64);
+
+  /* ── The one image a Compliance Passport may show ───────────────────
+     The portrait is the face the provider extracted from the DOCUMENT, and
+     until now it existed in this variable and nowhere else. A Passport that
+     proves an identity was verified and shows no face is a certificate; the
+     artefact this product is modelled on shows the holder.
+
+     It is the only one of the four images that may travel, and the reason is
+     what it does NOT contain: no document number, no MRZ, no date of birth,
+     no address, no signature. The document page itself (`document_front`)
+     carries every one of those and stays staff-only, and the selfie stays out
+     by the rule that has always kept liveness media out of this document.
+
+     Everything about this is additive and fail-soft. A storage failure
+     records nothing and changes nothing — the verification proceeds exactly
+     as it did, and a case with no portrait renders the Passport this product
+     has always produced. */
+  const portraitObject = portraitBytes
+    ? await storeIdentityPortrait(db, plan, check.case_id, checkId, portraitBytes)
+    : null;
+  if (portraitObject) plan.objects.id_portrait = portraitObject;
 
   await persistProgress({ id_verification: id.sanitised, id_verdict: id.verdict });
 
@@ -486,7 +577,15 @@ export async function runStandaloneVerification(
         passive_liveness: liveness?.requestId ?? null,
         face_match: faceMatch?.requestId ?? null,
       },
-      capture_objects: plan.objects,
+      /* `capture_objects` is deliberately NOT written here.
+         It was a second copy of `standalone_capture.objects`, composed once
+         at the end of a run and never updated — and every reader preferred
+         it. So an object added to the plan afterwards (the extracted
+         portrait) was in storage, named by the plan, and on the retention
+         job's list, while every Passport drew an empty frame because it was
+         reading the older of two lists. One list, in one place: the plan.
+         `captureObjectsFor` still merges the legacy copy for rows written
+         before this. */
     },
   });
 
@@ -583,4 +682,250 @@ export async function processStandaloneCheck(
   const claimed = await claimCheck(db, checkId);
   if (!claimed) return { checkId, outcome: 'not_claimed' };
   return await runStandaloneVerification(db, claimed);
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * Backfilling the document portrait for verifications that predate it
+ * ──────────────────────────────────────────────────────────────────────── */
+
+export type PortraitBackfillOutcome =
+  | 'stored'
+  | 'already_present'
+  | 'not_applicable'
+  | 'provider_unavailable'
+  | 'no_portrait_in_document'
+  | 'storage_failed';
+
+export interface PortraitBackfillResult {
+  checkId: string;
+  outcome: PortraitBackfillOutcome;
+  /** The provider's verdict on the re-read, recorded but never acted on. */
+  providerVerdict?: string | null;
+  detail?: string;
+}
+
+/**
+ * Outcomes that leave a stamp, and therefore end the matter.
+ *
+ * Everything that got as far as making the call does. `not_applicable` does
+ * not — nothing was spent and nothing was learned, so a check that becomes
+ * eligible later (the plan is repaired, the provider is configured) is still
+ * a candidate. `provider_unavailable` DOES stamp when the call itself failed,
+ * for the reason in `backfillIdentityPortrait`'s header.
+ */
+
+/**
+ * Fetch the portrait for a verification that completed before portraits were
+ * stored, and put it on the Passport.
+ *
+ * ── Why this runs by itself ───────────────────────────────────────────
+ * `resolveReferenceImage` extracted the document portrait on every run and
+ * deliberately discarded it — it lived in one local variable and was never
+ * persisted. So every verification completed before that changed has a
+ * Compliance Passport with no face on it, even though the document page it
+ * was cropped from is still in NPC's own bucket.
+ *
+ * That is a defect in this product's own record-keeping, and repairing it is
+ * this product's job. **Asking an operator to click a button on each case is
+ * asking them to fix our bug by hand**, once per customer, for ever — and it
+ * makes a Passport's completeness depend on whether anybody happened to open
+ * it. The one-minute sweep that already exists finds these and fills them in.
+ *
+ * ── What it is, precisely ─────────────────────────────────────────────
+ * **It re-derives an IMAGE. It never re-decides an identity.** The check's
+ * status, verdict, thresholds, scores and `completed_at` are not read here
+ * and not written: the verification stands exactly as it was recorded, and
+ * the only things this adds to the row are
+ * `standalone_capture.objects.id_portrait` and the attempt stamp beside it.
+ * A re-read that disagrees with the recorded verdict is returned for the
+ * caller to log and acted on by nobody — silently adopting a second opinion
+ * nobody asked for would be far worse than the missing photograph.
+ *
+ * ── Exactly one attempt, ever ─────────────────────────────────────────
+ * This makes one billed ID-verification call, and the stamp it leaves is
+ * written whether the call succeeded, failed or produced nothing. The stamp's
+ * PRESENCE is the guard, never its outcome: retrying a paid call against the
+ * same unreadable document would spend every minute for ever, which is the
+ * unattended spending the processor above this refuses by design. A record
+ * that cannot be repaired settles as `unavailable` on the page and stays
+ * there.
+ */
+export async function backfillIdentityPortrait(
+  db: any, checkId: string,
+): Promise<PortraitBackfillResult> {
+  const { data: check, error } = await db.schema('aml').from('verification_checks')
+    .select('id, case_id, party_id, party_label, status, provider, check_type, '
+      + 'capture_sequence, attempt_number, outcome_detail')
+    .eq('id', checkId).maybeSingle();
+  /* A read that FAILED is not a row that is ABSENT. Neither leaves a stamp:
+     nothing was spent, and a database fault must not permanently disqualify
+     a check from ever being repaired. */
+  if (error) {
+    return { checkId, outcome: 'not_applicable', detail: `check_unreadable: ${error.message}` };
+  }
+  if (!check) return { checkId, outcome: 'not_applicable', detail: 'check_not_found' };
+
+  // Only a verification that PASSED. A portrait taken off a failed or
+  // superseded attempt is not the evidence this party was verified on, and
+  // putting it on the Passport would say that it was.
+  if (check.status !== 'passed') {
+    return { checkId, outcome: 'not_applicable', detail: 'check_not_passed' };
+  }
+  if (!isStandaloneIdvProvider(check.provider)) {
+    return { checkId, outcome: 'not_applicable', detail: 'not_a_standalone_check' };
+  }
+
+  const store = check.outcome_detail?.standalone_capture ?? null;
+  if (readBackfillStamp(store)) {
+    return { checkId, outcome: 'not_applicable', detail: 'already_attempted' };
+  }
+
+  const plan = readCapturePlan(check);
+  if (!plan) return { checkId, outcome: 'not_applicable', detail: 'no_capture_plan' };
+  /* Checked against the MERGED view of the object lists, not the plan alone.
+     A portrait recorded in either place is a portrait we hold, and paying to
+     fetch one we already have is the mistake this whole area exists to stop.
+     `captureObjectsFor` is the same reader every Passport surface uses. */
+  if (identityPortraitObject(captureObjectsFor(check.outcome_detail))) {
+    return { checkId, outcome: 'already_present' };
+  }
+
+  let provider: StandaloneIdvProvider;
+  let resolved: Awaited<ReturnType<typeof resolveTenantProvider>> = null;
+  try {
+    resolved = await resolveTenantProvider(db, 'default', 'idv');
+    provider = getStandaloneIdvProvider({ resolved, admin: db });
+  } catch (err: any) {
+    /* No stamp: nothing was spent, and a deployment that has not finished
+       configuring its provider must not lose the repair permanently. */
+    return {
+      checkId, outcome: 'not_applicable',
+      detail: `provider_unresolved: ${String(err?.message ?? err)}`,
+    };
+  }
+
+  // The source image, read before anything is spent. A document page the
+  // retention job has already deleted costs nothing to discover — and leaves
+  // no stamp, because there was never anything here to repair.
+  let frontBytes: Uint8Array;
+  try {
+    frontBytes = await download(
+      db, plan.objects.document_front.bucket, plan.objects.document_front.path);
+  } catch (err: any) {
+    return { checkId, outcome: 'not_applicable', detail: String(err?.message ?? err) };
+  }
+
+  const unitCosts = (resolved?.config?.['standalone_unit_costs_cents'] ?? {}) as
+    Record<string, unknown>;
+  const rawCost = unitCosts['id_verification'];
+  const costCents = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost >= 0
+    ? rawCost
+    : (resolved?.costCents ?? 0);
+
+  let reading: IdVerificationReading | null = null;
+  let callDetail: string | null = null;
+  try {
+    const body = await runWithMetrics(db, {
+      tenantId: 'default', capability: 'idv', providerKey: provider.name,
+      costCents, configId: resolved?.configId ?? null,
+    }, () => provider.verifyIdentityDocument({
+      frontImage: frontBytes,
+      backImage: null,
+      vendorData: buildVendorData(check.case_id, check.party_id ?? null),
+      metadata: {
+        npc_verification_check_id: checkId,
+        npc_capture_sequence: check.capture_sequence ?? check.attempt_number ?? 1,
+        npc_purpose: 'portrait_backfill',
+      },
+    }));
+    reading = readIdVerification(body);
+  } catch (err: any) {
+    callDetail = err instanceof DiditStandaloneError
+      ? err.category : String(err?.message ?? err);
+  }
+
+  /* From here the call HAS been made, so every path stamps. A request whose
+     response never arrived has an unknown billing state, and re-sending it is
+     precisely what this codebase refuses. */
+  const bytes = reading ? await resolveReferenceImage(reading.portraitBase64) : null;
+  const stored = bytes
+    ? await storeIdentityPortrait(db, plan, check.case_id, checkId, bytes)
+    : null;
+
+  const outcome: PortraitBackfillOutcome = stored
+    ? 'stored'
+    : !reading
+      ? 'provider_unavailable'
+      : bytes
+        ? 'storage_failed'
+        : 'no_portrait_in_document';
+
+  /* The ONLY write, and it is one statement so the stamp and the object can
+     never disagree. `standalone_capture` is where `aml-idv-retention`
+     enumerates from, so writing the object here is also what puts it on the
+     same deletion clock as the captures it came from. Nothing under
+     `standalone` is touched: that block is the recorded verification, and
+     this call did not perform one. */
+  const detail = check.outcome_detail ?? {};
+  const { error: writeError } = await db.schema('aml').from('verification_checks')
+    .update({
+      outcome_detail: {
+        ...detail,
+        standalone_capture: {
+          ...(detail.standalone_capture ?? {}),
+          objects: stored ? { ...plan.objects, id_portrait: stored } : plan.objects,
+          portrait_backfill: { attempted_at: new Date().toISOString(), outcome },
+        },
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', checkId)
+    // Re-checked in the UPDATE. A check that stopped being `passed` between
+    // the read and here must not gain a portrait for the Passport.
+    .eq('status', 'passed');
+
+  return {
+    checkId,
+    outcome: writeError ? 'storage_failed' : outcome,
+    providerVerdict: reading?.verdict ?? null,
+    detail: writeError?.message ?? callDetail ?? undefined,
+  };
+}
+
+/**
+ * Checks whose Passport is missing a photograph we can still fetch.
+ *
+ * Bounded and ordered newest-first: the customers whose Passports are being
+ * read now are repaired first, and a long tail drains over subsequent ticks
+ * rather than in one burst of billed calls.
+ *
+ * The two JSON filters narrow the scan server-side; `backfillPending` decides.
+ * The predicate is re-applied in code deliberately — a filter that silently
+ * stopped matching would turn a bounded repair into repeated spending, and
+ * this is the one place where being wrong costs money.
+ */
+export async function findPortraitBackfillCandidates(
+  db: any, limit: number,
+): Promise<string[]> {
+  const { data, error } = await db.schema('aml').from('verification_checks')
+    .select('id, provider, outcome_detail')
+    .eq('check_type', 'electronic_idv')
+    .eq('status', 'passed')
+    .is('superseded_at', null)
+    .is('outcome_detail->standalone_capture->objects->>id_portrait', null)
+    .is('outcome_detail->standalone_capture->>portrait_backfill', null)
+    .order('completed_at', { ascending: false })
+    .limit(limit * 8);
+  if (error || !data) return [];
+
+  const ids: string[] = [];
+  for (const row of data) {
+    if (ids.length >= limit) break;
+    if (!isStandaloneIdvProvider(row.provider)) continue;
+    if (!backfillPending(
+      backfillStampFor(row.outcome_detail), captureObjectsFor(row.outcome_detail),
+    )) continue;
+    ids.push(String(row.id));
+  }
+  return ids;
 }

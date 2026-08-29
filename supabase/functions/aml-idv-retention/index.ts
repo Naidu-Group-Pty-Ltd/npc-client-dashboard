@@ -210,8 +210,13 @@ async function buildCandidate(admin: any, row: any): Promise<RetentionCandidate>
   const plan = readCapturePlan(row);
   const objects: CaptureObjectRef[] = [];
   if (plan) {
+    /* `id_portrait` is the face the provider extracted from the document —
+       derived during processing rather than captured, and the one image that
+       may appear on a Compliance Passport. It is destroyed on exactly the
+       same clock as the captures it came from: an image this product stores
+       and never deletes would be worse than one it never stored. */
     for (const ref of [plan.objects.document_front, plan.objects.document_back,
-      plan.objects.selfie]) {
+      plan.objects.selfie, plan.objects.id_portrait]) {
       if (ref?.bucket && ref?.path) objects.push({ bucket: ref.bucket, path: ref.path });
     }
   }

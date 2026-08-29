@@ -510,8 +510,23 @@ describe('what is written to the case record', () => {
     // The reader scrubs by name; `stripImagePayloads` sweeps by size on top.
     expect(ORCHESTRATOR).toContain('stripImagePayloads');
     expect(ORCHESTRATOR).not.toContain('portraitBase64,');
-    // The portrait variable is never written into an update.
-    expect(ORCHESTRATOR).not.toMatch(/outcome_detail:[\s\S]{0,400}portrait/);
+  });
+
+  it('no image BYTES are ever written into the case record', () => {
+    /* The portrait is now stored — as an object in a private bucket, so the
+       Compliance Passport can show the face printed on the identity
+       document. What must never change is that the RECORD holds a reference
+       and never the image: `outcome_detail` is read by every staff surface,
+       exported, and hashed into attestations.
+
+       So the bytes go to `storage.upload` and nowhere else, and the only
+       thing about the portrait that reaches the row is a `{bucket, path}`. */
+    expect(ORCHESTRATOR).toContain('.upload(path, bytes,');
+    // The bytes variable is never interpolated into a persisted payload.
+    expect(ORCHESTRATOR).not.toMatch(/outcome_detail:[\s\S]{0,600}portraitBytes/);
+    expect(ORCHESTRATOR).not.toMatch(/persistProgress\([\s\S]{0,200}portraitBytes/);
+    // And the reference that does reach it is a plan object, not an image.
+    expect(ORCHESTRATOR).toContain('plan.objects.id_portrait = portraitObject;');
   });
 
   it('records the staff-only evidence an adjudicator needs', () => {
@@ -682,7 +697,19 @@ describe('the draft transition', () => {
 describe('the processor', () => {
   it('accepts signed internal callers only', () => {
     expect(PROCESSOR).toContain('verifySignedInternal');
-    expect(PROCESSOR).toContain("['pg_cron', 'aml-client-portal', 'aml-verification']");
+    /* The rule, not the roster: every caller is a named internal one, and
+       there is no human path in. The list grew when portrait recovery was
+       added (`aml-reliance` dispatches it), so pinning the exact array would
+       have forbidden a legitimate caller while permitting a bad one. */
+    const from = PROCESSOR.indexOf('verifySignedInternal');
+    const arrayStart = PROCESSOR.indexOf('[', from);
+    const allowList = PROCESSOR.slice(arrayStart, PROCESSOR.indexOf(']', arrayStart));
+    const callers = [...allowList.matchAll(/'([a-z0-9_-]+)'/g)].map((m) => m[1]);
+    expect(callers).toContain('pg_cron');
+    expect(callers.length).toBeGreaterThan(0);
+    for (const caller of callers) {
+      expect(caller === 'pg_cron' || caller.startsWith('aml-')).toBe(true);
+    }
     expect(PROCESSOR).not.toContain('x-portal-session-token');
   });
 

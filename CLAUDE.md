@@ -129,6 +129,27 @@ Management API instead. And **a config-only edit used to deploy nothing**,
 because the changed-function list was built from `supabase/functions/**` paths
 alone — which is how a declaration and production came to disagree at all.
 
+## The login CAPTCHA is a per-deployment credential
+`src/lib/turnstileSiteKey.ts` is the one place that decides which Turnstile
+widget this build renders. A widget IS a **(site key, secret) pair** — the site
+key is public and drawn by the browser, `TURNSTILE_SECRET_KEY` is its twin in
+the backend — and `siteverify` reports the hostname a token was solved on, which
+no login handler here reads. A shared widget therefore means a token farmed from
+any other tenant's login page (the prime's is public) satisfies the CAPTCHA
+here.
+
+The prime's site key was a literal in `components/auth/TurnstileWidget.tsx` and
+this repository inherited it verbatim when it was mirrored, so every build it
+has ever produced rendered the PRIME's widget. **This repository now ships no
+built-in site key at all** — the same conclusion `integrations/supabase/env.ts`
+reached about the backend, for the same reason: a missing variable is the normal
+state of a new deployment, so a fallback that reaches another tenant is the
+failure mode rather than the safety net. Unset, the login page says the security
+check is not configured and names `VITE_TURNSTILE_SITE_KEY`; it never borrows.
+`turnstileIdentity.spec.ts` asserts no site key literal comes back into `src/`,
+and Aurixa Mission Control mints this deployment's own widget and publishes the
+variable.
+
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
 the run engine, the trigger-capture triggers or the dispatcher. One engine serves

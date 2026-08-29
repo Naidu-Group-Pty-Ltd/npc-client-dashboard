@@ -10,7 +10,7 @@
  */
 import type {
   PartnerClientResult, PartnerRecordsRequestView, PartnerWorkspaceClient,
-  PartnerWorkspaceDirectory, PartnerWorkspaceDto,
+  PartnerWorkspaceDirectory, PartnerWorkspaceResponse,
 } from "@/components/partner-compliance/types";
 
 type PortalInvoke = (
@@ -40,7 +40,10 @@ export function makePartnerWorkspaceClient(
     getDirectory: () =>
       call<PartnerWorkspaceDirectory>({ op: "get_partner_compliance_workspace" }),
     getWorkspace: (linkId) =>
-      call<{ workspace: PartnerWorkspaceDto }>({
+      /* The response now also carries the Passport document and the surface
+         mode. Both are passed through untouched — this transport adds no
+         field and interprets none. */
+      call<PartnerWorkspaceResponse>({
         op: "get_partner_compliance_workspace", partner_case_link_id: linkId,
       }),
     requestRecords: ({ linkId, recordCodes, rationale, dueAt }) =>

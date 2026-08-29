@@ -53,6 +53,7 @@ import {
   serviceGateStatus,
 } from "./caseDimensions";
 import { deriveFundingObligation } from "./fundingObligation.pure";
+import { refreshRemedy } from "./passport";
 import {
   EVIDENCE_STATE_LABELS,
   highestAttention,
@@ -1571,10 +1572,25 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
         }),
       );
     } else if (passportCode && PASSPORT_NEEDS_ACTION.has(passportCode)) {
-      warnings.push(
-        note("passport_action", `Passport: ${passportLabel ?? passportCode}`, "attention"),
-      );
-      outstanding.push(note("passport_refresh", "Passport version", "attention"));
+      /* ── One fact, counted once ────────────────────────────────────
+       * `refresh_required` covers two different owed acts. Where the
+       * server's ONLY reason is the unapproved gate, the version is fine
+       * and stays in force — listing "Passport version" as outstanding
+       * beside "Service-gate decision" reports one fact as two owed
+       * items, and tells the operator a reissue is owed that cannot
+       * change anything. `refreshRemedy` is the one place that knows. */
+      if (refreshRemedy(facts.passport.state?.reasons) === "approve_gate") {
+        completed.push(
+          note("passport", `Passport issued${facts.passport.version ? ` · v${facts.passport.version}` : ""}`, "steady", {
+            detail: "In force once the service gate is approved — no new version is needed.",
+          }),
+        );
+      } else {
+        warnings.push(
+          note("passport_action", `Passport: ${passportLabel ?? passportCode}`, "attention"),
+        );
+        outstanding.push(note("passport_refresh", "Passport version", "attention"));
+      }
     } else if (passportCode === "suspended" || passportCode === "revoked") {
       blockers.push(
         note("passport_restricted", `Passport: ${passportLabel ?? passportCode}`, "critical"),
@@ -1585,6 +1601,12 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
   } else {
     unavailableFacts.push("passport state");
   }
+
+  /* Issued, and held back by nothing but the gate. */
+  const gateOnlyPassport = passportCode !== null
+    && PASSPORT_NEEDS_ACTION.has(passportCode)
+    && loaded(facts.passport)
+    && refreshRemedy(facts.passport.state?.reasons) === "approve_gate";
 
   const complete = gateApproved && passportCode !== null && PASSPORT_IN_FORCE.has(passportCode);
 
@@ -1614,7 +1636,12 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
       : gateApproved
         ? `Gate approved. Passport: ${passportLabel ?? "state unavailable"}.`
         : caseCleared && !gateStopped
-          ? `The case is cleared — the service gate (${SERVICE_GATE_LABELS[gate]}) awaits an authorised approval.`
+          /* Says what approving actually finishes. The stage completed the
+             moment the gate was approved on a case in this position, and
+             nothing on the screen said so before the click. */
+          ? `The case is cleared — the service gate (${SERVICE_GATE_LABELS[gate]}) awaits an authorised approval${
+              gateOnlyPassport ? ", which is all that is left on this stage" : ""
+            }.`
           : `${SERVICE_GATE_LABELS[gate]} — the designated service may not proceed yet.`,
     blockers,
     warnings,
@@ -1627,12 +1654,17 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
         /* `actionType` matters — without one this button fell to the
          * workspace switch's default, a scroll to a screening anchor that
          * does not exist, and changed nothing visible. Same class as the
-         * Stage 6/7/8 buttons before it. The section is THIS stage: the
-         * gate card is mounted on Gate & Passport now, so the button no
-         * longer bounces the operator back to the Decision stage. */
+         * Stage 6/7/8 buttons before it.
+         *
+         * It lands on the DECISION stage now. The gate is granted by the
+         * cleared decision itself, so a cleared case still holding an open
+         * gate is either one an MLRO stopped or one decided before that
+         * change — and both are recorded on the Decision stage's full gate
+         * card. Sending the operator to a card Stage 9 no longer mounts is
+         * the dead-button class this label was written to escape. */
         ? {
-            key: "gate", label: "Record the service-gate decision", section: "passport",
-            actionType: "record_gate",
+            key: "gate", label: "Open the gate controls on the Decision stage",
+            section: "risk", actionType: "record_gate",
           }
         : { key: "passport", label: "Open the Compliance Passport", section: "passport" },
     secondaryActions: [{ key: "passport_open", label: "Passport & reliance", section: "passport" }],

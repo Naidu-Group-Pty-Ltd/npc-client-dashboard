@@ -65,6 +65,22 @@ export interface PassportRedemption {
   agreement: { partner_org_name: string; agreement_reference: string; scope: string[] };
   /** The statutory position, restated by the server at the point of use. */
   notice: string;
+  /**
+   * Where else this record lives, when the holder also has a portal account.
+   *
+   * SERVER-DECIDED. `available` is false unless the compliance page exists
+   * on this deployment and the organisation has an active membership
+   * somebody could sign in with — a door that refuses is worse than no door.
+   * Absent on a deployment serving a build that predates it.
+   */
+  portal_handoff?: {
+    available: boolean;
+    portalType: string | null;
+    label: string | null;
+    path: string | null;
+    url: string | null;
+    reason: string | null;
+  };
 }
 
 export const passportPublicApi = {

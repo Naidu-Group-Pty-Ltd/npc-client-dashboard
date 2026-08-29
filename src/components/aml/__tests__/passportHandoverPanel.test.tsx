@@ -254,11 +254,27 @@ describe("the act the acceptance unlocked", () => {
         granted_at: "2026-08-28T03:00:00.000Z",
         expires_at: new Date(Date.now() + 60 * 864e5).toISOString(),
         revoked_at: null, revoke_reason: null,
+        /* A LIVE Passport is one that was actually emailed. The fixture used
+           to omit this and still be called live, which is precisely the
+           distinction this product got wrong in production: a grant nobody
+           was sent is access with no channel. */
+        delivered_to_email: "partner@example.com",
+        delivered_at: "2026-08-28T03:00:01.000Z",
       }],
     });
 
     render(<ReliancePassportSection caseId={CASE_ID} isMlro />);
-    expect(await screen.findByText(/holds a live Compliance Passport/i)).toBeInTheDocument();
+    /* The property is that the workspace stops ASKING for something already
+       done. It used to say so in a banner that repeated the recipients row
+       directly beneath it — same partner, same standing, twice — so the
+       banner is gone and the row is where a live Passport is reported. */
+    const panel = await screen.findByRole("region", { name: /partners on this matter/i });
+    expect(panel).toHaveTextContent(/Testing Pty Ltd/);
+    // Settled: the roster reports it and offers no act at all.
+    expect(panel).toHaveTextContent(/Nothing owed/i);
+    expect(panel).toHaveTextContent(/They hold a live Passport/i);
     expect(screen.queryByRole("button", { name: /Issue the Passport/i })).not.toBeInTheDocument();
+    // And the acceptance banner does not re-announce it.
+    expect(screen.queryByText(/holds a live Compliance Passport/i)).toBeNull();
   });
 });

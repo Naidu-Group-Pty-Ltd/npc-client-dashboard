@@ -22,6 +22,10 @@ import {
   normaliseStockRow, stockMatchKeys, stockRecordLabel,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
+import {
+  describeIdentityChange, identityDifferences, stockPropertyIdentity,
+  type StockPropertyIdentity,
+} from './stockIdentity.pure.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import type { ExtractedMedia } from './extract.ts';
 import {
@@ -70,6 +74,16 @@ export interface ImportOutcome {
    * `IMAGE_BUDGET_MS`.
    */
   imageryOutstanding: boolean;
+  /**
+   * Rows whose source anchor matched a property we hold, but which now
+   * describe a DIFFERENT property.
+   *
+   * Reported because it is the one case where an import deliberately does not
+   * carry a builder's photographs forward, and an operator who sees a card go
+   * back to "No image found" is owed the reason. Each entry names the label and
+   * what changed.
+   */
+  replacedProperties: Array<{ label: string; reason: string }>;
 }
 
 interface ExistingItem {
@@ -79,7 +93,45 @@ interface ExistingItem {
   project_name: string | null;
   unit_number: string | null;
   lot_number: string | null;
+  /*
+   * The rest are for the identity guard on the anchor key, and they are all
+   * cheap columns. `source_row` is deliberately NOT read: the whole blob for
+   * twenty thousand rows is megabytes an edge worker does not have, and every
+   * field the identity needs is a column already — except the anchor, which
+   * PostgREST projects out of the JSON for us.
+   */
+  address_line: string | null;
+  suburb: string | null;
+  building_size_sqm: number | string | null;
+  lifecycle_status: string | null;
+  /** `source_row->>source_anchor`, projected under this alias. */
+  source_anchor: string | null;
 }
+
+/**
+ * A property an anchor currently names, and what it IS.
+ *
+ * The two travel together because they are one key: the anchor gets us to a
+ * candidate, and the identity is the only thing that licenses carrying that
+ * candidate's photographs forward.
+ */
+interface AnchoredProperty {
+  id: string;
+  identity: StockPropertyIdentity;
+}
+
+/**
+ * The columns the match indexes are built from.
+ *
+ * The anchor is projected out of `source_row` rather than joined or re-read.
+ * PostgREST validates a select list before it applies permissions, so a
+ * mistyped path here fails loudly with 42703 rather than arriving as
+ * `undefined` — which is the one thing that must not happen to an identity
+ * field. Verified against the live REST endpoint.
+ */
+const EXISTING_ITEM_SELECT = 'id, external_reference, development_name, project_name, '
+  + 'unit_number, lot_number, address_line, suburb, building_size_sqm, '
+  + 'lifecycle_status, source_anchor:source_row->>source_anchor';
 
 function referenceKey(item: ExistingItem): string | null {
   const value = item.external_reference?.trim().toLowerCase();
@@ -249,6 +301,7 @@ export async function importStockRecords(
     detected: 0, imported: 0, updated: 0, failed: 0, itemIds: [], failures: [],
     withSourceImage: 0,
     imageryOutstanding: false,
+    replacedProperties: [],
   };
 
   /**
@@ -314,19 +367,62 @@ export async function importStockRecords(
     });
   }
 
-  const { data: existingRows } = await db
+  const { data: existingRows, error: existingError } = await db
     .from('builder_stock_items')
-    .select('id, external_reference, development_name, project_name, unit_number, lot_number')
+    .select(EXISTING_ITEM_SELECT)
     .eq('organisation_id', input.organisationId)
+    .order('created_at', { ascending: true })
     .limit(20000);
+
+  /*
+   * A FAILED READ IS NOT AN EMPTY ORGANISATION.
+   *
+   * Every key below is built from this one query, so an error that is
+   * discarded here matches nothing and turns the whole import into an insert
+   * of duplicates — which is precisely the outcome this change exists to end,
+   * reached by a different route. This repository has paid for the general
+   * form of that mistake more than once: a read that FAILED is not a row that
+   * is ABSENT.
+   */
+  if (existingError) {
+    throw new Error(`Existing stock could not be read: ${existingError.message ?? 'unknown'}`);
+  }
 
   const byReference = new Map<string, string>();
   const byDevelopmentUnit = new Map<string, string>();
+  /**
+   * The anchor index, and the two rules that make it safe.
+   *
+   * ACTIVE ROWS ONLY. An archived row is stock somebody deliberately removed,
+   * and quietly reviving it because a later file mentions the same source row
+   * is a decision nobody asked for. An anchor whose only rows are archived
+   * behaves exactly as an unmatched anchor does: a fresh property.
+   *
+   * NEWEST ACTIVE ROW WINS A COLLISION, which is only safe because of the
+   * identity guard below and would not be otherwise. The pre-fix history left
+   * three active rows under some anchors — every re-import inserted a set and
+   * the old set was archived only when the operator deleted its upload — and
+   * treating that as an ambiguity to refuse would permanently disable the key
+   * for exactly the properties it was built to rescue. The newest row is the
+   * current meaning of that source row in both ways a collision can arise:
+   * duplicates of one property, where the newest is the live one, and a source
+   * row re-used for a different property, where the newest is what it now
+   * describes. What decides whether anything is CARRIED FORWARD is never this
+   * tie-break; it is `identityDifferences`.
+   */
+  const byAnchor = new Map<string, AnchoredProperty>();
   for (const item of (existingRows ?? []) as ExistingItem[]) {
     const reference = referenceKey(item);
     if (reference) byReference.set(reference, item.id);
     const developmentUnit = developmentUnitKey(item);
     if (developmentUnit) byDevelopmentUnit.set(developmentUnit, item.id);
+
+    const anchor = item.source_anchor?.trim();
+    if (!anchor || item.lifecycle_status === 'archived') continue;
+    // Read oldest-first, so the last write for an anchor is the newest row.
+    // The identity is computed here and only here — for the rows an anchor can
+    // actually reach, rather than for every row the organisation holds.
+    byAnchor.set(anchor, { id: item.id, identity: stockPropertyIdentity(item) });
   }
 
   const inventory = await buildInventoryIndex(db, input.organisationId);
@@ -336,7 +432,42 @@ export async function importStockRecords(
     const label = stockRecordLabel(record);
     try {
       const keys = stockMatchKeys(record);
-      const existingId = (keys.reference ? byReference.get(keys.reference) : undefined)
+
+      /**
+       * THE ANCHOR FIRST, AND ONLY WHERE IT IS STILL THE SAME PROPERTY.
+       *
+       * The anchor is the source's id for a ROW. It is the strongest key here
+       * and the only one the live list carries, but a row can be edited or
+       * re-used for the next lot in the estate, and an update in place would
+       * hand the new property every photograph the old one had earned —
+       * badged "Builder supplied", on the wrong house. So the row id gets us
+       * to a candidate and `identityDifferences` decides whether to keep it.
+       *
+       * A changed identity falls through to the two property-level keys
+       * rather than straight to an insert: a builder reference, or a
+       * development and a lot, are statements about a PROPERTY, so if either
+       * still matches, that match is better evidence than the anchor was.
+       * Only when nothing matches does this become a new property — and a new
+       * property starts with no imagery at all, which is the whole point.
+       *
+       * The row the anchor pointed at is left exactly as it is. It keeps its
+       * own photographs and its own place on the marketplace; whether it
+       * should still be offered is a question for deleting its upload, not
+       * for a file that stopped mentioning it.
+       */
+      const identity = stockPropertyIdentity(record);
+      const anchored = keys.anchor ? byAnchor.get(keys.anchor) : undefined;
+      const anchorDifferences = anchored
+        ? identityDifferences(anchored.identity, identity)
+        : [];
+      if (anchored && anchorDifferences.length) {
+        outcome.replacedProperties.push({
+          label, reason: describeIdentityChange(anchorDifferences),
+        });
+      }
+
+      const existingId = (anchored && !anchorDifferences.length ? anchored.id : undefined)
+        ?? (keys.reference ? byReference.get(keys.reference) : undefined)
         ?? (keys.developmentUnit
           ? byDevelopmentUnit.get(`${keys.developmentUnit.development}|${keys.developmentUnit.unit}`)
           : undefined);
@@ -401,6 +532,18 @@ export async function importStockRecords(
             `${keys.developmentUnit.development}|${keys.developmentUnit.unit}`, itemId);
         }
       }
+
+      /*
+       * And the anchor, pointed at the row this record just became — on both
+       * branches, because both can move it.
+       *
+       * It matters most in the case that got here by a CHANGED identity: the
+       * anchor still names the property it USED to describe, and leaving it
+       * there would make a second row carrying that anchor compare itself
+       * against a property nobody is describing any more. The identity travels
+       * with it, so the two halves of the key cannot drift apart.
+       */
+      if (keys.anchor) byAnchor.set(keys.anchor, { id: itemId, identity });
 
       outcome.itemIds.push(itemId);
       // The label the property was matched on, kept so a paginated source can

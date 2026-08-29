@@ -203,19 +203,38 @@ describe("wired at the source", () => {
     expect(wizard).toContain("link_email_sent");
   });
 
-  it("the LINK is the artefact a person is handed; the token is a disclosure", () => {
+  it("the LINK is the only credential handed over — the raw token is GONE", () => {
     // The link, as a real value in a read-only field — not a placeholder.
     expect(wizard).toContain("id=\"pow-passport-link\"");
     expect(wizard).toContain("value={grantResult.link}");
     expect(wizard).toMatch(/shown once/i);
-    // The raw token still exists and is still shown once, but it answers a
-    // question an everyday operator does not have, so it is behind a
-    // disclosure that says who it is for.
-    expect(wizard).toContain("One-time access token — for system-to-system integrations");
-    expect(wizard).toMatch(/<details/);
+    /* The token and the `/passport/<token>` link are ONE credential — the
+       link is that token with a URL around it — and the only consumer in
+       this platform is the public page, which reads it back out of the URL.
+       Showing it a second time doubled the places a live credential was
+       copied and invited an operator to send "the code" instead of the link,
+       which is a defect this product has already had. */
+    expect(wizard).not.toMatch(/access token/i);
+    expect(wizard).not.toContain("grantResult.token");
+    expect(wizard).not.toContain("copyToken");
     expect(wizard).toMatch(/no prior\s+sign-up is needed/i);
     // What the partner receives is procedures, never the risk assessment.
     expect(wizard).toMatch(/never this case(?:'|&apos;)s risk assessment/);
+  });
+
+  it("the wizard ENROLS the partner for their own portal's compliance page", () => {
+    /* `portal session → membership → canonical organisation` was broken at
+       both ends in production: zero membership rows, and the organisation
+       cross-reference columns written by nothing, ever. One operation does
+       both, because fixing either alone turns one refusal into another. */
+    expect(wizard).toContain("amlRelianceApi.enrolPartnerPortalAccess(");
+    expect(wizard).toContain("PORTAL_USER_SOURCE[portal]");
+    // Active immediately — an `invited` state nothing promotes is one more
+    // way to be silently locked out of the page.
+    expect(wizard).toMatch(/status:\s*"active"/);
+    // And it never blocks the grant: enrolment is awaited before the grant
+    // but swallows its own failure into a reported outcome.
+    expect(wizard).toContain("setPortalAccess({ state: \"failed\"");
   });
 
   it("every registry is read SERVER-side — a browser read of finance contacts returns nothing", () => {

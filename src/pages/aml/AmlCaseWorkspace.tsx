@@ -92,7 +92,6 @@ import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import { caseStage, progressRail, serviceGateStatus, type ProgressRailState } from "@/lib/aml/caseDimensions";
 import { gatePassportPath } from "@/lib/aml/gatePassportPath.pure";
 import { GatePassportPathCard } from "@/components/aml/workspace/GatePassportPathCard";
-import { GateApprovalCard } from "@/components/aml/GateApprovalCard";
 import {
   ScreeningTab, RiskTab, OwnershipControlTab,
   FundingFinanceTab, TimelineTab, AuditTab,
@@ -618,12 +617,14 @@ export default function AmlCaseWorkspace() {
         }, 0);
         return;
       case "record_gate":
-        /* Stage 9's primary act is recorded ON Stage 9 — the approval
-         * card is mounted in this section when the act is owed; when it
-         * is not, the guided path narrates why, so land there instead. */
+        /* The gate is no longer a second decision on Stage 9. A cleared
+         * decision carries it, so the only gate a cleared case can still be
+         * holding is one an MLRO deliberately stopped, or a legacy row — and
+         * both are recorded on the Decision stage's full gate card, which is
+         * where every non-approval status has always lived. */
+        setSection("risk");
         window.setTimeout(() => {
-          (document.getElementById("aml-passport-gate")
-            ?? document.getElementById("aml-passport-path"))
+          document.getElementById("decision-step-gate")
             ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
         }, 0);
         return;
@@ -762,12 +763,20 @@ export default function AmlCaseWorkspace() {
               onOpenSection={setSection}
               onPerform={performStageAction}
               /*
-               * Stage 5's numbered path carries the same action and its own
-               * progress. Repeating both here put one act on the screen three
-               * times, in three sets of words, above two progress readings
-               * that counted different things.
+               * A stage whose surface below carries the same act and its own
+               * progress states it once. Repeating both here put one act on
+               * the screen three times, in three sets of words, above two
+               * progress readings that counted different things.
+               *
+               * Stage 5 (its screening path) and Stage 9 (Gate & Passport,
+               * in order) both do. Stage 9's header said "0 of 3 items on
+               * this stage complete" beside a four-step list — two true
+               * numbers, neither about the list underneath them.
                */
-              deferToSurfaceBelow={section === "ownership" && Boolean(screeningStage.sync)}
+              deferToSurfaceBelow={
+                (section === "ownership" && Boolean(screeningStage.sync))
+                || section === "passport"
+              }
             />
           )}
 
@@ -1120,6 +1129,12 @@ export default function AmlCaseWorkspace() {
                           : null,
                     gateStatus: serviceGateStatus(caseRow),
                     passportState: facts.passport?.state?.code ?? null,
+                    /* The reasons, not only the code: `refresh_required`
+                       covers two different owed acts and only these tell
+                       them apart. Without them the step told a cleared case
+                       with a perfectly good v1 to issue a v2 that could not
+                       have changed anything. */
+                    passportReasons: facts.passport?.state?.reasons ?? null,
                     passportVersion: facts.passport?.version ?? null,
                     canReview: access.isMlro || access.roles.has("reviewer"),
                   })}
@@ -1132,11 +1147,14 @@ export default function AmlCaseWorkspace() {
                           ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
                       }, 0);
                     } else if (key === "gate") {
-                      // The approval act is on this stage; when nothing is
-                      // owed the card is absent and the path stays put.
-                      (document.getElementById("aml-passport-gate")
-                        ?? document.getElementById("aml-passport-path"))
-                        ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                      /* The gate travels with the decision now. Where one is
+                         still outstanding it is a stopped gate or a legacy
+                         row, and both are recorded on the Decision stage. */
+                      setSection("risk");
+                      window.setTimeout(() => {
+                        document.getElementById("decision-step-gate")
+                          ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+                      }, 0);
                     } else if (key === "preview") {
                       // The digital passport, exactly as the client and
                       // partners will see it — before anything is issued.
@@ -1150,28 +1168,24 @@ export default function AmlCaseWorkspace() {
                 />
               </div>
               {/*
-                The ONE act this stage owes — approving a cleared case's
-                gate — and nothing else. The full gate card (all eight
-                statuses) lives on the Decision stage alone; repeating it
-                here read as a duplicate of Stage 8 and is exactly what
-                this compact card replaces. It renders nothing when there
-                is nothing to approve.
+                ── Stage 9 owes no gate act any more ─────────────────────
+                It carried a second approval card: two choices, a ten-
+                character reason and one button, asking a reviewer to decide
+                again what they had just decided on the Decision stage. The
+                same `clearanceBlockReasons` had already run — stricter — so
+                the second act asked no new question, and its button sat
+                disabled behind a grey line of help text while still reading
+                "Approve the gate — Approved", so clicking it did nothing at
+                all. `aml.service_gate_decisions` held zero rows across the
+                entire database.
+
+                A cleared decision now records the gate itself, with the same
+                provenance. What is left here is the record and the guided
+                path above; every non-approval status — conditions, lock,
+                termination — is recorded on the Decision stage's full gate
+                card, which is untouched and is still how a live Passport is
+                suspended or revoked.
               */}
-              <GateApprovalCard
-                caseId={caseRow.id}
-                cleared={caseStage(caseRow) === "cleared" || caseRow.status === "cleared"}
-                canReview={access.isMlro || access.roles.has("reviewer")}
-                isMlro={access.isMlro}
-                onChanged={load}
-                onOpenDecision={() => {
-                  setSection("risk");
-                  window.setTimeout(() => {
-                    document.getElementById("decision-step-gate")
-                      ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-                  }, 0);
-                }}
-                anchorId="aml-passport-gate"
-              />
               {/* The full journey map keeps its place in the product — it
                   sits where the credential is worked on. */}
               <ComplianceJourneyMap caseRow={caseRow} />
@@ -1232,12 +1246,14 @@ export default function AmlCaseWorkspace() {
             /* So it never offers to take the operator where they already are. */
             currentSection={section}
             /*
-             * Stage 5's path keeps its own count, in its own units. Two
-             * meters on one screen counting different things is worse than
-             * either alone.
+             * A path below keeps its own count, in its own units. Two meters
+             * on one screen counting different things is worse than either
+             * alone — Stage 5's screening path and Stage 9's gate path both
+             * own theirs.
              */
             deferReadinessToSurfaceBelow={
-              section === "ownership" && Boolean(screeningStage.sync)
+              (section === "ownership" && Boolean(screeningStage.sync))
+              || section === "passport"
             }
             onOpenSection={setSection}
           />

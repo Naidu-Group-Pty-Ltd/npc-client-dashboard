@@ -94,17 +94,27 @@ export interface FallbackOutcome {
  */
 export async function readFallbackQueue(
   db: any,
-  input: { limit: number },
+  input: { limit: number; stockItemId?: string | null },
 ): Promise<{ rows: Array<Record<string, unknown>>; unavailable?: boolean }> {
   const limit = Math.max(1, Math.min(input.limit, 200));
   try {
-    const { data, error } = await db
+    let query = db
       .from('builder_stock_items')
       .select(CANDIDATE_COLUMNS)
       .eq('lifecycle_status', 'active')
       .in('enrichment_status', ['pending', 'enriching'])
       .order('created_at', { ascending: true })
       .limit(limit);
+    /*
+     * ONE CLAIMED PROPERTY'S LADDER, INDEPENDENT OF EVERY OTHER.
+     *
+     * Requirement 8 of the item-independent settler: a property whose source
+     * reached a terminal answer may climb its own ladder now, and must not
+     * wait on another property whose source is still unfinished. The queue is
+     * otherwise `created_at` ascending across the deployment.
+     */
+    if (input.stockItemId) query = query.eq('id', input.stockItemId);
+    const { data, error } = await query;
     if (error) return { rows: [], unavailable: true };
     return { rows: (data ?? []) as Array<Record<string, unknown>> };
   } catch {
@@ -168,7 +178,7 @@ async function primaryOf(db: any, itemId: string): Promise<string | null> {
  */
 export async function settleFallbackImages(
   db: any,
-  input: { limit?: number; deadlineAt?: number },
+  input: { limit?: number; deadlineAt?: number; stockItemId?: string | null },
   deps: { enrich?: typeof enrichStockItem } = {},
 ): Promise<FallbackOutcome> {
   const outcome: FallbackOutcome = {
@@ -178,7 +188,9 @@ export async function settleFallbackImages(
 
   // Read one more than the batch so `remaining` can be reported honestly
   // without a second round trip on the common case.
-  const queue = await readFallbackQueue(db, { limit: batchLimit + 50 });
+  const queue = await readFallbackQueue(db, {
+    limit: batchLimit + 50, stockItemId: input.stockItemId ?? null,
+  });
   if (queue.unavailable) {
     return { ...outcome, unavailable: true };
   }

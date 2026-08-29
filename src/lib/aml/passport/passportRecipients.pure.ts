@@ -107,6 +107,27 @@ export interface RecipientRow {
   suggestedEmail: string | null;
   /** The live grant a re-issue would supersede, or null. */
   reissueOf: string | null;
+  /**
+   * The live grant that could be WITHDRAWN, or null.
+   *
+   * Withdrawal is not deletion and the difference is the point: a grant is
+   * the record that a disclosure was authorised, so it is revoked and kept,
+   * never removed. `revoke_grant` is deliberately ungated where issuing is
+   * flag-gated — stopping access is a safety action and must never be the
+   * thing a feature flag prevents.
+   */
+  revokeGrantId: string | null;
+  /** False when there is nothing live to withdraw, or the role cannot. */
+  canRevoke: boolean;
+  /**
+   * Which list this row belongs on.
+   *
+   * `ended` is history — lapsed and withdrawn access — and the panel
+   * collapses it. It is not hidden: an operator asking "did we ever share
+   * this, and did we stop?" is asking an audit question, and the answer has
+   * to be one click away rather than gone.
+   */
+  group: "active" | "ended";
   /** The act on offer, in words. */
   actionLabel: string;
   /** What that act will actually do, said before the click. */
@@ -130,6 +151,10 @@ export interface RecipientFacts {
 
 export interface RecipientReading {
   rows: RecipientRow[];
+  /** Partners with something live or something owed. The everyday list. */
+  active: RecipientRow[];
+  /** Lapsed and withdrawn access, kept and collapsed rather than removed. */
+  ended: RecipientRow[];
   /** How many partners hold a live Passport they were actually sent. */
   holding: number;
   /** Partners whose access exists but reached them by no channel. */
@@ -235,6 +260,13 @@ export function passportRecipients(facts: RecipientFacts): RecipientReading {
           ? "A link is emailed. They open the whole Passport without a portal login."
           : "A fresh link is emailed against today's attestation.";
 
+      /* Only a LIVE grant can be withdrawn: a lapsed one has already stopped
+         working and a withdrawn one is already withdrawn, so offering the act
+         there would be a button that does nothing. */
+      const live = latest && !latest.revoked_at
+        && new Date(latest.expires_at).getTime() > now
+        ? latest : null;
+
       return {
         agreementId: agreement.id,
         partnerOrgId: agreement.partner_org_id ?? null,
@@ -250,6 +282,12 @@ export function passportRecipients(facts: RecipientFacts): RecipientReading {
         actionLabel,
         actionMeaning,
         blockedBy,
+        revokeGrantId: live ? live.id : null,
+        // Withdrawal needs the MLRO and something live. It is deliberately
+        // NOT blocked by an overdue review or a missing attestation — those
+        // stop new disclosure, and stopping disclosure is what this does.
+        canRevoke: Boolean(live) && facts.isMlro,
+        group: state === "lapsed" || state === "revoked" ? "ended" : "active",
       };
     })
     .sort((a, b) => {
@@ -275,5 +313,10 @@ export function passportRecipients(facts: RecipientFacts): RecipientReading {
       ? "No partner currently holds a live Passport."
       : `${parts.join(" · ")}.`;
 
-  return { rows, holding, undelivered, neverSent, headline };
+  return {
+    rows,
+    active: rows.filter((r) => r.group === "active"),
+    ended: rows.filter((r) => r.group === "ended"),
+    holding, undelivered, neverSent, headline,
+  };
 }

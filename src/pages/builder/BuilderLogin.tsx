@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { BuilderAuthShell } from '@/components/builder-portal/BuilderAuthShell';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
+import { safeReturnTo } from '@/lib/aml/partnerPortalHandoff';
 
 /**
  * Builder / Developer Portal sign-in.
@@ -31,6 +32,7 @@ import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 export default function BuilderLogin() {
   const { user, loading, signIn } = useBuilderPortalAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -52,9 +54,19 @@ export default function BuilderLogin() {
     );
   }
 
+  /* Where the visitor was going before the gate stopped them.
+     This login used to discard it and land everyone on the dashboard, so a
+     deep link into the AML/CTF Compliance page became "you are now signed
+     in, somewhere else" — indistinguishable from a broken link. Validated
+     as an internal path: an open redirect on a login page is a phishing
+     primitive, and the person who has just typed their password is exactly
+     the person you can send anywhere. */
+  const destination = safeReturnTo(
+    (location.state as { from?: unknown } | null)?.from, '/builder');
+
   // An already-authenticated visitor is handed back to the gate, which decides
   // whether they owe a password rotation, terms or onboarding.
-  if (user) return <Navigate to="/builder" replace />;
+  if (user) return <Navigate to={destination} replace />;
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -76,7 +88,7 @@ export default function BuilderLogin() {
       setTurnstileToken(null);
       return;
     }
-    navigate('/builder', { replace: true });
+    navigate(destination, { replace: true });
   };
 
   return (

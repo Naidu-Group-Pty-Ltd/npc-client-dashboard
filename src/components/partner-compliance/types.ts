@@ -24,6 +24,11 @@ export {
   RESPONSIBILITY_NOTICE,
 } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
 import type { PartnerWorkspaceDto } from "../../../supabase/functions/_shared/aml/partnerWorkspace";
+import type { PartnerSurfaceMode } from "@/lib/aml/partnerSurface";
+import type { MatterPassportState } from "@/lib/aml/partnerMatterIndex";
+import type { PassportView } from "@/lib/aml/passport";
+
+export type { PartnerSurfaceMode, MatterPassportState };
 
 export interface PartnerLinkSummary {
   id: string;
@@ -36,11 +41,49 @@ export interface PartnerLinkSummary {
   end_reason_code: string | null;
   purchase_file_id: string | null;
   legal_matter_id: string | null;
+  /**
+   * The matter's standing and, where the record may be READ, whose it is.
+   *
+   * `subject_label` and `case_reference` are sent by the server ONLY when
+   * that matter's Passport is disclosable to this organisation — they are
+   * printed on page one of the document itself, so naming them there
+   * discloses nothing new, and naming them on a withheld matter would be a
+   * disclosure made by a list rather than by a decision. Absent on a
+   * deployment serving a build that predates this.
+   */
+  passport_state?: MatterPassportState | null;
+  subject_label?: string | null;
+  case_reference?: string | null;
+  expires_at?: string | null;
 }
 
 export interface PartnerWorkspaceDirectory {
   organisation: { legal_name: string; classification_status: string };
   links: PartnerLinkSummary[];
+  /**
+   * What this partner's compliance page IS, decided server-side.
+   *
+   * Absent on a deployment serving a build that predates it, which reads as
+   * `full` — today's behaviour — rather than as a narrower page the operator
+   * never asked for.
+   */
+  surface_mode?: PartnerSurfaceMode;
+}
+
+/**
+ * The Compliance Passport as the partner's own portal receives it.
+ *
+ * `passport` is the SAME `PassportView` the Command Centre renders and the
+ * emailed link serves, built for the partner audience by the one assembler.
+ * It is `null` whenever the record is not disclosable, and
+ * `passport_availability` says which of those reasons applies — a blank area
+ * with no explanation is the failure mode this programme keeps finding.
+ */
+export interface PartnerWorkspaceResponse {
+  workspace: PartnerWorkspaceDto;
+  surface_mode?: PartnerSurfaceMode;
+  passport?: PassportView | null;
+  passport_availability?: { code: string; message: string };
 }
 
 /** Result envelope every client method resolves to. `error` carries the
@@ -58,7 +101,7 @@ export interface PartnerClientResult<T> {
  */
 export interface PartnerWorkspaceClient {
   getDirectory(): Promise<PartnerClientResult<PartnerWorkspaceDirectory>>;
-  getWorkspace(linkId: string): Promise<PartnerClientResult<{ workspace: PartnerWorkspaceDto }>>;
+  getWorkspace(linkId: string): Promise<PartnerClientResult<PartnerWorkspaceResponse>>;
   requestRecords(input: {
     linkId: string; recordCodes: string[]; rationale: string; dueAt?: string;
   }): Promise<PartnerClientResult<{ request: unknown }>>;
@@ -114,6 +157,13 @@ export interface PartnerPortalAdapter {
   workspaceTitle: string;
   /** e.g. "Purchase file", "Project sale", "Matter". */
   matterLabel: string;
+  /**
+   * The short noun this portal files a matter under — "File", "Contract",
+   * "Matter". Used where the partner's OWN reference leads, because their
+   * file number is what they filed it under and the issuing organisation's
+   * case reference is a foreign key to them.
+   */
+  ownReferenceLabel?: string;
   /** e.g. "Lender / broker", "Builder", "Acting solicitor". */
   roleLabel: string;
   formatReference: (link: {

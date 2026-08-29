@@ -11,6 +11,7 @@ export const financePortalAdapter: PartnerPortalAdapter = {
   portalType: "finance",
   workspaceTitle: "Client compliance",
   matterLabel: "Purchase file",
+  ownReferenceLabel: "File",
   roleLabel: "Lender / broker role",
   formatReference: (l) =>
     l.purchase_file_id ? `File …${l.purchase_file_id.slice(-6)}` : `Matter …${l.id.slice(-6)}`,
@@ -36,6 +37,7 @@ export const builderPortalAdapter: PartnerPortalAdapter = {
   portalType: "builder",
   workspaceTitle: "Purchaser compliance",
   matterLabel: "Sale / contract",
+  ownReferenceLabel: "Contract",
   roleLabel: "Organisation role",
   formatReference: (l) =>
     l.purchase_file_id ? `Contract …${l.purchase_file_id.slice(-6)}` : `Matter …${l.id.slice(-6)}`,
@@ -65,6 +67,7 @@ export const developerPortalAdapter: PartnerPortalAdapter = {
   portalType: "developer",
   workspaceTitle: "Purchaser compliance",
   matterLabel: "Lot / contract",
+  ownReferenceLabel: "Contract",
   roleLabel: "Vendor / seller role",
   formatReference: (l) =>
     l.purchase_file_id ? `Contract …${l.purchase_file_id.slice(-6)}` : `Matter …${l.id.slice(-6)}`,
@@ -85,6 +88,7 @@ export const solicitorPortalAdapter: PartnerPortalAdapter = {
   portalType: "solicitor_conveyancer",
   workspaceTitle: "Client verification",
   matterLabel: "Matter",
+  ownReferenceLabel: "Matter",
   roleLabel: "Acting role",
   formatReference: (l) =>
     l.legal_matter_id ? `Matter …${l.legal_matter_id.slice(-6)}`

@@ -54,10 +54,17 @@ describe("only an executed agreement can be produced", () => {
   });
 
   it("the panel offers the download on accepted rows alone", () => {
-    // Pinned to the CONDITION and the handler, not the button's wording —
-    // the label is presentation and may be reworded.
-    expect(panel).toContain('reading.state === "accepted" && (');
+    /* Pinned to the CONDITION and the handler, not the button's wording.
+       The condition moved with the surface: the four partner lists became
+       one roster, so "is this acknowledgement accepted" is now asked on the
+       partner's own row rather than in a separate acknowledgements list.
+       Only an accepted agreement is an executed one; there is nothing to
+       produce for the rest, and that is what is asserted. */
+    const roster = readFileSync("src/components/aml/PartnerRosterPanel.tsx", "utf8");
+    expect(roster).toContain('row.acknowledgementState === "accepted" && row.acknowledgementId');
+    expect(roster).toContain("handlers.onDownloadAgreement(row.acknowledgementId!)");
     expect(panel).toContain("downloadAcknowledgement(row)");
+    expect(panel).toContain("onDownloadAgreement:");
   });
 });
 

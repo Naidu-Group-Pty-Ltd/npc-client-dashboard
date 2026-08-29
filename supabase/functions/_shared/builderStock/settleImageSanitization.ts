@@ -208,6 +208,15 @@ export async function settleImageSanitization(
     budget?: RepairBudget;
     /** Injected in tests. Production passes nothing and the real repair runs. */
     sanitize?: typeof sanitizeSourceImage;
+    /**
+     * Repair ONE property's images and nobody else's.
+     *
+     * Used by the per-item settler, which has claimed exactly that property.
+     * The scan is otherwise organisation-wide and restarts at the lowest id
+     * every tick, which is how two Cloverton rows consumed the whole allowance
+     * for hours while twelve rows behind them were never reached.
+     */
+    stockItemId?: string | null;
   } = {},
 ): Promise<SanitizationSettlement> {
   const outcome: SanitizationSettlement = {
@@ -714,6 +723,7 @@ export async function settleImageSanitization(
       .order('id', { ascending: true })
       .limit(PAGE);
     if (options.uploadId) query = query.eq('upload_id', options.uploadId);
+    if (options.stockItemId) query = query.eq('stock_item_id', options.stockItemId);
     if (after) query = query.gt('id', after);
 
     const { data, error } = await query;

@@ -386,6 +386,71 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
 }
 
 /**
+ * Record a service-gate decision — the ONE implementation.
+ *
+ * ── Why this is a function and not two copies ─────────────────────────
+ * The gate is now written from two places: `set_service_gate` (the
+ * Decision stage's full card, every status) and `decide` (a CLEARED
+ * decision carries its own gate). They must write the same row, with the
+ * same provenance, or `gate_contract` starts reporting two different
+ * shapes of the same fact.
+ *
+ * Everything a gate decision is for survives: the row, who approved it,
+ * why, against which decision, under which policy version, with the
+ * conditions attached, and the audit event stamped back onto the row.
+ */
+async function recordGateDecision(admin: any, args: {
+  caseId: string;
+  status: string;
+  reason: string;
+  decisionId: string | null;
+  conditions: Array<{ id: string; label: string; status: string }>;
+  policyVersion: string;
+  actorId: string;
+  actorLabel: string | null;
+  previousStatus: string | null;
+  effectiveAt?: string;
+}): Promise<{ gate: any; error: string | null }> {
+  const effectiveAt = args.effectiveAt ?? new Date().toISOString();
+  const { data: gateRow, error: gateErr } = await admin.schema("aml")
+    .from("service_gate_decisions").insert({
+      case_id: args.caseId, status: args.status, effective_at: effectiveAt,
+      conditions: args.conditions, decision_id: args.decisionId,
+      approved_by: args.actorId, policy_version: args.policyVersion, reason: args.reason,
+    }).select("*").maybeSingle();
+  if (gateErr) return { gate: null, error: gateErr.message };
+
+  await admin.schema("aml").from("cases").update({
+    service_gate_status: args.status,
+    service_gate_effective_at: effectiveAt,
+    service_gate_policy_version: args.policyVersion,
+  }).eq("id", args.caseId);
+
+  const auditEventId = await appendCaseEvent(admin, args.caseId, "mlro_decision",
+    `Service-gate change: ${String(args.previousStatus ?? "unset").replace(/_/g, " ")} → ${args.status.replace(/_/g, " ")}`,
+    {
+      gate_decision_id: gateRow?.id, status: args.status, reason: args.reason,
+      decision_id: args.decisionId, policy_version: args.policyVersion,
+      conditions: args.conditions,
+    }, args.actorId, args.actorLabel);
+  if (gateRow?.id && auditEventId) {
+    await admin.schema("aml").from("service_gate_decisions")
+      .update({ audit_event_id: auditEventId }).eq("id", gateRow.id);
+  }
+  return { gate: { ...gateRow, audit_event_id: auditEventId }, error: null };
+}
+
+/**
+ * Gate statuses a decision must never move.
+ *
+ * A locked or terminated gate is the MLRO's own standing restriction — it
+ * is how a live Passport is suspended or revoked — and re-recording a
+ * decision must not revive it. This is the same rule `reopen_case` already
+ * follows for exactly the same reason.
+ */
+const GATE_STOPPED_STATUSES = new Set(["locked", "terminated"]);
+
+/**
  * Tenant-scoped authorization for the recommendation and service-gate ops.
  *
  * Restored: commit 1044a4e (a CORS header fix) removed this definition while
@@ -711,16 +776,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (error) return jr({ error: error.message }, 400);
 
       /*
-       * Reflect the outcome on the case — ALL THREE dimensions, the way the
+       * Reflect the outcome on the case — ALL FOUR dimensions, the way the
        * transition op has always synced them. This wrote only the legacy
        * `status`, leaving the canonical `case_stage` at `staff_review`, so a
        * cleared case's Decision stage never turned green, the live position
        * still said "Staff review", and the client portal never learned the
        * outcome (the same desync reopen_case had; caseStage() prefers the
        * explicit column). Mirrors aml-cases' STATUS_TO_STAGE /
-       * STATUS_TO_CLIENT_PORTAL for these three statuses — and deliberately
-       * NEVER writes the service-gate column; the gate moves only on an
-       * explicit gate decision.
+       * STATUS_TO_CLIENT_PORTAL for these three statuses.
        */
       let toStatus: string | null = null;
       if (outcome === "cleared") toStatus = "cleared";
@@ -738,6 +801,75 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           case_stage: DECIDE_STATUS_TO_STAGE[toStatus],
           client_portal_status: DECIDE_STATUS_TO_CLIENT_PORTAL[toStatus],
         }).eq("id", case_id);
+      }
+
+      /*
+       * ── The cleared decision CARRIES the service gate ─────────────────
+       *
+       * It used to leave the gate alone, so a reviewer who cleared a case
+       * still owed a second decision on Stage 9 — and the platform then
+       * disagreed with itself, because `aml-cases`' `transition` has always
+       * mapped `cleared → approved`. Which one you got depended on which
+       * button moved the case, and `AML-2026-00005` ended up `cleared` with
+       * a gate reading `under_review`, on a screen that could not explain
+       * why. `aml.service_gate_decisions` held ZERO rows across the whole
+       * database: the explicit act had never once been performed.
+       *
+       * The second decision asked no new question. `clearanceBlockReasons`
+       * — the SAME function, with the same inputs — has just run above, and
+       * run stricter (it includes the open conditions, which the gate op
+       * checked separately). Nothing between the two acts could change the
+       * answer, so the gate was ceremony rather than a control.
+       *
+       * Three rules keep it a record rather than a shortcut.
+       *
+       *   · **Only `cleared` grants.** A blocked or escalated outcome never
+       *     moves the gate: a restriction stays an explicit, deliberate act
+       *     on the Decision stage, and locking or terminating still requires
+       *     the MLRO.
+       *   · **A stopped gate is never revived.** Locked and terminated are
+       *     the MLRO's standing restriction and the only way a live Passport
+       *     is suspended or revoked. Re-recording a decision must not undo
+       *     that — the same rule `reopen_case` follows.
+       *   · **Open conditions mean `approved_with_controls`**, never plain
+       *     `approved`, exactly as `set_service_gate` requires.
+       *
+       * The row is still written in full — approver, reason, decision id,
+       * policy version, conditions, audit event — through the same
+       * `recordGateDecision` the explicit op uses. The ceremony goes; the
+       * record does not.
+       */
+      if (outcome === "cleared" && caseRow
+        && !GATE_STOPPED_STATUSES.has(String(caseRow.service_gate_status ?? ""))) {
+        const openConditions = (conds ?? []).map((c: any) => ({
+          id: c.id, label: c.label, status: c.status,
+        }));
+        const gateStatus = openConditions.length > 0 ? "approved_with_controls" : "approved";
+        if (String(caseRow.service_gate_status ?? "") !== gateStatus) {
+          const written = await recordGateDecision(admin, {
+            caseId: case_id,
+            status: gateStatus,
+            /* The decision's own rationale is the gate's reason: it is the
+               same reasoning, given once. A decision recorded without one
+               still records why the gate moved and what moved it. */
+            reason: (typeof rationale === "string" && rationale.trim().length >= 10)
+              ? rationale.trim()
+              : "Granted by the recorded cleared compliance decision on this case.",
+            decisionId: dec?.id ?? null,
+            conditions: openConditions,
+            policyVersion: programVersion,
+            actorId: userId, actorLabel: userLabel,
+            previousStatus: caseRow.service_gate_status ?? null,
+          });
+          /* A gate that could not be written must not silently look
+             approved: the decision stands, and the Decision stage's full
+             gate card remains the way to record it. */
+          if (written.error) {
+            await appendCaseEvent(admin, case_id, "mlro_decision",
+              "Service gate could not be recorded from the cleared decision",
+              { error: written.error, decision_id: dec?.id ?? null }, userId, userLabel);
+          }
+        }
       }
 
       // Close the recommendation loop (§12.8): the analyst recommendation the
@@ -1118,33 +1250,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
       }
 
-      const effectiveAt = new Date().toISOString();
       const gateConditions = (openConds ?? []).map((c: any) => ({ id: c.id, label: c.label, status: c.status }));
-      const { data: gateRow, error: gateErr } = await admin.schema("aml").from("service_gate_decisions").insert({
-        case_id: caseId, status, effective_at: effectiveAt,
+      const written = await recordGateDecision(admin, {
+        caseId, status, reason,
+        decisionId: latestDec?.id ?? null,
         conditions: gateConditions,
-        decision_id: latestDec?.id ?? null,
-        approved_by: userId, policy_version: gatePolicyVersion, reason,
-      }).select("*").maybeSingle();
-      if (gateErr) return jr({ error: gateErr.message }, 400);
-
-      await admin.schema("aml").from("cases").update({
-        service_gate_status: status,
-        service_gate_effective_at: effectiveAt,
-        service_gate_policy_version: gatePolicyVersion,
-      }).eq("id", caseId);
-
-      const auditEventId = await appendCaseEvent(admin, caseId, "mlro_decision",
-        `Service-gate change: ${String(caseRow.service_gate_status ?? "unset").replace(/_/g, " ")} → ${status.replace(/_/g, " ")}`,
-        {
-          gate_decision_id: gateRow?.id, status, reason, decision_id: latestDec?.id ?? null,
-          policy_version: gatePolicyVersion, conditions: gateConditions,
-        }, userId, userLabel);
-      if (gateRow?.id && auditEventId) {
-        await admin.schema("aml").from("service_gate_decisions")
-          .update({ audit_event_id: auditEventId }).eq("id", gateRow.id);
-      }
-      return jr({ gate: { ...gateRow, audit_event_id: auditEventId } });
+        policyVersion: gatePolicyVersion,
+        actorId: userId, actorLabel: userLabel,
+        previousStatus: caseRow.service_gate_status ?? null,
+      });
+      if (written.error) return jr({ error: written.error }, 400);
+      return jr({ gate: written.gate });
     }
 
     // Appendix C.4 read contract for the latest gate decision.

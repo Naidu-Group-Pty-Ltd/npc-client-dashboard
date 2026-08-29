@@ -9,7 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowRight, CheckCircle2, ChevronRight, CircleDashed, Eye, Lock } from "lucide-react";
-import { gatePassportComplete, type GatePassportStep } from "@/lib/aml/gatePassportPath.pure";
+import {
+  gatePassportComplete, gatePassportProgress, type GatePassportStep,
+} from "@/lib/aml/gatePassportPath.pure";
 
 function StepIcon({ state }: { state: GatePassportStep["state"] }) {
   if (state === "done") return <CheckCircle2 className="h-4 w-4 text-success" aria-hidden />;
@@ -34,12 +36,49 @@ export function GatePassportPathCard({ steps, onStepClick, onContinue }: {
   onContinue?: () => void;
 }) {
   const complete = gatePassportComplete(steps);
+  const progress = gatePassportProgress(steps);
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="flex-row flex-wrap items-baseline justify-between gap-x-3 gap-y-1 space-y-0 pb-2">
         <CardTitle className="text-sm">Gate &amp; Passport, in order</CardTitle>
+        {/* ── ONE count, and it counts these steps ──────────────────────
+            The header above and the rail beside both rendered their own
+            progress reading — "0 of 3 items on this stage complete" next to
+            a four-step list. Both were true and neither was about this
+            list, which is the same defect Stage 5 already fixed. Stage 9
+            defers to this number now; `anytime` is excluded, because a look
+            is not a debt. */}
+        <span className="text-xs text-muted-foreground" aria-live="polite">
+          {progress.done} of {progress.total} done
+        </span>
       </CardHeader>
       <CardContent className="space-y-2">
+        {/* ── What actually finishes this stage ─────────────────────────
+            "There doesn't seem to be a clear distinction for section 9 to be
+            ticked off as green after the user has already ticked off the
+            Approved function." Approving the gate on a cleared case whose
+            Passport is issued completes the stage outright — and nothing on
+            the screen said so before the click. It does now, and only when
+            it is true: one owed step left, and actionable by this operator. */}
+        {!complete && progress.finishesStage && progress.next && (
+          <div
+            className="rounded-md border border-primary/40 bg-primary/5 p-2.5"
+            data-testid="gate-passport-finishing-step"
+          >
+            <p className="text-xs text-primary">
+              <span className="font-medium">One step left — {progress.next.label}.</span>{" "}
+              Completing it finishes this stage and the case moves on to Partners.
+            </p>
+          </div>
+        )}
+        {!complete && !progress.finishesStage && progress.next?.blockedBy && (
+          <div className="rounded-md border border-warning/40 bg-warning/5 p-2.5">
+            <p className="text-xs text-warning">
+              <span className="font-medium">Waiting on {progress.next.label}.</span>{" "}
+              {progress.next.blockedBy}.
+            </p>
+          </div>
+        )}
         {complete && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/40 bg-success/5 p-2.5">
             <p className="text-xs text-success">

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft,
@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label';
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { OtpInput } from '@/components/finance-portal/OtpInput';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { safeReturnTo } from '@/lib/aml/partnerPortalHandoff';
 import { BrandLockup, BrandLogo } from '@/components/branding/BrandAssets';
 import { useBrand } from '@/branding/useTokens';
 
@@ -41,6 +42,11 @@ export default function SolicitorLogin() {
   const { user, loading, signIn, requestPasswordReset, verifyOtp, resetPassword } = useSolicitorPortalAuth();
   const { settings } = useBrand();
   const navigate = useNavigate();
+  const location = useLocation();
+  /* Where the visitor was going. Validated as an internal path — an open
+     redirect on a login page is a phishing primitive. */
+  const destination = safeReturnTo(
+    (location.state as { from?: unknown } | null)?.from, '/solicitor');
   const formRef = useRef<HTMLDivElement>(null);
 
   const [mode, setMode] = useState<Mode>('login');
@@ -66,7 +72,7 @@ export default function SolicitorLogin() {
   }
 
   if (user) {
-    return <Navigate to={user.must_change_password ? '/solicitor/change-password' : '/solicitor'} replace />;
+    return <Navigate to={user.must_change_password ? '/solicitor/change-password' : destination} replace />;
   }
 
   const changeMode = (next: Mode) => {
@@ -88,7 +94,7 @@ export default function SolicitorLogin() {
         setTurnstileToken(null);
         return;
       }
-      navigate('/solicitor', { replace: true });
+      navigate(destination, { replace: true });
     } finally {
       setSubmitting(false);
     }

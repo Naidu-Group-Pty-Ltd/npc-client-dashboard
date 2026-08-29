@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { returnToPath } from '@/lib/aml/partnerPortalHandoff';
 
 export function SolicitorPortalProtectedRoute() {
   const { user, loading } = useSolicitorPortalAuth();
@@ -18,7 +19,17 @@ export function SolicitorPortalProtectedRoute() {
   }
 
   if (!user) {
-    return <Navigate to="/solicitor/login" replace />;
+    /* This guard recorded no destination at all, so a deep link into a
+       matter was simply lost at the door. The rule is shared with the other
+       two portals: the destination is `pathname + search`, carried through
+       the login, and only ever an internal path. */
+    return (
+      <Navigate
+        to="/solicitor/login"
+        replace
+        state={{ from: returnToPath(location.pathname, location.search) }}
+      />
+    );
   }
 
   // Temp-password users must rotate their password before anything else.

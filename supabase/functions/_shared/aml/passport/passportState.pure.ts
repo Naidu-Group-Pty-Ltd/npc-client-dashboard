@@ -153,6 +153,97 @@ export function derivePassportState(input: PassportStateInput): PassportStateRes
   return result("issued_current", ["current_attestation_gate_approved"], currentVersion, latest);
 }
 
+/* ── What would actually clear a caution state ─────────────────────────
+ *
+ * `refresh_required` is ONE code covering two different owed acts, and the
+ * product used to render both of them as "issue a new version".
+ *
+ * On a real case (`AML-2026-00005`) the attestation was v1, issued, not
+ * superseded, `refresh_required_at` NULL, with zero open refresh
+ * obligations. The Passport still read **"Refresh required · v1"** — for one
+ * reason and one only: `service_gate_regressed`, because the gate was
+ * `under_review`. Nothing about the document was wrong.
+ *
+ * Stage 9 then told the operator "a newer version is needed — reissue from
+ * the reliance panel below", and the reliance panel offered "Reissue as v2"
+ * as the open act. Following that advice supersedes a perfectly good v1 for
+ * nothing, and **v2 reads `refresh_required` too**, because the gate is
+ * still not approved. A remedy that cannot discharge the reason is worse
+ * than no remedy: it is a loop with an audit trail.
+ *
+ * So the reasons are classified. This is the ONE place that knows which act
+ * clears which reason, and `passportStateRemedy.spec` asserts that every
+ * reason string this module can emit is classified by it — a new reason
+ * fails the build rather than silently defaulting into "reissue".
+ */
+
+/** Reasons a NEW VERSION discharges. The document itself is out of date. */
+const REISSUE_CLEARS = new Set([
+  "material_inputs_changed",
+  "open_refresh_obligation",
+  "all_versions_superseded",
+]);
+
+/** Reasons only an APPROVED SERVICE GATE discharges. Issuing cannot help. */
+const GATE_APPROVAL_CLEARS = new Set([
+  "service_gate_regressed",
+]);
+
+/**
+ * Reasons that are not cautions at all — they explain a HEALTHY or a
+ * TERMINAL reading, and nothing is owed on them.
+ *
+ * They matter here because a caller may hand this function any state's
+ * reasons, and `issued_current` publishes one
+ * (`current_attestation_gate_approved`). Treating an unrecognised reason as
+ * "reissue" is the right default for a caution, and exactly the wrong answer
+ * for a Passport that is already in force — so these are named rather than
+ * left to the default. A restriction (`suspended`/`revoked`) is likewise not
+ * something a version or a gate approval discharges: the MLRO's own gate
+ * decision is what stands.
+ */
+const NOT_A_CAUTION = new Set([
+  "current_attestation_gate_approved",
+  "gate_approved_no_attestation",
+  "no_attestation",
+  "case_closed",
+  "service_gate_terminated",
+  "service_gate_locked",
+]);
+
+export type PassportRefreshRemedy =
+  /** A new version is owed. */
+  | "reissue"
+  /** The gate is owed; the issued version is fine and stays in force. */
+  | "approve_gate"
+  /** Both, and the gate first — reissuing before it cannot clear the state. */
+  | "both"
+  /** Nothing is owed on this reading. */
+  | "none";
+
+/**
+ * What would clear this state, from the reasons the server published.
+ *
+ * An unrecognised reason counts towards `reissue`. That is the conservative
+ * side: offering a reissue that turns out to be unnecessary costs a version,
+ * whereas withholding one that IS needed strands the case — and the spec test
+ * means an unrecognised reason cannot reach production in the first place.
+ */
+export function refreshRemedy(reasons: readonly string[] | null | undefined): PassportRefreshRemedy {
+  const list = (reasons ?? []).filter((r) => !NOT_A_CAUTION.has(r));
+  const gate = list.some((r) => GATE_APPROVAL_CLEARS.has(r));
+  const reissue = list.some((r) => !GATE_APPROVAL_CLEARS.has(r));
+  if (gate && reissue) return "both";
+  if (gate) return "approve_gate";
+  if (reissue) return "reissue";
+  return "none";
+}
+
+/** Every reason code this module classifies — the spec test reads this. */
+export const PASSPORT_STATE_REASONS = [
+  ...REISSUE_CLEARS, ...GATE_APPROVAL_CLEARS, ...NOT_A_CAUTION,
+] as const;
+
 /** Per-version register state — the version panel's vocabulary. */
 export type PassportVersionState = "current" | "superseded" | "initial_issue";
 

@@ -26,6 +26,7 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import { Columns2, RectangleVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   LEAF_H,
@@ -303,12 +304,29 @@ export function PassportBook({
           ))}
         </div>
 
-        {/* Magnification. The document is authored at 9.5-11px and fitted into
-            whatever space there is, so on a laptop the body copy lands around
-            6px — the glyphs are distinct and nobody reads them. This changes
-            only how large it is drawn: the same uniform transform the fit
-            already applies, so nothing reflows and no line rewraps. */}
-        <div className="flex items-center gap-1" role="group" aria-label="Passport magnification">
+        <span aria-hidden className="passport-toolbar__sep" />
+
+        {/* ── Magnification ──────────────────────────────────────────────
+            The document is authored at 9.5-11px and fitted into whatever
+            space there is, so on a laptop the body copy lands around 6px —
+            the glyphs are distinct and nobody reads them. This changes only
+            how large it is drawn: the same uniform transform the fit already
+            applies, so nothing reflows and no line rewraps.
+
+            It is drawn as its own cluster because it was not being found.
+            Sitting in the same row as the page numbers, in the same chip, at
+            the same weight, four unlabelled chips read as four more pages — on the
+            surface where it matters most, a partner's portal where the
+            booklet IS the page. Same four buttons, same accessible names,
+            same behaviour: a well, a hairline and a label are emphasis, not
+            a new control. */}
+        <div
+          className="passport-zoombar"
+          role="group"
+          aria-label="Passport magnification"
+          data-testid="passport-zoom-controls"
+        >
+          <span className="passport-zoombar__label" aria-hidden>Zoom</span>
           {/* One leaf is the cheapest magnification there is — it roughly
               doubles the scale before any zoom at all — so it sits with the
               zoom rather than being a caller-only decision. */}
@@ -320,7 +338,14 @@ export function PassportBook({
             aria-label={onePage ? "Show two pages side by side" : "Show one page at a time"}
             onClick={() => setOnePage((v) => !v)}
           >
-            {onePage ? "❐" : "▯"}
+            {/* Icons, not characters. U+2750 and U+25AF are outside every
+                font this product ships, so both states of this toggle drew a
+                tofu box — visible in the reported screenshot as an empty
+                chip. A control nobody can identify is a control nobody uses,
+                which is half of why the magnification was never found. */}
+            {onePage
+              ? <Columns2 className="h-3.5 w-3.5" aria-hidden />
+              : <RectangleVertical className="h-3.5 w-3.5" aria-hidden />}
           </button>
           <button
             type="button"
@@ -334,8 +359,7 @@ export function PassportBook({
           </button>
           <button
             type="button"
-            className="passport-pagechip passport-mono"
-            style={{ width: "auto", paddingInline: 8 }}
+            className="passport-pagechip passport-mono passport-zoombar__value"
             onClick={() => setZoom(1)}
             disabled={view.zoom === 1}
             aria-label={`Magnification ${view.percent} percent. Reset to fit.`}
@@ -429,19 +453,32 @@ export function PassportBook({
         </div>
       </div>
 
-      {/* turn */}
-      <div className="flex flex-none items-center justify-between gap-3 border-t border-[color:var(--passport-hairline)] px-4 py-3">
+      {/* ── turn ────────────────────────────────────────────────────────
+          A GRID, not `justify-between`, and the reason is the defect it
+          fixes. `.passport-action` used to force `width: 100%` — it beat the
+          `w-auto` beside it on source order alone — so both buttons claimed
+          the whole row and the title between them was squeezed to a
+          truncated "Identity Ver…" with its page count wrapped onto three
+          lines and running under the Next button.
+
+          The declaration is gone (see `passport-tokens.css`), and the row is
+          three columns rather than three flex items: the outer two are equal
+          fractions, so the title column sits on the TRUE centre line however
+          wide the two labels happen to be. It is sized to its content and
+          never truncated — the whole point of naming the pages you are
+          looking at is being able to read the name. */}
+      <div className="grid flex-none grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-t border-[color:var(--passport-hairline)] px-4 py-3">
         <button
           type="button"
-          className="passport-action w-auto"
+          className="passport-action passport-action--turn justify-self-start"
           onClick={() => go(-1)}
           disabled={clamped === 0}
         >
           ← Previous
         </button>
-        <div className="min-w-0 text-center">
-          <div className="passport-display truncate text-[13px]">{titles}</div>
-          <div className="passport-faint passport-mono text-[10px] tracking-[0.14em]">
+        <div className="min-w-0 px-1 text-center">
+          <div className="passport-display text-[13px] leading-snug">{titles}</div>
+          <div className="passport-faint passport-mono mt-0.5 text-[10px] tracking-[0.14em]">
             {spread.includes(0) && pages[0]?.variant === "cover" && spread.length === 1
               ? "COVER"
               : bookletLabel(spread, pages.length)}
@@ -449,7 +486,7 @@ export function PassportBook({
         </div>
         <button
           type="button"
-          className="passport-action passport-action--primary w-auto"
+          className="passport-action passport-action--turn passport-action--primary justify-self-end"
           onClick={() => go(1)}
           disabled={clamped >= spreads.length - 1}
         >

@@ -207,11 +207,30 @@
 
 /* ── controls ─────────────────────────────────────────────────────────── */
 
+/**
+ * ── Why there is no `width: 100%` here any more ───────────────────────
+ * There was, and it was wrong for EVERY caller. `.passport-action` and
+ * Tailwind's `.w-auto` are both single-class selectors, so specificity ties
+ * and source order decides — and this stylesheet is imported last. Every one
+ * of the nineteen `passport-action w-auto` buttons in the product therefore
+ * rendered full width, with the utility that asked otherwise silently
+ * discarded. There is not a single call site that omits `w-auto`.
+ *
+ * The visible symptom was the booklet's turn bar: "← Previous" and "Next →"
+ * each claiming the whole row, squeezing the page title between them to a
+ * truncated "Identity Ver…" with its page count wrapped onto three lines and
+ * running under the button.
+ *
+ * Dropping the declaration does NOT unstretch the dialog buttons: this is a
+ * flex container, so a button inside a `flex-col` still stretches to the
+ * column under the default `align-items: stretch`. What changes is exactly
+ * the case that was broken — a button in a ROW, which now takes its content
+ * width, which is what `w-auto` asked for all along.
+ */
 .passport-action {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  width: 100%;
   padding: 0.5rem 0.625rem;
   border-radius: 8px;
   border: 1px solid var(--passport-border-raised);
@@ -220,6 +239,23 @@
   font-size: 0.75rem;
   text-align: left;
   transition: background 140ms ease-out, border-color 140ms ease-out;
+}
+
+/**
+ * The booklet's page-turn buttons.
+ *
+ * Equal minimum width on both, so the title between them sits on the true
+ * centre line rather than wherever two differently-sized labels happen to
+ * leave it, and centred text because a turn control is a target rather than
+ * a list row.
+ */
+.passport-action--turn {
+  flex: 0 0 auto;
+  justify-content: center;
+  min-width: 7.25rem;
+  padding-inline: 0.875rem;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .passport-action:hover:not(:disabled) {
@@ -1788,6 +1824,87 @@
 
 .passport-pagechip--cover {
   border-color: rgba(217, 166, 31, 0.5);
+  color: var(--passport-gold-soft);
+}
+
+/* ── the magnification cluster ─────────────────────────────────────────
+ * Reading controls sat in the same row as the page numbers, drawn in the
+ * same chip, at the same weight — so `▯ − 100% +` read as four more pages
+ * rather than as the control that makes a 6px document legible. On the
+ * surface where it matters most (a partner's own portal, where the booklet
+ * is the whole page) nobody found it.
+ *
+ * So it is given a body of its own: a hairline between it and the page row,
+ * a named label, a gold-tinted well, and chips lifted to gold ink inside it.
+ * It is the same four buttons with the same accessible names — this is
+ * emphasis, not a new control. */
+
+.passport-toolbar__sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: 1.25rem;
+  background: var(--passport-hairline);
+}
+
+.passport-zoombar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.3125rem;
+  border-radius: 9px;
+  border: 1px solid rgba(217, 166, 31, 0.34);
+  background: linear-gradient(180deg, rgba(217, 166, 31, 0.14), rgba(217, 166, 31, 0.04));
+  box-shadow: inset 0 1px 0 rgba(233, 200, 107, 0.08);
+}
+
+.passport-zoombar__label {
+  padding-inline: 0.25rem 0.0625rem;
+  color: var(--passport-gold-soft);
+  font-family: var(--passport-font-mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.passport-zoombar .passport-pagechip {
+  /* Centred both ways: two of these carry an icon rather than a character,
+     and an inline SVG in a text button sits on the baseline. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: rgba(217, 166, 31, 0.42);
+  background: var(--passport-surface);
+  color: var(--passport-gold-soft);
+}
+
+.passport-zoombar .passport-pagechip:hover:not(:disabled) {
+  background: rgba(217, 166, 31, 0.2);
+  color: var(--passport-gold-bright);
+}
+
+.passport-zoombar .passport-pagechip[aria-pressed="true"] {
+  border-color: rgba(217, 166, 31, 0.7);
+  background: rgba(217, 166, 31, 0.24);
+  color: var(--passport-gold-bright);
+}
+
+/* The reading itself, not a button that happens to show a number. It is wide
+   enough for "250%" so the cluster does not resize as the reader zooms —
+   a control that moves under the pointer is a control that gets misclicked. */
+.passport-zoombar__value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.5rem;
+  font-weight: 600;
+  color: var(--passport-gold-bright);
+}
+
+.passport-zoombar__value:disabled {
+  /* At the fit, "100%" is a READING and not a dead control. Dimming it to the
+     shared 0.45 made the one number in the cluster the hardest to see. */
+  opacity: 1;
   color: var(--passport-gold-soft);
 }
 

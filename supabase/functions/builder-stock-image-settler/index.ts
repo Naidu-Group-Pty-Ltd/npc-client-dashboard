@@ -82,6 +82,10 @@ import {
 import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
+import {
+  claimOneImageWorkItem, completeItemWork, isMissingCapability, readItemWorkPending,
+} from '../_shared/builderStock/itemWorkClaim.ts';
+import { settleClaimedItem } from '../_shared/builderStock/settleItemImages.ts';
 
 /*
  * The canonical headers, not a hand-rolled copy.
@@ -214,6 +218,207 @@ Deno.serve(async (req: Request) => {
 
   const startedAt = Date.now();
   const deadlineAt = startedAt + BUDGET_MS;
+
+  /*
+   * ═══════════════════════════════════════════════════════════════════════
+   * THE PER-ITEM PATH. ONE INVOCATION, ONE PROPERTY, NO GLOBAL LEASE.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * WHY IT COMES FIRST AND TAKES NO LEASE. The lease below is a single boolean
+   * row for the whole deployment. It was the queue lock, and a killed worker
+   * runs no `finally`, so it held that row for its full term while the queue
+   * stayed shut for every property — not just the one that died. Production,
+   * 29 August, seventeen minutes: six `CPU Time exceeded`, ten `lease_held`,
+   * not one completed tick, no work at all.
+   *
+   * The item claim replaces it. `FOR UPDATE SKIP LOCKED` means a property
+   * somebody else holds is stepped over rather than waited for, so two
+   * invocations can never own the same property and may freely own different
+   * ones. Taking the global lease here as well would put the old bottleneck
+   * straight back in front of the fix, so this path does not touch it.
+   *
+   * EXACTLY ONE PROPERTY PER INVOCATION. Claiming a batch and working through
+   * it inside one invocation rebuilds the very thing this replaces: claim A,
+   * B, C, D — A kills the worker — and B, C and D are leased by a process that
+   * no longer exists, having never been looked at. Throughput comes from
+   * invoking more often, never from widening this number.
+   */
+  const itemClaim = await claimOneImageWorkItem(supabase, {
+    leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
+  });
+
+  if (itemClaim.available) {
+    if (!itemClaim.item) {
+      /*
+       * Nothing due. That is NOT the same as nothing left — a property may be
+       * leased by a live invocation or backing off after a kill — so the
+       * scheduler is told both numbers and retires the job only on the second.
+       */
+      const pending = await readItemWorkPending(supabase);
+      console.log('[builder-stock-image-settler] item tick', {
+        phase: 'item_work', claimed: 0,
+        claimable: pending.claimable, outstanding: pending.outstanding,
+      });
+      return json({
+        success: true, path: 'item_work', settled: 0,
+        claimable: pending.claimable, outstanding: pending.outstanding,
+        complete: pending.outstanding === 0, deploymentReady: true,
+      });
+    }
+
+    const claimed = itemClaim.item;
+    /*
+     * The whole tick's wall clock goes to this one property, less a reserve to
+     * write the outcome down. That is the other half of the fix: the upload
+     * walk gave each property a 12-second slice of which the preceding ones had
+     * already spent most, so a linked-package recovery — which declines the bet
+     * unless ten seconds remain — could be starved indefinitely while the
+     * counter that would have retired it never advanced.
+     */
+    const settlement = await settleClaimedItem(supabase, claimed, {
+      deadlineAt: startedAt + BUDGET_MS - 10_000,
+      repairBudget: newRepairBudget(),
+    });
+
+    /*
+     * A CLAIM THAT SUCCEEDS AND A COMPLETION THAT DOES NOT IS THE WORST HALF
+     * OF A HALF-DEPLOYED MIGRATION, so it is named rather than swallowed.
+     *
+     * PostgREST resolves a function by the argument NAMES in the request body,
+     * so a completion whose signature has moved on answers PGRST202 — the same
+     * "not deployed" this file already handles for the claim. Reaching here
+     * with `available: false` therefore means the two halves disagree: the
+     * property was claimed, the work was done, and nothing recorded it. It
+     * stays leased until expiry and is then re-done, for ever.
+     *
+     * That exact state existed in production: 20261019000000 shipped
+     * `complete_builder_stock_image_work` with five arguments while this code
+     * calls it with six. There is no repair from in here — the migration has
+     * to land — so the job is to make it unmissable rather than to guess.
+     */
+    const completion = await completeItemWork(supabase, claimed.id, {
+      nextStage: settlement.nextStage,
+      result: settlement.result,
+      error: settlement.error ?? null,
+      retryAfterSeconds: 0,
+      progressed: settlement.progressed,
+    });
+    if (!completion.available) {
+      console.error('[builder-stock-image-settler] work was claimed but could not be recorded', {
+        phase: 'deployment_skew',
+        stock_item_id: claimed.id,
+        missing: 'public.complete_builder_stock_image_work(uuid,text,text,text,integer,boolean)',
+        remedy: 'apply supabase/migrations/'
+          + '20261021000000_builder_stock_item_work_claim_amendments.sql',
+      });
+      return json({
+        success: false, path: 'item_work', error: 'item_completion_unavailable',
+        deploymentReady: false, stage: settlement.stage,
+      }, 503);
+    }
+
+    const pending = await readItemWorkPending(supabase);
+    console.log('[builder-stock-image-settler] item tick', {
+      phase: 'item_work',
+      stock_item_id: claimed.id,
+      stage: settlement.stage,
+      next_stage: settlement.nextStage,
+      progressed: settlement.progressed,
+      primary_set: settlement.primarySet,
+      claimable: pending.claimable,
+      outstanding: pending.outstanding,
+      ms: Date.now() - startedAt,
+    });
+
+    return json({
+      success: true, path: 'item_work', settled: 1,
+      stage: settlement.stage, nextStage: settlement.nextStage,
+      progressed: settlement.progressed, primarySet: settlement.primarySet,
+      error: settlement.error ?? undefined,
+      claimable: pending.claimable, outstanding: pending.outstanding,
+      complete: pending.outstanding === 0, deploymentReady: true,
+    });
+  }
+
+  /*
+   * ═══════════════════════════════════════════════════════════════════════
+   * DEPLOYMENT SKEW. The claim function is not there yet.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * Edge functions ship automatically when `main` moves; migrations here are
+   * dispatched by hand. So this build WILL run against a database without
+   * `claim_builder_stock_image_work`, and that must not be an outage: on 29
+   * August a settler requiring an unapplied lease function answered 503 on
+   * every tick and the entire marketplace went blank until somebody noticed.
+   *
+   * Loud, and then the old path, unchanged. Slow is not an outage.
+   */
+  console.warn('[builder-stock-image-settler] per-item claim not deployed — using the upload walk', {
+    phase: 'deployment_skew',
+    missing: 'public.claim_builder_stock_image_work',
+    remedy: 'apply supabase/migrations/20261019000000_builder_stock_item_work_claim.sql',
+  });
+
+  /*
+   * ONE SETTLER AT A TIME.
+   *
+   * The cron offers this function a turn every minute while work is
+   * outstanding, and `BUDGET_MS` permits a single tick to run for a hundred
+   * seconds. Production has never come near that — 16.9s is the worst completed
+   * tick across 101 of them — but two settlers reading the same queue would
+   * start the same package twice, and "has not happened yet" is not a guard.
+   *
+   * The lease is a compare-and-set row rather than an advisory lock because
+   * this function holds no persistent database session: it speaks PostgREST,
+   * over HTTP, and a lock taken on one connection would not span the run. It
+   * EXPIRES rather than being released, so a worker killed on a resource limit
+   * — no `finally`, no response, as this repository has already paid to learn —
+   * costs one skipped minute instead of wedging the queue shut.
+   *
+   * Declining is a normal outcome and not a failure: the previous turn is still
+   * working, and the next minute will offer another.
+   */
+  const lease = await supabase.rpc('claim_builder_stock_settlement_lease', {
+    p_seconds: Math.ceil(BUDGET_MS / 1000) + 20,
+    p_holder: 'builder-stock-image-settler',
+  });
+  /*
+   * A LEASE THAT IS NOT DEPLOYED IS NOT A REASON TO STOP EITHER.
+   *
+   * The fallback path must not reintroduce the failure the path above exists
+   * to survive. A deployment with neither migration applied would otherwise
+   * answer 503 here — an outage reached by falling back FROM an outage. A
+   * missing lease means only that nothing is serialising ticks, which is
+   * exactly the state this function ran in for its whole life before the lease
+   * existed. A live lease FAULT is different and still refuses.
+   */
+  const leaseMissing = !!lease.error && isMissingCapability(lease.error);
+  if (lease.error && !leaseMissing) {
+    console.error('[builder-stock-image-settler] settlement lease unavailable', {
+      phase: 'settlement_lease',
+      reason: String(lease.error?.message ?? lease.error).slice(0, 200),
+    });
+    return json({ success: false, error: 'Settlement lease unavailable' }, 503);
+  }
+  if (leaseMissing) {
+    console.warn('[builder-stock-image-settler] settlement lease not deployed — proceeding unserialised', {
+      phase: 'deployment_skew', missing: 'public.claim_builder_stock_settlement_lease',
+    });
+  }
+  if (!lease.error && lease.data !== true) {
+    console.log('[builder-stock-image-settler] tick skipped — previous run still holds the lease');
+    return json({ success: true, skipped: 'lease_held' });
+  }
+
+  const releaseLease = async () => {
+    if (leaseMissing) return;
+    try {
+      await supabase.rpc('release_builder_stock_settlement_lease');
+    } catch {
+      // The lease expires on its own; failing to hand it back early is not
+      // worth failing a tick that otherwise did its work.
+    }
+  };
 
   try {
     /**
@@ -499,5 +704,13 @@ Deno.serve(async (req: Request) => {
     // were transposed besides, so the headers were being logged as the
     // context and the context discarded as a correlation id.
     return internalErrorResponse(error, '[builder-stock-image-settler]', corsHeaders);
+  } finally {
+    /*
+     * Hand the turn back as soon as the work is done, on every path this
+     * function can return by. A tick that took seven seconds must not hold the
+     * next two minutes; the expiry above is the backstop for the one path that
+     * runs no code at all — a resource-limit kill.
+     */
+    await releaseLease();
   }
 });

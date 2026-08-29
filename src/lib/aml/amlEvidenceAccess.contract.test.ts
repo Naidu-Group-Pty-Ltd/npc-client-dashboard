@@ -205,8 +205,17 @@ describe("retention invariants survive the reclassification", () => {
 
 describe("shared UI (all four adapters, one implementation)", () => {
   it("the panel mounts through the shared orchestrator behind the deliveries slot", () => {
-    expect(orchestrator).toContain("adapter.panels.deliveries");
+    /* The slot is now resolved through `partnerWorkspacePanels`, which masks
+       the surface mode OVER the adapter — every optional panel is
+       `full && Boolean(adapter.<slot>)`, so the adapter remains the ceiling
+       and a mode can only ever subtract. A portal that never permitted
+       deliveries still cannot acquire them. */
+    expect(orchestrator).toContain("partnerWorkspacePanels(surfaceMode, adapter.panels)");
+    expect(orchestrator).toContain("{panels.deliveries && (");
     expect(orchestrator).toContain("<EvidenceDeliveriesPanel");
+    const rule = readFileSync(
+      "supabase/functions/_shared/aml/partnerSurface.pure.ts", "utf8");
+    expect(rule).toContain("deliveries: full && Boolean(adapter.deliveries)");
   });
 
   it("nothing auto-opens and no transport method means no access control at all", () => {

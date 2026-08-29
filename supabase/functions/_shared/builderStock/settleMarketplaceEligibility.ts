@@ -108,7 +108,19 @@ interface ImageRow {
 export async function settleMarketplaceEligibility(
   db: any,
   organisationId: string,
-  options: { deadlineAt?: number; uploadId?: string | null } = {},
+  options: {
+    deadlineAt?: number;
+    uploadId?: string | null;
+    /**
+     * Judge ONE property's images and nobody else's.
+     *
+     * Used by the per-item settler, which has claimed exactly that property.
+     * The scan is otherwise organisation-wide and paged, so without this a
+     * claimed property's verdict waits behind every other image the
+     * organisation holds.
+     */
+    stockItemId?: string | null;
+  } = {},
 ): Promise<EligibilitySettlement> {
   const outcome: EligibilitySettlement = {
     scanned: 0, outstanding: 0, assessed: 0, rejected: 0, unmeasured: 0,
@@ -132,6 +144,7 @@ export async function settleMarketplaceEligibility(
       .order('id', { ascending: true })
       .limit(PAGE);
     if (options.uploadId) query = query.eq('upload_id', options.uploadId);
+    if (options.stockItemId) query = query.eq('stock_item_id', options.stockItemId);
     if (after) query = query.gt('id', after);
 
     const { data, error } = await query;

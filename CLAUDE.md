@@ -304,6 +304,138 @@ credential**; the link is what a person opens and the token is for a partner
 system with no browser, so it sits behind a disclosure rather than being
 presented as the deliverable.
 
+**Access can be withdrawn, and withdrawal is not deletion.** `revoke_grant`
+existed from the first version and no surface ever called it. A grant records
+that a disclosure was authorised, so revoking stops the access and KEEPS the
+history — the only "remove this partner" a register may offer. It needs a
+reason, it is offered only on a LIVE grant, and it is deliberately not gated
+by what gates issuing (an overdue review, a missing attestation, the write
+flag): those stop new disclosure, and stopping disclosure is what this does.
+The explained action list that made blocked buttons legible had itself become
+a wall — five rows of three lines, always open, beside the same grants listed
+twice — so **one act is open (the server's `ready`) and the rest are a
+disclosure**. And the four lists of the same partners (the grant, the written
+arrangement, the emailed agreement, the case link) are now **one roster**,
+`partnerRoster.pure.ts`: one row per organisation with ONE next step, chosen
+by what actually blocks. Two rules there — **a badge must mean something is
+unmet** (`active`, `reliance` and `builder_developer` are how a healthy record
+looks, and colouring them like problems is what made eleven chips unreadable),
+and **database vocabulary never reaches the operator**, asserted by a test that
+refuses any underscore-cased identifier in a rendered field.
+
+## One living record — the attestation everyone reads
+Read [`docs/aml/ATTESTATION_CURRENCY.md`](./docs/aml/ATTESTATION_CURRENCY.md)
+before touching `attestationCurrency.pure.ts`, `attestationForGrantRead` or the
+manifest carry-forward in `issue_attestation`. A grant pinned `attestation_id`
+and every read resolved through that pin, so **issuing v2 silently revoked
+every partner who already held the Passport** — their next read answered 409
+`attestation_superseded` and the only repair was to re-send it to each of them
+by hand. Under schema v2 there was a second, independent cause of the same
+outcome: the new version had no disclosure manifest, so every read would have
+failed `manifest_missing` anyway.
+
+The rule: **a grant authorises a PARTNER to read a CASE's attested record, not
+one frozen version of it.** Reads resolve the case's current attestation and
+the version served is recorded on the access log. Three rules carry it. **The
+pin is history, never the reading** — `attestation_id` is never rewritten.
+**Current means CURRENT, not merely newer**: a version flagged for refresh is
+still withheld, because "we know this one is wrong" is not "there is a better
+one" — and the refusal now promises no new link is needed. And **a widening is
+never implicit**: the carry-forward copies the previous manifest's scope, and a
+grant whose predecessor had no manifest gets none and fails closed.
+
+## The Passport inside a partner's own portal
+Read [`docs/aml/PASSPORT_IN_PORTAL.md`](./docs/aml/PASSPORT_IN_PORTAL.md)
+before touching `_shared/aml/partnerSurface.pure.ts`, `PartnerPassportPanel`,
+`enrol_partner_portal_access` or the `passport` field on
+`get_partner_compliance_workspace`. The machinery existed and had never served
+a partner, for **four independent reasons each fatal on its own**: the surface
+flags were off; `partner_portal_memberships` held zero rows and its upsert op
+had no caller anywhere; the organisation cross-reference columns were declared
+by the Phase 1 migration and written by **nothing, ever**; and the page drew a
+one-line identity strip rather than the booklet.
+
+Four rules carry it. **The in-portal document is the SAME document** —
+`buildCasePassportView(…, "partner")`, the assembler the emailed link uses, so
+"identical" is a property of one implementation rather than two agreeing.
+**Turning the Passport on NARROWS the page**: `aml_partner_passport_view`
+resolves the surface to `passport_only` unless `aml_partner_workspace_full` is
+also on, so showing a document cannot expose eight unreviewed panels — and the
+mode is a mask over the per-portal adapter (`full && adapter`), never a
+replacement for it. **Enrolment maps a real portal identity read from the
+portal's own records, and never re-points an existing binding**, because that
+would change which partner every existing portal account speaks for. And
+**a withheld Passport renders its reason** — enrolled, linked and nothing to
+read is a real state, and a blank area reads as a broken page.
+
+A partner accumulates Passports, so the page is a **filing cabinet** now, not
+a row of chips labelled `Matter …6a5a49` (the last six characters of a row
+id). `partnerMatterIndex.pure.ts` orders matters by what can be opened and the
+page is centred with the list beside the document. Its rule is a disclosure
+rule: **a partner is told whose record a matter is only where they may READ
+it** — `subject_label` is not sent for a withheld matter, decided by the same
+`passportDisclosure` the document goes through, so neither the list nor the
+search box can name a customer the partner may not see.
+
+An eighth fault sat in front of all of it: the page and the nav entry gated on
+`supabase.from("feature_flags")` **from the browser**, and that read can never
+work for a partner — the table grants SELECT `TO authenticated`, a portal
+user's client is anon, and RLS FILTERS rather than erroring, so it returned
+`[]` with HTTP 200 and every flag coerced to `false`. Every partner in every
+portal was told the page did not exist however the database was set. **This
+was the third surface to hit that trap** (`useAmlV3Flags` and
+`useBuilderStockMarketplaceFlag` carry the same header), so the rule is theirs:
+**read through the server, not the table** —
+`get_partner_surface_availability`. Two more rules follow: **one authority
+decides** (the pages no longer gate at all; the server refuses and says why),
+and **a failure is never cached and never reported as "off"** — `unknown` is a
+distinct answer, so the Command Centre says nothing rather than something
+false.
+
+Two more faults sat behind the same symptom. **`create_agreement` never
+accepted a `partner_org_id`**, so every wizard-written arrangement had NULL
+there and `grant_access` stamps a grant only `if (agreement.partner_org_id)` —
+the portal looks a grant up BY organisation, so it reported a Passport the
+partner held as never shared; the fix is a validated field, an explicit
+`bind_agreement_organisation` repair that never re-points, and a read path
+that accepts either explicit route. And **nothing led from the emailed link to
+the portal**: `portal_handoff` now offers "View in your portal" on the page and
+in the email, but only when the surface is on AND an active membership exists,
+because a door that refuses is worse than no door. The deep link carries a
+matter id and never the token, and `returnToPath`/`safeReturnTo` are one rule
+for all three logins — two of which used to discard the destination entirely.
+
+The page's chrome answers to two more rules. **The compliance entry is second
+in every portal**, directly under the Dashboard — Finance, Builder/Developer,
+Solicitor and the Client Portal — and `portalNavPlacement.test.ts` pins the
+position and nothing else; the Client Portal's is still called "Identity &
+Compliance", because that reader is the customer proving who they are. And
+**the standing "Your organisation remains responsible" banner is gone**: a
+partner reaches the page only through a signed arrangement carrying those
+acknowledgements, so it restated an agreement on every visit.
+`ResponsibilityNotice.tsx` is DELETED rather than unmounted (a dormant
+component is one import away from putting it back), while the statement itself
+survives attached to the document it qualifies and the assessment form's
+acknowledgement control is untouched — removing a notice must never remove a
+control. The space that frees is not cosmetic: `bookletGeometry` fits the
+spread to the box it is given, so container width and board height convert
+directly into legible document.
+
+The booklet's own chrome answers to one more: **`.passport-action` must not
+declare a width.** It declared `width: 100%`, and `.w-auto` — which every one
+of its nineteen call sites pairs it with — is also a single-class selector, so
+source order decided and the utility lost everywhere. The visible defect was
+the turn bar (both buttons 535px of a 1200px row, the page title clipped to
+"Identity Ver…"), but the same rule stacked every `flex flex-wrap` action row
+in the Command Centre one button per line. The turn bar is a grid now, because
+`justify-between` centres nothing, and the magnification cluster has a body of
+its own — it was four chips in the page-number row, in the page-number style,
+so nobody found it.
+
+The raw bearer token is **gone from the Command Centre**: it and the
+`/passport/<token>` link are one credential, and showing it twice invited an
+operator to send "the code" instead of the link.
+
 ## Stage 5 — the screening resolution centre
 Read [`docs/aml/STAGE_5_SCREENING_RESOLUTION.md`](./docs/aml/STAGE_5_SCREENING_RESOLUTION.md)
 before touching `ScreeningStageCard`, `screeningResolution.pure.ts`,
@@ -328,6 +460,55 @@ The contradictory screen behind it was **data disagreeing with itself**:
 and `closed_at`, while `transition` had always synced all three. It now syncs
 them too — and still never touches `service_gate_status`, because
 `STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
+
+## Stage 9 — the service gate and the credential
+Read [`docs/aml/STAGE_9_GATE_AND_PASSPORT.md`](./docs/aml/STAGE_9_GATE_AND_PASSPORT.md)
+before touching `refreshRemedy`, the reason codes in
+`_shared/aml/passport/passportState.pure.ts`, `gatePassportPath.pure.ts` or
+`passportActions.pure.ts`. **`refresh_required` is one code covering two
+different owed acts**, and the product rendered both as "issue a new version":
+on the reported case the attestation was v1, issued, unsuperseded, with zero
+open refresh obligations, and the state was flagged for the single reason
+`service_gate_regressed` — the gate was under review. Stage 9 said "a newer
+version is needed" and the reliance panel offered "Reissue as v2", which
+supersedes a good v1 and changes nothing, because v2 carries the same reason
+while the gate is unapproved. **A remedy that cannot discharge the reason is
+never offered as the next step**; `refreshRemedy` is the one place that
+classifies them, an unrecognised reason counts towards the reissue (the
+conservative side), and a spec test fails on any reason the classifier does not
+name.
+
+**The gate is granted by the cleared decision, not asked for twice.**
+`aml.service_gate_decisions` held ZERO rows across the whole database: Stage 9
+carried an approval card whose button was disabled until a ten-character reason
+was typed while still reading "Approve the gate — Approved", so clicking it did
+nothing at all. And the platform disagreed with itself — `aml-cases`'
+`transition` maps `cleared → approved` while `decide` deliberately left the gate
+alone, so which one a case got depended on which button moved it. The second act
+asked no new question either: `set_service_gate`'s approval preconditions and
+`decide`'s clearance preconditions are the SAME `clearanceBlockReasons` over the
+same inputs. `decide` records the gate itself now, through the one
+`recordGateDecision` both paths use, and `GateApprovalCard` is DELETED. Three
+rules hold: **only `cleared` grants**, **a `locked`/`terminated` gate is never
+revived** (the MLRO's standing restriction is the only way a live Passport is
+suspended or revoked), and **open conditions mean `approved_with_controls`**.
+`set_service_gate` and the Decision stage's full eight-status card are
+untouched — removing a ceremony must never remove a control.
+
+Two more rules. **Completion is counted once, in the units of the steps** —
+the header said "0 of 3 items on this stage complete", the rail said the same,
+and the card listed four steps; Stage 9 defers both, `anytime` is excluded
+because a look is not a debt, and where only the gate is owed the issuance step
+is DONE rather than a second copy of the same fact. And **the finishing line is
+named before the click**: approving the gate on that case completes the stage
+outright, so the card says so — exactly when one owed step remains and this
+operator can perform it, never when the last step is blocked.
+
+On the journey map, **Builder and Developer are one portal** (the wizard
+already knew; the map's second tile could never connect, and a `developer`
+grant had nowhere to appear), and **a live Passport reads green** like the
+Client portal's own completion — worded as a fact about access, never as a
+claim about the partner, and a revoked grant takes the colour back.
 
 ## Stage 5 — the guided path
 Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)

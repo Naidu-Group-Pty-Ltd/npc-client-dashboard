@@ -447,6 +447,28 @@ export function selectByBuildingSize(
   return hits.length === 1 ? hits[0] : null;
 }
 
+/**
+ * Drive's own downscaled rendition of a file, by id.
+ *
+ * PRODUCTION, 28 AUGUST 2026. Lot 13 Hummock Rise's package holds 38
+ * photographs and every one of them is too big to store: sampled at 12.28,
+ * 14.55, 14.01, 13.77, 14.70, 14.45, 16.28, 15.99, 13.84 and 13.25 MB against
+ * a 10 MB `MAX_SOURCE_IMAGE_BYTES`. The builder photographed the house at full
+ * resolution, which is the correct thing for a builder to do.
+ *
+ * THE SAME FILE, NOT A DIFFERENT PICTURE. `thumbnail?id=…` is Drive rendering
+ * the file it was given; the id is the file's own, so provenance is unchanged
+ * and no other photograph is substituted. It is preferred over decoding and
+ * re-encoding 16 MB inside the worker because that is precisely the CPU spend
+ * this repository has already been killed by twice, and a marketplace card is
+ * displayed at a fraction of this width anyway.
+ */
+export function driveRenditionUrl(id: string, width: number): string {
+  const clean = String(id ?? '').trim();
+  const px = Math.max(320, Math.min(Math.trunc(width) || 1600, 4096));
+  return `https://drive.google.com/thumbnail?id=${encodeURIComponent(clean)}&sz=w${px}`;
+}
+
 /** A file together with the folder path it was found under, root first. */
 export interface ScopedEntry {
   entry: DriveEntry;

@@ -76,3 +76,66 @@ export function headingToProperty(
   if (!Number.isFinite(bearing)) return null;
   return Math.round(((bearing % 360) + 360) % 360);
 }
+
+
+/**
+ * How far a panorama may sit from the property and still be of it.
+ *
+ * PRODUCTION, 28 AUGUST 2026. Lot 1663 Ringer Street, Lara showed a roundabout
+ * on the live Marketplace. Its builder package was correctly identified and
+ * then retired on the worker's resource limits, so Stage 3 answered — and Stage
+ * 3 had NO usefulness test of any kind: `enrichFromGoogle` asked Google for the
+ * nearest panorama to a geocode and accepted whatever came back, at any
+ * distance. On a new estate whose own street has never been driven, the nearest
+ * panorama is the arterial road it joins.
+ *
+ * SEVENTY METRES IS THE FRONT OF A HOUSE, NOT THE NEXT STREET. An Australian
+ * suburban camera sits on the roadway with the dwelling set back ten to twenty
+ * metres, so a genuine street-front still is comfortably inside this. What it
+ * excludes is the case that produced the roundabout: no coverage on this street
+ * at all and a panorama fetched from somewhere else entirely.
+ *
+ * The bound is deliberately generous. Refusing a real frontage is a worse
+ * outcome than accepting a slightly distant one — but accepting an intersection
+ * is worse than both, and blank is the honest answer when the camera has never
+ * been near the house.
+ */
+export const MAX_PANORAMA_DISTANCE_METRES = 70;
+
+export interface PanoramaUsefulness {
+  usable: boolean;
+  /** Metres from the panorama to the property, where both were known. */
+  distanceMetres: number | null;
+  reason: string;
+}
+
+/**
+ * Is this panorama near enough to be a picture of this property?
+ *
+ * A panorama whose location Google did not state is ACCEPTED, not refused: that
+ * is the behaviour which shipped, the metadata has always been optional, and
+ * this must not turn a working card blank on a missing field. What it refuses
+ * is a location that is stated and far away.
+ */
+export function assessPanoramaUsefulness(
+  panorama: LatLng | null,
+  property: LatLng | null,
+): PanoramaUsefulness {
+  if (!panorama || !property) {
+    return {
+      usable: true,
+      distanceMetres: null,
+      reason: 'The panorama did not state where it was taken from.',
+    };
+  }
+  const distanceMetres = Math.round(metresBetween(panorama, property));
+  if (distanceMetres > MAX_PANORAMA_DISTANCE_METRES) {
+    return {
+      usable: false,
+      distanceMetres,
+      reason: `The nearest Street View panorama is ${distanceMetres} m from this `
+        + 'property, too far to be a photograph of it.',
+    };
+  }
+  return { usable: true, distanceMetres, reason: 'Panorama is at the property.' };
+}

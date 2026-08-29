@@ -26,6 +26,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 const NAV_ITEMS = [
   { to: '/finance', label: 'Dashboard', icon: LayoutDashboard, end: true, tour: 'dashboard' },
+  // Second, directly under the Dashboard. A partner opens this page from an
+  // email about a live purchase and has to find it again afterwards; at the
+  // foot of a twelve-entry sidebar it read as an afterthought rather than as
+  // the compliance record a purchase now depends on.
+  //
+  // Feature-flagged (aml_partner_compliance_workspace + finance surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/finance/compliance', label: 'AML/CTF Compliance', icon: ShieldCheck, end: false, partnerWorkspace: true },
   { to: '/finance/purchase-files', label: 'Active Purchase Files', icon: Briefcase, end: false, tour: 'purchase-files' },
   { to: '/finance/pipeline', label: 'Pipeline Kanban', icon: Layers, end: false, tour: 'pipeline' },
   { to: '/finance/clients', label: 'My Clients', icon: Users, end: false, tour: 'clients' },
@@ -36,11 +45,6 @@ const NAV_ITEMS = [
   { to: '/finance/insights', label: 'Pipeline Insights', icon: Trophy, end: false, tour: 'insights' },
   { to: '/finance/reports', label: 'Reports & KPIs', icon: BarChart3, end: false },
   { to: '/finance/earnings', label: 'Earnings', icon: Wallet, end: false },
-  // Feature-flagged (aml_partner_compliance_workspace + finance surface
-  // flag); filtered out of the nav until enabled. Presentation gating only —
-  // the server enforces the same flags on every workspace operation.
-  { to: '/finance/compliance', label: 'Client Compliance', icon: ShieldCheck, end: false, partnerWorkspace: true },
-  
 ];
 
 

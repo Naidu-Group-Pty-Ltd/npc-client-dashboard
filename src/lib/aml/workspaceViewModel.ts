@@ -311,7 +311,18 @@ export interface AmlPassportFacts {
    * does not describe distribution at all.
    */
   enabled?: boolean;
-  state?: { code?: string | null; label?: string | null; tone?: string | null } | null;
+  /**
+   * `reasons` is the server's own machine-readable account of WHY the state
+   * is what it is, and it is load-bearing rather than diagnostic:
+   * `refresh_required` covers two different owed acts — a version that is
+   * out of date, and a service gate that has not been approved — and only
+   * the reasons tell them apart. `refreshRemedy` is the one place that
+   * classifies them. Absent on a deployment that predates them.
+   */
+  state?: {
+    code?: string | null; label?: string | null; tone?: string | null;
+    reasons?: string[] | null;
+  } | null;
   version?: number | null;
   issued_at?: string | null;
   /** `undefined` = not read (absent), `[]` = read and genuinely none. */

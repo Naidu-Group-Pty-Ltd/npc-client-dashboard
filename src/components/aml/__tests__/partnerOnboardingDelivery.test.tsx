@@ -25,6 +25,7 @@ const listAgreements = vi.fn();
 const listPartnerOrganisations = vi.fn();
 const listAttestations = vi.fn();
 const sendPartnerAcknowledgement = vi.fn();
+const enrolPartnerPortalAccess = vi.fn();
 
 vi.mock("@/lib/aml/amlRelianceApi", () => ({
   amlRelianceApi: {
@@ -36,6 +37,7 @@ vi.mock("@/lib/aml/amlRelianceApi", () => ({
     listPartnerOrganisations: (...a: unknown[]) => listPartnerOrganisations(...a),
     listAttestations: (...a: unknown[]) => listAttestations(...a),
     sendPartnerAcknowledgement: (...a: unknown[]) => sendPartnerAcknowledgement(...a),
+    enrolPartnerPortalAccess: (...a: unknown[]) => enrolPartnerPortalAccess(...a),
   },
 }));
 
@@ -55,7 +57,7 @@ vi.mock("@/hooks/use-toast", () => ({ toast: (...a: unknown[]) => toast(...a) })
 import { PartnerOnboardingWizard } from "../PartnerOnboardingWizard";
 
 const CASE_ID = "8b668f2f-0132-436f-b32c-d6709ea69526";
-const CONTACT = "ops@meridian.example";
+const CONTACT = "site@ridgeline.example";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -68,9 +70,20 @@ beforeEach(() => {
     documents: [{ code: "compliance_sharing", accepted_at: "2026-08-01T00:00:00.000Z" }],
   });
   // Every portal-provisioning call succeeds; the invite is not under test.
-  invokeSecureFunction.mockResolvedValue({ data: { users: [], organisation: { id: "o", row_version: 1, status: "active" }, user: { id: "u" } }, error: null });
+  invokeSecureFunction.mockResolvedValue({
+    data: {
+      users: [], organisation: { id: "builder-org-1", row_version: 1, status: "active" },
+      user: { id: "builder-user-1" },
+    },
+    error: null,
+  });
+  enrolPartnerPortalAccess.mockResolvedValue({
+    membership: { id: "m1", status: "active", portal_type: "builder" },
+    organisation_binding: { column: "builder_organisation_id", portal_organisation_id: "builder-org-1", bound: "set" },
+    surface_enabled: false, passport_view_enabled: false,
+  });
   upsertPartnerOrganisation.mockResolvedValue({ partner_organisation: { id: "org-1" } });
-  createAgreement.mockResolvedValue({ agreement: { id: "ag-1", partner_org_name: "Meridian Finance Group" } });
+  createAgreement.mockResolvedValue({ agreement: { id: "ag-1", partner_org_name: "Ridgeline Builders" } });
   linkPartnerToCase.mockResolvedValue({});
   grantAccess.mockResolvedValue({
     grant: { id: "gr-1", expires_at: "2027-08-20T00:00:00.000Z", attestation_version: 3 },
@@ -95,12 +108,17 @@ const renderWizard = () => render(
   />,
 );
 
-/** Drive the three steps to the confirm button. */
+/**
+ * Drive the three steps to the confirm button, on the Builder / Developer
+ * portal — the case the defect was reported against, and the one where the
+ * organisation cross-reference is strictly enforced by the session resolver.
+ */
 async function runWizard() {
   renderWizard();
   fireEvent.change(await screen.findByLabelText(/Legal name/i), {
-    target: { value: "Meridian Finance Group Pty Ltd" },
+    target: { value: "Ridgeline Builders Pty Ltd" },
   });
+  fireEvent.click(screen.getByRole("radio", { name: /Builder \/ Developer portal/i }));
   fireEvent.change(screen.getByLabelText(/Contact email/i), { target: { value: CONTACT } });
   fireEvent.change(screen.getByLabelText(/Contact name/i), { target: { value: "Dana Reyes" } });
   fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
@@ -151,12 +169,19 @@ describe("the final screen leads with delivery, not with a bearer token", () => 
     expect(field).toHaveValue("https://npc.example/passport/raw-token");
   });
 
-  it("puts the raw token behind a disclosure that says who it is for", async () => {
+  it("shows the raw bearer token NOWHERE — the link is the same credential", async () => {
+    /* The token and the `/passport/<token>` link are one secret: the link is
+       that token with a URL around it. The only consumer in this platform is
+       the public page, which reads it back out of the URL. Showing it a
+       second time doubled the places a live credential was copied and
+       invited an operator to send "the code" instead of the link — a defect
+       this product has already had once. */
     await runWizard();
-    const summary = await screen.findByText(/for system-to-system integrations/i);
-    expect(summary).toBeInTheDocument();
-    // It is a disclosure, so it is closed: an everyday operator never opens it.
-    expect(summary.closest("details")?.hasAttribute("open")).toBe(false);
+    await screen.findByLabelText(/Their Passport link/i);
+    expect(screen.queryByText(/access token/i)).toBeNull();
+    expect(screen.queryByText(/system-to-system/i)).toBeNull();
+    // The bare token must not appear anywhere on the screen, in any element.
+    expect(document.body.textContent).not.toMatch(/(^|[^/])raw-token/);
   });
 
   it("a failed email says so, and the link is still the copy that survives", async () => {
@@ -173,5 +198,51 @@ describe("the final screen leads with delivery, not with a bearer token", () => 
     expect(await screen.findByText(/did not send/i)).toBeInTheDocument();
     expect(await screen.findByLabelText(/Their Passport link/i))
       .toHaveValue("https://npc.example/passport/raw-token");
+  });
+});
+
+describe("the partner's own portal is enrolled on the way through", () => {
+  it("maps a REAL portal identity, and never an email address", async () => {
+    await runWizard();
+    await waitFor(() => expect(enrolPartnerPortalAccess).toHaveBeenCalled());
+    const args = enrolPartnerPortalAccess.mock.calls[0][0];
+    expect(args.portal_user_source).toBe("builder_portal_users");
+    expect(args.portal_user_id).toBe("builder-user-1");
+    expect(args.portal_user_id).not.toContain("@");
+    /* Active immediately: the MLRO has already decided this partner may
+       rely, and an `invited` state nothing ever promotes is one more silent
+       lock-out of the page. */
+    expect(args.status).toBe("active");
+  });
+
+  it("says the Passport is also in their portal — only when that is true", async () => {
+    enrolPartnerPortalAccess.mockResolvedValue({
+      membership: { id: "m1", status: "active", portal_type: "builder" },
+      organisation_binding: { column: "builder_organisation_id", portal_organisation_id: "o", bound: "set" },
+      surface_enabled: true, passport_view_enabled: true,
+    });
+    await runWizard();
+    await screen.findByLabelText(/Their Passport link/i);
+    expect(await screen.findByText(/AML\/CTF Compliance/i)).toBeInTheDocument();
+  });
+
+  it("with the surface off, it says the emailed link is the only way", async () => {
+    enrolPartnerPortalAccess.mockResolvedValue({
+      membership: { id: "m1", status: "active", portal_type: "builder" },
+      organisation_binding: { column: "builder_organisation_id", portal_organisation_id: "o", bound: "set" },
+      surface_enabled: false, passport_view_enabled: false,
+    });
+    await runWizard();
+    await screen.findByLabelText(/Their Passport link/i);
+    expect(await screen.findByText(/only way they reach this Passport today/i)).toBeInTheDocument();
+  });
+
+  it("a failed enrolment NEVER blocks the grant, and is reported", async () => {
+    enrolPartnerPortalAccess.mockRejectedValue(new Error("that builder organisation is not one this portal user belongs to"));
+    await runWizard();
+    // The Passport still issued and still delivered.
+    await waitFor(() => expect(grantAccess).toHaveBeenCalled());
+    expect(await screen.findByLabelText(/Their Passport link/i)).toBeInTheDocument();
+    expect(await screen.findByText(/could not be enrolled/i)).toBeInTheDocument();
   });
 });

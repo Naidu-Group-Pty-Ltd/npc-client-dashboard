@@ -45,17 +45,26 @@ describe("portal adapters drive one shared implementation", () => {
       await waitFor(() => {
         expect(screen.getByTestId("partner-compliance-workspace")).toBeTruthy();
       });
-      // The statutory wording is identical in every portal — an adapter can
-      // add an intro, never replace the notice.
-      expect(screen.getByText(RESPONSIBILITY_NOTICE)).toBeTruthy();
+      /* The standing statutory banner is gone from every portal — it
+         restated an acknowledgement the partner already gave in the written
+         arrangement that got them here. What an adapter may still contribute
+         is its portal's own context, and the rule it was written to enforce
+         is unchanged and now stricter: an adapter ADDS context, it can never
+         supply the statutory wording itself. That sentence belongs to the
+         document (`PartnerPassportPanel`), which no adapter can reach. */
+      expect(screen.queryByText(RESPONSIBILITY_NOTICE)).toBeNull();
+      if (a.responsibilityIntro) {
+        expect(screen.getByTestId("partner-page-context").textContent ?? "")
+          .toContain(a.responsibilityIntro);
+      }
       view.unmount();
     }
   });
 
   it("adapters carry presentation and context only — no authority-shaped fields", () => {
     const allowedKeys = new Set([
-      "portalType", "workspaceTitle", "matterLabel", "roleLabel", "formatReference",
-      "responsibilityIntro", "panels", "support", "deadlineLabels",
+      "portalType", "workspaceTitle", "matterLabel", "ownReferenceLabel", "roleLabel",
+      "formatReference", "responsibilityIntro", "panels", "support", "deadlineLabels",
     ]);
     for (const a of ADAPTERS) {
       for (const key of Object.keys(a)) {

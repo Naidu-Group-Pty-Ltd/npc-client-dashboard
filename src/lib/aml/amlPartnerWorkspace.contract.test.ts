@@ -138,7 +138,27 @@ describe("workspace operations stay inside the boundary", () => {
     expect(workspaceSection).toContain("buildPartnerWorkspaceDto");
     expect(workspaceSection).toContain("evaluateManifestForRead");
     expect(workspaceSection).toContain("intersectPayloadWithManifest");
-    expect(workspaceSection).toMatch(/if \(grant && dto\.procedures\)[\s\S]{0,300}reliance_access_log/);
+    /* The property is that DISCLOSURE IMPLIES A LOG ENTRY, and it now covers
+       two kinds of disclosure: the manifest-intersected procedure content and
+       the Passport document itself. Reading a Passport in a portal is the
+       same act as redeeming a token, so it leaves the same audit row — and
+       the condition names both, so adding a third disclosure without logging
+       it fails here. */
+    expect(workspaceSection).toMatch(
+      /if \(grant && \(dto\.procedures \|\| passportView\)\)[\s\S]{0,400}reliance_access_log/);
+    expect(workspaceSection).toContain("passport_disclosed: Boolean(passportView)");
+    expect(workspaceSection).toContain("procedures_disclosed: Boolean(dto.procedures)");
+  });
+
+  it("the in-portal Passport is the SAME projection the emailed link serves", () => {
+    /* One record is a property of one implementation, not of two agreeing.
+       A portal-specific projection here would be how "identical" quietly
+       stops being true. */
+    expect(workspaceSection).toContain('buildCasePassportView(admin, link.case_id, "partner")');
+    // And it is disclosed only when the grant and attestation permit it —
+    // decided by the shared rule, never by the page or by the surface mode.
+    expect(workspaceSection).toContain("passportDisclosure({");
+    expect(workspaceSection).toContain("disclosure.disclosable");
   });
 
   it("the audit receipt is deep-checked before it leaves the server", () => {

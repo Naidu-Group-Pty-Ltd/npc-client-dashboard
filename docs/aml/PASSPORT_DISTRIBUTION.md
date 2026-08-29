@@ -131,3 +131,56 @@ that does not exist on this deployment.
 - `src/components/aml/__tests__/partnerOnboardingDelivery.test.tsx` —
   **rendered**. The wizard passes `deliver_to`. No source-scanning test could
   see its absence, because the call was present and spelled correctly.
+
+## Withdrawing access — and why there is no delete
+
+`revoke_grant` existed from the first version of this feature and **no surface
+ever called it**. A Passport could be given and never taken back, on the one
+screen whose entire subject is who may read a client's completed due
+diligence. It is now the row's own menu item.
+
+**Withdrawal is not deletion, and the difference is the point.** A grant is
+the record that a disclosure was authorised. Deleting it destroys that record;
+revoking it stops the access and keeps the history — which is the only version
+of "remove this partner" a compliance register may offer. The panel says so
+once, where the act is, rather than leaving an operator to wonder why there is
+no bin icon.
+
+Three rules:
+
+- **A reason is required** (ten characters, enforced by the server). A
+  revocation nobody can explain later is a fact nobody can act on.
+- **Only a LIVE grant can be withdrawn.** A lapsed one has already stopped
+  working and a withdrawn one is already withdrawn, so the menu item is absent
+  rather than present-and-inert.
+- **It is not gated by what gates issuing.** An overdue arrangement review, a
+  missing attestation and the `aml_partner_grants_write` flag all stop *new*
+  disclosure. Stopping disclosure is what this does, so none of them may
+  prevent it — the MLRO role is the only condition.
+
+## The card had become the wall it was built to prevent
+
+The explained action list existed because bare header buttons refused every
+click with a toast that read as a broken button. It worked — and then five
+rows of three lines each, all permanently open, became the thing an operator
+had to read past to reach the work. Alongside it the same grants were listed
+twice (once as recipients, once as "Link history") and the acceptance banner
+re-announced a live Passport that the row directly beneath it already showed.
+
+Every word is still there and no reasoning changed. What changed is when it is
+on screen:
+
+- **One act is open** — the one the server's own reading marks `ready` — and
+  the rest are one line each behind a disclosure.
+- **The statutory notice is a disclosure**, because it is a standing
+  explanation rather than news.
+- **"Link history" is gone**, because its live rows are the recipients list
+  and its lapsed and withdrawn rows are that list's collapsed *Ended access*
+  group. One register, rendered once.
+- **The acceptance banner no longer renders its `issued` state.** TypeScript
+  proves that branch is dead rather than leaving it to rot.
+
+A partner row is now one line: name, standing, and the single act on offer.
+Everything secondary — withdraw, copy the last address — is in the row's own
+menu, because a destructive act should be deliberate and a rare one should not
+compete with the common one.

@@ -115,8 +115,18 @@
 
   <script>
     (function () {
-      var SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
-      var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
+      // THIS deployment's own project, never the prime's. A standalone embed
+      // cannot read `VITE_*`, so the pair is written out here — and it is the
+      // pair, resolved together, for the reason `src/integrations/supabase/env.ts`
+      // records: the anon key's `ref` claim names the project it belongs to.
+      //
+      // It was the prime's, twice. The fix landed, and then
+      // `chore(aurixa): cascade N file(s) from prime@…` overwrote it with the
+      // prime's copy again — so every lead this snippet collected went into the
+      // prime's database. `backendIsolation.spec.ts` fails on the prime's ref
+      // appearing anywhere under `public/`, which is what catches the next one.
+      var SUPABASE_URL = 'https://plisdzywzleljorrphxv.supabase.co';
+      var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsaXNkenl3emxlbGpvcnJwaHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwOTI3NzcsImV4cCI6MjEwMjY2ODc3N30.bGxsWwZxPHUih_u6YtzPwsIeG_b-KtwYz7U33OTqbWk';
 
       var params = new URLSearchParams(window.location.search);
       var slug = params.get('slug');

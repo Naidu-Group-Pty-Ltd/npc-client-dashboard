@@ -145,6 +145,10 @@ function portalStatusFor(caseRow: any): string {
 import {
   applicableQuestionnaireSections,
 } from "../_shared/aml/questionnaireSections.pure.ts";
+import {
+  backfillStampFor, captureObjectsFor,
+} from "../_shared/aml/passport/identityPortrait.pure.ts";
+import { attachPortraitUrls } from "../_shared/aml/passport/attachPortraitUrls.ts";
 
 const QUESTIONNAIRE_VERSION = '2';
 
@@ -976,7 +980,11 @@ const __corsWrappedHandler = async (req: Request) => {
           admin.schema('aml').from('consents')
             .select('id, kind, accepted_at').eq('case_id', c.id),
           admin.schema('aml').from('verification_checks')
-            .select('id, party_label, check_type, status, completed_at').eq('case_id', c.id),
+            /* `outcome_detail` for the one image the Passport may show — the
+               face the provider extracted from the identity document. Read
+               only through `identityPortrait.pure.ts`, an allow-list of one
+               key: the document page and the selfie are never published. */
+            .select('id, party_label, check_type, status, completed_at, outcome_detail').eq('case_id', c.id),
           admin.schema('aml').from('documents')
             .select('id, requirement_id, status, created_at, reviewed_at, version_number')
             .eq('case_id', c.id).neq('status', 'deleted'),
@@ -1061,7 +1069,24 @@ const __corsWrappedHandler = async (req: Request) => {
               version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
             })),
             consents: consents ?? [],
-            verification_checks: checks ?? [],
+            verification_checks: (checks ?? []).map((vc: any) => {
+              /* Named fields only — `outcome_detail` is a provider payload
+                 and never travels into the projection whole. */
+              const sa = vc.outcome_detail?.standalone ?? {};
+              return {
+                id: vc.id, party_label: vc.party_label, check_type: vc.check_type,
+                status: vc.status, completed_at: vc.completed_at,
+                /* ONE reader, shared with the Command Centre — see
+                   `captureObjectsFor`. This used to prefer the evidence
+                   block's copy of the object list, which is written once and
+                   never updated. */
+                capture_objects: captureObjectsFor(vc.outcome_detail),
+                document_choice: sa.document_choice
+                  ?? vc.outcome_detail?.standalone_capture?.document_choice ?? null,
+                issuing_state: sa.id_verification?.id_verification?.issuing_state ?? null,
+                portrait_backfill: backfillStampFor(vc.outcome_detail),
+              };
+            }),
             documents: (docs ?? []).map((d: any) => ({
               status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
             })),
@@ -1091,6 +1116,15 @@ const __corsWrappedHandler = async (req: Request) => {
             attestation_payload: currentAtt?.payload ?? null,
           }),
         });
+
+        /* The photograph is signed for THIS reader, at the moment of
+           service, by the SAME function the Command Centre and the partners
+           use. This was twenty inline lines that had to be corrected in step
+           with their twin in `aml-reliance`; the client's Passport and the
+           issuer's are the same document, and that has to be a property of
+           one implementation. */
+        await attachPortraitUrls(admin, view, checks ?? []);
+
         return jsonResponse({ passport: view });
       }
 

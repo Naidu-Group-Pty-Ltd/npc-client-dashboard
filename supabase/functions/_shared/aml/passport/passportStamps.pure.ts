@@ -232,6 +232,29 @@ export function stampRotation(index: number): number {
 export type StampConsentFact = { id: string | null; kind: string; accepted_at: string | null; actor_label?: string | null };
 export type StampCheckFact = {
   id: string | null; party_label: string | null; check_type: string; status: string; completed_at: string | null;
+  /**
+   * The stored objects for this attempt, for the ONE image the Passport may
+   * show — the face the provider extracted from the identity document.
+   *
+   * Optional and read only through `identityPortrait.pure.ts`, which is an
+   * allow-list of one key: the document page and the selfie are named there
+   * as withheld rather than merely omitted. Absent on every check recorded
+   * before portraits were stored, and on every hosted-provider check, where
+   * NPC deliberately holds no copy of anything.
+   */
+  capture_objects?: unknown;
+  /** NPC's own vocabulary for the document, e.g. `passport`. */
+  document_choice?: string | null;
+  /** ISO 3166-1 alpha-3, as the provider read it off the document. */
+  issuing_state?: string | null;
+  /**
+   * The stamp left by a completed portrait backfill attempt, where one ran.
+   *
+   * It is what separates "the photograph is on its way" from "the document
+   * was read and carried none" on the Client Identity page — an absence that
+   * will resolve itself from one that will not.
+   */
+  portrait_backfill?: unknown;
 };
 export type StampDocumentFact = { status: string; reviewed_at?: string | null; created_at?: string | null };
 export type StampScreeningFact = { state: string; completed_at?: string | null };

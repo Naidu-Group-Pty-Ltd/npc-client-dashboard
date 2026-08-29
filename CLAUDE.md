@@ -524,6 +524,77 @@ grant had nowhere to appear), and **a live Passport reads green** like the
 Client portal's own completion — worded as a fact about access, never as a
 claim about the partner, and a revoked grant takes the colour back.
 
+## The photograph on the Compliance Passport
+Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
+before touching `_shared/aml/passport/identityPortrait.pure.ts`,
+`storeIdentityPortrait`, `attachPortraitUrls` or the object list in
+`aml-idv-retention`. A Passport that proves an identity was verified and shows
+no face is a certificate, so the booklet carries one image — and **which one is
+the whole question**. Three exist and this deployment holds all three
+(`didit_standalone` uploads the customer's capture to our own buckets): the
+**`id_portrait`** the provider extracted from the document, the document page
+itself, and the selfie. Only the first may travel, because a face crop carries
+**no document number, no MRZ, no date of birth, no address and no signature**;
+the page carries all of them and stays staff-only. The rule is an **allow-list
+of exactly one key**, and `WITHHELD_CAPTURE_KEYS` names the other two rather
+than leaving them absent.
+
+**It sits on the Client Identity page, and the mount always draws.** It was
+first put on the Identity Verification leaf behind
+`.filter((p) => p.portrait)`, which meant two things and both reported as "I
+cannot see the photo of the client anywhere": it was not on the page that
+names the holder, and the block DISAPPEARED whenever no image was stored —
+which is every Passport issued before this — so the page could not be told
+apart from one that carries no photograph at all. `identity.portrait` is a
+**slot**, never null, and names which of three absences it is; the wording is
+about the RECORD and never about the customer, asserted by a test.
+
+**A portrait that was never stored is fetched automatically, exactly once.**
+The document page is still in NPC's bucket, so `backfillIdentityPortrait`
+re-derives the crop from it — on the one-minute sweep that already exists,
+never from a button. A first attempt put "Recover the holder's photograph" on
+the page and that was wrong: **asking an operator to click once per case is
+asking them to fix this product's own record-keeping bug by hand, for ever**,
+and it makes a Passport's completeness depend on whether anybody opened it.
+Five rules carry it. It **re-derives an image and never re-decides an
+identity** — no status, verdict, score or timing is written, and a re-read
+that disagrees with the recorded verdict is logged for a human rather than
+adopted. **One attempt, ever**: the `portrait_backfill` stamp is written
+whether the call succeeded, failed or produced nothing, and its PRESENCE is
+the guard, never its outcome. **Nothing is stamped where nothing was spent**,
+so a database fault or an unconfigured provider does not disqualify a check
+permanently. The pass runs only when **the live verification queue took
+nothing this tick**, and it is **bounded at two a tick** so a backlog drains
+without a burst of spending. `pending_retrieval` and `unavailable` are
+separate readings on the page, because "on its way" and "the document carried
+none" are not the same thing to a reader.
+
+**The object list was written twice, and every reader took the stale copy.**
+That is the fault that survived three otherwise-correct attempts: the
+portrait was uploaded, named by the capture plan and on the retention job's
+list, while `sa.capture_objects ?? plan.objects` — four hand-written copies of
+one expression across two edge functions — read the evidence block's copy,
+which is composed once at the end of a run and never updated.
+`captureObjectsFor` is the one reader now and **merges rather than choosing**
+(the plan wins key by key, the legacy copy is a floor), the run no longer
+writes the duplicate, and a test forbids naming `standalone.capture_objects`
+in code. `attachPortraitUrls` is likewise one shared module rather than
+twenty duplicated lines in each portal.
+
+Nothing new is fetched — the portrait is already extracted as the Face Match
+reference and was simply discarded. Three rules make storing a face safe. **It
+is deleted on the same clock as the captures**: `aml-idv-retention` enumerates
+FIXED keys, so a new object is invisible until named, and the capture plan is
+re-persisted during processing because the job reads `standalone_capture`
+rather than the evidence block. **Storing it can never fail a verification** —
+null means "no portrait", which is the ordinary state for every case recorded
+before this, and every surface renders unchanged on null. And **the URL is
+minted for one reader at the moment of service**: a signed storage URL is a
+bearer credential with a lifetime, so the projection carries a descriptor
+(`url: null`) and the edge function signs five minutes for the request that
+asked. It cascades to the client, the emailed link and the partners because
+`buildCasePassportView` is one assembler with an audience parameter.
+
 ## Stage 10 — ongoing CDD, and the reminders it raises
 Read [`docs/aml/ONGOING_CDD_AND_REMINDERS.md`](./docs/aml/ONGOING_CDD_AND_REMINDERS.md)
 before touching `_shared/aml/reviewSchedule.pure.ts`,

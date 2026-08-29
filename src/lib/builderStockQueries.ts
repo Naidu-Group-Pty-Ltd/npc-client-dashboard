@@ -95,10 +95,16 @@ export async function builderStockImageUrl(imageId: string): Promise<string | nu
 // Upload
 // ---------------------------------------------------------------------------
 
+/**
+ * How far the IMPORT has got. Four steps and no fifth.
+ *
+ * There used to be two more — `settling` and `enriching` — and they were not
+ * steps of the import at all. They were the browser driving image processing,
+ * and removing them is the whole of this change. See `uploadBuilderStockFile`
+ * below.
+ */
 export interface StockUploadProgress {
-  phase: 'requesting' | 'uploading' | 'processing' | 'settling' | 'enriching' | 'done';
-  /** Properties still waiting for image enrichment, while phase is 'enriching'. */
-  remaining?: number;
+  phase: 'requesting' | 'uploading' | 'processing' | 'done';
 }
 
 export interface StockImportSummary {
@@ -115,6 +121,17 @@ export interface StockImportSummary {
 export interface StockUploadResult {
   upload: BuilderStockUpload;
   summary: StockImportSummary;
+  /**
+   * Properties the backend still owes imagery, as at the moment the import
+   * committed.
+   *
+   * REPORTED, NEVER WAITED ON. A finished import with outstanding image work
+   * is the normal case, not a partial one — so the page says so instead of
+   * holding the modal open until it reaches zero. Naming it is what stops a
+   * successful import from reading as "images are done"; leaving it out is how
+   * a summary comes to claim more than the server said.
+   */
+  imageWorkPending: number;
 }
 
 /** What deleting a source affected. Counts only — no client is named. */
@@ -125,14 +142,115 @@ export interface StockSourceRemoval {
 }
 
 /**
- * The whole upload, start to finish.
+ * HOW LONG THE BROWSER WILL WAIT FOR ONE REQUEST BEFORE IT STOPS WAITING.
  *
- * Four steps, and the last one is a LOOP on purpose. Image enrichment makes
- * two network calls per property against providers we do not control, so it
- * cannot finish inside one edge invocation for a schedule of any size. The
- * server does what it can within its budget and reports what is left; this
- * asks again until nothing is. A failure in that loop leaves the properties
- * imported — the import is already committed by then.
+ * An edge invocation that is KILLED on its resource limit returns nothing at
+ * all — no body, no status, no CORS headers — and `fetch` neither resolves nor
+ * rejects for it. There is no browser default that ends such a request, so a
+ * promise awaited without a deadline is a modal that spins for ever. That is
+ * exactly what happened on 29 Aug 2026: execution `08d8f54f` booted, logged,
+ * and was terminated with no gateway response, and the import dialog sat on
+ * one screen until the tab was closed.
+ *
+ * These are ceilings, not budgets. The import itself answers in 19-30 seconds
+ * against an edge ceiling near 150; the numbers below are set high enough that
+ * reaching one is evidence of a dead request rather than a slow one.
+ */
+const IMPORT_REQUEST_TIMEOUT_MS = 180_000;
+/** The file goes straight to storage, so this one scales with the upload. */
+const FILE_UPLOAD_TIMEOUT_MS = 300_000;
+
+/**
+ * A REQUEST THAT NEVER ANSWERS IS A FAILED REQUEST, NOT A PENDING ONE.
+ *
+ * `deadline_exceeded` deliberately carries the same meaning as the transport
+ * layer's `transport_failed`: the browser did not hear back, so whether the
+ * work happened is UNDETERMINED. It must never be reported as "the import
+ * failed" — on the production incident the import had already committed 23
+ * properties before the request it was waiting on died.
+ */
+export class StockRequestDeadlineExceeded extends Error {
+  readonly code = 'deadline_exceeded';
+
+  constructor(what: string) {
+    super(`The server did not answer while ${what}, so whether it completed is `
+      + 'unknown. Refresh before trying again.');
+    this.name = 'StockRequestDeadlineExceeded';
+  }
+}
+
+/**
+ * Race a request against a clock and cancel it when the clock wins.
+ *
+ * The signal is passed INTO the request rather than merely raced beside it, so
+ * a timed-out call releases its connection instead of running on invisibly.
+ */
+async function withDeadline<T>(
+  what: string,
+  ms: number,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await run(controller.signal);
+  } catch (error) {
+    // `AbortError` here is ours: nothing else aborts these requests. The
+    // caller never asked to cancel, so it is a deadline and says so.
+    if (controller.signal.aborted) throw new StockRequestDeadlineExceeded(what);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One bounded `builder-portal-stock` call. */
+function invokeBounded<T>(
+  what: string,
+  body: Record<string, unknown>,
+  ms = IMPORT_REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  return withDeadline(what, ms, async (signal) => {
+    const { data, error } = await invokeBuilderFunction<T>('builder-portal-stock', body, { signal });
+    if (error) {
+      const failure = new Error(error.message) as Error & { code?: string; status?: number };
+      failure.code = error.code;
+      failure.status = error.status;
+      throw failure;
+    }
+    return data as T;
+  });
+}
+
+/**
+ * THE IMPORT ENDS WHEN THE ROWS ARE COMMITTED. IT DOES NOT WAIT FOR PICTURES.
+ *
+ * This function used to have a fifth step: a `while` loop calling
+ * `enrich_images` — an expensive image-processing operation — over and over
+ * until the server reported nothing left. That made the browser the OWNER of
+ * image work, and it was the wrong owner in three separate ways, all three
+ * measured in production on 29 August 2026.
+ *
+ *   IT COULD NOT FINISH. Every one of 29 consecutive calls returned the same
+ *   eight numbers (`rows_read: 23, matched: 0, images_stored: 0`); the source
+ *   stage was deadlocked against its own budget and the loop had no way to
+ *   know. The modal sat on "Processing supplied images" for twenty minutes.
+ *
+ *   IT COULD NOT SURVIVE. Call 30 was killed mid-request and returned no
+ *   response at all, so the promise never settled and the dialog could never
+ *   reach its own last line.
+ *
+ *   IT WAS NOT NEEDED. Through all of it the autonomous settler was claiming
+ *   ONE property per cron tick and advancing it — twelve properties in the
+ *   thirteen minutes after the browser stopped, with nobody watching. Source,
+ *   eligibility, sanitization, the fallback ladder, primary selection and
+ *   publication are all the backend's, and have been since the per-item claim
+ *   shipped.
+ *
+ * So the loop is gone rather than budgeted. Raising a timeout or a request cap
+ * would have kept the browser in charge of work it cannot own: the builder has
+ * to be able to close the tab the moment the import answers, and after this
+ * they can. What is left is reported — `imageWorkPending` — and never awaited.
  */
 export async function uploadBuilderStockFile(
   file: File,
@@ -140,9 +258,9 @@ export async function uploadBuilderStockFile(
 ): Promise<StockUploadResult> {
   onProgress?.({ phase: 'requesting' });
 
-  const created = await invoke<{
+  const created = await invokeBounded<{
     upload: BuilderStockUpload; signed_url: string; token: string;
-  }>({
+  }>('preparing the upload', {
     operation: 'create_upload',
     filename: file.name,
     content_type: file.type || 'application/octet-stream',
@@ -150,45 +268,28 @@ export async function uploadBuilderStockFile(
   });
 
   onProgress?.({ phase: 'uploading' });
-  const put = await fetch(created.signed_url, {
-    method: 'PUT',
-    headers: { 'content-type': file.type || 'application/octet-stream' },
-    body: file,
-  });
+  const put = await withDeadline('uploading the file', FILE_UPLOAD_TIMEOUT_MS, (signal) => fetch(
+    created.signed_url,
+    {
+      method: 'PUT',
+      headers: { 'content-type': file.type || 'application/octet-stream' },
+      body: file,
+      signal,
+    },
+  ));
   if (!put.ok) throw new Error('The file could not be uploaded. Please try again.');
 
   onProgress?.({ phase: 'processing' });
-  const processed = await invoke<{
+  const processed = await invokeBounded<{
     upload: BuilderStockUpload; summary: StockImportSummary; enrichment_pending: number;
-  }>({ operation: 'process_upload', upload_id: created.upload.id });
-
-  // Enrichment is best-effort from here. The properties exist.
-  try {
-    let guard = 0;
-    let remaining = processed.enrichment_pending ?? 0;
-    // Held across iterations: reporting a hardcoded phase before each call made
-    // the label flicker between the two stages on every round trip.
-    let phase: StockUploadProgress['phase'] = 'settling';
-    while (remaining > 0 && guard < 40) {
-      onProgress?.({ phase, remaining });
-      const batch = await invoke<{
-        processed: number; remaining: number; source_images_outstanding?: number;
-      }>({ operation: 'enrich_images', upload_id: created.upload.id });
-      // Stage 1 is the builder's OWN imagery; it is worth naming separately
-      // because it is the only stage whose output a card may draw.
-      phase = batch.source_images_outstanding ? 'settling' : 'enriching';
-      onProgress?.({ phase, remaining: batch.remaining });
-      remaining = batch.remaining;
-      // A batch that moved nothing will not move anything next time either.
-      if (!batch.processed) break;
-      guard += 1;
-    }
-  } catch {
-    /* Images are an enhancement. The import stands without them. */
-  }
+  }>('reading the properties', { operation: 'process_upload', upload_id: created.upload.id });
 
   onProgress?.({ phase: 'done' });
-  return { upload: processed.upload, summary: processed.summary };
+  return {
+    upload: processed.upload,
+    summary: processed.summary,
+    imageWorkPending: processed.enrichment_pending ?? 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -200,41 +301,25 @@ export async function uploadBuilderStockFile(
  *
  * The browser sends only the URL. The server fetches it — behind the SSRF
  * guard, with every redirect re-checked — snapshots what it got, and runs the
- * same import a file goes through. Enrichment then resumes exactly as it does
- * after an upload.
+ * same import a file goes through. Imagery is then the backend's, exactly as
+ * it is for a file: see `uploadBuilderStockFile` for why there is no loop here
+ * either.
  */
 export async function importBuilderStockUrl(
   url: string,
   onProgress?: (progress: StockUploadProgress) => void,
 ): Promise<StockUploadResult> {
   onProgress?.({ phase: 'processing' });
-  const imported = await invoke<{
+  const imported = await invokeBounded<{
     upload: BuilderStockUpload; summary: StockImportSummary; enrichment_pending: number;
-  }>({ operation: 'import_url', url });
-
-  try {
-    let guard = 0;
-    let remaining = imported.enrichment_pending ?? 0;
-    // Held across iterations: reporting a hardcoded phase before each call made
-    // the label flicker between the two stages on every round trip.
-    let phase: StockUploadProgress['phase'] = 'settling';
-    while (remaining > 0 && guard < 40) {
-      onProgress?.({ phase, remaining });
-      const batch = await invoke<{
-        processed: number; remaining: number; source_images_outstanding?: number;
-      }>({ operation: 'enrich_images', upload_id: imported.upload.id });
-      phase = batch.source_images_outstanding ? 'settling' : 'enriching';
-      onProgress?.({ phase, remaining: batch.remaining });
-      remaining = batch.remaining;
-      if (!batch.processed) break;
-      guard += 1;
-    }
-  } catch {
-    /* Images are an enhancement. The import stands without them. */
-  }
+  }>('reading the linked list', { operation: 'import_url', url });
 
   onProgress?.({ phase: 'done' });
-  return { upload: imported.upload, summary: imported.summary };
+  return {
+    upload: imported.upload,
+    summary: imported.summary,
+    imageWorkPending: imported.enrichment_pending ?? 0,
+  };
 }
 
 /** Remove a stock-list source. Requires the inventory DELETE permission. */

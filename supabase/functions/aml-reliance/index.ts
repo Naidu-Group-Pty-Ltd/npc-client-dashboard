@@ -114,6 +114,10 @@ import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import {
+  backfillStampFor, captureObjectsFor,
+} from "../_shared/aml/passport/identityPortrait.pure.ts";
+import { attachPortraitUrls } from "../_shared/aml/passport/attachPortraitUrls.ts";
+import {
   addMonthsUtc, resolveReviewInterval,
 } from "../_shared/aml/reviewSchedule.pure.ts";
 import {
@@ -337,7 +341,10 @@ async function buildCasePassportView(
     admin.schema("aml").from("consents")
       .select("id, kind, accepted_at, actor_label").eq("case_id", caseId),
     admin.schema("aml").from("verification_checks")
-      .select("id, party_label, check_type, status, completed_at").eq("case_id", caseId),
+      /* `outcome_detail` for the ONE image the Passport may show — the face
+         the provider extracted from the identity document. Read only through
+         `identityPortrait.pure.ts`, which is an allow-list of one key. */
+      .select("id, party_label, check_type, status, completed_at, outcome_detail").eq("case_id", caseId),
     admin.schema("aml").from("documents")
       .select("id, requirement_id, status, created_at, reviewed_at, version_number")
       .eq("case_id", caseId).neq("status", "deleted"),
@@ -585,7 +592,26 @@ async function buildCasePassportView(
         version: a.version, issued_at: a.issued_at, superseded_at: a.superseded_at,
       })),
       consents: consents ?? [],
-      verification_checks: checks ?? [],
+      verification_checks: (checks ?? []).map((c: any) => {
+        /* Named fields only. `outcome_detail` is a provider payload and must
+           never travel into the projection whole — the three facts the
+           portrait needs are lifted out and the rest is left behind. */
+        const sa = c.outcome_detail?.standalone ?? {};
+        const idv = sa.id_verification?.id_verification ?? {};
+        return {
+          id: c.id, party_label: c.party_label, check_type: c.check_type,
+          status: c.status, completed_at: c.completed_at,
+          /* ONE reader — see `captureObjectsFor`. This expression used to
+             prefer `standalone.capture_objects`, a copy written once when the
+             evidence block was composed and never updated, so a portrait
+             added to the plan afterwards was invisible here. */
+          capture_objects: captureObjectsFor(c.outcome_detail),
+          document_choice: sa.document_choice
+            ?? c.outcome_detail?.standalone_capture?.document_choice ?? null,
+          issuing_state: idv.issuing_state ?? null,
+          portrait_backfill: backfillStampFor(c.outcome_detail),
+        };
+      }),
       documents: (docs ?? []).map((d: any) => ({
         status: d.status, reviewed_at: d.reviewed_at, created_at: d.created_at,
       })),
@@ -628,6 +654,9 @@ async function buildCasePassportView(
       })),
     },
   });
+  /* The photograph is signed HERE, for this reader, and never in the
+     projection — see `attachPortraitUrls`. */
+  await attachPortraitUrls(admin, view, checks ?? []);
   return view;
 }
 

@@ -109,6 +109,52 @@ export function BookletBlockView({ block }: { block: BookletBlock }) {
         </div>
       );
 
+    /* ── The bio panel ────────────────────────────────────────────────
+       The holder's photograph beside the fields that name them — the layout
+       of an identity document, which is what this leaf is. The face is the
+       one printed on the document; never the document page, never the live
+       capture.
+
+       The mount ALWAYS draws. An absent image gets the frame, the hatched
+       field and a sentence saying which absence it is: a block that vanished
+       on a missing photograph is what left this page with no holder on it. */
+    case "bio":
+      return (
+        <div className="passport-bio">
+          <figure className="passport-bio__figure">
+            <div className="passport-portrait__mount passport-bio__mount">
+              {block.src ? (
+                <img
+                  src={block.src}
+                  alt={`Portrait of ${block.holder} from their ${block.caption}`}
+                  className="passport-portrait__img"
+                  loading="lazy"
+                  decoding="async"
+                />
+              ) : (
+                <div className="passport-portrait__empty" aria-hidden>
+                  <span className="passport-portrait__empty-mark">&#9672;</span>
+                </div>
+              )}
+            </div>
+            <figcaption className="passport-bio__caption">{block.caption}</figcaption>
+          </figure>
+          <div className="passport-bio__fields">
+            {block.items.map((f) => (
+              <div key={f.k} className="passport-bio__field">
+                <div className="passport-leaf__k">{f.k}</div>
+                <div className={cn("passport-bio__v", f.mono && "passport-mono passport-leaf__mono")}>
+                  {f.v}
+                </div>
+              </div>
+            ))}
+            {block.absence && (
+              <p className="passport-bio__absence">{block.absence}</p>
+            )}
+          </div>
+        </div>
+      );
+
     case "rows":
       return (
         <div>

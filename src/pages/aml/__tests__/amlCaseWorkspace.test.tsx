@@ -45,9 +45,6 @@ vi.mock("@/components/aml/ComplianceJourneyMap", () => ({
 // Stage 9's approval act fetches its own facts (gate contract, open
 // conditions); the shell suite only cares that the stage mounts the ACT,
 // not the full gate card or the readiness ledger both removed before it.
-vi.mock("@/components/aml/GateApprovalCard", () => ({
-  GateApprovalCard: () => <div data-testid="gate-approval-card" />,
-}));
 vi.mock("@/components/aml/CaseWorkspaceTabs", () => ({
   VerificationTab: () => <div data-testid="tab-verification" />,
   ScreeningTab: () => <div data-testid="tab-screening" />,
@@ -165,13 +162,17 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     expect(screen.getByText("Compliance evidence")).toBeInTheDocument();
   });
 
-  it("mounts only the approval ACT on the Passport stage — no full gate card, no readiness ledger", async () => {
+  it("mounts NO gate act on the Passport stage — the cleared decision carries it", async () => {
+    /* Stage 9 asked a reviewer to decide again what they had just decided
+       on the Decision stage, with a second reason, behind a button that was
+       disabled while it still read "Approve the gate — Approved". The
+       cleared decision records the gate itself now, so this stage owes
+       nothing about it — and neither the readiness ledger nor the full
+       eight-status card may take its place. */
     setup(`/admin/aml/cases/${CASE_ID}?section=passport`);
     await screen.findByRole("heading", { name: "Avery Client" });
-    // The readiness ledger restated gate facts without offering the act;
-    // the full eight-status gate card read as a duplicate of the Decision
-    // stage. Stage 9 keeps exactly the act it owes.
-    expect(screen.getByTestId("gate-approval-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("gate-approval-card")).not.toBeInTheDocument();
+    expect(screen.queryByText("Approve the service gate")).not.toBeInTheDocument();
     expect(screen.queryByText("Service readiness")).not.toBeInTheDocument();
     expect(screen.queryByText("Change service gate")).not.toBeInTheDocument();
   });

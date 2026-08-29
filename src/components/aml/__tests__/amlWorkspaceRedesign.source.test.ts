@@ -273,7 +273,13 @@ describe("presentation discipline", () => {
 });
 
 describe("no database change was needed", () => {
-  it("no migration persists a derived reading", () => {
+  /* This one test reads every migration in the repository — over a thousand
+     files, and one more with every change that ships. It has nothing to do
+     with the assertion's difficulty and everything to do with IO, so it gets
+     an IO-shaped budget: at 5s it began failing under parallel load while
+     passing in isolation, which is a flake that teaches people to re-run
+     rather than to read. The assertion below is untouched. */
+  it("no migration persists a derived reading", { timeout: 30_000 }, () => {
     // The next action, the macro phase, the journey stage and the attention
     // level are computed per render. If any of them ever acquires a column,
     // it has become a source of truth — which is the one thing this

@@ -19,12 +19,22 @@
  * being "ready" is availability, never a compliance claim.
  */
 
+import { refreshRemedy } from "@/lib/aml/passport";
+
 export interface PassportActionFacts {
   /** Current (unsuperseded) attestation, or null when none is issued. */
   attestationVersion: number | null;
   issuedAt: string | null;
   /** SERVER-derived passport state code; null = reading unavailable. */
   passportStateCode: string | null;
+  /**
+   * The server's reason codes for that state.
+   *
+   * `refresh_required` covers two different owed acts and only the reasons
+   * tell them apart — see `refreshRemedy`. Optional so a deployment that
+   * predates the reasons behaves exactly as it did.
+   */
+  passportStateReasons?: readonly string[] | null;
   activeAgreements: number;
   activeGrants: number;
   isMlro: boolean;
@@ -67,8 +77,18 @@ const MLRO_NEEDED = "Requires the MLRO";
 
 export function passportActions(f: PassportActionFacts): PassportActionRow[] {
   const hasAttestation = f.attestationVersion !== null;
-  const refreshFlagged =
+  const cautionary =
     f.passportStateCode === "refresh_required" || f.passportStateCode === "superseded";
+  /* ── A remedy that cannot discharge the reason is not a next step ─────
+   * The reliance panel opens exactly one act — the first row that is
+   * `ready`. On the reported case that was "Issue the attestation", reading
+   * "v1 is flagged for refresh — issuing v2 supersedes it", with a "Reissue
+   * as v2" button. The flag's only reason was `service_gate_regressed`: the
+   * gate was under review. Issuing v2 would have superseded a good v1 and
+   * left the state exactly where it was, because v2 is flagged for the same
+   * reason. `refreshRemedy` is the one place that knows the difference. */
+  const gateOnly = cautionary && refreshRemedy(f.passportStateReasons) === "approve_gate";
+  const refreshFlagged = cautionary && !gateOnly;
 
   const rows: PassportActionRow[] = [];
 
@@ -102,7 +122,12 @@ export function passportActions(f: PassportActionFacts): PassportActionRow[] {
       ? "No version issued yet — issuing creates v1."
       : refreshFlagged
         ? `v${f.attestationVersion} is flagged for refresh — issuing v${(f.attestationVersion ?? 0) + 1} supersedes it.`
-        : `v${f.attestationVersion} is in force${f.issuedAt ? ` (issued ${new Date(f.issuedAt).toLocaleDateString()})` : ""}. Reissuing supersedes it.`,
+        : gateOnly
+          /* Says what is owed and where, and does NOT offer a version as the
+             remedy. The act stays available — an MLRO may always reissue —
+             it simply is not what this case is waiting for. */
+          ? `v${f.attestationVersion} is issued and stays in force. It is held back only by the service gate, which is still awaiting approval on Gate & Passport — a new version would not change that.`
+          : `v${f.attestationVersion} is in force${f.issuedAt ? ` (issued ${new Date(f.issuedAt).toLocaleDateString()})` : ""}. Reissuing supersedes it.`,
     blockedBy: f.isMlro ? null : MLRO_NEEDED,
   });
 

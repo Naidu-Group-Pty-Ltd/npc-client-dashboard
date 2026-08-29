@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Loader2, ShieldCheck, XCircle, Clock, CheckCircle2, AlertTriangle,
+  ArrowRight, Building2,
 } from "lucide-react";
 import { BrandLockup } from "@/components/branding/BrandAssets";
 import { PassportBook } from "@/components/aml/passport/design/PassportBook";
@@ -212,6 +213,50 @@ export default function PublicPassport() {
         </AlertTitle>
         <AlertDescription className="text-xs">{data.notice}</AlertDescription>
       </Alert>
+
+      {/* ── the second route to the same record ────────────────────────
+          A link is a delivery; a portal is a place you go back to. A partner
+          who also holds a portal account should not have to keep this email
+          to re-read a record they may rely on — the same Passport is on
+          their own AML/CTF Compliance page, permanently, behind their own
+          sign-in.
+
+          Offered only when the SERVER says so: `available` is false unless
+          that page exists on this deployment and the organisation has an
+          active membership somebody could sign in with. Sending a partner to
+          a page that answers "your account is not enrolled" is worse than
+          the link they already have — it reads as a broken product rather
+          than an unconfigured one.
+
+          The destination carries a matter identifier and never this token: a
+          credential in a browser address bar survives in history, referrers
+          and screenshots, and the portal session decides what may be read
+          when they arrive. */}
+      {data.portal_handoff?.available && data.portal_handoff.path && (
+        <Card className="glass-panel">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+            <div className="flex min-w-0 items-start gap-2">
+              <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <div className="min-w-0 space-y-0.5">
+                <h2 className="text-sm font-semibold">
+                  You also hold a {data.portal_handoff.label} account
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  This same Passport is on your <strong>AML/CTF Compliance</strong> page there —
+                  signed in, with no link to keep. You will be taken straight to this matter.
+                </p>
+              </div>
+            </div>
+            <Button asChild size="sm" className="shrink-0">
+              <a href={data.portal_handoff.url || data.portal_handoff.path}>
+                <Building2 className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                View in your portal
+                <ArrowRight className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* The document itself.
           This used to be `JSON.stringify` in a `<pre>` — the literal payload,

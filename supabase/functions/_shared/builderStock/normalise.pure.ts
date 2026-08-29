@@ -475,14 +475,34 @@ export interface StockMatchKeys {
   reference: string | null;
   /** organisation + development + lot/unit. Both halves required. */
   developmentUnit: { development: string; unit: string } | null;
+  /**
+   * organisation + the SOURCE'S OWN ID FOR THIS ROW.
+   *
+   * The strongest of the three, and the only one the live list carries. It is
+   * matched FIRST and it is the only key guarded by an identity check — see
+   * `stockIdentity.pure.ts` — because an anchor names a row rather than a
+   * property, and a row can be edited or re-used for the next lot.
+   */
+  anchor: string | null;
 }
 
 /**
- * The two keys an import may match an existing row on, and no others.
+ * The three keys an import may match an existing row on, and no others.
  *
  * Address is deliberately absent. Two townhouses share one street address, and
  * merging them loses a property — the conservative failure is a duplicate row
  * a person can archive, not a silent merge nobody sees.
+ *
+ * THE ANCHOR IS THE STRONGEST AND IT IS WHY THIS LIST GREW. The two older keys
+ * need a builder reference, or a development AND a lot/unit column; the live
+ * Notion list carries none of them on any row — the lot lives inside the title
+ * — so both were null for all twenty-three properties and every re-import
+ * inserted a fresh set instead of updating. Eight uploads, `updated` zero every
+ * time, and the marketplace's imagery left on rows the operator then archived.
+ *
+ * It is also the only key that names a ROW rather than a property, which is
+ * exactly why it may never be trusted on its own: the importer pairs it with
+ * `sameProperty` from `stockIdentity.pure.ts` before carrying anything forward.
  */
 export function stockMatchKeys(record: NormalisedStockRecord): StockMatchKeys {
   const reference = record.external_reference
@@ -492,9 +512,12 @@ export function stockMatchKeys(record: NormalisedStockRecord): StockMatchKeys {
   const development = (record.development_name ?? record.project_name ?? '').trim().toLowerCase();
   const unit = (record.unit_number ?? record.lot_number ?? '').trim().toLowerCase();
 
+  const anchor = record.source_anchor ? record.source_anchor.trim() : null;
+
   return {
     reference: reference || null,
     developmentUnit: development && unit ? { development, unit } : null,
+    anchor: anchor || null,
   };
 }
 
@@ -533,8 +556,20 @@ export function stockRowFingerprint(record: Partial<NormalisedStockRecord>): str
   ].join('|');
 }
 
+/**
+ * The fields a label is built from.
+ *
+ * Named as its own type so a STORED ROW can be labelled too: the columns carry
+ * these names, and the identity rules in `stockIdentity.pure.ts` need the same
+ * label from both sides of a re-import. Widening the parameter only — every
+ * existing caller passes a whole record and is unaffected.
+ */
+export type StockLabelFields = Pick<NormalisedStockRecord,
+  'unit_number' | 'lot_number' | 'address_line' | 'suburb'
+  | 'development_name' | 'external_reference'>;
+
 /** A short human label for a record, for logs and the import summary. */
-export function stockRecordLabel(record: NormalisedStockRecord): string {
+export function stockRecordLabel(record: StockLabelFields): string {
   const parts: string[] = [];
   if (record.unit_number) parts.push(`Unit ${record.unit_number}`);
   else if (record.lot_number) parts.push(`Lot ${record.lot_number}`);

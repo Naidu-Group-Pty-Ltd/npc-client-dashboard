@@ -29,7 +29,9 @@ import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
-import { headingToProperty, readLatLng } from './streetViewHeading.pure.ts';
+import {
+  assessPanoramaUsefulness, headingToProperty, readLatLng,
+} from './streetViewHeading.pure.ts';
 
 /**
  * The SAME circuit scope `street-view` uses.
@@ -272,6 +274,29 @@ export async function enrichFromGoogle(
         { p_scope: GOOGLE_CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
     }
 
+    /*
+     * A PANORAMA HUNDREDS OF METRES AWAY IS NOT A PICTURE OF THIS HOUSE.
+     *
+     * PRODUCTION, 28 AUGUST 2026: Lot 1663 Ringer Street showed a roundabout.
+     * Google answers with the NEAREST panorama to a geocode and says nothing
+     * about whether that is useful; on a new estate whose own street has never
+     * been driven, the nearest is the arterial road it joins. Nothing here
+     * asked, so whatever came back became the card.
+     *
+     * Refused rather than substituted: the satellite tile below is a roof and
+     * `imagePriority` will not rank it either, so the honest answer is no
+     * picture. Blank is better than a roundabout.
+     */
+    const panorama = readLatLng(meta?.location);
+    /** Recorded on the row, so which way the camera looked is auditable. */
+    let heading: number | null = null;
+    const usefulness = assessPanoramaUsefulness(
+      panorama, { lat: location.lat, lng: location.lng });
+    if (meta?.status === 'OK' && !usefulness.usable) {
+      return await recordStageUnavailable(
+        db, item, 'google_maps', 'unavailable', usefulness.reason, 'google');
+    }
+
     if (meta?.status === 'OK' && await spend()) {
       /*
        * AIM THE CAMERA AT THE HOUSE.
@@ -287,8 +312,8 @@ export async function enrichFromGoogle(
        * is sent at all: Google's default is a real orientation of a real
        * panorama, which is better than one this code invented.
        */
-      const heading = headingToProperty(
-        readLatLng(meta?.location), { lat: location.lat, lng: location.lng });
+      heading = headingToProperty(
+        panorama, { lat: location.lat, lng: location.lng });
       const params = new URLSearchParams({
         size: '640x400', location: point, fov: '80', pitch: '0',
         return_error_code: 'true', key: apiKey,
@@ -362,7 +387,21 @@ export async function enrichFromGoogle(
       processing_status: 'ready',
       error_message: null,
       position: 0,
-      source_detail: { address, latitude: location.lat, longitude: location.lng, product },
+      /*
+       * WHERE THE CAMERA WAS AND WHICH WAY IT LOOKED.
+       *
+       * The row used to record the property's own coordinates and nothing about
+       * the photograph, so "is this aimed at the house, and was the camera
+       * anywhere near it" could not be answered from the record at all — which
+       * is exactly what a roundabout on a live card needed somebody to ask.
+       */
+      source_detail: {
+        address, latitude: location.lat, longitude: location.lng, product,
+        heading,
+        panorama_latitude: panorama?.lat ?? null,
+        panorama_longitude: panorama?.lng ?? null,
+        panorama_distance_metres: usefulness.distanceMetres,
+      },
     }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 
     return { stage: 'google_maps', status: 'ready', detail: product };

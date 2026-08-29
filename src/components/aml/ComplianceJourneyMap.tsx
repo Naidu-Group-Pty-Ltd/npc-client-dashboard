@@ -4,17 +4,17 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import {
   FileText, ShieldCheck, BadgeCheck, Share2, User, Landmark, HardHat,
-  Building2, Scale, Check, Circle,
+  Scale, Check, Circle,
 } from "lucide-react";
 import type { AmlCase } from "@/lib/aml/amlCasesApi";
 import { stageStates } from "@/lib/aml/journeyMapStages.pure";
 import { amlRelianceApi, type IndependentAssessment, type RelianceGrant } from "@/lib/aml/amlRelianceApi";
 
 /**
- * Compliance Journey Map — the owner's five-portal flow diagram, rendered as
- * a living surface at the top of every case.
+ * Compliance Journey Map — the owner's portal flow diagram, rendered as a
+ * living surface at the top of every case.
  *
- * Four stages across the top (Submit → Verify → Approve → Share) and the five
+ * Four stages across the top (Submit → Verify → Approve → Share) and the
  * portal tiles beneath, each fed from data the module already records. This
  * component COMPUTES nothing about compliance — every state shown here is a
  * projection of decisions made elsewhere (the service gate is still only ever
@@ -44,25 +44,66 @@ interface PortalTile {
   tone: "done" | "progress" | "idle";
 }
 
+/**
+ * The organisation types each PORTAL serves.
+ *
+ * ── One tile per portal, not per organisation type ────────────────────
+ * Builders and developers sign into the SAME portal — the
+ * Builder/Developer portal. `partnerOnboarding.pure.ts` removed that split
+ * from the onboarding wizard for the same reason ("two doors into one
+ * room"), and the map kept it: a "Developer portal" tile stood beside a
+ * "Builder portal" tile, and it could never light up, because there is no
+ * Developer portal to connect to. The AML server's vocabulary still
+ * carries both organisation types — `organisation_type`, `portal_type`,
+ * the builder portal's own `org_type` — and both belong to this one tile,
+ * so a partner recorded as a developer lights the portal they actually
+ * sign into rather than vanishing from the map.
+ */
+const PORTAL_ORG_TYPES: Record<string, string[]> = {
+  finance: ["finance"],
+  builder: ["builder", "developer"],
+  solicitor_conveyancer: ["solicitor_conveyancer"],
+};
+
 function portalTiles(
   caseRow: AmlCase, grants: RelianceGrant[], assessments: IndependentAssessment[],
 ): PortalTile[] {
   const liveGrants = grants.filter((g) => !g.revoked_at);
-  const byType = (t: string) =>
-    liveGrants.filter((g) => g.reliance_agreements?.partner_org_type === t);
-  const assessed = (t: string) =>
+  const orgTypes = (key: string) => PORTAL_ORG_TYPES[key] ?? [key];
+  /** Live Passport grants held by any organisation type this portal serves. */
+  const byPortal = (key: string) =>
+    liveGrants.filter((g) =>
+      orgTypes(key).includes(String(g.reliance_agreements?.partner_org_type)));
+  const assessed = (key: string) =>
     assessments.some((a) =>
       a.status === "satisfied" &&
-      liveGrants.some((g) => g.agreement_id === (a as any).agreement_id
-        && g.reliance_agreements?.partner_org_type === t));
+      byPortal(key).some((g) => g.agreement_id === (a as any).agreement_id));
 
+  /**
+   * ── When a portal reads GREEN ─────────────────────────────────────
+   * A live Passport grant is the outcome the whole journey exists to
+   * produce — "one process, every portal". It was drawn in `progress`
+   * blue while the Client portal went green on completing its own part,
+   * so a case whose Passport had actually reached three partners looked
+   * unfinished on the very map that exists to show it had not been done
+   * three times.
+   *
+   * Green here says the same thing the Client portal's green says: this
+   * portal's part of the one process is done, and the partner can read
+   * the record. It is deliberately NOT a claim about that partner's own
+   * compliance — the status wording stays a fact about ACCESS, and the
+   * older "Partner assessment satisfied" wording carried exactly that
+   * risk, which is why the assessment is now an addition to the access
+   * fact rather than a replacement for it.
+   */
   const partnerTile = (key: string, label: string, icon: typeof User): PortalTile => {
-    // A satisfied `IndependentAssessment` means that partner recorded itself
-    // satisfied with the records we shared. It is not, and must not be shown
-    // as, a claim that the partner or the case is compliant in its own right
-    // — the tile used to say exactly that.
-    if (assessed(key)) return { key, label, icon, status: "Partner assessment satisfied", tone: "done" };
-    if (byType(key).length > 0) return { key, label, icon, status: "Passport shared", tone: "progress" };
+    const live = byPortal(key).length > 0;
+    if (live) {
+      return {
+        key, label, icon, tone: "done",
+        status: assessed(key) ? "Passport live · partner assessed" : "Passport live",
+      };
+    }
     return { key, label, icon, status: "Not yet connected", tone: "idle" };
   };
 
@@ -78,16 +119,17 @@ function portalTiles(
       tone: portal === "complete" ? "done"
         : portal === "not_started" ? "idle" : "progress",
     },
-    {
-      key: "finance", label: "Finance portal", icon: Landmark,
-      status: byType("finance").length > 0 ? "Passport shared"
-        : finance === "not_requested" ? "Not yet connected"
-        : finance.replace(/_/g, " "),
-      tone: assessed("finance") || byType("finance").length > 0 ? "progress"
-        : finance === "not_requested" ? "idle" : "progress",
-    },
-    partnerTile("builder", "Builder portal", HardHat),
-    partnerTile("developer", "Developer portal", Building2),
+    /* Finance keeps its own middle state: the case row records that the
+       portal was REQUESTED, which the partner tiles have no equivalent of.
+       A live Passport still outranks it and reads green like the rest. */
+    byPortal("finance").length > 0
+      ? partnerTile("finance", "Finance portal", Landmark)
+      : {
+        key: "finance", label: "Finance portal", icon: Landmark,
+        status: finance === "not_requested" ? "Not yet connected" : finance.replace(/_/g, " "),
+        tone: finance === "not_requested" ? "idle" : "progress",
+      },
+    partnerTile("builder", "Builder / Developer portal", HardHat),
     partnerTile("solicitor_conveyancer", "Solicitors & conveyancers", Scale),
   ];
 }
@@ -166,8 +208,11 @@ export function ComplianceJourneyMap({ caseRow }: { caseRow: AmlCase }) {
           })}
         </ol>
 
-        {/* ── the five portals ────────────────────────────────────────── */}
-        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {/* ── the portals ─────────────────────────────────────────────
+            Four, not five: Builder and Developer are one portal, and a
+            "Developer portal" tile that can never connect described a door
+            that does not exist. */}
+        <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
           {tiles.map((tile) => {
             const Icon = tile.icon;
             return (

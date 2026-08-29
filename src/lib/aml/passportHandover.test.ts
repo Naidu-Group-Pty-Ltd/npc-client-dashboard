@@ -187,7 +187,16 @@ describe("the workspace and the partner's page both say what happens next", () =
   });
 
   it("the workspace offers the act on the row that reports the acceptance", () => {
-    expect(section).toContain("awaitingIssueById.has(row.id)");
+    /* Still true, and now truer: the acceptance and the act are on the SAME
+       row rather than in two lists that had to be read together. The roster
+       derives "they accepted; the Passport has not been issued" as that
+       partner's one next step, and the button is on it. */
+    const roster = readFileSync("src/lib/aml/passport/partnerRoster.pure.ts", "utf8");
+    expect(roster).toContain('kind: "issue_passport"');
+    expect(roster).toContain('ack?.status === "accepted"');
+    expect(section).toContain("PartnerRosterPanel");
+    expect(section).toContain("onSend: sendFromRoster");
+    // The handover banner still names the act while an acceptance is fresh.
     expect(section).toContain("Issue the Passport");
   });
 

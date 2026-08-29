@@ -89,7 +89,17 @@ const mount = (a: PartnerPortalAdapter, c: PartnerWorkspaceClient) =>
   );
 
 describe("shared partner compliance workspace", () => {
-  it("renders the fixed responsibility notice in every state, including denial", async () => {
+  it("the denial renders as the page, with a heading and a route out", async () => {
+    /* This used to assert the standing responsibility banner appeared even
+       here. That banner is gone from every portal — a partner reaches this
+       page only after signing the written arrangement and giving its
+       acknowledgements, so restating it on every visit, including on a page
+       that is refusing them, was repetition rather than notice.
+
+       What the denial must still do is the reason the test exists: name
+       itself, say why, and leave the emailed link standing. A partner who
+       followed "Open it in your Finance Portal" and landed on one grey
+       sentence cannot tell a broken product from a wrong turn. */
     const denied: PartnerWorkspaceClient = {
       ...client(),
       getDirectory: vi.fn(async () => ({
@@ -99,9 +109,13 @@ describe("shared partner compliance workspace", () => {
     };
     mount(adapter(), denied);
     await waitFor(() => {
-      expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
+      expect(screen.getByTestId("partner-compliance-workspace")).toBeTruthy();
     });
-    expect(screen.getByText(RESPONSIBILITY_NOTICE)).toBeTruthy();
+    expect(screen.getByText(/This page is not available to your account yet/i)).toBeTruthy();
+    expect(screen.getByText(/that link still works/i)).toBeTruthy();
+    // And it does NOT carry the banner any more, in any state.
+    expect(screen.queryByTestId("partner-responsibility-notice")).toBeNull();
+    expect(screen.queryByText(RESPONSIBILITY_NOTICE)).toBeNull();
   });
 
   it("renders the full workspace with summary, procedures, determination and requests", async () => {
@@ -109,7 +123,6 @@ describe("shared partner compliance workspace", () => {
     await waitFor(() => {
       expect(screen.getByTestId("partner-compliance-summary")).toBeTruthy();
     });
-    expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
     expect(screen.getByTestId("partner-procedures")).toBeTruthy();
     expect(screen.getByTestId("partner-assessment-form")).toBeTruthy();
     expect(screen.getByTestId("partner-records-request")).toBeTruthy();
@@ -155,7 +168,6 @@ describe("shared partner compliance workspace", () => {
     // the same testids render — there is no second implementation.
     expect(screen.getAllByText("Matter compliance").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("partner-audit-receipt")).toBeNull();
-    expect(screen.getByTestId("partner-responsibility-notice")).toBeTruthy();
   });
 
   it("leaks no internal AML vocabulary anywhere in the rendered output", async () => {
@@ -175,10 +187,14 @@ describe("shared partner compliance workspace", () => {
     }
   });
 
-  it("supports keyboard interaction: matter tabs are real buttons with aria-current", async () => {
+  it("supports keyboard interaction: matters are real buttons with aria-current", async () => {
+    /* The chip row became a searchable filing list — a partner accumulates
+       Passports, and "Matter …6a5a49" does not survive ten of them. The
+       property is unchanged: each matter is a real button, and the selected
+       one is marked for assistive technology. */
     mount(adapter(), client());
     await waitFor(() => expect(screen.getByTestId("partner-compliance-summary")).toBeTruthy());
-    const nav = screen.getByRole("navigation", { name: /purchase file list/i });
+    const nav = screen.getByRole("navigation", { name: /matters shared with your organisation/i });
     const buttons = nav.querySelectorAll("button");
     expect(buttons.length).toBe(1);
     expect(buttons[0].getAttribute("aria-current")).toBe("true");

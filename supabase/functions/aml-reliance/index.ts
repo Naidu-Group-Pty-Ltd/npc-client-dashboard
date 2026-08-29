@@ -99,6 +99,16 @@ import {
   type ReadinessItem,
   type SlaTarget,
 } from "../_shared/aml/partnerOperations.ts";
+import {
+  partnerSurfaceMode, passportDisclosure,
+  type PartnerSurfaceMode,
+} from "../_shared/aml/partnerSurface.pure.ts";
+import {
+  PORTAL_ROUTES, portalHandoff,
+} from "../_shared/aml/partnerPortalHandoff.pure.ts";
+import {
+  grantsNeedingForwardManifest, resolveAttestationForRead,
+} from "../_shared/aml/passport/attestationCurrency.pure.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
@@ -657,6 +667,13 @@ async function flagEnabled(admin: any, key: string): Promise<boolean> {
 const partnerIdentityEnforced = (admin: any) => flagEnabled(admin, "aml_partner_identity");
 const arrangementGovernanceEnforced = (admin: any) => flagEnabled(admin, "aml_arrangement_governance");
 const attestationV2Enabled = (admin: any) => flagEnabled(admin, "aml_attestation_v2");
+/* The Compliance Passport, inside a partner's own portal. Turning this on
+   NARROWS the compliance page to the document alone (see
+   `_shared/aml/partnerSurface.pure.ts`) unless the full workspace is
+   separately enabled — so a deployment cannot acquire eight unreviewed
+   panels as a side effect of showing a Passport. */
+const partnerPassportViewEnabled = (admin: any) => flagEnabled(admin, "aml_partner_passport_view");
+const partnerFullWorkspaceEnabled = (admin: any) => flagEnabled(admin, "aml_partner_workspace_full");
 
 const PARTNER_ORG_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer", "other"];
 const PARTNER_PORTAL_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer"];
@@ -850,13 +867,156 @@ async function loadScopedPartnerLink(admin: any, linkId: string, partnerOrgId: s
 
 /** Latest grant/attestation pair for a case × canonical organisation. Only
  * canonically-stamped grants participate — the workspace is the new path. */
+/**
+ * This organisation's most recent grant on this matter.
+ *
+ * ── Why there are two routes and not one ──────────────────────────────
+ * A grant carries `partner_org_id` only when its ARRANGEMENT carried one,
+ * and until `create_agreement` accepted an organisation, none of them did:
+ * every grant the onboarding wizard produced had NULL there. Looking up by
+ * that column alone therefore answered "no grant" for a partner who plainly
+ * held one, and the portal reported the Passport as never shared.
+ *
+ * The second route is the arrangement's own pointer, which is the same fact
+ * by a second explicit path — not an inference. Both are recorded decisions;
+ * neither is a name match, and nothing here falls back to guessing which
+ * organisation an arrangement "probably" meant.
+ *
+ * Deliberately two queries rather than one `.or()`: a PostgREST filter
+ * composed as a string is the defect class this codebase has a contract test
+ * for, and it would have to interpolate a UUID list here.
+ */
 async function loadOrgGrantAndAttestation(admin: any, caseId: string, partnerOrgId: string) {
-  const { data: grant } = await admin.schema("aml").from("reliance_grants")
-    .select("*, compliance_attestations:attestation_id(*)")
+  const select = "*, compliance_attestations:attestation_id(*)";
+  const { data: direct } = await admin.schema("aml").from("reliance_grants")
+    .select(select)
     .eq("case_id", caseId).eq("partner_org_id", partnerOrgId)
     .order("granted_at", { ascending: false }).limit(1).maybeSingle();
+  let grant = direct ?? null;
+
+  if (!grant) {
+    const { data: agreements } = await admin.schema("aml").from("reliance_agreements")
+      .select("id").eq("partner_org_id", partnerOrgId);
+    const agreementIds = (agreements ?? []).map((a: any) => String(a.id));
+    if (agreementIds.length > 0) {
+      const { data: viaAgreement } = await admin.schema("aml").from("reliance_grants")
+        .select(select)
+        .eq("case_id", caseId).in("agreement_id", agreementIds)
+        .order("granted_at", { ascending: false }).limit(1).maybeSingle();
+      grant = viaAgreement ?? null;
+    }
+  }
   if (!grant) return { grant: null, attestation: null };
   return { grant, attestation: (grant as any).compliance_attestations ?? null };
+}
+
+
+/**
+ * "Open it in your portal", resolved for one grant.
+ *
+ * Every input is a fact the server holds: the arrangement's organisation
+ * type decides WHICH portal, the surface flags decide whether that page
+ * exists, and an active membership decides whether anybody could sign in and
+ * reach it. The rule itself is `portalHandoff` — shared with the browser, so
+ * the destination advertised and the route served cannot drift.
+ *
+ * It never widens access. The path carries a matter identifier, which grants
+ * nothing: the portal session re-derives the organisation and re-checks every
+ * rule on arrival, and a matter belonging to somebody else is simply not
+ * found. The bearer token never appears in it — a credential in a browser
+ * address bar survives in history, referrers and screenshots.
+ */
+async function resolvePortalHandoff(
+  admin: any,
+  grant: any,
+  agreement: any,
+  origin: string | null,
+) {
+  const orgType = String(agreement?.partner_org_type ?? "");
+  const route = PORTAL_ROUTES[orgType as keyof typeof PORTAL_ROUTES];
+  if (!route) {
+    return portalHandoff(
+      { partnerOrgType: orgType, surfaceEnabled: false, hasActiveMembership: false },
+      origin,
+    );
+  }
+
+  /* The organisation, by either explicit route — the grant's own column, or
+     its arrangement's. See `loadOrgGrantAndAttestation` for why both exist. */
+  const orgId = grant?.partner_org_id
+    ? String(grant.partner_org_id)
+    : (agreement?.partner_org_id ? String(agreement.partner_org_id) : null);
+
+  const surfaceEnabled = orgId
+    ? (await flagEnabled(admin, "aml_partner_compliance_workspace"))
+      && (await flagEnabled(admin, SURFACE_FLAG_BY_SURFACE[route.surface]))
+      && (await partnerPassportViewEnabled(admin))
+    : false;
+
+  let hasActiveMembership = false;
+  let linkId: string | null = grant?.partner_case_link_id
+    ? String(grant.partner_case_link_id) : null;
+
+  if (orgId) {
+    const { count } = await admin.schema("aml").from("partner_portal_memberships")
+      .select("id", { count: "exact", head: true })
+      .eq("partner_org_id", orgId).eq("status", "active");
+    hasActiveMembership = (count ?? 0) > 0;
+
+    if (!linkId) {
+      /* The grant predates partner links, or was minted before its
+         arrangement named an organisation. The matter is still knowable
+         exactly — one ACTIVE link for this organisation on this case — and
+         is left absent rather than guessed when it is not. */
+      const { data: links } = await admin.schema("aml").from("partner_case_links")
+        .select("id, portal_type")
+        .eq("case_id", grant.case_id).eq("partner_org_id", orgId).eq("state", "active");
+      const candidates = (links ?? []).filter(
+        (l: any) => SURFACE_PORTAL_TYPES[route.surface].includes(String(l.portal_type)));
+      if (candidates.length === 1) linkId = String(candidates[0].id);
+    }
+  }
+
+  return portalHandoff({
+    partnerOrgType: orgType,
+    partnerCaseLinkId: linkId,
+    surfaceEnabled,
+    hasActiveMembership,
+  }, origin);
+}
+
+/** Surface → its own feature flag, mirroring WORKSPACE_PORTAL_FLAGS. */
+const SURFACE_FLAG_BY_SURFACE: Record<string, string> = {
+  finance: "aml_partner_workspace_finance",
+  builder: "aml_partner_workspace_builder",
+  solicitor_conveyancer: "aml_partner_workspace_solicitor",
+};
+
+
+/**
+ * The attestation a grant's holder actually reads.
+ *
+ * A grant authorises a PARTNER to read a CASE's attested record; it does not
+ * freeze which version of that record they see. The pin on the grant stays
+ * exactly as it is — it records what the access was issued against, which is
+ * the audit fact — and the reading follows the case's current version.
+ *
+ * Before this, issuing v2 answered every existing partner 409
+ * `attestation_superseded` and told them to ask for new access. Nothing was
+ * broken; it worked as written. But a routine re-issue silently revoked every
+ * partner's access and the only repair was to re-send the Passport to each of
+ * them by hand.
+ */
+async function attestationForGrantRead(admin: any, grant: any) {
+  const pinned = (grant as any).compliance_attestations ?? null;
+  const { data: current } = await admin.schema("aml").from("compliance_attestations")
+    .select("*").eq("case_id", grant.case_id).is("superseded_at", null)
+    .order("version", { ascending: false }).limit(1).maybeSingle();
+  return {
+    reading: resolveAttestationForRead({ current: current ?? null, pinned }),
+    current: current ?? null,
+    pinned,
+  };
 }
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
@@ -879,6 +1039,48 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // the master or surface flag off these ops answer 404 and the system
     // behaves exactly as before Phase 4.
 
+    /* ── does this portal's compliance page exist? ────────────────────
+       Answered HERE, before the workspace gate, and deliberately without a
+       session.
+
+       The browser used to answer this itself with
+       `supabase.from("feature_flags").select(...)`, and that read can never
+       work for a partner: `public.feature_flags` grants SELECT `TO
+       authenticated`, and a portal user's browser client is anon — their
+       identity is the portal's own cookie or token session, not a Supabase
+       one. RLS does not error on a role that matches no policy, it FILTERS.
+       So the query returned `[]` with HTTP 200, `error` was null, every flag
+       coerced from `undefined` to `false`, and the page reported "The
+       compliance workspace is not available" however the database was set.
+
+       The same trap is documented on `useAmlV3Flags` and
+       `useBuilderStockMarketplaceFlag`. The rule they state is the rule
+       here: read through the server.
+
+       It discloses nothing. Whether a page exists is what the navigation
+       shows anyway, and no case, partner or record is named. */
+    if (op === "get_partner_surface_availability") {
+      const requested = String(body.portal_type ?? "");
+      const surface = requested === "developer" ? "builder" : requested;
+      const flagKey = WORKSPACE_PORTAL_FLAGS[surface];
+      if (!flagKey) {
+        return jr({ error: `portal_type must be one of: ${Object.keys(WORKSPACE_PORTAL_FLAGS).join(", ")}` }, 400);
+      }
+      const master = await flagEnabled(admin, "aml_partner_compliance_workspace");
+      const surfaceOn = await flagEnabled(admin, flagKey);
+      return jr({
+        availability: {
+          portal_type: surface,
+          /* The PAGE exists when the master and the surface are both on. The
+             document on it is a second question, so it is reported
+             separately rather than folded in — a page with a withheld
+             Passport is a real state and must not read as no page. */
+          compliance_page: master && surfaceOn,
+          passport_view: master && surfaceOn && await partnerPassportViewEnabled(admin),
+        },
+      });
+    }
+
     if (PARTNER_WORKSPACE_OPS.has(op)) {
       const surfaceForFlag = String(body.portal_type ?? "");
       const masterOn = await flagEnabled(admin, "aml_partner_compliance_workspace");
@@ -891,24 +1093,127 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!ctx.ok) return jr({ error: ctx.error, code: ctx.code }, ctx.status);
       const { surface, source, portalUserId, portalUserLabel, membership, partnerOrg } = ctx;
 
+      /* What this partner's compliance page IS. Decided here, on the server,
+         and sent to the browser — never derived client-side, because a page
+         that decided its own scope could show a panel the deployment has not
+         enabled. `partnerSurfaceMode` is the same module the browser uses to
+         turn this answer into a panel list. */
+      const surfaceMode: PartnerSurfaceMode = partnerSurfaceMode({
+        passportViewEnabled: await partnerPassportViewEnabled(admin),
+        fullWorkspaceEnabled: await partnerFullWorkspaceEnabled(admin),
+      });
+
       if (op === "get_partner_compliance_workspace") {
         const linkId = String(body.partner_case_link_id ?? "");
         if (!linkId) {
           // Link directory: the organisation's own links only, safe fields only.
           const { data: links } = await admin.schema("aml").from("partner_case_links")
-            .select("id, relationship_role, legal_route, state, portal_type, linked_at, ended_at, end_reason_code, purchase_file_id, legal_matter_id")
+            .select("id, case_id, relationship_role, legal_route, state, portal_type, linked_at, ended_at, end_reason_code, purchase_file_id, legal_matter_id")
             .eq("partner_org_id", partnerOrg.id)
             .in("portal_type", SURFACE_PORTAL_TYPES[surface])
             .order("linked_at", { ascending: false }).limit(100);
+          const linkRows: any[] = links ?? [];
+
+          /* ── what each matter may be CALLED ────────────────────────────
+             The list used to label every matter with the last six characters
+             of its own row id — "Matter …6a5a49" — which names nothing a
+             partner recognises and does not scale past a handful.
+
+             The customer's name and the case reference are printed on page
+             one of the Passport, so naming them on a matter whose Passport is
+             DISCLOSABLE tells the partner nothing they cannot already read.
+             Naming them on a withheld matter would be a new disclosure made
+             by a list rather than by a decision — so the enrichment is
+             attached per link, only where `passportDisclosure` allows it, and
+             the browser is never trusted to make that call.
+
+             Three batched reads rather than one per link: a partner with
+             fifty matters must not cost a hundred and fifty queries. */
+          const caseIds = [...new Set(linkRows.map((l) => String(l.case_id)).filter(Boolean))];
+          if (caseIds.length > 0) {
+            const [{ data: caseRows }, { data: grantRows }, { data: attRows }] = await Promise.all([
+              admin.schema("aml").from("cases")
+                .select("id, case_reference, subject_display_name").in("id", caseIds),
+              admin.schema("aml").from("reliance_grants")
+                .select("id, case_id, agreement_id, partner_org_id, granted_at, expires_at, revoked_at, revoke_reason")
+                .in("case_id", caseIds),
+              admin.schema("aml").from("compliance_attestations")
+                .select("id, case_id, version, superseded_at, refresh_required_at")
+                .in("case_id", caseIds).is("superseded_at", null),
+            ]);
+            /* A grant reaches this organisation by either explicit route —
+               its own column, or its arrangement's. Same rule as
+               `loadOrgGrantAndAttestation`; never a name match. */
+            const { data: orgAgreements } = await admin.schema("aml").from("reliance_agreements")
+              .select("id").eq("partner_org_id", partnerOrg.id);
+            const agreementIds = new Set((orgAgreements ?? []).map((a: any) => String(a.id)));
+            const caseById = new Map((caseRows ?? []).map((c: any) => [String(c.id), c]));
+            const attByCase = new Map((attRows ?? []).map((a: any) => [String(a.case_id), a]));
+            const grantByCase = new Map<string, any>();
+            for (const g of (grantRows ?? [])) {
+              const mine = (g.partner_org_id && String(g.partner_org_id) === String(partnerOrg.id))
+                || agreementIds.has(String(g.agreement_id));
+              if (!mine) continue;
+              if (String(g.revoke_reason ?? "") === "superseded_by_reissue") continue;
+              const key = String(g.case_id);
+              const held = grantByCase.get(key);
+              if (!held || String(g.granted_at) > String(held.granted_at)) grantByCase.set(key, g);
+            }
+
+            for (const link of linkRows) {
+              const key = String(link.case_id);
+              const grant = grantByCase.get(key) ?? null;
+              const attestation = attByCase.get(key) ?? null;
+              const decision = passportDisclosure({
+                grant: grant
+                  ? { revoked_at: grant.revoked_at ?? null, expires_at: grant.expires_at }
+                  : null,
+                attestation: attestation
+                  ? {
+                    superseded_at: attestation.superseded_at ?? null,
+                    refresh_required_at: attestation.refresh_required_at ?? null,
+                  }
+                  : null,
+              });
+              const expiring = decision.disclosable && grant
+                && new Date(grant.expires_at).getTime() - Date.now() <= 14 * 864e5;
+              link.expires_at = grant?.expires_at ?? null;
+              link.passport_state = decision.disclosable
+                ? (expiring ? "expiring" : "available")
+                : decision.code === "revoked" ? "withdrawn"
+                  : decision.code === "expired" ? "expired"
+                    : decision.code === "refresh_required" ? "updating"
+                      : "not_shared";
+              // Named ONLY where the record may be read.
+              if (decision.disclosable) {
+                const row = caseById.get(key);
+                link.subject_label = row?.subject_display_name ?? null;
+                link.case_reference = row?.case_reference ?? null;
+              }
+              delete link.case_id;
+            }
+          }
+
           return jr({
             organisation: { legal_name: partnerOrg.legal_name, classification_status: partnerOrg.classification_status },
-            links: links ?? [],
+            links: linkRows,
+            surface_mode: surfaceMode,
           });
         }
         const link = await loadScopedPartnerLink(admin, linkId, partnerOrg.id, surface);
         if (!link) return jr({ error: "Not found" }, 404);
 
-        const { grant, attestation } = await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        const { grant, attestation: pinnedAttestation } =
+          await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        /* The SAME currency rule the emailed link uses. Without it a partner
+           reading in their portal would be pinned to the version their grant
+           was minted against while the link showed the current one — two
+           surfaces disagreeing about one record, which is the failure this
+           whole architecture exists to prevent. */
+        const portalCurrency = grant
+          ? await attestationForGrantRead(admin, { ...grant, compliance_attestations: pinnedAttestation })
+          : null;
+        const attestation = portalCurrency?.reading.serve ?? pinnedAttestation;
         let procedures: Record<string, unknown> | null = null;
         let recordAvailability: string[] = [];
         let limitations: string[] = [];
@@ -970,17 +1275,71 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           now: new Date(),
         });
 
-        // A workspace view that actually disclosed procedure content is an
-        // access — logged like a token redemption.
-        if (grant && dto.procedures) {
+        /* ── the Compliance Passport, in the partner's own portal ───────
+           The DOCUMENT, from `buildCasePassportView` — the same assembler,
+           the same composer and the same `assertPartnerSafe` boundary that
+           `redeem_attestation` serves to the emailed link. It is deliberately
+           the same call rather than a portal-specific projection: the
+           standing requirement is that the partner's copy and the Command
+           Centre's are one record, and two implementations of "the partner's
+           view" is precisely how that stops being true.
+
+           Whether it may be shown is decided by `passportDisclosure` from the
+           grant and the attestation — never by the page, never by the mode.
+           A revoked grant, a lapsed one, a superseded attestation or one
+           flagged for refresh all withhold it and say which, in words a
+           partner may read. */
+        const disclosure = passportDisclosure({
+          grant: grant ? { revoked_at: grant.revoked_at ?? null, expires_at: grant.expires_at } : null,
+          attestation: attestation
+            ? {
+              superseded_at: attestation.superseded_at ?? null,
+              refresh_required_at: attestation.refresh_required_at ?? null,
+            }
+            : null,
+        });
+        const passportEnabled = surfaceMode === "passport_only"
+          || await partnerPassportViewEnabled(admin);
+        let passportView: unknown = null;
+        if (passportEnabled && disclosure.disclosable) {
+          passportView = await buildCasePassportView(admin, link.case_id, "partner");
+        }
+
+        // A workspace view that actually disclosed the record — procedure
+        // content, the Passport document, or both — is an access, logged
+        // exactly like a token redemption. One row per view, never two.
+        if (grant && (dto.procedures || passportView)) {
           await admin.schema("aml").from("reliance_access_log").insert({
             grant_id: grant.id, case_id: link.case_id, action: "view_attestation",
             actor_label: `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`,
             ip_address: ip,
-            detail: { via: "partner_workspace", partner_case_link_id: link.id, attestation_version: attestation?.version ?? null },
+            detail: {
+              via: "partner_workspace", partner_case_link_id: link.id,
+              attestation_version: attestation?.version ?? null,
+              passport_disclosed: Boolean(passportView),
+              procedures_disclosed: Boolean(dto.procedures),
+            },
           });
         }
-        return jr({ workspace: dto });
+        return jr({
+          workspace: dto,
+          surface_mode: surfaceMode,
+          passport: passportView,
+          /* Said even when the document is withheld, and especially then: a
+             page with nothing on it and no explanation is the failure this
+             whole programme keeps finding. */
+          passport_availability: passportEnabled
+            ? { code: disclosure.code, message: disclosure.message }
+            : { code: "not_enabled", message: "" },
+          record_currency: portalCurrency
+            ? {
+              code: portalCurrency.reading.code,
+              moved_forward: portalCurrency.reading.movedForward,
+              issued_against_version: portalCurrency.reading.issuedAgainstVersion,
+              message: portalCurrency.reading.message,
+            }
+            : null,
+        });
       }
 
       if (op === "request_cdd_records") {
@@ -1716,9 +2075,32 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
       const grant = resolved.grant;
       const agreement = (grant as any).reliance_agreements;
-      const attestation = (grant as any).compliance_attestations;
+
+      /* ── one living record ────────────────────────────────────────────
+         The version the holder reads is the case's CURRENT one, not the one
+         their grant was minted against. `currency` carries what changed so
+         the page can say it: a partner who relied on v1 and is now reading
+         v2 has to be able to see that, because what they may rely on is the
+         record in front of them and not the one they remember. */
+      const currency = await attestationForGrantRead(admin, grant);
+      const attestation = currency.reading.serve ?? (grant as any).compliance_attestations;
 
       if (op === "redeem_attestation") {
+        if (!currency.reading.serve) {
+          // Known-wrong beats known-old: a refresh in flight has nothing
+          // correct to serve, and that is not the same as supersession.
+          await admin.schema("aml").from("reliance_access_log").insert({
+            grant_id: grant.id, case_id: grant.case_id, action: "view_attestation",
+            actor_label: agreement.partner_org_name, ip_address: ip,
+            detail: { denied: currency.reading.code },
+          });
+          return jr({
+            error: currency.reading.message,
+            code: currency.reading.code === "refresh_required"
+              ? "attestation_refresh_required" : "attestation_unavailable",
+            refresh_required: currency.reading.code === "refresh_required",
+          }, 409);
+        }
         const schemaVersion = attestation.schema_version ?? 1;
 
         // Schema-aware reading. v1 historical grants behave exactly as
@@ -1734,27 +2116,26 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
               detail: { attestation_version: attestation.version, denied: code },
             });
           };
-          if (attestation.superseded_at) {
-            await logDenied("attestation_superseded");
+          /* Supersession and refresh are settled BEFORE this branch by
+             `resolveAttestationForRead`: what reaches here is the case's
+             current, unflagged version or nothing at all. The belt stays on
+             — a superseded document must never be served, and asserting it
+             here costs nothing and would catch a future resolver that
+             regressed. */
+          if (attestation.superseded_at || attestation.refresh_required_at) {
+            await logDenied("attestation_not_current");
             return jr({
-              error: "This attestation has been superseded. Ask the issuing organisation for current access.",
-              code: "attestation_superseded",
-              refresh_required: true,
+              error: "This record is being updated. It will be available here without a new link.",
+              code: "attestation_refresh_required", refresh_required: true,
             }, 409);
           }
-          // Phase 6: a material change flags the attestation for refresh
-          // without superseding it — flagged content stops being served the
-          // same way. Safe wording only; the trigger detail stays internal.
-          if (attestation.refresh_required_at) {
-            await logDenied("attestation_refresh_required");
-            return jr({
-              error: "The information behind this attestation has been updated. Ask the issuing organisation for refreshed access.",
-              code: "attestation_refresh_required",
-              refresh_required: true,
-            }, 409);
-          }
+          /* The manifest for THIS version. A grant now accumulates one per
+             attestation it has been carried forward onto, so the lookup is
+             scoped by both — an unscoped `.maybeSingle()` would fail outright
+             on the second version. */
           const { data: manifest } = await admin.schema("aml").from("disclosure_manifests")
-            .select("*").eq("grant_id", grant.id).maybeSingle();
+            .select("*").eq("grant_id", grant.id).eq("attestation_id", attestation.id)
+            .order("created_at", { ascending: false }).limit(1).maybeSingle();
           const manifestDecision = evaluateManifestForRead(manifest ?? null, new Date());
           if (!manifestDecision.ok) {
             await logDenied(manifestDecision.code);
@@ -1785,6 +2166,21 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             // carries the due-diligence outcomes and none of the reasoning —
             // `assertPartnerSafe` throws rather than serve a widened one.
             passport: await buildCasePassportView(admin, grant.case_id, "partner"),
+            /* Where else this record lives. A link is a delivery; a portal is
+               a place you go back to — and a partner who holds a portal
+               account should not have to keep an email to re-read a record
+               they may rely on. Offered only when the page exists AND
+               somebody could sign in and reach it. */
+            portal_handoff: await resolvePortalHandoff(
+              admin, grant, agreement, req.headers.get("origin")),
+            /* One living record: which version this is, and whether it moved
+               since the access was issued. Stated rather than hidden. */
+            record_currency: {
+              code: currency.reading.code,
+              moved_forward: currency.reading.movedForward,
+              issued_against_version: currency.reading.issuedAgainstVersion,
+              message: currency.reading.message,
+            },
             attestation_sha256: attestation.payload_sha256,
             schema_version: 2,
             // The version this grant is bound to. The Command Centre prints
@@ -1810,6 +2206,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         return jr({
           attestation: attestation.payload,
           passport: await buildCasePassportView(admin, grant.case_id, "partner"),
+          portal_handoff: await resolvePortalHandoff(
+            admin, grant, agreement, req.headers.get("origin")),
+          /* One living record: which version this is, and whether it moved
+               since the access was issued. Stated rather than hidden. */
+          record_currency: {
+            code: currency.reading.code,
+            moved_forward: currency.reading.movedForward,
+            issued_against_version: currency.reading.issuedAgainstVersion,
+            message: currency.reading.message,
+          },
           attestation_sha256: attestation.payload_sha256,
           attestation_version: attestation.version ?? null,
           issued_at: attestation.issued_at,
@@ -1910,15 +2316,100 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!ref) return jr({ error: "agreement_reference is required — reliance without a written CDD arrangement is not available under Pt 2 Div 7" }, 400);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(executed)) return jr({ error: "executed_on must be YYYY-MM-DD" }, 400);
         if (!/^\d{4}-\d{2}-\d{2}$/.test(review)) return jr({ error: "next_review_due must be YYYY-MM-DD — the arrangement must be reviewed regularly" }, 400);
-        const { data, error } = await admin.schema("aml").from("reliance_agreements").insert({
+        /* ── the pointer that was never written ────────────────────────
+           An arrangement recorded only a free-text `partner_org_name`, so
+           the written arrangement and the canonical organisation were two
+           records that never pointed at each other. `grant_access` stamps
+           `partner_org_id` on a grant only `if (agreement.partner_org_id)`,
+           so every grant the onboarding wizard produced carried NULL — and
+           the partner's own portal looks its grant up BY organisation. The
+           Passport was correct, current and unreachable from the portal it
+           was issued for.
+
+           It is validated, never trusted: the organisation must exist and
+           be active, and its type must match the arrangement's, because an
+           arrangement that names one kind of partner and points at another
+           is a mapping error that would surface as a disclosure. */
+        const orgId = String(body.partner_org_id ?? "").trim();
+        let boundOrgId: string | null = null;
+        if (orgId) {
+          const { data: org } = await admin.schema("aml").from("partner_organisations")
+            .select("id, status, organisation_type, legal_name").eq("id", orgId).maybeSingle();
+          if (!org) return jr({ error: "Partner organisation not found", code: "organisation_missing" }, 404);
+          if (org.status !== "active") {
+            return jr({ error: `Partner organisation is ${org.status}`, code: "organisation_not_active" }, 409);
+          }
+          if (org.organisation_type !== type) {
+            return jr({
+              error: `Type mismatch: the arrangement records "${type}" but ${org.legal_name} is "${org.organisation_type}". Correct whichever record is wrong.`,
+              code: "organisation_type_mismatch",
+            }, 409);
+          }
+          boundOrgId = org.id;
+        }
+        const insertRow: Record<string, unknown> = {
           partner_org_name: name.slice(0, 200), partner_org_type: type,
           partner_abn: String(body.partner_abn ?? "").slice(0, 20) || null,
           agreement_reference: ref.slice(0, 200), executed_on: executed,
           next_review_due: review, notes: String(body.notes ?? "").slice(0, 2000) || null,
           created_by: userId,
-        }).select("*").single();
+        };
+        if (boundOrgId) insertRow.partner_org_id = boundOrgId;
+        const { data, error } = await admin.schema("aml").from("reliance_agreements")
+          .insert(insertRow).select("*").single();
         if (error) throw error;
         return jr({ agreement: data });
+      }
+
+      /* ── binding an existing arrangement to its organisation ──────────
+         The repair for arrangements written before `create_agreement`
+         accepted an organisation. It is an EXPLICIT act by the MLRO — the
+         operator selected both records — and never a name match: two
+         organisations may lawfully share a name, and the mapping review
+         exists precisely because guessing between them is not allowed.
+
+         Bind once, never re-point, exactly as the portal binding does. An
+         arrangement that already names a different organisation is a
+         mapping error to be corrected at the source, not overwritten here:
+         re-pointing it silently moves every grant it has ever issued. */
+      case "bind_agreement_organisation": {
+        if (!isMlro) return jr({ error: "MLRO role required — partner identity is outward-facing configuration" }, 403);
+        const agreementId = String(body.agreement_id ?? "");
+        const orgId = String(body.partner_org_id ?? "");
+        if (!agreementId || !orgId) {
+          return jr({ error: "agreement_id and partner_org_id are required" }, 400);
+        }
+        const { data: agreementRow } = await admin.schema("aml").from("reliance_agreements")
+          .select("id, partner_org_id, partner_org_type, partner_org_name")
+          .eq("id", agreementId).maybeSingle();
+        if (!agreementRow) return jr({ error: "Agreement not found" }, 404);
+        const { data: orgRow } = await admin.schema("aml").from("partner_organisations")
+          .select("id, status, organisation_type, legal_name").eq("id", orgId).maybeSingle();
+        if (!orgRow) return jr({ error: "Partner organisation not found", code: "organisation_missing" }, 404);
+        if (orgRow.status !== "active") {
+          return jr({ error: `Partner organisation is ${orgRow.status}`, code: "organisation_not_active" }, 409);
+        }
+        if (orgRow.organisation_type !== agreementRow.partner_org_type) {
+          return jr({
+            error: `Type mismatch: the arrangement records "${agreementRow.partner_org_type}" but ${orgRow.legal_name} is "${orgRow.organisation_type}". Correct whichever record is wrong.`,
+            code: "organisation_type_mismatch",
+          }, 409);
+        }
+        if (agreementRow.partner_org_id && String(agreementRow.partner_org_id) !== orgId) {
+          return jr({
+            error: `${agreementRow.partner_org_name} is already bound to a different partner organisation. Re-pointing it would move every grant this arrangement has issued — correct the records rather than re-binding.`,
+            code: "agreement_org_conflict",
+          }, 409);
+        }
+        if (agreementRow.partner_org_id) {
+          return jr({ agreement: agreementRow, bound: "already" });
+        }
+        const { data: updated, error: bindErr } = await admin.schema("aml")
+          .from("reliance_agreements")
+          .update({ partner_org_id: orgId, updated_at: new Date().toISOString() })
+          .eq("id", agreementId).select("*").single();
+        if (bindErr) throw bindErr;
+        return jr({ agreement: updated, bound: "set" });
       }
 
       case "review_agreement": {
@@ -2047,6 +2538,69 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             .update({ superseded_by_id: att.id }).eq("id", last.id);
         }
 
+        /* ── carry every live authorisation onto the new version ───────
+           This is what made re-issuing revoke everybody. A v2 grant reads
+           through a disclosure manifest scoped to ONE attestation, and
+           issuing a new version wrote the version and nothing else — so
+           every partner's next read failed `manifest_missing`, or (before
+           the currency resolver) `attestation_superseded`. Either way a
+           routine re-issue silently cut off every partner who already held
+           the Passport, and the only repair was to re-send it to each of
+           them by hand.
+
+           It is ADDITIVE and it widens nothing: one new manifest row per
+           live grant, with the record classes, denied classes and expiry
+           copied from the manifest it succeeds. A partner's authorisation
+           after a re-issue is exactly what it was before it. A grant whose
+           predecessor had no manifest gets none — absence of evidence is
+           not authority, and it will fail closed on read as it should. */
+        let carriedForward = 0;
+        if (v2 && (att.schema_version ?? 1) === 2) {
+          const { data: liveGrants } = await admin.schema("aml").from("reliance_grants")
+            .select("id, revoked_at, expires_at, partner_org_id, partner_case_link_id, consent_id")
+            .eq("case_id", caseId).is("revoked_at", null);
+          const carry = grantsNeedingForwardManifest(liveGrants ?? [], {
+            schemaVersion: att.schema_version ?? 1,
+          });
+          for (const g of carry) {
+            const { data: previous } = await admin.schema("aml").from("disclosure_manifests")
+              .select("*").eq("grant_id", g.id)
+              .order("created_at", { ascending: false }).limit(1).maybeSingle();
+            if (!previous) continue;
+            const { data: already } = await admin.schema("aml").from("disclosure_manifests")
+              .select("id").eq("grant_id", g.id).eq("attestation_id", att.id).maybeSingle();
+            if (already) continue;
+            const manifestScope = {
+              allowed_attribute_codes: previous.allowed_attribute_codes ?? [],
+              allowed_record_classes: previous.allowed_record_classes ?? [],
+              denied_classes: previous.denied_classes ?? [],
+            };
+            const manifestSha = await sha256HexCanonical({
+              ...manifestScope, attestation_id: att.id, grant_id: g.id, version: 1,
+            });
+            const { error: carryError } = await admin.schema("aml")
+              .from("disclosure_manifests").insert({
+                attestation_id: att.id, grant_id: g.id,
+                partner_org_id: g.partner_org_id ?? null,
+                partner_case_link_id: g.partner_case_link_id ?? null,
+                purpose: previous.purpose,
+                consent_id: previous.consent_id ?? g.consent_id ?? null,
+                ...manifestScope,
+                manifest_sha256: manifestSha,
+                expires_at: previous.expires_at,
+                created_by: userId,
+              });
+            if (carryError) {
+              // Never fatal to the issue itself — the version is the
+              // compliance act. A grant that could not be carried forward
+              // fails CLOSED on read, which is the safe direction.
+              console.warn("[aml-reliance] manifest carry-forward skipped:", carryError.message);
+            } else {
+              carriedForward += 1;
+            }
+          }
+        }
+
         await appendCaseEvent(admin, caseId, "mlro_decision",
           `Compliance attestation v${version} issued (sha ${payloadSha.slice(0, 12)})`,
           {
@@ -2054,8 +2608,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             schema_version: v2 ? 2 : 1,
             material_input_hash: materialHash,
             issued_reason_code: (insertExtra.issued_reason_code as string | undefined) ?? null,
+            grants_carried_forward: carriedForward,
           }, userId, userEmail);
-        return jr({ attestation: att });
+        /* Reported, because it is the answer to "what did issuing just do to
+           the partners who already hold this?" — which used to be "cut them
+           off" and was said nowhere. */
+        return jr({ attestation: att, grants_carried_forward: carriedForward });
       }
 
       case "list_attestations": {
@@ -2604,6 +3162,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           const brandCfg = await getBrandConfig();
           const orgLabel = String(agreement.partner_org_name).replace(/[<>]/g, "");
           const expiryLabel = new Date(grant.expires_at).toLocaleDateString("en-AU");
+          /* The second route to the same record, in the email itself — this
+             is the moment a recipient decides whether to keep the message.
+             `resolvePortalHandoff` returns `available: false` unless the page
+             exists and somebody could sign in and reach it, so this never
+             advertises a door that refuses. The absolute URL is built from
+             the same origin the Passport link uses rather than the request's,
+             because the request here is the Command Centre's. */
+          const handoff = await resolvePortalHandoff(
+            admin, grant, agreement, passportLink.replace(/\/passport\/.*$/, ""));
           const subject = `${brandCfg.companyName} — Compliance Passport access for ${orgLabel}`;
           const textBody = [
             `Your organisation has been given access to a Compliance Passport issued by ${brandCfg.companyName}.`,
@@ -2611,6 +3178,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             "No account or password is needed — open the link below:",
             passportLink,
             "",
+            ...(handoff.available && handoff.url
+              ? [
+                `You can also read it in your ${handoff.label}, on your AML/CTF Compliance page, whenever you need it:`,
+                handoff.url,
+                "",
+              ]
+              : []),
             `This access expires on ${expiryLabel}. If the link stops working, you can request a new one from the page itself.`,
             "",
             `— ${brandCfg.companyName}`,
@@ -2630,6 +3204,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
                   Open the Compliance Passport
                 </a>
               </p>
+              ${handoff.available && handoff.url ? `
+              <p style="color:#475569;font-size:14px;line-height:1.6;border-top:1px solid #e2e8f0;padding-top:16px;">
+                You also hold a <strong>${handoff.label}</strong> account. The same Passport is on your
+                <strong>AML/CTF Compliance</strong> page there — signed in, with no link to keep.
+                <br/>
+                <a href="${handoff.url}" style="color:#1d4ed8;">Open it in your ${handoff.label}</a>
+              </p>` : ""}
               <p style="color:#64748b;font-size:13px;line-height:1.6;">
                 This access expires on ${expiryLabel}. If the link stops working, you can request a new
                 one from the page itself.
@@ -2885,6 +3466,174 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .select("*").single();
         if (error) throw error;
         return jr({ membership: data });
+      }
+
+      /* ── enrolling a portal identity for the compliance surface ───────
+         The act that did not exist, and whose absence made every in-portal
+         Passport unreachable however correct everything else was.
+
+         `resolvePartnerPortalContext` walks portal session → membership →
+         canonical organisation, and cross-checks that organisation against
+         the portal organisation on the session. In production BOTH ends of
+         that walk were empty: `partner_portal_memberships` had zero rows,
+         and `builder_organisation_id` / `solicitor_firm_id` /
+         `finance_agent_contact_id` were null on every canonical
+         organisation — declared by the Phase 1 migration and written by
+         nothing, ever. A partner with a working portal login, an active
+         arrangement, a live grant and a linked matter still met
+         `membership_missing`, and if that were fixed alone, then
+         `partner_org_unmapped`.
+
+         They are one act, so this is one operation: a membership without the
+         organisation binding is still a locked door, and binding without a
+         membership is a mapping nobody can use. Doing them separately is two
+         ways to half-succeed.
+
+         Two rules it enforces.
+
+         **A portal identity is never minted here.** The user must already
+         exist in its own portal's table — this maps a real identity, it does
+         not create one, and authentication stays with the portal.
+
+         **A cross-reference is bound once and never silently re-pointed.**
+         If the canonical organisation already names a different portal
+         organisation, this refuses and says so. Re-pointing it would move
+         which partner an existing portal account speaks for, retroactively,
+         across every matter they hold — the same "never guess between
+         organisations" rule the session resolver applies at read time. */
+      case "enrol_partner_portal_access": {
+        if (!isMlro) return jr({ error: "MLRO role required — partner portal enrolment is outward-facing configuration" }, 403);
+        const orgId = String(body.partner_org_id ?? "");
+        const source = String(body.portal_user_source ?? "");
+        const portalUserId = String(body.portal_user_id ?? "");
+        const portalType = String(body.portal_type ?? "");
+        if (!orgId || !source || !portalUserId || !portalType) {
+          return jr({ error: "partner_org_id, portal_user_source, portal_user_id and portal_type are required" }, 400);
+        }
+        if (!PARTNER_USER_SOURCES.includes(source)) {
+          return jr({ error: `portal_user_source must be one of: ${PARTNER_USER_SOURCES.join(", ")}` }, 400);
+        }
+        if (!PARTNER_PORTAL_TYPES.includes(portalType)) {
+          return jr({ error: `portal_type must be one of: ${PARTNER_PORTAL_TYPES.join(", ")}` }, 400);
+        }
+        const { data: org } = await admin.schema("aml").from("partner_organisations")
+          .select("id, status, legal_name, builder_organisation_id, solicitor_firm_id, finance_agent_contact_id")
+          .eq("id", orgId).maybeSingle();
+        if (!org) return jr({ error: "Partner organisation not found" }, 404);
+        if (org.status !== "active") {
+          return jr({ error: `Partner organisation is ${org.status}`, code: "organisation_not_active" }, 409);
+        }
+
+        // The portal user must exist in its home table.
+        const { data: portalUser } = await admin.from(source)
+          .select("*").eq("id", portalUserId).maybeSingle();
+        if (!portalUser) {
+          return jr({ error: "Portal user not found in the named portal user table", code: "portal_user_missing" }, 404);
+        }
+
+        /* The portal ORGANISATION this identity belongs to, read from the
+           portal's own records rather than taken from the request — a body
+           that could name the organisation could bind a partner to one they
+           do not belong to. */
+        let column: "builder_organisation_id" | "solicitor_firm_id" | "finance_agent_contact_id";
+        let portalOrgId: string | null = null;
+        let portalOrgLabel = "portal organisation";
+        if (source === "builder_portal_users") {
+          column = "builder_organisation_id";
+          portalOrgLabel = "builder organisation";
+          const explicit = String(body.builder_organisation_id ?? "");
+          /* The SAME membership table `resolveBuilderSession` walks, filtered
+             the same way — an organisation this account cannot actually
+             select is not one it may be bound to. */
+          const { data: memberships } = await admin.from("builder_organisation_memberships")
+            .select("organisation_id, is_primary, status, revoked_at")
+            .eq("builder_user_id", portalUserId)
+            .eq("status", "active").is("revoked_at", null);
+          const rows: any[] = memberships ?? [];
+          if (explicit) {
+            // An explicitly named organisation is accepted only when the
+            // user is actually a member of it.
+            portalOrgId = rows.some((r) => String(r.organisation_id) === explicit) ? explicit : null;
+            if (!portalOrgId) {
+              return jr({ error: "That builder organisation is not one this portal user belongs to", code: "portal_org_not_member" }, 409);
+            }
+          } else {
+            const primary = rows.find((r) => r.is_primary) ?? rows[0];
+            portalOrgId = primary ? String(primary.organisation_id) : null;
+          }
+        } else if (source === "solicitor_portal_users") {
+          column = "solicitor_firm_id";
+          portalOrgLabel = "legal practice";
+          portalOrgId = portalUser.firm_id ? String(portalUser.firm_id) : null;
+        } else {
+          column = "finance_agent_contact_id";
+          portalOrgLabel = "finance contact";
+          portalOrgId = portalUser.finance_contact_id ? String(portalUser.finance_contact_id) : null;
+        }
+        if (!portalOrgId) {
+          return jr({
+            error: `This portal account is not attached to a ${portalOrgLabel} yet, so there is nothing to map it to. Complete their portal setup first.`,
+            code: "portal_org_unresolved",
+          }, 409);
+        }
+
+        // Bind once; never re-point.
+        const existingBinding = org[column] ? String(org[column]) : null;
+        let bound: "already" | "set" = "already";
+        if (existingBinding && existingBinding !== portalOrgId) {
+          return jr({
+            error: `${org.legal_name} is already mapped to a different ${portalOrgLabel}. Re-pointing it would change which partner every existing portal account speaks for — correct the records rather than re-mapping.`,
+            code: "portal_org_conflict",
+          }, 409);
+        }
+        if (!existingBinding) {
+          const { error: bindError } = await admin.schema("aml").from("partner_organisations")
+            .update({ [column]: portalOrgId }).eq("id", orgId);
+          if (bindError) throw bindError;
+          bound = "set";
+        }
+
+        /* The membership. `active` immediately: the MLRO has already decided
+           this partner may rely, and an `invited` state nothing ever
+           promotes is one more way to be silently locked out of a page. */
+        const status = ["invited", "active", "suspended", "ended"].includes(String(body.status ?? ""))
+          ? String(body.status)
+          : "active";
+        const nowIso = new Date().toISOString();
+        const { data: membershipRow, error: membershipError } = await admin.schema("aml")
+          .from("partner_portal_memberships")
+          .upsert({
+            partner_org_id: orgId, portal_type: portalType,
+            portal_user_source: source, portal_user_id: portalUserId,
+            organisation_role: String(body.organisation_role ?? "member").slice(0, 100),
+            compliance_role: ["compliance_officer", "operations", "read_only"].includes(String(body.compliance_role))
+              ? String(body.compliance_role) : null,
+            status,
+            activated_at: status === "active" ? nowIso : null,
+            created_by: userId,
+          }, { onConflict: "portal_user_source,portal_user_id,partner_org_id" })
+          .select("*").single();
+        if (membershipError) throw membershipError;
+
+        /* The organisation must also DECLARE the portal, or the directory
+           read filters this partner's own matters out of their own page. */
+        const declared: string[] = Array.isArray((org as any).portal_types) ? (org as any).portal_types : [];
+        if (!declared.includes(portalType)) {
+          const { error: portalTypesError } = await admin.schema("aml").from("partner_organisations")
+            .update({ portal_types: [...declared, portalType] }).eq("id", orgId);
+          if (portalTypesError) console.warn("[aml-reliance] portal_types not updated:", portalTypesError.message);
+        }
+
+        return jr({
+          membership: membershipRow,
+          organisation_binding: { column, portal_organisation_id: portalOrgId, bound },
+          /* Enrolment is necessary and not sufficient: the surface flags
+             decide whether the page exists at all, and this reports that
+             plainly rather than implying the partner can now see something. */
+          surface_enabled: (await flagEnabled(admin, "aml_partner_compliance_workspace"))
+            && (await flagEnabled(admin, WORKSPACE_PORTAL_FLAGS[portalType === "developer" ? "builder" : portalType] ?? "")),
+          passport_view_enabled: await partnerPassportViewEnabled(admin),
+        });
       }
 
       case "list_partner_acknowledgements": {

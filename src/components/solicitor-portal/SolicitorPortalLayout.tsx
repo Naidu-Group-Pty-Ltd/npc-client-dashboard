@@ -25,16 +25,18 @@ import { usePartnerWorkspaceEnabled } from '@/lib/aml/usePartnerWorkspaceFlags';
 
 const NAV_ITEMS = [
   { to: '/solicitor', label: 'Dashboard', icon: LayoutDashboard, end: true, tourId: 'dashboard' },
+  // Second, directly under the Dashboard — see FinancePortalLayout for why.
+  //
+  // Feature-flagged (aml_partner_compliance_workspace + solicitor surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/solicitor/compliance', label: 'AML/CTF Compliance', icon: ShieldCheck, end: false, tourId: 'compliance', partnerWorkspace: true },
   { to: '/solicitor/matters', label: 'Matters', icon: Briefcase, end: false, tourId: 'matters' },
   { to: '/solicitor/pipeline', label: 'Pipeline', icon: KanbanSquare, end: false, tourId: 'pipeline' },
   { to: '/solicitor/messages', label: 'Messages', icon: MessageSquare, end: false, tourId: 'messages' },
   { to: '/solicitor/tasks', label: 'Tasks', icon: ListChecks, end: false, tourId: 'tasks' },
   { to: '/solicitor/notifications', label: 'Notifications', icon: Bell, end: false, tourId: 'notifications' },
   { to: '/solicitor/settings', label: 'Settings', icon: SettingsIcon, end: false, tourId: 'settings' },
-  // Feature-flagged (aml_partner_compliance_workspace + solicitor surface
-  // flag); filtered out of the nav until enabled. Presentation gating only —
-  // the server enforces the same flags on every workspace operation.
-  { to: '/solicitor/compliance', label: 'Client Verification', icon: ShieldCheck, end: false, tourId: 'compliance', partnerWorkspace: true },
 ];
 
 function getInitials(name?: string | null, email?: string | null): string {

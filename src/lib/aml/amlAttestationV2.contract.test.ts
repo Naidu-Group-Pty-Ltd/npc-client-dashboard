@@ -101,11 +101,18 @@ describe("manifest-controlled reading (aml-reliance)", () => {
       reliance.indexOf("record_independent_assessment —"));
     expect(partnerPath).toContain("intersectPayloadWithManifest");
     expect(partnerPath).toContain("evaluateManifestForRead");
-    // Superseded v2 content is never served; the partner sees a safe signal.
-    expect(partnerPath).toContain("attestation_superseded");
+    /* Superseded v2 content is never served — the property is unchanged; how
+       it is reached is not. Supersession is now settled BEFORE this branch by
+       `resolveAttestationForRead`, which serves the case's current version
+       rather than the one the grant was pinned to, so issuing v2 no longer
+       revokes every partner who already holds the Passport. What reaches here
+       is current-or-nothing, and the assertion below is the belt that stays
+       on: a non-current document must never be served from this path. */
+    expect(partnerPath).toContain("attestationForGrantRead(admin, grant)");
+    expect(partnerPath).toContain("attestation.superseded_at || attestation.refresh_required_at");
     expect(partnerPath).toContain("refresh_required");
     // Denied reads are access-logged with a reason code.
-    expect(partnerPath).toMatch(/logDenied\("attestation_superseded"\)/);
+    expect(partnerPath).toMatch(/logDenied\("attestation_not_current"\)/);
     expect(partnerPath).toMatch(/logDenied\(manifestDecision\.code\)/);
     expect(partnerPath).toContain('logDenied("integrity_check_failed")');
     // The v1 branch still returns the raw sanitised payload as before.

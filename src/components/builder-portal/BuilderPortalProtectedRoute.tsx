@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
+import { returnToPath } from '@/lib/aml/partnerPortalHandoff';
 
 /**
  * Builder / Developer Portal governance gate.
@@ -41,7 +42,17 @@ export function BuilderPortalProtectedRoute() {
   }
 
   if (!user) {
-    return <Navigate to="/builder/login" replace state={{ from: location.pathname }} />;
+    /* The destination is `pathname + search`. It recorded the pathname alone,
+       so a deep link into a matter — `/builder/compliance?matter=…` — lost
+       the matter at the door even before the login ignored the record
+       entirely. One rule, shared with the other two portals. */
+    return (
+      <Navigate
+        to="/builder/login"
+        replace
+        state={{ from: returnToPath(location.pathname, location.search) }}
+      />
+    );
   }
 
   // Temp-password users must rotate their password before anything else.

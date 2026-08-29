@@ -61,6 +61,12 @@ interface BuilderNavItem {
 
 const NAV: BuilderNavItem[] = [
   { to: '/builder', label: 'Dashboard', icon: LayoutDashboard, exact: true, available: true },
+  // Second, directly under the Dashboard — see FinancePortalLayout for why.
+  //
+  // Feature-flagged (aml_partner_compliance_workspace + builder surface
+  // flag); filtered out of the nav until enabled. Presentation gating only —
+  // the server enforces the same flags on every workspace operation.
+  { to: '/builder/compliance', label: 'AML/CTF Compliance', icon: ShieldCheck, available: true, complianceGated: true },
   { to: '/builder/projects', label: 'Projects', icon: Building2, available: true },
   { to: '/builder/inventory', label: 'Inventory', icon: Boxes, available: true },
   { to: '/builder/stock', label: 'Stock List', icon: ClipboardList, available: true },
@@ -72,10 +78,6 @@ const NAV: BuilderNavItem[] = [
   { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: true },
   { to: '/builder/notifications', label: 'Notifications', icon: Bell, available: true },
   { to: '/builder/activity', label: 'Activity', icon: History, available: true },
-  // Feature-flagged (aml_partner_compliance_workspace + builder surface
-  // flag); filtered out of the nav until enabled. Presentation gating only —
-  // the server enforces the same flags on every workspace operation.
-  { to: '/builder/compliance', label: 'Compliance', icon: ShieldCheck, available: true, complianceGated: true },
   { to: '/builder/settings', label: 'Settings', icon: SettingsIcon, available: true },
 ];
 

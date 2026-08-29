@@ -101,9 +101,25 @@ describe("routes and navigation", () => {
   });
 
   it("the flag gate fails closed and requires master AND surface flags", () => {
-    expect(flagHook).toMatch(/coerce\(byKey\.get\(MASTER_FLAG\)\) && coerce\(byKey\.get\(SURFACE_FLAG\[surface\]\)\)/);
-    expect(flagHook).toMatch(/if \(error \|\| !data\) return false/);
-    expect(flagHook).toContain('catch(() => false)');
+    /* The PROPERTY is unchanged; where it is evaluated is not. It used to be
+       a `feature_flags` read from the browser, and that read can never work
+       for a partner: the table grants SELECT `TO authenticated`, a portal
+       user's client is anon, and RLS filters rather than erroring — so it
+       returned `[]` with HTTP 200 and every flag coerced to false. Every
+       partner was told "the compliance workspace is not available" however
+       the database was set. It is answered by the server now. */
+    const fn = read("supabase/functions/aml-reliance/index.ts");
+    const op = fn.slice(
+      fn.indexOf('if (op === "get_partner_surface_availability")'),
+      fn.indexOf("if (PARTNER_WORKSPACE_OPS.has(op))"));
+    // Master AND surface, both, still.
+    expect(op).toContain("compliance_page: master && surfaceOn");
+    expect(op).toContain('flagEnabled(admin, "aml_partner_compliance_workspace")');
+    expect(op).toContain("flagEnabled(admin, flagKey)");
+    // And the client still fails closed on an unreadable answer.
+    expect(flagHook).toContain("UNKNOWN");
+    expect(flagHook).toContain("compliancePage: false");
+    expect(flagHook).toContain("catch(() => UNKNOWN)");
   });
 });
 

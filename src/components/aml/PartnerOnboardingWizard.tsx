@@ -6,9 +6,11 @@
  * canonical organisation → written CDD arrangement (prebuilt for portal
  * partners — the Compliance Passport agreement their sign-up executes) →
  * case link → PORTAL ACCESS (the partner's contact receives the invite
- * email through each portal's own invite function) → grant. The final
- * screen hands over the ONE-TIME access token and reports where the
- * invite went.
+ * email through each portal's own invite function) → COMPLIANCE-PAGE
+ * ENROLMENT (the membership and the organisation binding that let them open
+ * the Passport signed in) → grant, with the link emailed at mint time. The
+ * final screen reports where the link went, where the invite went, and
+ * whether the Passport is also on their own portal's compliance page.
  *
  * ── Portal access, per portal ─────────────────────────────────────────
  * Each portal already has an invite pipeline, and this wizard drives it
@@ -41,7 +43,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Copy, Check, ShieldCheck, Mail, AlertTriangle } from "lucide-react";
+import { Loader2, Copy, Check, ShieldCheck, Mail, AlertTriangle, Building2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { invokeSecureFunction } from "@/lib/secureInvoke";
@@ -87,6 +89,14 @@ type InviteOutcome =
   | { state: "failed"; email: string; detail: string }
   | { state: "skipped" };
 
+/** The portal's own user table for a portal choice — never invented here. */
+const PORTAL_USER_SOURCE: Record<string, "finance_portal_users" | "builder_portal_users" | "solicitor_portal_users"> = {
+  finance: "finance_portal_users",
+  builder: "builder_portal_users",
+  developer: "builder_portal_users",
+  solicitor_conveyancer: "solicitor_portal_users",
+};
+
 /** Provisioned ids, cached so a retry resumes instead of duplicating. */
 interface ProvisionCache {
   financeContactId?: string;
@@ -95,6 +105,11 @@ interface ProvisionCache {
   orgActivated?: boolean;
   builderUserId?: string;
   firmId?: string;
+  /* The portal identity this pass provisioned or reused. Enrolment maps a
+     REAL portal user, so it needs the id the portal itself issued — never
+     an email, which is not an identity. */
+  financeUserId?: string;
+  solicitorUserId?: string;
 }
 
 /** invokeSecureFunction with the error shapes collapsed to one throw. */
@@ -187,15 +202,18 @@ export function PartnerOnboardingWizard({
   /**
    * What the grant actually produced — including where the link WENT.
    *
-   * The link is the human artefact and the token is the machine one, and
-   * this used to carry only the token: the wizard minted a grant with no
-   * `deliver_to`, so nothing was emailed to anybody, and the final screen
-   * handed the operator a bearer token with the instruction to "deliver it
-   * through their usual channel". That is not a channel, and it is why a
-   * partner with a perfectly good grant in the register received nothing.
+   * The link and NOTHING ELSE.
+   *
+   * This used to carry the raw bearer token, first as the deliverable and
+   * then behind a disclosure. It carries neither now, because the token and
+   * the `/passport/<token>` link are the same credential — the link is that
+   * token with a URL around it — and the only thing in this platform that
+   * consumes it is the public page, which reads it back out of the URL.
+   * Showing it a second time doubled the places a live credential was copied
+   * and invited an operator to send "the code" instead of the link, which is
+   * a defect this product has already had.
    */
   const [grantResult, setGrantResult] = useState<{
-    token: string;
     link: string;
     expires_at: string;
     version: number;
@@ -204,7 +222,14 @@ export function PartnerOnboardingWizard({
     emailError: string | null;
   } | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [copied, setCopied] = useState(false);
+  /* Whether this partner can also open the Passport inside their own portal
+     — reported, never assumed. See `enrolPortalAccess`. */
+  const [portalAccess, setPortalAccess] = useState<
+    | { state: "enrolled"; surfaceEnabled: boolean; bound: "already" | "set" }
+    | { state: "failed"; detail: string }
+    | { state: "skipped" }
+    | null
+  >(null);
 
   const portalChoice = PARTNER_PORTAL_CHOICES.find((p) => p.value === portal)!;
   const activeAgreements = agreements.filter((a) => a.status === "active");
@@ -249,7 +274,7 @@ export function PartnerOnboardingWizard({
     setCreatedOrgId(null); setCreatedAgreement(null); setLinkRecorded(false);
     provisionCache.current = {};
     setInviteOutcome(null); setAckResult(null);
-    setGrantResult(null); setCopied(false); setLinkCopied(false);
+    setGrantResult(null); setLinkCopied(false); setPortalAccess(null);
   }, [open]);
 
   /* The client's sharing consent, read softly — unknown stays unknown. */
@@ -418,16 +443,26 @@ export function PartnerOnboardingWizard({
         const status = await call<any>("finance-portal-invite", {
           action: "check_status", finance_contact_id: contactId,
         });
+        cache.financeUserId = status.portal_user?.id ?? cache.financeUserId;
         if (status.has_portal_access) return { state: "already", email };
         await call("finance-portal-invite", {
           action: "invite", finance_contact_id: contactId,
           invite_mode: "set_password_link", resend_invite: Boolean(status.is_invited),
         });
+        if (!cache.financeUserId) {
+          // The invite CREATES the portal user, so the identity only exists
+          // after it. Enrolment maps a real id and never an email.
+          const after = await call<any>("finance-portal-invite", {
+            action: "check_status", finance_contact_id: contactId,
+          });
+          cache.financeUserId = after.portal_user?.id ?? undefined;
+        }
         return { state: "sent", email };
       }
 
       if (portal === "solicitor_conveyancer") {
         if (chosenContact?.solicitor_user_id) {
+          cache.solicitorUserId = chosenContact.solicitor_user_id;
           if (chosenContact.active) return { state: "already", email };
           await call("solicitor-portal-invite", {
             action: "invite", solicitor_user_id: chosenContact.solicitor_user_id,
@@ -444,12 +479,15 @@ export function PartnerOnboardingWizard({
         }
         // The invite function creates the portal user itself — one call,
         // and an already-known email is reused rather than duplicated.
-        await call("solicitor-portal-invite", { action: "invite", firm_id: firmId, email, name });
+        const invited = await call<{ solicitor_user_id?: string; user?: { id?: string } }>(
+          "solicitor-portal-invite", { action: "invite", firm_id: firmId, email, name });
+        cache.solicitorUserId = invited?.solicitor_user_id ?? invited?.user?.id ?? cache.solicitorUserId;
         return { state: "sent", email };
       }
 
       // Builder / Developer — one shared portal, typed organisations.
       let builderUserId = chosenContact?.builder_user_id ?? cache.builderUserId;
+      if (chosenContact?.builder_user_id) cache.builderUserId = chosenContact.builder_user_id;
       if (chosenContact?.builder_user_id && chosenContact.active) {
         return { state: "already", email };
       }
@@ -507,6 +545,74 @@ export function PartnerOnboardingWizard({
   };
 
   /**
+   * Enrol this partner's portal identity for the in-portal compliance page.
+   *
+   * ── Why this act exists ───────────────────────────────────────────
+   * A partner who signs into their own portal reaches the AML/CTF
+   * Compliance page through `portal session → membership → canonical
+   * organisation`, and that walk was broken at BOTH ends in production:
+   * `aml.partner_portal_memberships` held zero rows, and the organisation
+   * cross-reference columns (`builder_organisation_id`,
+   * `solicitor_firm_id`, `finance_agent_contact_id`) were declared by a
+   * migration and written by nothing, ever. So a partner with a working
+   * login, an active arrangement, a live grant and a linked matter still
+   * met "your account is not enrolled" — and, if only that were fixed,
+   * "no canonical partner organisation is mapped to your organisation".
+   *
+   * The server does both in one operation and refuses to re-point a
+   * binding that already names a different portal organisation.
+   *
+   * It NEVER blocks the grant. The Passport is emailed either way; this
+   * decides whether they can also read it signed in, and its failure is
+   * reported on the final screen rather than swallowed.
+   */
+  const enrolPortalAccess = async (orgId: string) => {
+    if (portal === "other") { setPortalAccess({ state: "skipped" }); return; }
+    const source = PORTAL_USER_SOURCE[portal];
+    const cache = provisionCache.current;
+    /* A finance CONTACT id is not a portal USER id, and a solicitor firm is
+       not a person — only the portal's own user id may be mapped, so each
+       branch reads exactly the id that portal issued. */
+    const portalUserId =
+      source === "builder_portal_users"
+        ? (cache.builderUserId ?? chosenContact?.builder_user_id)
+        : source === "solicitor_portal_users"
+          ? (cache.solicitorUserId ?? chosenContact?.solicitor_user_id)
+          : cache.financeUserId;
+    if (!portalUserId) {
+      /* An identity we could not name is not an identity we may map. This is
+         a real outcome — a portal whose invite creates the user lazily — and
+         it is said rather than guessed at with an email address. */
+      setPortalAccess({
+        state: "failed",
+        detail: "their portal account could not be identified yet — it is usually created when they accept the invite. Re-run this onboarding for them afterwards and it will enrol.",
+      });
+      return;
+    }
+    try {
+      const res = await amlRelianceApi.enrolPartnerPortalAccess({
+        partner_org_id: orgId,
+        portal_user_source: source,
+        portal_user_id: String(portalUserId),
+        portal_type: amlType as "finance" | "builder" | "developer" | "solicitor_conveyancer",
+        ...(source === "builder_portal_users" && cache.organisationId
+          ? { builder_organisation_id: cache.organisationId }
+          : {}),
+        // The MLRO has already decided this partner may rely; an `invited`
+        // state that nothing ever promotes is one more silent lock-out.
+        status: "active",
+      });
+      setPortalAccess({
+        state: "enrolled",
+        surfaceEnabled: Boolean(res.surface_enabled),
+        bound: res.organisation_binding?.bound ?? "already",
+      });
+    } catch (e: any) {
+      setPortalAccess({ state: "failed", detail: e?.message ?? "the enrolment call failed." });
+    }
+  };
+
+  /**
    * The chain, run when the operator confirms. Portal access is
    * provisioned BEFORE the grant — but its failure never blocks the
    * grant, because the invite is retryable from the token screen and the
@@ -536,6 +642,11 @@ export function PartnerOnboardingWizard({
       let agreement = createdAgreement ?? reusableAgreement;
       if (!agreement && !directAck) {
         const res = await amlRelianceApi.createAgreement({
+          // The pointer that was never written. Without it the grant carries
+          // no `partner_org_id`, and the partner's own portal — which looks a
+          // grant up BY organisation — reports a Passport it holds as never
+          // shared. See `create_agreement` for the whole story.
+          partner_org_id: orgId,
           partner_org_name: partnerName,
           partner_org_type: amlType,
           partner_abn: abn.trim() || undefined,
@@ -543,6 +654,21 @@ export function PartnerOnboardingWizard({
         });
         agreement = res.agreement;
         setCreatedAgreement(agreement);
+      } else if (agreement && !agreement.partner_org_id && !directAck) {
+        /* An arrangement recorded before that pointer existed. The operator
+           has selected both records in this pass, so binding them is their
+           explicit act rather than a name match — and this is the repair
+           path for every partner onboarded before it. The server binds once
+           and refuses to re-point. */
+        try {
+          const bound = await amlRelianceApi.bindAgreementOrganisation(agreement.id, orgId);
+          agreement = bound.agreement;
+          setCreatedAgreement(agreement);
+        } catch (e: any) {
+          // Never fatal: the Passport still issues and still emails. It only
+          // costs the in-portal route, which the final screen reports.
+          console.warn("[onboarding] arrangement organisation binding skipped:", e?.message);
+        }
       }
 
       // 3 · The case link — the recorded reason this organisation may see
@@ -594,6 +720,13 @@ export function PartnerOnboardingWizard({
         setInviteOutcome(outcome);
       }
 
+      // 4b · The in-portal compliance page. Runs BEFORE the grant so that
+      //      the final screen can tell the operator, in one place, both
+      //      where the link went and whether the partner can also read the
+      //      Passport signed in. It never throws — a failed enrolment is a
+      //      reported outcome, not a stopped onboarding.
+      await enrolPortalAccess(orgId);
+
       // 5 · The grant — the server re-checks every precondition, and the
       //     link is EMAILED at mint time, the only moment it exists.
       //
@@ -607,7 +740,6 @@ export function PartnerOnboardingWizard({
         deliver_to: deliverTo,
       });
       setGrantResult({
-        token: res.access_token,
         link: res.passport_link ?? res.access_token,
         expires_at: res.grant.expires_at,
         version: res.grant.attestation_version,
@@ -637,17 +769,6 @@ export function PartnerOnboardingWizard({
       if (outcome.state === "sent") toast({ title: "Portal invite sent", description: `Emailed ${outcome.email}.` });
     } finally {
       setBusy(false);
-    }
-  };
-
-  const copyToken = async () => {
-    if (!grantResult) return;
-    try {
-      await navigator.clipboard.writeText(grantResult.token);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2500);
-    } catch {
-      toast({ title: "Copy failed", description: "Select the token text and copy it manually.", variant: "destructive" });
     }
   };
 
@@ -1115,33 +1236,43 @@ export function PartnerOnboardingWizard({
               </p>
             </div>
 
-            {/* ── the machine artefact, out of the everyday path ────────
-                The raw bearer token answered a question nobody had asked
-                ("what is this for, and do I need it?") at the exact moment
-                an operator was trying to finish. It is the same credential
-                the link carries, and a person never needs it — so it is
-                disclosed, labelled for what it is, rather than presented as
-                a step. */}
-            <details className="rounded-md border border-border/60 p-2.5">
-              <summary className="cursor-pointer text-xs font-medium">
-                One-time access token — for system-to-system integrations
-              </summary>
-              <div className="mt-2 space-y-1.5">
-                <p className="text-[11px] text-muted-foreground">
-                  The same credential the link carries, as a bearer token. It exists for a partner
-                  system that reads the Passport over the API without a browser. If a person is
-                  opening this, send them the link above instead — they never need this.
+            {/* ── where else they can read it ──────────────────────────
+                The link is a delivery; a portal is a place you go back to.
+                A partner who already holds a portal account should not have
+                to keep an email to re-read a record they are entitled to
+                rely on — so this says, plainly and only when it is true,
+                that the same Passport is on their own AML/CTF Compliance
+                page. Enrolment is reported rather than assumed: a failure
+                here never blocks the grant, and it is actionable. */}
+            {portalAccess?.state === "enrolled" && portalAccess.surfaceEnabled && (
+              <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/5 p-3">
+                <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-hidden />
+                <p className="text-xs">
+                  They can also open this Passport inside the {portalChoice.label} — it is on their
+                  own <span className="font-medium">AML/CTF Compliance</span> page, signed in, with
+                  no link to keep.
                 </p>
-                <div className="flex items-center gap-2">
-                  <code className="min-w-0 flex-1 break-all rounded-md border border-border/60 bg-muted/40 p-2 text-xs">
-                    {grantResult.token}
-                  </code>
-                  <Button size="sm" variant="outline" onClick={copyToken} aria-label="Copy access token">
-                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  </Button>
-                </div>
               </div>
-            </details>
+            )}
+            {portalAccess?.state === "enrolled" && !portalAccess.surfaceEnabled && (
+              <div className="flex items-start gap-2 rounded-md border border-border/60 p-3">
+                <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <p className="text-xs">
+                  They are enrolled for the {portalChoice.label} compliance page, but that surface is
+                  switched off on this deployment — so the emailed link is the only way they reach
+                  this Passport today. Nothing more is needed from you.
+                </p>
+              </div>
+            )}
+            {portalAccess?.state === "failed" && (
+              <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+                <p className="text-xs">
+                  The Passport was issued and emailed. They could not be enrolled for the
+                  in-portal compliance page: {portalAccess.detail} The link above works regardless.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

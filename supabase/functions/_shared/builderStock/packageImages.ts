@@ -26,7 +26,8 @@
  * followed outside the tree the row pointed at.
  */
 import {
-  driveDownloadUrl, driveFileId, driveFolderId, driveFolderUrl, isGoogleDriveHost,
+  driveDownloadUrl, driveFileId, driveFolderId, driveFolderUrl, driveRenditionUrl,
+  isGoogleDriveHost,
   lotAndDesignFrom, parseDriveFolderListing, selectLotFolder, selectPackageDocument,
   selectNamedDocument, selectPropertyPhotograph, streetAddressFrom,
   type ScopedEntry,
@@ -36,6 +37,7 @@ import {
   selectPdfPropertyPrimary, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
+import { MAX_SOURCE_IMAGE_BYTES } from './sourceAssets.pure.ts';
 import { PRIMARY_ROLE, type SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
 /** Folder listings one repair run may read. Shared and cached across rows. */
@@ -398,6 +400,35 @@ async function takePhotographAsFiled(
   }
   if (!fetched?.bytes?.length) {
     return { status: 'unreachable', detail: 'That photograph came back empty.' };
+  }
+
+  /*
+   * A BUILDER PHOTOGRAPHS AT FULL RESOLUTION, AND THE STORE HAS A CEILING.
+   *
+   * PRODUCTION, 28 AUGUST 2026. This function found exactly the right file —
+   * "Display Home - 13 Hummock Rise Werribee/Property Photos/Kaye_7341_HR.jpg" —
+   * downloaded a perfectly valid 12.28 MB JPEG, and `storeSourceImageBytes`
+   * refused it against the 10 MB `MAX_SOURCE_IMAGE_BYTES`. The run logged "The
+   * recovered photograph could not be stored", wrote no row, and the card fell
+   * all the way to a Street View of the road. Every one of that folder's 38
+   * photographs is 12-16 MB, so trying the next one is no answer at all.
+   *
+   * Drive will render the SAME FILE smaller, by its own id, for the cost of one
+   * request. That is preferred over decoding and re-encoding 16 MB in here:
+   * the worker has been killed for less, and a marketplace card is displayed at
+   * a fraction of this width. If the rendition cannot be had, the original is
+   * carried through unchanged and refused exactly as it is today — this can
+   * rescue a photograph and can never lose one.
+   */
+  if (fetched.bytes.length > MAX_SOURCE_IMAGE_BYTES) {
+    try {
+      const smaller = await fetchPackage(driveRenditionUrl(found.entry.id, 1600));
+      if (smaller?.bytes?.length && smaller.bytes.length <= MAX_SOURCE_IMAGE_BYTES) {
+        fetched = smaller;
+      }
+    } catch {
+      // Keep the original and let the store speak for itself.
+    }
   }
 
   const where = [...found.path, found.entry.name].join('/');

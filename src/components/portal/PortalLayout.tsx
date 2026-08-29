@@ -22,6 +22,12 @@ import { BrandLockup, BrandLogo } from '@/components/branding/BrandAssets';
 
 const portalNavItems = [
   { to: '/client', icon: HomeIcon, label: 'Dashboard', end: true, tourId: 'dashboard' },
+  // Second, directly under the Dashboard. It is the customer's half of the
+  // same AML/CTF record the partner portals now lead with, and it sat at the
+  // foot of a seventeen-entry sidebar. The label stays the customer's own
+  // words — what they do here is prove who they are — because regulator
+  // vocabulary on a customer surface is a different defect.
+  { to: '/client/aml', icon: Shield, label: 'Identity & Compliance', end: true, tourId: 'aml' },
   { to: '/client/profile', icon: User, label: 'My Profile', end: true, tourId: 'profile' },
   { to: '/client/deal-progress', icon: TrendingUp, label: 'Deal Progress', end: true, tourId: 'deal-progress' },
   { to: '/client/action-items', icon: ListChecks, label: 'Action Items', end: true, tourId: 'action-items' },
@@ -39,7 +45,6 @@ const portalNavItems = [
   { to: '/client/notifications', icon: Bell, label: 'Notifications', end: true, tourId: 'notifications' },
   { to: '/client/appointments', icon: CalendarDays, label: 'My Appointments', end: true },
   { to: '/client/booking', icon: CalendarDays, label: 'Book Appointment', end: true },
-  { to: '/client/aml', icon: Shield, label: 'Identity & Compliance', end: true, tourId: 'aml' },
 ];
 
 function getInitials(name?: string): string {

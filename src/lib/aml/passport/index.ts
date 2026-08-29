@@ -20,7 +20,10 @@ export {
 
 export {
   derivePassportState,
+  refreshRemedy,
   versionRegisterState,
+  PASSPORT_STATE_REASONS,
+  type PassportRefreshRemedy,
   type PassportAttestationFact,
   type PassportStateCode,
   type PassportStateInput,

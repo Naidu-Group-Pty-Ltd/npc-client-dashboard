@@ -224,7 +224,7 @@ function perimeterStep(args: {
       : "Recorded as a real deal — a designated service is being provided.");
     if (recordedBy || recordedAt) {
       detail.push(`Recorded${recordedBy ? ` by ${recordedBy}` : ""}${
-        recordedAt ? ` on ${new Date(recordedAt).toLocaleDateString()}` : ""}.`);
+        recordedAt ? ` on ${new Date(recordedAt).toLocaleDateString('en-AU')}` : ""}.`);
     }
     if ((p?.scopes_excluded ?? []).length > 0) {
       detail.push(`Checks this removes: ${(p!.scopes_excluded as string[])

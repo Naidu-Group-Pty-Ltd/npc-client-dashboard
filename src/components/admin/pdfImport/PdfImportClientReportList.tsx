@@ -50,10 +50,10 @@ export function PdfImportClientReportList({ reports, selectedReportId, onSelect 
               <TableCell className="text-xs">{getPdfImportClientReportAudienceLabel(r.audience)}</TableCell>
               <TableCell><Badge variant={getPdfImportClientReportSafetyTone(r.safetyLevel)}>{getPdfImportClientReportSafetyLabel(r.safetyLevel)}</Badge></TableCell>
               <TableCell><Badge variant={getPdfImportClientReportStatusTone(r.status)}>{getPdfImportClientReportStatusLabel(r.status)}</Badge></TableCell>
-              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.generatedAt ? new Date(r.generatedAt).toLocaleString() : '—'}</TableCell>
+              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.generatedAt ? new Date(r.generatedAt).toLocaleString('en-AU') : '—'}</TableCell>
               <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                {r.approvedAt ? new Date(r.approvedAt).toLocaleDateString() : '—'}
-                {r.exportedAt ? ` / ${new Date(r.exportedAt).toLocaleDateString()}` : ''}
+                {r.approvedAt ? new Date(r.approvedAt).toLocaleDateString('en-AU') : '—'}
+                {r.exportedAt ? ` / ${new Date(r.exportedAt).toLocaleDateString('en-AU')}` : ''}
               </TableCell>
             </TableRow>
           ))}

@@ -456,7 +456,7 @@ export default function ReportViewer() {
         for (let i = 0; i <= 4; i++) {
           const labelVal = Math.round((maxVal / 4) * i);
           const labelY = y + 8 + barAreaH - (barAreaH * i / 4);
-          pdf.text(labelVal.toLocaleString(), x + 4, labelY);
+          pdf.text(labelVal.toLocaleString('en-AU'), x + 4, labelY);
           setDraw(dividerCol); pdf.setLineWidth(0.1);
           pdf.line(x + 18, labelY - 1, x + w - 4, labelY - 1);
         }
@@ -467,7 +467,7 @@ export default function ReportViewer() {
           setFill(gold); pdf.rect(bx, by, barW, barH, 'F');
           setFill({ r: 220, g: 185, b: 100 }); pdf.rect(bx, by, barW, Math.min(barH, 3), 'F');
           pdf.setFontSize(5); pdf.setFont('helvetica', 'bold'); setColor(white);
-          if (barH > 8) pdf.text(d.value.toLocaleString(), bx + barW / 2, by - 2, { align: 'center' });
+          if (barH > 8) pdf.text(d.value.toLocaleString('en-AU'), bx + barW / 2, by - 2, { align: 'center' });
           pdf.setFontSize(4.5); pdf.setFont('helvetica', 'normal'); setColor(mutedText);
           const truncLabel = d.label.length > 10 ? d.label.substring(0, 9) + '…' : d.label;
           pdf.text(truncLabel, bx + barW / 2, y + h - 4, { align: 'center' });
@@ -487,7 +487,7 @@ export default function ReportViewer() {
           const gridY = startY + chartH - (chartH * i / 4);
           const gridVal = Math.round(minVal + (range / 4) * i);
           setDraw(dividerCol); pdf.setLineWidth(0.1); pdf.line(startX, gridY, startX + chartW, gridY);
-          pdf.text(gridVal.toLocaleString(), x + 4, gridY + 1);
+          pdf.text(gridVal.toLocaleString('en-AU'), x + 4, gridY + 1);
         }
         const points = data.map((d, i) => ({
           x: startX + (i / (data.length - 1)) * chartW,
@@ -605,7 +605,7 @@ export default function ReportViewer() {
       pdf.setFontSize(9); pdf.setFont('helvetica', 'bold');
       setColor(white);
       pdf.text(format(new Date(report.created_at), 'dd MMM yyyy'), margin + 10, metaY + 5);
-      pdf.text(report.listing_count.toLocaleString(), margin + contentWidth * 0.3, metaY + 5);
+      pdf.text(report.listing_count.toLocaleString('en-AU'), margin + contentWidth * 0.3, metaY + 5);
       pdf.text(charts.length.toString(), margin + contentWidth * 0.55, metaY + 5);
       setColor(gold);
       pdf.text(brandName, pageWidth - margin - 10, metaY + 5, { align: 'right' });
@@ -621,10 +621,10 @@ export default function ReportViewer() {
         const kpiW = (contentWidth - 12) / 4;
         const kpiH = 36;
         const kpiData = [
-          { label: 'Total Listings', value: report.kpis.total_listings?.toLocaleString() || 'N/A', sub: 'Properties analyzed' },
-          { label: 'Average Price', value: `$${Math.round(report.kpis.avg_price || 0).toLocaleString()}`, sub: 'Market average' },
-          { label: 'Recent (30 days)', value: report.kpis.recent_30d?.toLocaleString() || 'N/A', sub: 'New to market' },
-          { label: 'Unique Suburbs', value: report.kpis.unique_suburbs?.toLocaleString() || 'N/A', sub: 'Geographic spread' },
+          { label: 'Total Listings', value: report.kpis.total_listings?.toLocaleString('en-AU') || 'N/A', sub: 'Properties analyzed' },
+          { label: 'Average Price', value: `$${Math.round(report.kpis.avg_price || 0).toLocaleString('en-AU')}`, sub: 'Market average' },
+          { label: 'Recent (30 days)', value: report.kpis.recent_30d?.toLocaleString('en-AU') || 'N/A', sub: 'New to market' },
+          { label: 'Unique Suburbs', value: report.kpis.unique_suburbs?.toLocaleString('en-AU') || 'N/A', sub: 'Geographic spread' },
         ];
         kpiData.forEach((kpi, i) => {
           drawKPIBox(margin + i * (kpiW + 4), yPos, kpiW, kpiH, kpi.label, kpi.value, kpi.sub);
@@ -727,7 +727,7 @@ export default function ReportViewer() {
       pdf.text('MARKET SNAPSHOT', margin + 10, yPos + 10);
 
       pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); setColor(softWhite);
-      const snapshotNarrative = `This quantitative analysis encompasses ${totalListingsVal.toLocaleString()} property listings across ${uniqueSuburbs} distinct suburbs. The market is currently exhibiting ${velocityLabel.toLowerCase()} momentum with a ${Math.abs(velocityDelta).toFixed(1)}% ${velocityDelta >= 0 ? 'increase' : 'decrease'} in listing volume over the previous 30-day period. The median listing price stands at $${Math.round(medianPrice).toLocaleString()}, with an average price of $${Math.round(avgPriceVal).toLocaleString()}. Data confidence across the dataset averages ${avgConfVal.toFixed(1)}% with ${completenessVal}% field completeness. A total of ${recent30d} new listings have entered the market in the past 30 days.`;
+      const snapshotNarrative = `This quantitative analysis encompasses ${totalListingsVal.toLocaleString('en-AU')} property listings across ${uniqueSuburbs} distinct suburbs. The market is currently exhibiting ${velocityLabel.toLowerCase()} momentum with a ${Math.abs(velocityDelta).toFixed(1)}% ${velocityDelta >= 0 ? 'increase' : 'decrease'} in listing volume over the previous 30-day period. The median listing price stands at $${Math.round(medianPrice).toLocaleString('en-AU')}, with an average price of $${Math.round(avgPriceVal).toLocaleString('en-AU')}. Data confidence across the dataset averages ${avgConfVal.toFixed(1)}% with ${completenessVal}% field completeness. A total of ${recent30d} new listings have entered the market in the past 30 days.`;
       const snapLines = pdf.splitTextToSize(snapshotNarrative, contentWidth - 22);
       pdf.text(snapLines, margin + 10, yPos + 18);
 
@@ -754,8 +754,8 @@ export default function ReportViewer() {
       const hlW = (contentWidth - 8) / 3;
       const hlH = 38;
       const highlights = [
-        { icon: '▲', title: 'Price Insights', line1: `Median: $${Math.round(medianPrice).toLocaleString()}`, line2: `Average: $${Math.round(avgPriceVal).toLocaleString()}`, line3: `IQR: $${((report.analytics?.price?.iqr || 0)).toLocaleString()}`, accent: gold },
-        { icon: '◉', title: 'Market Activity', line1: `${recent30d} new (30d)`, line2: `${totalListingsVal.toLocaleString()} total`, line3: `${uniqueSuburbs} suburbs`, accent: { r: 16, g: 185, b: 129 } },
+        { icon: '▲', title: 'Price Insights', line1: `Median: $${Math.round(medianPrice).toLocaleString('en-AU')}`, line2: `Average: $${Math.round(avgPriceVal).toLocaleString('en-AU')}`, line3: `IQR: $${((report.analytics?.price?.iqr || 0)).toLocaleString('en-AU')}`, accent: gold },
+        { icon: '◉', title: 'Market Activity', line1: `${recent30d} new (30d)`, line2: `${totalListingsVal.toLocaleString('en-AU')} total`, line3: `${uniqueSuburbs} suburbs`, accent: { r: 16, g: 185, b: 129 } },
         { icon: '◆', title: 'Data Integrity', line1: `${avgConfVal.toFixed(1)}% confidence`, line2: `${completenessVal}% completeness`, line3: `${charts.length} charts generated`, accent: { r: 59, g: 130, b: 246 } },
       ];
 
@@ -786,9 +786,9 @@ export default function ReportViewer() {
           rows.push({ label: 'Market Velocity', value: analytics.velocity.label || 'N/A', detail: delta ? `${delta > 0 ? '+' : ''}${delta.toFixed(1)}% vs previous 30 days` : '' });
         }
         if (analytics.price) {
-          rows.push({ label: 'Median Price', value: `$${(analytics.price.median || 0).toLocaleString()}`, detail: `IQR: $${(analytics.price.iqr || 0).toLocaleString()}` });
-          rows.push({ label: 'Q1 (25th percentile)', value: `$${(analytics.price.q1 || 0).toLocaleString()}`, detail: 'Lower quartile boundary' });
-          rows.push({ label: 'Q3 (75th percentile)', value: `$${(analytics.price.q3 || 0).toLocaleString()}`, detail: 'Upper quartile boundary' });
+          rows.push({ label: 'Median Price', value: `$${(analytics.price.median || 0).toLocaleString('en-AU')}`, detail: `IQR: $${(analytics.price.iqr || 0).toLocaleString('en-AU')}` });
+          rows.push({ label: 'Q1 (25th percentile)', value: `$${(analytics.price.q1 || 0).toLocaleString('en-AU')}`, detail: 'Lower quartile boundary' });
+          rows.push({ label: 'Q3 (75th percentile)', value: `$${(analytics.price.q3 || 0).toLocaleString('en-AU')}`, detail: 'Upper quartile boundary' });
         }
         if (analytics.quality) {
           rows.push({ label: 'Avg Confidence', value: `${(analytics.quality.avg_confidence || 0).toFixed(1)}%`, detail: `Completeness: ${analytics.quality.completeness || 0}%` });
@@ -831,7 +831,7 @@ export default function ReportViewer() {
       const dqKpis = [
         { label: 'Overall Confidence', value: `${avgConfVal.toFixed(1)}%`, sub: avgConfVal > 70 ? 'HIGH QUALITY' : avgConfVal > 50 ? 'MODERATE' : 'NEEDS REVIEW', accent: avgConfVal > 70 ? { r: 16, g: 185, b: 129 } : avgConfVal > 50 ? gold : { r: 239, g: 68, b: 68 } },
         { label: 'Field Completeness', value: `${completenessVal}%`, sub: completenessVal > 80 ? 'EXCELLENT' : completenessVal > 60 ? 'GOOD' : 'INCOMPLETE', accent: completenessVal > 80 ? { r: 16, g: 185, b: 129 } : completenessVal > 60 ? gold : { r: 239, g: 68, b: 68 } },
-        { label: 'Records Analyzed', value: totalListingsVal.toLocaleString(), sub: `${charts.length} visualizations`, accent: gold },
+        { label: 'Records Analyzed', value: totalListingsVal.toLocaleString('en-AU'), sub: `${charts.length} visualizations`, accent: gold },
       ];
 
       dqKpis.forEach((kpi, i) => {
@@ -952,7 +952,7 @@ export default function ReportViewer() {
         pdf.setFontSize(8); pdf.setFont('helvetica', 'bold'); setColor(white);
         pdf.text(d.label, lgX + 8, lgY + 0.5);
         pdf.setFontSize(7); pdf.setFont('helvetica', 'normal'); setColor(gold);
-        pdf.text(`${d.value.toLocaleString()} listings`, lgX + 8, lgY + 6);
+        pdf.text(`${d.value.toLocaleString('en-AU')} listings`, lgX + 8, lgY + 6);
         pdf.setFontSize(6); setColor(mutedText);
         pdf.text(`${((d.value / confTotal) * 100).toFixed(1)}% of total`, lgX + 8, lgY + 11);
         lgY += 16;
@@ -1040,7 +1040,7 @@ export default function ReportViewer() {
           if (i % 2 === 0) {
             addPage('DATA VISUALIZATIONS');
             if (i === 0) {
-              drawSectionHeader('Data Visualizations', `${charts.length} charts generated from ${report.listing_count.toLocaleString()} listings`);
+              drawSectionHeader('Data Visualizations', `${charts.length} charts generated from ${report.listing_count.toLocaleString('en-AU')} listings`);
             }
           }
 
@@ -1130,7 +1130,7 @@ export default function ReportViewer() {
           suburbTableData.push({
             suburb: name,
             listings: count,
-            avgPrice: `$${Math.round(avgBasePrice * priceVariance).toLocaleString()}`,
+            avgPrice: `$${Math.round(avgBasePrice * priceVariance).toLocaleString('en-AU')}`,
             share: `${(shares[i] * 100).toFixed(1)}%`,
             activity: count > totalListings * 0.08 ? 'High' : count > totalListings * 0.05 ? 'Medium' : 'Low',
           });
@@ -1181,7 +1181,7 @@ export default function ReportViewer() {
         let sx = margin + 6;
         pdf.text('TOTAL', sx, yPos + 6.5); sx += colWidths[0];
         pdf.text(totalListings.toString(), sx, yPos + 6.5); sx += colWidths[1];
-        pdf.text(`$${Math.round(avgBasePrice).toLocaleString()}`, sx, yPos + 6.5); sx += colWidths[2];
+        pdf.text(`$${Math.round(avgBasePrice).toLocaleString('en-AU')}`, sx, yPos + 6.5); sx += colWidths[2];
         pdf.text('100%', sx, yPos + 6.5);
         yPos += 16;
       }
@@ -1229,7 +1229,7 @@ export default function ReportViewer() {
         '',
         'Data Sources: Property listing aggregators, public records, and proprietary market intelligence systems. All data is subject to change and may not reflect the most current market conditions.',
         '',
-        `Report generated on ${format(new Date(report.created_at), 'PPP')} analyzing ${report.listing_count.toLocaleString()} property listings across ${report.kpis?.unique_suburbs || 'multiple'} suburbs.`,
+        `Report generated on ${format(new Date(report.created_at), 'PPP')} analyzing ${report.listing_count.toLocaleString('en-AU')} property listings across ${report.kpis?.unique_suburbs || 'multiple'} suburbs.`,
         '',
         `© ${brandName}. All rights reserved. Unauthorized distribution prohibited.`
       ];
@@ -1474,22 +1474,22 @@ export default function ReportViewer() {
             <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="text-center p-4 bg-muted/50 rounded-lg">
                 <Building2 className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-2xl font-bold">{report.kpis.total_listings?.toLocaleString() || 'N/A'}</p>
+                <p className="text-2xl font-bold">{report.kpis.total_listings?.toLocaleString('en-AU') || 'N/A'}</p>
                 <p className="text-sm text-muted-foreground">Total Listings</p>
               </div>
               <div className="text-center p-4 bg-muted/50 rounded-lg">
                 <DollarSign className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-2xl font-bold">${report.kpis.avg_price?.toLocaleString() || 'N/A'}</p>
+                <p className="text-2xl font-bold">${report.kpis.avg_price?.toLocaleString('en-AU') || 'N/A'}</p>
                 <p className="text-sm text-muted-foreground">Average Price</p>
               </div>
               <div className="text-center p-4 bg-muted/50 rounded-lg">
                 <TrendingUp className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-2xl font-bold">{report.kpis.recent_30d?.toLocaleString() || 'N/A'}</p>
+                <p className="text-2xl font-bold">{report.kpis.recent_30d?.toLocaleString('en-AU') || 'N/A'}</p>
                 <p className="text-sm text-muted-foreground">Recent (30d)</p>
               </div>
               <div className="text-center p-4 bg-muted/50 rounded-lg">
                 <MapPin className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-                <p className="text-2xl font-bold">{report.kpis.unique_suburbs?.toLocaleString() || 'N/A'}</p>
+                <p className="text-2xl font-bold">{report.kpis.unique_suburbs?.toLocaleString('en-AU') || 'N/A'}</p>
                 <p className="text-sm text-muted-foreground">Unique Suburbs</p>
               </div>
             </CardContent>
@@ -1662,7 +1662,7 @@ export default function ReportViewer() {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Listings Analyzed</p>
-              <p className="font-medium">{report.listing_count.toLocaleString()}</p>
+              <p className="font-medium">{report.listing_count.toLocaleString('en-AU')}</p>
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Charts Generated</p>

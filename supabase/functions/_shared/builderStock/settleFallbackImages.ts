@@ -32,6 +32,7 @@
 // unloadable anywhere but Deno. The same reason `repairSourceImages.ts`
 // defers `fetchSource.ts`.
 import type { enrichStockItem, EnrichableStockItem } from './images.ts';
+import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 
 /**
  * How many properties one tick may put through the paid ladder.
@@ -101,7 +102,7 @@ export async function readFallbackQueue(
     let query = db
       .from('builder_stock_items')
       .select(CANDIDATE_COLUMNS)
-      .eq('lifecycle_status', 'active')
+      .in('lifecycle_status', PROCESSED_LIFECYCLE)
       .in('enrichment_status', ['pending', 'enriching'])
       .order('created_at', { ascending: true })
       .limit(limit);

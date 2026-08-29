@@ -724,7 +724,7 @@ export function InvestmentReportGenerator() {
 
       // Show what was extracted
       const extractedInfo = [];
-      if (extracted.extractedPrice) extractedInfo.push(`$${extracted.extractedPrice.toLocaleString()}`);
+      if (extracted.extractedPrice) extractedInfo.push(`$${extracted.extractedPrice.toLocaleString('en-AU')}`);
       if (extracted.extractedBedrooms) extractedInfo.push(`${extracted.extractedBedrooms} beds`);
       if (extracted.extractedBathrooms) extractedInfo.push(`${extracted.extractedBathrooms} baths`);
       if (extracted.extractedLandSize) extractedInfo.push(`${extracted.extractedLandSize}m²`);
@@ -1157,7 +1157,7 @@ export function InvestmentReportGenerator() {
 
       // Show what was extracted
       const extractedInfo = [];
-      if (extracted.extractedPrice) extractedInfo.push(`$${extracted.extractedPrice.toLocaleString()}`);
+      if (extracted.extractedPrice) extractedInfo.push(`$${extracted.extractedPrice.toLocaleString('en-AU')}`);
       if (extracted.extractedBedrooms) extractedInfo.push(`${extracted.extractedBedrooms} beds`);
       if (extracted.extractedBathrooms) extractedInfo.push(`${extracted.extractedBathrooms} baths`);
       if (extracted.extractedLandSize) extractedInfo.push(`${extracted.extractedLandSize}m² land`);

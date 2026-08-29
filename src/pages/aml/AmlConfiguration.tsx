@@ -178,7 +178,7 @@ function SummaryTiles({ summary, hideMetrics = false }: { summary: AmlTenantSumm
     { label: "Plan", value: plan?.label ?? "—", icon: Package, sub: plan?.description || undefined },
     { label: "Active providers", value: String(activeProviders), icon: Plug, sub: `${summary?.providers.length ?? 0} total` },
     ...(hideMetrics ? [] : [
-      { label: "30-day calls", value: calls.toLocaleString(), icon: Activity, sub: `${failureRate.toFixed(1)}% failure` },
+      { label: "30-day calls", value: calls.toLocaleString('en-AU'), icon: Activity, sub: `${failureRate.toFixed(1)}% failure` },
       { label: "30-day cost", value: fmtMoney(summary?.metrics_30d.cost_cents ?? 0), icon: DollarSign, sub: "across all providers" },
     ]),
   ];
@@ -928,8 +928,8 @@ function MetricsPanel() {
                   <TableRow key={`${p.capability}-${p.provider_key}-${i}`}>
                     <TableCell><Badge variant="outline">{p.capability}</Badge></TableCell>
                     <TableCell>{p.provider_key}</TableCell>
-                    <TableCell>{p.calls.toLocaleString()}</TableCell>
-                    <TableCell>{p.failures.toLocaleString()}</TableCell>
+                    <TableCell>{p.calls.toLocaleString('en-AU')}</TableCell>
+                    <TableCell>{p.failures.toLocaleString('en-AU')}</TableCell>
                     <TableCell>
                       <span className={p.failure_rate > 0.1 ? "text-destructive" : p.failure_rate > 0.03 ? "text-warning" : "text-success"}>
                         {(p.failure_rate * 100).toFixed(1)}%

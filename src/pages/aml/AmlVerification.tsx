@@ -212,7 +212,7 @@ export default function AmlVerification() {
                       {STATUS_ICON[c.status]} {c.status}
                     </span>
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{new Date(c.requested_at).toLocaleString()}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{new Date(c.requested_at).toLocaleString('en-AU')}</TableCell>
                   <TableCell className="text-right">
                     {(c.status === "pending" || c.status === "in_progress") && (
                       <Button size="sm" variant="ghost" onClick={() => cancel(c.id)}>Cancel</Button>

@@ -152,7 +152,7 @@ export function SendPortalInviteDialog({
                 <p className="text-xs text-muted-foreground">{status.portal_user.email}</p>
                 {status.portal_user.last_login_at && (
                   <p className="text-xs text-muted-foreground">
-                    Last login: {new Date(status.portal_user.last_login_at).toLocaleDateString()}
+                    Last login: {new Date(status.portal_user.last_login_at).toLocaleDateString('en-AU')}
                   </p>
                 )}
 
@@ -173,7 +173,7 @@ export function SendPortalInviteDialog({
                     </div>
                     {status.portal_user.terms_accepted_at && (
                       <p className="text-[10px] text-muted-foreground pl-6">
-                        Accepted on {new Date(status.portal_user.terms_accepted_at).toLocaleDateString()}
+                        Accepted on {new Date(status.portal_user.terms_accepted_at).toLocaleDateString('en-AU')}
                       </p>
                     )}
                     <div className="flex items-center gap-2">
@@ -228,7 +228,7 @@ export function SendPortalInviteDialog({
                   <AlertDescription>
                     An invite was sent but hasn't been accepted yet.
                     {status.portal_user?.invite_expires_at && (
-                      <> Expires: {new Date(status.portal_user.invite_expires_at).toLocaleDateString()}</>
+                      <> Expires: {new Date(status.portal_user.invite_expires_at).toLocaleDateString('en-AU')}</>
                     )}
                   </AlertDescription>
                 </Alert>

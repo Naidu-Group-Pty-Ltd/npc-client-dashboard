@@ -373,7 +373,7 @@ export function ImportReviewDialog({ open, onOpenChange, draft, onOpenTemplate, 
                   <div>
                     <div className="font-medium">Saved review decision: {decisionCopy(recordedDecision.decision).label}</div>
                     {recordedDecision.note && <p className="mt-1 text-sm text-muted-foreground whitespace-pre-wrap">{recordedDecision.note}</p>}
-                    {recordedDecision.decided_at && <p className="mt-1 text-[11px] text-muted-foreground">Recorded {new Date(recordedDecision.decided_at).toLocaleString()}</p>}
+                    {recordedDecision.decided_at && <p className="mt-1 text-[11px] text-muted-foreground">Recorded {new Date(recordedDecision.decided_at).toLocaleString('en-AU')}</p>}
                   </div>
                   <Badge variant="success">Recorded</Badge>
                 </div>

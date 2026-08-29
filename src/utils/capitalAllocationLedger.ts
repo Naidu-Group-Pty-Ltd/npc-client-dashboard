@@ -165,7 +165,7 @@ export function buildCapitalLedger(
         deltaId: d.id,
         deltaType: d.type,
         severity: 'error',
-        message: `Allocation $${Math.round(requested).toLocaleString()} exceeds pool "${poolId}" remainder $${Math.round(available).toLocaleString()}. Clamped to $${Math.round(allocated).toLocaleString()}.`,
+        message: `Allocation $${Math.round(requested).toLocaleString('en-AU')} exceeds pool "${poolId}" remainder $${Math.round(available).toLocaleString('en-AU')}. Clamped to $${Math.round(allocated).toLocaleString('en-AU')}.`,
       });
       pool.overcommitted = true;
     }
@@ -239,7 +239,7 @@ function resolveSink(
           deltaId: delta.id,
           deltaType: delta.type,
           severity: 'warning',
-          message: `Allocation $${Math.round(allocated).toLocaleString()} exceeds "${liab.label}" balance $${Math.round(liab.balance).toLocaleString()}. Capped.`,
+          message: `Allocation $${Math.round(allocated).toLocaleString('en-AU')} exceeds "${liab.label}" balance $${Math.round(liab.balance).toLocaleString('en-AU')}. Capped.`,
         });
       }
       const ratio = liab.balance > 0 ? usable / liab.balance : 0;
@@ -250,7 +250,7 @@ function resolveSink(
         debtBalanceDelta: -usable,
         depositContribution: 0,
         notes: [
-          `Pay down ${liab.label}: $${Math.round(usable).toLocaleString()} (${(ratio * 100).toFixed(0)}% of balance) → ${servicingSaving < 0 ? '−' : ''}$${Math.round(Math.abs(servicingSaving)).toLocaleString()}/mo`,
+          `Pay down ${liab.label}: $${Math.round(usable).toLocaleString('en-AU')} (${(ratio * 100).toFixed(0)}% of balance) → ${servicingSaving < 0 ? '−' : ''}$${Math.round(Math.abs(servicingSaving)).toLocaleString('en-AU')}/mo`,
         ],
       };
     }
@@ -273,7 +273,7 @@ function resolveSink(
           deltaId: delta.id,
           deltaType: delta.type,
           severity: 'warning',
-          message: `Offset $${Math.round(allocated).toLocaleString()} exceeds loan balance $${Math.round(prop.loanRemaining).toLocaleString()}. Capped.`,
+          message: `Offset $${Math.round(allocated).toLocaleString('en-AU')} exceeds loan balance $${Math.round(prop.loanRemaining).toLocaleString('en-AU')}. Capped.`,
         });
       }
       const monthlySaving = -(usable * (ratePoints / 100)) / 12;
@@ -283,7 +283,7 @@ function resolveSink(
         debtBalanceDelta: 0,
         depositContribution: 0,
         notes: [
-          `Offset $${Math.round(usable).toLocaleString()} on ${truncate(prop.address, 28)} @ ${ratePoints.toFixed(2)}% → −$${Math.round(Math.abs(monthlySaving)).toLocaleString()}/mo interest`,
+          `Offset $${Math.round(usable).toLocaleString('en-AU')} on ${truncate(prop.address, 28)} @ ${ratePoints.toFixed(2)}% → −$${Math.round(Math.abs(monthlySaving)).toLocaleString('en-AU')}/mo interest`,
         ],
       };
     }
@@ -321,7 +321,7 @@ function resolveSink(
         debtBalanceDelta: 0,
         depositContribution: 0,
         notes: [
-          `Buy-down $${Math.round(allocated).toLocaleString()} on ${truncate(prop.address, 28)}: ${oldRate.toFixed(2)}% → ${newRate.toFixed(2)}% (−${(buydown * 100).toFixed(0)} bps), ${servicingDelta >= 0 ? '+' : '−'}$${Math.round(Math.abs(servicingDelta)).toLocaleString()}/mo`,
+          `Buy-down $${Math.round(allocated).toLocaleString('en-AU')} on ${truncate(prop.address, 28)}: ${oldRate.toFixed(2)}% → ${newRate.toFixed(2)}% (−${(buydown * 100).toFixed(0)} bps), ${servicingDelta >= 0 ? '+' : '−'}$${Math.round(Math.abs(servicingDelta)).toLocaleString('en-AU')}/mo`,
         ],
       };
     }
@@ -337,7 +337,7 @@ function resolveSink(
         debtBalanceDelta: 0,
         depositContribution: 0,
         notes: [
-          `Debt-recycle $${Math.round(allocated).toLocaleString()}${prop ? ` against ${truncate(prop.address, 28)}` : ''} @ ${ratePoints.toFixed(2)}% → interest now tax-deductible. Confirm with accountant; servicing impact is recognised via negative-gearing add-back at year-end.`,
+          `Debt-recycle $${Math.round(allocated).toLocaleString('en-AU')}${prop ? ` against ${truncate(prop.address, 28)}` : ''} @ ${ratePoints.toFixed(2)}% → interest now tax-deductible. Confirm with accountant; servicing impact is recognised via negative-gearing add-back at year-end.`,
         ],
       };
     }
@@ -348,7 +348,7 @@ function resolveSink(
         debtBalanceDelta: 0,
         depositContribution: allocated,
         notes: [
-          `Reserve $${Math.round(allocated).toLocaleString()} as acquisition deposit (next purchase).`,
+          `Reserve $${Math.round(allocated).toLocaleString('en-AU')} as acquisition deposit (next purchase).`,
         ],
       };
     }
@@ -359,7 +359,7 @@ function resolveSink(
         debtBalanceDelta: 0,
         depositContribution: 0,
         notes: [
-          `Hold $${Math.round(allocated).toLocaleString()} as cash buffer (no servicing impact).`,
+          `Hold $${Math.round(allocated).toLocaleString('en-AU')} as cash buffer (no servicing impact).`,
         ],
       };
     }
@@ -374,7 +374,7 @@ function resolveSink(
           deltaId: delta.id,
           deltaType: delta.type,
           severity: 'error',
-          message: `Repayment reduction $${Math.round(monthlyCut).toLocaleString()}/mo exceeds target servicing $${Math.round(targetServicing).toLocaleString()}/mo. Capped.`,
+          message: `Repayment reduction $${Math.round(monthlyCut).toLocaleString('en-AU')}/mo exceeds target servicing $${Math.round(targetServicing).toLocaleString('en-AU')}/mo. Capped.`,
         });
       }
       const targetLabel = prop ? truncate(prop.address, 28) : (liab?.label || 'target loan');
@@ -384,7 +384,7 @@ function resolveSink(
         debtBalanceDelta: 0,
         depositContribution: 0,
         notes: [
-          `Apply $${Math.round(allocated).toLocaleString()} from pool to reduce ${targetLabel} repayment by $${Math.round(safeCut).toLocaleString()}/mo (capped at original $${Math.round(targetServicing).toLocaleString()}/mo).`,
+          `Apply $${Math.round(allocated).toLocaleString('en-AU')} from pool to reduce ${targetLabel} repayment by $${Math.round(safeCut).toLocaleString('en-AU')}/mo (capped at original $${Math.round(targetServicing).toLocaleString('en-AU')}/mo).`,
         ],
       };
     }
@@ -417,7 +417,7 @@ function consumeFunding(sourceBalances: SourceBalance[], amount: number): Source
 function describeFundingSources(fundingSources: SourceFundingPortion[]): string[] {
   if (fundingSources.length === 0) return [];
   const detail = fundingSources
-    .map(source => `${source.label} (${source.sourceType.replace(/_/g, ' ')}): $${Math.round(source.amount).toLocaleString()}`)
+    .map(source => `${source.label} (${source.sourceType.replace(/_/g, ' ')}): $${Math.round(source.amount).toLocaleString('en-AU')}`)
     .join('; ');
   return [`Funding source trace: ${detail}.`];
 }
@@ -434,7 +434,7 @@ function evaluateCapitalUsePolicy(
   );
   const hasBorrowedSources = borrowedSources.length > 0;
   const borrowedAmount = borrowedSources.reduce((sum, source) => sum + source.amount, 0);
-  const borrowedLabel = `$${Math.round(borrowedAmount).toLocaleString()} borrowed/equity-release funding`;
+  const borrowedLabel = `$${Math.round(borrowedAmount).toLocaleString('en-AU')} borrowed/equity-release funding`;
   const targetId = delta.meta?.sinkTargetId as string | undefined;
   const targetProperty = ctx.properties.find(property => property.id === targetId);
   const notes: string[] = [];
@@ -505,7 +505,7 @@ function blankSink(label: string, allocated: number): ResolvedSink {
     monthlyServicingDelta: 0,
     debtBalanceDelta: 0,
     depositContribution: 0,
-    notes: [`(${label}) — $${Math.round(allocated).toLocaleString()} parked, no effect`],
+    notes: [`(${label}) — $${Math.round(allocated).toLocaleString('en-AU')} parked, no effect`],
   };
 }
 

@@ -444,7 +444,7 @@ export default function PdfImportDiagnostics() {
         <Card className={METRIC_CARD_CLASS}>
           <CardContent className="p-4 sm:p-5">
             <div className={METRIC_LABEL_CLASS}>Text chars</div>
-            <div className={METRIC_VALUE_CLASS}>{stats?.summary.text_chars?.toLocaleString() ?? '—'}</div>
+            <div className={METRIC_VALUE_CLASS}>{stats?.summary.text_chars?.toLocaleString('en-AU') ?? '—'}</div>
           </CardContent>
         </Card>
         <Card className={METRIC_CARD_CLASS}>
@@ -713,7 +713,7 @@ export default function PdfImportDiagnostics() {
                         )}
                       </TableCell>
                       <TableCell className="text-right text-sm">
-                        {row.result_payload?.summary?.text_chars?.toLocaleString() ?? '—'}
+                        {row.result_payload?.summary?.text_chars?.toLocaleString('en-AU') ?? '—'}
                       </TableCell>
                       <TableCell className="text-right text-sm">
                         {row.result_payload?.summary?.text_chars

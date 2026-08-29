@@ -244,16 +244,16 @@ export function ReportVersionComparison({ reportId, versionA, versionB, open, on
                   <CardTitle className="text-base">Financial Calculations</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  {renderMetricComparison('Purchase Price', dataA.financial_calculations?.purchase_price, dataB.financial_calculations?.purchase_price, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Stamp Duty', dataA.financial_calculations?.stamp_duty, dataB.financial_calculations?.stamp_duty, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Legal Fees', dataA.financial_calculations?.legal_fees, dataB.financial_calculations?.legal_fees, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Inspection Costs', dataA.financial_calculations?.inspection_costs, dataB.financial_calculations?.inspection_costs, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Total Acquisition', dataA.financial_calculations?.total_acquisition_cost, dataB.financial_calculations?.total_acquisition_cost, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Weekly Rent', dataA.financial_calculations?.estimated_weekly_rent, dataB.financial_calculations?.estimated_weekly_rent, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Annual Rent', dataA.financial_calculations?.annual_rent, dataB.financial_calculations?.annual_rent, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
+                  {renderMetricComparison('Purchase Price', dataA.financial_calculations?.purchase_price, dataB.financial_calculations?.purchase_price, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Stamp Duty', dataA.financial_calculations?.stamp_duty, dataB.financial_calculations?.stamp_duty, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Legal Fees', dataA.financial_calculations?.legal_fees, dataB.financial_calculations?.legal_fees, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Inspection Costs', dataA.financial_calculations?.inspection_costs, dataB.financial_calculations?.inspection_costs, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Total Acquisition', dataA.financial_calculations?.total_acquisition_cost, dataB.financial_calculations?.total_acquisition_cost, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Weekly Rent', dataA.financial_calculations?.estimated_weekly_rent, dataB.financial_calculations?.estimated_weekly_rent, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Annual Rent', dataA.financial_calculations?.annual_rent, dataB.financial_calculations?.annual_rent, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
                   {renderMetricComparison('Rental Yield', dataA.financial_calculations?.rental_yield, dataB.financial_calculations?.rental_yield, (v) => (v !== null && v !== undefined) ? `${Number(v).toFixed(2)}%` : 'N/A')}
-                  {renderMetricComparison('Annual Cash Flow', dataA.financial_calculations?.annual_cash_flow, dataB.financial_calculations?.annual_cash_flow, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
-                  {renderMetricComparison('Operating Costs', dataA.financial_calculations?.total_annual_costs, dataB.financial_calculations?.total_annual_costs, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString()}` : 'N/A')}
+                  {renderMetricComparison('Annual Cash Flow', dataA.financial_calculations?.annual_cash_flow, dataB.financial_calculations?.annual_cash_flow, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
+                  {renderMetricComparison('Operating Costs', dataA.financial_calculations?.total_annual_costs, dataB.financial_calculations?.total_annual_costs, (v) => (v !== null && v !== undefined) ? `$${Number(v).toLocaleString('en-AU')}` : 'N/A')}
                 </CardContent>
               </Card>
             )}

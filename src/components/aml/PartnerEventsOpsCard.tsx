@@ -120,22 +120,22 @@ export function PartnerEventsOpsCard() {
             <RecordList
               label="Pending events" testId="pending-events"
               rows={health.pending_events.map((e) => (
-                `${e.event_type} · ${new Date(e.occurred_at).toLocaleString()} · attempts ${e.attempts}${e.last_error ? ` · ${e.last_error.slice(0, 80)}` : ""}`
+                `${e.event_type} · ${new Date(e.occurred_at).toLocaleString('en-AU')} · attempts ${e.attempts}${e.last_error ? ` · ${e.last_error.slice(0, 80)}` : ""}`
               ))} />
             <RecordList
               label="Dead letters" testId="dead-letters"
               rows={health.dead_letters.map((d) => (
-                `${d.event_type} · failed ${new Date(d.failed_at).toLocaleString()} · attempts ${d.attempts}`
+                `${d.event_type} · failed ${new Date(d.failed_at).toLocaleString('en-AU')} · attempts ${d.attempts}`
               ))} />
             <RecordList
               label="Open refresh obligations" testId="open-obligations"
               rows={health.open_obligations.map((o) => (
-                `${o.required_action.replace(/_/g, " ")} · ${o.safe_reason_code.replace(/_/g, " ")} · case ${o.case_id.slice(0, 8)}…${o.due_at ? ` · due ${new Date(o.due_at).toLocaleDateString()}` : ""}`
+                `${o.required_action.replace(/_/g, " ")} · ${o.safe_reason_code.replace(/_/g, " ")} · case ${o.case_id.slice(0, 8)}…${o.due_at ? ` · due ${new Date(o.due_at).toLocaleDateString('en-AU')}` : ""}`
               ))} />
             <RecordList
               label="Attestations flagged for refresh" testId="flagged-attestations"
               rows={health.refresh_required_attestations.map((a) => (
-                `v${a.version} · case ${a.case_id.slice(0, 8)}… · flagged ${new Date(a.refresh_required_at).toLocaleString()}`
+                `v${a.version} · case ${a.case_id.slice(0, 8)}… · flagged ${new Date(a.refresh_required_at).toLocaleString('en-AU')}`
               ))} />
             <RecordList
               label="Arrangement reviews due" testId="arrangement-reviews"

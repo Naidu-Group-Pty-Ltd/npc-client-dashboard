@@ -728,7 +728,7 @@ export default function BuilderDeliveryDetail() {
                           {statusLabel(entry.entity_kind, entry.to_status)}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.created_at).toLocaleString('en-AU')}
                         </span>
                       </div>
                       {entry.reason ? (

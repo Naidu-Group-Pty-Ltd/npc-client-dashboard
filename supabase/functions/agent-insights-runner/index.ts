@@ -71,7 +71,7 @@ async function runForUser(sb: any, userId: string) {
       user_id: userId, kind: 'stale_deals', severity: 'warning',
       title: `${staleDeals.length} deal${staleDeals.length > 1 ? 's' : ''} sitting >7 days without an update`,
       summary: 'These need a nudge or a stage change.',
-      body_markdown: staleDeals.map((d: any) => `- **${d.deal_name || 'Untitled'}** — stage \`${d.stage}\` (last updated ${new Date(d.updated_at).toLocaleDateString()})`).join('\n'),
+      body_markdown: staleDeals.map((d: any) => `- **${d.deal_name || 'Untitled'}** — stage \`${d.stage}\` (last updated ${new Date(d.updated_at).toLocaleDateString('en-AU')})`).join('\n'),
       payload: { deal_ids: staleDeals.map((d: any) => d.id) },
     });
     if (r.inserted) results.push('stale_deals');
@@ -87,7 +87,7 @@ async function runForUser(sb: any, userId: string) {
       user_id: userId, kind: 'overdue_reminders', severity: 'critical',
       title: `${overdue.length} reminder${overdue.length > 1 ? 's are' : ' is'} overdue`,
       summary: 'Clear these first — they were due before today.',
-      body_markdown: overdue.map((r: any) => `- **${r.title}** — due ${new Date(r.due_date).toLocaleDateString()}`).join('\n'),
+      body_markdown: overdue.map((r: any) => `- **${r.title}** — due ${new Date(r.due_date).toLocaleDateString('en-AU')}`).join('\n'),
       payload: { reminder_ids: overdue.map((r: any) => r.id) },
     });
     if (r.inserted) results.push('overdue_reminders');
@@ -103,7 +103,7 @@ async function runForUser(sb: any, userId: string) {
     const r = await upsertInsight(sb, {
       user_id: userId, kind: 'settlement_countdown', severity: 'info',
       title: `${settling.length} settlement${settling.length > 1 ? 's' : ''} in the next 14 days`,
-      body_markdown: settling.map((d: any) => `- **${d.deal_name || 'Untitled'}** — settles ${new Date(d.settlement_date).toLocaleDateString()}`).join('\n'),
+      body_markdown: settling.map((d: any) => `- **${d.deal_name || 'Untitled'}** — settles ${new Date(d.settlement_date).toLocaleDateString('en-AU')}`).join('\n'),
       payload: { deal_ids: settling.map((d: any) => d.id) },
     });
     if (r.inserted) results.push('settlement_countdown');

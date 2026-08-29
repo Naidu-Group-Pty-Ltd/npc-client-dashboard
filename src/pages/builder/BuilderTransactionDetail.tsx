@@ -522,7 +522,7 @@ export default function BuilderTransactionDetail() {
                           {TRANSACTION_STATUS_LABELS[entry.to_status]}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          {new Date(entry.created_at).toLocaleString()}
+                          {new Date(entry.created_at).toLocaleString('en-AU')}
                         </span>
                       </div>
                       {entry.reason ? (

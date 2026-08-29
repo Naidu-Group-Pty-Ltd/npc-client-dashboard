@@ -151,7 +151,7 @@ export function TokenUsagePanel() {
       ? [
           {
             label: "Included Monthly",
-            value: includedMonthly.toLocaleString(),
+            value: includedMonthly.toLocaleString('en-AU'),
             icon: Zap,
             helper: balance?.planName
               ? `Credits included with ${balance.planName}, every month`
@@ -164,7 +164,7 @@ export function TokenUsagePanel() {
       : []),
     {
       label: "Generations",
-      value: totals.count.toLocaleString(),
+      value: totals.count.toLocaleString('en-AU'),
       icon: Activity,
       helper: "Filtered generation records",
       accent: "from-primary/15 via-card to-muted/30",
@@ -173,7 +173,7 @@ export function TokenUsagePanel() {
     },
     {
       label: "Tokens Used",
-      value: totals.used.toLocaleString(),
+      value: totals.used.toLocaleString('en-AU'),
       icon: Coins,
       helper: "Actual committed usage",
       accent: "from-success/12 via-card to-muted/30",
@@ -369,9 +369,9 @@ export function TokenUsagePanel() {
                                     <span className="block whitespace-nowrap font-medium text-foreground" title={r.created_at}>
                                       {formatDistanceToNow(new Date(r.created_at), { addSuffix: true })}
                                     </span>
-                                    <span className="block truncate" title={r.created_at}>Created {new Date(r.created_at).toLocaleString()}</span>
+                                    <span className="block truncate" title={r.created_at}>Created {new Date(r.created_at).toLocaleString('en-AU')}</span>
                                     {r.updated_at && (
-                                      <span className="block truncate" title={r.updated_at}>Updated {new Date(r.updated_at).toLocaleString()}</span>
+                                      <span className="block truncate" title={r.updated_at}>Updated {new Date(r.updated_at).toLocaleString('en-AU')}</span>
                                     )}
                                   </div>
                                 </TableCell>
@@ -395,7 +395,7 @@ export function TokenUsagePanel() {
                                   </button>
                                 </TableCell>
                                 <TableCell className="align-top text-right font-semibold tabular-nums">
-                                  <span className="text-success dark:text-success">{r.actual_tokens.toLocaleString()}</span>
+                                  <span className="text-success dark:text-success">{r.actual_tokens.toLocaleString('en-AU')}</span>
                                 </TableCell>
                                 <TableCell className="align-top text-right text-xs tabular-nums text-muted-foreground">
                                   <span className="inline-flex rounded-full border border-border/60 bg-muted/45 px-2 py-1 font-medium shadow-sm">{fmtMs(r.duration_ms)}</span>
@@ -428,7 +428,7 @@ export function TokenUsagePanel() {
                         </SelectContent>
                       </Select>
                       <span className="ml-0 sm:ml-2">
-                        {filtered.length === 0 ? 0 : pageStart + 1}–{Math.min(pageStart + pageSize, filtered.length)} of {filtered.length.toLocaleString()}
+                        {filtered.length === 0 ? 0 : pageStart + 1}–{Math.min(pageStart + pageSize, filtered.length)} of {filtered.length.toLocaleString('en-AU')}
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1">

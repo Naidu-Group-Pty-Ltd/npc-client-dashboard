@@ -277,7 +277,7 @@ export function aiAdjustmentsToDeltas(adj: ScenarioAdjustments): ScenarioDelta[]
     if (!allocation || !Number.isFinite(allocation.amount) || allocation.amount <= 0 || !allocation.sinkType) continue;
     deltas.push({
       id: `cap-alloc-${i}-${allocation.sinkType}`,
-      label: `Allocate $${Math.round(allocation.amount).toLocaleString()} → ${allocation.sinkType.replace(/_/g, ' ')}`,
+      label: `Allocate $${Math.round(allocation.amount).toLocaleString('en-AU')} → ${allocation.sinkType.replace(/_/g, ' ')}`,
       type: 'capital_allocation',
       value: allocation.amount,
       unit: 'absolute',
@@ -818,10 +818,10 @@ export function BCScenarioAgent({
                     >
                       <TrendingUp className="h-3 w-3 mr-1" />
                       {liveSnapshot
-                        ? `${effectiveValidation!.capacityChange >= 0 ? '+' : ''}$${Math.round(effectiveValidation!.capacityChange).toLocaleString()}`
+                        ? `${effectiveValidation!.capacityChange >= 0 ? '+' : ''}$${Math.round(effectiveValidation!.capacityChange).toLocaleString('en-AU')}`
                         : (scenario.reconciledImpact
                           || (scenario.engineValidation
-                            ? `${scenario.engineValidation.capacityChange >= 0 ? '+' : ''}$${Math.round(scenario.engineValidation.capacityChange).toLocaleString()}`
+                            ? `${scenario.engineValidation.capacityChange >= 0 ? '+' : ''}$${Math.round(scenario.engineValidation.capacityChange).toLocaleString('en-AU')}`
                             : scenario.estimatedImpact))}
                     </Badge>
                   </div>
@@ -868,7 +868,7 @@ export function BCScenarioAgent({
                   {effectiveValidation && (() => {
                     const v = effectiveValidation!;
                     const fmt = (n?: number) => typeof n === 'number'
-                      ? `$${Math.round(n).toLocaleString()}`
+                      ? `$${Math.round(n).toLocaleString('en-AU')}`
                       : '—';
                     const hasTarget = typeof v.targetPurchasePrice === 'number' && v.targetPurchasePrice > 0;
                     const meets = v.meetsTarget === true;
@@ -1018,7 +1018,7 @@ export function BCScenarioAgent({
                     )}
                     {scenario.adjustments.acquisition && (
                       <Badge variant="outline" className="text-[10px]">
-                        Acquisition{scenario.adjustments.acquisition.targetPurchasePrice ? ` · target $${Math.round(scenario.adjustments.acquisition.targetPurchasePrice).toLocaleString()}` : ''}
+                        Acquisition{scenario.adjustments.acquisition.targetPurchasePrice ? ` · target $${Math.round(scenario.adjustments.acquisition.targetPurchasePrice).toLocaleString('en-AU')}` : ''}
                       </Badge>
                     )}
                   </div>

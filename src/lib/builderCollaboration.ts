@@ -219,13 +219,13 @@ export const DOCUMENT_STATUS_CLASSES: Record<BuilderDocumentStatus, string> = {
 export function formatCollaborationDate(value: string | null | undefined): string {
   if (!value) return '—';
   const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString() : '—';
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString('en-AU') : '—';
 }
 
 export function formatCollaborationTime(value: string | null | undefined): string {
   if (!value) return '—';
   const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : '—';
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString('en-AU') : '—';
 }
 
 export function formatFileSize(bytes: number | null | undefined): string {

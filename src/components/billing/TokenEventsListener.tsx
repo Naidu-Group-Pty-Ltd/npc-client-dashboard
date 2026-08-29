@@ -52,7 +52,7 @@ export function TokenEventsListener() {
       if (!b) return;
       buckets.delete(functionName);
       const label = FUNCTION_LABELS[functionName] ?? "Report";
-      const parts: string[] = [`Used ${b.tokensUsed.toLocaleString()} tokens`];
+      const parts: string[] = [`Used ${b.tokensUsed.toLocaleString('en-AU')} tokens`];
       if (b.durationMs > 0) {
         const s = (b.durationMs / 1000).toFixed(b.durationMs < 10_000 ? 1 : 0);
         parts.push(`${s}s`);
@@ -126,11 +126,11 @@ export function TokenEventsListener() {
           <DialogTitle className="text-center">Out of report credits</DialogTitle>
           <DialogDescription className="text-center">
             {label} needs{" "}
-            <span className="font-semibold text-foreground">{requested.toLocaleString()}</span>{" "}
+            <span className="font-semibold text-foreground">{requested.toLocaleString('en-AU')}</span>{" "}
             tokens but only{" "}
-            <span className="font-semibold text-foreground">{available.toLocaleString()}</span>{" "}
+            <span className="font-semibold text-foreground">{available.toLocaleString('en-AU')}</span>{" "}
             are available in your agency pool — you're short by{" "}
-            <span className="font-semibold text-foreground">{short.toLocaleString()}</span>.
+            <span className="font-semibold text-foreground">{short.toLocaleString('en-AU')}</span>.
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg border border-border/60 bg-muted/30 p-3 text-sm text-muted-foreground">

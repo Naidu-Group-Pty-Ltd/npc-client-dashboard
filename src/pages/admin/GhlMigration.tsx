@@ -95,7 +95,7 @@ const ALL_DOMAINS: Domain[] = ['location', 'contacts', 'pipelines', 'opportuniti
 
 function fmtCount(n: number | null): string {
   if (n === null || n === undefined) return '—';
-  return n.toLocaleString();
+  return n.toLocaleString('en-AU');
 }
 
 function PreviewCard({
@@ -923,7 +923,7 @@ function MigrationWorkersPanel() {
                         <tr className="border-t border-border/40 cursor-pointer hover:bg-muted/30"
                             onClick={() => setExpandedJobId(isOpen ? null : j.id)}>
                           <td className="p-2 text-muted-foreground whitespace-nowrap">
-                            {new Date(j.created_at).toLocaleTimeString()}
+                            {new Date(j.created_at).toLocaleTimeString('en-AU')}
                           </td>
                           <td className="p-2 font-medium capitalize">{j.domain}</td>
                           <td className="p-2 whitespace-nowrap">
@@ -939,7 +939,7 @@ function MigrationWorkersPanel() {
                           <td className="p-2">
                             <div className="flex items-center justify-between gap-2 mb-1">
                               <span className="font-mono tabular-nums text-[11px]">
-                                {processed.toLocaleString()}{rawTotal > 0 ? `/${rawTotal.toLocaleString()}${!totalIsKnown ? '+' : ''}` : ''}
+                                {processed.toLocaleString('en-AU')}{rawTotal > 0 ? `/${rawTotal.toLocaleString('en-AU')}${!totalIsKnown ? '+' : ''}` : ''}
                                 <span className="ml-1 text-muted-foreground">({pct}%)</span>
                               </span>
                               {isLive && !isPaused && (
@@ -1218,7 +1218,7 @@ function AccountSummary({ data }: { data: PreviewResponse }) {
         <code className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{data.location_id}</code>
       </div>
       <div className="ml-auto text-muted-foreground">
-        Fetched {new Date(data.fetched_at).toLocaleTimeString()}
+        Fetched {new Date(data.fetched_at).toLocaleTimeString('en-AU')}
       </div>
     </div>
   );
@@ -1266,7 +1266,7 @@ function CompareTable({
                 <td className="p-3 text-right tabular-nums">
                   {gap === null ? '—' : (
                     <span className={gap > 0 ? 'text-warning' : gap < 0 ? 'text-success' : 'text-muted-foreground'}>
-                      {gap > 0 ? '+' : ''}{gap.toLocaleString()}
+                      {gap > 0 ? '+' : ''}{gap.toLocaleString('en-AU')}
                     </span>
                   )}
                 </td>
@@ -1669,7 +1669,7 @@ function JobDetailRow({ job, onChanged }: { job: any; onChanged?: () => void }) 
               </div>
               <div className="col-span-2 md:col-span-2">
                 <span className="text-muted-foreground">last dispatch:</span>{' '}
-                <span className="font-mono">{lastDispatchedAt ? new Date(lastDispatchedAt).toLocaleTimeString() : '—'}</span>
+                <span className="font-mono">{lastDispatchedAt ? new Date(lastDispatchedAt).toLocaleTimeString('en-AU') : '—'}</span>
               </div>
             </div>
             {cursorEntries.length > 0 ? (

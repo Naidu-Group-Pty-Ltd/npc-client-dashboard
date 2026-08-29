@@ -113,7 +113,7 @@ export function PurchaseHistoryCard() {
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {p.originUsername ?? p.originUserId ?? "unknown user"} ·{" "}
-                    {new Date(p.createdAt).toLocaleDateString()}
+                    {new Date(p.createdAt).toLocaleDateString('en-AU')}
                     {p.quantity > 1 ? ` · ×${p.quantity}` : ""}
                   </div>
                 </div>
@@ -127,7 +127,7 @@ export function PurchaseHistoryCard() {
 
         <div className="flex items-center justify-between pt-1 text-xs text-muted-foreground">
           <span>
-            {total > 0 ? `${total.toLocaleString()} total purchase${total === 1 ? "" : "s"}` : ""}
+            {total > 0 ? `${total.toLocaleString('en-AU')} total purchase${total === 1 ? "" : "s"}` : ""}
           </span>
           <Button
             variant="outline"

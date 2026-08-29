@@ -225,7 +225,7 @@ export default function Checklists() {
       ? 'bg-success/10'
       : 'bg-brand-400/10';
     const isSelected = selectedChecklistIds.has(instance.id);
-    const formattedDate = new Date(instance.created_at).toLocaleDateString();
+    const formattedDate = new Date(instance.created_at).toLocaleDateString('en-AU');
     const actionLabel = `${instance.name} checklist dated ${formattedDate}`;
 
     return (

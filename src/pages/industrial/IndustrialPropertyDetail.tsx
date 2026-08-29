@@ -99,11 +99,11 @@ export default function IndustrialPropertyDetail() {
         <TabsContent value="overview" className="space-y-4">
           <Card>
             <CardContent className="pt-6 grid gap-4 md:grid-cols-3 text-sm">
-              <Info label="GLA" value={property.gla_sqm ? `${property.gla_sqm.toLocaleString()} m²` : '—'} />
-              <Info label="Site Area" value={property.site_area_sqm ? `${property.site_area_sqm.toLocaleString()} m²` : '—'} />
+              <Info label="GLA" value={property.gla_sqm ? `${property.gla_sqm.toLocaleString('en-AU')} m²` : '—'} />
+              <Info label="Site Area" value={property.site_area_sqm ? `${property.site_area_sqm.toLocaleString('en-AU')} m²` : '—'} />
               <Info label="Site Cover" value={property.site_cover_pct ? `${property.site_cover_pct}%` : '—'} />
               <Info label="Office %" value={property.office_pct ? `${property.office_pct}%` : '—'} />
-              <Info label="Hardstand" value={property.hardstand_sqm ? `${property.hardstand_sqm.toLocaleString()} m²` : '—'} />
+              <Info label="Hardstand" value={property.hardstand_sqm ? `${property.hardstand_sqm.toLocaleString('en-AU')} m²` : '—'} />
               <Info label="Clearance" value={property.clearance_metres ? `${property.clearance_metres} m` : '—'} />
               <Info label="Power" value={property.power_kva ? `${property.power_kva} kVA` : '—'} />
               <Info label="Dock Doors" value={property.dock_doors ?? '—'} />

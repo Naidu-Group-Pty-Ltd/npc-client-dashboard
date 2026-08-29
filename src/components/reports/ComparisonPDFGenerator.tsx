@@ -84,7 +84,7 @@ export function ComparisonPDFGenerator({ comparison }: ComparisonPDFGeneratorPro
     let content = `# ${title}\n\n`;
     content += `**Properties Compared:** ${comparison.property_count}\n`;
     content += `**States:** ${states}\n`;
-    content += `**Analysis Date:** ${new Date(comparison.created_at).toLocaleDateString()}\n\n`;
+    content += `**Analysis Date:** ${new Date(comparison.created_at).toLocaleDateString('en-AU')}\n\n`;
     
     if (comparison.property_addresses && comparison.property_addresses.length > 0) {
       content += `**Property Addresses:**\n`;

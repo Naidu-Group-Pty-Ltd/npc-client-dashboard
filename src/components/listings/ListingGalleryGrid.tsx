@@ -106,7 +106,7 @@ export function ListingGalleryGrid({
             Load {Math.min(PAGE_SIZE, listings.length - visible)} more
           </Button>
           <p className="text-xs text-muted-foreground">
-            Showing {shown.length.toLocaleString()} of {listings.length.toLocaleString()}
+            Showing {shown.length.toLocaleString('en-AU')} of {listings.length.toLocaleString('en-AU')}
           </p>
         </div>
       )}

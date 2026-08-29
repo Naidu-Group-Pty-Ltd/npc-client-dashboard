@@ -204,7 +204,7 @@ export async function generateOverviewSnapshotPDF(data: OverviewSnapshotData): P
   // Total listings badge at bottom
   doc.setFontSize(11);
   doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
-  doc.text(`Total Properties: ${data.totalListings.toLocaleString()}`, margin, ph - 50);
+  doc.text(`Total Properties: ${data.totalListings.toLocaleString('en-AU')}`, margin, ph - 50);
 
   // Brand
   doc.setFontSize(9);

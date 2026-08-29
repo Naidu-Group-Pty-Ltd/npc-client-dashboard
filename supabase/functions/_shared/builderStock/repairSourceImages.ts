@@ -27,6 +27,7 @@
  *   another builder's stock even if two rows happen to read alike.
  */
 import { classifyFetchedSource, classifyStockFile } from './fileTypes.pure.ts';
+import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 import { detectDocumentMime } from '../immutableDocuments.ts';
 import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
@@ -291,7 +292,7 @@ async function storedSourceRows(
     .select('source_row')
     .eq('organisation_id', input.organisationId)
     .eq('upload_id', input.uploadId)
-    .eq('lifecycle_status', 'active')
+    .in('lifecycle_status', PROCESSED_LIFECYCLE)
     .order('created_at', { ascending: true });
   return (data ?? [])
     .map((row: { source_row?: unknown }) => readStoredRecord(row?.source_row))
@@ -565,7 +566,7 @@ export async function repairSourceImagesForUpload(
     .from('builder_stock_items')
     .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result')
     .eq('organisation_id', input.organisationId)
-    .eq('lifecycle_status', 'active')
+    .in('lifecycle_status', PROCESSED_LIFECYCLE)
     .order('created_at', { ascending: true })
     .limit(20000);
 
@@ -1301,7 +1302,7 @@ async function repairPdfUpload(
     .select('id, external_reference, development_name, project_name, unit_number, lot_number, address_line, suburb, source_row, primary_image_id')
     .eq('organisation_id', input.organisationId)
     .eq('upload_id', input.upload.id)
-    .eq('lifecycle_status', 'active')
+    .in('lifecycle_status', PROCESSED_LIFECYCLE)
     .order('created_at', { ascending: true })
     .limit(5000);
 

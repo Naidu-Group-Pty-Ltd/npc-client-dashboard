@@ -77,16 +77,16 @@ export function ClientAIInsights({ clientId }: ClientAIInsightsProps) {
       const prompt = `Analyze this property investment portfolio and provide insights:
 
 Client: ${clientName}
-Portfolio Value: $${portfolioValue.toLocaleString()}
-Total Debt: $${debt.toLocaleString()}
+Portfolio Value: $${portfolioValue.toLocaleString('en-AU')}
+Total Debt: $${debt.toLocaleString('en-AU')}
 LTV Ratio: ${ltv.toFixed(1)}%
 Properties: ${propertyCount}
-Monthly Cash Flow: $${cashFlow.toLocaleString()}
+Monthly Cash Flow: $${cashFlow.toLocaleString('en-AU')}
 Gross Yield: ${grossYield.toFixed(2)}%
-Average Property Value: $${avgPropertyValue.toLocaleString()}
+Average Property Value: $${avgPropertyValue.toLocaleString('en-AU')}
 
 Property breakdown:
-${properties.map((p: any) => `- ${p.address}: Value $${Number(p.value).toLocaleString()}, Loan $${Number(p.loan_remaining).toLocaleString()}, Monthly Rent $${Number(p.monthly_rental_income).toLocaleString()}, Net Cash Flow $${Number(p.net_monthly_cashflow).toLocaleString()}`).join('\n')}
+${properties.map((p: any) => `- ${p.address}: Value $${Number(p.value).toLocaleString('en-AU')}, Loan $${Number(p.loan_remaining).toLocaleString('en-AU')}, Monthly Rent $${Number(p.monthly_rental_income).toLocaleString('en-AU')}, Net Cash Flow $${Number(p.net_monthly_cashflow).toLocaleString('en-AU')}`).join('\n')}
 
 Provide a JSON response with this structure:
 {

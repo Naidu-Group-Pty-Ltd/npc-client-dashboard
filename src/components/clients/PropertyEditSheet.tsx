@@ -926,7 +926,7 @@ export function PropertyEditSheet({ property, open, onOpenChange, onComplete }: 
                       </div>
                       {monthlyPropertyManagement > 0 && (
                         <p className="text-xs text-muted-foreground">
-                          = ${Math.round(monthlyPropertyManagement).toLocaleString()}/month
+                          = ${Math.round(monthlyPropertyManagement).toLocaleString('en-AU')}/month
                         </p>
                       )}
                     </div>

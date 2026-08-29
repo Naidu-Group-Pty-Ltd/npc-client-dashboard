@@ -111,7 +111,7 @@ const REASON_LABEL: Record<string, { label: string; hint: string; tone: string }
 };
 
 function num(n: number | undefined | null): string {
-  return (n ?? 0).toLocaleString();
+  return (n ?? 0).toLocaleString('en-AU');
 }
 
 export function BillingRecoveryTab({ days = 30 }: { days?: number }) {
@@ -254,7 +254,7 @@ export function BillingRecoveryTab({ days = 30 }: { days?: number }) {
           value={num(queue.pending)}
           detail={
             queue.oldest_pending
-              ? `Oldest ${new Date(queue.oldest_pending).toLocaleString()}`
+              ? `Oldest ${new Date(queue.oldest_pending).toLocaleString('en-AU')}`
               : 'Nothing waiting'
           }
           tone={(queue.stuck ?? 0) > 0 ? 'warn' : 'default'}

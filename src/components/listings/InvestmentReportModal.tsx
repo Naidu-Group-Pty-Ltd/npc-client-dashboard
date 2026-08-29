@@ -272,7 +272,7 @@ export function InvestmentReportModal({
     pdf.setFontSize(12);
     pdf.setFont(undefined, 'normal');
     pdf.text(`Property: ${propertyAddress}`, margin, 45);
-    pdf.text(`Generated: ${new Date().toLocaleDateString()}`, margin, 55);
+    pdf.text(`Generated: ${new Date().toLocaleDateString('en-AU')}`, margin, 55);
     pdf.setFontSize(10);
     const lines = pdf.splitTextToSize(reportContent, maxWidth);
     let yPosition = 70;

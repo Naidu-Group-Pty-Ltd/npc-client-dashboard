@@ -16,7 +16,7 @@ interface QuantitativeReportCardProps {
 
 export function QuantitativeReportCard({ report, generatorLabel, onView, onDownloadPDF, isFocused = false }: QuantitativeReportCardProps) {
   const avgPrice = report.kpis?.avg_price ?? report.kpis?.average_price ?? report.analytics?.average_price;
-  const averagePrice = avgPrice ? `$${Math.round(avgPrice).toLocaleString()}` : 'N/A';
+  const averagePrice = avgPrice ? `$${Math.round(avgPrice).toLocaleString('en-AU')}` : 'N/A';
   const dataQuality = report.analytics?.quality?.avg_confidence != null
     ? `${report.analytics.quality.avg_confidence.toFixed(1)}%`
     : report.analytics?.valid_price_count != null && report.listing_count

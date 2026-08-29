@@ -84,7 +84,7 @@ export default function AmlCaseSnapshot() {
                 {snapshot.risk_rating && <Badge variant="secondary">Risk: {snapshot.risk_rating}</Badge>}
                 {snapshot.updated_at && (
                   <span className="text-xs text-muted-foreground">
-                    Updated {new Date(snapshot.updated_at).toLocaleString()}
+                    Updated {new Date(snapshot.updated_at).toLocaleString('en-AU')}
                   </span>
                 )}
               </div>
@@ -128,7 +128,7 @@ export default function AmlCaseSnapshot() {
                 <div>
                   <h4 className="mb-2 text-sm font-medium">Latest finance comparison</h4>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div><span className="text-muted-foreground">Captured</span><div>{new Date(snapshot.finance_comparison.captured_at).toLocaleString()}</div></div>
+                    <div><span className="text-muted-foreground">Captured</span><div>{new Date(snapshot.finance_comparison.captured_at).toLocaleString('en-AU')}</div></div>
                     <div><span className="text-muted-foreground">Source</span><div>{snapshot.finance_comparison.source}</div></div>
                     <div><span className="text-muted-foreground">Lender</span><div>{snapshot.finance_comparison.lender ?? "—"}</div></div>
                     <div><span className="text-muted-foreground">LVR</span><div>{snapshot.finance_comparison.lvr ?? "—"}</div></div>

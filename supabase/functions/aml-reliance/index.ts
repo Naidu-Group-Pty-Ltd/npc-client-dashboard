@@ -113,6 +113,13 @@ import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-p
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import {
+  addMonthsUtc, resolveReviewInterval,
+} from "../_shared/aml/reviewSchedule.pure.ts";
+import {
+  AML_REMINDER_TYPES, passportIssuedReminder, periodicReviewReminder,
+  upsertComplianceReminder,
+} from "../_shared/aml/complianceReminders.ts";
 import { readBoundedJson } from '../_shared/validate.ts';
 
 const corsHeaders = {
@@ -130,6 +137,122 @@ const jr = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
     status, headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+
+/**
+ * Issuing the Passport starts the clock on keeping it current.
+ *
+ * ── What this closes ──────────────────────────────────────────────────
+ * `schedule_periodic_review` had to be invoked by hand, from a card at the
+ * foot of the last stage. Nothing invoked it on issuance, so a case could
+ * carry a live, relied-upon Compliance Passport with no ongoing CDD booked
+ * at all — and even where one was booked, it appeared on that one card and
+ * on no reminder list in the product.
+ *
+ * ── What it will not do ───────────────────────────────────────────────
+ * It never moves an obligation that already exists: an open periodic review
+ * is left exactly where it is, because re-issuing a document is not a
+ * reason to re-schedule a scheduled review. It never touches a case whose
+ * relationship has ended. And it never fails the issuance — the attestation
+ * is the compliance act and this is a prompt, so every outcome is reported
+ * and nothing is thrown.
+ */
+async function armOngoingCdd(admin: any, args: {
+  caseId: string; version: number; userId: string | null; userLabel: string | null;
+}): Promise<{
+  nextReviewAt: string | null; reviewScheduled: boolean; reminderWritten: boolean;
+  skipped?: string;
+}> {
+  try {
+    const aml = admin.schema("aml");
+    const { data: caseRow } = await aml.from("cases")
+      .select("id, case_reference, client_id, subject_display_name, risk_rating, monitoring_status, next_periodic_review_at")
+      .eq("id", args.caseId).maybeSingle();
+    if (!caseRow) return { nextReviewAt: null, reviewScheduled: false, reminderWritten: false, skipped: "case_not_found" };
+    if (caseRow.monitoring_status === "ended") {
+      return { nextReviewAt: null, reviewScheduled: false, reminderWritten: false, skipped: "relationship_ended" };
+    }
+
+    const { data: open } = await aml.from("existing_customer_reviews")
+      .select("id, due_at").eq("case_id", args.caseId).eq("classification", "periodic")
+      .in("status", ["queued", "in_progress", "remediation_required"])
+      .order("due_at", { ascending: true }).limit(1).maybeSingle();
+
+    let reviewId: string | null = open?.id ?? null;
+    let dueAt: string | null = open?.due_at ?? null;
+    let scheduled = false;
+
+    if (!open) {
+      const { data: tenant } = await aml.from("tenant_settings")
+        .select("review_interval_config").eq("tenant_id", tenantForCase(String(caseRow.id))).maybeSingle();
+      const interval = resolveReviewInterval(
+        caseRow.risk_rating, (tenant?.review_interval_config as Record<string, unknown>) ?? null);
+      dueAt = addMonthsUtc(new Date(), interval.months).toISOString();
+      const { data: review } = await aml.from("existing_customer_reviews").insert({
+        case_id: args.caseId, client_id: caseRow.client_id ?? null,
+        classification: "periodic", status: "queued",
+        priority: caseRow.risk_rating === "high" || caseRow.risk_rating === "prohibited" ? "high" : "normal",
+        due_at: dueAt, original_due_at: dueAt,
+      }).select("id").maybeSingle();
+      reviewId = review?.id ?? null;
+      scheduled = Boolean(reviewId);
+      if (scheduled) {
+        await aml.from("cases").update({ next_periodic_review_at: dueAt }).eq("id", args.caseId);
+        await appendCaseEvent(admin, args.caseId, "system",
+          `Periodic review scheduled for ${dueAt.slice(0, 10)} (${interval.months}-month cycle) on Passport issuance`,
+          { review_id: reviewId, interval_months: interval.months, attestation_version: args.version },
+          args.userId, args.userLabel);
+      }
+    }
+
+    /* Two reminders, because they answer two questions: "the Passport is
+       live, share it" and "this review falls due". Keyed on different
+       sources so neither can overwrite the other. */
+    const issued = await upsertComplianceReminder(admin, {
+      clientId: caseRow.client_id, type: AML_REMINDER_TYPES.passport_issued,
+      sourceRef: args.caseId,
+      ...passportIssuedReminder({
+        caseReference: caseRow.case_reference ?? null,
+        subjectLabel: caseRow.subject_display_name ?? null,
+        version: args.version,
+        nextReviewAt: dueAt,
+      }),
+      dueDate: new Date().toISOString(),
+      priority: "medium",
+      createdBy: args.userId,
+    });
+
+    let reviewReminder = { written: false };
+    if (reviewId && dueAt) {
+      const { data: tenantForLabel } = await aml.from("tenant_settings")
+        .select("review_interval_config").eq("tenant_id", tenantForCase(String(caseRow.id))).maybeSingle();
+      const months = resolveReviewInterval(
+        caseRow.risk_rating,
+        (tenantForLabel?.review_interval_config as Record<string, unknown>) ?? null).months;
+      reviewReminder = await upsertComplianceReminder(admin, {
+        clientId: caseRow.client_id, type: AML_REMINDER_TYPES.periodic_review,
+        sourceRef: reviewId,
+        ...periodicReviewReminder({
+          caseReference: caseRow.case_reference ?? null, dueAt, intervalMonths: months,
+        }),
+        dueDate: dueAt,
+        priority: caseRow.risk_rating === "high" || caseRow.risk_rating === "prohibited" ? "high" : "medium",
+        createdBy: args.userId,
+      });
+    }
+
+    return {
+      nextReviewAt: dueAt,
+      reviewScheduled: scheduled,
+      reminderWritten: issued.written || reviewReminder.written,
+    };
+  } catch (e) {
+    /* Never fails the issuance. */
+    return {
+      nextReviewAt: null, reviewScheduled: false, reminderWritten: false,
+      skipped: String((e as Error)?.message ?? e),
+    };
+  }
+}
 
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -2601,6 +2724,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }
         }
 
+        /* ── Issuing the Passport ARMS ongoing CDD ────────────────────
+           Issuance is the moment the record becomes something a partner may
+           rely on, and it is therefore the moment the obligation to keep it
+           current begins. That obligation had to be scheduled by hand from a
+           card at the foot of the last stage, and once scheduled it appeared
+           on that card and nowhere else — not on the Reminders hub, which is
+           the screen the Command Centre has for exactly this.
+
+           So issuance now books the first periodic review if none is open,
+           and puts it on the customer's reminders. Two rules: it never
+           moves a review that already exists (a scheduled obligation is not
+           re-scheduled by re-issuing a document), and it never fails the
+           issuance — the attestation is the compliance act, the reminder is
+           a prompt. */
+        const ongoing = await armOngoingCdd(admin, {
+          caseId, version, userId, userLabel: userEmail,
+        });
+
         await appendCaseEvent(admin, caseId, "mlro_decision",
           `Compliance attestation v${version} issued (sha ${payloadSha.slice(0, 12)})`,
           {
@@ -2609,11 +2750,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             material_input_hash: materialHash,
             issued_reason_code: (insertExtra.issued_reason_code as string | undefined) ?? null,
             grants_carried_forward: carriedForward,
+            next_periodic_review_at: ongoing.nextReviewAt,
+            reminder_written: ongoing.reminderWritten,
           }, userId, userEmail);
         /* Reported, because it is the answer to "what did issuing just do to
            the partners who already hold this?" — which used to be "cut them
            off" and was said nowhere. */
-        return jr({ attestation: att, grants_carried_forward: carriedForward });
+        return jr({
+          attestation: att, grants_carried_forward: carriedForward,
+          ongoing_cdd: ongoing,
+        });
       }
 
       case "list_attestations": {

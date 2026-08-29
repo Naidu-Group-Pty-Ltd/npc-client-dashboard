@@ -45,10 +45,10 @@ export function OutOfTokensBanner({ available, requested, onDismiss }: OutOfToke
       <AlertDescription className="flex flex-col gap-3">
         <span>
           This report needs{" "}
-          <span className="font-semibold">{requested.toLocaleString()}</span> tokens but only{" "}
-          <span className="font-semibold">{available.toLocaleString()}</span> are available in your
+          <span className="font-semibold">{requested.toLocaleString('en-AU')}</span> tokens but only{" "}
+          <span className="font-semibold">{available.toLocaleString('en-AU')}</span> are available in your
           agency pool — you're short by{" "}
-          <span className="font-semibold">{short.toLocaleString()}</span>.
+          <span className="font-semibold">{short.toLocaleString('en-AU')}</span>.
         </span>
         <div className="flex flex-wrap gap-2">
           <Button

@@ -48,7 +48,7 @@ const STATUS_TONE: Record<string, string> = {
   withdrawn: "bg-muted text-muted-foreground",
 };
 
-function fmt(d: string | null | undefined) { return d ? new Date(d).toLocaleString() : "—"; }
+function fmt(d: string | null | undefined) { return d ? new Date(d).toLocaleString('en-AU') : "—"; }
 
 export default function AmlAustracReporting() {
   const { canWrite, isMlro, hasAnyRole, loading: accessLoading } = useAmlAccess();

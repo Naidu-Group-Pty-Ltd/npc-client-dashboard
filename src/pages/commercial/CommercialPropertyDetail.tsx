@@ -101,9 +101,9 @@ export default function CommercialPropertyDetail() {
         <TabsContent value="overview" className="space-y-4">
           <Card>
             <CardContent className="pt-6 grid gap-4 md:grid-cols-3 text-sm">
-              <Info label="GFA" value={property.gfa_sqm ? `${property.gfa_sqm.toLocaleString()} m²` : '—'} />
-              <Info label="NLA" value={property.nla_sqm ? `${property.nla_sqm.toLocaleString()} m²` : '—'} />
-              <Info label="Site Area" value={property.site_area_sqm ? `${property.site_area_sqm.toLocaleString()} m²` : '—'} />
+              <Info label="GFA" value={property.gfa_sqm ? `${property.gfa_sqm.toLocaleString('en-AU')} m²` : '—'} />
+              <Info label="NLA" value={property.nla_sqm ? `${property.nla_sqm.toLocaleString('en-AU')} m²` : '—'} />
+              <Info label="Site Area" value={property.site_area_sqm ? `${property.site_area_sqm.toLocaleString('en-AU')} m²` : '—'} />
               <Info label="Parking Bays" value={property.parking_bays ?? '—'} />
               <Info label="Year Built" value={property.year_built ?? '—'} />
               <Info label="Zoning" value={property.zoning ?? '—'} />

@@ -115,7 +115,7 @@ export function ChecklistInstanceView({ instance, onBack, canEdit, canDelete }: 
                   {instance.status === 'completed' ? <><CheckCircle2 className="h-3 w-3 mr-1" /> Completed</> : instance.status}
                 </Badge>
                 <span className="rounded-full border border-border dark:border-white/5 bg-background dark:bg-black/30 px-2.5 py-1 text-xs font-medium text-muted-foreground dark:text-muted-foreground">
-                  Created {new Date(instance.created_at).toLocaleDateString()}
+                  Created {new Date(instance.created_at).toLocaleDateString('en-AU')}
                 </span>
               </div>
             </div>

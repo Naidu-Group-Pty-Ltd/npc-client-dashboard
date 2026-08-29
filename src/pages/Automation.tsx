@@ -341,7 +341,7 @@ const Automation = () => {
                       </Badge>
                       {syncStats.lastSync && (
                         <span className="min-w-0 truncate rounded-full border border-border/60 bg-background/55 px-2.5 py-1 text-muted-foreground">
-                          Last: {new Date(syncStats.lastSync).toLocaleDateString()}
+                          Last: {new Date(syncStats.lastSync).toLocaleDateString('en-AU')}
                         </span>
                       )}
                     </div>

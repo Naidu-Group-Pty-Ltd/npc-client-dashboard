@@ -125,7 +125,12 @@ export interface BuilderStockItem {
   availability_status: StockAvailability;
   expected_completion: string | null;
   description: string | null;
-  lifecycle_status: 'active' | 'archived';
+  /**
+   * `staged` is imported-but-not-published: a replacement stock list's new
+   * properties, invisible to the Marketplace until their imagery has been
+   * looked for. See `_shared/builderStock/stockLifecycle.pure.ts`.
+   */
+  lifecycle_status: 'active' | 'staged' | 'archived';
   enrichment_status: 'pending' | 'enriching' | 'complete' | 'partial' | 'failed';
   enriched_at: string | null;
   primary_image_id: string | null;

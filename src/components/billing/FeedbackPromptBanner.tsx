@@ -80,7 +80,7 @@ export function FeedbackPromptBanner() {
               <>
                 A few minutes of feedback, and your workspace gets{" "}
                 <span className="font-medium text-foreground">
-                  {prompt.rewardTokens.toLocaleString()} credits
+                  {prompt.rewardTokens.toLocaleString('en-AU')} credits
                 </span>
                 . The questions cover only the modules you actually use.
               </>

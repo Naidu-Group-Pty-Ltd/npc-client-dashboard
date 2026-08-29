@@ -81,7 +81,7 @@ export function PassportIssuedDialog({
               </DialogTitle>
               <DialogDescription>
                 The link opens without a portal account and expires{" "}
-                {new Date(result.expiresAt).toLocaleDateString()}. It is shown here once — only its
+                {new Date(result.expiresAt).toLocaleDateString('en-AU')}. It is shown here once — only its
                 hash is stored, so it cannot be read again.
               </DialogDescription>
             </DialogHeader>

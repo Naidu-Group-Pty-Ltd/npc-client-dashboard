@@ -25,7 +25,7 @@ const CODE = SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, ''
 
 describe('figures in the assumptions list', () => {
   it('uses no bare toLocaleString, which prints three fraction digits', () => {
-    // `203958.7523.toLocaleString()` is `203,958.752` — seventeen significant
+    // `203958.7523.toLocaleString('en-AU')` is `203,958.752` — seventeen significant
     // figures beside the same number rounded to `$203,959` two pages away. And
     // one line had no formatter at all, so `1000` printed without a separator.
     // `repairFloatArtefacts` cannot catch either: it needs eight fraction

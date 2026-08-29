@@ -95,7 +95,7 @@ export function GenerateReportStep({
     if (value >= 1000000) {
       return `$${(value / 1000000).toFixed(2)}M`;
     }
-    return `$${value.toLocaleString()}`;
+    return `$${value.toLocaleString('en-AU')}`;
   };
 
   return (
@@ -128,7 +128,7 @@ export function GenerateReportStep({
             </div>
             <div className="text-center p-4 bg-muted/50 rounded-lg">
               <div className={`text-xl font-bold ${monthlyCashflow >= 0 ? 'text-success' : 'text-destructive'}`}>
-                ${monthlyCashflow.toLocaleString()}/mo
+                ${monthlyCashflow.toLocaleString('en-AU')}/mo
               </div>
               <p className="text-xs text-muted-foreground">Net Cash Flow</p>
             </div>

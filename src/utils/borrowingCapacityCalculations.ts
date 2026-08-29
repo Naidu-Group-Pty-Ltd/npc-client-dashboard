@@ -573,7 +573,7 @@ export function formatCapacity(amount: number): string {
   } else if (amount >= 1000) {
     return `$${Math.round(amount / 1000)}K`;
   }
-  return `$${amount.toLocaleString()}`;
+  return `$${amount.toLocaleString('en-AU')}`;
 }
 
 /**

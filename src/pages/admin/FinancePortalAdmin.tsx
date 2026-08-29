@@ -469,7 +469,7 @@ export default function FinancePortalAdmin() {
                                   </div>
                                   {portalUser.terms_accepted_at && (
                                     <p className="text-[10px] text-muted-foreground pl-6">
-                                      Accepted on {new Date(portalUser.terms_accepted_at).toLocaleDateString()}
+                                      Accepted on {new Date(portalUser.terms_accepted_at).toLocaleDateString('en-AU')}
                                     </p>
                                   )}
                                   <div className="flex items-center gap-2">

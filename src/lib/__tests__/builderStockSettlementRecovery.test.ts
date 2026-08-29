@@ -128,6 +128,10 @@ function fakeDb(options: {
     const asked = columns.split(',').map((column) => column.trim());
     const builder: any = {
       eq(c: string, v: unknown) { filters.push(['eq', c, v]); return builder; },
+      // `lifecycle_status` is matched against a SET now — served stock is
+      // `active`, and the image engine also works `staged`. See
+      // `stockLifecycle.pure.ts`.
+      in(c: string, v: unknown) { filters.push(['in', c, v]); return builder; },
       gt(c: string, v: unknown) { filters.push(['gt', c, v]); return builder; },
       lt(c: string, v: unknown) { filters.push(['lt', c, v]); return builder; },
       is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
@@ -148,6 +152,7 @@ function fakeDb(options: {
           filters.every(([op, column, value]) => {
             const current = row[column];
             if (op === 'eq') return current === value;
+            if (op === 'in') return (value as unknown[]).includes(current);
             if (op === 'is') return (current ?? null) === value;
             if (op === 'gt') return String(current) > String(value);
             return current !== null && current !== undefined && Number(current) < Number(value);
@@ -192,6 +197,7 @@ function fakeDb(options: {
           };
           const builder: any = {
             eq(c: string, v: unknown) { filters.push(['eq', c, v]); return builder; },
+            in(c: string, v: unknown) { filters.push(['in', c, v]); return builder; },
             is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
             select() {
               return {

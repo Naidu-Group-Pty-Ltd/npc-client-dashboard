@@ -127,7 +127,7 @@ export function RecordsRequestBuilder({
                       {r.status.replace(/_/g, " ")}
                     </Badge>
                     <span className="text-muted-foreground">
-                      {new Date(r.requested_at).toLocaleDateString()}
+                      {new Date(r.requested_at).toLocaleDateString('en-AU')}
                     </span>
                     {r.due_at && <span className="text-muted-foreground">· needed by {r.due_at}</span>}
                   </div>

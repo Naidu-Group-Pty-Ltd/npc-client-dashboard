@@ -26,6 +26,9 @@ import {
   describeIdentityChange, identityDifferences, stockPropertyIdentity,
   type StockPropertyIdentity,
 } from './stockIdentity.pure.ts';
+import {
+  lifecycleForMatchedProperty, lifecycleForNewProperty,
+} from './stockLifecycle.pure.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import type { ExtractedMedia } from './extract.ts';
 import {
@@ -84,6 +87,30 @@ export interface ImportOutcome {
    * what changed.
    */
   replacedProperties: Array<{ label: string; reason: string }>;
+  /**
+   * New properties written INVISIBLE, awaiting publication.
+   *
+   * A replacement stock list's new rows must not appear on the Marketplace as
+   * blank cards the instant they are inserted — see `stockLifecycle.pure.ts`.
+   * Zero here means either a first-ever upload (nothing to protect) or a list
+   * whose properties all matched.
+   */
+  staged: number;
+  /**
+   * Published properties this import MATCHED whose new values are held back
+   * until the cutover.
+   *
+   * Their rows are untouched and go on serving exactly what they served
+   * before — the replacement's price, availability and description sit in
+   * `pending_patch` until `publish_builder_stock_upload` applies them.
+   */
+  deferred: number;
+  /**
+   * The uploads this one supersedes: those that were supplying the rows it
+   * matched, captured before their `upload_id` was re-pointed. The cutover
+   * archives what they still supply and nothing else.
+   */
+  replacesUploadIds: string[];
 }
 
 interface ExistingItem {
@@ -104,6 +131,13 @@ interface ExistingItem {
   suburb: string | null;
   building_size_sqm: number | string | null;
   lifecycle_status: string | null;
+  /**
+   * The upload CURRENTLY supplying this row, read BEFORE the import re-points
+   * it. It is the only moment the old supplier is knowable: #2347 rewrites
+   * `upload_id` on every matched row, so by cutover time the evidence of which
+   * upload used to serve it is gone. See `replaces_upload_ids`.
+   */
+  upload_id: string | null;
   /** `source_row->>source_anchor`, projected under this alias. */
   source_anchor: string | null;
 }
@@ -131,7 +165,7 @@ interface AnchoredProperty {
  */
 const EXISTING_ITEM_SELECT = 'id, external_reference, development_name, project_name, '
   + 'unit_number, lot_number, address_line, suburb, building_size_sqm, '
-  + 'lifecycle_status, source_anchor:source_row->>source_anchor';
+  + 'lifecycle_status, upload_id, source_anchor:source_row->>source_anchor';
 
 function referenceKey(item: ExistingItem): string | null {
   const value = item.external_reference?.trim().toLowerCase();
@@ -302,6 +336,9 @@ export async function importStockRecords(
     withSourceImage: 0,
     imageryOutstanding: false,
     replacedProperties: [],
+    staged: 0,
+    deferred: 0,
+    replacesUploadIds: [],
   };
 
   /**
@@ -411,11 +448,29 @@ export async function importStockRecords(
    * tie-break; it is `identityDifferences`.
    */
   const byAnchor = new Map<string, AnchoredProperty>();
+  /** How much PUBLISHED stock this organisation already serves. */
+  let published = 0;
+  /** Item id -> the upload supplying it before this import touched anything. */
+  const supplierBefore = new Map<string, string>();
+  /** Item id -> its lifecycle before this import, so a match cannot publish it. */
+  const lifecycleBefore = new Map<string, string | null>();
   for (const item of (existingRows ?? []) as ExistingItem[]) {
     const reference = referenceKey(item);
     if (reference) byReference.set(reference, item.id);
     const developmentUnit = developmentUnitKey(item);
     if (developmentUnit) byDevelopmentUnit.set(developmentUnit, item.id);
+
+    /*
+     * DOES THIS ORGANISATION HAVE A WORKING MARKETPLACE TO PROTECT?
+     *
+     * Only a PUBLISHED row counts. A staged row from an earlier, unfinished
+     * replacement is invisible, so an organisation holding nothing but staged
+     * rows still has an empty page — and staging again would keep it empty.
+     */
+    if (item.lifecycle_status === 'active') published += 1;
+    /* The supplier as it stands NOW, before any of this import's re-pointing. */
+    if (item.upload_id) supplierBefore.set(item.id, item.upload_id);
+    lifecycleBefore.set(item.id, item.lifecycle_status);
 
     const anchor = item.source_anchor?.trim();
     if (!anchor || item.lifecycle_status === 'archived') continue;
@@ -427,6 +482,16 @@ export async function importStockRecords(
 
   const inventory = await buildInventoryIndex(db, input.organisationId);
   const now = new Date().toISOString();
+  /** Uploads whose rows this one takes over. See `replacesUploadIds`. */
+  const supersededUploads = new Set<string>();
+  /*
+   * WHERE A NEW PROPERTY STARTS. Decided ONCE, from the state before this
+   * import wrote anything, so a twenty-three-row list cannot stage its first
+   * row and publish its last because the count moved underneath it.
+   */
+  const newPropertyLifecycle = lifecycleForNewProperty({
+    organisationHasPublishedStock: published > 0,
+  });
 
   for (const record of records) {
     const label = stockRecordLabel(record);
@@ -488,13 +553,80 @@ export async function importStockRecords(
 
       let itemId: string;
       if (existingId) {
+        /*
+         * A MATCHED ROW KEEPS ITS OWN LIFECYCLE — this update deliberately
+         * does not name `lifecycle_status`, so a published property goes on
+         * serving its correct imagery throughout the replacement, which is the
+         * whole point of #2347, and a still-staged one stays invisible.
+         *
+         * Its previous supplier is remembered instead: `upload_id` is about to
+         * be re-pointed at this upload, and after that nothing can tell which
+         * upload used to serve it. The cutover needs exactly that to know what
+         * counts as a REMOVED property.
+         */
+        const previous = supplierBefore.get(existingId);
+        if (previous && previous !== input.uploadId) supersededUploads.add(previous);
+      }
+      if (existingId) {
+        /**
+         * A PUBLISHED PROPERTY'S NEW VALUES ARE HELD BACK, NOT APPLIED.
+         *
+         * Staging fixes MEMBERSHIP and does nothing about VALUES. `patch`
+         * carries price, availability, description, land and building size, and
+         * writing it to a row the Marketplace is serving publishes half a
+         * dataset the moment the file is imported: A's new price beside B's old
+         * membership, while the replacement is still processing and might never
+         * finish. Proved before this was written — the Marketplace read
+         * returned 850000/reserved with C invisible and B still standing.
+         *
+         * So the whole patch, and the membership change with it, goes into a
+         * column nothing serves. `publish_builder_stock_upload` applies it,
+         * names every column it may write, and does so in the same statement
+         * that promotes the staged rows and archives the removed ones.
+         *
+         * A PATCH RATHER THAN A REPLACEMENT ROW, because the row id must not
+         * change: it is what `stock_item_id` and `primary_image_id` point at, so
+         * a swap would strand this property's earned imagery on the old id.
+         *
+         * Only where there is something to protect, and only for a row that is
+         * actually PUBLISHED. A first-ever upload, and a still-staged row from
+         * an unfinished replacement, are applied directly as they always were —
+         * neither is on anybody's screen.
+         */
+        const defer = newPropertyLifecycle === 'staged'
+          && lifecycleBefore.get(existingId) === 'active';
+
         const { data, error } = await db
           .from('builder_stock_items')
-          .update({
+          .update(defer ? {
+            /*
+             * ONLY THE SERVED VALUES AND THE MEMBERSHIP ARE HELD BACK.
+             *
+             * `source_row` is applied immediately because it serves nothing and
+             * drives everything: it is what `repairSourceImages` reads to find
+             * this property's photographs. Holding it back would mean the
+             * builder's new imagery could not be looked for until the cutover —
+             * and a builder photograph arriving before the cutover SHOULD
+             * become the card's picture. An image that appears on a card which
+             * had none is not a replacement value leaking; it is the ladder
+             * doing exactly what it is for, and `chooseCardImage` guarantees it
+             * can only ever be an improvement.
+             */
+            pending_upload_id: input.uploadId,
+            pending_patch: patch,
+            source_row: record as unknown as Record<string, unknown>,
+          } : {
             ...patch,
             upload_id: input.uploadId,
             source_row: record as unknown as Record<string, unknown>,
-            lifecycle_status: 'active',
+            /*
+             * REVIVES AN ARCHIVED ROW; NEVER PUBLISHES A STAGED ONE. This used
+             * to be a flat `'active'`, which was right when there were two
+             * lifecycles and would silently promote a replacement property
+             * nobody had looked for yet now that there are three.
+             */
+            lifecycle_status: lifecycleForMatchedProperty(
+              lifecycleBefore.get(existingId), newPropertyLifecycle),
             last_seen_at: now,
           })
           .eq('id', existingId)
@@ -504,6 +636,7 @@ export async function importStockRecords(
         if (error) throw error;
         itemId = data.id;
         outcome.updated += 1;
+        if (defer) outcome.deferred += 1;
       } else {
         const { data, error } = await db
           .from('builder_stock_items')
@@ -515,6 +648,7 @@ export async function importStockRecords(
             created_by_builder_user_id: input.builderUserId,
             source_row: record as unknown as Record<string, unknown>,
             availability_status: patch.availability_status ?? 'unknown',
+            lifecycle_status: newPropertyLifecycle,
             last_seen_at: now,
           })
           .select('id')
@@ -522,6 +656,7 @@ export async function importStockRecords(
         if (error) throw error;
         itemId = data.id;
         outcome.imported += 1;
+        if (newPropertyLifecycle === 'staged') outcome.staged += 1;
 
         // Keep the in-memory index current so two rows in ONE file that match
         // each other update rather than colliding on the unique index.
@@ -684,6 +819,34 @@ export async function importStockRecords(
       // lookup key, never authority.
       .eq('organisation_id', input.organisationId)
       .in('id', [...new Set(outcome.itemIds)]);
+  }
+
+  outcome.replacesUploadIds = [...supersededUploads];
+
+  /*
+   * RECORDED ON THE UPLOAD, because the cutover happens minutes or hours later
+   * in a different invocation and this is the only moment the answer exists.
+   *
+   * Written even when empty — an upload that superseded nothing must archive
+   * nothing, and a NULL that later reads as "unknown" is how a cutover talks
+   * itself into archiving a stock list the builder keeps beside this one.
+   *
+   * Failure here is not fatal to the import: the properties are saved either
+   * way, and an upload with no recorded predecessor publishes its own rows and
+   * archives none — visibly wrong stock a person can remove, rather than
+   * correct stock silently destroyed.
+   */
+  const { error: replacesError } = await db
+    .from('builder_stock_uploads')
+    .update({ replaces_upload_ids: outcome.replacesUploadIds })
+    .eq('id', input.uploadId)
+    .eq('organisation_id', input.organisationId);
+  if (replacesError) {
+    outcome.failures.push({
+      label: 'stock list',
+      reason: 'The list this one replaces could not be recorded, so removed '
+        + 'properties will stay on the marketplace until the old list is deleted.',
+    });
   }
 
   return outcome;

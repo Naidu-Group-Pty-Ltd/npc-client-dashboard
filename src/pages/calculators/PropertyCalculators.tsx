@@ -383,8 +383,8 @@ function GlobalGenerationControls({ propertyLinked }: { propertyLinked: boolean 
           <div className="flex flex-wrap gap-2 lg:justify-end">
             <Badge variant={reportReadiness.pdfDisabled ? 'secondary' : 'default'} className="px-2.5 py-1">{reportReadiness.status}</Badge>
             <Badge variant={outOfDate ? 'secondary' : 'outline'} className="px-2.5 py-1">{status}</Badge>
-            {lastRunAt && <Badge variant="outline" className="px-2.5 py-1">Last calculated {new Date(lastRunAt).toLocaleString()}</Badge>}
-            {reportGeneratedAt && <Badge variant="outline" className="px-2.5 py-1">Report generated {new Date(reportGeneratedAt).toLocaleString()}</Badge>}
+            {lastRunAt && <Badge variant="outline" className="px-2.5 py-1">Last calculated {new Date(lastRunAt).toLocaleString('en-AU')}</Badge>}
+            {reportGeneratedAt && <Badge variant="outline" className="px-2.5 py-1">Report generated {new Date(reportGeneratedAt).toLocaleString('en-AU')}</Badge>}
           </div>
         </div>
 

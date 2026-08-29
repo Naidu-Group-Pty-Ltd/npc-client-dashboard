@@ -183,7 +183,7 @@ export function estimateLMI(input: LmiInput): LmiEstimate {
     lvrBand: tier.band,
     estimatedRate: Math.round(estimatedRate * 100) / 100,
     isLmiRequired: true,
-    breakdown: `LVR ${lvr.toFixed(1)}% (${tier.band}) → ${estimatedRate.toFixed(2)}% of $${loanAmount.toLocaleString()} loan${isFirstHomeBuyer ? ' (FHB discount applied)' : ''}`,
+    breakdown: `LVR ${lvr.toFixed(1)}% (${tier.band}) → ${estimatedRate.toFixed(2)}% of $${loanAmount.toLocaleString('en-AU')} loan${isFirstHomeBuyer ? ' (FHB discount applied)' : ''}`,
   };
 }
 

@@ -90,10 +90,10 @@ export function ReportGenerationStatus({
         <AlertDescription className="flex flex-col gap-4 text-sm text-foreground/90">
           <span className="leading-relaxed">
             This report costs{" "}
-            <span className="font-semibold tabular-nums">{need.toLocaleString()}</span> tokens but
-            only <span className="font-semibold tabular-nums">{available.toLocaleString()}</span>{" "}
+            <span className="font-semibold tabular-nums">{need.toLocaleString('en-AU')}</span> tokens but
+            only <span className="font-semibold tabular-nums">{available.toLocaleString('en-AU')}</span>{" "}
             are available — short by{" "}
-            <span className="font-semibold tabular-nums text-destructive">{short.toLocaleString()}</span>. Top up or
+            <span className="font-semibold tabular-nums text-destructive">{short.toLocaleString('en-AU')}</span>. Top up or
             upgrade before generating.
           </span>
           <div className="flex flex-wrap gap-2">
@@ -124,10 +124,10 @@ export function ReportGenerationStatus({
       <AlertDescription className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-foreground/90">
-            <span className="font-semibold tabular-nums">{available.toLocaleString()}</span> of{" "}
-            <span className="tabular-nums">{allowance.toLocaleString()}</span> tokens remaining
+            <span className="font-semibold tabular-nums">{available.toLocaleString('en-AU')}</span> of{" "}
+            <span className="tabular-nums">{allowance.toLocaleString('en-AU')}</span> tokens remaining
             {need > 0 && (
-              <> · this report needs ~<span className="tabular-nums">{need.toLocaleString()}</span></>
+              <> · this report needs ~<span className="tabular-nums">{need.toLocaleString('en-AU')}</span></>
             )}
             .
           </span>

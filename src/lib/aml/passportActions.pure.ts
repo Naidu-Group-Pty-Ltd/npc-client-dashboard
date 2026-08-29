@@ -127,7 +127,7 @@ export function passportActions(f: PassportActionFacts): PassportActionRow[] {
              remedy. The act stays available — an MLRO may always reissue —
              it simply is not what this case is waiting for. */
           ? `v${f.attestationVersion} is issued and stays in force. It is held back only by the service gate, which is still awaiting approval on Gate & Passport — a new version would not change that.`
-          : `v${f.attestationVersion} is in force${f.issuedAt ? ` (issued ${new Date(f.issuedAt).toLocaleDateString()})` : ""}. Reissuing supersedes it.`,
+          : `v${f.attestationVersion} is in force${f.issuedAt ? ` (issued ${new Date(f.issuedAt).toLocaleDateString('en-AU')})` : ""}. Reissuing supersedes it.`,
     blockedBy: f.isMlro ? null : MLRO_NEEDED,
   });
 

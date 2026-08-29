@@ -191,7 +191,7 @@ export default function AmlScreening() {
                   <TableCell className="text-xs">{m.list_name ?? "—"}</TableCell>
                   <TableCell>{m.score != null ? m.score.toFixed(2) : "—"}</TableCell>
                   <TableCell className="text-xs">{m.jurisdiction ?? "—"}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{new Date(m.created_at).toLocaleString()}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{new Date(m.created_at).toLocaleString('en-AU')}</TableCell>
                   <TableCell className="text-right">
                     <Button size="sm" variant="outline" onClick={() => { setResolveTarget(m); setDisposition("dismissed"); setRationale(""); }}>
                       Resolve
@@ -238,7 +238,7 @@ export default function AmlScreening() {
                     </Badge>
                   </TableCell>
                   <TableCell className="text-xs">{(c.result_summary as any)?.match_count ?? 0}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{new Date(c.requested_at).toLocaleString()}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{new Date(c.requested_at).toLocaleString('en-AU')}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

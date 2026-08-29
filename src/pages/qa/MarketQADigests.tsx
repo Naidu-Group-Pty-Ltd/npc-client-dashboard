@@ -68,7 +68,7 @@ export default function MarketQADigests() {
                       {d.digest_group && <Badge variant="outline" className="text-[10px]">{d.digest_group}</Badge>}
                     </div>
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      {new Date(d.sent_at).toLocaleString()} · {d.question_ids?.length ?? 0} Qs
+                      {new Date(d.sent_at).toLocaleString('en-AU')} · {d.question_ids?.length ?? 0} Qs
                     </div>
                   </button>
                 ))}

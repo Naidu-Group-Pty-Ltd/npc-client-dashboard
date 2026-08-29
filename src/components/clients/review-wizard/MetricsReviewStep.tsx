@@ -27,7 +27,7 @@ export function MetricsReviewStep({ properties, portfolioTotals }: MetricsReview
     if (value >= 1000000) {
       return `$${(value / 1000000).toFixed(2)}M`;
     }
-    return `$${value.toLocaleString()}`;
+    return `$${value.toLocaleString('en-AU')}`;
   };
 
   return (
@@ -93,7 +93,7 @@ export function MetricsReviewStep({ properties, portfolioTotals }: MetricsReview
             <p className={`text-2xl font-bold mt-1 ${
               portfolioTotals.totalMonthlyCashflow >= 0 ? 'text-success' : 'text-destructive'
             }`}>
-              ${portfolioTotals.totalMonthlyCashflow.toLocaleString()}
+              ${portfolioTotals.totalMonthlyCashflow.toLocaleString('en-AU')}
             </p>
           </CardContent>
         </Card>
@@ -146,11 +146,11 @@ export function MetricsReviewStep({ properties, portfolioTotals }: MetricsReview
                         {prop.lvr.toFixed(1)}%
                       </Badge>
                     </td>
-                    <td className="py-3 text-right">${prop.monthlyRentalIncome.toLocaleString()}</td>
+                    <td className="py-3 text-right">${prop.monthlyRentalIncome.toLocaleString('en-AU')}</td>
                     <td className={`py-3 text-right font-medium ${
                       prop.netMonthlyCashflow >= 0 ? 'text-success' : 'text-destructive'
                     }`}>
-                      ${prop.netMonthlyCashflow.toLocaleString()}
+                      ${prop.netMonthlyCashflow.toLocaleString('en-AU')}
                     </td>
                     <td className="py-3 text-right">{prop.grossYield.toFixed(2)}%</td>
                   </tr>

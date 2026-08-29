@@ -166,7 +166,7 @@ export function AmlFinanceRequestsCard({ purchaseFileId }: { purchaseFileId: str
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium">{r.subject}</div>
                       <div className="text-xs text-muted-foreground">
-                        {KIND_LABELS[r.kind] ?? r.kind} · {new Date(r.created_at).toLocaleDateString()}
+                        {KIND_LABELS[r.kind] ?? r.kind} · {new Date(r.created_at).toLocaleDateString('en-AU')}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">

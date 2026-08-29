@@ -272,7 +272,7 @@ export function describeRuleCoverage(c: PepRuleCoverage): string {
     return `No office of this kind was recognised in the loaded index, so `
       + `this cannot be shown to have been searched. Check ${c.meaning} by hand.`;
   }
-  return `At least ${c.officeCount.toLocaleString()} office`
+  return `At least ${c.officeCount.toLocaleString("en-AU")} office`
     + `${c.officeCount === 1 ? "" : "s"} of this kind are loaded. That is what `
     + "was searched, not a statement about anybody.";
 }

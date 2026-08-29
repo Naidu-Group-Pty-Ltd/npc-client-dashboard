@@ -327,28 +327,28 @@ export default function QuantitativeReports() {
             <KPICard
               className="reports-kpi-tile reports-kpi-tile-primary"
               title="Total Listings"
-              value={totalListings.toLocaleString()}
+              value={totalListings.toLocaleString('en-AU')}
               icon={<Building2 className="h-4 w-4" />}
               description="All property listings"
             />
             <KPICard
               className="reports-kpi-tile reports-kpi-tile-value"
               title="Average Price"
-              value={`$${avgPrice.toLocaleString()}`}
+              value={`$${avgPrice.toLocaleString('en-AU')}`}
               icon={<DollarSign className="h-4 w-4" />}
               description="Across all listings"
             />
             <KPICard
               className="reports-kpi-tile reports-kpi-tile-activity"
               title="Recent Listings"
-              value={recentListings.toLocaleString()}
+              value={recentListings.toLocaleString('en-AU')}
               icon={<Calendar className="h-4 w-4" />}
               description="Last 30 days"
             />
             <KPICard
               className="reports-kpi-tile reports-kpi-tile-coverage"
               title="Unique Suburbs"
-              value={suburbChartData.length.toLocaleString()}
+              value={suburbChartData.length.toLocaleString('en-AU')}
               icon={<MapPin className="h-4 w-4" />}
               description="Coverage areas"
             />
@@ -852,7 +852,7 @@ export default function QuantitativeReports() {
                       <div className="reports-pricing-stat-grid grid grid-cols-2 md:grid-cols-5 gap-3 pt-2 border-t">
                         <div className="reports-pricing-stat text-center">
                           <p className="text-lg font-bold text-foreground">
-                            ${medianPrice.toLocaleString()}
+                            ${medianPrice.toLocaleString('en-AU')}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
                             Median Price
@@ -860,7 +860,7 @@ export default function QuantitativeReports() {
                         </div>
                         <div className="reports-pricing-stat text-center">
                           <p className="text-lg font-bold text-foreground">
-                            ${avgPrice.toLocaleString()}
+                            ${avgPrice.toLocaleString('en-AU')}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
                             Average Price
@@ -868,7 +868,7 @@ export default function QuantitativeReports() {
                         </div>
                         <div className="reports-pricing-stat text-center">
                           <p className="text-lg font-bold text-foreground">
-                            ${p25.toLocaleString()}
+                            ${p25.toLocaleString('en-AU')}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
                             25th Percentile
@@ -876,7 +876,7 @@ export default function QuantitativeReports() {
                         </div>
                         <div className="reports-pricing-stat text-center">
                           <p className="text-lg font-bold text-foreground">
-                            ${p75.toLocaleString()}
+                            ${p75.toLocaleString('en-AU')}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
                             75th Percentile

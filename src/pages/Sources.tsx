@@ -231,7 +231,7 @@ export default function Sources() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Sources</h1>
           <p className="text-muted-foreground">
-            Source attribution across {listings.length.toLocaleString()} listings
+            Source attribution across {listings.length.toLocaleString('en-AU')} listings
           </p>
         </div>
         <Button
@@ -253,7 +253,7 @@ export default function Sources() {
               <Hash className="h-4 w-4 text-muted-foreground" />
               <span className="text-xs text-muted-foreground font-medium">Total Listings</span>
             </div>
-            <p className="text-2xl font-bold">{listings.length.toLocaleString()}</p>
+            <p className="text-2xl font-bold">{listings.length.toLocaleString('en-AU')}</p>
           </CardContent>
         </Card>
         <Card>

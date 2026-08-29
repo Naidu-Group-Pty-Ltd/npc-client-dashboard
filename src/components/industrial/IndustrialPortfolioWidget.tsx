@@ -68,7 +68,7 @@ export function IndustrialPortfolioWidget() {
   const tiles = useMemo(() => ([
     { label: 'Assets', value: metrics.count.toString(), raw: metrics.count, cue: metrics.count === 1 ? 'asset on book' : 'assets on book' },
     { label: 'Total Value', value: fmtAud(metrics.totalValuation), raw: metrics.totalValuation, cue: 'portfolio valuation' },
-    { label: 'Total GLA', value: `${metrics.totalGla.toLocaleString()} m²`, raw: metrics.totalGla, cue: 'gross lettable area' },
+    { label: 'Total GLA', value: `${metrics.totalGla.toLocaleString('en-AU')} m²`, raw: metrics.totalGla, cue: 'gross lettable area' },
     { label: 'Passing Rent', value: `${fmtAud(metrics.totalRent)} pa`, raw: metrics.totalRent, cue: 'contracted income' },
     { label: 'NOI (est.)', value: `${fmtAud(metrics.totalNoi)} pa`, raw: metrics.totalNoi, cue: 'after standard allowances' },
     { label: 'Weighted Yield', value: `${metrics.weightedYieldPct.toFixed(2)}%`, raw: metrics.weightedYieldPct, cue: metrics.weightedYieldPct === 0 ? 'yield visible at zero' : 'income weighted' },

@@ -341,7 +341,7 @@ export default function BuilderProjectDetail() {
                   </p>
                   {entry.reason ? <p className="mt-1 text-muted-foreground">{entry.reason}</p> : null}
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {new Date(entry.created_at).toLocaleString()} · {entry.changed_by_type.replace(/_/g, ' ')}
+                    {new Date(entry.created_at).toLocaleString('en-AU')} · {entry.changed_by_type.replace(/_/g, ' ')}
                   </p>
                 </div>
               ))}

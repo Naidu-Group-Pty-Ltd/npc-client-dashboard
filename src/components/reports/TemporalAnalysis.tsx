@@ -137,7 +137,7 @@ export function TemporalAnalysis({ listings }: TemporalAnalysisProps) {
                   <ChartTooltip
                     content={<ChartTooltipContent
                       className="reports-trend-tooltip"
-                      formatter={(value: any) => [`$${parseInt(value).toLocaleString()}`, 'Avg Price']}
+                      formatter={(value: any) => [`$${parseInt(value).toLocaleString('en-AU')}`, 'Avg Price']}
                     />}
                   />
                   <Line

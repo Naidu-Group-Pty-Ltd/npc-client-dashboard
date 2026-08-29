@@ -53,7 +53,7 @@ export function useCreateClientReminder() {
               data: {
                 type: 'client_reminder_due',
                 title: `New Reminder: ${input.title}`,
-                message: `You have been assigned a reminder due ${new Date(input.due_date).toLocaleDateString()}`,
+                message: `You have been assigned a reminder due ${new Date(input.due_date).toLocaleDateString('en-AU')}`,
                 target_user_id: userId,
                 entity_id: input.client_id || null,
                 is_read: false,

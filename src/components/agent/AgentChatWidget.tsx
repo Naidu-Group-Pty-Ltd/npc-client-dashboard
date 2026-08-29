@@ -1027,7 +1027,7 @@ export function AgentChatWidget() {
                         <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", action.status === 'success' ? 'bg-success' : 'bg-destructive')} />
                         <div className="flex-1 min-w-0">
                           <p className="text-[11px] font-medium truncate">{action.tool_name}</p>
-                          <p className="text-[10px] text-muted-foreground">{new Date(action.created_at).toLocaleString()}</p>
+                          <p className="text-[10px] text-muted-foreground">{new Date(action.created_at).toLocaleString('en-AU')}</p>
                         </div>
                         {!action.is_rolled_back && action.rollback_data && (
                           <Button variant="ghost" size="sm" className="h-5 text-[9px] px-1.5" onClick={() => { setPanelView('chat'); setShowSidebar(false); sendMessage(`Undo action ${action.id}`); }}>
@@ -1177,7 +1177,7 @@ export function AgentChatWidget() {
                           <span className="text-[10px] text-muted-foreground mt-0.5 block">
                             {variant === 'shared_with_me' && conv.shared_by ? `From ${conv.shared_by} • ` : ''}
                             {variant === 'shared_by_me' && conv.shared_with_username ? `To ${conv.shared_with_username} • ` : ''}
-                            {new Date(conv.updated_at).toLocaleDateString()}
+                            {new Date(conv.updated_at).toLocaleDateString('en-AU')}
                           </span>
                           {conv.handoff_note && (
                             <span className="text-[10px] text-muted-foreground/60 italic block mt-0.5 truncate">

@@ -206,7 +206,7 @@ export function TransactionsPanel() {
                             {formatDistanceToNow(new Date(r.createdAt), { addSuffix: true })}
                           </span>
                           <span className="block truncate" title={r.createdAt}>
-                            {new Date(r.createdAt).toLocaleString()}
+                            {new Date(r.createdAt).toLocaleString('en-AU')}
                           </span>
                         </TableCell>
                         <TableCell className="min-w-0 align-top">
@@ -247,7 +247,7 @@ export function TransactionsPanel() {
                           )}
                           {r.completedAt && (
                             <span className="block truncate pt-1" title={r.completedAt}>
-                              Settled {new Date(r.completedAt).toLocaleDateString()}
+                              Settled {new Date(r.completedAt).toLocaleDateString('en-AU')}
                             </span>
                           )}
                         </TableCell>
@@ -260,7 +260,7 @@ export function TransactionsPanel() {
 
             <div className="flex min-w-0 flex-col justify-between gap-3 pt-1 sm:flex-row sm:items-center">
               <span className="text-xs text-muted-foreground">
-                {total.toLocaleString()} transaction{total === 1 ? "" : "s"}
+                {total.toLocaleString('en-AU')} transaction{total === 1 ? "" : "s"}
               </span>
               <div className="flex items-center gap-1">
                 <Button

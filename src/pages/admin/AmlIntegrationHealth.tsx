@@ -260,7 +260,7 @@ export default function AmlIntegrationHealth() {
           title="Provider calls"
           icon={Activity}
           state={loading ? "loading" : "ready"}
-          value={totals.calls.toLocaleString()}
+          value={totals.calls.toLocaleString('en-AU')}
           hint={`over ${days}d`}
         />
         <AmlMetricCard
@@ -268,13 +268,13 @@ export default function AmlIntegrationHealth() {
           icon={AlertTriangle}
           state={loading ? "loading" : "ready"}
           value={fmtPct(totals.failureRate)}
-          hint={`${totals.failures.toLocaleString()} failures`}
+          hint={`${totals.failures.toLocaleString('en-AU')} failures`}
         />
         <AmlMetricCard
           title="Avg latency"
           icon={TrendingUp}
           state={loading ? "loading" : "ready"}
-          value={`${totals.avgLatency.toLocaleString()} ms`}
+          value={`${totals.avgLatency.toLocaleString('en-AU')} ms`}
           hint="calls-weighted"
         />
         <AmlMetricCard
@@ -352,7 +352,7 @@ export default function AmlIntegrationHealth() {
                         <Badge variant="outline" className="ml-2 text-xs">inactive</Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{r.calls.toLocaleString()}</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.calls.toLocaleString('en-AU')}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       <span className={
                         r.failure_rate > 0.15 ? "text-destructive"
@@ -362,7 +362,7 @@ export default function AmlIntegrationHealth() {
                         {fmtPct(r.failure_rate)}
                       </span>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{r.avg_latency_ms.toLocaleString()} ms</TableCell>
+                    <TableCell className="text-right tabular-nums">{r.avg_latency_ms.toLocaleString('en-AU')} ms</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtCurrency(r.cost_cents, r.currency)}</TableCell>
                     <TableCell>
                       <HealthBadge health={r.health} />
@@ -396,8 +396,8 @@ export default function AmlIntegrationHealth() {
             <>
               <p className="sr-only">
                 Daily call volume across {timeline.length} days:{" "}
-                {timelineTotals.calls.toLocaleString()} calls and{" "}
-                {timelineTotals.failures.toLocaleString()} failures in the
+                {timelineTotals.calls.toLocaleString('en-AU')} calls and{" "}
+                {timelineTotals.failures.toLocaleString('en-AU')} failures in the
                 selected window.
               </p>
               <div className="flex items-end gap-1 h-32" aria-hidden="true">

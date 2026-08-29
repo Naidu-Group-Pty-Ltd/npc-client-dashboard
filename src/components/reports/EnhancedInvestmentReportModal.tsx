@@ -291,7 +291,7 @@ export function EnhancedInvestmentReportModal({
     pdf.setFontSize(12);
     pdf.setFont(undefined, 'normal');
     pdf.text(`Property: ${propertyAddress}`, margin, 45);
-    pdf.text(`Generated: ${new Date().toLocaleDateString()}`, margin, 55);
+    pdf.text(`Generated: ${new Date().toLocaleDateString('en-AU')}`, margin, 55);
 
     if (enhancedData?.financials) {
       pdf.setFontSize(10);
@@ -499,7 +499,7 @@ export function EnhancedInvestmentReportModal({
               <CardContent className="space-y-2">
                 <div className="flex justify-between">
                   <span>Total Population:</span>
-                  <Badge variant="secondary">{population.total?.toLocaleString()}</Badge>
+                  <Badge variant="secondary">{population.total?.toLocaleString('en-AU')}</Badge>
                 </div>
                 {population.growth && (
                   <div className="flex justify-between">
@@ -519,7 +519,7 @@ export function EnhancedInvestmentReportModal({
               <CardContent className="space-y-2">
                 <div className="flex justify-between">
                   <span>Median Income:</span>
-                  <Badge variant="secondary">${income.medianHouseholdIncome?.toLocaleString()}</Badge>
+                  <Badge variant="secondary">${income.medianHouseholdIncome?.toLocaleString('en-AU')}</Badge>
                 </div>
                 <div className="flex justify-between">
                   <span>Median Age:</span>

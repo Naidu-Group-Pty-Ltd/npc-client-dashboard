@@ -243,8 +243,8 @@ export function MonthlyRepaymentField({
         <p className="text-[10px] text-muted-foreground">
           Auto:{' '}
           {repaymentType === 'interest_only'
-            ? `${loanBalance.toLocaleString()} × ${interestRate}% ÷ 12`
-            : `${loanBalance.toLocaleString()} amortized @ ${interestRate}% over ${loanTermYears}y`}
+            ? `${loanBalance.toLocaleString('en-AU')} × ${interestRate}% ÷ 12`
+            : `${loanBalance.toLocaleString('en-AU')} amortized @ ${interestRate}% over ${loanTermYears}y`}
         </p>
       )}
 

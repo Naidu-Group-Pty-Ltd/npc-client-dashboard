@@ -105,7 +105,7 @@ export function PartnerPassportPanel({
                     header.credential,
                     header.current_version_label,
                     header.last_issued_at
-                      ? `Issued ${new Date(header.last_issued_at).toLocaleDateString()}`
+                      ? `Issued ${new Date(header.last_issued_at).toLocaleDateString('en-AU')}`
                       : null,
                   ].filter(Boolean).join("  ·  ")}
                 </div>

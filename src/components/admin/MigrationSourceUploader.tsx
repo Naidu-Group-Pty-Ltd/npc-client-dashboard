@@ -190,7 +190,7 @@ export function MigrationSourceUploader({
 
         if (failed) {
           toast.error(
-            `Stopped at chunk ${failed.index} (${(failed.index * CHUNK_SIZE).toLocaleString()} of ${records.length.toLocaleString()} rows). Delete the partial upload below and retry.`,
+            `Stopped at chunk ${failed.index} (${(failed.index * CHUNK_SIZE).toLocaleString('en-AU')} of ${records.length.toLocaleString('en-AU')} rows). Delete the partial upload below and retry.`,
             { duration: 12_000 },
           );
           // Refresh the list so the user can see and delete the partial row.
@@ -210,7 +210,7 @@ export function MigrationSourceUploader({
         }
 
         setProgress({ uploaded: records.length, total: records.length, percent: 100, phase: 'Done' });
-        toast.success(`Staged ${finRes.data.upload.row_count.toLocaleString()} ${domain} rows from ${file.name}`);
+        toast.success(`Staged ${finRes.data.upload.row_count.toLocaleString('en-AU')} ${domain} rows from ${file.name}`);
         onSelect(uploadId, {
           rowCount: finRes.data.upload.row_count,
           fileName: finRes.data.upload.file_name,
@@ -299,7 +299,7 @@ export function MigrationSourceUploader({
                   : 'Drag & drop a CSV or XLSX file, or click to browse'}
           </div>
           <div className="text-[10px] text-muted-foreground">
-            Accepts .csv, .xlsx · Max 50 MB · Max {MAX_ROWS.toLocaleString()} rows
+            Accepts .csv, .xlsx · Max 50 MB · Max {MAX_ROWS.toLocaleString('en-AU')} rows
           </div>
           <Button
             type="button"
@@ -323,7 +323,7 @@ export function MigrationSourceUploader({
             <div className="flex items-center justify-between text-[10px] text-muted-foreground">
               <span>{progress.phase}</span>
               <span>
-                {progress.uploaded.toLocaleString()} / {progress.total.toLocaleString()} rows ·{' '}
+                {progress.uploaded.toLocaleString('en-AU')} / {progress.total.toLocaleString('en-AU')} rows ·{' '}
                 {progress.percent}%
               </span>
             </div>
@@ -343,7 +343,7 @@ export function MigrationSourceUploader({
             <AlertDescription className="flex items-center justify-between gap-2 text-[11px]">
               <span>
                 Active source: <strong>{selected.file_name || selected.id.substring(0, 8)}</strong> ·{' '}
-                {selected.row_count.toLocaleString()} rows
+                {selected.row_count.toLocaleString('en-AU')} rows
               </span>
               <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => onSelect(null)}>
                 Use live GHL instead
@@ -377,7 +377,7 @@ export function MigrationSourceUploader({
                       <td className="p-1.5 font-mono text-[10px]">
                         {u.file_name || u.id.substring(0, 8)}
                       </td>
-                      <td className="p-1.5 text-right">{u.row_count.toLocaleString()}</td>
+                      <td className="p-1.5 text-right">{u.row_count.toLocaleString('en-AU')}</td>
                       <td className="p-1.5">
                         {u.status === 'ready' ? (
                           <Badge variant="outline" className="text-[9px] text-success">ready</Badge>
@@ -388,7 +388,7 @@ export function MigrationSourceUploader({
                         )}
                       </td>
                       <td className="p-1.5 text-muted-foreground">
-                        {new Date(u.created_at).toLocaleString()}
+                        {new Date(u.created_at).toLocaleString('en-AU')}
                       </td>
                       <td className="flex items-center justify-end gap-1 p-1.5">
                         {u.id === selectedUploadId ? (

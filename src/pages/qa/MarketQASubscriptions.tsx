@@ -128,11 +128,11 @@ export default function MarketQASubscriptions() {
                         {s.is_active ? 'active' : 'paused'}
                       </Badge>
                       <span className="text-[11px] text-muted-foreground">
-                        next: {s.is_active ? new Date(s.next_run_at).toLocaleString() : '—'}
+                        next: {s.is_active ? new Date(s.next_run_at).toLocaleString('en-AU') : '—'}
                       </span>
                       {s.last_run_at && (
                         <span className="text-[11px] text-muted-foreground">
-                          last: {new Date(s.last_run_at).toLocaleString()}
+                          last: {new Date(s.last_run_at).toLocaleString('en-AU')}
                           {lastRun?.status === 'failed' && <span className="text-destructive ml-1">(failed)</span>}
                         </span>
                       )}

@@ -174,7 +174,7 @@ const REVIEW_OVERDUE =
 function fmt(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString();
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString('en-AU');
 }
 
 export function passportRecipients(facts: RecipientFacts): RecipientReading {

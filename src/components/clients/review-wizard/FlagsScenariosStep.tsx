@@ -51,7 +51,7 @@ export function FlagsScenariosStep({ flags, scenarios }: FlagsScenariosStepProps
   const formatCurrency = (value: number) => {
     const absValue = Math.abs(value);
     const sign = value >= 0 ? '+' : '-';
-    return `${sign}$${absValue.toLocaleString()}`;
+    return `${sign}$${absValue.toLocaleString('en-AU')}`;
   };
 
   return (

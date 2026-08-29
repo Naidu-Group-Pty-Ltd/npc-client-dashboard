@@ -212,7 +212,7 @@ export default function BuilderSettings() {
                       {session.revoked_at ? <Badge variant="secondary">Revoked</Badge> : null}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Last used {new Date(session.last_used_at).toLocaleString()}
+                      Last used {new Date(session.last_used_at).toLocaleString('en-AU')}
                       {session.revoked_at ? ` · ${session.revoked_reason || 'revoked'}` : ''}
                     </p>
                   </div>

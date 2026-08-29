@@ -879,7 +879,7 @@ function NoteCard({ note, mutations, noteTypeColors }: { note: GamePlanNote; mut
         </div>
       )}
       <div className="flex items-center justify-between mt-2">
-        <span className="text-[10px] text-muted-foreground">{new Date(note.created_at).toLocaleDateString()}</span>
+        <span className="text-[10px] text-muted-foreground">{new Date(note.created_at).toLocaleDateString('en-AU')}</span>
         <div className="flex gap-1 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsEditing(true)} title="Edit note">
             <Pencil className="h-3 w-3 text-muted-foreground" />

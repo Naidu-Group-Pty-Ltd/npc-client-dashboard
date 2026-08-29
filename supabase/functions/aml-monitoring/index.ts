@@ -20,6 +20,13 @@ import { verifyAuth } from "../_shared/auth.ts";
 // deployment. See `_shared/aml/caseTenant.ts` for what that cost.
 import { tenantForCase } from "../_shared/aml/caseTenant.ts";
 import {
+  addMonthsUtc, MAX_REVIEW_INTERVAL_MONTHS, resolveReviewInterval,
+} from "../_shared/aml/reviewSchedule.pure.ts";
+import {
+  AML_REMINDER_TYPES, completeComplianceReminder, periodicReviewReminder,
+  triggerReviewReminder, upsertComplianceReminder,
+} from "../_shared/aml/complianceReminders.ts";
+import {
   PEP_INDEX_CHANGE_ALERT_TITLE, changeSeverity, detectIndexChange,
   type IndexMatch,
 } from "../_shared/aml/pepIndexChange.pure.ts";
@@ -362,8 +369,23 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         outcome_by: userId,
         reviewer_notes: body.reviewer_notes ?? null,
       }).eq("id", String(body.id)).select("*").single();
+      // `select("*")` already carries `client_id` and `classification`, which
+      // the reminder discharge below needs.
       if (error) return jr({ error: error.message }, 400);
       if (data?.case_id) await appendCaseEvent(admin, data.case_id, "system", `Existing-customer review ${data.status} → ${data.outcome ?? "n/a"}`, { review_id: data.id }, userId, userLabel);
+
+      /* The obligation is discharged, so the prompt stops prompting. It is
+         completed rather than deleted: the Reminders hub should show what
+         happened, not a row that silently vanished. */
+      if (data?.id && data.status === "complete") {
+        await completeComplianceReminder(admin, {
+          clientId: data.client_id,
+          type: data.classification === "periodic"
+            ? AML_REMINDER_TYPES.periodic_review
+            : AML_REMINDER_TYPES.trigger_review,
+          sourceRef: data.id,
+        });
+      }
       // Phase 10: completing a periodic review closes the cycle and books the
       // next one from the case's current risk rating, so ongoing CDD never
       // lapses silently. Ended relationships are left alone.
@@ -372,14 +394,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const { data: caseRow } = await aml.from("cases")
           .select("id, risk_rating, monitoring_status").eq("id", data.case_id).maybeSingle();
         if (caseRow && caseRow.monitoring_status !== "ended") {
-          const { data: tenant } = await aml.from("tenant_settings")
-            .select("review_interval_config").eq("tenant_id", tenantForCase(String(caseRow.id))).maybeSingle();
-          const defaults: Record<string, number> = { prohibited: 3, high: 12, medium: 24, low: 36, unrated: 12 };
-          const cfg = { ...defaults, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
-          const months = Number(cfg[String(caseRow.risk_rating ?? "") || "unrated"] ?? 12) || 12;
-          const next = new Date();
-          next.setUTCMonth(next.getUTCMonth() + months);
-          next_review_at = next.toISOString();
+          /* The SAME resolver `schedule_periodic_review` uses. This was a
+             second inline copy of the interval table, and it was the copy
+             nobody updated — so completing a review booked the next one on a
+             cycle the rest of the product had stopped believing in. */
+          const { months } = await reviewInterval(caseRow);
+          next_review_at = addMonthsUtc(new Date(), months).toISOString();
           await aml.from("cases").update({
             last_periodic_review_at: new Date().toISOString(),
             next_periodic_review_at: next_review_at,
@@ -414,9 +434,6 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // trigger events, assigned with deadlines, and stop when the business
     // relationship formally ends. Every state change is audited; nothing is
     // inferred and no monitoring history is removed.
-    const DEFAULT_REVIEW_INTERVALS: Record<string, number> = {
-      prohibited: 3, high: 12, medium: 24, low: 36, unrated: 12,
-    };
     const TRIGGER_KINDS: Record<string, { label: string; days: number; priority: string }> = {
       risk_increase:            { label: "Risk rating increased",            days: 14, priority: "high" },
       screening_match:          { label: "New screening match",              days: 7,  priority: "urgent" },
@@ -429,27 +446,28 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     };
     const OPEN_REVIEW_STATUSES = ["queued", "in_progress", "remediation_required"];
 
-    async function reviewIntervalMonths(caseRow: any): Promise<number> {
+    /* The interval table and the annual ceiling are `reviewSchedule.pure.ts`
+       and nowhere else. They used to be written twice inside this file —
+       once here and once inline in `complete_review` — thirty lines apart,
+       and only one of them was ever edited. A cycle that says one thing when
+       a review is scheduled and another when it is completed is not a
+       cycle. */
+    async function reviewInterval(caseRow: any) {
       const { data: tenant } = await aml.from("tenant_settings")
         .select("review_interval_config")
         .eq("tenant_id", tenantForCase(String(caseRow?.id ?? ""))).maybeSingle();
-      const cfg = { ...DEFAULT_REVIEW_INTERVALS, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
-      const rating = String(caseRow?.risk_rating ?? "") || "unrated";
-      const months = Number(cfg[rating] ?? cfg.unrated ?? 12);
-      return Number.isFinite(months) && months > 0 ? months : 12;
+      return resolveReviewInterval(
+        caseRow?.risk_rating,
+        (tenant?.review_interval_config as Record<string, unknown>) ?? null,
+      );
     }
 
-    function addMonths(from: Date, months: number): Date {
-      const d = new Date(from.getTime());
-      d.setUTCMonth(d.getUTCMonth() + months);
-      return d;
-    }
 
     if (op === "schedule_periodic_review") {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, case_reference, client_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
       if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
@@ -461,8 +479,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .in("status", OPEN_REVIEW_STATUSES).limit(1).maybeSingle();
       if (existing) return jr({ review: existing, already_scheduled: true });
 
-      const months = await reviewIntervalMonths(caseRow);
-      const dueAt = (body.due_at ? new Date(String(body.due_at)) : addMonths(new Date(), months)).toISOString();
+      const interval = await reviewInterval(caseRow);
+      const months = interval.months;
+      const dueAt = (body.due_at ? new Date(String(body.due_at)) : addMonthsUtc(new Date(), months)).toISOString();
       const { data: review, error } = await aml.from("existing_customer_reviews").insert({
         case_id: caseId, client_id: caseRow.client_id ?? null,
         classification: "periodic", status: "queued",
@@ -473,11 +492,33 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (error) return jr({ error: error.message }, 400);
 
       await aml.from("cases").update({ next_periodic_review_at: dueAt }).eq("id", caseId);
+
+      /* On the operator's Reminders hub, not only on this stage. A review
+         due years out is exactly the obligation nobody sees coming, and the
+         hub is the screen built for that — see `complianceReminders.ts`. */
+      const reminder = await upsertComplianceReminder(admin, {
+        clientId: caseRow.client_id, type: AML_REMINDER_TYPES.periodic_review,
+        sourceRef: review.id,
+        ...periodicReviewReminder({
+          caseReference: caseRow.case_reference ?? null, dueAt, intervalMonths: months,
+        }),
+        dueDate: dueAt,
+        priority: caseRow.risk_rating === "high" || caseRow.risk_rating === "prohibited" ? "high" : "medium",
+        createdBy: userId,
+      });
+
       await appendCaseEvent(admin, caseId, "system",
         `Periodic review scheduled for ${new Date(dueAt).toISOString().slice(0, 10)} (${months}-month cycle)`,
-        { review_id: review.id, interval_months: months, risk_rating: caseRow.risk_rating ?? null },
+        {
+          review_id: review.id, interval_months: months, risk_rating: caseRow.risk_rating ?? null,
+          /* Recorded rather than silent: a tenant that configured a longer
+             cycle than the programme allows should be able to see that the
+             ceiling applied, and to whom. */
+          interval_clamped: interval.clamped, configured_months: interval.configuredMonths,
+          reminder_written: reminder.written, reminder_skipped: reminder.skipped ?? null,
+        },
         userId, userLabel);
-      return jr({ review, interval_months: months });
+      return jr({ review, interval_months: months, reminder });
     }
 
     if (op === "record_trigger_review") {
@@ -488,7 +529,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (!TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
       if (detail.length < 10) return jr({ error: "detail must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, case_reference, client_id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
       if (!await hasTenantAccess(tenantForCase(String(caseRow.id)), WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
@@ -507,10 +548,25 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         reviewer_notes: detail,
       }).select("*").single();
       if (error) return jr({ error: error.message }, 400);
+
+      const triggerReminder = await upsertComplianceReminder(admin, {
+        clientId: caseRow.client_id, type: AML_REMINDER_TYPES.trigger_review,
+        sourceRef: review.id,
+        ...triggerReviewReminder({
+          caseReference: caseRow.case_reference ?? null, dueAt, triggerLabel: spec.label,
+        }),
+        dueDate: dueAt,
+        priority: spec.priority === "urgent" || spec.priority === "high" ? "high" : "medium",
+        createdBy: userId,
+      });
+
       await appendCaseEvent(admin, caseId, "system",
         `Trigger-event review raised: ${spec.label}`,
-        { review_id: review.id, trigger_kind: triggerKind, detail, due_at: dueAt }, userId, userLabel);
-      return jr({ review });
+        {
+          review_id: review.id, trigger_kind: triggerKind, detail, due_at: dueAt,
+          reminder_written: triggerReminder.written,
+        }, userId, userLabel);
+      return jr({ review, reminder: triggerReminder });
     }
 
     if (op === "assign_review") {
@@ -742,7 +798,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           relationship_ended_at: caseRow.relationship_ended_at ?? null,
           relationship_end_reason: caseRow.relationship_end_reason ?? null,
           risk_rating: caseRow.risk_rating ?? null,
-          review_interval_months: await reviewIntervalMonths(caseRow),
+          review_interval_months: (await reviewInterval(caseRow)).months,
           next_periodic_review_at: caseRow.next_periodic_review_at ?? null,
           last_periodic_review_at: caseRow.last_periodic_review_at ?? null,
           last_screened_at: lastScreened,
@@ -1103,7 +1159,7 @@ async function runScheduledScans(admin: any) {
   // the risk-based cycle keeps running without manual scheduling.
   const nowIso = new Date().toISOString();
   const { data: dueCases } = await aml.from("cases")
-    .select("id, client_id, risk_rating, next_periodic_review_at")
+    .select("id, case_reference, client_id, risk_rating, next_periodic_review_at")
     .eq("monitoring_status", "active")
     .not("next_periodic_review_at", "is", null)
     .lte("next_periodic_review_at", nowIso)
@@ -1115,13 +1171,29 @@ async function runScheduledScans(admin: any) {
       .eq("case_id", c.id).eq("classification", "periodic")
       .in("status", ["queued", "in_progress", "remediation_required"]);
     if ((count ?? 0) > 0) continue;
-    const { error } = await aml.from("existing_customer_reviews").insert({
+    const { data: raised, error } = await aml.from("existing_customer_reviews").insert({
       case_id: c.id, client_id: c.client_id ?? null,
       classification: "periodic", status: "queued",
       priority: c.risk_rating === "high" || c.risk_rating === "prohibited" ? "high" : "normal",
       due_at: c.next_periodic_review_at, original_due_at: c.next_periodic_review_at,
-    });
-    if (!error) periodicRaised += 1;
+    }).select("id").maybeSingle();
+    if (!error) {
+      periodicRaised += 1;
+      /* A review the sweep raises is exactly the one nobody was watching
+         for. It reaches the Reminders hub like a scheduled one — the same
+         writer, keyed on the same review id, so it can never duplicate. */
+      await upsertComplianceReminder(admin, {
+        clientId: c.client_id, type: AML_REMINDER_TYPES.periodic_review,
+        sourceRef: raised?.id,
+        ...periodicReviewReminder({
+          caseReference: c.case_reference ?? null,
+          dueAt: String(c.next_periodic_review_at),
+          intervalMonths: MAX_REVIEW_INTERVAL_MONTHS,
+        }),
+        dueDate: String(c.next_periodic_review_at),
+        priority: c.risk_rating === "high" || c.risk_rating === "prohibited" ? "high" : "medium",
+      });
+    }
   }
 
   return {

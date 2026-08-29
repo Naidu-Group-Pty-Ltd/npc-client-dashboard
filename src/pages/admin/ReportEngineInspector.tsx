@@ -175,7 +175,7 @@ export default function ReportEngineInspector() {
                         } className="h-4 px-1.5 text-[10px]">{r.status}</Badge>
                       </div>
                       <div className="text-muted-foreground mt-0.5 truncate">
-                        {new Date(r.started_at).toLocaleString()}
+                        {new Date(r.started_at).toLocaleString('en-AU')}
                       </div>
                       <div className="text-muted-foreground/80 mt-0.5">
                         {r.model || '—'} · {(r.total_prompt_tokens + r.total_completion_tokens) || 0} tok
@@ -914,7 +914,7 @@ function EngineConfigEditor() {
                   <Badge variant="outline" className="text-[10px]">{r.scope}</Badge>
                 </div>
                 {r.description && <div className="text-muted-foreground mt-0.5 truncate">{r.description}</div>}
-                <div className="text-muted-foreground/70 text-[10px] mt-0.5">updated {new Date(r.updated_at).toLocaleString()}</div>
+                <div className="text-muted-foreground/70 text-[10px] mt-0.5">updated {new Date(r.updated_at).toLocaleString('en-AU')}</div>
               </button>
             ))}
           </div>
@@ -995,7 +995,7 @@ function AuditLog() {
                   <Badge variant="outline">{r.target_kind}</Badge>
                   <span className="font-mono text-[10px]">{r.target_id || '—'}</span>
                 </div>
-                <span className="text-muted-foreground text-[10px]">{new Date(r.performed_at).toLocaleString()}</span>
+                <span className="text-muted-foreground text-[10px]">{new Date(r.performed_at).toLocaleString('en-AU')}</span>
               </div>
               {r.rationale && <div className="text-muted-foreground mt-1">{r.rationale}</div>}
               <details className="mt-2">
@@ -1295,7 +1295,7 @@ function StaticPlanTab() {
                   <div className="text-[10px] text-muted-foreground mt-1">
                     {lookup.latest_run.model || '—'} · {(lookup.latest_run.total_prompt_tokens ?? 0) + (lookup.latest_run.total_completion_tokens ?? 0)} tok
                   </div>
-                  <div className="text-[10px] text-muted-foreground">{lookup.latest_run.started_at && new Date(lookup.latest_run.started_at).toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground">{lookup.latest_run.started_at && new Date(lookup.latest_run.started_at).toLocaleString('en-AU')}</div>
                 </>
               ) : <div className="text-[10px] text-muted-foreground">No runs recorded.</div>}
             </div>
@@ -1565,7 +1565,7 @@ function StaticPlanTab() {
                         <div key={i} className="border-b border-border/40 pb-1">
                           <div className="flex items-center justify-between">
                             <Badge variant="outline" className="text-[10px]">{e.target_kind}</Badge>
-                            <span className="text-[10px] text-muted-foreground">{new Date(e.performed_at).toLocaleString()}</span>
+                            <span className="text-[10px] text-muted-foreground">{new Date(e.performed_at).toLocaleString('en-AU')}</span>
                           </div>
                           {e.rationale && <div className="text-[10px] text-muted-foreground mt-0.5">{e.rationale}</div>}
                         </div>

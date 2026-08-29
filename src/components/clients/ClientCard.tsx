@@ -316,7 +316,7 @@ export function ClientCard({ client, ghlLocationId, onView, onDelete, onSyncComp
 
         {/* Metrics */}
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <MetricTile icon={Building2} label="Properties" value={propertyCount.toLocaleString()} />
+          <MetricTile icon={Building2} label="Properties" value={propertyCount.toLocaleString('en-AU')} />
           <MetricTile
             icon={DollarSign}
             label="Portfolio"

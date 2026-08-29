@@ -40,7 +40,7 @@ import { BuilderPortalStatCard } from '@/components/builder-portal/ui/BuilderPor
  * and `useBuilderActivity` are the only sources, and neither offers one.
  */
 const formatTimestamp = (value: string | null) =>
-  value ? new Date(value).toLocaleString() : 'This is your first sign-in';
+  value ? new Date(value).toLocaleString('en-AU') : 'This is your first sign-in';
 
 /**
  * The `entity_kind` `builder-stock-marketplace` writes when a Command Centre

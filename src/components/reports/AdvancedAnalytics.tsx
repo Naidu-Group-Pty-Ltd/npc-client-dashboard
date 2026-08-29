@@ -167,12 +167,12 @@ export function AdvancedAnalytics({ listings }: AdvancedAnalyticsProps) {
           <span className="reports-secondary-metric-icon"><Activity className="h-4 w-4 text-muted-foreground" /></span>
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">${analytics.pricing.median.toLocaleString()}</div>
+          <div className="text-2xl font-bold">${analytics.pricing.median.toLocaleString('en-AU')}</div>
           <div className="text-xs text-muted-foreground">
-            Median • IQR: ${analytics.pricing.range.toLocaleString()}
+            Median • IQR: ${analytics.pricing.range.toLocaleString('en-AU')}
           </div>
           <div className="text-xs text-muted-foreground mt-1">
-            Q1: ${analytics.pricing.q1.toLocaleString()} • Q3: ${analytics.pricing.q3.toLocaleString()}
+            Q1: ${analytics.pricing.q1.toLocaleString('en-AU')} • Q3: ${analytics.pricing.q3.toLocaleString('en-AU')}
           </div>
         </CardContent>
       </Card>

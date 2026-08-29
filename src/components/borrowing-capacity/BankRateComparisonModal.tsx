@@ -355,7 +355,7 @@ export function BankRateComparisonModal({
                               <div>
                                 <p className="font-medium">{lender.lenderName}</p>
                                 <p className="text-xs text-muted-foreground">
-                                  Last updated: {lender.fetchedAt ? new Date(lender.fetchedAt).toLocaleDateString() : 'Never'}
+                                  Last updated: {lender.fetchedAt ? new Date(lender.fetchedAt).toLocaleDateString('en-AU') : 'Never'}
                                 </p>
                               </div>
                             </div>

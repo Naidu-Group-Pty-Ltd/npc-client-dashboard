@@ -350,7 +350,7 @@ export function ReportVersionHistory({ reportId, currentVersion, open, onOpenCha
                                 <div className="flex items-center gap-1">
                                   <ChevronRight className="h-3 w-3 text-muted-foreground" />
                                   <span className="text-muted-foreground">
-                                    Content: {version.changes_summary.content_length.toLocaleString()} chars
+                                    Content: {version.changes_summary.content_length.toLocaleString('en-AU')} chars
                                   </span>
                                 </div>
                               </div>

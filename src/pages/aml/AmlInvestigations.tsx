@@ -90,7 +90,7 @@ export default function AmlInvestigations() {
                   <TableBody>
                     {overrides.map((o) => (
                       <TableRow key={o.id}>
-                        <TableCell className="text-xs">{new Date(o.created_at).toLocaleString()}</TableCell>
+                        <TableCell className="text-xs">{new Date(o.created_at).toLocaleString('en-AU')}</TableCell>
                         <TableCell className="font-mono text-xs">{o.case_id.slice(0, 8)}…</TableCell>
                         <TableCell>{o.requested_rating || "—"}</TableCell>
                         <TableCell className="max-w-md text-sm text-muted-foreground">{o.requested_reason}</TableCell>
@@ -132,7 +132,7 @@ export default function AmlInvestigations() {
                   <TableBody>
                     {approvals.map((a) => (
                       <TableRow key={a.id}>
-                        <TableCell className="text-xs">{new Date(a.requested_at).toLocaleString()}</TableCell>
+                        <TableCell className="text-xs">{new Date(a.requested_at).toLocaleString('en-AU')}</TableCell>
                         <TableCell className="font-mono text-xs">{a.case_id.slice(0, 8)}…</TableCell>
                         <TableCell>{a.kind}</TableCell>
                         <TableCell><Badge className={STATUS_TONE[a.status]}>{a.status}</Badge></TableCell>

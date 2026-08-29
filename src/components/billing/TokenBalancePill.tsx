@@ -25,7 +25,7 @@ function formatCompact(n: number | undefined | null): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 10_000) return `${Math.round(n / 1_000)}k`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return n.toLocaleString();
+  return n.toLocaleString('en-AU');
 }
 
 export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
@@ -57,10 +57,10 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
             compact && "h-11 w-11 px-0",
           )}
           aria-label={
-            balance ? `Tokens remaining: ${available.toLocaleString()}` : "Token balance unavailable"
+            balance ? `Tokens remaining: ${available.toLocaleString('en-AU')}` : "Token balance unavailable"
           }
           title={
-            balance ? `Tokens remaining: ${available.toLocaleString()}` : "Token balance unavailable"
+            balance ? `Tokens remaining: ${available.toLocaleString('en-AU')}` : "Token balance unavailable"
           }
         >
           <Coins className="h-4 w-4 shrink-0" />
@@ -93,27 +93,27 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
                 ) : !balance ? (
                   "—"
                 ) : (
-                  available.toLocaleString()
+                  available.toLocaleString('en-AU')
                 )}
               </p>
               <p className="text-xs text-muted-foreground">
                 {!balance
                   ? "Balance unavailable"
                   : balance.stale
-                  ? `Last confirmed${balance.updatedAt ? ` ${new Date(balance.updatedAt).toLocaleString()}` : " balance"}`
+                  ? `Last confirmed${balance.updatedAt ? ` ${new Date(balance.updatedAt).toLocaleString('en-AU')}` : " balance"}`
                   : balance.exempt
                   ? "Unmetered · billing exempt"
                   : allowance > 0
-                  ? `of ${allowance.toLocaleString()} allowance${balance.planName ? ` · ${balance.planName}` : ""}`
+                  ? `of ${allowance.toLocaleString('en-AU')} allowance${balance.planName ? ` · ${balance.planName}` : ""}`
                   : "Top-up credits · no plan allowance"}
               </p>
               {/* Credits lapse 30 days after they are issued, so a balance can
                   shrink without anyone spending anything. Say so before it does. */}
               {!!balance?.expiringSoon && balance.expiringSoon > 0 && (
                 <p className="text-xs text-warning">
-                  {balance.expiringSoon.toLocaleString()} expiring
+                  {balance.expiringSoon.toLocaleString('en-AU')} expiring
                   {balance.nextExpiryAt
-                    ? ` ${new Date(balance.nextExpiryAt).toLocaleDateString()}`
+                    ? ` ${new Date(balance.nextExpiryAt).toLocaleDateString('en-AU')}`
                     : ` within ${balance.expiryWarningDays ?? 7} days`}
                 </p>
               )}
@@ -140,7 +140,7 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
                 <span>{pct.toFixed(0)}% remaining</span>
                 {balance?.currentPeriodEnd && (
                   <span>
-                    Resets {new Date(balance.currentPeriodEnd).toLocaleDateString()}
+                    Resets {new Date(balance.currentPeriodEnd).toLocaleDateString('en-AU')}
                   </span>
                 )}
               </div>
@@ -154,7 +154,7 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
         <div className="bg-border text-center text-xs">
           <div className="bg-popover px-3 py-2">
             <p className="text-muted-foreground">Used</p>
-            <p className="font-semibold tabular-nums">{used.toLocaleString()}</p>
+            <p className="font-semibold tabular-nums">{used.toLocaleString('en-AU')}</p>
           </div>
         </div>
 

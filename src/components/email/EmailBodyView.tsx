@@ -79,7 +79,7 @@ export default function EmailBodyView({
         <div className="mt-4 flex flex-col items-start gap-2 border-t border-border/50 pt-3">
           {!expanded && (
             <p className="text-xs text-muted-foreground">
-              {Math.max(0, hiddenChars).toLocaleString()} more characters hidden
+              {Math.max(0, hiddenChars).toLocaleString('en-AU')} more characters hidden
               {isHuge ? ' (large email — expand to load the rest)' : ''}.
             </p>
           )}

@@ -288,7 +288,7 @@ export default function BcSegmentEngineAdmin() {
 
               {row && (
                 <div className="text-xs text-muted-foreground">
-                  Last updated {new Date(row.updated_at).toLocaleString()} by {row.updated_by ?? 'system'}
+                  Last updated {new Date(row.updated_at).toLocaleString('en-AU')} by {row.updated_by ?? 'system'}
                 </div>
               )}
 
@@ -330,9 +330,9 @@ export default function BcSegmentEngineAdmin() {
           {dryResult && (
             <div className="border rounded-md p-3 bg-muted/30 text-xs space-y-2">
               <div className="flex flex-wrap gap-3">
-                <Badge variant="outline">Residential cap: ${Number(dryResult.borrowingCapacity ?? dryResult.maxBorrowingAmount ?? 0).toLocaleString()}</Badge>
+                <Badge variant="outline">Residential cap: ${Number(dryResult.borrowingCapacity ?? dryResult.maxBorrowingAmount ?? 0).toLocaleString('en-AU')}</Badge>
                 {dryResult.portfolioCapacity != null && (
-                  <Badge variant="outline">Portfolio cap: ${Number(dryResult.portfolioCapacity).toLocaleString()}</Badge>
+                  <Badge variant="outline">Portfolio cap: ${Number(dryResult.portfolioCapacity).toLocaleString('en-AU')}</Badge>
                 )}
                 {dryResult.segmentReconciliation?.triggered ? (
                   <Badge className="bg-success/20 text-success border-success/30">Segments triggered</Badge>
@@ -387,7 +387,7 @@ export default function BcSegmentEngineAdmin() {
                   </div>
                   <div className="flex items-center gap-3 shrink-0 text-muted-foreground">
                     <span>{h.response_time_ms != null ? `${h.response_time_ms}ms` : '—'}</span>
-                    <span>{new Date(h.created_at).toLocaleTimeString()}</span>
+                    <span>{new Date(h.created_at).toLocaleTimeString('en-AU')}</span>
                   </div>
                 </div>
               ))}

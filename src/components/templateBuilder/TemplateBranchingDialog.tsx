@@ -52,7 +52,7 @@ export function TemplateBranchingDialog({
   useEffect(() => {
     if (!open) return;
     void loadBranches();
-    setBranchLabel(`Draft ${new Date().toLocaleDateString()}`);
+    setBranchLabel(`Draft ${new Date().toLocaleDateString('en-AU')}`);
   }, [open, templateId]);
 
   const loadBranches = async () => {

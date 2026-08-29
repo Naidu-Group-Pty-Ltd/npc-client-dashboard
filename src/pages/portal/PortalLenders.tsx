@@ -83,7 +83,7 @@ export default function PortalLenders() {
                         <div className="font-medium">{s.lender_name}</div>
                         <div className="text-xs text-muted-foreground">
                           {s.product_name || '—'}
-                          {s.loan_amount ? ` · $${Number(s.loan_amount).toLocaleString()}` : ''}
+                          {s.loan_amount ? ` · $${Number(s.loan_amount).toLocaleString('en-AU')}` : ''}
                           {s.interest_rate ? ` · ${Number(s.interest_rate).toFixed(2)}%` : ''}
                         </div>
                       </div>
@@ -135,7 +135,7 @@ export default function PortalLenders() {
                 <div key={sheet.id} className="p-4 space-y-2">
                   <div className="font-medium text-sm">{sheet.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    Shared {new Date(sheet.created_at).toLocaleDateString()}
+                    Shared {new Date(sheet.created_at).toLocaleDateString('en-AU')}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {(sheet.rate_snapshot as any[]).map((r, i) => (

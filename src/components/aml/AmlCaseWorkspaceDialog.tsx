@@ -212,8 +212,8 @@ export function AmlCaseWorkspaceDialog({
               </DialogDescription>
               {caseRow && (
                 <p className="mt-1 break-words text-xs text-muted-foreground">
-                  Opened {new Date(caseRow.opened_at).toLocaleDateString()}
-                  {" · Updated "}{new Date(caseRow.updated_at).toLocaleDateString()}
+                  Opened {new Date(caseRow.opened_at).toLocaleDateString('en-AU')}
+                  {" · Updated "}{new Date(caseRow.updated_at).toLocaleDateString('en-AU')}
                 </p>
               )}
             </div>

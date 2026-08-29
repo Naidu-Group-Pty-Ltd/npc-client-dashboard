@@ -300,10 +300,20 @@ describe('re-importing the same list', () => {
     expect(db.updated[0].id).toBe('item-1');
     expect(db.inserted).toHaveLength(0);
     expect(outcome.replacedProperties).toEqual([]);
-    // And the new upload becomes the one supplying it, so deleting the OLD
-    // upload archives nothing — `shouldArchiveOnSourceDelete` matches on
-    // `upload_id` alone. The safe cutover falls out of the identity fix.
-    expect(db.updated[0].payload.upload_id).toBe('upload-2');
+    /*
+     * And the new upload becomes the one supplying it, so deleting the OLD
+     * upload archives nothing — `shouldArchiveOnSourceDelete` matches on
+     * `upload_id` alone.
+     *
+     * SAFE PUBLICATION HOLDS THAT CHANGE BACK. `upload_id` is membership, and
+     * membership is part of the published dataset: re-pointing it the instant
+     * the file is imported would publish half a replacement. It travels in
+     * `pending_patch` and is applied by the cutover — which is also what lets
+     * the cutover tell a removed property from a kept one. The row itself
+     * still survives, which is what this test is for.
+     */
+    expect(db.updated[0].payload.pending_upload_id).toBe('upload-2');
+    expect(db.updated[0].payload.upload_id).toBeUndefined();
   });
 
   it('does NOT carry the old property forward when the LOT changed under the anchor', async () => {

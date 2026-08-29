@@ -341,7 +341,7 @@ export function statusLabel(kind: BuilderDeliveryKind, status: string): string {
 export function formatDeliveryDate(value: string | null | undefined): string {
   if (!value) return '—';
   const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString() : '—';
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString('en-AU') : '—';
 }
 
 export function formatDeliveryMoney(value: number | null | undefined): string {

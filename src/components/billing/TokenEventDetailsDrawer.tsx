@@ -237,7 +237,7 @@ export function TokenEventDetailsDrawer({
                       </div>
                       <Separator />
                       <div className="grid grid-cols-2 gap-3 text-xs">
-                        <div><p className="text-muted-foreground">Used</p><p className="font-semibold tabular-nums text-success dark:text-success">{o.actual_tokens.toLocaleString()}</p></div>
+                        <div><p className="text-muted-foreground">Used</p><p className="font-semibold tabular-nums text-success dark:text-success">{o.actual_tokens.toLocaleString('en-AU')}</p></div>
                         <div><p className="text-muted-foreground">Duration</p><p className="font-semibold tabular-nums">{fmtMs(o.duration_ms)}</p></div>
                       </div>
                       {o.error_message && (
@@ -285,8 +285,8 @@ export function TokenEventDetailsDrawer({
                               <p className="truncate text-muted-foreground" title={data.users[e.user_id]}>User: {data.users[e.user_id]}</p>
                             )}
                             <div className="grid min-w-0 grid-cols-2 gap-2 pt-1">
-                              <div><p className="text-muted-foreground">Used</p><p className="font-medium tabular-nums text-success dark:text-success">{e.used_tokens.toLocaleString()}</p></div>
-                              <div><p className="text-muted-foreground">Available</p><p className="font-medium tabular-nums">{e.available_tokens.toLocaleString()}</p></div>
+                              <div><p className="text-muted-foreground">Used</p><p className="font-medium tabular-nums text-success dark:text-success">{e.used_tokens.toLocaleString('en-AU')}</p></div>
+                              <div><p className="text-muted-foreground">Available</p><p className="font-medium tabular-nums">{e.available_tokens.toLocaleString('en-AU')}</p></div>
                             </div>
                             {e.reason && <p className="break-words rounded-xl border border-border/60 bg-muted/35 p-2 text-muted-foreground">Reason: {e.reason}</p>}
                             {e.error_message && <p className="break-words rounded-xl border border-destructive/20 bg-destructive/10 p-2 text-destructive">{e.error_message}</p>}
@@ -313,8 +313,8 @@ export function TokenEventDetailsDrawer({
                             <p className="truncate text-muted-foreground" title={data.users[e.user_id]}>User: {data.users[e.user_id]}</p>
                           )}
                           <div className="grid min-w-0 grid-cols-2 gap-2 pt-1">
-                            <div><p className="text-muted-foreground">Used</p><p className="font-medium tabular-nums">{e.used_tokens.toLocaleString()}</p></div>
-                            <div><p className="text-muted-foreground">Available</p><p className="font-medium tabular-nums">{e.available_tokens.toLocaleString()}</p></div>
+                            <div><p className="text-muted-foreground">Used</p><p className="font-medium tabular-nums">{e.used_tokens.toLocaleString('en-AU')}</p></div>
+                            <div><p className="text-muted-foreground">Available</p><p className="font-medium tabular-nums">{e.available_tokens.toLocaleString('en-AU')}</p></div>
                           </div>
                           {e.reason && <p className="break-words text-muted-foreground">Reason: {e.reason}</p>}
                           {e.error_message && <p className="break-words rounded-lg bg-destructive/10 p-2 text-destructive">{e.error_message}</p>}

@@ -253,7 +253,7 @@ export function FinancialsTab({
             {price > 0 && (
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Loan Amount</p>
-                <p className="text-lg font-bold text-primary">${loanAmount.toLocaleString()}</p>
+                <p className="text-lg font-bold text-primary">${loanAmount.toLocaleString('en-AU')}</p>
               </div>
             )}
           </div>
@@ -397,7 +397,7 @@ export function FinancialsTab({
             <div className="mt-4 p-4 bg-primary/5 rounded-lg border border-primary/20">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Est. Monthly {loanType === 'interest_only' ? 'Interest' : 'Repayment'}</span>
-                <span className="text-xl font-bold text-primary">${monthlyInterest.toLocaleString()}/mo</span>
+                <span className="text-xl font-bold text-primary">${monthlyInterest.toLocaleString('en-AU')}/mo</span>
               </div>
             </div>
           )}
@@ -607,7 +607,7 @@ export function FinancialsTab({
             <div className="mt-4 p-4 bg-muted/50 rounded-lg border">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Total Upfront Costs</span>
-                <span className="text-xl font-bold">${totalAcquisitionCosts.toLocaleString()}</span>
+                <span className="text-xl font-bold">${totalAcquisitionCosts.toLocaleString('en-AU')}</span>
               </div>
             </div>
           )}

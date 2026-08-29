@@ -229,7 +229,7 @@ export function FundingEvidencePanel({ caseId, canWrite, onChanged, onContinue }
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {SOURCE_TYPE_LABEL[item.source_type] ?? item.source_type}
-                          {item.amount !== null && ` · ${item.currency} ${Number(item.amount).toLocaleString()}`}
+                          {item.amount !== null && ` · ${item.currency} ${Number(item.amount).toLocaleString('en-AU')}`}
                           {item.verified && item.verified_at
                             && ` · verified ${String(item.verified_at).slice(0, 10)}`}
                         </p>

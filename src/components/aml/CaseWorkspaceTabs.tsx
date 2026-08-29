@@ -514,7 +514,7 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
                 <div>
                   <div className="font-medium">{s.subject_label}</div>
                   <div className="text-xs text-muted-foreground">
-                    {s.provider} · {(s.scope || []).join(", ")} · {new Date(s.requested_at).toLocaleString()}
+                    {s.provider} · {(s.scope || []).join(", ")} · {new Date(s.requested_at).toLocaleString('en-AU')}
                   </div>
                 </div>
                 <Badge variant="outline">{s.status}</Badge>
@@ -748,7 +748,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
               <Row k="MLTF score" v={String(latest.mltf_score)} />
               <Row k="Verification score" v={String(latest.verification_score)} />
               <Row k="Completion score" v={String(latest.completion_score)} />
-              <Row k="Computed" v={new Date(latest.created_at).toLocaleString()} />
+              <Row k="Computed" v={new Date(latest.created_at).toLocaleString('en-AU')} />
               {latest.policy_snapshot_hash && (
                 <Row k="Policy hash" v={<span className="font-mono text-[11px]">{latest.policy_snapshot_hash.slice(0, 12)}…</span>} />
               )}
@@ -842,7 +842,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
                 <div className="mt-1 text-[11px] text-muted-foreground">
-                  Recorded {new Date(pendingRecommendation.created_at).toLocaleString()} — recording
+                  Recorded {new Date(pendingRecommendation.created_at).toLocaleString('en-AU')} — recording
                   another replaces it as the one awaiting review.
                 </div>
               </div>
@@ -898,7 +898,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
                   {latestDecision.outcome.replace(/_/g, " ")}
                 </Badge>
                 <span className="text-xs text-muted-foreground">
-                  Decided {new Date(latestDecision.decided_at).toLocaleString()}
+                  Decided {new Date(latestDecision.decided_at).toLocaleString('en-AU')}
                   {latestDecision.program_version ? ` · Policy ${latestDecision.program_version}` : ""}
                 </span>
               </div>
@@ -972,7 +972,7 @@ export function RiskTab({ caseId, canWrite, onChanged, onOpenSection, hasAssigne
                   </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    Recorded {new Date(pendingRecommendation.created_at).toLocaleString()} · your decision
+                    Recorded {new Date(pendingRecommendation.created_at).toLocaleString('en-AU')} · your decision
                     marks it actioned.
                   </p>
                 </div>
@@ -1073,7 +1073,7 @@ export function AuditTab({ events }: { events: AmlCaseEvent[] }) {
               {events.map((ev) => (
                 <li key={ev.id} className="border-l-2 border-border pl-3">
                   <div className="text-xs text-muted-foreground">
-                    {new Date(ev.created_at).toLocaleString()} · {ev.category}
+                    {new Date(ev.created_at).toLocaleString('en-AU')} · {ev.category}
                   </div>
                   <div className="text-sm">{ev.summary}</div>
                   {ev.actor_label && (
@@ -1280,7 +1280,7 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
               <Row k="Structure" v={ENTITY_TYPE_LABELS[entity.entity_type] ?? entity.entity_type} />
               <Row k="ABN" v={entity.abn ?? "—"} />
               <Row k="ACN" v={entity.acn ?? "—"} />
-              <Row k="Established" v={entity.incorporation_date ? new Date(entity.incorporation_date).toLocaleDateString() : "—"} />
+              <Row k="Established" v={entity.incorporation_date ? new Date(entity.incorporation_date).toLocaleDateString('en-AU') : "—"} />
               <Row k="Jurisdiction" v={entity.jurisdiction} />
             </div>
           )}
@@ -1503,7 +1503,7 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
                     Client declared: {typeof c.value === "object" && c.value !== null && "v" in c.value
                       ? String((c.value as any).v)
                       : String(c.value ?? "—")}
-                    {" · "}{new Date(c.submitted_at).toLocaleDateString()}
+                    {" · "}{new Date(c.submitted_at).toLocaleDateString('en-AU')}
                   </div>
                 </li>
               ))}
@@ -1693,7 +1693,7 @@ export function FundingFinanceTab({ caseId, canWrite = false, onChanged, onConti
         ) : (
           <>
             <div className="grid gap-2 sm:grid-cols-2">
-              <Row k="Latest comparison" v={latest ? new Date(latest.created_at ?? "").toLocaleDateString() : "—"} />
+              <Row k="Latest comparison" v={latest ? new Date(latest.created_at ?? "").toLocaleDateString('en-AU') : "—"} />
               <Row k="Open discrepancies" v={String(openDiscrepancies.length)} />
               <Row
                 k="Finance requests"
@@ -1934,7 +1934,7 @@ export function TimelineTab({
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                          {meta.label} · {new Date(entry.at).toLocaleString()}
+                          {meta.label} · {new Date(entry.at).toLocaleString('en-AU')}
                         </div>
                         <div className="text-sm font-medium">{entry.title}</div>
                         {entry.detail && (

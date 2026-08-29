@@ -784,7 +784,7 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void | 
                   : 'I have read this and I consent.'}
                 {doc.accepted_at && (
                   <span className="ml-2 text-muted-foreground">
-                    Recorded {new Date(doc.accepted_at).toLocaleDateString()}
+                    Recorded {new Date(doc.accepted_at).toLocaleDateString('en-AU')}
                   </span>
                 )}
               </span>
@@ -1999,7 +1999,7 @@ function OpenRequestsCard({ requests, onDone, onNavigate, availability }: { requ
                     )}
                     {r.due_at && (
                       <span className="text-xs text-muted-foreground">
-                        Due {new Date(r.due_at).toLocaleDateString()}
+                        Due {new Date(r.due_at).toLocaleDateString('en-AU')}
                       </span>
                     )}
                     {routable ? (

@@ -120,7 +120,7 @@ export function LenderRateAlertManager() {
                       <span>Below {a.threshold_rate.toFixed(2)}%</span>
                       {a.loan_purpose && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{a.loan_purpose === 'OWNER_OCCUPIED' ? 'OO' : 'INV'}</Badge>}
                       {a.repayment_type && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{a.repayment_type === 'PRINCIPAL_AND_INTEREST' ? 'P&I' : 'IO'}</Badge>}
-                      {a.last_triggered_at && <span>· last fired {new Date(a.last_triggered_at).toLocaleDateString()}</span>}
+                      {a.last_triggered_at && <span>· last fired {new Date(a.last_triggered_at).toLocaleDateString('en-AU')}</span>}
                     </div>
                   </div>
                 </div>

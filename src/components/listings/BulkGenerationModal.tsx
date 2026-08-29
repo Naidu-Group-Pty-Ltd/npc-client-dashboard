@@ -325,7 +325,7 @@ export function BulkGenerationModal({
             />
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs text-muted-foreground">
-                Projected token cost ({selectedProperties.length} × ~{estimateTokens('report.bulk-item').toLocaleString()} per report)
+                Projected token cost ({selectedProperties.length} × ~{estimateTokens('report.bulk-item').toLocaleString('en-AU')} per report)
               </span>
               <TokenCostEstimate
                 estimate={estimateTokens('report.bulk-item') * Math.max(1, selectedProperties.length)}

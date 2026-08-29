@@ -49,7 +49,7 @@ function relTime(iso?: string | null) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
-  return new Date(iso).toLocaleDateString();
+  return new Date(iso).toLocaleDateString('en-AU');
 }
 
 async function invoke(action: string, payload: Record<string, any> = {}) {
@@ -553,7 +553,7 @@ function PlanScheduleCard({ plan, onChanged }: { plan: Plan; onChanged: () => vo
         </label>
         <div className="rounded-lg border border-border/50 bg-background/30 px-3 py-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
           {plan.schedule_cron ? (
-            <>Next · {plan.next_run_at ? new Date(plan.next_run_at).toLocaleString() : '—'} &nbsp;·&nbsp; Last · {plan.last_run_at ? new Date(plan.last_run_at).toLocaleString() : '—'}</>
+            <>Next · {plan.next_run_at ? new Date(plan.next_run_at).toLocaleString('en-AU') : '—'} &nbsp;·&nbsp; Last · {plan.last_run_at ? new Date(plan.last_run_at).toLocaleString('en-AU') : '—'}</>
           ) : 'No schedule set — plan runs on demand only.'}
         </div>
         <div className="flex gap-2">

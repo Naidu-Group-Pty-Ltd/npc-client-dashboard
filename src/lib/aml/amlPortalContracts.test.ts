@@ -598,8 +598,16 @@ describe("monitoring and ongoing CDD (Phase 10, §12.9 + §18)", () => {
     expect(branch).toContain("hasTenantAccess(tenantForCase(");
     expect(branch).toContain("WRITE_ROLES");
     expect(branch).not.toContain("caseRow.tenant_id");
-    expect(branch).toContain("reviewIntervalMonths(caseRow)");
-    expect(monSource).toContain("DEFAULT_REVIEW_INTERVALS");
+    /* The interval table moved OUT of this file, to
+       `_shared/aml/reviewSchedule.pure.ts`. It had been written twice inside
+       it — once here and once inline in `complete_review` — and only the
+       first was ever edited, so completing a review booked the next one on a
+       cycle the rest of the product had stopped believing in. What this test
+       protects is that scheduling resolves the interval rather than
+       inventing one, which it still does. */
+    expect(branch).toContain("await reviewInterval(caseRow)");
+    expect(monSource).toContain("resolveReviewInterval");
+    expect(monSource).not.toContain("DEFAULT_REVIEW_INTERVALS");
   });
 
   it("authorizes every Phase 10 case operation against the case tenant", () => {

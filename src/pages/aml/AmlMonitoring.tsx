@@ -42,7 +42,7 @@ const ALERT_STATUS_TONE: Record<string, string> = {
   false_positive: "bg-muted text-muted-foreground",
 };
 
-function fmt(d: string | null) { return d ? new Date(d).toLocaleString() : "—"; }
+function fmt(d: string | null) { return d ? new Date(d).toLocaleString('en-AU') : "—"; }
 
 export default function AmlMonitoring() {
   const { canWrite, isMlro } = useAmlAccess();

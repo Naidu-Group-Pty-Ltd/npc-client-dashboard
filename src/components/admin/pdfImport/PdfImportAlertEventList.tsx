@@ -75,7 +75,7 @@ export function PdfImportAlertEventList({ events, selectedId, onSelect }: Props)
               <TableCell className="text-sm">{getMonitoringDomainLabel(event.domain)}</TableCell>
               <TableCell className="text-right tabular-nums">{event.occurrenceCount}</TableCell>
               <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                {event.lastSeenAt ? new Date(event.lastSeenAt).toLocaleString() : '—'}
+                {event.lastSeenAt ? new Date(event.lastSeenAt).toLocaleString('en-AU') : '—'}
               </TableCell>
             </TableRow>
           ))}

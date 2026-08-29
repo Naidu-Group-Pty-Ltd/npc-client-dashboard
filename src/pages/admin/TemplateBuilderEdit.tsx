@@ -2233,9 +2233,9 @@ export default function TemplateBuilderEdit() {
             className={`text-[11px] px-2 py-1 rounded border ${saveConflict ? 'border-destructive/30 bg-destructive/10 text-destructive' : isDirty ? 'border-brand-500/30 bg-brand-500/10 text-brand-700' : 'border-success/30 bg-success/10 text-success'}`}
             title={[
               saveConflict?.message,
-              lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleString()}` : null,
-              lastLocalSaveAt ? `Autosaved locally ${new Date(lastLocalSaveAt).toLocaleString()}` : null,
-              isDirty && dirtySince ? `Unsaved since ${new Date(dirtySince).toLocaleString()}` : null,
+              lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleString('en-AU')}` : null,
+              lastLocalSaveAt ? `Autosaved locally ${new Date(lastLocalSaveAt).toLocaleString('en-AU')}` : null,
+              isDirty && dirtySince ? `Unsaved since ${new Date(dirtySince).toLocaleString('en-AU')}` : null,
             ].filter(Boolean).join(' · ') || undefined}
           >
             {saveConflict ? 'Save conflict' : update.isPending ? 'Saving…' : isDirty ? 'Unsaved changes' : 'Saved'}

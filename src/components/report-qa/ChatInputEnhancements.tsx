@@ -26,11 +26,11 @@ export function CharacterCount({ current, max, className }: CharacterCountProps)
       )}
     >
       {remaining >= 0 ? (
-        <span>{remaining.toLocaleString()} characters remaining</span>
+        <span>{remaining.toLocaleString('en-AU')} characters remaining</span>
       ) : (
         <span className="flex items-center gap-1">
           <AlertCircle className="h-3 w-3" />
-          {Math.abs(remaining).toLocaleString()} over limit
+          {Math.abs(remaining).toLocaleString('en-AU')} over limit
         </span>
       )}
     </div>

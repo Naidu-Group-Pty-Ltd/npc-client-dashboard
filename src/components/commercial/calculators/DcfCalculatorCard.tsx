@@ -792,7 +792,7 @@ export function DcfCalculatorCard() {
                 <Badge variant="outline" className={readinessTone}>{cashflowCurrent ? 'Generated' : cashflowOutOfDate ? 'Out of date' : 'Pending'}</Badge>
               </div>
               {readinessStatus === 'Awaiting DCF Inputs' && <p className="mt-2 text-xs leading-5 text-muted-foreground">{EMPTY_HELPER}</p>}
-              {cashflowCurrent && <p className="mt-2 text-xs text-success">Cashflow generated · {generatedAt ? new Date(generatedAt).toLocaleString() : 'Generated'} · {DCF_CALCULATION_VERSION}</p>}
+              {cashflowCurrent && <p className="mt-2 text-xs text-success">Cashflow generated · {generatedAt ? new Date(generatedAt).toLocaleString('en-AU') : 'Generated'} · {DCF_CALCULATION_VERSION}</p>}
               {cashflowOutOfDate && <p className="mt-2 text-xs text-brand-200">Cashflow out of date · regenerate before export.</p>}
               {!!priorityWarnings.length && <div className="mt-3 space-y-1">{priorityWarnings.map((w) => <p key={w.message} className="text-xs text-brand-100">• {w.message}</p>)}</div>}
             </section>

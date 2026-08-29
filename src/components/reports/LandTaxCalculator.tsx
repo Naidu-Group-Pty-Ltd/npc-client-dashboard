@@ -225,7 +225,7 @@ export function LandTaxCalculator({
           <span className="text-sm font-medium">Land Tax Calculator</span>
           {result && result.annualLandTax > 0 && (
             <Badge variant="secondary" className="ml-auto">
-              ${result.annualLandTax.toLocaleString()}/yr
+              ${result.annualLandTax.toLocaleString('en-AU')}/yr
             </Badge>
           )}
           {selectedState === 'NT' && (
@@ -457,7 +457,7 @@ export function LandTaxCalculator({
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Annual Land Tax</span>
                 <span className="text-lg font-bold text-primary">
-                  ${result.annualLandTax.toLocaleString()}
+                  ${result.annualLandTax.toLocaleString('en-AU')}
                 </span>
               </div>
               
@@ -467,25 +467,25 @@ export function LandTaxCalculator({
                     {result.baseTax > 0 && (
                       <div className="flex justify-between">
                         <span>Base tax:</span>
-                        <span>${result.baseTax.toLocaleString()}</span>
+                        <span>${result.baseTax.toLocaleString('en-AU')}</span>
                       </div>
                     )}
                     {result.marginalTax > 0 && (
                       <div className="flex justify-between">
                         <span>Marginal tax:</span>
-                        <span>${result.marginalTax.toLocaleString()}</span>
+                        <span>${result.marginalTax.toLocaleString('en-AU')}</span>
                       </div>
                     )}
                     {result.fixedCharge > 0 && (
                       <div className="flex justify-between">
                         <span>Fixed charge:</span>
-                        <span>${result.fixedCharge.toLocaleString()}</span>
+                        <span>${result.fixedCharge.toLocaleString('en-AU')}</span>
                       </div>
                     )}
                     {result.mritAddon > 0 && (
                       <div className="flex justify-between">
                         <span>WA MRIT:</span>
-                        <span>${result.mritAddon.toLocaleString()}</span>
+                        <span>${result.mritAddon.toLocaleString('en-AU')}</span>
                       </div>
                     )}
                     <div className="flex justify-between pt-1 border-t">

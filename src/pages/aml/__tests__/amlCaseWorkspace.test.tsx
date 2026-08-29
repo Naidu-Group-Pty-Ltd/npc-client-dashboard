@@ -142,7 +142,7 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     const rail = screen.getByRole("list", { name: "Compliance journey stages" });
     for (const stage of [
       "Activation", "Intake", "Identity", "Documents", "Screening",
-      "Funding", "Submission", "Decision", "Gate & Passport", "Partners",
+      "Funding", "Submission", "Decision", "Passport & Partners", "Ongoing CDD",
     ]) {
       expect(within(rail).getByText(stage)).toBeInTheDocument();
     }

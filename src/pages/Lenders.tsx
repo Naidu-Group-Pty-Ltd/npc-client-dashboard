@@ -108,7 +108,7 @@ export default function Lenders() {
                         <div className="min-w-0">
                           <div className="font-medium truncate">{s.lenderName}</div>
                           <div className="text-xs text-muted-foreground">
-                            {s.rateCount} products · refreshed {new Date(s.fetchedAt).toLocaleDateString()}
+                            {s.rateCount} products · refreshed {new Date(s.fetchedAt).toLocaleDateString('en-AU')}
                           </div>
                         </div>
                       </div>

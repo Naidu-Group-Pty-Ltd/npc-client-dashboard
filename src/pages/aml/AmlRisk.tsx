@@ -189,7 +189,7 @@ export default function AmlRisk() {
               <>
                 <div className="flex items-center gap-2">
                   <Badge className={RATING_TONE[latest.risk_rating ?? "low"] ?? ""}>{(latest.risk_rating ?? "?").toUpperCase()}</Badge>
-                  <span className="text-xs text-muted-foreground">Computed {new Date(latest.created_at).toLocaleString()}</span>
+                  <span className="text-xs text-muted-foreground">Computed {new Date(latest.created_at).toLocaleString('en-AU')}</span>
                 </div>
                 <div className="space-y-2">
                   <ScoreBar label="ML/TF" value={latest.mltf_score} />
@@ -347,7 +347,7 @@ export default function AmlRisk() {
                 )}
                 {history.map((a) => (
                   <TableRow key={a.id}>
-                    <TableCell className="text-xs">{new Date(a.created_at).toLocaleString()}</TableCell>
+                    <TableCell className="text-xs">{new Date(a.created_at).toLocaleString('en-AU')}</TableCell>
                     <TableCell><Badge className={RATING_TONE[a.risk_rating ?? "low"] ?? ""}>{(a.risk_rating ?? "?").toUpperCase()}</Badge></TableCell>
                     <TableCell>{Math.round(a.mltf_score)}</TableCell>
                     <TableCell>{Math.round(a.completion_score)}</TableCell>

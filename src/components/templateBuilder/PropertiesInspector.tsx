@@ -271,7 +271,7 @@ function CascadeAnchorEditor({
               <div>
                 <Label className="text-[10px] uppercase tracking-wider text-muted-foreground">QA note</Label>
                 <Textarea className="min-h-16 text-xs" placeholder="Why this generated field lands here; review notes for repeated uses." value={anchor.qaNote ?? ''} onChange={(e) => update(index, { qaNote: e.target.value || undefined })} />
-                {anchor.qaReviewedAt && <div className="mt-1 text-[10px] text-muted-foreground">Reviewed {new Date(anchor.qaReviewedAt).toLocaleString()}</div>}
+                {anchor.qaReviewedAt && <div className="mt-1 text-[10px] text-muted-foreground">Reviewed {new Date(anchor.qaReviewedAt).toLocaleString('en-AU')}</div>}
               </div>
             </div>
           ))}

@@ -391,7 +391,7 @@ export default function AmlFinance() {
                 <TableBody>
                   {comparisons.map((c) => (
                     <TableRow key={c.id}>
-                      <TableCell className="text-xs">{new Date(c.captured_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-xs">{new Date(c.captured_at).toLocaleString('en-AU')}</TableCell>
                       <TableCell><Badge variant="outline" className="capitalize">{c.source.replace("_", " ")}</Badge></TableCell>
                       <TableCell>{c.lender ?? "—"}</TableCell>
                       <TableCell className="text-right">{money(c.purchase_price)}</TableCell>
@@ -454,7 +454,7 @@ export default function AmlFinance() {
                 <TableBody>
                   {filteredDiscrepancies.map((d) => (
                     <TableRow key={d.id}>
-                      <TableCell className="text-xs">{new Date(d.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-xs">{new Date(d.created_at).toLocaleString('en-AU')}</TableCell>
                       <TableCell><code className="text-xs">{d.kind}</code></TableCell>
                       <TableCell><Badge className={SEVERITY_TONE[d.severity]}>{d.severity}</Badge></TableCell>
                       <TableCell><Badge className={STATUS_TONE[d.status]}>{d.status.replace("_", " ")}</Badge></TableCell>
@@ -533,7 +533,7 @@ export default function AmlFinance() {
                   {evidence.map((e) => {
                     const externalUrl = normalizeExternalUrl(e.external_url);
                     return <TableRow key={e.id}>
-                      <TableCell className="text-xs">{new Date(e.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-xs">{new Date(e.created_at).toLocaleString('en-AU')}</TableCell>
                       <TableCell><Badge variant="outline" className="capitalize">{e.reference_type.replace("_", " ")}</Badge></TableCell>
                       <TableCell>
                         {externalUrl
@@ -628,7 +628,7 @@ export default function AmlFinance() {
                 <TableBody>
                   {requests.map((r) => (
                     <TableRow key={r.id}>
-                      <TableCell className="text-xs">{new Date(r.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-xs">{new Date(r.created_at).toLocaleDateString('en-AU')}</TableCell>
                       <TableCell><Badge variant="outline" className="capitalize">{r.kind.replace(/_/g, " ")}</Badge></TableCell>
                       <TableCell className="max-w-[280px]">
                         <div className="truncate text-sm">{r.subject}</div>
@@ -640,7 +640,7 @@ export default function AmlFinance() {
                       <TableCell className="max-w-[260px] text-xs text-muted-foreground">
                         {r.responded_at ? (
                           <>
-                            <div>{r.responded_by_label ?? "Finance partner"} · {new Date(r.responded_at).toLocaleDateString()}</div>
+                            <div>{r.responded_by_label ?? "Finance partner"} · {new Date(r.responded_at).toLocaleDateString('en-AU')}</div>
                             {r.response_payload?.text && <div className="truncate">{r.response_payload.text}</div>}
                             {r.comparison_id && <div>Funding snapshot recorded</div>}
                           </>

@@ -295,7 +295,7 @@ export function GhlWorkflowVisualizer() {
           </Select>
           <div className="text-xs text-muted-foreground">
             Showing {visibleLegacy.length} of {totals.total}
-            {lastLoadedAt && <> · loaded {new Date(lastLoadedAt).toLocaleTimeString()}</>}
+            {lastLoadedAt && <> · loaded {new Date(lastLoadedAt).toLocaleTimeString('en-AU')}</>}
           </div>
         </div>
 

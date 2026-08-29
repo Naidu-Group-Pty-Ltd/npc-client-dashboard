@@ -108,7 +108,7 @@ export default function AgentEvalBaselinesPanel() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-base">{b.name}</CardTitle>
-                    <div className="text-xs text-muted-foreground">{new Date(b.created_at).toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground">{new Date(b.created_at).toLocaleString('en-AU')}</div>
                     {b.notes && <p className="text-xs text-muted-foreground mt-1">{b.notes}</p>}
                   </div>
                   <div className="flex items-center gap-2">

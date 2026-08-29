@@ -100,7 +100,7 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
             )}
             {status.updated_at && (
               <span className="text-[11px] text-muted-foreground">
-                Updated {new Date(status.updated_at).toLocaleDateString()}
+                Updated {new Date(status.updated_at).toLocaleDateString('en-AU')}
               </span>
             )}
           </div>

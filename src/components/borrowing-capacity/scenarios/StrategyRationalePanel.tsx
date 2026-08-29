@@ -152,7 +152,7 @@ function buildPlainTextBrief(report: RationaleReport, fmt: (n: number) => string
   lines.push('─'.repeat(60));
   report.caveats.forEach(c => lines.push(`• ${c}`));
   lines.push('');
-  lines.push(`Generated: ${new Date(report.generatedAt).toLocaleString()}`);
+  lines.push(`Generated: ${new Date(report.generatedAt).toLocaleString('en-AU')}`);
   return lines.join('\n');
 }
 

@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
         <div class="container">
           <div class="header">
             <h1>📊 Weekly Call Performance Report</h1>
-            <p>${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}</p>
+            <p>${startDate.toLocaleDateString('en-AU')} - ${endDate.toLocaleDateString('en-AU')}</p>
           </div>
           
           <div class="content">
@@ -328,7 +328,7 @@ Deno.serve(async (req) => {
     const { error: emailError } = await resend.emails.send({
       from: brand.fromHeaderAdmin,
       to: [recipientEmail],
-      subject: `Weekly Call Report - ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}`,
+      subject: `Weekly Call Report - ${startDate.toLocaleDateString('en-AU')} to ${endDate.toLocaleDateString('en-AU')}`,
       html: emailHtml,
     });
 

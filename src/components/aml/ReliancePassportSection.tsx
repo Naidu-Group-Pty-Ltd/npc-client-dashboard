@@ -916,7 +916,7 @@ export function ReliancePassportSection({
                         {partner.partnerName} · accepted
                         {partner.acceptedByName ? ` by ${partner.acceptedByName}` : ""}
                         {partner.acceptedAt
-                          ? ` on ${new Date(partner.acceptedAt).toLocaleDateString()}`
+                          ? ` on ${new Date(partner.acceptedAt).toLocaleDateString('en-AU')}`
                           : ""} · {partner.recipientEmail}
                       </li>
                     ))}
@@ -1062,7 +1062,7 @@ export function ReliancePassportSection({
             <div className="font-medium">Attestation</div>
             {current ? (
               <div className="text-muted-foreground">
-                v{current.version} · {new Date(current.issued_at).toLocaleDateString()}
+                v{current.version} · {new Date(current.issued_at).toLocaleDateString('en-AU')}
                 <div className="truncate" title={current.payload_sha256}>
                   sha {current.payload_sha256.slice(0, 16)}…
                 </div>

@@ -139,7 +139,7 @@ export function activityActionLabel(action: string): string {
 export function formatWorkspaceTime(value: string | null | undefined): string {
   if (!value) return '—';
   const parsed = new Date(value);
-  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : '—';
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString('en-AU') : '—';
 }
 
 /**

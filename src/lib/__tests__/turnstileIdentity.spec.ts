@@ -1,17 +1,18 @@
 /**
- * Turnstile identity: this deployment must never render another tenant's
- * CAPTCHA widget.
+ * Turnstile identity: one widget, one deployment.
  *
- * A widget is a (site key, secret) pair, and the prime's site key was a
- * literal in `components/auth/TurnstileWidget.tsx` — inherited verbatim when
- * this repository was mirrored from `npc-property-dashbord`. Sharing it is the
- * same class of fault `backendIsolation.spec.ts` guards: one credential, one
- * rotation, one domain allowlist, spanning tenants that are supposed to be
- * separate. `siteverify` does report the hostname a token was solved on, and
- * no login handler in this repository reads it.
+ * A widget is a (site key, secret) pair, and this deployment's site key was a
+ * literal in `components/auth/TurnstileWidget.tsx`. Every repository mirrored
+ * from this one inherited it verbatim — `npc-client-dashboard` rendered THIS
+ * deployment's widget on a different tenant's login page, which is one
+ * credential, one rotation and one domain allowlist spanning tenants that are
+ * supposed to be separate. `siteverify` does report the hostname a token was
+ * solved on, and no login handler here reads it.
  *
- * The rule: there is no safe default for "whose widget". An unset variable is
- * a question, so the widget fails closed instead of borrowing.
+ * Two rules, and this file is where they are enforced. The key is named in
+ * exactly ONE module, so a mirror has one thing to change rather than a search
+ * to run. And the built-in is bound to the backend its secret lives in, so a
+ * fork pointed at its own Supabase project stops using this widget on its own.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -21,15 +22,13 @@ import { resolveTurnstileSiteKey, TURNSTILE_SITE_KEY_ENV } from '../turnstileSit
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 const SRC = join(REPO_ROOT, 'src');
 
-/** The prime's widget. It must not appear in this repository's source. */
-const FOREIGN_SITE_KEY = '0x4AAAAAAChQyb0ZxBORhxWq';
+/** This deployment's own widget, and the backend its secret lives in. */
+const OWN_SITE_KEY = '0x4AAAAAAChQyb0ZxBORhxWq';
+const OWN_BACKEND_REF = 'dduzbchuswwbefdunfct';
 
-/**
- * Any Turnstile site key, not just the one we know about — a second borrowed
- * key would be exactly as wrong and would not be caught by naming the first.
- * Cloudflare mints them as `0x4AAAA…`, 22-24 chars after the prefix.
- */
-const SITE_KEY_SHAPE = /0x4[A-Za-z0-9_-]{18,}/;
+/** The one module allowed to name it. */
+const RESOLVER = join('src', 'lib', 'turnstileSiteKey.ts');
+const THIS_SPEC = join('src', 'lib', '__tests__', 'turnstileIdentity.spec.ts');
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -43,82 +42,63 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-describe('no Turnstile site key is hardcoded under src/', () => {
-  const files = walk(SRC).filter((f) => f !== join(__dirname, 'turnstileIdentity.spec.ts'));
+describe('the site key is named in exactly one module', () => {
+  const files = walk(SRC).map((f) => relative(REPO_ROOT, f));
 
   it('scans a plausible number of files', () => {
     expect(files.length).toBeGreaterThan(100);
   });
 
-  it("never names the prime's site key", () => {
-    for (const file of files) {
-      expect(readFileSync(file, 'utf8'), `${relative(REPO_ROOT, file)} names the prime's Turnstile site key`).not.toContain(
-        FOREIGN_SITE_KEY,
-      );
-    }
+  it('is not inlined anywhere else under src/', () => {
+    const naming = files.filter(
+      (f) => f !== RESOLVER && f !== THIS_SPEC && readFileSync(join(REPO_ROOT, f), 'utf8').includes(OWN_SITE_KEY),
+    );
+    expect(naming, 'these files inline the Turnstile site key instead of resolving it').toEqual([]);
   });
 
-  it('never inlines any site key', () => {
-    for (const file of files) {
-      expect(readFileSync(file, 'utf8'), `${relative(REPO_ROOT, file)} inlines a Turnstile site key`).not.toMatch(
-        SITE_KEY_SHAPE,
-      );
-    }
+  it('the resolver does name it', () => {
+    expect(readFileSync(join(REPO_ROOT, RESOLVER), 'utf8')).toContain(OWN_SITE_KEY);
   });
 });
 
 describe('resolveTurnstileSiteKey precedence', () => {
-  it('uses the configured key when one is set', () => {
-    const r = resolveTurnstileSiteKey({ configured: '0x4AAAAAAtenantOwnKey11' });
+  it('uses the configured key when one is set, over the built-in', () => {
+    const r = resolveTurnstileSiteKey({
+      configured: '0x4AAAAAAtenantOwnKey11',
+      backendRef: OWN_BACKEND_REF,
+    });
     expect(r).toEqual({ siteKey: '0x4AAAAAAtenantOwnKey11', source: 'env', warning: null });
   });
 
   it('trims a configured key and ignores a blank one', () => {
     expect(resolveTurnstileSiteKey({ configured: '  0x4key  ' }).siteKey).toBe('0x4key');
-    expect(resolveTurnstileSiteKey({ configured: '   ' }).siteKey).toBeNull();
+    expect(resolveTurnstileSiteKey({ configured: '   ', backendRef: null }).siteKey).toBeNull();
   });
 
-  it('resolves to nothing when unset, and names the variable', () => {
-    const r = resolveTurnstileSiteKey({});
-    expect(r.siteKey).toBeNull();
-    expect(r.source).toBe('unset');
-    expect(r.warning).toContain(TURNSTILE_SITE_KEY_ENV);
+  it('uses the built-in for this deployment', () => {
+    const r = resolveTurnstileSiteKey({ backendRef: OWN_BACKEND_REF });
+    expect(r).toEqual({ siteKey: OWN_SITE_KEY, source: 'built-in', warning: null });
   });
 
-  it('never borrows a built-in key belonging to a different backend', () => {
-    const r = resolveTurnstileSiteKey({
-      builtInSiteKey: FOREIGN_SITE_KEY,
-      builtInBackendRef: 'dduzbchuswwbefdunfct',
-      backendRef: 'plisdzywzleljorrphxv',
-    });
-    expect(r.siteKey).toBeNull();
-    expect(r.source).toBe('unset');
-    expect(r.warning).toContain('dduzbchuswwbefdunfct');
-  });
-
-  it('will not use a built-in key when the backend cannot be identified', () => {
-    const r = resolveTurnstileSiteKey({
-      builtInSiteKey: FOREIGN_SITE_KEY,
-      builtInBackendRef: 'dduzbchuswwbefdunfct',
-      backendRef: null,
-    });
-    expect(r.siteKey).toBeNull();
-  });
-
-  it('uses a built-in key only for the backend it is the twin of', () => {
-    const r = resolveTurnstileSiteKey({
-      builtInSiteKey: '0x4AAAAAAownWidget12345',
-      builtInBackendRef: 'plisdzywzleljorrphxv',
-      backendRef: 'plisdzywzleljorrphxv',
-    });
-    expect(r).toEqual({ siteKey: '0x4AAAAAAownWidget12345', source: 'built-in', warning: null });
-  });
-
-  it('this repository ships no built-in key at all', () => {
-    // The clone's own reading: even pointed at its own backend, nothing is
-    // borrowed — Mission Control publishes the key.
+  it('a build pointed at another project gets nothing, not this widget', () => {
     const r = resolveTurnstileSiteKey({ backendRef: 'plisdzywzleljorrphxv' });
     expect(r.siteKey).toBeNull();
     expect(r.source).toBe('unset');
+    expect(r.warning).toContain(TURNSTILE_SITE_KEY_ENV);
+    expect(r.warning).toContain(OWN_BACKEND_REF);
+  });
+
+  it('a build whose backend cannot be identified gets nothing', () => {
+    expect(resolveTurnstileSiteKey({ backendRef: null }).siteKey).toBeNull();
+  });
+
+  it('a mirror that clears the built-in resolves to unset', () => {
+    const r = resolveTurnstileSiteKey({
+      builtInSiteKey: null,
+      builtInBackendRef: null,
+      backendRef: OWN_BACKEND_REF,
+    });
+    expect(r.siteKey).toBeNull();
+    expect(r.warning).toContain(TURNSTILE_SITE_KEY_ENV);
   });
 });

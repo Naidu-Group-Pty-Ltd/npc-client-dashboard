@@ -5,50 +5,37 @@
  * is rendered by the browser; the secret lives in the backend and is what
  * `siteverify` checks the resulting token against. A token minted by one
  * widget does not verify against another widget's secret, and — this is the
- * part that matters here — a token minted by ONE tenant's widget verifies
- * perfectly well against ANOTHER tenant's backend if both were handed the same
- * pair. Cloudflare returns the hostname it was solved on and no login handler
- * in this repository reads it.
+ * part that matters — a token minted by ONE tenant's widget verifies perfectly
+ * well against ANOTHER tenant's backend if both were handed the same pair.
+ * Cloudflare returns the hostname the challenge was solved on and no login
+ * handler in this repository reads it.
  *
- * The site key used to be a literal in `components/auth/TurnstileWidget.tsx`,
- * and it was the PRIME's. Every deployment this repository has ever produced
- * therefore rendered the prime's widget: the same pair, shared across tenants,
- * rotated for everybody at once, with every customer hostname needing a place
- * on one widget's domain allowlist.
+ * The site key used to be a literal in `components/auth/TurnstileWidget.tsx`.
+ * That is fine for this deployment, whose widget it is, and it is exactly
+ * wrong for every deployment mirrored from this one: `npc-client-dashboard`
+ * inherited the literal verbatim and rendered this deployment's widget on a
+ * different tenant's login page, which is one credential, one rotation and one
+ * domain allowlist spanning tenants that are supposed to be separate.
  *
- * ── The pairing rule, again ─────────────────────────────────────────────────
+ * ── The pairing rule ────────────────────────────────────────────────────────
  *
- * `integrations/supabase/env.ts` already reasons about exactly this shape for
- * the Supabase URL and its anon key, and reached the conclusion this module
- * repeats: **a missing variable is the normal state of a freshly created
- * deployment, so a fallback that reaches another tenant is the failure mode
- * rather than the safety net.**
+ * `integrations/supabase/env.ts` already reasons about this shape for the
+ * Supabase URL and its anon key. The same rule settles it here: the built-in
+ * site key is used ONLY when this build talks to the backend that key's secret
+ * lives in. A fork pointed at its own Supabase project therefore stops using
+ * this widget without anybody having to remember to unset anything — the
+ * failure mode becomes a visible "not configured" rather than a silent share.
  *
- * So this repository has NO built-in site key. Unset, the widget renders as
- * unavailable and says which variable is missing, which is the honest reading:
- * a deployment whose CAPTCHA identity has not been minted yet cannot perform a
- * CAPTCHA. It is also not a regression on the state it replaces — a browser
- * holding the prime's site key against this deployment's own
- * `TURNSTILE_SECRET_KEY` is refused by `siteverify` with `invalid-input-secret`
- * and the sign-in never reaches the password check.
- *
- * Aurixa Mission Control mints this deployment's own widget and publishes its
- * site key here as `VITE_TURNSTILE_SITE_KEY` (see the clone's Turnstile
- * identity panel); `turnstileIdentity.spec.ts` asserts no site key literal
- * comes back into `src/`.
+ * Aurixa Mission Control mints each clone its own widget and publishes the
+ * site key as `VITE_TURNSTILE_SITE_KEY`.
  */
-
 import { SUPABASE_PROJECT_REF } from '@/integrations/supabase/env';
 
-/**
- * This deployment has no widget baked in — see the header. The parameter is
- * kept on the resolver rather than removed so the prime and every clone share
- * one implementation and one set of readings.
- */
-const BUILT_IN_SITE_KEY: string | null = null;
+/** This deployment's own widget. */
+const BUILT_IN_SITE_KEY: string | null = '0x4AAAAAAChQyb0ZxBORhxWq';
 
-/** Which backend that built-in key is the twin of. Nothing, here. */
-const BUILT_IN_BACKEND_REF: string | null = null;
+/** The backend that widget's `TURNSTILE_SECRET_KEY` lives in — its twin. */
+const BUILT_IN_BACKEND_REF: string | null = 'dduzbchuswwbefdunfct';
 
 /** The environment variable that carries this deployment's own site key. */
 export const TURNSTILE_SITE_KEY_ENV = 'VITE_TURNSTILE_SITE_KEY';
@@ -64,11 +51,6 @@ export type TurnstileSiteKeyResolution = {
 /**
  * Resolve the site key. Exported and pure so the precedence is testable
  * without stubbing `import.meta`.
- *
- * The built-in key is used ONLY when this build talks to the backend that key
- * is the twin of. That is what makes a built-in safe to inherit: a fork
- * pointed at its own Supabase project stops using the original's widget
- * without anybody having to remember to unset anything.
  */
 export function resolveTurnstileSiteKey(input: {
   configured?: string | null;
@@ -97,7 +79,7 @@ export function resolveTurnstileSiteKey(input: {
     return {
       siteKey: null,
       source: 'unset',
-      warning: `The built-in Turnstile site key belongs to Supabase project "${builtInRef}", but this build talks to ${backendRef ? `"${backendRef}"` : 'an unrecognised project'}. A widget is a (site key, secret) pair, so set ${TURNSTILE_SITE_KEY_ENV} to this deployment's own site key.`,
+      warning: `The built-in Turnstile site key is the twin of the secret in Supabase project "${builtInRef}", but this build talks to ${backendRef ? `"${backendRef}"` : 'an unrecognised project'}. Set ${TURNSTILE_SITE_KEY_ENV} to this deployment's own site key.`,
     };
   }
 

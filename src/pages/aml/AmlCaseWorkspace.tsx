@@ -114,7 +114,6 @@ import {
   deriveAmlConnectedPortals, isWorkspaceSection, WORKSPACE_SECTIONS,
   type AmlWorkspaceSection as SectionKey,
 } from "@/lib/aml/workspaceViewModel";
-import { BLOCKER_TITLE, portalLabel, routeLabel, stateLabel } from "@/lib/aml/passport/distributionPresentation.pure";
 
 /**
  * Which sections a role may open. Unchanged from the previous rail:
@@ -1160,6 +1159,9 @@ export default function AmlCaseWorkspace() {
                       // partners will see it — before anything is issued.
                       navigate(`/admin/aml/passport?case=${caseRow.id}`);
                     } else {
+                      /* Both issuance and sharing are in the reliance panel:
+                         the roster is the one place that says who holds this
+                         Passport and offers every act on it. */
                       document.getElementById("aml-passport-issue")
                         ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
                     }
@@ -1198,7 +1200,23 @@ export default function AmlCaseWorkspace() {
           {/* ── Stage 10 · Partners & ongoing CDD ───────────────────── */}
           {section === "monitoring" && canInvestigate && (
             <div className="space-y-4">
-              <PartnerDistributionCard passport={evidence.passport} loading={summaryLoading} />
+              {/*
+                ── The partner card that used to sit here is GONE ────────
+                It was a read-only echo of the roster on Passport & Partners
+                — the same organisations, no acts, and read through
+                `get_passport_distribution_readiness`, which is gated by
+                `aml_passport_partner_distribution`. That flag is off on this
+                deployment (partners are onboarded one at a time through
+                `grant_access`), so the card announced "Passport distribution
+                is not enabled for this deployment" on the stage immediately
+                after six partners had successfully been given the Passport.
+
+                Partners belong to the stage where the Passport is: you
+                cannot share what has not been issued, and the roster there
+                carries the acts. This stage is what keeps the case current
+                AFTERWARDS, which is a different question on a different
+                horizon — years, not days.
+              */}
               <MonitoringReviewsSection
                 caseId={caseRow.id}
                 canWrite={canWrite}
@@ -1457,87 +1475,6 @@ function ClientIntakeCard({
 /* ------------------------------------------------------------------ */
 /* Stage 10 — who may receive the Passport, exactly as the server says  */
 /* ------------------------------------------------------------------ */
-
-/**
- * Partner distribution readiness. Every field — the state, the route, the
- * blockers — is derived by `aml-reliance` and rendered verbatim. The browser
- * does not recompute eligibility, and this card carries no share control:
- * distribution is performed on the dedicated Compliance Passport page, which
- * calls the server-authorised operation and re-derives readiness first.
- */
-function PartnerDistributionCard({
-  passport, loading,
-}: {
-  passport: import("@/lib/aml/useAmlCaseSummary").AmlCaseEvidence["passport"];
-  loading: boolean;
-}) {
-  if (loading && !passport) {
-    return <AmlLoadingState variant="spinner" label="Reading partner readiness…" />;
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-5">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            Partner distribution
-          </p>
-          <Button asChild size="sm" variant="ghost" className="h-7 px-2 text-xs">
-            <Link to="/admin/aml/passport">Open the Compliance Passport</Link>
-          </Button>
-        </div>
-
-        {!passport ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Partner readiness could not be read. Treat it as unknown rather than as blocked.
-          </p>
-        ) : passport.enabled === false ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Passport distribution is not enabled for this deployment.
-          </p>
-        ) : (passport.partners ?? []).length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            No partner organisation is linked to this case, so there is nothing to distribute yet.
-          </p>
-        ) : (
-          <ul className="mt-2 divide-y divide-border/50">
-            {(passport.partners ?? []).map((p, i) => (
-              <li key={p.partner?.org_id ?? i} className="py-2.5 first:pt-0">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <span className="min-w-0 text-sm font-medium">
-                    {p.partner?.org_name ?? "Partner organisation"}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {stateLabel(String(p.state ?? ""))}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {portalLabel(p.partner?.portal_type)}
-                  {p.legal_route ? ` · ${routeLabel(p.legal_route)}` : ""}
-                </p>
-                {(p.blockers ?? []).length > 0 && (
-                  <ul className="mt-1 space-y-0.5">
-                    {(p.blockers ?? []).map((code) => (
-                      <li key={code} className="text-xs text-muted-foreground">
-                        — {BLOCKER_TITLE[code as keyof typeof BLOCKER_TITLE] ?? code}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <p className="mt-3 border-t border-border/50 pt-3 text-[11px] leading-relaxed text-muted-foreground">
-          Readiness is decided by the server on every read. A partner receives only the
-          audience-authorised credential and evidence classes — never internal risk, screening
-          reasoning or decision rationale.
-        </p>
-      </CardContent>
-    </Card>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /* The canonical fourteen-step process rail (Records → Timeline)       */

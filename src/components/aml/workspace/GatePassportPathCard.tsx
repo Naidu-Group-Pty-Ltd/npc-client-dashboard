@@ -82,11 +82,12 @@ export function GatePassportPathCard({ steps, onStepClick, onContinue }: {
         {complete && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-success/40 bg-success/5 p-2.5">
             <p className="text-xs text-success">
-              The service may proceed and the Passport is in force. Partners come next.
+              The service may proceed and the Passport is in force. Share it with partners
+              below; ongoing CDD keeps the case current from here.
             </p>
             {onContinue && (
               <Button size="sm" className="h-7" onClick={onContinue}>
-                Continue to Partners
+                Continue to Ongoing CDD
                 <ArrowRight aria-hidden className="ml-1.5 h-3.5 w-3.5" />
               </Button>
             )}

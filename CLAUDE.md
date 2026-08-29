@@ -131,24 +131,22 @@ alone — which is how a declaration and production came to disagree at all.
 
 ## The login CAPTCHA is a per-deployment credential
 `src/lib/turnstileSiteKey.ts` is the one place that decides which Turnstile
-widget this build renders. A widget IS a **(site key, secret) pair** — the site
-key is public and drawn by the browser, `TURNSTILE_SECRET_KEY` is its twin in
-the backend — and `siteverify` reports the hostname a token was solved on, which
-no login handler here reads. A shared widget therefore means a token farmed from
-any other tenant's login page (the prime's is public) satisfies the CAPTCHA
-here.
+widget a build renders. A widget IS a **(site key, secret) pair** — the site key
+is public and drawn by the browser, `TURNSTILE_SECRET_KEY` is its twin in the
+backend — and `siteverify` reports the hostname a token was solved on, which no
+login handler here reads. So a shared widget means a token farmed from ANY
+tenant's login page satisfies the CAPTCHA on every other one.
 
-The prime's site key was a literal in `components/auth/TurnstileWidget.tsx` and
-this repository inherited it verbatim when it was mirrored, so every build it
-has ever produced rendered the PRIME's widget. **This repository now ships no
-built-in site key at all** — the same conclusion `integrations/supabase/env.ts`
-reached about the backend, for the same reason: a missing variable is the normal
-state of a new deployment, so a fallback that reaches another tenant is the
-failure mode rather than the safety net. Unset, the login page says the security
-check is not configured and names `VITE_TURNSTILE_SITE_KEY`; it never borrows.
-`turnstileIdentity.spec.ts` asserts no site key literal comes back into `src/`,
-and Aurixa Mission Control mints this deployment's own widget and publishes the
-variable.
+The site key used to be a literal in `components/auth/TurnstileWidget.tsx`, and
+`npc-client-dashboard` inherited it verbatim when this repo was mirrored. Two
+rules now hold it. **The built-in key is used only while the build talks to the
+Supabase project its secret lives in** — the same pairing rule
+`integrations/supabase/env.ts` applies to the URL and anon key, and what makes a
+built-in safe to inherit: a fork pointed elsewhere resolves to no key and says
+so, rather than rendering this deployment's widget on another tenant's page. And
+**the key is named in exactly one module**, asserted by
+`turnstileIdentity.spec.ts`. Aurixa Mission Control mints each clone its own
+widget and publishes `VITE_TURNSTILE_SITE_KEY`.
 
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
@@ -462,7 +460,7 @@ them too — and still never touches `service_gate_status`, because
 `STATUS_TO_SERVICE_GATE[resumeStatus]` would revive a terminated gate.
 
 ## Stage 9 — the service gate and the credential
-Read [`docs/aml/STAGE_9_GATE_AND_PASSPORT.md`](./docs/aml/STAGE_9_GATE_AND_PASSPORT.md)
+Read [`docs/aml/STAGE_9_PASSPORT_AND_PARTNERS.md`](./docs/aml/STAGE_9_PASSPORT_AND_PARTNERS.md)
 before touching `refreshRemedy`, the reason codes in
 `_shared/aml/passport/passportState.pure.ts`, `gatePassportPath.pure.ts` or
 `passportActions.pure.ts`. **`refresh_required` is one code covering two
@@ -503,6 +501,22 @@ is DONE rather than a second copy of the same fact. And **the finishing line is
 named before the click**: approving the gate on that case completes the stage
 outright, so the card says so — exactly when one owed step remains and this
 operator can perform it, never when the last step is blocked.
+
+**Partners are on ONE stage, and the rail says what the page says.** The
+roster and every act on it have always been on the Passport stage; the stage
+after it carried a read-only echo of the same organisations, read through
+`aml_passport_partner_distribution` — a flag that is OFF wherever partners are
+onboarded one at a time, so it announced "Passport distribution is not enabled
+for this deployment" right after six partners had been given the Passport. The
+cut follows the work: **Stage 9 is "Passport & Partners"** (you cannot share
+what has not been issued) and **Stage 10 is "Ongoing CDD"**.
+`PartnerDistributionCard` is DELETED, `distributionStage` no longer reads
+`facts.passport` at all but still NAMES where the partners are, and Stage 9's
+path gains a fifth `anytime` step — sharing is never owed, because a case may
+legitimately have no partner. A `shortLabel` must be **part of** its `label`
+(a test pins the rule, not the strings): the rail read "Partners" while the
+heading read "Partners & ongoing CDD", which is how an operator comes to look
+for partners on the wrong screen.
 
 On the journey map, **Builder and Developer are one portal** (the wizard
 already knew; the map's second tile could never connect, and a `developer`

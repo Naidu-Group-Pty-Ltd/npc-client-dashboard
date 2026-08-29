@@ -287,18 +287,35 @@ const STAGE_DEFINITIONS: readonly StageDefinition[] = [
     purpose: "The risk position, the evidence behind it, and the recorded human decision.",
     sections: ["risk"],
   },
+  /*
+   * ── Why these two are named the way they are ───────────────────────
+   * They were "Service gate & Passport" and "Partners & ongoing CDD", and
+   * that cut put PARTNERS in both places: the roster, with every act — send,
+   * re-issue, withdraw, onboard — sat on the Passport stage, while the next
+   * stage carried a read-only echo of the same organisations with no acts at
+   * all. An operator could not tell which one was the partner surface.
+   *
+   * The cut follows the work. Issuing a credential and handing it to the
+   * partners entitled to rely on it are one piece of work — you cannot share
+   * what has not been issued, and the roster is where sharing happens. What
+   * keeps the case current afterwards is a different question on a different
+   * horizon: years, not days.
+   *
+   * "Service gate" also left the name: the gate is granted by the cleared
+   * decision now, so it is reported on this stage rather than decided here.
+   */
   {
     id: "passport",
-    label: "Service gate & Passport",
-    shortLabel: "Gate & Passport",
-    purpose: "Whether the designated service may proceed, and whether the credential has been issued.",
+    label: "Passport & Partners",
+    shortLabel: "Passport & Partners",
+    purpose: "The credential itself — issued, previewed, and shared with the partners entitled to rely on it.",
     sections: ["passport"],
   },
   {
     id: "distribution",
-    label: "Partners & ongoing CDD",
-    shortLabel: "Partners",
-    purpose: "Who may receive the Passport, who has it, and what keeps the case current afterwards.",
+    label: "Ongoing CDD",
+    shortLabel: "Ongoing CDD",
+    purpose: "What keeps this case current once the service is under way: the review cycle, trigger reviews, screening refresh and the end of the relationship.",
     sections: ["monitoring"],
   },
 ] as const;
@@ -1674,8 +1691,29 @@ function passportStage(facts: AmlWorkspaceFacts): StageReading {
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   13. Stage 10 — Partner distribution & ongoing CDD
-   ══════════════════════════════════════════════════════════════════════ */
+   13. Stage 10 — Ongoing CDD
+   ══════════════════════════════════════════════════════════════════════
+
+   ── What this stage stopped being ──────────────────────────────────────
+   It used to read partner DISTRIBUTION readiness as well as monitoring, and
+   that half was both a duplicate and, on a deployment like this one, a
+   contradiction.
+
+   A duplicate, because the partner roster — every organisation, and every
+   act on it — lives on Passport & Partners; this stage only ever restated
+   the same organisations with no act attached.
+
+   A contradiction, because `facts.passport.partners` comes from
+   `get_passport_distribution_readiness`, which is gated by
+   `aml_passport_partner_distribution`. That flag is off wherever partners
+   are onboarded one at a time through `grant_access` — as they are here —
+   so the stage announced "Passport distribution is not enabled for this
+   deployment" immediately after six partners had been given the Passport
+   successfully. Both readings were about different things and only one of
+   them was about this case.
+
+   So the stage answers one question now: what keeps this case current once
+   the service is under way. Issuance is not the end of AML.                */
 
 function distributionStage(facts: AmlWorkspaceFacts): StageReading {
   const blockers: AmlJourneyNote[] = [];
@@ -1686,66 +1724,8 @@ function distributionStage(facts: AmlWorkspaceFacts): StageReading {
   const unavailableFacts: string[] = [];
 
   let owner: AmlJourneyOwner = "none";
-  let distributionState: AmlEvidenceState = "unknown";
-  let summary = "Partner readiness could not be read.";
+  let summary = "The monitoring position could not be read.";
 
-  if (loaded(facts.passport) && facts.passport.enabled === false) {
-    warnings.push(note("dist_disabled", "Passport distribution is not enabled here", "waiting"));
-    distributionState = "not_applicable";
-    summary = "Passport distribution is not enabled for this deployment.";
-  } else if (loaded(facts.passport) && facts.passport.partners === undefined) {
-    // The credential state was recovered from the projection this role may
-    // read, which carries no partner readiness. Absent is not empty: saying
-    // "no partner is linked" on evidence we never saw would be an invention.
-    unavailableFacts.push("passport distribution readiness");
-  } else if (loaded(facts.passport)) {
-    const partners = facts.passport.partners ?? [];
-    const s = facts.passport.summary ?? {};
-    sourceFacts.push(`passport distribution readiness (${partners.length} partner(s))`);
-
-    if (partners.length === 0) {
-      distributionState = "not_applicable";
-      summary = "No partner organisation is linked to this case.";
-      completed.push(
-        note("no_partners", "No partner linked", "steady", {
-          detail: "Nothing to distribute until a partner organisation is linked to the case.",
-        }),
-      );
-    } else {
-      const ready = s.ready ?? 0;
-      const current = s.already_current ?? 0;
-      const blocked = s.blocked ?? 0;
-      summary = `${current} current · ${ready} ready to share · ${blocked} blocked.`;
-
-      if (ready > 0) {
-        distributionState = "attention";
-        owner = "analyst";
-        outstanding.push(note("share", `${ready} partner ready to receive the Passport`, "attention"));
-      }
-      if (blocked > 0) {
-        warnings.push(
-          note("blocked_partners", `${blocked} partner blocked`, "attention", {
-            detail: "The server states the blockers; they are shown on the partner card.",
-          }),
-        );
-      }
-      if (current > 0) {
-        completed.push(note("current", `${current} partner holds the current version`, "steady"));
-        if (distributionState === "unknown") distributionState = "complete";
-      }
-      if (distributionState === "unknown") {
-        distributionState = blocked > 0 ? "attention" : "in_progress";
-      }
-      if (ready === 0 && blocked === 0 && current > 0) {
-        distributionState = "complete";
-        owner = "partner";
-      }
-    }
-  } else {
-    unavailableFacts.push("passport distribution readiness");
-  }
-
-  // ── Ongoing CDD. Issuance is not the end of AML.
   let monitoringState: AmlEvidenceState = "unknown";
   if (loaded(facts.monitoring)) {
     sourceFacts.push("case monitoring summary");
@@ -1754,44 +1734,47 @@ function distributionStage(facts: AmlWorkspaceFacts): StageReading {
     const alerts = (m.open_alerts ?? []).length;
     if (m.relationship_ended_at) {
       monitoringState = "not_applicable";
+      summary = "The business relationship has ended. The records are retained for the statutory period.";
       completed.push(note("ended", "Relationship ended — records retained", "steady"));
     } else if (overdue > 0) {
       monitoringState = "attention";
       owner = "analyst";
+      summary = `${overdue} review${overdue === 1 ? " is" : "s are"} overdue.`;
       blockers.push(note("overdue", `${overdue} review${overdue === 1 ? "" : "s"} overdue`, "attention"));
     } else if (m.rescreen_overdue) {
       monitoringState = "attention";
       owner = "analyst";
+      summary = "Screening refresh is overdue for this customer.";
       warnings.push(note("rescreen", "Screening refresh overdue", "attention"));
     } else if (alerts > 0) {
       monitoringState = "attention";
       owner = "analyst";
+      summary = `${alerts} monitoring alert${alerts === 1 ? " is" : "s are"} open.`;
       warnings.push(note("alerts", `${alerts} open monitoring alert${alerts === 1 ? "" : "s"}`, "attention"));
     } else if (m.monitoring_status === "paused") {
       monitoringState = "attention";
+      summary = "Monitoring is paused on this case.";
       warnings.push(note("paused", "Monitoring is paused", "attention"));
     } else {
       monitoringState = "complete";
+      /* Says WHEN, not just "active": a review cycle nobody can name the end
+         of reads as an empty state rather than as a standing obligation.
+         The date comes from the open reviews the summary already carries —
+         nothing new is fetched and nothing is derived. */
+      const nextDue = (m.open_reviews ?? [])
+        .map((r) => r.due_at)
+        .filter((d): d is string => Boolean(d))
+        .sort()[0];
+      summary = nextDue
+        ? `Monitoring is active. The next review is due ${new Date(nextDue).toLocaleDateString()}.`
+        : "Monitoring is active and nothing is overdue.";
       completed.push(note("monitoring", "Monitoring active, nothing overdue", "steady"));
     }
   } else {
     unavailableFacts.push("monitoring summary");
   }
 
-  const states: AmlEvidenceState[] = [distributionState, monitoringState].filter(
-    (s) => s !== "not_applicable",
-  );
-  const status: AmlEvidenceState = states.length === 0
-    ? "not_applicable"
-    : states.includes("attention")
-      ? "attention"
-      : states.includes("unknown")
-        ? "unknown"
-        : states.includes("in_progress")
-          ? "in_progress"
-          : states.includes("not_started")
-            ? "not_started"
-            : "complete";
+  const status: AmlEvidenceState = monitoringState;
 
   return {
     status,
@@ -1804,8 +1787,10 @@ function distributionStage(facts: AmlWorkspaceFacts): StageReading {
     primaryAction:
       status === "complete" || status === "not_applicable"
         ? null
-        : { key: "distribution", label: "Open partners & monitoring", section: "monitoring" },
-    secondaryActions: [{ key: "passport", label: "Passport & reliance", section: "passport" }],
+        : { key: "monitoring", label: "Open ongoing CDD", section: "monitoring" },
+    /* The partners are on the previous stage, with the Passport they hold —
+       named here as a route rather than restated as a second register. */
+    secondaryActions: [{ key: "passport", label: "Passport & partners", section: "passport" }],
     sourceFacts,
     unavailableFacts,
   };

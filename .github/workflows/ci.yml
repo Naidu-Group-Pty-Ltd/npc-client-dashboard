@@ -512,16 +512,44 @@ jobs:
       - name: WP-15 launch-gate aggregator
         run: node scripts/security/wp15-launch-gate.mjs
 
-      # The action is free on user-owned repos but demands a license key the
-      # moment the owner is an organisation — which this repository's owner
-      # became when it moved to Naidu-Group-Pty-Ltd. The GITLEAKS_LICENSE
-      # secret must be set on the org (or repo) or this step fails before
-      # scanning anything.
+      # Runs the gitleaks BINARY, not `gitleaks/gitleaks-action`.
+      #
+      # gitleaks itself is MIT-licensed and free. The ACTION is what demands a
+      # paid key once the repository owner is an organisation — which this one
+      # became on the move to Naidu-Group-Pty-Ltd. Its failure is not a finding
+      # and not a scan: it exits before reading a single file with
+      # "[Naidu-Group-Pty-Ltd] is an organization. License key is required."
+      #
+      # So `security` was red on EVERY pull request in this repository — every
+      # other control in this job passes — and a red check nobody can turn
+      # green is one people learn to merge past. It also meant 277 working-tree
+      # findings had never been read by anyone; they are triaged in
+      # `.gitleaks.toml` now.
+      #
+      # 8.28 rather than 8.21: the older binary accepts a config carrying both
+      # `[allowlist]` and `[[allowlists]]` and SILENTLY IGNORES every plural
+      # block. 8.28 refuses that config outright, which is the behaviour worth
+      # having.
+      #
+      # `--no-git` scans the working tree rather than history: a pull request
+      # cannot fix what an applied commit already contains, and history is
+      # audited separately.
       - name: Secret scan (gitleaks)
-        uses: gitleaks/gitleaks-action@v3
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_VERSION: "8.28.0"
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks version
+          /tmp/gitleaks detect \
+            --source . \
+            --config .gitleaks.toml \
+            --no-git \
+            --redact \
+            --no-banner \
+            --exit-code 1
 
   # The render container is the only place a report font can come from, and a
   # missing face substitutes silently — the PDF renders, every test passes, and

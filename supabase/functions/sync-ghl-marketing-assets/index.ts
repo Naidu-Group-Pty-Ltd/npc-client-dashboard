@@ -275,10 +275,23 @@ Deno.serve(async (req) => {
     //   - User JWT: must additionally have admin/superadmin role.
     const authHeader = req.headers.get('authorization') || '';
     const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
-    // Public anon key (safe to hardcode — also injected by Supabase runtime, but not always)
-    const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
+    // The project's OWN anon key, read at runtime.
+    //
+    // This was a hardcoded literal, and the literal belonged to project
+    // `dduzbchuswwbefdunfct` — not this one. Its comment said "safe to
+    // hardcode", which is true of the SECRECY of an anon key and false of its
+    // IDENTITY: pg_cron on this project sends THIS project's anon key, which
+    // never equals another project's, so `isCronCall` was false on every call
+    // and the cron path was dead on every deployment except the one it was
+    // written for. A clone inherits the file and inherits the dead path.
+    //
+    // `SUPABASE_ANON_KEY` is injected into every Edge Function by the runtime.
+    // When it is absent there is nothing to compare against, and the honest
+    // answer is "not a cron call" — falling through to verifyAuth, which
+    // refuses rather than admits.
+    const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
     const sessionToken = req.headers.get('x-session-token') || body?.session_token;
-    const isCronCall = bearer === ANON_KEY && !sessionToken;
+    const isCronCall = ANON_KEY !== '' && bearer === ANON_KEY && !sessionToken;
 
     if (!isCronCall) {
       const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);

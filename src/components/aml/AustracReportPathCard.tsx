@@ -61,11 +61,21 @@ export interface PathStepAction {
 }
 
 export function AustracReportPathCard({
-  facts, stepActions,
+  facts, stepActions, stepNotes,
 }: {
   facts: AustracReportFacts;
   /** Keyed by step key. A step absent from this map draws no button. */
   stepActions?: Partial<Record<string, PathStepAction>>;
+  /**
+   * Who the open step belongs to, when it does not belong to this operator.
+   *
+   * A step with no button is the honest rendering of "there is nothing you
+   * can do about this one" — but silence about WHY reads as a broken page.
+   * This is rendered on the open step only, and only when no action is
+   * offered for it, so nobody is ever left looking at a live step with
+   * neither an act nor an explanation.
+   */
+  stepNotes?: Partial<Record<string, string>>;
 }) {
   const steps = deriveAustracPath(facts);
   const checks = austracReadiness(facts);
@@ -152,6 +162,11 @@ export function AustracReportPathCard({
                   </span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">{s.detail}</span>
                 </span>
+                {open && !stepActions?.[s.key] && stepNotes?.[s.key] && (
+                  <span className="shrink-0 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {stepNotes[s.key]}
+                  </span>
+                )}
                 {open && stepActions?.[s.key] && (
                   <Button
                     size="sm"

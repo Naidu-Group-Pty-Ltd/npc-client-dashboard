@@ -395,3 +395,64 @@ chips — colour noise carrying no information, which is worse than no colour.
 The three letters tell the obligations apart and already did. The **SMR alone**
 is tinted, because s.123 is a fact about how that row must be handled rather
 than a category. A test pins it.
+
+---
+
+## One review, not a review and a routing
+
+The path had six steps. Two of them were the same decision:
+
+3. **Clear the pre-lodgement checks** — completed by moving the report to
+   `awaiting_mlro`.
+4. **MLRO approves it** — completed by the sign-off.
+
+Step 3 was a **hand-off**, and on a reporting entity where the person who
+drafts the report *is* the MLRO — which is most of them, and is this one — it
+was a report sent from somebody to themselves before they were allowed to act
+on it. A ceremony with no second party.
+
+Worse, take the routing away and the two steps complete on exactly the same
+fact. **Two steps counting one thing** is how a header comes to read "2 of 6
+done" above a list where nothing between them can move — the same defect Stage
+9 had when completion was counted twice.
+
+So they are one step: **"Review the checks and approve it"**. The checks are
+what the approver reviews; the approval is the act. The path is five steps.
+
+### Removing a ceremony must never remove a control
+
+`mlro_signoff` is untouched: still MLRO-only, still server-enforced, still
+recorded against the person who made it, still refusing from a terminal
+status. The step is still named for the MLRO's decision, and a test asserts
+both that the step exists and that it completes only on `mlro_signed_at`.
+
+`awaiting_mlro` also still exists. The column accepts it, `mlro_signoff`
+accepts a report in it, rows may already carry it, and the path opens on the
+approval either way. Nothing in the product routed to it before the guided
+path briefly offered to, and nothing does now — the summary tile still counts
+it alongside `in_review`.
+
+### The confirmation moved rather than being deleted
+
+The hand-off asked before sending a report whose checks were outstanding. That
+question was always about **this** decision, so it moved onto the approval:
+approving an incomplete report is a legitimate thing to do and is recorded
+against the person who did it, but it should never happen by accident. A
+report with nothing outstanding approves in one click, exactly as it did from
+the table.
+
+Two details. The guard **excludes the checks the approval itself unlocks** —
+lodgement and the receipt come after it, and listing them would ask the
+approver to answer for steps their own decision enables. And it reads the same
+`factsFor` projection the card does, because the table's Approve button acts
+on a report that may not be the selected one, and two mappings from a row to
+`AustracReportFacts` is how a confirmation comes to list another report's
+checks.
+
+### An open step with no button says whose it is
+
+A step absent from `stepActions` draws no button — the honest rendering of
+"there is nothing you can do about this one". But silence about *why* reads as
+a broken page, so `stepNotes` renders "The MLRO's decision" on the open step
+when this operator cannot make it. An analyst reaching the approval is a real
+state with a real next actor, and it is now said on the page.

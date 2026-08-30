@@ -104,7 +104,11 @@ describe("the path", () => {
   it("has exactly one open step, and it is the first unfinished one", () => {
     const open = deriveAustracPath(facts()).filter((s) => s.state === "open");
     expect(open).toHaveLength(1);
-    expect(open[0].key).toBe("review");
+    /* The approval. It was "review" — a step whose only completion was
+       routing the report to the MLRO, which on an entity where the drafter
+       IS the MLRO was a report sent from somebody to themselves. Without
+       the routing it counted the same fact as the approval beside it. */
+    expect(open[0].key).toBe("approve");
   });
 
   it("opens on the customer when there is none", () => {
@@ -121,7 +125,42 @@ describe("the path", () => {
     }))).toMatch(/discharged/i);
   });
 
+  it("counts the approval once, not as a review and an approval", () => {
+    /* Two steps completing on the same fact is how a header comes to read
+       "2 of 6 done" above a list where nothing else can move. */
+    const keys = deriveAustracPath(facts()).map((s) => s.key);
+    expect(keys).toEqual(["identify", "assemble", "approve", "lodge", "receipt"]);
+    expect(keys).not.toContain("review");
+    expect(keys).not.toContain("signoff");
+  });
+
+  it("keeps the approval as the control it always was", () => {
+    /* Removing a ceremony must never remove a control. The hand-off went;
+       the MLRO's decision is still what completes the step, and still what
+       the step is named for. */
+    const step = deriveAustracPath(facts()).find((s) => s.key === "approve")!;
+    expect(step.state).toBe("open");
+    expect(step.label).toMatch(/approve/i);
+    expect(step.detail).toMatch(/MLRO/);
+    expect(deriveAustracPath(facts({ mlroSignedAt: "2026-08-30T00:00:00Z" }))
+      .find((s) => s.key === "approve")!.state).toBe("done");
+  });
+
+  it("does not need a report to have been routed to the MLRO first", () => {
+    /* `mlro_signoff` accepts a plain draft and always did, so a report that
+       was never handed off still reaches the approval as its open step. */
+    const open = deriveAustracPath(facts({ status: "draft" })).find((s) => s.state === "open");
+    expect(open?.key).toBe("approve");
+  });
+
+  it("still reads a report that WAS routed, because that status still exists", () => {
+    /* Nothing routes to `awaiting_mlro` from the product now, but the column
+       accepts it and rows may already carry it. */
+    const path = deriveAustracPath(facts({ status: "awaiting_mlro" }));
+    expect(path.find((s) => s.state === "open")?.key).toBe("approve");
+  });
+
   it("is numbered from one, in order", () => {
-    expect(deriveAustracPath(facts()).map((s) => s.n)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(deriveAustracPath(facts()).map((s) => s.n)).toEqual([1, 2, 3, 4, 5]);
   });
 });

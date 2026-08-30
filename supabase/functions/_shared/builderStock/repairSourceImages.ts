@@ -55,6 +55,9 @@ import {
 } from './sourceImages.ts';
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
+  branchRecord, openBranches, rowSourceBranches, writeBranchState,
+} from './sourceBranches.pure.ts';
+import {
   DriveListingCache, recoverPackageImage, type PackageFetcher, type PackageOutcome,
 } from './packageImages.ts';
 import { attachDocumentMedia } from './importStock.ts';
@@ -695,11 +698,21 @@ export async function repairSourceImagesForUpload(
     }
 
     /**
-     * The row's own linked package, read up front because BOTH branches now
-     * need it: the no-assets branch it has always served, and the branch below
-     * where the row's own cover turns out to be a convicted marketing tile.
+     * EVERY SUPPORTED LINK THE ROW OWNS, not the one it owns alone.
+     *
+     * This was `solePackageUrl`, which answered only where the row carried
+     * EXACTLY ONE Drive link — written for a source whose rows carried at most
+     * one, where a second really did mean ambiguity. A spreadsheet row
+     * legitimately carries a brochure, a siting plan, an estate map, a plan of
+     * subdivision and a rental appraisal, and that rule declined ALL FIVE: a
+     * property with five builder documents was treated as one with none.
+     *
+     * The correction is not a better choice between them. It is to stop
+     * choosing — see `sourceBranches.pure.ts`. Read up front because BOTH
+     * paths need it: the no-assets path, and the path below where the row's
+     * own cover turns out to be a convicted marketing tile.
      */
-    const packageUrl = solePackageUrl(record.unmapped);
+    const branches = rowSourceBranches(record.unmapped);
 
     if (all.length) {
       outcome.matched += 1;
@@ -771,7 +784,7 @@ export async function repairSourceImagesForUpload(
         outcome.problems.push(...stored.problems.slice(0, 5));
         // What was just stored was measured as it was stored, so the standing
         // is re-read — but only where a package exists to act on the answer.
-        if (packageUrl) {
+        if (branches.length) {
           standing = await readPrimaryImageStanding(db, itemId, PROVENANCE_VERSION);
         }
       }
@@ -794,7 +807,7 @@ export async function repairSourceImagesForUpload(
        * everything downstream of this line is the package path that already
        * existed, with every identity proof it has always demanded.
        */
-      if (!(packageUrl && standing.convictedOnly)) continue;
+      if (!(branches.length && standing.convictedOnly)) continue;
     }
 
     /**
@@ -803,7 +816,7 @@ export async function repairSourceImagesForUpload(
      * builder-supplied photograph can be — and the only one that has to prove
      * which property it depicts before it is used.
      */
-    if (!packageUrl) continue;
+    if (!branches.length) continue;
     // A property that already holds a PROVEN one is skipped, which is what
     // makes a budgeted run resumable rather than repetitive. A row from before
     // provenance was recorded does not count, so it gets re-derived.
@@ -833,15 +846,34 @@ export async function repairSourceImagesForUpload(
      * a changed package or a changed anchor, so this skips a settled question
      * and never a live one.
      */
+    /*
+     * ONE BRANCH THIS TICK, AND THE PROPERTY COMES BACK FOR THE REST.
+     *
+     * A branch recovery downloads a multi-megabyte document and classifies its
+     * rasters; it is the expensive uninterruptible step every budget in this
+     * function exists to bound. Taking one per property per run keeps that
+     * discipline exactly as it was — and `incomplete` below is what brings the
+     * property back for its remaining branches, which is the same mechanism a
+     * part-finished run has always used.
+     */
+    const openNow = openBranches(
+      negativeBefore.get(itemId), branches, PROVENANCE_VERSION, anchor ?? null);
+    if (!openNow.length) {
+      // Every applicable branch has answered. THAT is when stage 1 is finished
+      // — not when one of them failed.
+      outcome.packageAlreadyAnswered += 1;
+      continue;
+    }
+    const branch = openNow[0];
+    const packageUrl = branch.url;
     const question = {
       provenanceVersion: PROVENANCE_VERSION,
       packageReference: packageUrl,
       sourceAnchor: anchor ?? null,
     };
-    if (negativeProvenanceStillStands(negativeBefore.get(itemId), question)) {
-      outcome.packageAlreadyAnswered += 1;
-      continue;
-    }
+    // More than one left means this property is not done, whatever this branch
+    // answers, so the run must not report itself finished on its behalf.
+    if (openNow.length > 1) outcome.incomplete = true;
 
     /**
      * A PACKAGE THAT HAS ALREADY KILLED THE WORKER TWICE IS NOT ASKED A THIRD
@@ -860,11 +892,13 @@ export async function repairSourceImagesForUpload(
      * fallback ladder, which it could not reach at all while the upload could
      * never settle.
      */
-    const priorAttempts = attemptsSoFar(negativeBefore.get(itemId), question);
-    if (packageAttemptsExhausted(negativeBefore.get(itemId), question)) {
+    const branchBefore = branchRecord(negativeBefore.get(itemId), packageUrl);
+    const priorAttempts = attemptsSoFar(branchBefore, question);
+    if (packageAttemptsExhausted(branchBefore, question)) {
       const { error: giveUpError } = await db
         .from('builder_stock_items')
-        .update({ source_provenance_result: recordPackageUnprocessable(question) })
+        .update({ source_provenance_result: writeBranchState(
+          negativeBefore.get(itemId), packageUrl, recordPackageUnprocessable(question)) })
         .eq('id', itemId)
         .eq('organisation_id', input.organisationId);
       if (giveUpError) {
@@ -925,8 +959,8 @@ export async function repairSourceImagesForUpload(
       await db
         .from('builder_stock_items')
         .update({
-          source_provenance_result: provenanceAfterAttempt(
-            negativeBefore.get(itemId), question),
+          source_provenance_result: writeBranchState(negativeBefore.get(itemId), packageUrl,
+            provenanceAfterAttempt(branchBefore, question)),
         })
         .eq('id', itemId)
         .eq('organisation_id', input.organisationId);
@@ -948,8 +982,8 @@ export async function repairSourceImagesForUpload(
     await db
       .from('builder_stock_items')
       .update({
-        source_provenance_result: recordPackageAttempt(
-          negativeBefore.get(itemId), question),
+        source_provenance_result: writeBranchState(negativeBefore.get(itemId), packageUrl,
+          recordPackageAttempt(branchBefore, question)),
       })
       .eq('id', itemId)
       .eq('organisation_id', input.organisationId);
@@ -1042,6 +1076,10 @@ export async function repairSourceImagesForUpload(
           document: photo.fileName,
           document_url: photo.fileUrl,
           source_row_anchor: anchor,
+          // Which of the row's documents answered. Provenance and diagnostics;
+          // nothing reads it to decide anything.
+          source_column: branch.column,
+          source_branch_kind: branch.kind,
           folder_path: photo.folderPath,
           extraction_method: 'filed_as_is',
         },
@@ -1052,11 +1090,18 @@ export async function repairSourceImagesForUpload(
         prove(itemId, photo.reference);
         touched.add(itemId);
         if (negativeBefore.has(itemId)) {
+          // THIS branch's record only. A sibling branch that answered honestly
+          // — read, nothing for this property — keeps its answer, or the next
+          // run re-reads a document it has already finished with.
           await db.from('builder_stock_items')
-            .update({ source_provenance_result: null })
+            .update({
+              source_provenance_result: writeBranchState(
+                negativeBefore.get(itemId), packageUrl, null),
+            })
             .eq('id', itemId)
             .eq('organisation_id', input.organisationId);
-          negativeBefore.delete(itemId);
+          negativeBefore.set(itemId,
+            writeBranchState(negativeBefore.get(itemId), packageUrl, null));
         }
       } else {
         outcome.problems.push({
@@ -1071,7 +1116,9 @@ export async function repairSourceImagesForUpload(
       outcome.packageNotIdentified += 1;
       const { error: writeError } = await db
         .from('builder_stock_items')
-        .update({ source_provenance_result: recordNoDeterministicImage(question, recovered.detail) })
+        .update({ source_provenance_result: writeBranchState(
+          negativeBefore.get(itemId), packageUrl,
+          recordNoDeterministicImage(question, recovered.detail)) })
         .eq('id', itemId)
         .eq('organisation_id', input.organisationId);
       if (writeError) {
@@ -1115,6 +1162,8 @@ export async function repairSourceImagesForUpload(
         document: recovered.image.documentName,
         document_url: recovered.image.documentUrl,
         source_row_anchor: anchor,
+        source_column: branch.column,
+        source_branch_kind: branch.kind,
         page: recovered.image.provenance.page,
         extraction_method: recovered.image.provenance.method,
         pdf_object: recovered.image.provenance.objectNumber,
@@ -1422,21 +1471,15 @@ async function repairPdfUpload(
   return outcome;
 }
 
-/**
- * The ONE package link a row carries, or nothing.
+/*
+ * `solePackageUrl` WAS HERE, and its removal is the whole of this change.
  *
- * Read from the columns the normaliser could not place — the live list calls
- * it "Complete Package Pack" — rather than from a column name this module
- * would have to know. Two different package links on one row is a row that
- * does not say which package is its own, and the answer to that is no image.
+ *     return links.size === 1 ? [...links][0] : null;
+ *
+ * "Two different package links on one row is a row that does not say which
+ * package is its own, and the answer to that is no image." True of a source
+ * whose rows carry at most one link; false of a spreadsheet, where a row
+ * carrying five documents was declined all five. `rowSourceBranches` keeps
+ * every one of them, attached to its own row and its own heading.
  */
-function solePackageUrl(unmapped: Record<string, string>): string | null {
-  const links = new Set<string>();
-  for (const value of Object.values(unmapped ?? {})) {
-    for (const candidate of String(value).split(/\s+/)) {
-      if (!/^https?:\/\//i.test(candidate)) continue;
-      if (driveFolderId(candidate) || driveFileId(candidate)) links.add(candidate);
-    }
-  }
-  return links.size === 1 ? [...links][0] : null;
-}
+

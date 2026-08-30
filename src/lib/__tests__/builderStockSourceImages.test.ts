@@ -15,6 +15,7 @@
  * `attachment:<id>:<name>`, punctuation-heavy schema keys, and the real column
  * names (`Deal`, `Estate Tag`, `Package Status`).
  */
+import { branchRecord } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 import { describe, expect, it } from 'vitest';
 import {
   negativeProvenanceStillStands,
@@ -1352,7 +1353,7 @@ describe('a package that named no image is not read again', () => {
     expect(drive.fetched.length).toBeGreaterThan(0);
 
     const item = db.tables.builder_stock_items[0];
-    expect(item.source_provenance_result).toMatchObject({
+    expect(branchRecord(item.source_provenance_result, FOLDER_A)).toMatchObject({
       result: 'no_deterministic_image',
       provenance_version: PROVENANCE_VERSION,
       package_reference: FOLDER_A,
@@ -1414,7 +1415,7 @@ describe('a package that named no image is not read again', () => {
     // A better extractor may find what the old one could not, so it looks.
     expect(drive.fetched.length).toBeGreaterThan(0);
     expect(outcome.packageAlreadyAnswered).toBe(0);
-    expect(db.tables.builder_stock_items[0].source_provenance_result)
+    expect(branchRecord(db.tables.builder_stock_items[0].source_provenance_result, FOLDER_A))
       .toMatchObject({ provenance_version: PROVENANCE_VERSION });
   });
 
@@ -1444,8 +1445,13 @@ describe('a package that named no image is not read again', () => {
 
     expect(drive.fetched.length).toBeGreaterThan(0);
     expect(outcome.packageAlreadyAnswered).toBe(0);
-    // The banked answer now names the package actually checked.
-    expect(db.tables.builder_stock_items[0].source_provenance_result)
+    /*
+     * The banked answer is filed under the branch it answers for. The old
+     * record for a link the row no longer carries stays where it is and is
+     * never consulted again — a branch is looked up by its URL, and that URL
+     * is not on the row.
+     */
+    expect(branchRecord(db.tables.builder_stock_items[0].source_provenance_result, FOLDER_B))
       .toMatchObject({ package_reference: FOLDER_B });
   });
 
@@ -1478,7 +1484,8 @@ describe('a package that named no image is not read again', () => {
      * what matters, and what is checked, is that nothing here stands as an
      * answer, so the package is asked again next tick.
      */
-    const afterUnreachable = db.tables.builder_stock_items[0].source_provenance_result;
+    const afterUnreachable = branchRecord(
+      db.tables.builder_stock_items[0].source_provenance_result, FOLDER_A);
     expect(afterUnreachable ?? null).toBeNull();
     expect(negativeProvenanceStillStands(afterUnreachable, {
       provenanceVersion: PROVENANCE_VERSION,
@@ -1505,7 +1512,8 @@ describe('a package that named no image is not read again', () => {
 
     // Same rule as F: a claim written before an uninterruptible step is cleared
     // when that step returns, however it returned.
-    const afterThrow = db.tables.builder_stock_items[0].source_provenance_result;
+    const afterThrow = branchRecord(
+      db.tables.builder_stock_items[0].source_provenance_result, FOLDER_A);
     expect(afterThrow ?? null).toBeNull();
     expect(negativeProvenanceStillStands(afterThrow, {
       provenanceVersion: PROVENANCE_VERSION,

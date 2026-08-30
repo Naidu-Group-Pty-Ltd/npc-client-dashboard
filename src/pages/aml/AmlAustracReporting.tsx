@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, Loader2, PlusCircle, ShieldCheck, Send, Download, CheckCircle2, XCircle, History, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -116,7 +116,7 @@ export default function AmlAustracReporting() {
 
   /** The report whose record is being drawn, so its button can say so. */
   const [bundling, setBundling] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
+  const [approving, setApproving] = useState<string | null>(null);
 
   const [openSubmit, setOpenSubmit] = useState(false);
   const [submitChannel, setSubmitChannel] = useState<AmlSubmissionChannel>("austrac_online");
@@ -169,50 +169,52 @@ export default function AmlAustracReporting() {
   }, [hasAnyRole]);
 
   /**
-   * The selected report as the guided path reads it.
+   * A report as the guided path reads it.
    *
-   * Assembled here rather than inside the card so the card stays pure
-   * presentation over one shape, and so the lodgement reference and receipt
-   * come from the SUBMISSIONS actually recorded rather than from a status
-   * word that could disagree with them.
+   * One projection rather than two, because the approval guard needs the
+   * same reading for a report in the TABLE — where no submissions have been
+   * loaded — as the card has for the selected one. Two mappings from a row
+   * to `AustracReportFacts` is how a confirmation comes to list checks that
+   * belong to a different report.
+   *
+   * The lodgement reference and the receipt come from the SUBMISSIONS
+   * actually recorded rather than from a status word that could disagree
+   * with them.
    */
-  const pathFacts: AustracReportFacts | null = useMemo(() => {
-    if (!selectedReport) return null;
+  const factsFor = useCallback((
+    report: AmlReport,
+    subs: AmlReportSubmission[],
+  ): AustracReportFacts | null => {
     // A kind the obligation table does not carry gets no path rather than a
     // crash: `AUSTRAC_OBLIGATIONS[undefined]` is what the card would read.
-    const kind = toObligationKind(selectedReport.kind);
+    const kind = toObligationKind(report.kind);
     if (!kind) return null;
-    const latestSub = selectedSubs[0] ?? null;
-    const meta = (selectedReport.metadata ?? {}) as Record<string, any>;
+    const latestSub = subs[0] ?? null;
+    const meta = (report.metadata ?? {}) as Record<string, any>;
     return {
       kind,
-      status: selectedReport.status,
-      caseId: selectedReport.case_id ?? null,
-      subjectLabel: cases.find((c) => c.id === selectedReport.case_id)?.subject_display_name ?? null,
-      title: selectedReport.title ?? null,
-      narrative: selectedReport.narrative ?? null,
-      periodStart: selectedReport.reporting_period_start ?? null,
-      periodEnd: selectedReport.reporting_period_end ?? null,
-      mlroSignedAt: selectedReport.mlro_signed_at ?? null,
-      submittedAt: selectedReport.submitted_at ?? null,
+      status: report.status,
+      caseId: report.case_id ?? null,
+      subjectLabel: cases.find((c) => c.id === report.case_id)?.subject_display_name ?? null,
+      title: report.title ?? null,
+      narrative: report.narrative ?? null,
+      periodStart: report.reporting_period_start ?? null,
+      periodEnd: report.reporting_period_end ?? null,
+      mlroSignedAt: report.mlro_signed_at ?? null,
+      submittedAt: report.submitted_at ?? null,
       externalReference: latestSub?.external_reference ?? null,
       receiptReference: (latestSub as any)?.receipts?.[0]?.receipt_reference
-        ?? (selectedReport.acknowledged_at ? "recorded" : null),
+        ?? (report.acknowledged_at ? "recorded" : null),
       obligationAt: meta.obligation_at ?? null,
       terrorismFinancing: meta.terrorism_financing === true,
     };
-  }, [selectedReport, selectedSubs, cases]);
+  }, [cases]);
 
-  /*
-    ── Drafting happens on a page now ────────────────────────────────
-    A report to a regulator is the longest single piece of writing anyone
-    does in this product, written against a statutory deadline and usually
-    over more than one sitting. A modal could not be linked to, returned to
-    with the back button, or reopened where it was left, and it closed on an
-    outside click with whatever was in it. All three entry points — starting
-    one, editing one, and the two path steps that are about the draft
-    itself — go to the same URL.
-  */
+  const pathFacts = useMemo(
+    () => (selectedReport ? factsFor(selectedReport, selectedSubs) : null),
+    [selectedReport, selectedSubs, factsFor],
+  );
+
   const startNew = () => navigate(amlAustracDraftPath());
   const editExisting = (r: AmlReport) => navigate(amlAustracDraftPath(r.id));
 
@@ -222,10 +224,46 @@ export default function AmlAustracReporting() {
     catch (e: any) { toast.error(e?.message ?? "Delete failed"); }
   };
 
+  /**
+   * The decision that authorises lodgement.
+   *
+   * ── Why the hand-off went ─────────────────────────────────────────
+   * The path used to offer "Send to the MLRO" before this, which on a
+   * reporting entity where the person drafting the report IS the MLRO — most
+   * of them — was a report sent from somebody to themselves before they
+   * could act on it. Approval is the act; the checks are what the approver
+   * reviews on the way. `mlro_signoff` accepts a plain draft and always did,
+   * so nothing about the server changed.
+   *
+   * The confirmation the hand-off carried moved here rather than being
+   * deleted, because it was always about THIS decision: approving a report
+   * whose checks are outstanding is a legitimate thing to do and should
+   * never happen by accident. A report with nothing outstanding approves in
+   * one click, exactly as it did from the table.
+   */
   const signoff = async (r: AmlReport) => {
     if (!isMlro) return;
-    try { await amlReportingApi.mlroSignoff(r.id); toast.success("MLRO sign-off recorded"); await load(); if (selectedId === r.id) await loadDetail(r.id); }
-    catch (e: any) { toast.error(e?.message ?? "Sign-off failed"); }
+    const facts = factsFor(r, selectedId === r.id ? selectedSubs : []);
+    const outstanding = facts
+      ? austracReadiness(facts).filter(
+        // The lodgement and the receipt come AFTER approval — listing them
+        // as outstanding would ask the approver to answer for steps their
+        // own decision unlocks.
+        (c) => (c.state === "blocked" || c.state === "attention")
+          && c.key !== "mlro" && c.key !== "lodgement" && c.key !== "receipt",
+      )
+      : [];
+    if (outstanding.length > 0) {
+      const list = outstanding.map((c) => `• ${c.label}`).join("\n");
+      if (!window.confirm(
+        `${outstanding.length} check${outstanding.length === 1 ? " is" : "s are"} still outstanding:`
+        + `\n\n${list}\n\nApprove it anyway? The approval is recorded against you.`,
+      )) return;
+    }
+    setApproving(r.id);
+    try { await amlReportingApi.mlroSignoff(r.id); toast.success("Approved", { description: "It can now be lodged at AUSTRAC Online." }); await load(); if (selectedId === r.id) await loadDetail(r.id); }
+    catch (e: any) { toast.error(e?.message ?? "The approval could not be recorded"); }
+    finally { setApproving(null); }
   };
   const reject = async (r: AmlReport) => {
     if (!isMlro) return;
@@ -238,40 +276,6 @@ export default function AmlAustracReporting() {
     const reason = prompt("Withdrawal reason?") ?? "";
     try { await amlReportingApi.withdrawReport(r.id, reason); toast.success("Report withdrawn"); await load(); if (selectedId === r.id) await loadDetail(r.id); }
     catch (e: any) { toast.error(e?.message ?? "Withdraw failed"); }
-  };
-
-  /**
-   * Step 3's act: put the report in front of the MLRO.
-   *
-   * `upsert_report` already accepts `awaiting_mlro` — it is one of the three
-   * draft statuses the server permits a writer to set — so this is the
-   * existing endpoint rather than a new one, and `deriveAustracPath` already
-   * counts step 3 done once the status reaches it.
-   *
-   * It confirms first when checks are still outstanding. Sending an
-   * incomplete report is a legitimate thing to do (the MLRO may be the
-   * person who resolves what is missing) but it should never happen by
-   * accident.
-   */
-  const sendToMlro = async (r: AmlReport) => {
-    const outstanding = pathFacts
-      ? austracReadiness(pathFacts).filter((c) => c.state === "blocked" || c.state === "attention")
-      : [];
-    if (outstanding.length > 0) {
-      const list = outstanding.map((c) => `• ${c.label}`).join("\n");
-      if (!window.confirm(
-        `${outstanding.length} check${outstanding.length === 1 ? " is" : "s are"} still outstanding:\n\n${list}`
-        + "\n\nSend it to the MLRO anyway?",
-      )) return;
-    }
-    setSending(true);
-    try {
-      await amlReportingApi.upsertReport({ ...r, status: "awaiting_mlro" });
-      toast.success("Sent to the MLRO", { description: "It is now waiting on their decision." });
-      await load();
-      await loadDetail(r.id);
-    } catch (e: any) { toast.error(e?.message ?? "It could not be sent to the MLRO"); }
-    finally { setSending(false); }
   };
 
   const openSubmitFor = (r: AmlReport) => {
@@ -511,7 +515,17 @@ export default function AmlAustracReporting() {
                           <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); editExisting(r); }}>Edit</Button>
                         )}
                         {isMlro && ["draft","in_review","awaiting_mlro"].includes(r.status) && (
-                          <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); signoff(r); }}><ShieldCheck className="h-4 w-4 mr-1" /> Sign-off</Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={approving === r.id}
+                            onClick={(e) => { e.stopPropagation(); void signoff(r); }}
+                          >
+                            {approving === r.id
+                              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              : <ShieldCheck className="h-4 w-4 mr-1" />}
+                            Approve
+                          </Button>
                         )}
                         {isMlro && r.status === "approved" && (
                           <Button size="sm" onClick={(e) => { e.stopPropagation(); openSubmitFor(r); }}><Send className="h-4 w-4 mr-1" /> Submit</Button>
@@ -606,15 +620,16 @@ export default function AmlAustracReporting() {
                     ? {
                       identify: { label: "Open the draft", run: () => editExisting(selectedReport) },
                       assemble: { label: "Write the narrative", run: () => editExisting(selectedReport) },
-                      review: {
-                        label: "Send to the MLRO",
-                        run: () => { void sendToMlro(selectedReport); },
-                        busy: sending,
-                      },
                     }
                     : {}),
                   ...(isMlro && SIGNOFF_STATUSES.has(selectedReport.status)
-                    ? { signoff: { label: "Sign it off", run: () => { void signoff(selectedReport); } } }
+                    ? {
+                      approve: {
+                        label: "Review and approve",
+                        run: () => { void signoff(selectedReport); },
+                        busy: approving === selectedReport.id,
+                      },
+                    }
                     : {}),
                   ...(isMlro && selectedReport.status === "approved"
                     ? {
@@ -635,6 +650,16 @@ export default function AmlAustracReporting() {
                       },
                     }
                     : {}),
+                }}
+                /*
+                  An open step with no button must still say whose it is. An
+                  analyst reaches the approval and cannot make it — that is a
+                  real state with a real next actor, and silence about it
+                  reads as a broken page.
+                */
+                stepNotes={{
+                  ...(isMlro ? {} : { approve: "The MLRO's decision" }),
+                  ...(isMlro ? {} : { lodge: "The MLRO lodges it", receipt: "The MLRO records it" }),
                 }}
               />
             )}

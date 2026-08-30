@@ -670,6 +670,20 @@ keyboard operation — while badge COLOUR marks only the SMR, because
 `--primary` and `--warning` are both gold in dark mode and five tones carried
 no information at all.
 
+The path is **five steps, not six**. "Clear the pre-lodgement checks" was a
+HAND-OFF — it completed by moving the report to `awaiting_mlro` — and on an
+entity where the drafter IS the MLRO that is a report sent from somebody to
+themselves before they may act on it; strip the routing and it counts the same
+fact as the approval beside it, and **two steps counting one thing** is how a
+header disagrees with the list under it. They are one step now, "Review the
+checks and approve it". **Removing a ceremony must never remove a control**:
+`mlro_signoff` is untouched, `awaiting_mlro` still exists and still signs off,
+and the hand-off's confirmation MOVED onto the approval — excluding the checks
+the approval itself unlocks, and reading the same `factsFor` projection the
+card does, because the table's button acts on a report that may not be the
+selected one. An open step with no action now renders **whose** it is, because
+a live step with neither an act nor an explanation reads as a broken page.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

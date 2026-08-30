@@ -20,6 +20,7 @@ const summary = vi.fn();
 const listCases = vi.fn();
 const exportBundle = vi.fn();
 const upsertReport = vi.fn();
+const mlroSignoff = vi.fn();
 
 vi.mock("@/lib/aml/amlReportingApi", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -27,7 +28,8 @@ vi.mock("@/lib/aml/amlReportingApi", async (orig) => ({
     summary: () => summary(),
     listReports: (a: unknown) => listReports(a),
     getReport: (id: string) => getReport(id),
-    upsertReport: vi.fn(), deleteReport: vi.fn(), mlroSignoff: vi.fn(),
+    deleteReport: vi.fn(),
+    mlroSignoff: (id: string) => mlroSignoff(id),
     mlroReject: vi.fn(), withdrawReport: vi.fn(), submitRecord: vi.fn(),
     recordReceipt: vi.fn(), createVersion: vi.fn(),
     exportBundle: (id: string) => exportBundle(id),
@@ -82,6 +84,7 @@ beforeEach(() => {
     content_hash: "f".repeat(64),
   });
   upsertReport.mockResolvedValue({ ...REPORT, status: "awaiting_mlro" });
+  mlroSignoff.mockResolvedValue({ report: { ...REPORT, status: "approved" } });
   listCases.mockResolvedValue({
     cases: [{ id: "case-1", subject_display_name: "Rugesh Naidu", case_reference: "AML-2026-00005" }],
     total: 1,
@@ -143,8 +146,16 @@ describe("the guided path", () => {
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
     await waitFor(() =>
       expect(screen.getByText("Suspicious Matter Report")).toBeInTheDocument());
-    // Six numbered steps, one of them open.
-    expect(await screen.findByText("MLRO approves it")).toBeInTheDocument();
+    /* Five numbered steps, one of them open. It was six: a "clear the
+       checks" step whose only completion was routing the report to the
+       MLRO, and the MLRO's approval. Without the routing the two count the
+       same fact, and two steps counting one thing is how a header comes to
+       disagree with the list under it. */
+    /* Twice: the header leads with the open step, and the list names it. */
+    expect((await screen.findAllByText("Review the checks and approve it")).length)
+      .toBeGreaterThan(0);
+    expect(screen.queryByText("MLRO approves it")).not.toBeInTheDocument();
+    expect(screen.queryByText("Clear the pre-lodgement checks")).not.toBeInTheDocument();
     expect(screen.getByText("Lodge it at AUSTRAC Online")).toBeInTheDocument();
     expect(screen.getByText("Keep the receipt with the report")).toBeInTheDocument();
   });
@@ -211,29 +222,73 @@ describe("the record download", () => {
 });
 
 describe("the guided path leads somewhere", () => {
-  it("offers step 3 an act that actually runs", async () => {
+  it("offers the open step an act that actually runs", async () => {
     /* The card drew "Open" on whichever step was open and the page handled
-       three of six keys, so a saved draft — which sits on step 3 — rendered
-       a button that did nothing at all. */
+       three of six keys, so a saved draft rendered a button that did
+       nothing at all. */
     renderPage();
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
-    const send = await screen.findByRole("button", { name: /Send to the MLRO/i });
+    const approve = await screen.findByRole("button", { name: /Review and approve/i });
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    fireEvent.click(send);
-    await waitFor(() => expect(upsertReport).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "r1", status: "awaiting_mlro" })));
+    fireEvent.click(approve);
+    await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
     expect(screen.queryByRole("button", { name: /^Open$/ })).not.toBeInTheDocument();
   });
 
-  it("asks before sending a report whose checks are still outstanding", async () => {
-    /* Sending an incomplete report is legitimate — the MLRO may be the
-       person who resolves what is missing — but never by accident. */
+  it("never asks anybody to send the report to themselves", async () => {
+    /* On a reporting entity where the person drafting the report IS the
+       MLRO — most of them — a hand-off step is a report sent from somebody
+       to themselves before they can act on it. */
+    renderPage();
+    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await screen.findByRole("button", { name: /Review and approve/i });
+    expect(screen.queryByRole("button", { name: /Send to the MLRO/i })).not.toBeInTheDocument();
+    expect(upsertReport).not.toHaveBeenCalled();
+  });
+
+  /* Complete enough to reach the approval, and past its statutory window —
+     the one check that can still be outstanding when the approval is the
+     open step. A suspicion formed in January is long past three business
+     days. */
+  const withGaps = { ...REPORT, metadata: { obligation_at: "2026-01-05T00:00:00.000Z" } };
+
+  it("approves a complete report in one click, as the table always did", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    const confirmed = vi.spyOn(window, "confirm");
+    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
+    await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
+    expect(confirmed).not.toHaveBeenCalled();
+  });
+
+  it("asks before approving a report whose checks are still outstanding", async () => {
+    /* Approving an incomplete report is legitimate and is recorded against
+       the person who did it — but it should never happen by accident. */
+    listReports.mockResolvedValue([withGaps]);
+    getReport.mockResolvedValue({ report: withGaps, versions: [], submissions: [] });
     renderPage();
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
-    fireEvent.click(await screen.findByRole("button", { name: /Send to the MLRO/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
     expect(confirmed).toHaveBeenCalled();
-    expect(upsertReport).not.toHaveBeenCalled();
+    expect(mlroSignoff).not.toHaveBeenCalled();
+  });
+
+  it("does not count the steps the approval itself unlocks against it", async () => {
+    /* Lodgement and the receipt come AFTER approval. Listing them as
+       outstanding would ask the approver to answer for the steps their own
+       decision unlocks. */
+    listReports.mockResolvedValue([withGaps]);
+    getReport.mockResolvedValue({ report: withGaps, versions: [], submissions: [] });
+    renderPage();
+    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
+    const asked = String(confirmed.mock.calls[0]?.[0] ?? "");
+    expect(asked).toMatch(/Within the statutory window/);
+    expect(asked).not.toMatch(/Lodged at AUSTRAC Online/);
+    expect(asked).not.toMatch(/Receipt on file/);
+    expect(asked).not.toMatch(/MLRO approval/);
   });
 });
 

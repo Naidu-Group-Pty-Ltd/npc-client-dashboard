@@ -17,7 +17,7 @@
  * customer's file is not on file.
  *
  * ── The path ──────────────────────────────────────────────────────────
- * Six steps, one of them open, in the order they are answered. This is the
+ * Five steps, one of them open, in the order they are answered. This is the
  * same shape Stage 5 and Stage 9 use, deliberately: an operator who has
  * learned one guided path in this product has learned all of them.
  *
@@ -341,7 +341,7 @@ export interface PathStep {
 }
 
 /**
- * Six numbered steps with exactly one open.
+ * Five numbered steps with exactly one open.
  *
  * The open step is the first that is not done, so the page always answers
  * "what now" with one thing rather than a list to interpret.
@@ -362,15 +362,30 @@ export function deriveAustracPath(f: AustracReportFacts): PathStep[] {
       done: narrativeDone && Boolean(f.title),
     },
     {
-      key: "review",
-      label: "Clear the pre-lodgement checks",
-      detail: "Everything below green, or a recorded reason why not.",
-      done: Boolean(f.mlroSignedAt) || f.status === "awaiting_mlro",
-    },
-    {
-      key: "signoff",
-      label: "MLRO approves it",
-      detail: "The decision that authorises lodgement, recorded against the person who made it.",
+      /*
+        ── One review, not a review and a routing ──────────────────────
+        This was two steps: "Clear the pre-lodgement checks", which
+        completed by moving the report to `awaiting_mlro`, and "MLRO
+        approves it". The first was a hand-off, and on a reporting entity
+        where the person who drafts the report IS the MLRO — which is most
+        of them — it was a report sent from somebody to themselves before
+        they could act on it.
+
+        Worse, without that routing the two steps complete on exactly the
+        same fact, and two steps counting one thing is how "0 of 3 complete"
+        comes to sit above a list of four. So they are ONE step: the checks
+        are what the approver reviews, and the approval is the act.
+
+        The control is untouched. `mlro_signoff` is still MLRO-only, still
+        server-enforced, still recorded against the person who made it —
+        removing a ceremony must never remove a control. `awaiting_mlro`
+        also still exists and a report already in it still signs off
+        normally; nothing in the product routed to it before this path
+        offered to, and nothing does now.
+      */
+      key: "approve",
+      label: "Review the checks and approve it",
+      detail: "The MLRO clears the checks below and records the decision that authorises lodgement.",
       done: Boolean(f.mlroSignedAt),
     },
     {

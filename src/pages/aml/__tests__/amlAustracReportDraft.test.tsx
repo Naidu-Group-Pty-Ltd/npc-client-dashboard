@@ -247,7 +247,7 @@ describe("why the report is being made", () => {
     renderNew();
     expect(await screen.findByText(/The whole path/i)).toBeInTheDocument();
     expect(screen.getAllByText(/on this screen/i).length).toBe(2);
-    expect(screen.getByText("MLRO approves it")).toBeInTheDocument();
+    expect(screen.getByText("Review the checks and approve it")).toBeInTheDocument();
   });
 
   it("shows the deadline the answers produce, counted in business days", async () => {

@@ -309,3 +309,89 @@ label's own box height.
 the same class of reason: jsdom implements neither, `cmdk` needs the first
 and Radix's positioned surfaces the second, and a component that throws on
 mount in a test is indistinguishable from one that is broken.
+
+---
+
+## The record download, the dead step, and which report you are reading
+
+### "Bundle" downloaded a developer artefact
+
+It fetched the edge function's export and saved `JSON.stringify(bundle, null,
+2)` as `austrac-smr-<uuid>.json`. That file opens in a text editor. It carries
+no identity, no branding, no statement of what it is, and nothing an auditor,
+a colleague or a regulator's file could use — the archive record for a report
+to a regulator was a debug dump.
+
+It is a PDF now, and it is drawn by the **same renderer, under the same brand
+resolver**, as the client submission record: `generateSubmissionRecordPdf` and
+`resolveRecordBrand`. A workspace that has configured a brand issues under its
+own name, colour ramp and report logo; a workspace that has not issues under
+**Aurixa Systems** — never an empty masthead, never another tenant's marks. A
+logo that cannot be fetched degrades to the wordmark rather than failing the
+download: identity is required, a picture is not.
+
+`austracBundleRecord.pure.ts` projects the bundle onto `SubmissionRecord`.
+Everything on the page comes from the bundle the **server** assembled and
+hashed; the module formats and does not read the database, so it cannot state
+anything the export did not contain.
+
+Two rules. **The tipping-off prohibition travels with the document** — this is
+printable, e-mailable and leaveable on a desk, so an SMR record carries s.123
+in its closing notice and says not to give it to the customer; a TTR record
+does not, because carrying the warning everywhere is how an operator learns to
+read past it. And **database vocabulary never reaches the page**: `awaiting_mlro`
+renders "Awaiting mlro", asserted by a test.
+
+The renderer needed one generalisation to serve both. It wrote `Submission
+v{n}` into the masthead, the identity line and the running foot, which is
+correct for the document it was built for and wrong for an AUSTRAC record that
+is not a submission and has no submission version. `RecordDocumentIdentity` is
+now a defaulted parameter — the existing caller passes nothing and renders
+exactly what it rendered before. The alternative was a second generator, which
+is how a repository ends up with two print treatments that drift.
+
+### Step 3's button did nothing
+
+The path card took `onOpenStep(key)` and drew a button reading "Open" on
+whichever step was open. The page handled three of the six keys. A saved draft
+sits on step 3 — "Clear the pre-lodgement checks" — so the button rendered, was
+clicked, and did nothing at all.
+
+**A dead control is worse than no control**: it reads as a broken page rather
+than as a step nobody can take yet. The card now takes `stepActions`, a map of
+`{ label, run }`, and **a step with no entry draws no button** — which is the
+honest rendering of the MLRO's sign-off to an analyst.
+
+The label names the act rather than saying "Open": *Open the draft*, *Write the
+narrative*, **Send to the MLRO**, *Sign it off*, *Record the lodgement*,
+*Capture the receipt*. Step 3's act uses `upsert_report` with
+`awaiting_mlro` — one of the three draft statuses the server already permits a
+writer to set, so no new endpoint — and `deriveAustracPath` already counted the
+step done at that status. It confirms first when checks are outstanding:
+sending an incomplete report is legitimate (the MLRO may be the person who
+resolves what is missing) but it should never happen by accident.
+
+### Which report am I looking at?
+
+The selected row was `bg-muted/40` and nothing else, which on the dark theme is
+a shade of the same charcoal as the row beside it. With two reports on the
+register an operator could not tell which one the entire right-hand panel was
+describing.
+
+Three signals rather than one, because a single tint is what failed: a solid
+accent bar down the leading edge, a tinted ground, and the word **Viewing**
+beside the title. `aria-selected` carries the same fact to a screen reader, and
+the row is keyboard-operable — it was click-only, so the register could not be
+worked without a mouse at all.
+
+The detail panel now heads itself with the obligation badge, the status, the
+title and the customer. It used to read "Detail" with the title in muted small
+print, naming neither.
+
+**Colour marks one thing.** A tone per obligation was the obvious first answer
+and it was wrong: in the dark theme `--primary` and `--warning` are both the
+brand gold, so five kinds in five tones rendered as five near-identical amber
+chips — colour noise carrying no information, which is worse than no colour.
+The three letters tell the obligations apart and already did. The **SMR alone**
+is tinted, because s.123 is a fact about how that row must be handled rather
+than a category. A test pins it.

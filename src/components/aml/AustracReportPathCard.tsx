@@ -37,12 +37,35 @@ function CheckIcon({ state }: { state: CheckState }) {
   return <CircleDot aria-hidden className="h-3.5 w-3.5" />;
 }
 
+/**
+ * What a step's own button does, and what it is called.
+ *
+ * ── Why this replaced a callback ──────────────────────────────────────
+ * The card took `onOpenStep(key)` and drew a button reading "Open" on
+ * whichever step was open. The page handled three of the six keys, so on a
+ * report sitting at "Clear the pre-lodgement checks" — which is where a
+ * saved draft sits — the button rendered, was clicked, and did nothing at
+ * all. A dead control is worse than no control: it reads as a broken page
+ * rather than as a step nobody can take yet.
+ *
+ * The card now asks for the act rather than announcing a key. A step with
+ * no entry here draws no button, which is the honest rendering of "there is
+ * nothing this operator can do about this one" — the MLRO's sign-off, to an
+ * analyst, is exactly that. And the label names the act, so an operator
+ * knows what the click will do before they make it.
+ */
+export interface PathStepAction {
+  label: string;
+  run: () => void;
+  busy?: boolean;
+}
+
 export function AustracReportPathCard({
-  facts, onOpenStep,
+  facts, stepActions,
 }: {
   facts: AustracReportFacts;
-  /** Where a step's own action lives, when the page has one to offer. */
-  onOpenStep?: (key: string) => void;
+  /** Keyed by step key. A step absent from this map draws no button. */
+  stepActions?: Partial<Record<string, PathStepAction>>;
 }) {
   const steps = deriveAustracPath(facts);
   const checks = austracReadiness(facts);
@@ -129,10 +152,15 @@ export function AustracReportPathCard({
                   </span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">{s.detail}</span>
                 </span>
-                {open && onOpenStep && (
-                  <Button size="sm" variant="outline" className="h-7 shrink-0 text-xs"
-                    onClick={() => onOpenStep(s.key)}>
-                    Open
+                {open && stepActions?.[s.key] && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0 text-xs"
+                    disabled={stepActions[s.key]!.busy}
+                    onClick={() => stepActions[s.key]!.run()}
+                  >
+                    {stepActions[s.key]!.label}
                   </Button>
                 )}
               </li>

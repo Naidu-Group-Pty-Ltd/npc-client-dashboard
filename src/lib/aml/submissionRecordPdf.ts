@@ -39,6 +39,43 @@ function hexRgb255(hex: string): [number, number, number] {
  *  the wordmark must read whatever accent a tenant chooses. */
 const CREAM: [number, number, number] = [245, 239, 228];
 
+/**
+ * What the page calls itself: the masthead title, the line under the
+ * subject, and the running foot's left segment.
+ *
+ * ── Why this is a parameter ───────────────────────────────────────────
+ * The three strings were composed inline from `record.audience` and
+ * `record.version`, with "Submission v{n}" written into the masthead, the
+ * identity line and the foot. That is correct for the one document this
+ * renderer was built for and wrong for every other — an AUSTRAC bundle
+ * printed "Submission v1" across a document that is not a submission and
+ * has no submission version.
+ *
+ * The alternative was a second generator, which is how a repository ends up
+ * with two print treatments that drift: this one already carries the
+ * white-label masthead, the Aurixa fallback, the contrast floor the print
+ * rules set, and selectable text. So the identity is lifted out and
+ * defaulted, and the existing caller passes nothing and renders exactly what
+ * it rendered before.
+ */
+export interface RecordDocumentIdentity {
+  /** Opposite the masthead logo — what kind of document this is. */
+  title: string;
+  /** Under the subject: reference, then what edition of it this is. */
+  identityLine: string;
+  /** The running foot, minus the issuing brand and the page numbers. */
+  footLine: string;
+}
+
+/** The identity a client submission record has always carried. */
+export function submissionRecordIdentity(record: SubmissionRecord): RecordDocumentIdentity {
+  return {
+    title: recordDocumentTitle(record),
+    identityLine: `${record.reference}  ·  Submission v${record.version}`,
+    footLine: `${record.reference} · Submission v${record.version} · ${record.generatedAt}`,
+  };
+}
+
 /** `…-record.html` → `…-record.pdf` — one filename rule, one extension swap. */
 export function submissionRecordPdfFilename(record: Pick<SubmissionRecord, "filename">): string {
   return record.filename.replace(/\.html$/, ".pdf");
@@ -319,7 +356,11 @@ function drawBlock(doc: Doc, cursor: Cursor, block: RecordBlock) {
  * Omitted (tests, degraded paths), the document renders in its unbranded
  * austere form.
  */
-export async function generateSubmissionRecordPdf(record: SubmissionRecord, brand?: RecordBrand): Promise<Blob> {
+export async function generateSubmissionRecordPdf(
+  record: SubmissionRecord,
+  brand?: RecordBrand,
+  identity: RecordDocumentIdentity = submissionRecordIdentity(record),
+): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   // Multi-line text draws at jsPDF's default 1.15 leading unless told
@@ -327,7 +368,7 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord, bran
   // floats row rules away from wrapped text. One factor, set once.
   doc.setLineHeightFactor(1.45);
   const cursor: Cursor = { y: MARGIN };
-  const docTitle = recordDocumentTitle(record);
+  const docTitle = identity.title;
 
   const BAND_H = 16;
   if (brand) {
@@ -387,7 +428,7 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord, bran
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9.5);
     doc.setTextColor(...LABEL);
-    doc.text(`${record.reference}  ·  Submission v${record.version}`, MARGIN, cursor.y + lineHeight(9.5) * 0.8);
+    doc.text(identity.identityLine, MARGIN, cursor.y + lineHeight(9.5) * 0.8);
     cursor.y += lineHeight(9.5) + 3;
     doc.setDrawColor(...hexRgb255(brand.accentDeep));
     doc.setLineWidth(0.6);
@@ -488,9 +529,7 @@ export async function generateSubmissionRecordPdf(record: SubmissionRecord, bran
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(...LABEL);
-    const footLeft = brand
-      ? `${brand.name} · ${record.reference} · Submission v${record.version} · ${record.generatedAt}`
-      : `${record.reference} · Submission v${record.version} · ${record.generatedAt}`;
+    const footLeft = brand ? `${brand.name} · ${identity.footLine}` : identity.footLine;
     doc.text(footLeft, MARGIN, FOOT_Y);
     doc.text(`Page ${i} of ${pages}`, PAGE_W - MARGIN, FOOT_Y, { align: "right" });
   }

@@ -651,6 +651,25 @@ box are the guidance on substance. And **the label was sitting on the box**:
 it shared a `flex items-end` row with that counter, which is what put its
 descenders on the textarea's border.
 
+Three more, from the hub beside it. **The "Bundle" download was a debug dump**
+— `JSON.stringify` of the export, named by uuid, opening in a text editor —
+and is now a PDF drawn by the SAME renderer and brand resolver as the client
+submission record (`austracBundleRecord.pure.ts` projects onto
+`SubmissionRecord`), issuing under the workspace's brand or the **Aurixa
+Systems** fallback; the tipping-off prohibition travels IN the document and
+on the SMR alone, and `RecordDocumentIdentity` became a defaulted parameter
+because the renderer wrote "Submission v1" across every page it drew.
+**A dead control is worse than no control** — the path card drew "Open" on
+the open step while the page handled three of six keys, so a saved draft's
+step 3 did nothing; it takes `stepActions` now, a step with no entry draws no
+button, and step 3's act is `upsert_report` with `awaiting_mlro` (an existing
+status the server already permits). And **the selected row needs more than a
+tint**: `bg-muted/40` on a dark theme is the charcoal beside it, so selection
+is an accent bar, a ground and the word "Viewing", with `aria-selected` and
+keyboard operation — while badge COLOUR marks only the SMR, because
+`--primary` and `--warning` are both gold in dark mode and five tones carried
+no information at all.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

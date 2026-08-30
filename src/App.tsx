@@ -109,7 +109,7 @@ const AmlPassports = lazyWithRetry(() => import("./pages/aml/AmlPassports"));
 import {
   AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
   AmlFinance, AmlTransactions,
-  AmlMonitoring, AmlInvestigations, AmlAustracReporting, AmlRecords, AmlGovernance, AmlConfiguration,
+  AmlMonitoring, AmlInvestigations, AmlAustracReporting, AmlAustracReportDraft, AmlRecords, AmlGovernance, AmlConfiguration,
 } from "./pages/aml/AmlShellPages";
 const AmlLaunchOps = lazyWithRetry(() => import("./pages/aml/AmlLaunchOps"));
 const AmlPartnerOperations = lazyWithRetry(() => import("./pages/aml/AmlPartnerOperations"));
@@ -761,6 +761,22 @@ const App = () => (
                   <Route path="monitoring" element={<AmlGuard capability="aml.view"><AmlMonitoring /></AmlGuard>} />
                   <Route path="investigations" element={<AmlGuard capability="aml.investigate"><AmlInvestigations /></AmlGuard>} />
                   <Route path="austrac" element={<AmlGuard capability="aml.report"><AmlAustracReporting /></AmlGuard>} />
+                  {/*
+                    Drafting a report is a page rather than a dialog, so it has
+                    a URL that can be linked, returned to and reached with the
+                    back button. Both sit UNDER `austrac`, which is what keeps
+                    them in the Regulatory & Assurance workspace —
+                    `pathMatchesWorkspace` matches a prefix followed by `/`.
+
+                    Brought across by hand: `src/App.tsx` is held
+                    `manual_reconcile` by the cascade because this clone carries
+                    route gates the prime does not, so an upstream route never
+                    arrives on its own. The cascade delivered the page and the
+                    source test that asserts these two lines; only the lines
+                    themselves had to be written here.
+                  */}
+                  <Route path="austrac/new" element={<AmlGuard capability="aml.report"><AmlAustracReportDraft /></AmlGuard>} />
+                  <Route path="austrac/:reportId/edit" element={<AmlGuard capability="aml.report"><AmlAustracReportDraft /></AmlGuard>} />
                   <Route path="records" element={<AmlGuard capability="aml.view"><AmlRecords /></AmlGuard>} />
                   <Route path="governance" element={<AmlGuard capability="aml.view"><AmlGovernance /></AmlGuard>} />
                   <Route path="launch-ops" element={<AmlGuard capability="aml.view"><AmlLaunchOps /></AmlGuard>} />

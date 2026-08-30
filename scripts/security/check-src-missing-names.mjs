@@ -74,10 +74,33 @@ const KNOWN_MISSING = new Set(readFileSync(KNOWN_MISSING_PATH, 'utf8')
  * all while failing is a different problem (a bad project file, a missing
  * dependency) and is reported as one rather than passing silently.
  */
+/*
+ * `tsc` over this project peaks at ~3.2 GB, measured. Node's default old-space
+ * ceiling is smaller than that on a GitHub runner, so the child died with
+ * "Ineffective mark-compacts near heap limit" after 93 seconds and this gate
+ * reported, correctly, that it "did not run". Every pull request in the
+ * repository failed `verify` on it.
+ *
+ * The honest failure is what made it findable — a gate that cannot run must
+ * never report a pass — so that branch below is untouched and only the heap
+ * moves. 6 GB against a measured 3.2 GB peak leaves room for the project to
+ * grow before this is a question again; the runner has 16 GB.
+ *
+ * An existing NODE_OPTIONS is preserved rather than replaced: it may carry
+ * something the caller needs, and appending keeps the last --max-old-space-size
+ * winning if one is already set.
+ */
+const TSC_HEAP_MB = 6144;
+const childEnv = {
+  ...process.env,
+  NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=${TSC_HEAP_MB}`.trim(),
+};
+
 let out = '';
 try {
   out = execFileSync('npx', ['tsc', '--noEmit', '-p', 'tsconfig.app.json'], {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+    env: childEnv,
   });
 } catch (error) {
   out = `${error.stdout ?? ''}${error.stderr ?? ''}`;

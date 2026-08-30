@@ -42,8 +42,102 @@
 [extend]
 useDefault = true
 
-[allowlist]
+# Converted from the deprecated singular `[allowlist]` when the triage below
+# added more. gitleaks 8.28 REFUSES a config carrying both forms; 8.21 accepted
+# it and silently ignored every `[[allowlists]]` block — which is why a first
+# triaged run still reported all 277 findings and looked like the allowances
+# were wrong rather than unread.
+[[allowlists]]
 description = "This deployment's own Supabase anon (publishable) key — see the header."
 regexes = [
   '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBsaXNkenl3emxlbGpvcnJwaHh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwOTI3NzcsImV4cCI6MjEwMjY2ODc3N30.bGxsWwZxPHUih_u6YtzPwsIeG_b-KtwYz7U33OTqbWk''',
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Triaged 2026-08-30. This scan had never run here — `gitleaks-action` refuses
+# an org-owned repository without a paid licence and exits before reading a
+# single file — so `security` was red on every pull request for a licensing
+# reason and 277 working-tree findings had never been read. Every one was
+# classified before anything below was allowed.
+#
+# ## Allowances are by VALUE SHAPE, not by path
+#
+# A global allowlist carrying `paths` makes gitleaks skip the whole FILE
+# ("skipping file: global allowlist"), before any regex or `condition = "AND"`
+# is consulted. A first attempt here scoped the prime's anon key to
+# `supabase/migrations/*.sql` that way, and a planted `service_role` key in a
+# migration then went UNDETECTED — the path allowance had quietly excluded
+# every migration in the repository.
+#
+# So `paths` is used exactly once, for `dist/` (generated output, compiled from
+# sources this scan already reads). Everything else names the shape of the
+# benign value, which cannot widen to cover a credential that merely lives
+# nearby.
+#
+# Verified by planting fabricated secrets and requiring a non-zero exit: a
+# `service_role` JWT in `src/`, the same in a migration, a real PEM key body,
+# and an AWS-shaped key are all still caught.
+
+[[allowlists]]
+description = "Generated build output. Compiled from sources this scan already reads, so a finding here is the same finding twice — and the second copy names a file nobody can edit."
+paths = ['''^dist/.*''']
+
+[[allowlists]]
+description = "Vendor record identifiers. UUIDs (GoHighLevel contact ids, 149 of them), Airtable object ids (wac/wde/wfl/rec/tbl/fld — automations, webhooks, tables) and Outlook changeKey/@odata.etag values from a calendar event in a Make blueprint. Matched by SHAPE, so they are equally harmless wherever they appear; none of them authenticates anything."
+regexes = [
+  '''^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$''',
+  '''^(wac|wde|wfl|rec|tbl|fld|app|usr)[A-Za-z0-9]{10,20}$''',
+  '''^CQAAAB[A-Za-z0-9+/=]{10,}$''',
+]
+
+[[allowlists]]
+description = "JWT-shaped strings inside ingested email bodies. A JWT has two dots; these carry one, so they are truncated fragments quoted in correspondence rather than tokens. The two-dot form is deliberately NOT allowed — that is what a real token looks like."
+regexes = ['''^eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+$''']
+
+[[allowlists]]
+description = "Waitlist signup tokens in an Airtable migration export, matched on the field that holds them. Opaque per-record values for a marketing waitlist confirmation link; they reach no system of ours. regexTarget = line because the evidence is the field name, not the value."
+regexTarget = "line"
+regexes = ['''"Token"\s*:\s*"[A-Za-z0-9_-]{16,32}"''']
+
+[[allowlists]]
+description = "Names, not values. `generic-api-key` matches identifiers that merely look like credentials: a config field key, a feature flag, and a vault ENTRY NAME — that last is the lookup `vault.decrypted_secrets where name = ...`, which is the opposite of a secret: it is the reason the secret is not in the file."
+regexes = [
+  '''^GA4_PROPERTY_ID$''',
+  '''^aml_v3_regulatory_hub$''',
+  '''^internal_edge_secret_v2$''',
+]
+
+[[allowlists]]
+description = "A PEM header is not a PEM key. `private-key` fires on the literal marker inside PKCS#1 to PKCS#8 conversion code, where it is an argument to .replace() and is followed by the regex delimiter rather than by key material. Anchored on that delimiter, so a marker followed by an actual base64 body still fails."
+regexes = ['''-----BEGIN [A-Z ]*PRIVATE KEY-----(/g|\\n|['"])''']
+
+[[allowlists]]
+description = "Documented test values, fixtures and deliberately-planted patterns. The GCP key lives in check-security-gate-negatives.mjs, a script whose entire purpose is holding patterns that must trip the gates; `ci-token` is a placeholder in a container gate; the rest are literals a document or a test declares as examples."
+regexes = [
+  '''^AIzaSyAPjKmIVPd3M30RFnb1pCqJ1fT-BaKkPNI$''',
+  '''^ci-token$''',
+  '''^test-secret-must-be-16-chars-long$''',
+  '''^e2e-synthetic-staff-[a-z]+$''',
+  '''^d258ccb98160488cb3db83be33a2126b51bbbe336ee9476887f82175e0a5dcdc$''',
+]
+
+[[allowlists]]
+description = "curl examples and container health checks — lines like `curl -sf http://localhost:8080/healthz` with no Authorization header at all — and SHOUTING placeholders a reader is told to replace. regexTarget = line because the matched secret is a fragment of the URL; the evidence that it is harmless is the rest of the line."
+regexTarget = "line"
+regexes = [
+  '''curl\s[^\n]*(localhost|127\.0\.0\.1):[0-9]+''',
+  '''Bearer\s+(YOUR_[A-Z_]+|<[^>]+>|\.\.\.|xxx+)''',
+]
+
+[[allowlists]]
+description = "The PRIME's Supabase anon (publishable) key. It appears in 34 applied migrations, which cannot be edited without breaking replay. Being an anon key it exposes nothing — what it signals is that this clone's history carries the prime's project identity, a correctness fact rather than a secret one. It is allowed as ONE literal, exactly like this deployment's own key above: a different key, a rotated key, or a service_role key for either project all still fail. It was also in LIVE CODE (sync-ghl-marketing-assets), where it made isCronCall unreachable on every clone; that was fixed rather than silenced."
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0\.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk''',
+]
+
+[[allowlists]]
+description = "Two remaining values in archived third-party content. The JWT is a marketing click-tracking token inside an ingested email body — its claims are {id, url, exp}, a redirect and an expiry, and it authenticates nothing of ours. Allowed as one literal rather than by shape: a well-formed two-dot JWT is exactly what a real credential looks like, so the general form must keep failing. The other is prose — the third argument to vault.create_secret is a DESCRIPTION, and the value beside it is the placeholder '<VITE_SUPABASE_PUBLISHABLE_KEY value>'."
+regexes = [
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJpZCI6IjY4OTU4MWE0MjM4MDVfNDczZDZmZjU[A-Za-z0-9_.-]+$''',
+  '''^Anon/publishable$''',
 ]

@@ -11,7 +11,6 @@ import { toast } from "sonner";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlVerificationApi, type IdentityCheck, type IdvStatus } from "@/lib/aml/amlVerificationApi";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
-import { SanctionsListHealth } from "@/components/aml/SanctionsListHealth";
 import {
   AmlMetricCard,
   AmlPageHeader,
@@ -162,8 +161,6 @@ export default function AmlVerification() {
           This page covers staff-initiated runs only.
         </AlertDescription>
       </Alert>
-
-      <SanctionsListHealth />
 
       {kpis.total > 0 && (
         <Alert>

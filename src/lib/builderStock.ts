@@ -88,7 +88,7 @@ export interface BuilderStockImage {
   external_url: string | null;
   storage_path: string | null;
   content_type: string | null;
-  verification_status: 'source_supplied' | 'location_derived' | 'unverified';
+  verification_status: 'source_supplied' | 'location_derived' | 'unverified' | 'property_identity_verified';
   confidence: number | null;
   processing_status: 'pending' | 'ready' | 'unavailable' | 'failed';
   error_message: string | null;

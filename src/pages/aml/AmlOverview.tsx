@@ -423,16 +423,15 @@ function AmlOverviewV2() {
           Reporting and configuration surfaces are restricted and only appear for MLRO users.
         </p>
       )}
-      {canConfigure && (
-        <div className="flex flex-wrap gap-2">
-          <Button asChild size="sm" variant="outline">
-            <Link to="/admin/aml/configuration">
-              <Settings2 aria-hidden="true" className="mr-2 h-4 w-4" />
-              Configuration
-            </Link>
-          </Button>
-        </div>
-      )}
+      {/*
+        A second Configuration button used to sit here, under a comment that
+        already said "restricted-capability affordances live in tiles above".
+        It went to the same place as the tile and contradicted its own
+        neighbour. Configuration is now reached from exactly two places: that
+        tile — gated on `aml.configure`, so an ordinary operator never sees it
+        — and Stage 5's "open list health" when screening cannot run. It is no
+        longer in the navigation at all.
+      */}
     </div>
   );
 }

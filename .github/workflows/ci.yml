@@ -236,7 +236,13 @@ jobs:
             src/lib/__tests__/builderStockFallbackDriver.test.ts \
             src/lib/__tests__/builderStockCronGate.test.ts \
             src/lib/__tests__/builderStockPackageAttempt.test.ts \
-            src/lib/__tests__/builderStockCloudflareWorker.test.ts
+            src/lib/__tests__/builderStockCloudflareWorker.test.ts \
+            src/lib/__tests__/builderStockImportHandoff.test.ts \
+            src/lib/__tests__/builderStockPackageTieBreak.test.ts \
+            src/lib/__tests__/builderStockImageryInheritance.test.ts \
+            src/lib/__tests__/builderStockNotionViewContract.test.ts \
+            src/lib/__tests__/builderStockUploadContract.test.ts \
+            src/lib/__tests__/builderStockLadderExhaustion.test.ts
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
       # scanner, lint run or typecheck ever reached it — its test file sat

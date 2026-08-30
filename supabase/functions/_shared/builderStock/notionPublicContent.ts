@@ -73,6 +73,12 @@ export interface NotionRecoveryDiagnostics {
   row_pages_fetched: number;
   /** Set only when Notion itself refused us. */
   access_denied_status: number | null;
+  /**
+   * The link named a view (`?v=`) the page does not have. The read is refused
+   * rather than served another view, so this is the one diagnostic that says
+   * the source was rejected for naming a stock list nobody could find.
+   */
+  requested_view_missing: boolean;
 }
 
 export type NotionRecovery =
@@ -115,7 +121,8 @@ export type NotionRecovery =
      * named an authorisation error. Everything else means "public, but we
      * could not read a stock list out of it".
      */
-    reason: 'no_page_id' | 'unreachable' | 'access_denied' | 'no_content';
+    reason: 'no_page_id' | 'unreachable' | 'access_denied' | 'no_content'
+      | 'requested_view_missing';
     diagnostics: NotionRecoveryDiagnostics;
   };
 
@@ -264,6 +271,7 @@ function blankDiagnostics(): NotionRecoveryDiagnostics {
     has_collection: false, query_status: null, query_bytes: 0, row_count: 0,
     column_count: 0, simple_tables: 0, text_length: 0, access_denied_status: null,
     rows_with_source_images: 0, source_image_assets: 0, row_pages_fetched: 0,
+    requested_view_missing: false,
   };
 }
 
@@ -355,6 +363,17 @@ export async function recoverNotionPublicContent(
   diagnostics.block_type = shape.blockType;
   diagnostics.has_collection = !!shape.collectionId;
 
+  /*
+   * THE LINKED VIEW IS THE STOCK LIST. If `?v=` names a view this page does
+   * not have, there is no honest way to continue: any other view is a
+   * different set of properties, and importing it would replace the builder's
+   * stock with somebody else's answer to a question they did not ask.
+   */
+  if (shape.requestedViewMissing) {
+    diagnostics.requested_view_missing = true;
+    return { ok: false, reason: 'requested_view_missing', diagnostics };
+  }
+
   // (1) A database — the shape a real stock list takes. Its rows are not in
   // the chunk; the view has to be queried for them.
   if (shape.collectionId && shape.collectionViewId && shape.spaceId) {
@@ -363,12 +382,29 @@ export async function recoverNotionPublicContent(
       query = await postGuardedJson(endpoint('/api/v3/queryCollection?src=initial_load'), {
         source: { type: 'collection', id: shape.collectionId, spaceId: shape.spaceId },
         collectionView: { id: shape.collectionViewId, spaceId: shape.spaceId },
+        /*
+         * THE VIEW'S OWN QUERY, VERBATIM.
+         *
+         * A Notion view is a QUERY over a collection — a filter, a sort, a
+         * grouping — and the rows a reader sees are the rows that query
+         * returns. Sending an empty query here asked the COLLECTION instead,
+         * so a builder who linked a filtered view of a large database would
+         * have every row of it imported as their stock list. It has never
+         * shown on the source that reported this because that view filters
+         * nothing, which is exactly why it needed finding by reading the
+         * contract rather than the symptom.
+         *
+         * Spread verbatim rather than translated: Notion supplies the
+         * canonical structure, and re-deriving it would be a second
+         * implementation of somebody else's filter language, free to disagree
+         * with the page the builder is looking at.
+         */
         loader: {
           type: 'reducer',
           reducers: {
             collection_group_results: { type: 'results', limit: MAX_COLLECTION_ROWS },
           },
-          sortQuery: [],
+          ...(shape.viewQuery ?? {}),
           searchQuery: '',
           userTimeZone: 'Australia/Sydney',
         },

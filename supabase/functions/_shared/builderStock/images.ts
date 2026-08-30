@@ -27,7 +27,7 @@ import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
-import { nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
+import { STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE, nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
 import {
   assessPanoramaUsefulness, headingToProperty, readLatLng,
@@ -138,7 +138,7 @@ async function recordStageSkipped(
   item: EnrichableStockItem,
   stage: 'google_maps' | 'internet_search',
 ): Promise<StageOutcome> {
-  const message = 'Skipped: the builder supplied an image for this property.';
+  const message = STAGE_SKIPPED_MESSAGE;
   const { data: existing } = await db
     .from('builder_stock_item_images')
     .select('id')
@@ -152,7 +152,16 @@ async function recordStageSkipped(
       stock_item_id: item.id,
       organisation_id: item.organisation_id,
       source_stage: stage,
-      source_reference: 'stage-status',
+      /*
+       * ITS OWN REFERENCE, BECAUSE IT IS NOT A FINDING ABOUT THE PROPERTY.
+       * A skip records that stage 1 answered; a `stage-status` row records
+       * that the stage RAN and found nothing. Written under one reference the
+       * two were indistinguishable, so when stage 1's answer later changed —
+       * a builder cover re-measured as a marketing tile — the ladder read its
+       * own skips as an exhausted fallback and left the card blank with
+       * neither paid stage ever asked.
+       */
+      source_reference: STAGE_SKIPPED_REFERENCE,
       source_provider: stage === 'google_maps' ? 'google' : 'perplexity',
       processing_status: 'unavailable',
       verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
@@ -684,8 +693,8 @@ export async function enrichStockItem(
    */
   const { data: rows } = await db
     .from('builder_stock_item_images')
-    .select('id, source_stage, verification_status, processing_status, position, '
-      + 'storage_path, external_url, source_detail')
+    .select('id, source_stage, source_reference, error_message, verification_status, '
+      + 'processing_status, position, storage_path, external_url, source_detail')
     .eq('stock_item_id', item.id);
 
   const stage = nextImageStage((rows ?? []) as never, {
@@ -736,8 +745,8 @@ export async function enrichStockItem(
    */
   const { data: settledRows } = await db
     .from('builder_stock_item_images')
-    .select('id, source_stage, verification_status, processing_status, position, '
-      + 'storage_path, external_url, source_detail')
+    .select('id, source_stage, source_reference, error_message, verification_status, '
+      + 'processing_status, position, storage_path, external_url, source_detail')
     .eq('stock_item_id', item.id);
   const remainingStage = nextImageStage((settledRows ?? []) as never, {
     sourceSettlementComplete: item.sourceSettlementComplete !== false,

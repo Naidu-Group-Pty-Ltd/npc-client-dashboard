@@ -86,11 +86,21 @@ beforeEach(() => {
 });
 
 describe("AmlCases — register shell", () => {
-  it("renders header, saved views, toolbar and the loaded register", async () => {
+  it("renders header, queues, toolbar and the loaded register", async () => {
     setup();
     expect(await screen.findByRole("heading", { name: "Case register" })).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Saved views" })).toBeInTheDocument();
-    expect(screen.getByRole("search", { name: "Filter the case register" })).toBeInTheDocument();
+    /* Four QUEUES — questions about the work — replaced eleven chips, seven
+       of which duplicated the Status and Risk dropdowns beside them. */
+    const queues = screen.getByRole("navigation", { name: "Case queues" });
+    for (const q of ["All open", "Mine", "Needs attention", "Ready for decision"]) {
+      expect(within(queues).getByRole("button", { name: new RegExp(q) })).toBeInTheDocument();
+    }
+    for (const gone of ["High risk", "Cleared", "Closed", "Awaiting client"]) {
+      expect(within(queues).queryByRole("button", { name: new RegExp(`^${gone}`) }))
+        .not.toBeInTheDocument();
+    }
+    expect(screen.getByRole("search", { name: "Search and filter the case register" }))
+      .toBeInTheDocument();
     expect(await screen.findByText("1 case")).toBeInTheDocument();
     // The work-queue columns: where in the process, how risky, may the
     // service proceed, and what is waiting. Status is text, never a raw
@@ -103,31 +113,61 @@ describe("AmlCases — register shell", () => {
     expect(screen.queryByText("client_submitted")).not.toBeInTheDocument();
   });
 
-  it("applies a saved view from the ?view= deep link with a single filtered fetch", async () => {
+  it("applies a saved view from the ?view= deep link with ONE filtered fetch", async () => {
     setup("/admin/aml/cases?view=awaiting_decision");
-    await waitFor(() => {
-      expect((list.mock.calls.at(-1)?.[0] as any)?.status).toBe("escalated_mlro");
+    await waitFor(() =>
+      expect(list.mock.calls.some((c) => (c[0] as any)?.status === "escalated_mlro")).toBe(true));
+
+    /* The rule this has always protected: the register's own rows come from
+       exactly ONE filtered request. The view seeds the filter state before
+       the first fetch, so a deep-linked mount never issues an unfiltered
+       request that could race the filtered one and overwrite the rows.
+
+       There is a second call now — an unfiltered snapshot read only to count
+       the queues — and it must carry no filters at all and never touch the
+       rows on screen. Counting the filtered rows would report the
+       intersection of a queue with whatever is selected and call it the
+       queue. */
+    const filtered = list.mock.calls.filter((c) => {
+      const p = (c[0] ?? {}) as Record<string, unknown>;
+      return p.status !== undefined || p.risk !== undefined || p.assigned_to_me !== undefined;
     });
-    // The view seeds the initial filter state, so the mount never issues an
-    // unfiltered request that could race the filtered one.
-    expect(list).toHaveBeenCalledTimes(1);
-    const chip = screen.getByRole("button", { name: "Ready for decision" });
-    expect(chip).toHaveAttribute("aria-pressed", "true");
+    expect(filtered).toHaveLength(1);
+    expect((filtered[0][0] as any).status).toBe("escalated_mlro");
+
+    const queues = screen.getByRole("navigation", { name: "Case queues" });
+    expect(within(queues).getByRole("button", { name: /Ready for decision/ }))
+      .toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("counts a queue from an unfiltered snapshot, and shows the number", async () => {
+    setup();
+    const queues = await screen.findByRole("navigation", { name: "Case queues" });
+    // "All open" is the server's own total, exact whether or not the page
+    // was truncated.
+    await waitFor(() =>
+      expect(within(queues).getByRole("button", { name: /All open/ })).toHaveTextContent("1"));
   });
 
   it("shows the active-filter summary and clears everything with one action", async () => {
     setup("/admin/aml/cases?view=high_risk");
-    await waitFor(() => {
-      expect((list.mock.calls.at(-1)![0] as any).risk).toBe("high");
-    });
-    expect(await screen.findByText("Risk: High")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    // The snapshot read is unfiltered, so the filtered call is not
+    // necessarily the last one.
+    await waitFor(() =>
+      expect(list.mock.calls.some((c) => (c[0] as any)?.risk === "high")).toBe(true));
+    /* `high_risk` was a chip sitting beside the Risk dropdown that did the
+       same thing. Its `?view=` key still resolves — it simply arrives as the
+       Risk filter it always was underneath, and as a pill you can take off
+       on its own rather than an inert grey label. */
+    expect(await screen.findByRole("button", { name: /Risk: High/ })).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: "Clear filters" })[0]);
     await waitFor(() => {
       const params = list.mock.calls.at(-1)![0] as any;
       expect(params.risk).toBeUndefined();
       expect(params.status).toBeUndefined();
+      expect(params.assigned_to_me).toBeUndefined();
     });
-    expect(screen.getByRole("button", { name: "All open" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /All open/ })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("opens the legacy dialog from the ?open=&tab= deep link and clears the params", async () => {
@@ -186,7 +226,7 @@ describe("AmlCases — register shell", () => {
     // "no matches" for data that hasn't arrived.
     let resolveNext: (v: unknown) => void = () => {};
     list.mockImplementationOnce(() => new Promise((r) => { resolveNext = r; }));
-    fireEvent.click(screen.getByRole("button", { name: "High risk" }));
+    fireEvent.click(screen.getByRole("button", { name: /Ready for decision/ }));
     expect(await screen.findByText("Loading the case register")).toBeInTheDocument();
     expect(screen.queryByText("No cases match the current filters")).not.toBeInTheDocument();
     resolveNext({ cases: [baseCase()], total: 1 });

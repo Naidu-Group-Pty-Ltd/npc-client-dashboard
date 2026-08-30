@@ -331,12 +331,30 @@ Deno.serve(async (req: Request) => {
      * builder closed the browser, with no operator anywhere in the loop.
      */
     let publication: Awaited<ReturnType<typeof publishUploadIfReady>> | null = null;
-    if (claimed.upload_id && claimed.lifecycle_status === 'staged') {
-      publication = await publishUploadIfReady(supabase, claimed.upload_id);
+    /*
+     * THE UPLOAD THAT IS WAITING, NOT THE ONE THAT IS SERVING.
+     *
+     * This used to read `claimed.upload_id` behind `lifecycle_status ===
+     * 'staged'`, and both halves were wrong for a replacement whose rows all
+     * MATCHED. Such a row is `active`, not staged, so the question was never
+     * asked; and its `upload_id` is still the OLD upload, because re-pointing
+     * it is step 1 of the cutover — so the one id in hand named the dataset
+     * already on screen. `pending_upload_id` is the upload holding this
+     * property's replacement values.
+     *
+     * This is now a fast path rather than the mechanism. The scheduler sweeps
+     * for ready uploads every tick, because an import whose rows all matched
+     * owes NO image work at all and therefore has no completed item to hang
+     * the question on — which is how a ready upload came to wait for ever.
+     */
+    const waitingUpload = claimed.pending_upload_id ?? (
+      claimed.lifecycle_status === 'staged' ? claimed.upload_id : null);
+    if (waitingUpload) {
+      publication = await publishUploadIfReady(supabase, waitingUpload);
       if (publication.published) {
         console.log('[builder-stock-image-settler] stock list published', {
           phase: 'publication',
-          upload_id: claimed.upload_id,
+          upload_id: waitingUpload,
           promoted: publication.promoted,
           archived: publication.archived,
         });

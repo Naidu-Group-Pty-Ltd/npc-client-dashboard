@@ -111,6 +111,12 @@ export interface ImportOutcome {
    * archives what they still supply and nothing else.
    */
   replacesUploadIds: string[];
+  /**
+   * New properties that inherited the photograph an ARCHIVED row already held
+   * for the same property — what stops a delete-and-re-upload blanking the
+   * Marketplace while every picture is derived again from scratch.
+   */
+  inheritedImagery: number;
 }
 
 interface ExistingItem {
@@ -138,6 +144,11 @@ interface ExistingItem {
    * upload used to serve it is gone. See `replaces_upload_ids`.
    */
   upload_id: string | null;
+  /**
+   * Whether this row holds a settled photograph — read so an ARCHIVED row can
+   * hand one to the row a re-import creates for the same property.
+   */
+  primary_image_id: string | null;
   /** `source_row->>source_anchor`, projected under this alias. */
   source_anchor: string | null;
 }
@@ -152,6 +163,8 @@ interface ExistingItem {
 interface AnchoredProperty {
   id: string;
   identity: StockPropertyIdentity;
+  /** Set on the archived index only, where it names the photograph to carry. */
+  primaryImageId?: string | null;
 }
 
 /**
@@ -165,7 +178,69 @@ interface AnchoredProperty {
  */
 const EXISTING_ITEM_SELECT = 'id, external_reference, development_name, project_name, '
   + 'unit_number, lot_number, address_line, suburb, building_size_sqm, '
-  + 'lifecycle_status, upload_id, source_anchor:source_row->>source_anchor';
+  + 'lifecycle_status, upload_id, primary_image_id, '
+  + 'source_anchor:source_row->>source_anchor';
+
+/**
+ * Lend a property's settled imagery to the row a re-import just created.
+ *
+ * COPIES, NEVER MOVES. The archived row keeps its own image rows and its own
+ * pointer, so the record of what the deleted list served survives and this can
+ * never be destructive. Only `stock_item_id` and `upload_id` change on the
+ * copies; every byte, verification status and provenance detail is the
+ * donor's, because "is this photograph this property's" was already answered
+ * for this exact property.
+ */
+async function carryImageryForward(
+  // The same untyped client every other writer in this module takes.
+  db: any,
+  input: { organisationId: string; uploadId: string },
+  donor: { id: string; primaryImageId: string | null },
+  itemId: string,
+): Promise<boolean> {
+  const { data: donorImages, error: readError } = await db
+    .from('builder_stock_item_images')
+    .select('*')
+    .eq('stock_item_id', donor.id)
+    .eq('organisation_id', input.organisationId)
+    .order('position', { ascending: true });
+  if (readError) throw readError;
+  const rows = (donorImages ?? []) as Array<Record<string, unknown>>;
+  if (!rows.length) return false;
+
+  const copies = rows.map((row) => {
+    const copy = { ...row };
+    delete copy.id;
+    delete copy.created_at;
+    delete copy.updated_at;
+    copy.stock_item_id = itemId;
+    copy.upload_id = input.uploadId;
+    return copy;
+  });
+
+  const { data: written, error: writeError } = await db
+    .from('builder_stock_item_images').insert(copies).select('id');
+  if (writeError) throw writeError;
+  const inserted = (written ?? []) as Array<{ id: string }>;
+  if (!inserted.length) return false;
+
+  /*
+   * Which copy leads is decided by the donor's own pointer, found by POSITION
+   * in the ordered read — the one property of a row that survives copying.
+   * Where the donor's pointer names nothing we copied, the first copy leads
+   * and the ordinary primary enforcement corrects it, so the worst case is
+   * today's behaviour.
+   */
+  const donorPrimaryIndex = rows.findIndex((row) => row.id === donor.primaryImageId);
+  const lead = inserted[donorPrimaryIndex >= 0 ? donorPrimaryIndex : 0];
+  const { error: pointError } = await db
+    .from('builder_stock_items')
+    .update({ primary_image_id: lead.id })
+    .eq('id', itemId)
+    .eq('organisation_id', input.organisationId);
+  if (pointError) throw pointError;
+  return true;
+}
 
 function referenceKey(item: ExistingItem): string | null {
   const value = item.external_reference?.trim().toLowerCase();
@@ -339,6 +414,7 @@ export async function importStockRecords(
     staged: 0,
     deferred: 0,
     replacesUploadIds: [],
+    inheritedImagery: 0,
   };
 
   /**
@@ -448,6 +524,20 @@ export async function importStockRecords(
    * tie-break; it is `identityDifferences`.
    */
   const byAnchor = new Map<string, AnchoredProperty>();
+  /**
+   * ARCHIVED rows that still hold a photograph, indexed by anchor.
+   *
+   * Deleting a stock list ARCHIVES its rows and the photographs live ON those
+   * rows, so a re-import of the same list inserts fresh rows holding nothing
+   * and every card reads "No image found" until the engine has re-downloaded
+   * and re-parsed every linked package it read an hour ago. Upload 479689a0
+   * was deleted holding 20 of 23 photographs; its replacement began at zero.
+   *
+   * Kept separate from `byAnchor` on purpose: this index may only ever LEND a
+   * photograph. It never revives a row and it is never a match key, so an
+   * archived property stays archived and a new row stays a new row.
+   */
+  const archivedByAnchor = new Map<string, AnchoredProperty>();
   /** How much PUBLISHED stock this organisation already serves. */
   let published = 0;
   /** Item id -> the upload supplying it before this import touched anything. */
@@ -473,7 +563,18 @@ export async function importStockRecords(
     lifecycleBefore.set(item.id, item.lifecycle_status);
 
     const anchor = item.source_anchor?.trim();
-    if (!anchor || item.lifecycle_status === 'archived') continue;
+    if (!anchor) continue;
+    if (item.lifecycle_status === 'archived') {
+      // Oldest-first read, so the last write wins: the most recent answer.
+      if (item.primary_image_id) {
+        archivedByAnchor.set(anchor, {
+          id: item.id,
+          identity: stockPropertyIdentity(item),
+          primaryImageId: item.primary_image_id,
+        });
+      }
+      continue;
+    }
     // Read oldest-first, so the last write for an anchor is the newest row.
     // The identity is computed here and only here — for the rows an anchor can
     // actually reach, rather than for every row the organisation holds.
@@ -657,6 +758,44 @@ export async function importStockRecords(
         itemId = data.id;
         outcome.imported += 1;
         if (newPropertyLifecycle === 'staged') outcome.staged += 1;
+
+        /*
+         * INHERIT THE PHOTOGRAPH THIS PROPERTY ALREADY HAD.
+         *
+         * ANCHOR TO FIND IT, IDENTITY TO LICENSE IT — never the anchor alone.
+         * That rule is not new here: it is exactly what governs the live
+         * anchor key above, for exactly the reason it matters more on this
+         * path. A source row can be re-used for a different property, and a
+         * photograph carried on the strength of a re-used row would put one
+         * property's house on another's card. So the archived candidate must
+         * agree on development, lot, street, design AND building size —
+         * `identityDifferences` empty — before anything travels.
+         *
+         * It is also why the lot alone can never be the key: this library
+         * holds Lot 60941 Cloverton twice and Lot 1342 Austin twice, the pairs
+         * differing only in building size, and treating either pair as one
+         * property would silently delete a real one.
+         *
+         * A failure costs the inheritance and never the import: the engine
+         * derives the photograph again, which is what it does today.
+         */
+        const donor = keys.anchor ? archivedByAnchor.get(keys.anchor) : undefined;
+        if (donor && identityDifferences(donor.identity, identity).length === 0) {
+          try {
+            const carried = await carryImageryForward(
+              db, { organisationId: input.organisationId, uploadId: input.uploadId },
+              { id: donor.id, primaryImageId: donor.primaryImageId ?? null }, itemId);
+            if (carried) outcome.inheritedImagery += 1;
+          } catch (error) {
+            console.warn('[builderStock] imagery could not be carried forward', {
+              upload_id: input.uploadId,
+              stock_item_id: itemId,
+              donor_item_id: donor.id,
+              phase: 'imagery_inheritance',
+              message: safeFailureReason(error),
+            });
+          }
+        }
 
         // Keep the in-memory index current so two rows in ONE file that match
         // each other update rather than colliding on the unique index.

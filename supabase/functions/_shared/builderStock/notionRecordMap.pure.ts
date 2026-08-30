@@ -39,6 +39,35 @@ export interface NotionPageShape {
   collectionViewId: string | null;
   spaceId: string | null;
   title: string | null;
+  /**
+   * The link named a view with `?v=` and this page does not have it.
+   *
+   * SAID RATHER THAN SUBSTITUTED. This used to fall through to `viewIds[0]`,
+   * so a builder who linked one view could be served a different one — a
+   * different set of properties — with nothing anywhere reporting it. Which
+   * rows belong to a stock list is the one question an importer may never
+   * guess at, so the caller fails the source read on this.
+   */
+  requestedViewMissing: boolean;
+  /**
+   * The view's OWN query — its filter, its sort, its grouping.
+   *
+   * A Notion view is a query over a collection, not a slice of it, and the
+   * rows a reader sees are the rows that query returns. Querying the
+   * collection with an empty query therefore reads the whole database
+   * whenever the view filters, which is a different stock list from the one
+   * the builder linked. Passed through verbatim: Notion already supplies the
+   * canonical structure and re-deriving it would be a second, disagreeing
+   * implementation of somebody else's filter language.
+   *
+   * IT IS ASSEMBLED FROM TWO PLACES, BECAUSE NOTION STORES IT IN TWO PLACES.
+   * `query2` holds the filter set in the view's Filter menu;
+   * `format.property_filters` holds the filter CHIPS above the table. Both
+   * narrow what a reader sees and Notion applies them together, so reading
+   * only `query2` reads a view the builder is not looking at — see
+   * `viewMembershipQuery`.
+   */
+  viewQuery: Record<string, unknown> | null;
 }
 
 /**
@@ -214,9 +243,23 @@ export function describeNotionPage(
   const viewIds = Array.isArray(block.view_ids)
     ? block.view_ids.filter((id): id is string => typeof id === 'string')
     : [];
-  const collectionViewId = (preferredViewId && viewIds.includes(preferredViewId))
-    ? preferredViewId
-    : (viewIds[0] ?? preferredViewId ?? null);
+  /*
+   * AN EXPLICIT VIEW IS HONOURED OR THE READ FAILS — never quietly swapped.
+   *
+   * `?v=` on the link is the builder saying WHICH view is the stock list. A
+   * fallback to `viewIds[0]` answers a question nobody asked and imports a
+   * different set of properties; with no `?v=` there is no such instruction,
+   * so the page's own first view is the documented default.
+   */
+  const requestedViewMissing = !!preferredViewId && !viewIds.includes(preferredViewId);
+  const collectionViewId = preferredViewId
+    ? (viewIds.includes(preferredViewId) ? preferredViewId : null)
+    : (viewIds[0] ?? null);
+
+  const viewRecord = collectionViewId
+    ? unwrapNotionRecord(tableOf(recordMap, 'collection_view')[collectionViewId])
+    : null;
+  const viewQuery = viewMembershipQuery(viewRecord);
 
   const spaceId = typeof block.space_id === 'string' ? block.space_id
     : notionEntrySpaceId(entry)
@@ -236,13 +279,82 @@ export function describeNotionPage(
     collectionViewId,
     spaceId,
     title: (collectionTitle || blockTitle || null),
+    requestedViewMissing,
+    viewQuery,
   };
+}
+
+/**
+ * EVERYTHING THAT DECIDES WHICH ROWS A VIEW SHOWS, IN ONE QUERY.
+ *
+ * A Notion table view narrows its collection from two independent stores and
+ * the reader sees the intersection:
+ *
+ *   collection_view.query2                  the view's Filter menu
+ *   collection_view.format.property_filters the filter CHIPS above the table
+ *
+ * Reading only the first is reading a different view. Measured against a live
+ * builder page: `query2` was `{ sort: [...] }` with no filter at all, while
+ * `property_filters` carried two chips — a status and a state — and the
+ * collection holds 23 rows where the page shows 18. Every one of the five the
+ * page withholds was excluded by a chip. Nothing about that is particular to
+ * that page: a chip is one click in Notion's toolbar and any builder may add
+ * one at any time, on any column, at which point their stock list silently
+ * stops being the list we import.
+ *
+ * THE CLAUSES TRAVEL VERBATIM. Each entry's inner `filter` is already exactly
+ * one filter clause in Notion's own language — `{ property, filter }` — so it
+ * is lifted, not translated. Re-deriving it was tried against the live
+ * endpoint and is how you get a plausible-looking query that returns nothing:
+ * a chip carrying several accepted values is an `enum_is` whose `value` is an
+ * ARRAY, which no hand-written equivalent guessed correctly.
+ *
+ * AND, BECAUSE THAT IS WHAT THE PAGE DOES. Chips narrow the view's own filter
+ * rather than widening it. A view with no chips is passed through completely
+ * unchanged, so this can only ever remove rows the reader was not being shown.
+ */
+export function viewMembershipQuery(
+  viewRecord: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null {
+  if (!viewRecord) return null;
+
+  const raw = viewRecord.query2 ?? viewRecord.query ?? null;
+  const query = (raw && typeof raw === 'object')
+    ? { ...(raw as Record<string, unknown>) }
+    : null;
+
+  const format = (viewRecord.format && typeof viewRecord.format === 'object')
+    ? viewRecord.format as Record<string, unknown> : {};
+  const chips = Array.isArray(format.property_filters) ? format.property_filters : [];
+
+  const clauses: Record<string, unknown>[] = [];
+  for (const chip of chips) {
+    if (!chip || typeof chip !== 'object') continue;
+    const clause = (chip as Record<string, unknown>).filter;
+    // A clause names the column it filters. Anything that does not is a shape
+    // this function does not recognise, and inventing a reading of it would
+    // be exactly the guess the whole module refuses to make.
+    if (!clause || typeof clause !== 'object') continue;
+    const named = clause as Record<string, unknown>;
+    if (typeof named.property !== 'string' || !named.filter) continue;
+    clauses.push(named);
+  }
+
+  if (clauses.length === 0) return query;
+
+  const existing = query?.filter;
+  const filters = (existing && typeof existing === 'object')
+    ? [existing as Record<string, unknown>, ...clauses]
+    : clauses;
+
+  return { ...(query ?? {}), filter: { operator: 'and', filters } };
 }
 
 function blank(): NotionPageShape {
   return {
     pageBlockId: null, blockType: null, collectionId: null,
     collectionViewId: null, spaceId: null, title: null,
+    requestedViewMissing: false, viewQuery: null,
   };
 }
 

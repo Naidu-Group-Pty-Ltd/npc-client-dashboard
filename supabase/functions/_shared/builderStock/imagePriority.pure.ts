@@ -48,6 +48,49 @@ import {
   chooseDisplayableImage, isDisplayableSourceImage, servesCleanOriginal,
   type DisplayableImage,
 } from './primaryImage.ts';
+import { needsEligibilityAssessment } from './marketplaceEligibility.pure.ts';
+import { sanitizationSettled, storedOriginalSha } from './sanitizedDerivative.pure.ts';
+
+/**
+ * The reference a SKIPPED stage row carries, and the message it carries.
+ *
+ * A skip is not a finding about the property; it records that stage 1 answered
+ * so the stages below were never asked. It used to be written under the same
+ * `stage-status` reference as a stage that RAN and found nothing, which made
+ * the two indistinguishable — see `stageWasAttempted`.
+ */
+export const STAGE_SKIPPED_REFERENCE = 'stage-skipped';
+export const STAGE_SKIPPED_MESSAGE =
+  'Skipped: the builder supplied an image for this property.';
+
+/**
+ * Did this stage actually RUN, or was it merely skipped?
+ *
+ * A skip is written when stage 1 has answered, and STAGE 1'S ANSWER CAN
+ * CHANGE. A builder image measured clean today can be re-measured as a
+ * marketing tile tomorrow — a new cover on the same row, a decoder that reads
+ * more of the frame, a version bump. When it does, the skip rows written under
+ * the old answer are still sitting there, and every test below that asks "is
+ * there a row for this stage?" reads them as an exhausted stage.
+ *
+ * Measured in production: two properties settled with a displayable builder
+ * cover, both paid stages recorded `Skipped: the builder supplied an image`,
+ * and the cover was later refused as an annotated marketing tile. The cards
+ * went blank holding two rows that said the fallback ladder had been tried.
+ * Neither stage had ever been asked.
+ *
+ * Skips written before this reference existed are recognised by their message,
+ * which is why it is a constant rather than a literal at the call site.
+ */
+export function stageWasAttempted(image: DisplayableImage, stage: string): boolean {
+  if (image.source_stage !== stage) return false;
+  const row = image as DisplayableImage & {
+    source_reference?: unknown; error_message?: unknown;
+  };
+  if (row.source_reference === STAGE_SKIPPED_REFERENCE) return false;
+  if (row.error_message === STAGE_SKIPPED_MESSAGE) return false;
+  return true;
+}
 
 /** Where a web-search image lives. Unchanged; its VERIFICATION is what is new. */
 export const WEB_SEARCH_STAGE = 'internet_search';
@@ -219,12 +262,36 @@ export function nextImageStage(
    * A source row that is still on its way to a verdict — stored but not yet
    * measured, or measured and now being repaired. Either way the question
    * "does this property have a picture of its own?" is unanswered.
+   *
+   * AND A REFUSAL IS AN ANSWER. This used to be `!isDisplayableSourceImage`
+   * and nothing else, so a source image that had been measured, refused, and
+   * whose repair question was closed too counted as evidence that had not
+   * arrived — for ever. `wait` writes nothing and advances nothing, so such a
+   * property never reached stage 2 or stage 3 however many times it was
+   * claimed. It is the only answer here with no exit, which is what made it
+   * the dangerous one to get wrong.
+   *
+   * Both halves of "on its way" are now asked directly. The eligibility
+   * verdict is outstanding while `needsEligibilityAssessment` says the stored
+   * decision predates the current version — the same test the eligibility
+   * sweep itself uses, so the two cannot disagree about what is owed. The
+   * repair is outstanding while `sanitizationSettled` finds no derivative, no
+   * clearance and no recorded failure bound to these exact bytes.
+   *
+   * A convicted image with both questions closed is a finished stage 1 with a
+   * negative answer, and the ladder moves down — which is precisely what the
+   * package-retirement path promises when it says a property "loses its
+   * builder image and GAINS the fallback ladder".
    */
-  const sourcePending = rows.some((image) =>
-    image.source_stage === SOURCE_SUPPLIED_STAGE
-    && image.verification_status === SOURCE_SUPPLIED_VERIFICATION
-    && image.processing_status !== 'failed'
-    && !isDisplayableSourceImage(image));
+  const sourcePending = rows.some((image) => {
+    if (image.source_stage !== SOURCE_SUPPLIED_STAGE) return false;
+    if (image.verification_status !== SOURCE_SUPPLIED_VERIFICATION) return false;
+    if (image.processing_status === 'failed') return false;
+    if (isDisplayableSourceImage(image)) return false;
+    const detail = image.source_detail ?? {};
+    return needsEligibilityAssessment(detail)
+      || !sanitizationSettled(detail, storedOriginalSha(detail));
+  });
   if (sourcePending || !options.sourceSettlementComplete) return 'wait';
 
   /*
@@ -240,10 +307,10 @@ export function nextImageStage(
    * behind them. Any row for a stage is now the record that it ran.
    */
   if (rows.some((image) => isVerifiedWebImage(image))) return 'none';
-  if (!rows.some((image) => image.source_stage === WEB_SEARCH_STAGE)) return 'web_search';
+  if (!rows.some((image) => stageWasAttempted(image, WEB_SEARCH_STAGE))) return 'web_search';
 
   if (rows.some((image) => isStreetViewImage(image))) return 'none';
-  if (!rows.some((image) => image.source_stage === STREET_VIEW_STAGE)) return 'street_view';
+  if (!rows.some((image) => stageWasAttempted(image, STREET_VIEW_STAGE))) return 'street_view';
 
   // Every stage has been tried and none produced a displayable picture.
   return 'none';

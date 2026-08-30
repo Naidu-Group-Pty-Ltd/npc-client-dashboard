@@ -104,11 +104,17 @@ describe("Scenario A — a closed, enquiry-only case", () => {
     expect(deriveStageHeadline({ caseClosed: true, action: a as never })).toBe("case_closed");
   });
 
-  it("offers no ordinary advance-status control on either dimension", () => {
+  it("offers no ordinary advance-status control, on any stage", () => {
+    /* The rail's "Advance status" card is gone everywhere. It read the
+       CANONICAL lifecycle as well as the legacy one, because the two can
+       disagree — and the closed reading is still made on both dimensions,
+       since a retained record must never be presented as a case in
+       progress. */
     const code = strip(panelSrc);
     expect(code).toMatch(
       /caseStage\(caseRow\) === "closed" \|\| caseRow\.status === "closed"/);
-    expect(code).toMatch(/const nextOptions = closed \? \[\]/);
+    expect(code).not.toMatch(/nextOptions/);
+    expect(code).not.toContain("Advance status");
   });
 
   it("offers reopening as its own reason-bearing action, never a transition", () => {

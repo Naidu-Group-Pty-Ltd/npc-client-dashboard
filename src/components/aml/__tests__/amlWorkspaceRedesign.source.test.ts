@@ -23,6 +23,8 @@ const workspace = read("src/pages/aml/AmlCaseWorkspace.tsx");
 const register = read("src/pages/aml/AmlCases.tsx");
 const actionPanel = read("src/components/aml/workspace/AmlContextActionPanel.tsx");
 const readinessCard = read("src/components/aml/workspace/AmlServiceReadinessCard.tsx");
+/** The authoritative transition map — the rail no longer keeps a copy. */
+const edgeFunction = read("supabase/functions/aml-cases/index.ts");
 
 const componentDir = "src/components/aml/workspace";
 const componentFiles = readdirSync(join(repo, componentDir))
@@ -127,40 +129,68 @@ describe("no new server surface", () => {
     }
   });
 
-  it("the only mutation in the rail is the transition the old panel already made", () => {
+  it("the rail performs NO mutation at all", () => {
+    /* It used to carry "Advance status" — an optional-reason box and a row of
+       buttons that moved the case lifecycle straight from the rail. That is
+       gone from every stage: a lifecycle is the consequence of decisions that
+       carry their own reasons, and every state it could reach is set where
+       that decision is recorded. What is left is a notice on a closed case
+       and the authorised reopen, which the workspace performs. */
     const mutations = actionPanel.match(/aml\w+Api\.\w+\(/g) ?? [];
-    expect([...new Set(mutations)]).toEqual(["amlCasesApi.transition("]);
+    expect(mutations).toEqual([]);
+    // Prose may name what left; the component may not render it.
+    const code = actionPanel.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(code).not.toContain("Advance status");
   });
 });
 
 describe("the case state machine is untouched", () => {
-  it("the action rail keeps the legal transition map verbatim", () => {
+  it("the legal transition map is the SERVER's, and the rail no longer copies it", () => {
+    /* The map was mirrored in the rail so it could draw the right buttons.
+       With no buttons there is nothing to mirror — and a second copy of a
+       state machine is how two of them come to disagree. The authoritative
+       map is unchanged in `aml-cases`. */
     for (const line of [
-      'draft: ["kyc_in_progress", "closed"]',
-      'kyc_in_progress: ["kyc_complete", "edd_required", "blocked", "closed"]',
-      'kyc_complete: ["under_review", "edd_required", "cleared", "closed"]',
-      'edd_required: ["under_review", "escalated_mlro", "blocked", "closed"]',
-      'under_review: ["cleared", "escalated_mlro", "edd_required", "blocked", "closed"]',
-      'escalated_mlro: ["cleared", "blocked", "closed"]',
-      'cleared: ["under_review", "closed"]',
-      'blocked: ["under_review", "closed"]',
+      "draft: ['kyc_in_progress', 'closed']",
+      "kyc_in_progress: ['kyc_complete', 'edd_required', 'blocked', 'closed']",
+      "cleared: ['under_review', 'closed']",
       "closed: []",
     ]) {
-      expect(actionPanel).toContain(line);
+      expect(edgeFunction).toContain(line);
     }
+    expect(actionPanel).not.toContain("NEXT_STATUSES");
   });
 
-  it("Blocked and Closed still require a confirmed, non-empty reason", () => {
-    expect(actionPanel).toContain(
-      'PANEL_DESTRUCTIVE_TRANSITIONS = new Set<AmlCaseStatus>(["blocked", "closed"])',
+  it("closing still requires a confirmed, non-empty reason", () => {
+    /* `closed` is TERMINAL and the record is retained from that point, so it
+       was never an ordinary advance and must never be one click. It moved to
+       the case header — beside the case's own identity rather than the stage
+       somebody happens to be on — and it asks for a reason it will not
+       proceed without. */
+    expect(workspace).toContain('amlCasesApi.transition(caseId, "closed"');
+    const closeFn = workspace.slice(
+      workspace.indexOf("const closeCase = useCallback"),
+      workspace.indexOf("const closeCase = useCallback") + 2200,
     );
-    expect(actionPanel).toContain("AlertDialog");
-    expect(actionPanel).toContain("!destructiveReason.trim()");
+    expect(closeFn).toContain("required: true");
+    expect(closeFn).toMatch(/minLength:\s*10/);
+    expect(closeFn).toContain("confirmLabel");
+    // And it is never offered to a reader who may not write.
+    expect(workspace).toContain("onClose={canWrite ?");
   });
 
-  it("statuses render through the shared labels, never as raw enums", () => {
-    expect(actionPanel).toContain("CASE_STATUS_LABELS");
+  it("a terminal act is never offered on an already-terminal record", () => {
+    const header = read("src/components/aml/workspace/AmlWorkspaceHeader.tsx");
+    expect(header).toContain("onClose && !closed");
+    // Read on BOTH dimensions — they can disagree, and did in production.
+    expect(header).toMatch(/caseStage\(caseRow\) === "closed" \|\| caseRow\.status === "closed"/);
+  });
+
+  it("the rail renders no status vocabulary at all", () => {
+    // The rule it protected — a raw enum never reaches an operator — is kept
+    // by there being nothing to render.
     expect(actionPanel).not.toMatch(/\{caseRow\.status\}/);
+    expect(actionPanel).not.toContain("CASE_STATUS_LABELS");
   });
 });
 

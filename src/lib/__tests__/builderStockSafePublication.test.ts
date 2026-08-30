@@ -210,12 +210,147 @@ describe('the cutover is atomic and refuses unless ready', () => {
   });
 
   it('publishes itself, with no operator in the loop', () => {
+    /*
+     * THIS TEST USED TO PIN THE DEFECT.
+     *
+     * It asserted `publishUploadIfReady(supabase, claimed.upload_id)` behind
+     * `claimed.lifecycle_status === 'staged'` — which is what the settler did,
+     * and both halves were wrong for a replacement whose rows all MATCHED. A
+     * matched row is `active` rather than staged, and its `upload_id` is still
+     * the OLD upload because re-pointing it is step 1 of the cutover. So the
+     * one code path that could publish was asking about the dataset already on
+     * screen, on rows it never looked at.
+     *
+     * Pinned on the waiting upload now, which is the only id that names the
+     * upload holding this property's replacement values.
+     */
     const settler = readFileSync(join(REPO_ROOT,
       'supabase/functions/builder-stock-image-settler/index.ts'), 'utf8');
-    // Asked after every completed item, because that item may be the last one
-    // its upload was waiting on and nothing else is watching.
-    expect(settler).toMatch(/publishUploadIfReady\(supabase, claimed\.upload_id\)/);
-    expect(settler).toMatch(/claimed\.lifecycle_status === 'staged'/);
+    expect(settler).toMatch(/publishUploadIfReady\(supabase, waitingUpload\)/);
+    expect(settler).toMatch(/claimed\.pending_upload_id \?\?/);
+    // And never again the id of the upload that is currently serving.
+    expect(settler).not.toMatch(/publishUploadIfReady\(supabase, claimed\.upload_id\)/);
+  });
+
+  it('the SCHEDULER asks too — an item finishing is not the mechanism', () => {
+    /*
+     * REPORTED, 30 AUGUST 2026. A replacement landed 18 detected / 0 new / 18
+     * updated, readiness answered TRUE, and `published_at` stayed NULL while
+     * the Marketplace served the superseded dataset.
+     *
+     * The settler was the ONLY caller of the cutover anywhere, and it asks
+     * inside the branch that has just settled a claimed property. An import
+     * whose rows all matched stages nothing and inserts nothing, so it owes no
+     * image work: the claim returns empty, the branch never runs, and nobody
+     * ever asks. A builder re-uploading their list is the ordinary case, and
+     * it is exactly the case with no completed item to hang the question on.
+     *
+     * So publication is a question the scheduler asks, every tick, rather than
+     * a side effect of unrelated work finishing.
+     */
+    const sql = readFileSync(join(REPO_ROOT,
+      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
+    const tick = sql.slice(sql.indexOf(
+      'FUNCTION public.settle_builder_stock_marketplace_eligibility_tick'));
+
+    // Asked before anything is counted, and not behind any condition.
+    const ask = tick.indexOf('PERFORM public.publish_ready_builder_stock_uploads()');
+    expect(ask).toBeGreaterThan(-1);
+    expect(ask).toBeLessThan(tick.indexOf('SELECT count(*) INTO v_outstanding'));
+    expect(ask).toBeLessThan(tick.indexOf('IF v_outstanding'));
+  });
+
+  it('an owed cutover keeps the scheduler alive', () => {
+    // The retirement test is a sum, and a quantity missing from it is one the
+    // sweep can retire on top of. An upload owing no image work contributes
+    // nothing to the other three counts.
+    const sql = readFileSync(join(REPO_ROOT,
+      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
+    expect(sql).toContain(
+      'IF v_outstanding + v_fallback + v_item_work + v_publications = 0 THEN');
+    expect(sql).toContain('v_publications := public.builder_stock_publications_pending()');
+  });
+
+  it('a SUPERSEDED upload can never publish, and that is enforced in the function', () => {
+    /*
+     * NOT THEORETICAL. On the reported deployment an earlier replacement that
+     * never published was ALSO ready, holding pending patches for the five
+     * properties the current source drops. Publishing it would have re-pointed
+     * those five to ITSELF, taking them out of the current upload's
+     * `replaces_upload_ids` — so the cutover's archive step would no longer
+     * recognise them as removed and they would have stayed on the Marketplace
+     * for ever. A sweep that published "anything ready" would have permanently
+     * broken the membership it exists to correct.
+     */
+    const sql = readFileSync(join(REPO_ROOT,
+      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
+    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
+
+    // In the function itself, not only in the sweep: the settler calls this
+    // directly too, and a guard only one caller honours is not a guard.
+    const refusal = fn.indexOf('builder_stock_upload_superseded(p_upload_id)');
+    expect(refusal).toBeGreaterThan(-1);
+    expect(fn).toContain("'published', false, 'reason', 'superseded'");
+    // Refused before a single row is touched.
+    expect(refusal).toBeLessThan(fn.indexOf('UPDATE public.builder_stock_items'));
+
+    // Deleted and already-published are refused on the same terms.
+    expect(fn).toContain("'reason', 'deleted'");
+    expect(fn).toContain("'reason', 'already_published'");
+
+    // Newest wins, decided by the upload row rather than by any caller.
+    const guard = sql.slice(sql.indexOf('FUNCTION public.builder_stock_upload_superseded'));
+    expect(guard).toContain('newer.organisation_id = this.organisation_id');
+    expect(guard).toContain('newer.created_at > this.created_at');
+    expect(guard).toContain('newer.deleted_at IS NULL');
+  });
+
+  it('the sweep offers every candidate and lets the cutover refuse', () => {
+    const sql = readFileSync(join(REPO_ROOT,
+      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
+    const sweep = sql.slice(sql.indexOf('FUNCTION public.publish_ready_builder_stock_uploads'));
+    expect(sweep).toContain('u.published_at IS NULL');
+    expect(sweep).toContain('u.deleted_at IS NULL');
+    expect(sweep).toContain('NOT public.builder_stock_upload_superseded(u.id)');
+    // Readiness is never re-decided out here — it is evaluated inside the same
+    // statement that flips the rows, so nothing can change between the two.
+    expect(sweep).toContain('public.publish_builder_stock_upload(v_upload.id)');
+    expect(sweep).not.toContain('publication_readiness');
+  });
+
+  it('every function this migration adds is locked to the service role', () => {
+    const sql = readFileSync(join(REPO_ROOT,
+      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
+    for (const fn of [
+      'builder_stock_upload_superseded\\(uuid\\)',
+      'publish_builder_stock_upload\\(uuid\\)',
+      'builder_stock_publications_pending\\(\\)',
+      'publish_ready_builder_stock_uploads\\(\\)',
+      'settle_builder_stock_marketplace_eligibility_tick\\(\\)',
+    ]) {
+      expect(sql).toMatch(new RegExp(
+        `REVOKE ALL ON FUNCTION public\\.${fn}\\s*\\n?\\s*FROM PUBLIC, anon, authenticated`));
+      expect(sql).toMatch(new RegExp(
+        `GRANT EXECUTE ON FUNCTION public\\.${fn}\\s*\\n?\\s*TO postgres, service_role`));
+    }
+  });
+
+  it('the cutover the sweep runs is the SAME three ordered steps', () => {
+    // A restated function is a chance to change one silently. The archive
+    // predicate, the order, and that a removal is archived rather than deleted.
+    const sql = readFileSync(join(REPO_ROOT,
+      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
+    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
+    const repoint = fn.indexOf('upload_id          = p_upload_id');
+    const promote = fn.indexOf("-- 2. Promote this upload's staged rows");
+    const archive = fn.indexOf('-- 3. Archive what the superseded uploads still supply');
+    expect(repoint).toBeGreaterThan(-1);
+    expect(repoint).toBeLessThan(promote);
+    expect(promote).toBeLessThan(archive);
+    expect(fn).toContain('AND upload_id = ANY(v_replaces)');
+    expect(fn).toContain('AND upload_id <> p_upload_id');
+    expect(fn.slice(archive, fn.indexOf('UPDATE public.builder_stock_uploads'))).not.toContain('DELETE');
+    expect(fn).toContain('IF NOT coalesce(v_ready, false) THEN');
   });
 });
 

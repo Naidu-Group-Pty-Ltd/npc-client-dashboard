@@ -143,28 +143,45 @@ describe("the post-decision stages do not offer to undo the decision", () => {
   const panel = readFileSync(
     "src/components/aml/workspace/AmlContextActionPanel.tsx", "utf8");
 
-  it("the card is suppressed on both of them, and nowhere else", () => {
-    expect(workspace).toContain(
-      'allowStatusTransitions={section !== "passport" && section !== "monitoring"}');
-    expect(panel).toContain("allowStatusTransitions = true");
+  it("the card is gone from EVERY stage, not just those two", () => {
+    /* It was suppressed on Passport & Partners and Ongoing CDD first. The
+       reasons were never local to them: a case's lifecycle is the consequence
+       of decisions that carry their own recorded reasons, so a rail control
+       restating them as one-click buttons behind an optional reason was a
+       second way to do something the product already had a place for. */
+    const code = workspace.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+    expect(code).not.toContain("allowStatusTransitions");
+    expect(panel).not.toContain("allowStatusTransitions");
   });
 
   it("hiding it is presentation — the server still decides", () => {
-    /* The standing rule on this panel, and it must survive the change:
-       every transition is mirrored and enforced server-side. */
+    /* The standing rule, and it must survive the change: every transition is
+       enforced server-side, and the operation itself is untouched. */
     expect(panel).toContain("Hiding a button was never authorisation");
-    expect(panel).toContain("amlCasesApi.transition");
+    expect(workspace).toContain("amlCasesApi.transition(");
+    expect(
+      readFileSync("supabase/functions/aml-cases/index.ts", "utf8"),
+    ).toContain("case 'transition':");
+  });
+
+  it("every state the card could reach still has a home", () => {
+    /* Removing a ceremony must never remove a control. The panel's header
+       names where each one is set now, and the two that matter are checked
+       here rather than taken on trust. */
+    // Cleared / blocked / escalated — the Decision stage's own control.
+    expect(readFileSync("src/components/aml/CaseWorkspaceTabs.tsx", "utf8"))
+      .toContain("amlRiskApi.decide");
+    // Closed — the case header, with a reason it will not proceed without.
+    expect(workspace).toContain('amlCasesApi.transition(caseId, "closed"');
+    expect(readFileSync("src/components/aml/workspace/AmlWorkspaceHeader.tsx", "utf8"))
+      .toContain("Close case");
   });
 
   it("nothing else the panel does was removed", () => {
-    // A closed case still gets its one action, and destructive transitions
-    // still carry a required, confirmed reason.
+    // A closed case still gets its one action, and reopening is still its
+    // own reason-bearing operation rather than a status edit.
     expect(panel).toContain("Reopen case to resume AML/CTF");
-    expect(panel).toContain("Reason (required)");
-    expect(panel).toContain("PANEL_DESTRUCTIVE_COPY");
-    // The closed card is outside the gate, so a closed case can still be
-    // reopened from either stage.
-    const closedCard = panel.slice(panel.indexOf("{closed && ("), panel.indexOf("{/* ── Case status transitions"));
-    expect(closedCard).not.toContain("allowStatusTransitions");
+    expect(panel).toContain("onReopen");
+    expect(workspace).toContain("amlCasesApi.reopenCase(");
   });
 });

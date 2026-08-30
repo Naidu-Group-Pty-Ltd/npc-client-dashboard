@@ -128,6 +128,8 @@ const CASE_STATUSES = [
 ] as const;
 
 const RISK_RATINGS = ['low', 'medium', 'high', 'prohibited'] as const;
+/** The subject types the schema accepts. The `list` filter allow-lists against this. */
+const SUBJECT_TYPES = ['individual', 'entity', 'trust'];
 
 const EVENT_CATEGORIES = [
   'case_created', 'status_changed', 'risk_rescored', 'document_added',
@@ -941,6 +943,18 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .range(offset, offset + limit - 1);
         if (body.status && CASE_STATUSES.includes(body.status)) q = q.eq('status', body.status);
         if (body.risk && RISK_RATINGS.includes(body.risk)) q = q.eq('risk_rating', body.risk);
+        /* Allow-listed like `status` and `risk`, never interpolated: this is
+           the same shape those two use, and a subject type that is not one of
+           the three the schema accepts is ignored rather than passed through.
+           `not_individual` is its own value because the question a caller
+           actually asks is "does this tenant hold any entity or trust case" —
+           expressing that as a negation client-side means paging through
+           every case to answer it. */
+        if (body.subject_type === 'not_individual') {
+          q = q.neq('subject_type', 'individual');
+        } else if (SUBJECT_TYPES.includes(body.subject_type)) {
+          q = q.eq('subject_type', body.subject_type);
+        }
         if (body.assigned_to_me) q = q.or(`assigned_analyst_id.eq.${userId},assigned_mlro_id.eq.${userId}`);
         if (body.search) {
           const s = String(body.search).replace(/[%,]/g, ' ').trim();

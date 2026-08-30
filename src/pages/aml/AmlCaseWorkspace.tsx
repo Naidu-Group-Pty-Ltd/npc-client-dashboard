@@ -85,7 +85,7 @@ import { SanctionsPerimeterControl } from "@/components/aml/SanctionsPerimeterCo
 import { useScreeningStage } from "@/lib/aml/useScreeningStage";
 import { deriveScreeningPath, type ScreeningStepKey } from "@/lib/aml/screeningSteps.pure";
 import {
-  ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_VERIFICATION_PATH,
+  ADMIN_AML_CONFIGURATION_PATH, ADMIN_AML_LIST_HEALTH_PATH,
 } from "@/lib/aml/amlRoutes";
 import { useLiveCaseRefresh } from "@/lib/aml/useLiveCaseRefresh";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
@@ -354,6 +354,55 @@ export default function AmlCaseWorkspace() {
       outstandingWork: (screeningStage.sync?.next_action.key ?? "none") !== "none",
     },
   );
+
+  /**
+   * Close a case.
+   *
+   * ── Why it is here and not in the rail ────────────────────────────────
+   * Closing was one of the buttons on the rail's "Advance status" card,
+   * behind a reason marked OPTIONAL, beside the ordinary advances. It is not
+   * an ordinary advance: `closed` is TERMINAL in the transition table, the
+   * record is retained from that point, and the only way back is the
+   * authorised reopen below. Presenting an irreversible act as a peer of
+   * "Kyc complete" is what made the card wrong.
+   *
+   * So it moves to the case header, where the case's own identity lives, and
+   * it asks for a reason it will not proceed without. The comment in
+   * `AmlContextActionPanel` claimed closing was "the case header's" while
+   * nothing there did it; this is that claim made true.
+   *
+   * The server is unchanged: this is the same `transition` call, with the
+   * same legal map enforced server-side, and the same reason written to the
+   * tamper-evident audit trail.
+   */
+  const closeCase = useCallback(async () => {
+    const values = await askOperator({
+      title: "Close this case?",
+      description:
+        "Closing ends this AML/CTF case. The record is retained for compliance "
+        + "purposes and the journey stops here — a closed case cannot be advanced, "
+        + "and resuming it takes a separate authorised reopen. The reason is "
+        + "written to the tamper-evident audit trail.",
+      confirmLabel: "Close case",
+      fields: [{
+        name: "reason", label: "Why is this case being closed?", type: "textarea",
+        required: true, minLength: 10,
+        placeholder: "An auditor will read this — say why the case is ending.",
+      }],
+    });
+    if (!values) return;
+    try {
+      await amlCasesApi.transition(caseId, "closed", values.reason.trim());
+      toast({ title: "Case closed", description: "The record is retained and the journey has stopped." });
+      load();
+    } catch (e: any) {
+      toast({
+        title: "The case could not be closed",
+        description: e?.message ?? "The server refused the request.",
+        variant: "destructive",
+      });
+    }
+  }, [caseId, load, askOperator]);
 
   /**
    * Reopen a closed case.
@@ -710,7 +759,12 @@ export default function AmlCaseWorkspace() {
   return (
     <div className="space-y-4">
       {/* ── Persistent case identity ──────────────────────────────────── */}
-      <AmlWorkspaceHeader caseRow={caseRow} matterLabel={evidence.matterLabel} live={live} />
+      <AmlWorkspaceHeader
+        caseRow={caseRow}
+        matterLabel={evidence.matterLabel}
+        live={live}
+        onClose={canWrite ? () => void closeCase() : undefined}
+      />
 
       {/* ── The journey: ten stages, plus the record surface beside them ─ */}
       {/* On a phone the record button would eat a third of the rail, so it
@@ -990,7 +1044,7 @@ export default function AmlCaseWorkspace() {
                 onAct={runScreeningAction}
                 onContinue={nextStage ? () => goToStage(nextStage.id) : undefined}
                 onReviewPerimeter={() => setPerimeterDialogOpen(true)}
-                onOpenListHealth={() => navigate(ADMIN_AML_VERIFICATION_PATH)}
+                onOpenListHealth={() => navigate(ADMIN_AML_LIST_HEALTH_PATH)}
                 actor={{
                   canWrite,
                   isReviewer: access.roles.has("reviewer"),
@@ -1276,21 +1330,16 @@ export default function AmlCaseWorkspace() {
             }
             onOpenSection={setSection}
           />
+          {/*
+            Renders on a CLOSED case only, and carries one act: the authorised
+            reopen. The "Advance status" card that used to sit here on every
+            stage is gone — see the component's own header for where each
+            state it could reach is set instead.
+          */}
           <AmlContextActionPanel
             caseRow={caseRow}
             canWrite={canWrite}
-            isMlro={access.isMlro}
             onReopen={() => void reopenCase()}
-            onChanged={load}
-            /*
-             * Not on the two stages that exist BECAUSE the decision was
-             * made. There, the rail's optional-reason shortcut could send a
-             * cleared case back to "Under review" in one click — regressing
-             * the stage, the client portal and the service gate, which flips
-             * a live Passport to "Refresh required". Re-deciding a case is
-             * the Decision stage's own control, with its rationale.
-             */
-            allowStatusTransitions={section !== "passport" && section !== "monitoring"}
           />
         </aside>
       </div>

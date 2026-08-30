@@ -25,6 +25,15 @@ export interface ClaimedItem {
   id: string;
   organisation_id: string;
   upload_id: string | null;
+  /**
+   * The upload whose replacement values this row is holding, if any.
+   *
+   * A MATCHED ROW'S `upload_id` IS STILL THE OLD ONE. Re-pointing it is step 1
+   * of the cutover itself, so until publication the id of the upload actually
+   * waiting on this property lives here and nowhere else. Asking to publish
+   * `upload_id` on such a row asks about the dataset already on screen.
+   */
+  pending_upload_id: string | null;
   image_work_stage: string;
   image_work_attempts: number;
   lifecycle_status: string | null;

@@ -127,6 +127,12 @@ async function invoke<T = any>(payload: Record<string, any>): Promise<T> {
 export const amlCasesApi = {
   list: (params: {
     status?: AmlCaseStatus; risk?: AmlRiskRating; assigned_to_me?: boolean;
+    /**
+     * `not_individual` asks the server "does this tenant hold any entity or
+     * trust case", which is the question the navigation needs and the one a
+     * client cannot answer without paging through every case.
+     */
+    subject_type?: "individual" | "entity" | "trust" | "not_individual";
     search?: string; limit?: number; offset?: number;
   } = {}) => invoke<{ cases: AmlCase[]; total: number }>({ op: "list", ...params }),
 

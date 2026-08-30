@@ -524,6 +524,87 @@ grant had nowhere to appear), and **a live Passport reads green** like the
 Client portal's own completion — worded as a fact about access, never as a
 claim about the partner, and a revoked grant takes the colour back.
 
+## What the AML navigation offers, and what it does not
+
+The Command Centre's nav is **compliance surfaces only**. Everything about
+shipping this software, verifying a deployment or administering the platform
+keeps its route and leaves the strip — the treatment `aml-v3-cutover` and
+`aml-integration-health` already had. **Hiding is never deleting**: every AML
+route in `App.tsx` is declared unconditionally and a standing test asserts it,
+so a bookmark, a deep link and the case workspace's own buttons all still land.
+
+Customer Compliance is **Register + Compliance Passport** — the two cross-case
+entry points. Every per-case topic (Verification, Screening, Risk, Funding &
+Finance, Transactions) is a stage inside a named customer's case; the
+standalone pages exist but each loads with `cases[0]` selected, which is the
+most recently created case, and on the Risk page "Record decision" was live in
+that state. Ownership & Control is **conditional** — `useHasEntityCases` asks
+the server whether the tenant holds a non-individual case, because beneficial
+ownership is a company/trust/SMSF question, and it **fails open** so a failed
+read never hides a compliance surface.
+
+Three surfaces left because they are build or platform tooling rather than
+AML/CTF work, and the evidence is on the tenant rather than in an opinion:
+**Launch Operations** (rollout stages, 13 acceptance scenarios none ever run,
+0 certifications, a risk register of 8 seeded rows never edited, categories
+including "Engineering"), **Partner Operations** (renders only a deployment
+preflight table; its operational half is behind a disabled flag with four
+empty tables, and partners are managed on the Passport & Partners stage), and
+**Governance** (five tabs of Release Gate, AI Approvals, Step-Up Sessions,
+Resilience Drills and Runbooks — its one compliance tab, Contacts, is gated on
+`aml_v3_org_settings`, which is off, which is also why
+`senior_manager_designations` is empty).
+
+**Configuration left the strip too**, and it is the case that shows what
+"hidden" has to mean. It is not platform tooling — it holds the verification
+provider's credentials, the risk factors every assessment is scored against,
+and the sanctions register's health — but it is set once and revisited
+rarely, and it is step-up protected, which is what an administrator's
+destination looks like rather than a tab. It is reached from exactly two
+places now: one capability-gated tile on Compliance Home (a second button
+beneath it went, having sat directly under a comment saying restricted
+affordances live in the tiles), and Stage 5's "open list health" when
+screening cannot run. **Hiding the PAGE would strand the register behind a
+blocked case again**, which is the defect that put it there.
+
+Three rules bite. **A path belongs to exactly ONE workspace** — missing from
+`paths` a page draws no secondary strip and highlights Compliance Home, and
+listed in TWO it resolves to whichever comes first and draws the wrong strip;
+both are reachable-but-broken, and the Passport shipped that way once. **A
+workspace with no tab is not the same as no workspace**: `hidden` keeps
+Organisation Settings owning its four URLs while the strip stops drawing it,
+so those pages keep their header — resolution reads the permitted set,
+rendering reads the visible one. And **every hook goes above the early
+returns**: `AmlConfiguration` returns early while loading and again when the
+summary cannot be read, `?tab=` support was appended where it was USED, and
+the second render called two more hooks than the first — React threw, the
+boundary caught it, and the page read "Something went wrong" on every visit.
+A source-level test now fails on any hook below the first early return,
+because the page's own test file had only ever exercised a sub-component.
+
+## Lodging a report with AUSTRAC
+Read [`docs/aml/AUSTRAC_LODGEMENT_PATH.md`](./docs/aml/AUSTRAC_LODGEMENT_PATH.md)
+before touching `austracReportPath.pure.ts`, `AustracReportPathCard` or the
+`submit_record` / `record_receipt` operations. The server was already rigorous
+— MLRO approval, step-up MFA, lodgement evidence, the AUSTRAC reference for an
+SMR, an explicit no-tipping-off attestation — and the surface in front of it
+was five boxes and a status table. The defect: **`reports.case_id` has existed
+since the first migration and the draft dialog never set it**, so every report
+was filed against nobody and reached no customer's file.
+
+Four rules. **The clock is in BUSINESS days** (SMR 3 from the day the suspicion
+was formed, TTR/IFTI 10; a suspicion about terrorism financing is 24 HOURS and
+is the same report under a tighter clock, never a different kind) and it runs
+from the OBLIGATION rather than the reporting period — a separate field, kept
+in `metadata`, because a deadline derived from the wrong date is worse than
+none. **The checks disclose and the server refuses** — two gates is how one of
+them becomes wrong, so only "filed against nobody" and "past the window" read
+as blocked. **The platform never lodges**: AUSTRAC Online is the entity's own
+account and this holds no credentials, said on the page rather than in a
+tooltip. And **tipping off is guarded at the projection** — both
+`CLIENT_RESTRICTED_KEYS` and `PARTNER_RESTRICTED_KEYS` already carry `smr`,
+`austrac` and `suspic`, and a test pins them rather than trusting them.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,
@@ -628,11 +709,27 @@ looking, from the function, exactly like a write nobody attempted. And
 **issuing the Passport arms ongoing CDD**: `armOngoingCdd` books the first
 review, never moves one that exists, and never fails the issuance.
 
-The rail's "Advance status" card is gone from those two stages: on a cleared
+The rail's "Advance status" card is **gone from every stage**. On a cleared
 case it offered "Under review" behind an OPTIONAL reason, and one click
 regressed the stage, the client portal and the service gate — flipping a live
-Passport to "Refresh required". Re-deciding a case is the Decision stage's own
-control; hiding a button was never authorisation and the server is unchanged.
+Passport to "Refresh required". It was suppressed on the two post-decision
+stages first, but the reason was never local to them: **a case's lifecycle is
+the consequence of decisions that carry their own recorded reasons**, so a
+rail control restating them as one-click buttons was a second way to do
+something the product already had a place for.
+
+**Removing a ceremony must never remove a control**, so every state it could
+reach still has one, and a test checks rather than trusts that: `cleared` /
+`blocked` / `escalated_mlro` are the Decision stage's, `kyc_*` are moved by
+the client's own submission, `under_review` is deliberately not offered, and
+**`closed` moved to the case header** — which is where the panel's own comment
+had always claimed it lived while nothing there did it. Closing asks for a
+reason it will not proceed without, is offered only to a writer, and never on
+an already-closed record. `AmlContextActionPanel` is now the closed-case
+notice and the authorised reopen, nothing else. Hiding a button was never
+authorisation: `transition` is untouched and the server enforces exactly as
+before, and the legacy case dialog — the rollback path when the workspace flag
+is off — still carries the panel it always had.
 
 ## Stage 5 — the guided path
 Read [`docs/aml/STAGE_5_GUIDED_PATH.md`](./docs/aml/STAGE_5_GUIDED_PATH.md)

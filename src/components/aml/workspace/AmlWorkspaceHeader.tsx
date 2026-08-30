@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 import type { AmlCase } from "@/lib/aml/amlCasesApi";
 
 import { AmlGateBadge, AmlRiskBadge } from "@/components/aml/primitives";
-import { serviceGateStatus } from "@/lib/aml/caseDimensions";
+import { caseStage, serviceGateStatus } from "@/lib/aml/caseDimensions";
 
 const SUBJECT_TYPE_LABELS: Record<string, string> = {
   individual: "Individual",
@@ -48,6 +48,7 @@ export function AmlWorkspaceHeader({
   matterLabel,
   className,
   live,
+  onClose,
 }: AmlWorkspaceHeaderProps & {
   /**
    * Live-refresh state. The case refetches itself, so the header says when it
@@ -56,8 +57,24 @@ export function AmlWorkspaceHeader({
    * see.
    */
   live?: { lastRefreshedAt: Date | null; refreshing: boolean; refreshNow: () => void };
+  /**
+   * Close the case.
+   *
+   * Absent for a reader without write access, and absent on a case that is
+   * already closed — a terminal act offered on a terminal record is a button
+   * that can only fail.
+   *
+   * It lives here, beside the case's own identity, because closing is a fact
+   * about the CASE rather than about the stage somebody happens to be
+   * looking at. It used to sit in the right rail among the ordinary status
+   * advances, behind a reason marked optional; `closed` is terminal and the
+   * record is retained from that point, so it is neither ordinary nor an
+   * advance. The caller confirms and requires the reason.
+   */
+  onClose?: () => void;
 }) {
   const gate = serviceGateStatus(caseRow);
+  const closed = caseStage(caseRow) === "closed" || caseRow.status === "closed";
   const subjectType = SUBJECT_TYPE_LABELS[caseRow.subject_type] ?? caseRow.subject_type;
 
   return (
@@ -137,6 +154,16 @@ export function AmlWorkspaceHeader({
 
         {/* Two badges, kept apart: an assessment and a decision, not a chain. */}
         <div className="flex shrink-0 flex-wrap items-center gap-2" aria-label="Case position">
+          {onClose && !closed && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+              onClick={onClose}
+            >
+              Close case
+            </Button>
+          )}
           <AmlRiskBadge risk={caseRow.risk_rating} prefix />
           <AmlGateBadge gate={gate} prefix />
         </div>

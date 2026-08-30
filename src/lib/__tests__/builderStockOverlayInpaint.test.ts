@@ -916,10 +916,10 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
     writes,
     set failWrites(value: boolean) { state.failWrites = value; },
     set failUploads(value: boolean) { state.failUploads = value; },
-    from() {
+    from(_table: string): any {
       return {
-        select: () => build(),
-        update(patch: Record<string, unknown>) {
+        select: (..._columns: unknown[]) => build(),
+        update(patch: Record<string, unknown>): any {
           const filters: Array<[string, string, unknown]> = [];
           // JSON-path filters (the claim's compare-and-set) are RESOLVED
           // against the row, never assumed — see fixtures/postgrestJsonPath.
@@ -945,7 +945,7 @@ function fakeDb(rows: Array<Record<string, any>>, objects: Record<string, Uint8A
             is(column: string, value: unknown) {
               filters.push(['is', column, value]); return builder;
             },
-            select() {
+            select(..._columns: unknown[]) {
               return {
                 maybeSingle() {
                   const { applied, error } = apply();
@@ -1624,7 +1624,7 @@ describe('a settlement write can never take the cooldown off the row', () => {
     // `image-00` — the sick one.
     await settleImageSanitization(db as never, ORG, {
       budget: { remaining: 1 },
-      sanitize: async (...args) => { attempted.push('tick1'); return sanitize(...args as []); },
+      sanitize: async (..._args: unknown[]) => { attempted.push('tick1'); return sanitize(); },
     });
     expect(stampAt(db.rows[0])).toBeTruthy();
     expect(sanitizationSettled(
@@ -1637,7 +1637,7 @@ describe('a settlement write can never take the cooldown off the row', () => {
     const before = stampAt(db.rows[0]);
     await settleImageSanitization(db as never, ORG, {
       budget: { remaining: 1 },
-      sanitize: async (...args) => { attempted.push('tick2'); return sanitize(...args as []); },
+      sanitize: async (..._args: unknown[]) => { attempted.push('tick2'); return sanitize(); },
     });
     expect(stampAt(db.rows[0])).toBe(before);
     expect((db.rows[1].source_detail as Record<string, any>)[DERIVATIVE_KEY]?.verdict)
@@ -2687,7 +2687,7 @@ describe('the repair claim', () => {
       .update({ source_detail: { poisoned: true } })
       .eq('id', 'image-1')
       .eq('source_detail->sanitization_attempt->>at', 'not-the-stamp')
-      .select('id').maybeSingle();
+      .select().maybeSingle();
     expect(miss.data).toBeNull();
     expect((row.source_detail as Record<string, unknown>).poisoned).toBeUndefined();
 
@@ -2695,7 +2695,7 @@ describe('the repair claim', () => {
       .update({ source_detail: { ...(row.source_detail as object), touched: true } })
       .eq('id', 'image-1')
       .is('source_detail->sanitization_attempt->>at', null)
-      .select('id').maybeSingle();
+      .select().maybeSingle();
     expect(absent.data?.id).toBe('image-1');
     expect((row.source_detail as Record<string, unknown>).touched).toBe(true);
   });

@@ -185,6 +185,25 @@ export function decideMarketplaceEligibility(
   return { state: 'eligible', reason: null, measured: true, overlay: summary };
 }
 
+export interface MarketplaceEligibilityDetail {
+  [key: string]: unknown;
+  marketplace_display_eligible: boolean;
+  marketplace_eligibility_state: MarketplaceEligibilityState;
+  marketplace_rejection_reason: MarketplaceRejection | null;
+  marketplace_measured: boolean;
+  marketplace_measured_sha256: string | null;
+  marketplace_overlay: {
+    largest_share: number;
+    total_share: number;
+    region_count: number;
+    text_height_share: number;
+    text_line_count: number;
+    faint_text_height_share: number;
+    faint_text_line_count: number;
+  } | null;
+  marketplace_eligibility_version: number;
+}
+
 /**
  * The `source_detail` keys the decision contributes.
  *
@@ -209,7 +228,7 @@ export function marketplaceEligibilityDetail(
    * verdict (read exactly as before), never a wrong one.
    */
   measuredSha256?: string | null,
-): Record<string, unknown> {
+): MarketplaceEligibilityDetail {
   return {
     marketplace_display_eligible: eligibility.state === 'eligible',
     marketplace_eligibility_state: eligibility.state,

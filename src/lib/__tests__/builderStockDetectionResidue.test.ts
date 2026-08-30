@@ -128,8 +128,9 @@ describe('the post-repair gate asks the faint question instead of reading a supp
 
     const result = await sanitizeSourceImage(await bytesOf(picture));
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe('still_annotated');
+    if (result.ok === false) {
+      expect(result.reason).toBe('still_annotated');
+    }
   });
 
   it('the same repair with no faint residue keeps the Lot 13 allowance', async () => {
@@ -173,9 +174,10 @@ describe('a brand-coloured plate surviving anywhere refuses the repair', () => {
       repairRegion: REGION,
     });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe('still_annotated');
-    expect(result.detail).toContain('promotional colour block');
+    if (result.ok === false) {
+      expect(result.reason).toBe('still_annotated');
+      expect(result.detail).toContain('promotional colour block');
+    }
   });
 
   it('a neutral door outside the same supplied region is not a refusal', async () => {
@@ -265,8 +267,9 @@ describe('the deterministic route answers to the same total ceiling as every oth
       regions: blobs.length, maskWidth: W, maskHeight: H,
     });
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe('too_much_to_rebuild');
+    if (result.ok === false) {
+      expect(result.reason).toBe('too_much_to_rebuild');
+    }
   });
 
   it('still fills the same holes when they stay inside the ceiling', () => {

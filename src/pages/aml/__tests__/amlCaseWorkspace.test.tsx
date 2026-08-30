@@ -346,22 +346,42 @@ describe("AmlCaseWorkspace — full-page shell", () => {
     expect(screen.getByRole("link", { name: /Back to case register/ })).toBeInTheDocument();
   });
 
-  it("keeps destructive transitions behind an explicit confirmation with a required reason", async () => {
+  it("closing is on the case header, confirmed, and refuses to proceed without a reason", async () => {
+    /* It used to be a button in the rail's "Advance status" row, beside the
+       ordinary advances, behind a reason marked OPTIONAL. `closed` is
+       terminal and the record is retained from that point, so it is neither
+       ordinary nor an advance. The rail card is gone from every stage; this
+       is where the act lives now, and the confirmation and required reason
+       are unchanged. */
     transition.mockResolvedValue({ case: baseCase });
     setup();
     await screen.findByRole("heading", { name: "Avery Client" });
-    // kyc_complete allows "closed" — a destructive option, separated + confirmed.
-    fireEvent.click(screen.getByRole("button", { name: "Closed" }));
+
+    // Not in the rail any more, on any stage.
+    expect(screen.queryByText("Advance status")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close case" }));
     expect(await screen.findByText("Close this case?")).toBeInTheDocument();
     expect(transition).not.toHaveBeenCalled();
-    const confirm = screen.getByRole("button", { name: "Close case" });
-    expect(confirm).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Reason (required)"), {
-      target: { value: "Duplicate case opened in error" },
-    });
-    expect(confirm).toBeEnabled();
+
+    const confirm = screen.getAllByRole("button", { name: "Close case" })
+      .find((b) => b.closest('[role="dialog"]'))!;
+
+    /* The reason is refused, not the button. The prompt dialog deliberately
+       keeps confirm enabled and moves focus to the problem — a dead control
+       with no explanation is the worse of the two. What matters is that
+       nothing is written. */
+    fireEvent.click(confirm);
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(transition).not.toHaveBeenCalled();
+
+    fireEvent.change(
+      screen.getByLabelText(/Why is this case being closed\?/),
+      { target: { value: "Duplicate case opened in error" } },
+    );
     fireEvent.click(confirm);
     await waitFor(() =>
       expect(transition).toHaveBeenCalledWith(CASE_ID, "closed", "Duplicate case opened in error"));
   });
+
 });

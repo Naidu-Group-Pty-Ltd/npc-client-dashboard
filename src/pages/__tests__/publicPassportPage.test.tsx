@@ -75,9 +75,9 @@ function partnerViewInput(): PassportViewInput {
     stamp_input: {
       issuer_org: "NPC Services command centre",
       attestations: [{ version: 1, issued_at: "2026-08-27T08:28:28.000Z", superseded_at: null }],
-      consents: [{ kind: "compliance_sharing", accepted_at: "2026-08-15T16:51:54Z", actor_label: "Client" }],
+      consents: [{ id: null, kind: "compliance_sharing", accepted_at: "2026-08-15T16:51:54Z", actor_label: "Client" }],
       verification_checks: [{
-        party_label: "Rugesh Naidu", check_type: "electronic_idv", status: "passed",
+        id: null, party_label: "Rugesh Naidu", check_type: "electronic_idv", status: "passed",
         completed_at: "2026-08-20T15:16:00Z",
       }],
       documents: [{ status: "accepted", reviewed_at: "2026-08-11T00:00:00Z", created_at: "2026-08-10T00:00:00Z" }],

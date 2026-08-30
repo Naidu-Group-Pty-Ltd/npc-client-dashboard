@@ -263,7 +263,8 @@ export async function chooseAndStorePrimaryImage(
 ): Promise<string | null> {
   const { data: images } = await db
     .from('builder_stock_item_images')
-    .select('id, source_stage, verification_status, processing_status, position, storage_path, external_url, source_detail')
+    .select('id, source_stage, source_reference, error_message, verification_status, '
+      + 'processing_status, position, storage_path, external_url, source_detail')
     .eq('stock_item_id', stockItemId);
 
   /*
@@ -275,11 +276,58 @@ export async function chooseAndStorePrimaryImage(
    * Imported lazily so this module stays importable by everything that only
    * needs the source rules; the two would otherwise import each other.
    */
-  const { chooseCardImage } = await import('./imagePriority.pure.ts');
-  const primary = chooseCardImage((images ?? []) as DisplayableImage[]);
+  const { chooseCardImage, nextImageStage } = await import('./imagePriority.pure.ts');
+  const rows = (images ?? []) as DisplayableImage[];
+  const primary = chooseCardImage(rows);
+
+  const patch: Record<string, unknown> = { primary_image_id: primary?.image.id ?? null };
+
+  /*
+   * A SETTLED PROPERTY THAT HAS LOST ITS PICTURE IS NOT SETTLED ANY MORE.
+   *
+   * `settled` means the ladder was climbed to the end. It is written from the
+   * ladder's answer at ONE moment, and stage 1's answer can change afterwards:
+   * a builder cover measured clean today is re-measured as a marketing tile
+   * tomorrow, and the property that legitimately stopped at stage 1 now has
+   * nothing to show and no way to ask for anything else. Measured in
+   * production on two properties whose covers were refused eighteen hours
+   * after they settled — both blank, both holding fallback rows that said the
+   * ladder had been tried, and neither paid stage ever asked.
+   *
+   * So the stage is re-opened from the same reading that cleared the pointer:
+   * this function is called after EVERY stage and after every re-judgement, so
+   * it is the one place that sees the change at the moment it happens. It
+   * re-opens only where the ladder itself says there is somewhere left to go —
+   * a property that is genuinely out of stages stays settled and does not
+   * re-enter the queue — and it never touches a property that has a picture.
+   *
+   * `image_work_next_attempt_at` is cleared to now so the re-opened property
+   * is claimable on the next tick rather than serving out a backoff earned by
+   * a question that is no longer the one being asked.
+   */
+  if (!primary) {
+    const { data: item } = await db.from('builder_stock_items')
+      .select('image_work_stage').eq('id', stockItemId).maybeSingle();
+    /*
+     * ONLY A SETTLED ONE. A property mid-ladder already has its own stage and
+     * its own backoff, and writing from here would move it back from wherever
+     * the claim had reached — the claim's progression is the authority while
+     * it is still running.
+     */
+    if (item?.image_work_stage === 'settled') {
+      const remaining = nextImageStage(rows, { sourceSettlementComplete: true });
+      if (remaining !== 'none') {
+        // `wait` means a verdict is genuinely owed, so the property goes back
+        // to the stage that writes one rather than to the paid ladder.
+        patch.image_work_stage = remaining === 'wait' ? 'eligibility' : 'fallback';
+        patch.image_work_next_attempt_at = new Date().toISOString();
+        patch.image_work_claim_until = null;
+      }
+    }
+  }
 
   await db.from('builder_stock_items')
-    .update({ primary_image_id: primary?.image.id ?? null })
+    .update(patch)
     .eq('id', stockItemId);
 
   return primary?.image.id ?? null;

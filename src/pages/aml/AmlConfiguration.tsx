@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,16 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ProviderReadinessCard } from "@/components/aml/ProviderReadinessCard";
+import { SanctionsListHealth } from "@/components/aml/SanctionsListHealth";
+
+/**
+ * The tabs a `?tab=` link may open.
+ *
+ * An allow-list rather than a pass-through: the value reaches a Radix
+ * `defaultValue`, and a tab name that matches nothing renders a page with a
+ * tab strip and no panel under it.
+ */
+const TAB_VALUES = new Set(["branding", "activation", "plan", "providers", "metrics"]);
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { toast } from "sonner";
@@ -68,6 +79,45 @@ export default function AmlConfiguration() {
   };
   useEffect(() => { reload(); }, []);
 
+  /*
+    ── Landing on the tab you were sent for ──────────────────────────────
+    Configuration is a tabbed page, and a link into it is worthless if it
+    opens on Branding. Stage 5 sends an administrator here to check whether
+    the sanctions register loaded (`ADMIN_AML_LIST_HEALTH_PATH`), so the tab
+    is read from the URL. An unrecognised or absent value falls back to the
+    default: a bad link must land somewhere sensible rather than nowhere.
+
+    ── These hooks are ABOVE the early returns, and must stay there ───────
+    This component returns early while it is loading and again when the
+    summary cannot be read. Hooks placed after those returns are not called
+    on the first render and ARE called on the second, which is a different
+    hook count between renders — React throws, the error boundary catches
+    it, and the page reads "Something went wrong" with no clue why. That is
+    exactly what shipped here: the tab-from-URL support was appended at the
+    point it was used rather than at the top, and Configuration crashed on
+    every visit the moment its data arrived. Nothing about the feature was
+    wrong; the placement was.
+  */
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab") ?? "";
+  const initialTab = TAB_VALUES.has(requestedTab) ? requestedTab : "branding";
+
+  /*
+    The anchored panel is scrolled to once the page HAS one. The browser's
+    own hash handling runs before React renders anything, and this component
+    renders a skeleton first — so the effect waits for the content rather
+    than firing on mount and finding nothing.
+  */
+  useEffect(() => {
+    if (loading || !summary || !window.location.hash) return;
+    const id = window.location.hash.slice(1);
+    const t = window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [loading, summary]);
+
+
   if (loading) {
     return (
       <div className="space-y-4">
@@ -112,7 +162,7 @@ export default function AmlConfiguration() {
 
       <SummaryTiles summary={summary} hideMetrics={metricsRelocation} />
 
-      <Tabs defaultValue="branding" className="w-full">
+      <Tabs defaultValue={initialTab} className="w-full">
         <TabsList className="h-auto flex-wrap justify-start">
           <TabsTrigger value="branding"><Palette className="h-4 w-4 mr-1.5" />Branding</TabsTrigger>
           <TabsTrigger value="activation"><ShieldCheck className="h-4 w-4 mr-1.5" />Activation</TabsTrigger>
@@ -153,6 +203,24 @@ export default function AmlConfiguration() {
         <TabsContent value="providers" className="mt-4">
           <div className="space-y-4">
             <ProviderReadinessCard />
+            {/*
+              ── Why the sanctions register is HERE ──────────────────────
+              It used to be mounted on the standalone Verification page and
+              nowhere else, while Stage 5's "open list health" action was the
+              only thing that navigated to it — so whether the register had
+              loaded at all could only be discovered from a case that was
+              already blocked by it.
+
+              The health of the register is an organisation-level fact, not a
+              per-case detail: `sanctions_entries` was empty from the day this
+              platform was built, for three independent reasons, each of which
+              reported as normal operation. It belongs beside the provider
+              credentials it is loaded with, on a page an administrator opens
+              deliberately.
+            */}
+            <div id="sanctions-list-health" className="scroll-mt-24">
+              <SanctionsListHealth />
+            </div>
             <ProvidersPanel summary={summary} canWrite={isMlro} onSaved={reload} />
           </div>
         </TabsContent>

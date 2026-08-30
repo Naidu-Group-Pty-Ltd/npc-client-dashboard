@@ -68,7 +68,7 @@ export async function enforceRawBodyLimit(req: Request, maxBytes: number): Promi
 /** Reads a bounded JSON body before parsing, preventing unbounded allocation. */
 export async function enforceJsonBodyLimit<T = unknown>(req: Request, maxBytes: number): Promise<{ ok: true; value: T; raw: string } | { ok: false; error: Response }> {
   const bounded = await enforceRawBodyLimit(req, maxBytes);
-  if (!bounded.ok) return bounded;
+  if (bounded.ok === false) return { ok: false, error: bounded.error };
   const { raw } = bounded;
   try { return { ok: true, value: JSON.parse(raw) as T, raw }; }
   catch { return { ok: false, error: securityJsonError(400, 'invalid_request') }; }

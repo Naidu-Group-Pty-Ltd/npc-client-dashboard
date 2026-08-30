@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronRight, Loader2, Plus, Search, ShieldAlert, ShieldCheck, ToggleLeft } from "lucide-react";
+import {
+  ChevronRight, Loader2, Plus, Search, ShieldAlert, ShieldCheck,
+  SlidersHorizontal, ToggleLeft, X,
+} from "lucide-react";
 
 import { ActivateClientDialog } from "@/components/aml/ActivateClientDialog";
 import { AmlCaseWorkspaceDialog } from "@/components/aml/AmlCaseWorkspaceDialog";
@@ -21,6 +24,12 @@ import type { AmlJourneyStageId } from "@/lib/aml/journeyModel";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  REGISTER_QUEUES, countRegisterQueues, queueCountLabel,
+} from "@/lib/aml/caseRegisterQueues.pure";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -95,7 +104,7 @@ const PAGE_LIMIT = 100;
 export default function AmlCasesPage() {
   const access = useAmlAccess();
   const navigate = useNavigate();
-  const { isSuperadmin } = useAuth();
+  const { isSuperadmin, user } = useAuth();
   const {
     caseWorkspace: fullPageWorkspace,
     loading: flagsLoading,
@@ -215,6 +224,29 @@ export default function AmlCasesPage() {
   };
 
 
+  /**
+   * An UNFILTERED page of the register, held only to count the queues.
+   *
+   * The rows on screen are already filtered, so counting them would report
+   * the intersection of a queue with whatever is currently selected and call
+   * it the queue. It is fetched once and again on an explicit refresh: a
+   * queue count does not change because somebody changed a dropdown.
+   */
+  const [snapshot, setSnapshot] = useState<AmlCase[] | null>(null);
+  const [snapshotTotal, setSnapshotTotal] = useState(0);
+
+  const loadSnapshot = async () => {
+    try {
+      const res = await amlCasesApi.list({ limit: PAGE_LIMIT });
+      setSnapshot(res.cases);
+      setSnapshotTotal(res.total);
+    } catch {
+      // A count that cannot be taken is shown as no count. It must never
+      // fail the register itself, which is the thing the operator came for.
+      setSnapshot(null);
+    }
+  };
+
   const load = async (opts?: { searchOverride?: string }) => {
     const q = opts?.searchOverride ?? search;
     const seq = ++loadSeq.current;
@@ -245,6 +277,10 @@ export default function AmlCasesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [access.hasAnyRole, access.flagEnabled, status, risk, assignedToMe]);
 
+  useEffect(() => {
+    if (access.hasAnyRole && access.flagEnabled) void loadSnapshot();
+  }, [access.hasAnyRole, access.flagEnabled]);
+
   // The active view may refine the loaded page (see SAVED_VIEWS). Rows are
   // never invented — this only hides rows the reading says are quiet.
   const refine = SAVED_VIEWS.find((v) => v.key === view)?.refine;
@@ -254,16 +290,61 @@ export default function AmlCasesPage() {
   );
   const refinedFromTruncatedPage = Boolean(refine) && total > cases.length;
 
-  const activeFilterLabels = useMemo(() => {
-    const labels: string[] = [];
-    if (status !== "all") labels.push(`Status: ${CASE_STATUS_LABELS[status as AmlCaseStatus] ?? status}`);
-    if (risk !== "all") labels.push(`Risk: ${RISK_FILTER_LABELS[risk] ?? risk}`);
-    if (assignedToMe) labels.push("Assigned to me");
-    if (appliedSearch) labels.push(`Search: "${appliedSearch}"`);
-    return labels;
+  const queueCounts = useMemo(
+    () => countRegisterQueues({
+      rows: snapshot ?? [],
+      total: snapshotTotal,
+      needsAttention: (r) => deriveAmlCaseAttention(r as AmlCase).needsAttention,
+      userId: user?.id ?? null,
+      ready: snapshot !== null,
+    }),
+    [snapshot, snapshotTotal, user?.id],
+  );
+
+  /**
+   * Every applied filter, each with the way to take it off.
+   *
+   * These were inert grey labels, so a narrowed register had exactly one way
+   * out — "Clear filters", all or nothing. A filter an operator can see is a
+   * filter they should be able to remove one at a time.
+   */
+  const activeFilters = useMemo(() => {
+    const items: Array<{ key: string; label: string; clear: () => void }> = [];
+    if (status !== "all") {
+      items.push({
+        key: "status",
+        label: `Status: ${CASE_STATUS_LABELS[status as AmlCaseStatus] ?? status}`,
+        clear: () => { leaveView(); setStatus("all"); },
+      });
+    }
+    if (risk !== "all") {
+      items.push({
+        key: "risk",
+        label: `Risk: ${RISK_FILTER_LABELS[risk] ?? risk}`,
+        clear: () => { leaveView(); setRisk("all"); },
+      });
+    }
+    if (assignedToMe) {
+      items.push({
+        key: "mine",
+        label: "Assigned to me",
+        clear: () => { leaveView(); setAssignedToMe(false); },
+      });
+    }
+    if (appliedSearch) {
+      items.push({
+        key: "search",
+        label: `Search: "${appliedSearch}"`,
+        clear: () => { setSearch(""); void load({ searchOverride: "" }); },
+      });
+    }
+    return items;
   }, [status, risk, assignedToMe, appliedSearch]);
 
-  const hasActiveFilters = activeFilterLabels.length > 0;
+  const hasActiveFilters = activeFilters.length > 0;
+
+  /** How many ATTRIBUTE filters are on — the badge on the Filters button. */
+  const attributeFilterCount = (status !== "all" ? 1 : 0) + (risk !== "all" ? 1 : 0);
 
   const clearFilters = () => {
     setSearch("");
@@ -381,65 +462,151 @@ export default function AmlCasesPage() {
         </Alert>
       )}
 
-      {/* Saved views */}
-      <div className="rounded-xl border border-border/60 bg-card/45 p-2 shadow-sm"><div className="flex flex-wrap gap-2" role="group" aria-label="Saved views">
-        {SAVED_VIEWS.map((v) => (
-          <Button
-            key={v.key}
-            size="sm"
-            variant={view === v.key ? "default" : "outline"}
-            className="h-7 rounded-full px-3 text-xs"
-            aria-pressed={view === v.key}
-            onClick={() => selectView(v.key)}
-          >
-            {v.label}
-          </Button>
-        ))}
-      </div>
-      </div>
+      {/*
+        ── Queues first, filters second ───────────────────────────────────
+        These four are questions about the WORK — is anything mine, is
+        anything stuck, is anything ready to decide — and each carries its
+        count, so an operator can see where the work is before deciding
+        where to click. The seven chips that used to sit beside them were
+        status and risk values duplicating the two dropdowns below; they now
+        live where they always belonged, and every `?view=` key still
+        resolves.
+      */}
+      <nav aria-label="Case queues" className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {REGISTER_QUEUES.map((q) => {
+          const active = view === q.key;
+          const label = queueCountLabel(queueCounts[q.key]);
+          return (
+            <button
+              key={q.key}
+              type="button"
+              aria-pressed={active}
+              title={q.hint}
+              onClick={() => selectView(q.key)}
+              className={cn(
+                "group flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-left",
+                "transition-[background-color,border-color,box-shadow,transform] duration-150",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                "active:scale-[0.99] motion-reduce:transition-none motion-reduce:active:scale-100",
+                active
+                  ? "border-primary/40 bg-primary/10 shadow-sm"
+                  : "border-border/60 bg-card/45 hover:border-border hover:bg-muted/50",
+              )}
+            >
+              <span className="min-w-0">
+                <span className={cn(
+                  "block truncate text-sm font-medium",
+                  active ? "text-primary" : "text-foreground",
+                )}>
+                  {q.label}
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                  {q.hint}
+                </span>
+              </span>
+              {/* No number rather than a wrong one: a register that could
+                  not be counted shows nothing here. And an EMPTY queue is
+                  drawn quieter than a full one — the eye should land on the
+                  queues that have work in them, which is the whole reason
+                  for putting counts on the surface. */}
+              {label !== null && (
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-2.5 py-1 text-sm font-semibold tabular-nums transition-colors",
+                    active
+                      ? "bg-primary/15 text-primary"
+                      : queueCounts[q.key]?.count === 0
+                        ? "bg-muted/40 text-muted-foreground/60"
+                        : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {label}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
 
-      {/* Search + filters as one toolbar */}
-      <div role="search" aria-label="Filter the case register" className="rounded-xl border border-border/60 bg-card/45 p-3 shadow-sm space-y-3">
+      {/* ── One toolbar: find it, narrow it, see what is applied ─────── */}
+      <div
+        role="search"
+        aria-label="Search and filter the case register"
+        className="rounded-xl border border-border/60 bg-card/45 p-3 shadow-sm space-y-3"
+      >
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
-            <Input
-              placeholder="Search subject or case ref…"
-              aria-label="Search subject or case reference"
-              value={search} onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load()}
-              className="w-full sm:w-64"
+          <div className="relative w-full min-w-0 sm:max-w-sm sm:flex-1">
+            <Search
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
             />
-            <Button variant="outline" size="sm" onClick={() => void load()} aria-label="Search">
-              <Search aria-hidden="true" className="h-4 w-4" />
-            </Button>
+            <Input
+              placeholder="Search a customer or case reference…"
+              aria-label="Search subject or case reference"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
+              className="h-10 w-full pl-9"
+            />
           </div>
-          <Select value={status} onValueChange={(v) => { leaveView(); setStatus(v); }}>
-            <SelectTrigger className="w-full sm:w-48" aria-label="Filter by status">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {Object.entries(CASE_STATUS_LABELS).map(([k, v]) => (
-                <SelectItem key={k} value={k}>{v}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={risk} onValueChange={(v) => { leaveView(); setRisk(v); }}>
-            <SelectTrigger className="w-full sm:w-40" aria-label="Filter by risk rating">
-              <SelectValue placeholder="Risk" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All risk</SelectItem>
-              <SelectItem value="low">Low</SelectItem>
-              <SelectItem value="medium">Medium</SelectItem>
-              <SelectItem value="high">High</SelectItem>
-              <SelectItem value="prohibited">Prohibited</SelectItem>
-            </SelectContent>
-          </Select>
+
+          {/*
+            Status and risk behind ONE control that says how many are on.
+            Two always-visible dropdowns reading "All statuses" and "All
+            risk" spend permanent width telling an operator that nothing is
+            filtered — which is the state they are in nearly all the time.
+          */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-10 gap-2">
+                <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
+                Filters
+                {attributeFilterCount > 0 && (
+                  <span className="rounded-full bg-primary/15 px-1.5 text-xs font-semibold tabular-nums text-primary">
+                    {attributeFilterCount}
+                  </span>
+                )}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="register-status" className="text-xs">Status</Label>
+                <Select value={status} onValueChange={(v) => { leaveView(); setStatus(v); }}>
+                  <SelectTrigger id="register-status" aria-label="Filter by status">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any status</SelectItem>
+                    {Object.entries(CASE_STATUS_LABELS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="register-risk" className="text-xs">Risk rating</Label>
+                <Select value={risk} onValueChange={(v) => { leaveView(); setRisk(v); }}>
+                  <SelectTrigger id="register-risk" aria-label="Filter by risk rating">
+                    <SelectValue placeholder="Risk" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any risk rating</SelectItem>
+                    <SelectItem value="low">Low</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="high">High</SelectItem>
+                    <SelectItem value="prohibited">Prohibited</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
 
-        {/* Result count + active filters, with a way out. */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" aria-live="polite">
+        {/* Result count, and every applied filter as its own removable pill. */}
+        <div
+          className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground"
+          aria-live="polite"
+        >
           <span>
             {loading
               ? "Loading cases…"
@@ -449,16 +616,25 @@ export default function AmlCasesPage() {
                   ? `Showing the first ${cases.length} of ${total} cases`
                   : `${total} case${total === 1 ? "" : "s"}`}
           </span>
-          {activeFilterLabels.map((label) => (
-            <span key={label} className="rounded-full bg-muted px-2 py-0.5">{label}</span>
+          {/*
+            A filter you can see is a filter you can take off. These used to
+            be inert grey labels, so the only way out of a narrowed register
+            was "Clear filters" — all or nothing.
+          */}
+          {activeFilters.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={f.clear}
+              className="group inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/60 py-0.5 pl-2.5 pr-1.5 transition-colors hover:border-border hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              <span className="text-foreground/80">{f.label}</span>
+              <X aria-hidden="true" className="h-3 w-3 text-muted-foreground group-hover:text-foreground" />
+              <span className="sr-only">Remove this filter</span>
+            </button>
           ))}
           {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-xs"
-              onClick={clearFilters}
-            >
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={clearFilters}>
               Clear filters
             </Button>
           )}

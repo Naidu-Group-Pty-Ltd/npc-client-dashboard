@@ -564,6 +564,22 @@ Deno.serve(async (req) => {
             return json({ error: NOTION_NOT_PUBLIC_MESSAGE, code: 'notion_not_public' }, 400);
           }
 
+          /*
+           * THE LINKED VIEW DECIDES WHICH PROPERTIES THIS LIST HOLDS, so a
+           * link naming a view the page does not have is refused rather than
+           * answered from something else. Falling through here would import
+           * the page shell — a different set of properties — and replace the
+           * builder's stock with it.
+           */
+          if (recovery && !recovery.ok && recovery.reason === 'requested_view_missing') {
+            console.warn('[builder-portal-stock] notion view not found', notionDiagnostics);
+            return json({
+              error: 'That link names a view this Notion page does not have. Open the '
+                + 'view you want to import and copy the address from your browser.',
+              code: 'notion_view_not_found',
+            }, 400);
+          }
+
           if (recovery?.ok) {
             // The recovered content REPLACES the shell as the snapshot, so the
             // stored object is what was actually imported rather than a page

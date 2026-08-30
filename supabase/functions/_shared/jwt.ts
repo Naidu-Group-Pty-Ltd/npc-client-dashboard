@@ -3,6 +3,7 @@
  * Generates Supabase-compatible JWTs signed with the project secret
  */
 
+// @ts-ignore Deno-only module; not resolvable under Node type-checking.
 import { create, getNumericDate, verify, Header, Payload } from "https://deno.land/x/djwt@v3.0.2/mod.ts";
 
 interface JWTPayload {

@@ -15,6 +15,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
+import { AustracReportPathCard } from "@/components/aml/AustracReportPathCard";
+import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
+import {
+  AUSTRAC_OBLIGATIONS, type AustracReportFacts, type AustracReportKind,
+} from "@/lib/aml/austracReportPath.pure";
 import {
   AmlAccessGate,
   AmlLoadingState,
@@ -59,6 +64,16 @@ export default function AmlAustracReporting() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [loading, setLoading] = useState(false);
+  /**
+   * The customers a report can be filed against.
+   *
+   * `reports.case_id` has existed since the first migration and the draft
+   * dialog never set it, so every report ever drafted here was filed against
+   * nobody — findable from this page and from nowhere else, least of all the
+   * customer's own record. The field is now asked for, and the server was
+   * already writing the case event when it was given one.
+   */
+  const [cases, setCases] = useState<AmlCase[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedVersions, setSelectedVersions] = useState<AmlReportVersion[]>([]);
   const [selectedSubs, setSelectedSubs] = useState<AmlReportSubmission[]>([]);
@@ -107,6 +122,48 @@ export default function AmlAustracReporting() {
 
   useEffect(() => { if (hasAnyRole) load(); /* eslint-disable-next-line */ }, [statusFilter, kindFilter, hasAnyRole]);
   useEffect(() => { if (selectedId) loadDetail(selectedId); else { setSelectedReport(null); setSelectedVersions([]); setSelectedSubs([]); } }, [selectedId]);
+
+  useEffect(() => {
+    if (!hasAnyRole) return;
+    amlCasesApi.list({ limit: 200 })
+      .then((r) => setCases(r.cases))
+      // A report can still be drafted if the list cannot be read; the check
+      // below will say it is not filed against anybody, which is true.
+      .catch(() => setCases([]));
+  }, [hasAnyRole]);
+
+  const obligationAt = (draft.metadata as any)?.obligation_at ?? null;
+
+  /**
+   * The selected report as the guided path reads it.
+   *
+   * Assembled here rather than inside the card so the card stays pure
+   * presentation over one shape, and so the lodgement reference and receipt
+   * come from the SUBMISSIONS actually recorded rather than from a status
+   * word that could disagree with them.
+   */
+  const pathFacts: AustracReportFacts | null = useMemo(() => {
+    if (!selectedReport) return null;
+    const latestSub = selectedSubs[0] ?? null;
+    const meta = (selectedReport.metadata ?? {}) as Record<string, any>;
+    return {
+      kind: selectedReport.kind as AustracReportKind,
+      status: selectedReport.status,
+      caseId: selectedReport.case_id ?? null,
+      subjectLabel: cases.find((c) => c.id === selectedReport.case_id)?.subject_display_name ?? null,
+      title: selectedReport.title ?? null,
+      narrative: selectedReport.narrative ?? null,
+      periodStart: selectedReport.reporting_period_start ?? null,
+      periodEnd: selectedReport.reporting_period_end ?? null,
+      mlroSignedAt: selectedReport.mlro_signed_at ?? null,
+      submittedAt: selectedReport.submitted_at ?? null,
+      externalReference: latestSub?.external_reference ?? null,
+      receiptReference: (latestSub as any)?.receipts?.[0]?.receipt_reference
+        ?? (selectedReport.acknowledged_at ? "recorded" : null),
+      obligationAt: meta.obligation_at ?? null,
+      terrorismFinancing: meta.terrorism_financing === true,
+    };
+  }, [selectedReport, selectedSubs, cases]);
 
   const startNew = () => { setDraft({ kind: "smr", title: "", narrative: "" }); setOpenDraft(true); };
   const editExisting = (r: AmlReport) => { setDraft({ ...r }); setOpenDraft(true); };
@@ -321,8 +378,22 @@ export default function AmlAustracReporting() {
             <CardTitle className="text-base">Detail</CardTitle>
             <CardDescription>{selectedReport ? selectedReport.title : "Select a report to view versions and submissions."}</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             {!selectedReport && <div className="text-sm text-muted-foreground">Nothing selected.</div>}
+            {/*
+              The path leads, because "what now" is the question an operator
+              opens a report with. The tabs below keep every existing detail
+              exactly where it was.
+            */}
+            {selectedReport && pathFacts && (
+              <AustracReportPathCard
+                facts={pathFacts}
+                onOpenStep={(key) => {
+                  if (key === "identify" || key === "assemble") editExisting(selectedReport);
+                  else if (key === "lodge") { setSubmitRef(""); setOpenSubmit(true); }
+                }}
+              />
+            )}
             {selectedReport && (
               <Tabs defaultValue="meta">
                 <TabsList className="grid grid-cols-3">
@@ -407,6 +478,36 @@ export default function AmlAustracReporting() {
                 <Input value={draft.reference_code ?? ""} onChange={(e) => setDraft((d) => ({ ...d, reference_code: e.target.value }))} />
               </div>
             </div>
+            {/*
+              ── Which customer this is about ──────────────────────────
+              The field the dialog never had. Without it the report is
+              filed against nobody: it does not reach the customer's
+              compliance file, does not appear on their case timeline, and
+              cannot be found from their record. The server has always
+              written the case event when given a case; it was never given
+              one.
+            */}
+            <div>
+              <Label>Customer</Label>
+              <Select
+                value={draft.case_id ?? "none"}
+                onValueChange={(v) => setDraft((d) => ({ ...d, case_id: v === "none" ? null : v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Choose the customer this report is about" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Not yet chosen</SelectItem>
+                  {cases.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.subject_display_name} — {c.case_reference}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                The report is held on this customer's compliance file, and the drafting is
+                recorded on their case timeline.
+              </p>
+            </div>
             <div>
               <Label>Title</Label>
               <Input value={draft.title ?? ""} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} />
@@ -414,6 +515,53 @@ export default function AmlAustracReporting() {
             <div>
               <Label>Narrative</Label>
               <Textarea rows={6} value={draft.narrative ?? ""} onChange={(e) => setDraft((d) => ({ ...d, narrative: e.target.value }))} />
+            </div>
+            {/*
+              ── What starts the statutory clock ────────────────────────
+              An SMR is due 3 business days after the suspicion was FORMED
+              (24 hours where it concerns terrorism financing); a TTR and an
+              IFTI 10 business days after the transaction or instruction.
+              None of those is the reporting period, so the date is asked
+              for separately and kept in `metadata` — a deadline derived
+              from the wrong date is worse than none.
+            */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>Obligation arose</Label>
+                <Input
+                  type="datetime-local"
+                  value={obligationAt ? String(obligationAt).slice(0, 16) : ""}
+                  onChange={(e) => setDraft((d) => ({
+                    ...d,
+                    metadata: {
+                      ...(d.metadata ?? {}),
+                      obligation_at: e.target.value ? new Date(e.target.value).toISOString() : null,
+                    },
+                  }))}
+                />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {AUSTRAC_OBLIGATIONS[(draft.kind ?? "smr") as AustracReportKind].clockStarts
+                    .replace(/^the /, "The ")} — this is what the deadline is counted from.
+                </p>
+              </div>
+              {(draft.kind ?? "smr") === "smr" && (
+                <div className="flex items-start gap-2 pt-6">
+                  <Checkbox
+                    id="draft-tf"
+                    checked={Boolean((draft.metadata as any)?.terrorism_financing)}
+                    onCheckedChange={(v) => setDraft((d) => ({
+                      ...d,
+                      metadata: { ...(d.metadata ?? {}), terrorism_financing: v === true },
+                    }))}
+                  />
+                  <Label htmlFor="draft-tf" className="text-xs font-normal leading-snug">
+                    The suspicion concerns terrorism financing
+                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                      Tightens the deadline to 24 hours.
+                    </span>
+                  </Label>
+                </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>

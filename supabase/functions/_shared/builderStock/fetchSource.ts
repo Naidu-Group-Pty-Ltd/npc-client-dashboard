@@ -42,6 +42,11 @@ const denoDns = Deno as unknown as {
 const resolveDns = (hostname: string, recordType: DnsRecordType) =>
   denoDns.resolveDns(hostname, recordType);
 
+import {
+  googleSheetsReadAttempts, googleSheetsRef, resolveSheetsPayload, sentinelReadUrl,
+  type GoogleSheetsRef,
+} from './googleSheetsSource.pure.ts';
+
 export interface FetchedSource {
   bytes: Uint8Array;
   /** What the server said it was. A claim, checked against the bytes later. */
@@ -70,6 +75,107 @@ export class SourceFetchError extends Error {
  * the scheme. This settles the destination.
  */
 export async function fetchStockSource(startUrl: string): Promise<FetchedSource> {
+  /*
+   * A GOOGLE SHEETS LINK IS RESOLVED TO ITS DATA BEFORE ANYTHING ELSE.
+   *
+   * Fetched as an ordinary URL it answers 675 KB of `text/html` — the Sheets
+   * APPLICATION — and the generic table extractor reads a 101 x 27 grid whose
+   * header is the spreadsheet's column letters and whose first column is the
+   * row-number gutter. The import does not fail; it succeeds at reading the
+   * wrong thing, which is worse.
+   *
+   * Done here rather than at the caller so that EVERY retrieval gets it: the
+   * import, the source-image repair and anything added later all come through
+   * this one function, and a builder may paste a Sheets link into any of them.
+   */
+  const sheets = googleSheetsRef(startUrl);
+  if (sheets) return await fetchGoogleSheet(sheets, startUrl);
+
+  return await fetchOrdinaryUrl(startUrl);
+}
+
+/**
+ * Read one tab of a public Google Sheet through Google's own endpoints.
+ *
+ * Each candidate goes through `fetchOrdinaryUrl`, so the SSRF guard, the
+ * redirect policy, the timeouts and the byte cap are the existing ones — this
+ * chooses addresses, it does not fetch differently.
+ */
+async function fetchGoogleSheet(
+  ref: GoogleSheetsRef,
+  startUrl: string,
+): Promise<FetchedSource> {
+  let lastRefusal: SourceFetchError | null = null;
+
+  for (const attempt of googleSheetsReadAttempts(ref)) {
+    let body: FetchedSource;
+    try {
+      body = await fetchOrdinaryUrl(attempt.url);
+    } catch (error) {
+      // A document that refuses one endpoint may serve another: the reported
+      // source answers 401 on `export` and 200 on `gviz`. Keep the refusal in
+      // case every endpoint refuses, so the builder is told the real reason.
+      if (error instanceof SourceFetchError) { lastRefusal = error; continue; }
+      throw error;
+    }
+
+    /*
+     * WHAT CAME BACK MUST BE THE TAB THAT WAS ASKED FOR.
+     *
+     * `gviz` answers an unknown gid with 200, `status: "ok"` and a DIFFERENT
+     * worksheet. So where the link named a gid and the endpoint is one that
+     * substitutes, the same endpoint is asked for a tab that cannot exist and
+     * the two answers are compared. Identical means the gid did not resolve.
+     */
+    let sentinelBody: string | null = null;
+    if (attempt.substitutes && ref.gid !== null) {
+      try {
+        sentinelBody = decodeUtf8(
+          (await fetchOrdinaryUrl(sentinelReadUrl(ref, attempt))).bytes);
+      } catch {
+        sentinelBody = null;
+      }
+    }
+
+    const resolved = resolveSheetsPayload({
+      ref, attempt, body: decodeUtf8(body.bytes), sentinelBody,
+    });
+
+    if (!resolved.ok) {
+      if (resolved.reason === 'gid_unresolved') {
+        throw new SourceFetchError(
+          'sheet_tab_not_found',
+          'That link names a tab this spreadsheet does not have. '
+            + 'Open the tab you want and copy the address again.',
+        );
+      }
+      continue;
+    }
+
+    return {
+      bytes: new TextEncoder().encode(resolved.csv),
+      // It IS a CSV now, whatever the endpoint labelled it, and saying so is
+      // what puts it through the parser every other CSV source uses.
+      declaredContentType: 'text/csv',
+      finalUrl: attempt.url,
+      status: body.status,
+    };
+  }
+
+  if (lastRefusal) throw lastRefusal;
+  throw new SourceFetchError(
+    'sheet_unreadable',
+    'That spreadsheet could not be read. Share it so anyone with the link can '
+      + 'view it, or upload the stock list instead.',
+  );
+}
+
+function decodeUtf8(bytes: Uint8Array): string {
+  return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+}
+
+/** The retrieval every source has always used. Unchanged. */
+async function fetchOrdinaryUrl(startUrl: string): Promise<FetchedSource> {
   const deadline = Date.now() + TOTAL_TIMEOUT_MS;
 
   let current: URL;

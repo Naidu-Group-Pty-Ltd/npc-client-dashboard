@@ -243,7 +243,8 @@ jobs:
             src/lib/__tests__/builderStockNotionViewContract.test.ts \
             src/lib/__tests__/builderStockUploadContract.test.ts \
             src/lib/__tests__/builderStockLadderExhaustion.test.ts \
-            src/lib/__tests__/builderStockGoogleSheetsSource.test.ts
+            src/lib/__tests__/builderStockGoogleSheetsSource.test.ts \
+            src/lib/__tests__/builderStockSheetHyperlinks.test.ts
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
       # scanner, lint run or typecheck ever reached it — its test file sat
@@ -521,11 +522,11 @@ jobs:
       # and not a scan: it exits before reading a single file with
       # "[Naidu-Group-Pty-Ltd] is an organization. License key is required."
       #
-      # So `security` was red on EVERY pull request in this repository — every
-      # other control in this job passes — and a red check nobody can turn
-      # green is one people learn to merge past. It also meant 277 working-tree
-      # findings had never been read by anyone; they are triaged in
-      # `.gitleaks.toml` now.
+      # So `security` was red on EVERY pull request here — every other control
+      # in this job passes — and a red check nobody can turn green is one people
+      # learn to merge past. It also meant 286 working-tree findings had never
+      # been read; they are triaged in `.gitleaks.toml`, which this repository
+      # did not have until then.
       #
       # 8.28 rather than 8.21: the older binary accepts a config carrying both
       # `[allowlist]` and `[[allowlists]]` and SILENTLY IGNORES every plural

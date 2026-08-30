@@ -46,9 +46,24 @@ import {
   googleSheetsReadAttempts, googleSheetsRef, resolveSheetsPayload, sentinelReadUrl,
   type GoogleSheetsRef,
 } from './googleSheetsSource.pure.ts';
+import {
+  matchWorksheet, mergeHyperlinkColumns,
+  type HyperlinkAvailability, type WorkbookSheet,
+} from './sheetHyperlinks.pure.ts';
+import { parseDelimited } from './table.pure.ts';
+import { matrixToCsv } from './notionRecordMap.pure.ts';
 
 export interface FetchedSource {
   bytes: Uint8Array;
+  /**
+   * Whether a spreadsheet source's hyperlink targets were recoverable.
+   *
+   * Absent for every other kind of source. Present and NOT `resolved` means
+   * link-bearing cells were read as labels only — which is a fact about our
+   * access to the document, never a finding that the property has no builder
+   * imagery. See `sourcesFullyEnumerable`.
+   */
+  hyperlinks?: HyperlinkAvailability;
   /** What the server said it was. A claim, checked against the bytes later. */
   declaredContentType: string;
   /** After redirects. This is what gets recorded as `final_url`. */
@@ -152,13 +167,31 @@ async function fetchGoogleSheet(
       continue;
     }
 
+    /*
+     * THE LINKS THE CSV THREW AWAY, IF THE WORKBOOK WILL GIVE THEM UP.
+     *
+     * A stock list keeps its documents as hyperlinks — the cell says
+     * `Brochure`, the address is underneath — and every CSV export writes the
+     * label and discards the target. XLSX keeps them, so the workbook is asked
+     * for the same tab's links and they are appended as columns beside the
+     * rows they belong to.
+     *
+     * MEMBERSHIP DOES NOT MOVE. `resolved.csv` is still the whole of which
+     * properties exist, in its order, with its values. This can only ever add
+     * columns, and it is skipped entirely the moment anything about it is
+     * uncertain — a workbook that will not open, a tab that cannot be
+     * identified decisively, or two tabs that look alike.
+     */
+    const enriched = await enrichWithHyperlinks(ref, resolved.csv);
+
     return {
-      bytes: new TextEncoder().encode(resolved.csv),
+      bytes: new TextEncoder().encode(enriched.csv),
       // It IS a CSV now, whatever the endpoint labelled it, and saying so is
       // what puts it through the parser every other CSV source uses.
       declaredContentType: 'text/csv',
       finalUrl: attempt.url,
       status: body.status,
+      hyperlinks: enriched.availability,
     };
   }
 
@@ -168,6 +201,89 @@ async function fetchGoogleSheet(
     'That spreadsheet could not be read. Share it so anyone with the link can '
       + 'view it, or upload the stock list instead.',
   );
+}
+
+/**
+ * Ask the workbook for the selected tab's hyperlink targets.
+ *
+ * Every refusal is an availability reading rather than an error: the CSV is
+ * already proven and the import proceeds on it. What must never happen is the
+ * import proceeding while REPORTING that it saw the builder's sources.
+ */
+async function enrichWithHyperlinks(
+  ref: GoogleSheetsRef,
+  csv: string,
+): Promise<{ csv: string; availability: HyperlinkAvailability }> {
+  const matrix = parseDelimited(csv);
+  if (matrix.length < 2) return { csv, availability: 'none_present' };
+
+  let workbookBytes: Uint8Array;
+  try {
+    // The workbook export carries no gid — it is the WHOLE document — which is
+    // exactly why the worksheet is identified by content below.
+    const fetched = await fetchOrdinaryUrl(
+      `https://docs.google.com/spreadsheets/d/${ref.spreadsheetId}/export?format=xlsx`);
+    workbookBytes = fetched.bytes;
+  } catch {
+    return { csv, availability: 'unavailable_source_sharing' };
+  }
+
+  let sheets: WorkbookSheet[];
+  try {
+    sheets = await readWorkbookSheets(workbookBytes);
+  } catch {
+    return { csv, availability: 'unavailable_source_sharing' };
+  }
+
+  const match = matchWorksheet(matrix, sheets);
+  if (!match.ok) {
+    return {
+      csv,
+      availability: match.reason === 'ambiguous'
+        ? 'unavailable_ambiguous_worksheet'
+        : 'unavailable_no_worksheet_match',
+    };
+  }
+
+  const merged = mergeHyperlinkColumns(matrix, match.sheet);
+  if (!merged.linksResolved) return { csv, availability: 'none_present' };
+
+  return { csv: matrixToCsv(merged.matrix), availability: 'resolved' };
+}
+
+/**
+ * Every worksheet's visible values and its hyperlink targets.
+ *
+ * SheetJS surfaces a link as `cell.l.Target` beside the displayed `cell.v`, so
+ * a labelled cell that carries no link is distinguishable from one that does
+ * rather than inferred. The reader is the one this repository already loads
+ * for spreadsheet sources; nothing new is introduced into the runtime.
+ */
+async function readWorkbookSheets(bytes: Uint8Array): Promise<WorkbookSheet[]> {
+  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
+  const workbook = XLSX.read(bytes, { type: 'array', cellDates: true });
+
+  return workbook.SheetNames.map((name: string) => {
+    const sheet = workbook.Sheets[name];
+    const values: (string | null)[][] = [];
+    const links: (string | null)[][] = [];
+    if (!sheet || !sheet['!ref']) return { name, values, links };
+
+    const range = XLSX.utils.decode_range(String(sheet['!ref']));
+    for (let r = range.s.r; r <= range.e.r; r += 1) {
+      const valueRow: (string | null)[] = [];
+      const linkRow: (string | null)[] = [];
+      for (let c = range.s.c; c <= range.e.c; c += 1) {
+        const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+        valueRow.push(cell ? String(cell.w ?? cell.v ?? '') : null);
+        const target = cell?.l?.Target;
+        linkRow.push(typeof target === 'string' && target ? target : null);
+      }
+      values.push(valueRow);
+      links.push(linkRow);
+    }
+    return { name, values, links };
+  });
 }
 
 function decodeUtf8(bytes: Uint8Array): string {

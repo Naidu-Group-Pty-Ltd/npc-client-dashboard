@@ -241,7 +241,11 @@ describe('the resolved data enters the pipeline that already exists', () => {
       // A Google spreadsheet id is a long opaque token. No string literal here
       // may look like one.
       for (const [, literal] of code.matchAll(/'([^']*)'/g)) {
-        expect(literal).not.toMatch(/^[A-Za-z0-9_-]{25,}$/);
+        // Mixed case AND digits: what a spreadsheet id looks like, and what
+        // this module's own snake_case reason codes are not.
+        const idShaped = /^[A-Za-z0-9_-]{25,}$/.test(literal)
+          && /[A-Z]/.test(literal) && /\d/.test(literal);
+        expect(idShaped, `id-shaped literal ${literal}`).toBe(false);
       }
     }
   });

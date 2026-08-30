@@ -234,8 +234,26 @@ export interface AustracReportFacts {
   terrorismFinancing?: boolean;
 }
 
-/** The minimum a narrative must carry to be worth an MLRO's time. */
-export const MIN_NARRATIVE_CHARS = 200;
+/**
+ * A narrative is written, or it is not. There is no length.
+ *
+ * ── Why the character floor went ──────────────────────────────────────
+ * This carried a 200-character minimum, rendered as `298 / 200 characters`
+ * beside the box. Two things were wrong with it. AUSTRAC sets no such
+ * threshold — the floor was this product's invention, and a compliance
+ * product telling an MLRO their account of a suspicion is too short by an
+ * arbitrary number is asserting a standard nobody set. And the counter READ
+ * as a cap: "298 / 200" is the shape of an overrun, on the one field where
+ * running out of room would be a serious problem, so the number discouraged
+ * exactly the thing it was meant to encourage.
+ *
+ * What replaces it is not nothing. The questions a narrative has to answer
+ * are listed under the box, per obligation, from `KIND_GUIDANCE` — guidance
+ * on substance rather than a measure of bulk.
+ */
+export function narrativeIsWritten(narrative: string | null | undefined): boolean {
+  return (narrative ?? "").trim().length > 0;
+}
 
 export function austracReadiness(f: AustracReportFacts): ReadinessCheck[] {
   const checks: ReadinessCheck[] = [];
@@ -256,11 +274,11 @@ export function austracReadiness(f: AustracReportFacts): ReadinessCheck[] {
   checks.push({
     key: "narrative",
     label: "Narrative written",
-    state: (f.narrative ?? "").trim().length >= MIN_NARRATIVE_CHARS ? "done" : "attention",
-    detail: (f.narrative ?? "").trim().length >= MIN_NARRATIVE_CHARS
+    state: narrativeIsWritten(f.narrative) ? "done" : "attention",
+    detail: narrativeIsWritten(f.narrative)
       ? "The grounds are set out in the report."
-      : `AUSTRAC reads the narrative, not the fields around it. Set out what happened, `
-        + `what was unusual about it, and what you did — at least ${MIN_NARRATIVE_CHARS} characters.`,
+      : "AUSTRAC reads the narrative, not the fields around it. Set out what happened, "
+        + "what was unusual about it, and what you did.",
   });
 
   const clock = lodgementClock({
@@ -329,7 +347,7 @@ export interface PathStep {
  * "what now" with one thing rather than a list to interpret.
  */
 export function deriveAustracPath(f: AustracReportFacts): PathStep[] {
-  const narrativeDone = (f.narrative ?? "").trim().length >= MIN_NARRATIVE_CHARS;
+  const narrativeDone = narrativeIsWritten(f.narrative);
   const raw: Array<Omit<PathStep, "n" | "state"> & { done: boolean }> = [
     {
       key: "identify",

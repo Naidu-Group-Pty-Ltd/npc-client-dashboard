@@ -240,3 +240,72 @@ one thing whichever screen names it. `draftSectionsForReport` is there for
 the same reason: the form and the page both ask "what is still owed" about
 the same draft, and two mappings from a stored row to `DraftFacts` is how
 they come to disagree.
+
+---
+
+## Finding the customer, and what the narrative is measured by
+
+Three things the draft page got wrong once it was a page.
+
+### The customer is typed, not scrolled
+
+The customer field was a plain drop-down listing every open case in whatever
+order the server returned it. On a tenant with two hundred customers that is
+not a picker, it is a haystack: there was no way to type a name, and no way
+to reach a customer by the **Passport reference** an operator is reading off
+another screen — which is how a reference is normally carried between
+screens.
+
+It is a combobox now — type a name or a reference and the list narrows.
+
+**The rule is not the picker's.** `caseSearch.pure.ts` holds it, and the
+Compliance Passport register — where the convention started, name or case
+reference — filters through the same module. A customer who can be found on
+one screen and not on another is how an operator concludes a case does not
+exist, so the register's filter *moved* rather than being copied.
+
+Two things the shared rule does that a substring match does not. **Every word
+must match and they may match different fields**, so "rugesh 00005" finds the
+customer whose name carries one and whose reference carries the other — which
+is how somebody types when reading a reference off one screen and a name off
+another. And **a reference matches with or without its punctuation**:
+`AML-2026-00005` is found by `aml202600005` and by `00005`, because a
+reference is copied, re-typed and read aloud, and the hyphens are not part of
+what anybody remembers.
+
+It also **searches without fetching**. The list is the one the page already
+loaded, filtered in the browser, so no keystroke leaves a customer's name in
+a request log and typing cannot fail.
+
+### There is no character floor
+
+The narrative carried a 200-character minimum, rendered beside the box as
+`298 / 200 characters`. Two things were wrong with it.
+
+AUSTRAC sets no such threshold. The floor was this product's invention, and a
+compliance product telling an MLRO that their account of a suspicion is too
+short by an arbitrary number is asserting a standard nobody set.
+
+And the counter **read as a cap**. "298 / 200" is the shape of an overrun, on
+the one field in this product where running out of room would be a serious
+problem — so the number discouraged exactly the thing it was there to
+encourage.
+
+`narrativeIsWritten` replaces it: a narrative is written, or it is not. What
+replaces the floor is not nothing — the questions a narrative has to answer
+are listed under the box, per obligation, from `KIND_GUIDANCE`. Guidance on
+substance rather than a measure of bulk.
+
+### The label was sitting on the box
+
+"Narrative" shared a `flex items-end` row with the counter. The counter made
+the row taller, `items-end` dropped the label to the row's foot, and the
+Label primitive's `leading-none` left its descenders resting on the
+textarea's own border. Removing the counter removes the row; every field on
+the page now carries the same `space-y-1.5` rhythm rather than relying on the
+label's own box height.
+
+`ResizeObserver` and `scrollIntoView` are polyfilled in the test setup for
+the same class of reason: jsdom implements neither, `cmdk` needs the first
+and Radix's positioned surfaces the second, and a component that throws on
+mount in a test is indistinguishable from one that is broken.

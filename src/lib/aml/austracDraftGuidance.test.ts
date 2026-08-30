@@ -106,12 +106,17 @@ describe("the four numbered sections", () => {
     expect(draftSections({ ...base, kind: "annual" })[1].state).toBe("complete");
   });
 
-  it("counts the narrative against the same threshold the readiness check uses", () => {
-    const short = draftSections({ ...base, title: "t", narrative: "too short" })[2];
-    expect(short.state).toBe("outstanding");
-    expect(short.outstanding).toMatch(/of 200 characters/);
-    const long = draftSections({ ...base, title: "t", narrative: "x".repeat(200) })[2];
-    expect(long.state).toBe("complete");
+  it("asks for a narrative and never for a length", () => {
+    /* AUSTRAC sets no character threshold, and the one this carried rendered
+       as `298 / 200 characters` — the shape of an overrun, on the one field
+       where running out of room would be a serious problem. A narrative is
+       written or it is not, and the questions under the box are the guidance
+       on substance. */
+    const empty = draftSections({ ...base, title: "t", narrative: "   " })[2];
+    expect(empty.state).toBe("outstanding");
+    expect(empty.outstanding).not.toMatch(/character/i);
+    const brief = draftSections({ ...base, title: "t", narrative: "Cash paid at settlement." })[2];
+    expect(brief.state).toBe("complete");
   });
 
   it("treats the period as optional for a customer report and owed for the annual one", () => {
@@ -122,7 +127,7 @@ describe("the four numbered sections", () => {
   it("summarises what is still owed without ever claiming it is ready to lodge", () => {
     expect(draftSummary(draftSections(base))).toMatch(/outstanding/);
     const complete = draftSections({
-      ...base, caseId: "c1", title: "t", narrative: "x".repeat(200),
+      ...base, caseId: "c1", title: "t", narrative: "Cash paid at settlement.",
       obligationAt: "2026-08-27T09:00:00Z",
     });
     expect(draftSummary(complete)).toBe("Everything this report needs has been recorded.");
@@ -184,7 +189,7 @@ describe("one label map, and one section model", () => {
        draft. Two mappings from a row to `DraftFacts` is how they come to
        disagree. */
     const owed = draftSectionsForReport({
-      kind: "smr", case_id: null, title: "t", narrative: "x".repeat(200),
+      kind: "smr", case_id: null, title: "t", narrative: "Cash paid at settlement.",
       metadata: { obligation_at: "2026-08-27T09:00:00Z" },
     });
     expect(owed[0].state).toBe("complete");

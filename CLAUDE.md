@@ -637,6 +637,20 @@ hub's action is **"Start AUSTRAC Report"**: "New Draft" named the row it would
 add to a table, not the act. `AUSTRAC_KIND_LABEL` and `draftSectionsForReport`
 are in the pure module because both were about to exist twice.
 
+Three things the page itself got wrong. **A customer is typed, not scrolled**
+— the field was a drop-down over every open case, so `caseSearch.pure.ts` now
+holds one matching rule that the Compliance Passport register uses too (its
+filter MOVED rather than being copied): every word must match and they may
+match different fields, and a reference matches with or without its
+punctuation. It filters the list already loaded and never queries on a
+keystroke. **There is no character floor** — a 200-character minimum rendered
+as `298 / 200 characters`, which is the shape of an overrun on the one field
+where running out of room would be serious, and AUSTRAC sets no threshold;
+`narrativeIsWritten` replaces it and the per-obligation questions under the
+box are the guidance on substance. And **the label was sitting on the box**:
+it shared a `flex items-end` row with that counter, which is what put its
+descenders on the textarea's border.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

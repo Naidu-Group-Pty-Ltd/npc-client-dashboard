@@ -107,7 +107,7 @@ const AmlCaseWorkspace = lazyWithRetry(() => import("./pages/aml/AmlCaseWorkspac
 const AmlOverview = lazyWithRetry(() => import("./pages/aml/AmlOverview"));
 const AmlPassports = lazyWithRetry(() => import("./pages/aml/AmlPassports"));
 import {
-  AmlIntakeQueue, AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
+  AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
   AmlFinance, AmlTransactions,
   AmlMonitoring, AmlInvestigations, AmlAustracReporting, AmlRecords, AmlGovernance, AmlConfiguration,
 } from "./pages/aml/AmlShellPages";
@@ -749,7 +749,6 @@ const App = () => (
                 <Route path="admin/agent-quality" element={<ModuleGuard moduleKey="__superadmin_only__"><AgentQuality /></ModuleGuard>} />
                 <Route path="admin/aml" element={<AmlLayout />}>
                   <Route index element={<AmlGuard capability="aml.view"><AmlOverview /></AmlGuard>} />
-                  <Route path="intake" element={<AmlGuard capability="aml.view"><AmlIntakeQueue /></AmlGuard>} />
                   <Route path="cases" element={<AmlGuard capability="aml.view"><AmlCases /></AmlGuard>} />
                   <Route path="cases/:caseId" element={<AmlGuard capability="aml.view"><AmlCaseWorkspace /></AmlGuard>} />
                   <Route path="passport" element={<AmlGuard capability="aml.view"><AmlPassports /></AmlGuard>} />

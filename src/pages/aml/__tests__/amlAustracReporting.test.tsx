@@ -222,16 +222,15 @@ describe("the record download", () => {
 });
 
 describe("the guided path leads somewhere", () => {
-  it("offers the open step an act that actually runs", async () => {
-    /* The card drew "Open" on whichever step was open and the page handled
-       three of six keys, so a saved draft rendered a button that did
-       nothing at all. */
+  it("opens the report to be reviewed rather than approving from the row", async () => {
+    /* Approving from a register row asks somebody to authorise a document
+       they are not looking at. The step opens the report itself, where the
+       checks, the narrative and the approval are all on one screen. */
     renderPage();
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
-    const approve = await screen.findByRole("button", { name: /Review and approve/i });
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    fireEvent.click(approve);
-    await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
+    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/r1/edit");
+    expect(mlroSignoff).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /^Open$/ })).not.toBeInTheDocument();
   });
 
@@ -252,11 +251,12 @@ describe("the guided path leads somewhere", () => {
      days. */
   const withGaps = { ...REPORT, metadata: { obligation_at: "2026-01-05T00:00:00.000Z" } };
 
-  it("approves a complete report in one click, as the table always did", async () => {
+  it("keeps the row's own approval for an MLRO who has already read it", async () => {
+    /* Removing a control is not what opening the report was for. */
     renderPage();
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
     const confirmed = vi.spyOn(window, "confirm");
-    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
     expect(confirmed).not.toHaveBeenCalled();
   });
@@ -269,7 +269,7 @@ describe("the guided path leads somewhere", () => {
     renderPage();
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
-    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(confirmed).toHaveBeenCalled();
     expect(mlroSignoff).not.toHaveBeenCalled();
   });
@@ -283,7 +283,7 @@ describe("the guided path leads somewhere", () => {
     renderPage();
     fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
-    fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     const asked = String(confirmed.mock.calls[0]?.[0] ?? "");
     expect(asked).toMatch(/Within the statutory window/);
     expect(asked).not.toMatch(/Lodged at AUSTRAC Online/);

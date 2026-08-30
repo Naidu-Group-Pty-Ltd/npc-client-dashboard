@@ -245,7 +245,8 @@ jobs:
             src/lib/__tests__/builderStockLadderExhaustion.test.ts \
             src/lib/__tests__/builderStockGoogleSheetsSource.test.ts \
             src/lib/__tests__/builderStockSheetHyperlinks.test.ts \
-            src/lib/__tests__/builderStockSourceBranches.test.ts
+            src/lib/__tests__/builderStockSourceBranches.test.ts \
+            src/lib/__tests__/builderStockSourceAccessNotice.test.ts
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
       # scanner, lint run or typecheck ever reached it — its test file sat

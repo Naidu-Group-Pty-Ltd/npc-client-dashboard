@@ -456,3 +456,73 @@ A step absent from `stepActions` draws no button — the honest rendering of
 a broken page, so `stepNotes` renders "The MLRO's decision" on the open step
 when this operator cannot make it. An analyst reaching the approval is a real
 state with a real next actor, and it is now said on the page.
+
+---
+
+## The whole process, in the report
+
+Three changes that follow from one observation: **approving from a register
+row asks somebody to authorise a document they are not looking at.**
+
+### "Review and approve" opens the report
+
+The hub's step-3 button used to sign the report off where it stood. It now
+opens the report, where the checks, the narrative and the approval are on one
+screen — and approving there returns to the hub with the report selected and
+the **lodgement** step open, which is the next act and is not on the report
+page.
+
+The register row's own **Approve** button is untouched. An MLRO who has
+already read the report should not have to open it again, and removing a
+control is not what opening the report was for.
+
+### The approval saves first
+
+The MLRO approves **what they are looking at**. If the narrative on screen has
+not been written to the record, signing off would attest to a version nobody
+read. So an unsaved change is persisted before the decision, in one act, and
+the button says **"Save and approve"** while there is one — nobody has to
+wonder which version they are signing off.
+
+Approval takes the report out of the draft statuses, so this page can no
+longer write to it. A report opened at `/edit` past those statuses renders
+**read-only with the reason**, rather than an editable form whose Save the
+server answers 403 to.
+
+### One guard, asked from both places
+
+`outstandingBeforeApproval` and `approvalConfirmation` are in the pure module
+because the approval can now be made from two surfaces. Two copies of "what is
+still owed" is how one screen comes to warn about something the other does
+not. It still excludes the checks the approval itself unlocks.
+
+### The checks lead the card
+
+They sat under the steps, which put the thing an approver has to **read**
+below the thing they are asked to **do** — and on a report whose path is long
+enough to scroll, below the fold. Step 3 is "review the checks and approve
+it", so the checks are the first thing on the card and the approval is reached
+past them.
+
+One rule falls out of that reorder: **no step may describe its own position on
+the page.** The step text is drawn on the hub, inside the report, and in the
+draft page's orientation list, and the checks sit somewhere different in each;
+"the checks below" was true on one screen and wrong on the next the moment
+they moved. A test rejects `above` and `below` in any step's label or detail.
+
+### The AUSTRAC Online door is on the step that needs it
+
+The lodgement statement and its link were a locked panel at the foot of the
+card, three blocks below the step they are about. They are inside **step 4**
+now — the statement that the reporting entity lodges through its own account
+with its own credentials, and this product holds none and submits nothing, and
+the link, prominent while that step is the open one.
+
+### The path is drawn once per screen
+
+The draft page's reference rail carries a five-step orientation list for
+somebody **starting** a report. With the live card on the page they would be
+two renderings of the same path, free to disagree about which step is open, so
+the rail's list is suppressed exactly when the card is mounted — and the card
+is mounted only for a saved report, which is the only kind that has anything
+to approve.

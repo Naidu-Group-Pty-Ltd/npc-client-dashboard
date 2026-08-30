@@ -14,6 +14,7 @@ import { resolve } from "node:path";
 
 const getReport = vi.fn();
 const upsertReport = vi.fn();
+const mlroSignoff = vi.fn();
 const listCases = vi.fn();
 
 vi.mock("@/lib/aml/amlReportingApi", async (orig) => ({
@@ -21,8 +22,9 @@ vi.mock("@/lib/aml/amlReportingApi", async (orig) => ({
   amlReportingApi: {
     getReport: (id: string) => getReport(id),
     upsertReport: (d: unknown) => upsertReport(d),
+    mlroSignoff: (id: string) => mlroSignoff(id),
     summary: vi.fn(), listReports: vi.fn(), deleteReport: vi.fn(),
-    mlroSignoff: vi.fn(), mlroReject: vi.fn(), withdrawReport: vi.fn(),
+    mlroReject: vi.fn(), withdrawReport: vi.fn(),
     submitRecord: vi.fn(), recordReceipt: vi.fn(), exportBundle: vi.fn(),
     createVersion: vi.fn(),
   },
@@ -51,6 +53,7 @@ const REPORT = {
 beforeEach(() => {
   getReport.mockResolvedValue({ report: REPORT, versions: [], submissions: [] });
   upsertReport.mockResolvedValue({ ...REPORT, id: "r9" });
+  mlroSignoff.mockResolvedValue({ ...REPORT, status: "approved" });
   listCases.mockResolvedValue({
     cases: [{ id: "case-1", subject_display_name: "Rugesh Naidu", case_reference: "AML-2026-00005" }],
     total: 1,
@@ -283,6 +286,98 @@ describe("why the report is being made", () => {
     expect(await within(annual)
       .findByText(/accounts for the reporting entity's own programme/i)).toBeInTheDocument();
     expect(within(annual).queryByLabelText("Customer")).not.toBeInTheDocument();
+  });
+});
+
+describe("the whole process happens in the report", () => {
+  const renderEdit = (report: Record<string, unknown> = REPORT) => {
+    getReport.mockResolvedValue({ report, versions: [], submissions: [] });
+    return render(
+      <MemoryRouter initialEntries={["/admin/aml/austrac/r1/edit"]}>
+        <Routes>
+          <Route path="/admin/aml/austrac/:reportId/edit" element={<AmlAustracReportDraft />} />
+          <Route path="/admin/aml/austrac" element={<div>the hub</div>} />
+        </Routes>
+        <Where />
+      </MemoryRouter>,
+    );
+  };
+
+  it("carries the path, and the checks lead it", async () => {
+    /* An MLRO reviewing a report had the checks on one screen and the
+       document on another. The checks are what "review" means, so they are
+       the first thing on the card. */
+    renderEdit();
+    expect(await screen.findByText("Before it is lodged")).toBeInTheDocument();
+    expect(screen.getAllByText("Review the checks and approve it").length).toBeGreaterThan(0);
+  });
+
+  it("approves from inside the report and lands on the lodgement step", async () => {
+    /* Once approved it takes the operator to the hub, where the next act —
+       recording the AUSTRAC lodgement — lives. */
+    renderEdit();
+    /* This fixture has no narrative, so the guard asks first — which is the
+       point of the guard. */
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac?report=r1"));
+  });
+
+  it("saves what is on screen before it signs off on it", async () => {
+    /* The MLRO approves what they are LOOKING AT. Signing off an unsaved
+       narrative would attest to a version nobody read. */
+    renderEdit();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.change(await screen.findByLabelText(/Narrative/i), {
+      target: { value: "Cash paid at settlement with no explanation offered." },
+    });
+    /* Two of them, deliberately: the path's own step and the action bar.
+       Both are the same act. */
+    const buttons = await screen.findAllByRole("button", { name: /Save and approve/i });
+    expect(buttons.length).toBe(2);
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(upsertReport).toHaveBeenCalled());
+    await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
+    const savedFirst = upsertReport.mock.invocationCallOrder[0]
+      < mlroSignoff.mock.invocationCallOrder[0];
+    expect(savedFirst).toBe(true);
+  });
+
+  it("puts the AUSTRAC Online door on the lodgement step", async () => {
+    /* It was a locked panel at the foot of the card, three blocks below the
+       step it is about. */
+    renderEdit();
+    const link = await screen.findByRole("link", { name: /Open AUSTRAC Online/i });
+    expect(link).toHaveAttribute("href", "https://online.austrac.gov.au/");
+    const step = link.closest("li")!;
+    expect(within(step).getByText("Lodge it at AUSTRAC Online")).toBeInTheDocument();
+  });
+
+  it("refuses to edit a report that has already been approved, and says why", async () => {
+    /* `upsert_report` refuses anything past the draft statuses, so an
+       editable form here would have a Save the server answers 403 to. */
+    renderEdit({ ...REPORT, status: "approved", mlro_signed_at: "2026-08-30T00:00:00.000Z" });
+    expect(await screen.findByText(/can no longer be edited here/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Approve$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save draft/i })).not.toBeInTheDocument();
+  });
+
+  it("draws the path once, not twice", async () => {
+    /* The reference rail carries a six-step orientation list for somebody
+       STARTING a report. With the live card on the page they would be two
+       renderings of the same path, free to disagree about which step is
+       open. */
+    renderEdit();
+    await screen.findByText("Before it is lodged");
+    expect(screen.queryByText(/The whole path/i)).not.toBeInTheDocument();
+  });
+
+  it("still orients somebody starting a fresh report", async () => {
+    renderNew();
+    expect(await screen.findByText(/The whole path/i)).toBeInTheDocument();
+    expect(screen.queryByText("Before it is lodged")).not.toBeInTheDocument();
   });
 });
 

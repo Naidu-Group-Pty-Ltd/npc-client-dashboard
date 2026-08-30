@@ -25,7 +25,7 @@ import {
   austracBundleIdentity, buildAustracBundleRecord,
 } from "@/lib/aml/austracBundleRecord.pure";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { austracReadiness, type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
+import { approvalConfirmation, type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
 import { AUSTRAC_KIND_LABEL as KIND_LABEL, toObligationKind } from "@/lib/aml/austracDraftGuidance.pure";
 import { amlAustracDraftPath } from "@/lib/aml/amlRoutes";
 import {
@@ -244,22 +244,9 @@ export default function AmlAustracReporting() {
   const signoff = async (r: AmlReport) => {
     if (!isMlro) return;
     const facts = factsFor(r, selectedId === r.id ? selectedSubs : []);
-    const outstanding = facts
-      ? austracReadiness(facts).filter(
-        // The lodgement and the receipt come AFTER approval — listing them
-        // as outstanding would ask the approver to answer for steps their
-        // own decision unlocks.
-        (c) => (c.state === "blocked" || c.state === "attention")
-          && c.key !== "mlro" && c.key !== "lodgement" && c.key !== "receipt",
-      )
-      : [];
-    if (outstanding.length > 0) {
-      const list = outstanding.map((c) => `• ${c.label}`).join("\n");
-      if (!window.confirm(
-        `${outstanding.length} check${outstanding.length === 1 ? " is" : "s are"} still outstanding:`
-        + `\n\n${list}\n\nApprove it anyway? The approval is recorded against you.`,
-      )) return;
-    }
+    // One rule, asked identically here and inside the report itself.
+    const ask = facts ? approvalConfirmation(facts) : null;
+    if (ask && !window.confirm(ask)) return;
     setApproving(r.id);
     try { await amlReportingApi.mlroSignoff(r.id); toast.success("Approved", { description: "It can now be lodged at AUSTRAC Online." }); await load(); if (selectedId === r.id) await loadDetail(r.id); }
     catch (e: any) { toast.error(e?.message ?? "The approval could not be recorded"); }
@@ -622,12 +609,23 @@ export default function AmlAustracReporting() {
                       assemble: { label: "Write the narrative", run: () => editExisting(selectedReport) },
                     }
                     : {}),
+                  /*
+                    ── Review means opening the report ─────────────────
+                    Approving from a register row asks somebody to authorise
+                    a document they are not looking at. The step opens the
+                    report itself, where the checks, the narrative and the
+                    approval are all on one screen — and approving there
+                    returns here with the lodgement step open.
+
+                    The row's own Approve button is untouched: an MLRO who
+                    has already read the report should not have to open it
+                    again, and removing a control is not what this is.
+                  */
                   ...(isMlro && SIGNOFF_STATUSES.has(selectedReport.status)
                     ? {
                       approve: {
                         label: "Review and approve",
-                        run: () => { void signoff(selectedReport); },
-                        busy: approving === selectedReport.id,
+                        run: () => editExisting(selectedReport),
                       },
                     }
                     : {}),

@@ -684,6 +684,25 @@ card does, because the table's button acts on a report that may not be the
 selected one. An open step with no action now renders **whose** it is, because
 a live step with neither an act nor an explanation reads as a broken page.
 
+**The whole process happens in the report now.** Approving from a register row
+asks somebody to authorise a document they are not looking at, so Stage 3's
+button OPENS the report — checks, narrative and approval on one screen — and
+approving there returns to the hub with the lodgement step open. Five rules.
+**The approval saves first** (the MLRO approves what they are LOOKING AT; the
+button says "Save and approve" while there is an unsaved change), and a report
+past the draft statuses renders READ-ONLY with the reason rather than a form
+whose Save the server answers 403 to. **One guard, asked from both surfaces** —
+`approvalConfirmation` is in the pure module because two copies of "what is
+still owed" is how one screen warns about something the other does not. **The
+checks LEAD the card**, because they are what an approver must read and they
+sat below what they were asked to do; and **no step may describe its own
+position** (`above`/`below` are rejected by a test — the same text is drawn on
+three screens and the checks sit differently in each). **The AUSTRAC Online
+door is inside step 4**, with the statement that the entity lodges through its
+own account and this product holds no credentials. And **the path is drawn once
+per screen**: the draft rail's orientation list is suppressed exactly when the
+live card is mounted.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

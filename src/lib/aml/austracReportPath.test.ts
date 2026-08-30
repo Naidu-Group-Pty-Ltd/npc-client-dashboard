@@ -4,7 +4,8 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  AUSTRAC_OBLIGATIONS, TERRORISM_FINANCING_HOURS,
+  AUSTRAC_OBLIGATIONS, TERRORISM_FINANCING_HOURS, approvalConfirmation,
+  outstandingBeforeApproval,
   addBusinessDays, austracHeadline, austracReadiness, deriveAustracPath,
   lodgementClock, type AustracReportFacts,
 } from "./austracReportPath.pure";
@@ -158,6 +159,38 @@ describe("the path", () => {
        accepts it and rows may already carry it. */
     const path = deriveAustracPath(facts({ status: "awaiting_mlro" }));
     expect(path.find((s) => s.state === "open")?.key).toBe("approve");
+  });
+
+  it("asks nothing of an approver whose report is clean", () => {
+    /* A clean report approves in one click; only a real gap interrupts. */
+    expect(approvalConfirmation(facts())).toBeNull();
+    expect(outstandingBeforeApproval(facts())).toEqual([]);
+  });
+
+  it("never asks the approver to answer for the steps their own decision unlocks", () => {
+    /* Lodgement and the receipt come AFTER approval, and the MLRO check IS
+       the decision. */
+    const keys = outstandingBeforeApproval(facts({ caseId: null, narrative: "" }))
+      .map((c) => c.key);
+    expect(keys).toContain("customer");
+    expect(keys).toContain("narrative");
+    for (const after of ["mlro", "lodgement", "receipt"]) expect(keys).not.toContain(after);
+  });
+
+  it("names what is outstanding, and says the approval is recorded", () => {
+    const asked = approvalConfirmation(facts({ caseId: null }))!;
+    expect(asked).toContain("Filed against a customer");
+    expect(asked).toMatch(/recorded against you/i);
+  });
+
+  it("never tells the reader where something is on the page", () => {
+    /* The same step text is drawn on the hub, inside the report and in the
+       draft page's orientation list, and the checks sit in a different
+       place in each. "The checks below" was true on one screen and wrong on
+       the next the moment they were reordered. */
+    for (const step of deriveAustracPath(facts())) {
+      expect(`${step.label} ${step.detail}`).not.toMatch(/\b(below|above)\b/i);
+    }
   });
 
   it("is numbered from one, in order", () => {

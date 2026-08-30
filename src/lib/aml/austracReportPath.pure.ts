@@ -330,6 +330,41 @@ export function austracReadiness(f: AustracReportFacts): ReadinessCheck[] {
   return checks;
 }
 
+/**
+ * What is still outstanding when somebody is about to approve.
+ *
+ * ── One rule, two surfaces ────────────────────────────────────────────
+ * The approval can be made from the register's own row and from inside the
+ * report. Both ask the same question before they proceed, so both ask it
+ * from here: two copies of "what is still owed" is how one screen comes to
+ * warn about something the other one does not.
+ *
+ * It EXCLUDES the checks the approval itself unlocks. Lodgement and the
+ * receipt come after the decision, and the MLRO check IS the decision —
+ * listing any of them would ask the approver to answer for steps their own
+ * act enables.
+ */
+export function outstandingBeforeApproval(f: AustracReportFacts): ReadinessCheck[] {
+  const after = new Set(["mlro", "lodgement", "receipt"]);
+  return austracReadiness(f).filter(
+    (c) => !after.has(c.key) && (c.state === "blocked" || c.state === "attention"),
+  );
+}
+
+/**
+ * What the approver is asked before an incomplete report is approved.
+ *
+ * Returns null when nothing is outstanding, so a clean report approves in
+ * one click and only a real gap ever interrupts.
+ */
+export function approvalConfirmation(f: AustracReportFacts): string | null {
+  const outstanding = outstandingBeforeApproval(f);
+  if (outstanding.length === 0) return null;
+  const list = outstanding.map((c) => `\u2022 ${c.label}`).join("\n");
+  return `${outstanding.length} check${outstanding.length === 1 ? " is" : "s are"} still outstanding:`
+    + `\n\n${list}\n\nApprove it anyway? The approval is recorded against you.`;
+}
+
 /* ── The path ─────────────────────────────────────────────────────────── */
 
 export interface PathStep {
@@ -385,7 +420,11 @@ export function deriveAustracPath(f: AustracReportFacts): PathStep[] {
       */
       key: "approve",
       label: "Review the checks and approve it",
-      detail: "The MLRO clears the checks below and records the decision that authorises lodgement.",
+      /* No "above" or "below": this text is drawn on the hub, inside the
+         report and in the draft page's orientation list, and the checks sit
+         in a different place in each. A step that describes its own
+         position on one screen is wrong on the next. */
+      detail: "The MLRO clears the pre-lodgement checks and records the decision that authorises lodgement.",
       done: Boolean(f.mlroSignedAt),
     },
     {

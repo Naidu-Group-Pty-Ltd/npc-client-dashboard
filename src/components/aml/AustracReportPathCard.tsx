@@ -90,6 +90,42 @@ export function AustracReportPathCard({
   return (
     <Card className="border-border/70">
       <CardContent className="space-y-4 p-4">
+        {/*
+          ── The checks lead ──────────────────────────────────────────
+          They used to sit under the steps, which put the thing an approver
+          has to READ below the thing they are asked to DO — and on a report
+          whose path is long enough to scroll, below the fold. Step 3 is
+          "review the checks and approve it", so the checks are the first
+          thing on the card and the approval is reached past them.
+        */}
+        {/* ── The live checks ─────────────────────────────────────── */}
+        <div className="rounded-lg border border-border/50 bg-muted/15 p-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Before it is lodged
+          </p>
+          <ul className="mt-2 space-y-2">
+            {checks.map((c) => (
+              <li key={c.key} className="flex items-start gap-2.5">
+                <span className={cn("mt-0.5 shrink-0", CHECK_TONE[c.state])}>
+                  <CheckIcon state={c.state} />
+                </span>
+                <span className="min-w-0">
+                  <span className={cn(
+                    "block text-xs font-medium",
+                    c.state === "done" ? "text-muted-foreground" : "text-foreground",
+                  )}>
+                    {c.label}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
+                    {c.detail}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+
         {/* ── What this is, when it is due ─────────────────────────── */}
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -132,7 +168,7 @@ export function AustracReportPathCard({
               <li
                 key={s.key}
                 className={cn(
-                  "flex items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors",
+                  "rounded-lg border px-3 py-2.5 transition-colors",
                   open
                     ? "border-primary/40 bg-primary/5"
                     : s.state === "done"
@@ -140,6 +176,7 @@ export function AustracReportPathCard({
                       : "border-border/40",
                 )}
               >
+                <div className="flex items-start gap-3">
                 <span
                   aria-hidden
                   className={cn(
@@ -178,59 +215,44 @@ export function AustracReportPathCard({
                     {stepActions[s.key]!.label}
                   </Button>
                 )}
+                </div>
+
+                {/*
+                  ── Where the lodgement actually happens ────────────────
+                  This was a locked panel at the foot of the card, three
+                  blocks below the step it is about. It says the one thing
+                  an operator most needs to know — the reporting entity
+                  lodges through its OWN AUSTRAC Online account, with its own
+                  credentials, and this product holds none and submits
+                  nothing — and the door is right here, on the step that
+                  needs it, rather than somewhere else on the page.
+                */}
+                {s.key === "lodge" && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2.5 rounded-md border border-border/50 bg-muted/20 px-2.5 py-2 sm:ml-8">
+                    <Lock aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
+                      Lodgement happens in your organisation's own AUSTRAC Online account. This
+                      platform holds no AUSTRAC credentials and submits nothing on your behalf — it
+                      prepares the report, keeps the evidence behind it, records who approved it,
+                      and holds the receipt on the customer's file.
+                    </p>
+                    <Button
+                      asChild
+                      size="sm"
+                      variant={open ? "default" : "outline"}
+                      className="h-7 shrink-0 text-xs"
+                    >
+                      <a href="https://online.austrac.gov.au/" target="_blank" rel="noreferrer noopener">
+                        Open AUSTRAC Online <ExternalLink aria-hidden className="ml-1.5 h-3 w-3" />
+                      </a>
+                    </Button>
+                  </div>
+                )}
               </li>
             );
           })}
         </ol>
 
-        {/* ── The live checks ─────────────────────────────────────── */}
-        <div className="rounded-lg border border-border/50 bg-muted/15 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Before it is lodged
-          </p>
-          <ul className="mt-2 space-y-2">
-            {checks.map((c) => (
-              <li key={c.key} className="flex items-start gap-2.5">
-                <span className={cn("mt-0.5 shrink-0", CHECK_TONE[c.state])}>
-                  <CheckIcon state={c.state} />
-                </span>
-                <span className="min-w-0">
-                  <span className={cn(
-                    "block text-xs font-medium",
-                    c.state === "done" ? "text-muted-foreground" : "text-foreground",
-                  )}>
-                    {c.label}
-                  </span>
-                  <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
-                    {c.detail}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        {/*
-          ── Where the lodgement actually happens ──────────────────────
-          Said once, plainly, on the surface rather than in a tooltip. The
-          reporting entity lodges through its own AUSTRAC Online account
-          with its own credentials; this product holds none and submits
-          nothing. Everything here is preparation and record.
-        */}
-        <div className="flex flex-wrap items-start gap-2.5 rounded-lg border border-border/50 px-3 py-2.5">
-          <Lock aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <p className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
-            Lodgement happens in your organisation's own AUSTRAC Online account. This
-            platform holds no AUSTRAC credentials and submits nothing on your behalf —
-            it prepares the report, keeps the evidence behind it, records who approved
-            it, and holds the receipt on the customer's file.
-          </p>
-          <Button asChild size="sm" variant="ghost" className="h-7 shrink-0 text-xs">
-            <a href="https://online.austrac.gov.au/" target="_blank" rel="noreferrer noopener">
-              AUSTRAC Online <ExternalLink aria-hidden className="ml-1.5 h-3 w-3" />
-            </a>
-          </Button>
-        </div>
       </CardContent>
     </Card>
   );

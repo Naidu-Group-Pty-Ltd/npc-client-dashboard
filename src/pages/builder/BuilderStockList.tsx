@@ -43,6 +43,7 @@ import {
   type BuilderStockItem, type BuilderStockUpload, type StockAvailability,
   type StockImageStage, type StockSelectionStatus, type StockUploadStatus,
 } from '@/lib/builderStock';
+import { isNonBlockingSourceNotice } from '../../../supabase/functions/_shared/builderStock/sourceAccessNotice.pure';
 
 /**
  * Builder Portal — Stock List.
@@ -683,8 +684,32 @@ export default function BuilderStockList() {
                           {STOCK_UPLOAD_STATUS_LABELS[upload.status as StockUploadStatus] ?? upload.status}
                         </Badge>
                         {upload.error_message ? (
-                          <p className="mt-1 max-w-[22rem] text-xs text-muted-foreground">
-                            {upload.error_message}
+                          /*
+                           * A SOURCE-ACCESS ERROR IS AN ERROR, AND THE UPLOAD
+                           * STILL SUCCEEDED.
+                           *
+                           * Both facts have to survive the same row. A Google
+                           * Sheet shared so anyone with the link may view it
+                           * answers for its property rows and can still refuse
+                           * the workbook its link targets live in — so the
+                           * import is complete, the badge says so, and this
+                           * says what could not be reached. Muted grey read as
+                           * a footnote and nobody saw it; failing the upload
+                           * would send a builder to re-import a list that is
+                           * already in.
+                           */
+                          <p
+                            className={cn(
+                              'mt-1 flex max-w-[22rem] items-start gap-1.5 text-xs',
+                              isNonBlockingSourceNotice(upload.error_code)
+                                ? 'rounded-md border border-destructive/30 bg-destructive/5 p-2 text-destructive'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            {isNonBlockingSourceNotice(upload.error_code) ? (
+                              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                            ) : null}
+                            <span>{upload.error_message}</span>
                           </p>
                         ) : null}
                         {upload.image_stage_summary

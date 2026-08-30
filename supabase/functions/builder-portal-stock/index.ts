@@ -39,7 +39,9 @@ import {
 import {
   runStockImport, type RunImportResult,
 } from '../_shared/builderStock/runImport.ts';
+import { sourceAccessNoticeFor } from '../_shared/builderStock/sourceAccessNotice.pure.ts';
 import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
+import type { HyperlinkAvailability } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
 import {
   NOTION_NOT_PUBLIC_MESSAGE, normaliseStockSourceUrl, snapshotFileName,
   stockSourceDisplayName,
@@ -220,6 +222,15 @@ Deno.serve(async (req) => {
       uploadId: string,
       result: RunImportResult,
       extraMetadata: Record<string, unknown>,
+      /**
+       * How much of a spreadsheet source we could actually read.
+       *
+       * Absent for a file upload and for every other kind of source. Present
+       * and not `resolved` means the rows came through and the link targets
+       * did not — a successful import with a source-access notice, never a
+       * failure. See `sourceAccessNotice.pure.ts`.
+       */
+      sourceHyperlinks?: HyperlinkAvailability,
     ) => {
       if (!result.ok) {
         if (result.code === 'duplicate_file') {
@@ -237,15 +248,33 @@ Deno.serve(async (req) => {
         return await failUpload(uploadId, result.code, result.message, result.detail);
       }
 
+      /*
+       * A SOURCE THAT GAVE US ITS ROWS AND NOT ITS LINKS IS A SUCCESSFUL
+       * IMPORT WITH SOMETHING TO SAY.
+       *
+       * `status` is untouched — the rows are in, and marking the upload failed
+       * would send a builder to re-upload a list that already imported. What
+       * it gets is a recorded, machine-readable condition the portal shows as
+       * a source-access error beside the successful row counts, and which no
+       * amount of waiting will change: unavailable is terminal.
+       *
+       * A row-level failure still wins the message, because rows that could
+       * not be saved are the more serious of the two.
+       */
+      const sourceNotice = sourceAccessNoticeFor(sourceHyperlinks);
       const { data: updated } = await supabase.from('builder_stock_uploads').update({
         status: result.uploadStatus,
         records_detected: result.summary.detected,
         records_imported: result.summary.imported,
         records_updated: result.summary.updated,
         records_failed: result.summary.failed,
-        error_detail: result.summary.failures.length ? { failures: result.summary.failures } : null,
+        error_code: result.summary.failures.length ? null : (sourceNotice?.code ?? null),
+        error_detail: result.summary.failures.length
+          ? { failures: result.summary.failures }
+          : (sourceNotice ? sourceNotice.detail : null),
         error_message: result.summary.failures.length
-          ? `${result.summary.failed} row(s) could not be saved.` : null,
+          ? `${result.summary.failed} row(s) could not be saved.`
+          : (sourceNotice?.message ?? null),
         processing_completed_at: new Date().toISOString(),
       }).eq('id', uploadId).eq('organisation_id', activeOrganisationId)
         .select(STOCK_UPLOAD_SELECT).single();
@@ -711,7 +740,8 @@ Deno.serve(async (req) => {
         return await finishImport(uploadId, result, {
           strategy_source: 'url',
           ...(notionDiagnostics ? { notion_recovery: notionDiagnostics.recovery_ok } : {}),
-        });
+          ...(fetched.hyperlinks ? { source_hyperlinks: fetched.hyperlinks } : {}),
+        }, fetched.hyperlinks);
       } catch (error) {
         console.error('[builder-portal-stock] url processing failed', error);
         return await failUpload(uploadId, 'processing_failed',

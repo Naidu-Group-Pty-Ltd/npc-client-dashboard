@@ -261,8 +261,20 @@ export async function settleFallbackImages(
    * cron's completion rule is built on this number, and an estimate that ran
    * one item behind would let the sweep go quiet with work outstanding — which
    * is the exact defect this module exists to fix.
+   *
+   * OVER THE SAME SCOPE THE WORK WAS DONE IN. This read used to be global
+   * whatever the caller asked for, and `settleClaimedItem` decides ONE
+   * property's next stage from it: `remaining > 0 ? 'fallback' : settled`. So
+   * a property that had finished its own ladder was held at `fallback` while
+   * ANY other property in the deployment was still owed one — re-claimed,
+   * finding its own queue empty, doing nothing, and re-claimed again. On an
+   * 89-property upload that is the whole cohort spinning until the last one
+   * finishes: quadratic invocations against a per-item claim, and the comment
+   * at the call site describing a per-property count that was never computed.
    */
-  const after = await readFallbackQueue(db, { limit: 200 });
+  const after = await readFallbackQueue(db, {
+    limit: 200, stockItemId: input.stockItemId ?? null,
+  });
   outcome.remaining = after.unavailable ? Math.max(0, queue.rows.length - outcome.resolved)
     : after.rows.length;
   return outcome;

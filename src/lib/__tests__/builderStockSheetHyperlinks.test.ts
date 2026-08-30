@@ -214,7 +214,7 @@ describe('a label nobody resolved is not an absent source', () => {
     expect(sourcesFullyEnumerable('none_present')).toBe(true);
 
     for (const unavailable of [
-      'unavailable_source_sharing',
+      'unavailable_source_export',
       'unavailable_no_worksheet_match',
       'unavailable_ambiguous_worksheet',
     ] as const) {
@@ -245,7 +245,7 @@ describe('the resolved links enter the pipeline that already exists', () => {
   it('every refusal is an availability reading, never a failed import', () => {
     const fn = source().slice(source().indexOf('async function enrichWithHyperlinks'));
     for (const reading of [
-      "'unavailable_source_sharing'",
+      "'unavailable_source_export'",
       "'unavailable_ambiguous_worksheet'",
       "'unavailable_no_worksheet_match'",
       "'none_present'",

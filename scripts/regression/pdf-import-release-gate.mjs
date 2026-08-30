@@ -2,7 +2,8 @@
 /**
  * PDF Import Release Gate — Phase 11D local/CI static gate.
  *
- * Self-contained (no TypeScript import). Answers "can this branch/deployment
+ * Self-contained (no TypeScript import — its one local import is a sibling
+ * `.mjs`). Answers "can this branch/deployment
  * proceed?" for the PDF import system. Local/CI-safe by default: NO production
  * secrets, NO Supabase calls, NO Cloud Run calls, NO AI, NO template mutation,
  * NO import execution. It only reads files, inspects git, optionally runs the
@@ -15,6 +16,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { classifyArtifact } from './pdfImportArtifactClass.mjs';
 
 const ROOT = (() => {
   try {
@@ -156,17 +158,13 @@ for (const rel of requiredFiles) {
 }
 
 // 2. Private artifact scan (committed CI range + staged/unstaged file paths)
-function classifyArtifact(path) {
-  const l = path.toLowerCase();
-  if (l.endsWith('.pdf')) return ['private_pdf', 'no_private_pdfs_staged'];
-  if (/\.(png|jpe?g|webp)$/.test(l)) return ['private_image', 'no_generated_images_staged'];
-  if (l.endsWith('.log') || l.endsWith('.env') || l.includes('/.env')) return ['private_log_or_env', 'no_logs_or_env_staged'];
-  if (l.includes('signed-url') || l.includes('signed_url') || l.includes('cloud-run-log') || l.includes('supabase-log')) {
-    return ['signed_url_or_log_dump', 'no_signed_url_dumps_staged'];
-  }
-  if (l.includes('audit-output/') || l.includes('supabase/config.toml.before-')) return ['private_log_or_env', 'no_logs_or_env_staged'];
-  return [null, null];
-}
+//
+// The rule lives in its own module rather than inline here, because it is
+// written twice — the other copy is `releaseGateSafetyScanner.ts`, which is
+// what the unit tests exercise while THIS is what CI runs. Narrowing the
+// TypeScript copy alone once cost a full round trip: four specs passed, the
+// change merged and cascaded, and the gate failed on the same file. A contract
+// spec now imports both and fails when they answer differently.
 const artifactHits = { no_private_pdfs_staged: [], no_generated_images_staged: [], no_logs_or_env_staged: [], no_signed_url_dumps_staged: [] };
 for (const p of candidateFiles) {
   const [, checkId] = classifyArtifact(p);

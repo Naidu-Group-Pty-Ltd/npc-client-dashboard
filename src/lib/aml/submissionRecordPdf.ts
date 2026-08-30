@@ -497,12 +497,21 @@ export async function generateSubmissionRecordPdf(
   const colophonH = 3
     + (record.generatedBy ? lineHeight(8.5) + 1 : 0)
     + noticeLines.length * lineHeight(8.5);
-  // 10mm above the foot, not 6: at 6 the foot read as a third line of the
-  // colophon — same grey, same alignment, one point of size apart.
+  /* 10mm above the foot, not 6: at 6 the foot read as a third line of the
+     colophon — same grey, same alignment, one point of size apart.
+
+     It is PINNED to the foot only when it fits on the page the content ended
+     on. When it does not, pinning it to the foot of a fresh page produces a
+     sheet that is blank apart from a footer — which is what a two-page
+     AUSTRAC record looked like when its content overran by a centimetre. On
+     a new page it follows the top margin instead, so a break yields a page
+     that starts with something rather than a blank one that ends with it. */
   if (cursor.y + 2 > FOOT_Y - 10 - colophonH) {
     doc.addPage();
+    cursor.y = MARGIN + 4;
+  } else {
+    cursor.y = FOOT_Y - 10 - colophonH;
   }
-  cursor.y = FOOT_Y - 10 - colophonH;
   doc.setDrawColor(RULE_DARK);
   doc.setLineWidth(0.25);
   doc.line(MARGIN, cursor.y, MARGIN + CONTENT_W, cursor.y);

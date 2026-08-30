@@ -543,7 +543,48 @@ the server whether the tenant holds a non-individual case, because beneficial
 ownership is a company/trust/SMSF question, and it **fails open** so a failed
 read never hides a compliance surface.
 
-Compliance Home's **"Your queues" is four entries**, because a queue is work
+**The primary strip is three tabs: Compliance Home, Customer Compliance and
+AUSTRAC Hub.** Regulatory & Assurance is retired, and it went by being
+REDISTRIBUTED rather than hidden — lodging a report is the daily job and it was
+two clicks down, so the AUSTRAC Hub is a workspace of its own (its drafting
+routes resolve by prefix, so writing a report never loses the strip), and
+monitoring, EDD and records sit under Compliance Home beside the queues that
+count them. **No path lost a workspace**, which is the rule that makes a
+retirement safe. Compliance Home therefore owns real paths now, and
+`pathMatchesWorkspace` matches the module ROOT exactly and never as a prefix —
+`/admin/aml` is every AML URL's ancestor, and prefix-matching it would make
+Home the active workspace on the case register and every other tab dead.
+
+The chrome is now **one Refresh and nothing else**. "Open queue" linked to the
+active workspace's `defaultPath` — the page an operator is already looking at,
+because they arrive at a workspace BY its default path, so on Compliance Home
+it was a no-op every time. Configuration went with it, and Compliance Home's
+secondary strip went too. What holds it all together is that **`paths` and
+`secondary` answer different questions**: `paths` is OWNERSHIP (a URL belonging
+to nothing draws no chrome and highlights Home — reachable and looking broken),
+`secondary` is what is OFFERED. Monitoring, Investigations & EDD, Records &
+Privacy and Configuration keep the first and lose the second, so every route
+resolves and every page keeps its trail while no tab is drawn. Configuration
+also left Organisation Settings' `paths` — **a path belongs to exactly ONE
+workspace**, and listed in two it resolves to whichever comes first while the
+other silently loses it. Three of the four keep **one quiet, capability-gated
+line at the foot of Compliance Home** ("Also in this workspace"), because
+Monitoring is already deep-linked from three readings in the strip while the
+others had no route at all — and two of them are statutory.
+
+That redistribution is what let **"Your queues" go entirely**: every
+destination it listed is in the navigation, so the card was a third launcher
+after the primary strip and the role-adaptive "jump back" card above it. The
+page's own header went with it — a second title, strapline and Refresh drawn
+directly under the command centre's — which exposed that **the shell's Refresh
+was a placebo**: it dispatched `aml-command-refresh` and nothing in the product
+had ever listened, so the button moved a clock. Compliance Home answers it now,
+and `AML_COMMAND_REFRESH_EVENT` is named in one module because a literal at
+each end is how two ends drift. Configuration's one capability-gated door moved
+with the header into the command centre's action row, where it is one click
+from wherever an administrator is rather than only from Home.
+
+Compliance Home's queue directory was, before it went, **four entries**, because a queue is work
 waiting for somebody. **Transactions** left: `aml.transactions` and
 `aml.transaction_parties` hold zero rows and the page is a PER-CASE surface
 loading `cases[0]`, which is exactly why the nav audit already folded it into
@@ -676,6 +717,30 @@ submission record (`austracBundleRecord.pure.ts` projects onto
 Systems** fallback; the tipping-off prohibition travels IN the document and
 on the SMR alone, and `RecordDocumentIdentity` became a defaulted parameter
 because the renderer wrote "Submission v1" across every page it drew.
+That record was correct and thin, and its first production render is the
+document this rework is measured against: it opened on a field list, said
+nothing about what OBLIGES the report, carried the MLRO decision only as a
+version-table note reading "MLRO sign-off", said nothing about what was still
+outstanding, and printed page two **blank apart from the colophon** — which
+pinned itself to the foot of a fresh page whenever the content overran. It is
+arranged as a story now (handling restriction, obligation, report, narrative,
+pre-lodgement checks, approval, lodgement, receipt, versions, integrity) and
+**nothing in it reads anything new**: the prose is `AUSTRAC_OBLIGATIONS` and
+`KIND_GUIDANCE`, the checks are `austracReadiness` — the module the register
+already renders — and the approver is read from the version row the sign-off
+writes, because `mlro_signed_by` is an id with no label. Five rules carry it.
+**The s.123 prohibition is met BEFORE the document is acted on and stated
+once** — it was 8.5pt grey at the foot of the last page, where a reader who
+has already forwarded it arrives; a test pins the rule (present, first,
+exactly once) and not the field. **A lodgement is never asserted to have met
+the deadline** — `submitted_at` says a report went, not that it went in time,
+so the Deadline line compares against the due date. **An empty field is
+omitted rather than printed as a dash** (two of eleven first-page rows carried
+no fact). **The uuid leaves the body and stays in the running foot** — it
+means nothing to any party the record is for, while the hash stays WHOLE
+because truncating it destroys the only thing it is for. And **a colophon pins
+to the foot only when it fits**, or an overrun buys a blank sheet with a
+footer on it.
 **A dead control is worse than no control** — the path card drew "Open" on
 the open step while the page handled three of six keys, so a saved draft's
 step 3 did nothing; it takes `stepActions` now, a step with no entry draws no
@@ -734,7 +799,13 @@ the function): hiding an approved-but-unlodged SMR loses a statutory deadline
 rather than tidying a list. Three things follow — a lodged report with no
 receipt archives but the confirmation SAYS so; `upsert_report` must strip the
 stamp or a client archives by saving; and the tiles count the working
-register, because a number beside a row nobody can see is worse than none.
+register, because a number beside a row nobody can see is worse than none. Choosing
+is explicit — a checkbox per archivable row and a select-all that reads the
+same `archiveBlockReason` the server enforces, so a checkbox can never pick a
+report the archive would refuse — and **undo is part of the act**: the inverse
+call is offered on the toast, on exactly the rows that succeeded and with no
+second confirmation, because undoing is not a new decision and a bulk archive
+is where a mis-click costs most.
 
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)

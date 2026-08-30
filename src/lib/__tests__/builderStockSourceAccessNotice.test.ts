@@ -49,7 +49,7 @@ describe('A and D — everything readable says nothing', () => {
 
 describe('B, C and E — rows in, links out, and the builder is told', () => {
   const reasons = [
-    'unavailable_source_sharing',
+    'unavailable_source_export',
     'unavailable_no_worksheet_match',
     'unavailable_ambiguous_worksheet',
   ] as const;
@@ -65,7 +65,7 @@ describe('B, C and E — rows in, links out, and the builder is told', () => {
   });
 
   it('the message says all three things', () => {
-    const message = sourceAccessNoticeFor('unavailable_source_sharing')!.message;
+    const message = sourceAccessNoticeFor('unavailable_source_export')!.message;
     // 1 — something could not be reached.
     expect(message).toMatch(/could not be accessed/i);
     // 2 — the import still succeeded.
@@ -80,7 +80,7 @@ describe('B, C and E — rows in, links out, and the builder is told', () => {
      * Demanding a Drive change for optional metadata is the behaviour this
      * whole change exists to prevent.
      */
-    const message = sourceAccessNoticeFor('unavailable_source_sharing')!.message;
+    const message = sourceAccessNoticeFor('unavailable_source_export')!.message;
     for (const forbidden of [/shar/i, /permission/i, /access setting/i, /anyone with the link/i]) {
       expect(message).not.toMatch(forbidden);
     }
@@ -149,7 +149,7 @@ describe('I — unavailable is TERMINAL, so nothing waits for it', () => {
   });
 
   it('an access failure is never counted as having seen the sources', () => {
-    expect(sourcesFullyEnumerable('unavailable_source_sharing')).toBe(false);
+    expect(sourcesFullyEnumerable('unavailable_source_export')).toBe(false);
     expect(sourcesFullyEnumerable('none_present')).toBe(true);
   });
 });
@@ -173,7 +173,7 @@ describe('F and G — the rows themselves are a different question', () => {
 
 describe('K and J — one property\'s inaccessible documents are its own', () => {
   it('the notice is a fact about the SOURCE, and carries no property in it', () => {
-    const notice = sourceAccessNoticeFor('unavailable_source_sharing')!;
+    const notice = sourceAccessNoticeFor('unavailable_source_export')!;
     expect(JSON.stringify(notice)).not.toMatch(/lot|estate|address|item_id/i);
   });
 

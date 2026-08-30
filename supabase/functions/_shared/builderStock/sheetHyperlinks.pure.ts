@@ -173,12 +173,68 @@ export function mergeHyperlinkColumns(
   return { matrix: out, columnsAdded: added, linksResolved };
 }
 
+/**
+ * THE TARGET OF A CELL, HOWEVER THE BUILDER WROTE IT.
+ *
+ * A spreadsheet stores "this text points somewhere" two different ways, and
+ * the reader only ever knew one of them.
+ *
+ *   the relationship   the cell carries a link record; SheetJS surfaces it as
+ *                      `cell.l.Target`. This is what Sheets and Excel write
+ *                      when somebody uses Insert > Link.
+ *
+ *   the formula        the cell IS `=HYPERLINK("…","Brochure")`. There is no
+ *                      link record at all — the target is an argument inside
+ *                      `cell.f`, and `cell.l` is null.
+ *
+ * Proved by round-trip through the reader this runtime already loads: a
+ * relationship survives as `l.Target`, a HYPERLINK formula survives only as
+ * `f`, and plain text carries neither. Reading just the first silently drops
+ * every brochure a builder typed as a formula — which is an ordinary way to
+ * write one, and indistinguishable on screen from the other.
+ *
+ * ONLY http(s) IS A SOURCE. A formula can name anything — a local file, an
+ * anchor within the workbook, a mail link — and none of those is a document
+ * this pipeline can open. Anything else answers null rather than being passed
+ * downstream to fail later with a worse message.
+ */
+export function hyperlinkTargetOf(cell: {
+  link?: string | null; formula?: string | null;
+}): string | null {
+  const relationship = typeof cell.link === 'string' ? cell.link.trim() : '';
+  if (relationship && /^https?:\/\//i.test(relationship)) return relationship;
+
+  const formula = typeof cell.formula === 'string' ? cell.formula : '';
+  if (!formula) return null;
+
+  /*
+   * The first argument of the outermost HYPERLINK. Excel escapes a quote
+   * inside a string by doubling it, so the capture runs to the first quote
+   * that is not doubled and the pairs are collapsed afterwards.
+   */
+  const match = formula.match(/\bHYPERLINK\s*\(\s*"((?:[^"]|"")*)"/i);
+  if (!match) return null;
+  const target = match[1].replace(/""/g, '"').trim();
+  return /^https?:\/\//i.test(target) ? target : null;
+}
+
 /** What the import may honestly say about the links it did or did not get. */
 export type HyperlinkAvailability =
   /** The workbook was read and this tab's links are on the rows. */
   | 'resolved'
-  /** The workbook could not be read at all — the document's sharing decides this. */
-  | 'unavailable_source_sharing'
+  /**
+   * The document refused to hand over the workbook at all. Every documented
+   * public representation of a Sheet was probed and only `/export` carries
+   * link targets, so a document that will not export cannot yield them by any
+   * other route — and NOTHING is known about its links, not even whether it
+   * has any.
+   */
+  | 'unavailable_source_export'
+  /**
+   * We GOT the file and could not make sense of it. Our problem rather than
+   * the document's, kept separate because it points at a different remedy.
+   */
+  | 'unavailable_workbook_unreadable'
   /** The workbook was read and no worksheet is decisively this tab. */
   | 'unavailable_no_worksheet_match'
   /** Two worksheets are equally like this tab, so neither may lend its links. */

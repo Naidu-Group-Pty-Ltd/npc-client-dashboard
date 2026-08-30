@@ -117,11 +117,8 @@ export function verifyWebImageIdentity(
       return { ok: false, matched: [], reason: `subject_not_a_facade:${banned}` };
     }
   }
-  for (const generic of GENERIC_ESTATE) {
-    if (haystack.includes(norm(generic))) {
-      return { ok: false, matched: [], reason: 'generic_estate_page' };
-    }
-  }
+  const genericPhrase = GENERIC_ESTATE
+    .find((generic) => haystack.includes(norm(generic))) ?? null;
 
   const matched: string[] = [];
   const has = (value: unknown, label: string): boolean => {
@@ -165,6 +162,30 @@ export function verifyWebImageIdentity(
       return { ok: false, matched, reason: 'names_a_different_lot' };
     }
     if (named.includes(lot)) { matched.push('lot'); lotMatched = true; }
+  }
+
+  /*
+   * THE GENERIC-ESTATE VETO IS A TIE-BREAKER, NOT A TRUMP CARD.
+   *
+   * It used to be checked before any evidence was gathered and returned
+   * outright, so a page that names THIS LOT was thrown away because the same
+   * page also carried the words "house and land packages" — which is on
+   * essentially every builder's site, beside every individual listing.
+   *
+   * Measured: an image at `…/lot-310-<estate>-<suburb>-<postcode>-vic.jpg`,
+   * titled `LOT 310 <estate>, <suburb> <postcode> VIC`, refused
+   * `generic_estate_page`. The correct photograph of the property was found,
+   * stored, and discarded — and the card fell through to a Street View of the
+   * road outside the estate.
+   *
+   * The veto's own reasoning is what limits it: it exists for pictures "of no
+   * particular house", where matching more identity fields does not make the
+   * candidate more specific. A candidate carrying THIS lot or THIS street is
+   * exactly the case that reasoning does not cover — the page names one
+   * property and it is this one. Everything else it caught, it still catches.
+   */
+  if (genericPhrase && !streetMatched && !lotMatched) {
+    return { ok: false, matched, reason: 'generic_estate_page' };
   }
 
   if (!suburb && !postcode) {

@@ -47,8 +47,7 @@ import {
   type GoogleSheetsRef,
 } from './googleSheetsSource.pure.ts';
 import {
-  matchWorksheet, mergeHyperlinkColumns,
-  type HyperlinkAvailability, type WorkbookSheet,
+  hyperlinkTargetOf, matchWorksheet, mergeHyperlinkColumns, type HyperlinkAvailability, type WorkbookSheet,
 } from './sheetHyperlinks.pure.ts';
 import { parseDelimited } from './table.pure.ts';
 import { matrixToCsv } from './notionRecordMap.pure.ts';
@@ -225,14 +224,18 @@ async function enrichWithHyperlinks(
       `https://docs.google.com/spreadsheets/d/${ref.spreadsheetId}/export?format=xlsx`);
     workbookBytes = fetched.bytes;
   } catch {
-    return { csv, availability: 'unavailable_source_sharing' };
+    // The document would not hand over the workbook. Only `/export` carries
+    // link targets, so nothing is known about this sheet's links at all.
+    return { csv, availability: 'unavailable_source_export' };
   }
 
   let sheets: WorkbookSheet[];
   try {
     sheets = await readWorkbookSheets(workbookBytes);
   } catch {
-    return { csv, availability: 'unavailable_source_sharing' };
+    // We got the file and could not read it. A different fault, and a
+    // different remedy, from a document that refused to send it.
+    return { csv, availability: 'unavailable_workbook_unreadable' };
   }
 
   const match = matchWorksheet(matrix, sheets);
@@ -276,8 +279,17 @@ async function readWorkbookSheets(bytes: Uint8Array): Promise<WorkbookSheet[]> {
       for (let c = range.s.c; c <= range.e.c; c += 1) {
         const cell = sheet[XLSX.utils.encode_cell({ r, c })];
         valueRow.push(cell ? String(cell.w ?? cell.v ?? '') : null);
-        const target = cell?.l?.Target;
-        linkRow.push(typeof target === 'string' && target ? target : null);
+        /*
+         * BOTH WAYS A CELL CAN POINT SOMEWHERE. `cell.l.Target` is the link
+         * RELATIONSHIP, which is what Insert > Link writes; a cell that IS
+         * `=HYPERLINK("…","Brochure")` carries no relationship at all and its
+         * target is an argument inside `cell.f`. Reading only the first
+         * dropped every brochure a builder typed as a formula.
+         */
+        linkRow.push(hyperlinkTargetOf({
+          link: cell?.l?.Target ?? null,
+          formula: cell?.f ?? null,
+        }));
       }
       values.push(valueRow);
       links.push(linkRow);

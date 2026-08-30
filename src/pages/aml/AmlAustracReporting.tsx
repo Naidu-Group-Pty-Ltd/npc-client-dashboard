@@ -105,7 +105,13 @@ export default function AmlAustracReporting() {
     is a view rather than a filter buried in the status list.
   */
   const [view, setView] = useState<"live" | "archived">("live");
-  const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  /*
+    Which reports the operator has chosen. Archiving is reversible but it
+    still takes a compliance record off the register, so it is an explicit
+    pick rather than something a stray click can do to a row nobody meant.
+  */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   /**
    * The customers a report can be filed against.
@@ -289,37 +295,93 @@ export default function AmlAustracReporting() {
    * AUSTRAC. Hiding an approved-but-unlodged report would be a way to lose
    * a statutory deadline, not a tidy-up.
    */
-  const archive = async (r: AmlReport) => {
-    const blocked = archiveBlockReason(r.status);
-    if (blocked) { toast.error("It cannot be archived yet", { description: blocked }); return; }
-    const warning = archiveWarning({
-      status: r.status,
-      hasReceipt: Boolean(r.acknowledged_at) || (selectedId === r.id && selectedSubs.some(
-        (sub) => ((sub as any)?.receipts ?? []).length > 0)),
-    });
-    const ask = `Archive "${r.title}"?\n\nIt is kept in full — the report, its versions, its `
-      + `submissions and its receipts — and taken off the working register. You can restore it `
-      + `from the archive at any time.${warning ? `\n\n${warning}` : ""}`;
-    if (!window.confirm(ask)) return;
-    setArchivingId(r.id);
-    try {
-      await amlReportingApi.archiveReport(r.id);
-      toast.success("Archived", { description: "It is retained in full and can be restored." });
-      if (selectedId === r.id) setSelectedId(null);
-      await load();
-    } catch (e: any) { toast.error(e?.message ?? "It could not be archived"); }
-    finally { setArchivingId(null); }
-  };
+  /**
+   * Put reports away, or bring them back — one implementation for both
+   * directions, one row and many.
+   *
+   * ── Archiving is not deleting ─────────────────────────────────────
+   * `delete_report` refuses anything past the draft statuses because a
+   * lodged report is a retained record — kept for seven years with the
+   * evidence behind it. Archiving keeps every byte of it and takes it off
+   * the working list, and the server enforces the same
+   * `archiveBlockReason` this renders from: a report may be archived only
+   * once NOTHING IS OWED TO AUSTRAC. Hiding an approved-but-unlodged report
+   * would lose a statutory deadline rather than tidy a list.
+   *
+   * ── Undo is part of the act ───────────────────────────────────────
+   * The inverse call is offered on the toast, on exactly the rows that
+   * succeeded. Telling somebody a thing is reversible and then making them
+   * go and find the other view to reverse it is not the same as reversing
+   * it — and a bulk archive is precisely where a mis-click costs the most.
+   */
+  const runArchive = useCallback(async (
+    rows: AmlReport[],
+    direction: "archive" | "restore",
+    opts: { confirm?: boolean } = {},
+  ) => {
+    if (rows.length === 0) return;
+    const archiving = direction === "archive";
 
-  const restore = async (r: AmlReport) => {
-    setArchivingId(r.id);
-    try {
-      await amlReportingApi.restoreReport(r.id);
-      toast.success("Restored to the register");
-      await load();
-    } catch (e: any) { toast.error(e?.message ?? "It could not be restored"); }
-    finally { setArchivingId(null); }
-  };
+    if (archiving && opts.confirm !== false) {
+      const blocked = rows.map((r) => archiveBlockReason(r.status)).find(Boolean);
+      if (blocked) { toast.error("It cannot be archived yet", { description: blocked }); return; }
+      const warning = rows
+        .map((r) => archiveWarning({
+          status: r.status,
+          hasReceipt: Boolean(r.acknowledged_at) || (selectedId === r.id && selectedSubs.some(
+            (sub) => ((sub as { receipts?: unknown[] })?.receipts ?? []).length > 0)),
+        }))
+        .find(Boolean);
+      const what = rows.length === 1
+        ? `"${rows[0].title}"`
+        : `${rows.length} reports:\n\n${rows.map((r) => `\u2022 ${r.title}`).join("\n")}`;
+      const ask = `Archive ${what}?\n\nEverything is kept — the report, its versions, its `
+        + `submissions and its receipts — and taken off the working register. You can restore it `
+        + `at any time.${warning ? `\n\n${warning}` : ""}`;
+      if (!window.confirm(ask)) return;
+    }
+
+    setArchiveBusy(true);
+    const done: AmlReport[] = [];
+    const failures: string[] = [];
+    for (const r of rows) {
+      try {
+        if (archiving) await amlReportingApi.archiveReport(r.id);
+        else await amlReportingApi.restoreReport(r.id);
+        done.push(r);
+      } catch (e: unknown) {
+        failures.push((e as Error)?.message ?? r.title);
+      }
+    }
+    setArchiveBusy(false);
+    setPicked(new Set());
+    if (archiving && done.some((r) => r.id === selectedId)) setSelectedId(null);
+    await load();
+
+    if (done.length > 0) {
+      const noun = done.length === 1 ? "report" : "reports";
+      toast.success(
+        archiving ? `${done.length} ${noun} archived` : `${done.length} ${noun} restored`,
+        {
+          description: archiving
+            ? "Retained in full — nothing was deleted."
+            : "Back on the working register.",
+          action: {
+            label: "Undo",
+            // The inverse, on exactly the rows that succeeded, and with no
+            // second confirmation: undoing is not a new decision.
+            onClick: () => { void runArchive(done, archiving ? "restore" : "archive", { confirm: false }); },
+          },
+        },
+      );
+    }
+    if (failures.length > 0) {
+      toast.error(
+        `${failures.length} could not be ${archiving ? "archived" : "restored"}`,
+        { description: failures[0] },
+      );
+    }
+  }, [load, selectedId, selectedSubs]);
 
   const openSubmitFor = (r: AmlReport) => {
     setSelectedId(r.id); setSubmitReport(r);
@@ -403,6 +465,32 @@ export default function AmlAustracReporting() {
     } catch (e: any) { toast.error(e?.message ?? "The report record could not be produced"); }
     finally { setBundling(null); }
   };
+
+  /**
+   * The reports this view lets an operator choose.
+   *
+   * On the working register that is the ones nothing is owed to AUSTRAC for
+   * — the same rule the row's own button reads and the server enforces, so
+   * a checkbox can never select a report the archive would refuse. In the
+   * archive it is all of them, because restoring has no precondition.
+   */
+  const selectable = useMemo(
+    () => (view === "archived" ? reports : reports.filter((r) => !archiveBlockReason(r.status))),
+    [reports, view],
+  );
+  const pickedRows = useMemo(
+    () => selectable.filter((r) => picked.has(r.id)),
+    [selectable, picked],
+  );
+  const allPicked = selectable.length > 0 && pickedRows.length === selectable.length;
+  const togglePicked = (id: string) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  // A selection means nothing once the view or the filters change under it.
+  useEffect(() => { setPicked(new Set()); }, [view, statusFilter, kindFilter]);
 
   const tiles = useMemo(() => summary ? [
     { label: "Drafts", value: summary.draft },
@@ -511,12 +599,57 @@ export default function AmlAustracReporting() {
             </div>
             <CardDescription>Filter, review, and act on AUSTRAC drafts and submissions.</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
+            {/*
+              ── What has been chosen, and what can be done with it ─────
+              It appears only when something is selected, so the register is
+              not carrying a permanently empty toolbar, and it says the count
+              in words because "2" beside a button is not a sentence.
+            */}
+            {canWrite && pickedRows.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+                <span className="text-sm font-medium text-primary">
+                  {pickedRows.length} {pickedRows.length === 1 ? "report" : "reports"} selected
+                </span>
+                <div className="ml-auto flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
+                    Clear
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={archiveBusy}
+                    onClick={() => { void runArchive(pickedRows, view === "archived" ? "restore" : "archive"); }}
+                  >
+                    {archiveBusy
+                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      : view === "archived"
+                        ? <ArchiveRestore className="mr-2 h-4 w-4" />
+                        : <Archive className="mr-2 h-4 w-4" />}
+                    {view === "archived" ? "Restore selected" : "Archive selected"}
+                  </Button>
+                </div>
+              </div>
+            )}
             <Table aria-label="AUSTRAC reports">
               <TableHeader>
                 <TableRow>
+                  {canWrite && (
+                    <TableHead scope="col" className="w-10">
+                      <Checkbox
+                        aria-label={view === "archived"
+                          ? "Select every archived report"
+                          : "Select every report that can be archived"}
+                        checked={allPicked}
+                        disabled={selectable.length === 0 || archiveBusy}
+                        onCheckedChange={(v) => setPicked(
+                          v === true ? new Set(selectable.map((r) => r.id)) : new Set(),
+                        )}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead scope="col">Kind</TableHead><TableHead scope="col">Title</TableHead>
-                  <TableHead scope="col">Status</TableHead><TableHead scope="col">Updated</TableHead>
+                  <TableHead scope="col">Status</TableHead>
+                  <TableHead scope="col">{view === "archived" ? "Archived" : "Updated"}</TableHead>
                   <TableHead scope="col" className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -556,6 +689,25 @@ export default function AmlAustracReporting() {
                     )}
                     onClick={() => setSelectedId(r.id)}
                   >
+                    {canWrite && (
+                      <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                        {(view === "archived" || !archiveBlockReason(r.status)) ? (
+                          <Checkbox
+                            aria-label={`Select ${r.title}`}
+                            checked={picked.has(r.id)}
+                            disabled={archiveBusy}
+                            onCheckedChange={() => togglePicked(r.id)}
+                          />
+                        ) : (
+                          /* No checkbox where the archive would refuse: a
+                             control that exists to be turned down teaches an
+                             operator to distrust the page. */
+                          <span className="sr-only">
+                            {archiveBlockReason(r.status) ?? ""}
+                          </span>
+                        )}
+                      </TableCell>
+                    )}
                     <TableCell className="relative">
                       {active && (
                         <span
@@ -600,7 +752,9 @@ export default function AmlAustracReporting() {
                       </span>
                     </TableCell>
                     <TableCell><Badge className={STATUS_TONE[r.status] ?? ""}>{r.status.replace(/_/g," ")}</Badge></TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{fmt(r.updated_at)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {view === "archived" ? fmt(r.archived_at) : fmt(r.updated_at)}
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1 flex-wrap">
                         {canWrite && ["draft","in_review"].includes(r.status) && (
@@ -650,10 +804,10 @@ export default function AmlAustracReporting() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={archivingId === r.id}
-                            onClick={(e) => { e.stopPropagation(); void archive(r); }}
+                            disabled={archiveBusy}
+                            onClick={(e) => { e.stopPropagation(); void runArchive([r], "archive"); }}
                           >
-                            {archivingId === r.id
+                            {archiveBusy
                               ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                               : <Archive className="h-4 w-4 mr-1" />}
                             Archive
@@ -663,10 +817,10 @@ export default function AmlAustracReporting() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={archivingId === r.id}
-                            onClick={(e) => { e.stopPropagation(); void restore(r); }}
+                            disabled={archiveBusy}
+                            onClick={(e) => { e.stopPropagation(); void runArchive([r], "restore"); }}
                           >
-                            {archivingId === r.id
+                            {archiveBusy
                               ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                               : <ArchiveRestore className="h-4 w-4 mr-1" />}
                             Restore
@@ -677,9 +831,9 @@ export default function AmlAustracReporting() {
                   </TableRow>
                   );
                 })}
-                {!reports.length && loading && <AmlTableLoadingRow colSpan={5} label="Loading reports…" />}
+                {!reports.length && loading && <AmlTableLoadingRow colSpan={canWrite ? 6 : 5} label="Loading reports…" />}
                 {!reports.length && !loading && (
-                  <AmlTableEmptyRow colSpan={5}>
+                  <AmlTableEmptyRow colSpan={canWrite ? 6 : 5}>
                     {view === "archived"
                       ? "Nothing has been archived. A report is archived once its lodgement is behind it; it is kept in full and can be restored."
                       : `No reports match these filters. Try clearing the status or kind filter${canWrite ? ", or start a new draft" : ""}.`}

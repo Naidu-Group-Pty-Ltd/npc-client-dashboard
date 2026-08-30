@@ -8,8 +8,8 @@ import {
   Users,
   Info,
   Bell,
-  Settings2,
   ArrowRight,
+  ChevronRight,
   Lock,
 } from "lucide-react";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
@@ -17,17 +17,16 @@ import { amlMonitoringApi, type AmlMonitoringSummary } from "@/lib/aml/amlMonito
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
-import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
+import { hasAmlCapability } from "@/lib/aml/permissions";
 import { suggestAmlLanding } from "@/lib/aml/defaultLanding";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { caseStage } from "@/lib/aml/caseDimensions";
 import { cn } from "@/lib/utils";
+import { AML_COMMAND_REFRESH_EVENT } from "@/lib/aml/amlRoutes";
 import {
   AmlEmptyState,
   AmlErrorState,
   AmlMetricCard,
-  AmlPageHeader,
-  AmlRefreshButton,
   AmlRiskBadge,
   AmlStageBadge,
 } from "@/components/aml/primitives";
@@ -43,73 +42,6 @@ import AmlComplianceHomeV3 from "./AmlComplianceHomeV3";
  * to comply with tipping-off protections in AGENTS.md §2.
  */
 
-interface QueueLink {
-  key: string;
-  label: string;
-  description: string;
-  to: string;
-  cta: string;
-  capability: AmlCapability;
-}
-
-/**
- * The queues, and what a queue IS.
- *
- * ── Two entries left, and why ─────────────────────────────────────────
- * This list says "workspaces available to you right now" — work that is
- * waiting for somebody. Two of the six were not that.
- *
- * **Transactions** went. `aml.transactions` and `aml.transaction_parties`
- * both hold zero rows on this deployment, and the page it pointed at is a
- * PER-CASE surface that loads with `cases[0]` selected — the newest case,
- * chosen for the operator rather than by them. That is exactly why the
- * navigation audit already folded Transactions into Customer Compliance as a
- * stage inside a named customer's case and took it out of the strip; leaving
- * it here contradicted a decision the product had already made. The route,
- * the page and the per-case stage are all untouched.
- *
- * **Configuration** went, and did NOT become unreachable. It is not a queue:
- * nothing waits there, it is set once and revisited rarely, and it is
- * step-up protected — an administrator's destination rather than a shift's
- * work. But it is also the only discoverable route to the sanctions
- * register's health, and hiding the page entirely is what once stranded that
- * behind a blocked case. So it moved to the page header, where settings
- * belong, still gated on `aml.configure`.
- */
-const QUEUE_LINKS: QueueLink[] = [
-  {
-    key: "cases",
-    label: "Customer Case register",
-    description: "Search, open and continue any customer compliance case.",
-    to: "/admin/aml/cases",
-    cta: "Open register",
-    capability: "aml.view",
-  },
-  {
-    key: "monitoring",
-    label: "Monitoring & alerts",
-    description: "Triage open alerts, unprocessed events and periodic reviews.",
-    to: "/admin/aml/monitoring",
-    cta: "Open monitoring",
-    capability: "aml.investigate",
-  },
-  {
-    key: "investigations",
-    label: "Investigations & EDD",
-    description: "Progress EDD workstreams and evidence-backed decisions.",
-    to: "/admin/aml/investigations",
-    cta: "Open investigations",
-    capability: "aml.investigate",
-  },
-  {
-    key: "austrac",
-    label: "AUSTRAC Hub",
-    description: "SMR / TTR / IFTI drafting, MLRO approval and lodgement.",
-    to: "/admin/aml/austrac",
-    cta: "Open AUSTRAC Hub",
-    capability: "aml.report",
-  },
-];
 
 export default function AmlOverview() {
   const { complianceHome: v3Home, loading: v3Loading } = useAmlV3Flags();
@@ -185,11 +117,11 @@ function AmlOverviewV2() {
     return () => { alive = false; };
   }, [canInvestigate, loadMonitoring]);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     const alive = () => true;
     if (canView) void loadCases(alive);
     if (canInvestigate) void loadMonitoring(alive);
-  };
+  }, [canView, canInvestigate, loadCases, loadMonitoring]);
 
   const openCount = useMemo(
     () => cases.filter((c) => !["cleared", "closed", "blocked"].includes(c.status)).length,
@@ -200,12 +132,22 @@ function AmlOverviewV2() {
     [cases],
   );
 
+  /*
+    ── The command centre's Refresh was a placebo ────────────────────
+    `AmlLayout` dispatches `aml-command-refresh` and updates a "Refreshed
+    HH:MM" stamp, and NOTHING in the product had ever listened for it. The
+    button moved a clock. That was survivable while this page carried a
+    Refresh of its own; with the duplicate header gone it would have been the
+    only one, so the page answers the event.
+  */
+  useEffect(() => {
+    const onCommandRefresh = () => { void refresh(); };
+    window.addEventListener(AML_COMMAND_REFRESH_EVENT, onCommandRefresh);
+    return () => window.removeEventListener(AML_COMMAND_REFRESH_EVENT, onCommandRefresh);
+  }, [refresh]);
+
   const landing = useMemo(() => suggestAmlLanding(roles), [roles]);
 
-  const visibleQueues = useMemo(
-    () => QUEUE_LINKS.filter((q) => hasAmlCapability(roles, q.capability)),
-    [roles],
-  );
 
   const caseMetricState = loadingCases ? "loading" : caseError ? "unavailable" : "ready";
   // "loading" until the fetch has actually settled — never a fabricated zero
@@ -249,32 +191,15 @@ function AmlOverviewV2() {
 
   return (
     <div className="space-y-6">
-      <AmlPageHeader
-        title="Compliance Home"
-        description="Your queues and case activity across the AML/CTF program."
-        icon={ShieldCheck}
-        actions={
-          <>
-            <AmlRefreshButton onClick={refresh} loading={loadingCases || loadingMonitoring} />
-            {/*
-              Configuration is not a queue — nothing waits there, it is set
-              once and revisited rarely, and it is step-up protected. It sits
-              in the header because that is where settings belong, and it is
-              here at all because it is the only discoverable route to the
-              sanctions register's health: hiding the page is what once
-              stranded that behind a blocked case.
-            */}
-            {canConfigure && (
-              <Button asChild size="sm" variant="ghost">
-                <Link to="/admin/aml/configuration">
-                  <Settings2 aria-hidden="true" className="mr-2 h-4 w-4" />
-                  Configuration
-                </Link>
-              </Button>
-            )}
-          </>
-        }
-      />
+      {/*
+        ── The page's own header is gone ─────────────────────────────
+        The command centre above it already draws a title, a strapline and a
+        Refresh. This drew a second title, a second strapline and a second
+        Refresh directly underneath — and the working one was the LOWER of
+        the two, because the shell's button dispatched an event nothing had
+        ever listened for. The event is answered now (see below), so the
+        surviving Refresh is the one that was already there.
+      */}
 
       {/* Role-adaptive landing hint */}
       {landing && (
@@ -399,40 +324,16 @@ function AmlOverviewV2() {
         </CardContent>
       </Card>
 
-      {/* Queue directory — only entries the user can reach */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Your queues</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Workspaces available to you right now, based on your assigned capabilities.
-          </p>
-        </CardHeader>
-        <CardContent>
-          {visibleQueues.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No actionable queues yet — request an AML role to get started.
-            </p>
-          ) : (
-            <ul className="grid gap-3 sm:grid-cols-2">
-              {visibleQueues.map((q) => (
-                <li
-                  key={q.key}
-                  className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-card/40 p-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">{q.label}</div>
-                    <div className="text-xs text-muted-foreground">{q.description}</div>
-                  </div>
-                  <Button asChild size="sm" variant="outline" className="shrink-0">
-                    <Link to={q.to}>{q.cta}</Link>
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
+      {/*
+        ── "Your queues" is gone, and nothing left with it ───────────
+        It listed five destinations and every one of them is now in the
+        navigation: the case register under Customer Compliance, Monitoring,
+        Investigations & EDD and Records & Privacy under Compliance Home, and
+        the AUSTRAC Hub as a workspace of its own. A card repeating them was
+        a third way to reach the same pages — after the primary strip and the
+        "jump back into your queue" card directly above it, which is
+        role-adaptive and points at the one that matters today.
+      */}
       {/* Latest cases with actionable empty state */}
       <Card>
         <CardHeader>
@@ -461,23 +362,78 @@ function AmlOverviewV2() {
               }
             />
           ) : (
+            /*
+              ── The rows open the case ────────────────────────────────
+              They were static text: a customer's name, their reference and
+              two badges, with no way to act on any of it. The only route on
+              the card was "Open case register", which puts an operator back
+              in a list they were already looking at a row of.
+            */
             <ul className="divide-y divide-border/60 text-sm">
               {cases.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-2 py-2">
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{c.subject_display_name}</div>
-                    <div className="text-xs text-muted-foreground">{c.case_reference}</div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {c.risk_rating && <AmlRiskBadge risk={c.risk_rating} />}
-                    <AmlStageBadge stage={caseStage(c)} />
-                  </div>
+                <li key={c.id}>
+                  <Link
+                    to={`/admin/aml/cases/${c.id}`}
+                    className="group -mx-2 flex items-center justify-between gap-3 rounded-md px-2 py-2.5 transition-colors hover:bg-primary/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    aria-label={`Open ${c.subject_display_name}'s case, ${c.case_reference}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium transition-colors group-hover:text-primary">
+                        {c.subject_display_name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">{c.case_reference}</div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {c.risk_rating && <AmlRiskBadge risk={c.risk_rating} />}
+                      <AmlStageBadge stage={caseStage(c)} />
+                      <ChevronRight
+                        aria-hidden="true"
+                        className="h-4 w-4 shrink-0 text-muted-foreground/60 transition-transform group-hover:translate-x-0.5 group-hover:text-primary"
+                      />
+                    </div>
+                  </Link>
                 </li>
               ))}
             </ul>
           )}
         </CardContent>
       </Card>
+
+      {/*
+        ── The surfaces that would otherwise have no route ──────────────
+        Monitoring, Investigations & EDD, Records & Privacy and
+        Configuration all left the navigation. Monitoring did not need a
+        door here — the three monitoring readings in the strip above already
+        deep-link to it — but the other three had none left at all, and two
+        of them are statutory: retention schedules under s.107, and the
+        sanctions register's health, which is what a screening refuses
+        against. Hiding a PAGE is what once stranded that behind a blocked
+        case.
+
+        So this is one quiet line at the foot of the page rather than a
+        card, a tile or a strip: no heading, no borders, no calls to action,
+        and each entry gated on the capability that surface actually needs.
+      */}
+      {(canInvestigate || canView || canConfigure) && (
+        <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 pt-1 text-xs text-muted-foreground">
+          <span className="text-muted-foreground/70">Also in this workspace</span>
+          {[
+            { label: "Investigations & EDD", to: "/admin/aml/investigations", show: canInvestigate },
+            { label: "Records & Privacy", to: "/admin/aml/records", show: canView },
+            { label: "Configuration", to: "/admin/aml/configuration", show: canConfigure },
+          ].filter((e) => e.show).map((e, i, all) => (
+            <span key={e.to} className="flex items-center gap-1.5">
+              <Link
+                to={e.to}
+                className="rounded-sm underline-offset-4 transition-colors hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                {e.label}
+              </Link>
+              {i < all.length - 1 && <span aria-hidden className="text-muted-foreground/40">·</span>}
+            </span>
+          ))}
+        </p>
+      )}
 
       {/* Restricted-capability affordances are gated where they are drawn;
           nothing more leaks into the home for users without the permission. */}
@@ -491,12 +447,14 @@ function AmlOverviewV2() {
         already said "restricted-capability affordances live in tiles above".
         It went to the same place as the tile and contradicted its own
         neighbour. Configuration is still reached from exactly two places, and
-        the first of them has MOVED: the page header — gated on
-        `aml.configure`, so an ordinary operator never sees it — and Stage 5's
-        "open list health" when screening cannot run. It left the queue list
-        because it is not a queue, and it did not leave the page, because
-        hiding it is what once stranded the sanctions register behind a
-        blocked case. It is still not in the navigation at all.
+        the first of them has now moved TWICE: out of the queue list (it is
+        settings, not a queue) into this page's header, and out of that header
+        into the command centre's own action row when the header went — one
+        door, still gated on `aml.configure`, and now one click from wherever
+        an administrator is rather than only from here. The second is Stage
+        5's "open list health" when screening cannot run. It never left the
+        product, because hiding it is what once stranded the sanctions
+        register behind a blocked case.
       */}
     </div>
   );

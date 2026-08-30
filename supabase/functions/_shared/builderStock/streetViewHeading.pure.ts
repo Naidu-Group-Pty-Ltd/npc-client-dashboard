@@ -139,3 +139,66 @@ export function assessPanoramaUsefulness(
   }
   return { usable: true, distanceMetres, reason: 'Panorama is at the property.' };
 }
+
+
+/**
+ * IS THIS GEOCODE OF A PROPERTY, OR OF A SUBURB?
+ *
+ * `geocodableAddress` now composes a line from the lot and the named estate
+ * where the source gave no address column, which is what lets the ladder reach
+ * a stock list built the ordinary way. It also creates a hazard the ladder did
+ * not have before: if Google has never heard of the estate, it falls back to
+ * the locality and answers with the SUBURB CENTRE — and the panorama check
+ * below then passes, because the nearest panorama to the middle of a suburb is
+ * a street in that suburb. A picture of somewhere else entirely, with every
+ * distance guard satisfied.
+ *
+ * `geocodableAddress` already refuses a place with nothing beside it for
+ * exactly this reason. This is the same rule enforced on the ANSWER rather
+ * than on the question, which is where it can actually be checked.
+ *
+ * IT REFUSES COARSENESS, NOT IMPRECISION. A named estate legitimately resolves
+ * to a `route`, a `neighborhood`, a `premise` or an `establishment`, and every
+ * one of those is a place a camera can be pointed at. What is refused is a
+ * result that IS an administrative area: the suburb, the postcode or wider.
+ *
+ * A result that states no types at all is ACCEPTED — the same rule the
+ * panorama check follows, and for the same reason: a missing optional field
+ * must never turn a working card blank.
+ */
+export const COARSE_GEOCODE_TYPES = [
+  'locality', 'postal_code', 'postal_code_prefix', 'postal_town',
+  'administrative_area_level_1', 'administrative_area_level_2',
+  'administrative_area_level_3', 'administrative_area_level_4',
+  'country', 'continent',
+] as const;
+
+export interface GeocodePrecision {
+  usable: boolean;
+  /** The coarse type that refused it, for the row's own error message. */
+  coarsestType: string | null;
+  reason: string;
+}
+
+export function assessGeocodePrecision(result: unknown): GeocodePrecision {
+  const types = (result && typeof result === 'object')
+    ? (result as { types?: unknown }).types : null;
+  if (!Array.isArray(types) || types.length === 0) {
+    return {
+      usable: true, coarsestType: null,
+      reason: 'The location service did not say how precise the match was.',
+    };
+  }
+  const named = types.map((type) => String(type));
+  const coarse = named.find(
+    (type) => (COARSE_GEOCODE_TYPES as readonly string[]).includes(type));
+  if (!coarse) {
+    return { usable: true, coarsestType: null, reason: 'Located at the property.' };
+  }
+  return {
+    usable: false,
+    coarsestType: coarse,
+    reason: 'That address could only be located as far as the surrounding area, '
+      + 'so any photograph would be of somewhere else nearby.',
+  };
+}

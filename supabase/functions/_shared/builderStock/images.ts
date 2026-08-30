@@ -24,13 +24,16 @@
 import { meteredFetch } from '../meteredFetch.ts';
 import { enforceGlobalDailyQuota, killSwitchActive } from '../publicAbuseControls.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
-import { geocodableAddress } from './normalise.pure.ts';
+import { geocodableAddress, hasPhotographableStreetAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
-import { STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE, nextImageStage, WEB_VERIFIED_VERIFICATION } from './imagePriority.pure.ts';
+import {
+  MAX_BLOCKED_PASSES, STAGE_SKIPPED_MESSAGE, STAGE_SKIPPED_REFERENCE,
+  blockedPassCount, nextImageStage, WEB_VERIFIED_VERIFICATION,
+} from './imagePriority.pure.ts';
 import { verifyWebImageIdentity } from './webImageIdentity.pure.ts';
 import {
-  assessPanoramaUsefulness, headingToProperty, readLatLng,
+  assessGeocodePrecision, assessPanoramaUsefulness, headingToProperty, readLatLng,
 } from './streetViewHeading.pure.ts';
 
 /**
@@ -103,7 +106,51 @@ async function withTimeout<T>(work: (signal: AbortSignal) => Promise<T>): Promis
   }
 }
 
-/** Record a stage that produced nothing, so the UI can say why. */
+/**
+ * How many passes this stage has already been blocked on for this property.
+ *
+ * Read rather than assumed, because the row is UPSERTED: one `stage-status`
+ * row per (property, stage) is overwritten on each pass, so the count has
+ * nowhere else to live. A read that fails contributes the conservative answer
+ * — the ceiling — because a counter we cannot read must never license an
+ * unbounded retry loop against a provider.
+ */
+async function priorBlockedPasses(
+  db: any,
+  item: EnrichableStockItem,
+  stage: 'google_maps' | 'internet_search',
+): Promise<number> {
+  try {
+    const { data, error } = await db
+      .from('builder_stock_item_images')
+      .select('source_detail, processing_status')
+      .eq('stock_item_id', item.id)
+      .eq('source_stage', stage)
+      .eq('source_reference', 'stage-status')
+      .maybeSingle();
+    if (error) return MAX_BLOCKED_PASSES;
+    const row = (data ?? null) as
+      { source_detail?: unknown; processing_status?: unknown } | null;
+    if (!row) return 0;
+    const detail = (row.source_detail ?? {}) as Record<string, unknown>;
+    // A row that recorded an ANSWER starts the count again: the property has
+    // moved on since, and the next block is the first of a new run.
+    const wasBlocked = detail.stage_ran === false || row.processing_status === 'failed';
+    return wasBlocked ? blockedPassCount(row as never) : 0;
+  } catch {
+    return MAX_BLOCKED_PASSES;
+  }
+}
+
+/**
+ * Record a stage that produced nothing, so the UI can say why.
+ *
+ * `ran` IS NOT OPTIONAL, and that is deliberate. It says whether the provider
+ * was asked and answered about this property, which is the only thing that
+ * decides whether the ladder may move on — see `stageWasAttempted`. Making it
+ * a required argument means a refusal cannot be added without someone deciding
+ * which kind it is, and the two kinds read almost identically at the call site.
+ */
 async function recordStageUnavailable(
   db: any,
   item: EnrichableStockItem,
@@ -111,7 +158,19 @@ async function recordStageUnavailable(
   status: 'unavailable' | 'failed',
   message: string,
   provider: string,
+  ran: boolean,
 ): Promise<StageOutcome> {
+  /*
+   * A BLOCKED PASS IS COUNTED; AN ANSWER IS NOT.
+   *
+   * Storing the count here is what makes the retry BOUNDED: an outage, or a
+   * provider nobody has configured, costs a property two passes rather than a
+   * permanently retired stage or an unbounded paid loop.
+   */
+  const blocked = ran
+    ? 0
+    : Math.min(MAX_BLOCKED_PASSES, (await priorBlockedPasses(db, item, stage)) + 1);
+
   await db.from('builder_stock_item_images').upsert({
     stock_item_id: item.id,
     organisation_id: item.organisation_id,
@@ -121,6 +180,7 @@ async function recordStageUnavailable(
     processing_status: status,
     verification_status: stage === 'google_maps' ? 'location_derived' : 'unverified',
     error_message: message,
+    source_detail: ran ? { stage_ran: true } : { stage_ran: false, blocked_passes: blocked },
     position: 0,
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
   return { stage, status, detail: message };
@@ -201,21 +261,42 @@ export async function enrichFromGoogle(
   if (!apiKey) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is not configured for this workspace.', 'google');
+      'Location imagery is not configured for this workspace.', 'google', false);
   }
 
   const address = geocodableAddress(item);
   if (!address) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'This property has no street address to look up.', 'google');
+      'This property has no street address to look up.', 'google', false);
+  }
+
+  /*
+   * AND THERE HAS TO BE SOMETHING BUILT THERE TO PHOTOGRAPH.
+   *
+   * `geocodableAddress` will compose a findable line from a lot number and an
+   * estate, which is what lets stage 2 name the property. It does NOT mean a
+   * camera pointed at that point sees the property: on a lot in a new estate
+   * it sees dirt or the road, and that is worse than a blank card because it
+   * is presented to a client as their house.
+   *
+   * This is an ANSWER, not a block — the lookup was asked and this property
+   * cannot be photographed from the street until it exists, which no retry
+   * changes. `ran: true`, so the ladder settles instead of buying it again.
+   */
+  if (!hasPhotographableStreetAddress(item)) {
+    return await recordStageUnavailable(
+      db, item, 'google_maps', 'unavailable',
+      'This property is a lot in an estate with no street address yet, so a '
+      + 'street-level photograph would show the land rather than the property.',
+      'google', true);
   }
 
   // The operator's off switch, shared with `street-view`.
   if (killSwitchActive('GOOGLE_STREET_VIEW_KILL_SWITCH')) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is temporarily switched off.', 'google');
+      'Location imagery is temporarily switched off.', 'google', false);
   }
 
   /**
@@ -233,7 +314,7 @@ export async function enrichFromGoogle(
   } else if (circuitOpen === true) {
     return await recordStageUnavailable(
       db, item, 'google_maps', 'unavailable',
-      'Location imagery is temporarily unavailable.', 'google');
+      'Location imagery is temporarily unavailable.', 'google', false);
   }
 
   // The same daily ceiling and the same env var as `street-view`, because it
@@ -246,7 +327,7 @@ export async function enrichFromGoogle(
     if (!await spend()) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google');
+        'The daily limit for location imagery has been reached.', 'google', false);
     }
     const geocoded = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=au&key=${apiKey}`,
@@ -254,11 +335,29 @@ export async function enrichFromGoogle(
       { feature: 'builder-stock/geocode' },
     );
     const geo = await geocoded.json().catch(() => null);
-    const location = geo?.results?.[0]?.geometry?.location;
+    const match = geo?.results?.[0];
+    const location = match?.geometry?.location;
     if (!location || typeof location.lat !== 'number' || typeof location.lng !== 'number') {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'That address could not be located.', 'google');
+        'That address could not be located.', 'google', true);
+    }
+
+    /*
+     * AND IT HAS TO BE A GEOCODE OF A PROPERTY, NOT OF A SUBURB.
+     *
+     * The panorama guard below measures the panorama against THIS point, so it
+     * cannot catch a point that is itself wrong: the nearest panorama to the
+     * middle of a suburb is a street in that suburb, and every distance check
+     * passes on a photograph of somewhere else. That became reachable when
+     * `geocodableAddress` learned to compose a line from the lot and the
+     * estate — Google answers a name it does not know by falling back to the
+     * locality.
+     */
+    const precision = assessGeocodePrecision(match);
+    if (!precision.usable) {
+      return await recordStageUnavailable(
+        db, item, 'google_maps', 'unavailable', precision.reason, 'google', true);
     }
 
     const point = `${location.lat},${location.lng}`;
@@ -268,7 +367,7 @@ export async function enrichFromGoogle(
     if (!await spend()) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google');
+        'The daily limit for location imagery has been reached.', 'google', false);
     }
     const metadata = await meteredFetch(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(point)}&key=${apiKey}`,
@@ -303,7 +402,7 @@ export async function enrichFromGoogle(
       panorama, { lat: location.lat, lng: location.lng });
     if (meta?.status === 'OK' && !usefulness.usable) {
       return await recordStageUnavailable(
-        db, item, 'google_maps', 'unavailable', usefulness.reason, 'google');
+        db, item, 'google_maps', 'unavailable', usefulness.reason, 'google', true);
     }
 
     if (meta?.status === 'OK' && await spend()) {
@@ -370,7 +469,7 @@ export async function enrichFromGoogle(
     if (!bytes || bytes.length < 1024) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'No location imagery is available for this address.', 'google');
+        'No location imagery is available for this address.', 'google', true);
     }
 
     const path = `${item.organisation_id}/items/${item.id}/google-${product}.jpg`;
@@ -420,7 +519,7 @@ export async function enrichFromGoogle(
     });
     return await recordStageUnavailable(
       db, item, 'google_maps', 'failed',
-      'Location imagery could not be retrieved.', 'google');
+      'Location imagery could not be retrieved.', 'google', false);
   }
 }
 
@@ -472,14 +571,14 @@ export async function enrichFromInternetSearch(
   if (!apiKey) {
     return await recordStageUnavailable(
       db, item, 'internet_search', 'unavailable',
-      'Internet property search is not configured for this workspace.', 'perplexity');
+      'Internet property search is not configured for this workspace.', 'perplexity', false);
   }
 
   const query = stockSearchQuery(item, builderName);
   if (!query) {
     return await recordStageUnavailable(
       db, item, 'internet_search', 'unavailable',
-      'This property does not name enough to search for.', 'perplexity');
+      'This property does not name enough to search for.', 'perplexity', false);
   }
 
   try {
@@ -517,7 +616,7 @@ export async function enrichFromInternetSearch(
     if (!response.ok) {
       return await recordStageUnavailable(
         db, item, 'internet_search', 'failed',
-        'The property search service did not respond.', 'perplexity');
+        'The property search service did not respond.', 'perplexity', false);
     }
 
     const payload = await response.json().catch(() => null);
@@ -527,7 +626,7 @@ export async function enrichFromInternetSearch(
     if (!candidates.length) {
       return await recordStageUnavailable(
         db, item, 'internet_search', 'unavailable',
-        'No published imagery was found for this property.', 'perplexity');
+        'No published imagery was found for this property.', 'perplexity', true);
     }
 
     /**
@@ -602,7 +701,7 @@ export async function enrichFromInternetSearch(
     });
     return await recordStageUnavailable(
       db, item, 'internet_search', 'failed',
-      'The property search could not be completed.', 'perplexity');
+      'The property search could not be completed.', 'perplexity', false);
   }
 }
 
@@ -753,9 +852,33 @@ export async function enrichStockItem(
   });
   const ladderHasMore = remainingStage !== 'none';
 
-  const enrichmentStatus = anyReady
-    ? (anyProblem ? 'partial' : 'complete')
-    : (ladderHasMore ? 'pending' : 'failed');
+  /*
+   * THE LADDER DECIDES WHEN A PROPERTY IS FINISHED — NOT WHETHER BYTES LANDED.
+   *
+   * `ladderHasMore` used to be consulted ONLY on the `!anyReady` arm, and
+   * `anyReady` means "a stage stored an image", which is not the same question
+   * as "this property has a picture". A web result that stores cleanly and then
+   * fails the identity check is a `ready` OUTCOME and a non-displayable IMAGE.
+   *
+   * So a property could be marked `partial` — terminal, and `readFallbackQueue`
+   * selects `pending`/`enriching` only — while `nextImageStage` still owed it a
+   * rung. The shape that reaches it: stage 2 stores an unverified image
+   * (`ready`), stage 3 is BLOCKED in the same claim by an outage, an open
+   * circuit or the daily ceiling (`stage_ran: false`, one bounded pass spent),
+   * and the property settles blank with Street View never asked and a retry
+   * unspent. Exactly the state `settled` may not mean.
+   *
+   * `ladderHasMore` is already computed from a fresh re-read of the rows as
+   * they now stand, which is the honest source and the reason that re-read
+   * exists. Asking it FIRST changes no vocabulary — `complete`, `partial` and
+   * `failed` keep their meanings — it only stops any of them being written
+   * while a stage is still owed. It terminates for the same reason it always
+   * did: a blocked stage becomes attempted at `MAX_BLOCKED_PASSES`, and a
+   * property holding a displayable picture answers `none` before anything else.
+   */
+  const enrichmentStatus = ladderHasMore
+    ? 'pending'
+    : (anyReady ? (anyProblem ? 'partial' : 'complete') : 'failed');
 
   await db.from('builder_stock_items')
     .update({ enrichment_status: enrichmentStatus, enriched_at: new Date().toISOString() })

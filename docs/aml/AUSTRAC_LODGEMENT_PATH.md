@@ -337,10 +337,74 @@ anything the export did not contain.
 
 Two rules. **The tipping-off prohibition travels with the document** — this is
 printable, e-mailable and leaveable on a desk, so an SMR record carries s.123
-in its closing notice and says not to give it to the customer; a TTR record
-does not, because carrying the warning everywhere is how an operator learns to
-read past it. And **database vocabulary never reaches the page**: `awaiting_mlro`
-renders "Awaiting mlro", asserted by a test.
+and says not to give it to the customer; a TTR record does not, because
+carrying the warning everywhere is how an operator learns to read past it. And
+**database vocabulary never reaches the page**: `awaiting_mlro` renders
+"Awaiting mlro", asserted by a test.
+
+### What the record left out, and what it led with
+
+The first production render found the document correct and thin. It opened on
+a field list; it stated what the report was called and nothing about what
+obliges it; the MLRO decision — the fact that authorises lodgement — appeared
+only as a version-table note reading "MLRO sign-off"; nothing said what was
+still outstanding when it went; and page two was **blank apart from the
+colophon**, because that block pinned itself to the foot of a fresh page when
+the content overran by a centimetre. Meanwhile the section a reader reaches
+last led with the row's uuid and a 64-character hash.
+
+The rework is arrangement, not new data. **Nothing here reads the database**
+that did not read it before: the obligation prose is `AUSTRAC_OBLIGATIONS` and
+`KIND_GUIDANCE`, the checks are `austracReadiness` — the same module the
+register and the report page render — and the approver is read from the
+version row the sign-off itself writes, because `reports.mlro_signed_by` is an
+id and carries no label.
+
+The document is now, in order: the **handling restriction** (SMR only), **the
+obligation** in prose, **the report**, **what happened**, the **pre-lodgement
+checks** as a Check / Standing / Detail table, **MLRO approval** under a
+heading of its own, **lodgement**, the **AUSTRAC acknowledgement**, the
+**version history**, and **integrity**. It reads as a story — what was owed,
+what the facts are, what account was given, what was outstanding, who
+authorised it, what was done, what came back, how it got here, how to check
+it.
+
+Five rules carry it.
+
+**The prohibition is met before the document is acted on.** s.123 travelled
+only in the closing colophon: 8.5pt grey, at the foot of the last page, under
+a centimetre of white. By the time a reader gets there they may already have
+forwarded it. It is a leading section now and it is stated **once** — the
+notice keeps "this is a record, not the lodgement" and no longer repeats the
+offence, because a prohibition printed twice is one an operator learns to
+skim. A test pins the rule (the prohibition is on the page, in first position,
+exactly once) rather than the field it happens to live in.
+
+**Never assert a deadline was met from the fact of a lodgement.** `submitted_at`
+says a report went, not that it went in time. The Deadline line compares the
+lodgement against the due date and says *Lodged after the window closed* where
+that is what happened — this is the one document in the file that would
+otherwise be saying the opposite.
+
+**An empty field is omitted, never printed as a dash.** "YOUR REFERENCE —" and
+"REPORTING PERIOD —" were two of eleven rows on the first page and neither
+carried a fact.
+
+**The uuid leaves the body and stays in the document.** It means nothing to any
+party this record is for, and the document already carries the two references a
+person uses. Its first eight characters ride in the running foot, where a
+re-export, a support request or "which record is this printout" can still find
+it. The hash stays **whole** — truncating a hash destroys the only thing it is
+for — demoted below the sentence that says what it is for.
+
+**A colophon pins to the foot only when it fits.** Otherwise it follows the top
+margin of the new page, so an overrun yields a page that starts with something
+rather than a blank sheet that ends with a footer.
+
+One fact was genuinely added, and it is stated rather than counted: a record of
+a report must be kept for **7 years from the day the report was made** (s.107).
+The clock runs from a lodgement date this platform may not hold, so the
+document states the obligation and never computes a date.
 
 The renderer needed one generalisation to serve both. It wrote `Submission
 v{n}` into the masthead, the identity line and the running foot, which is

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
+import { ADMIN_AML_CONFIGURATION_PATH, AML_COMMAND_REFRESH_EVENT } from "@/lib/aml/amlRoutes";
 import { useAmlTerminology } from "@/lib/aml/useAmlTerminology";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { useHasEntityCases } from "@/lib/aml/useHasEntityCases";
@@ -61,6 +62,9 @@ import { useHasEntityCases } from "@/lib/aml/useHasEntityCases";
  *    laptops.
  */
 
+/** The module root. Matched exactly — it is every other path's ancestor. */
+const AML_ROOT_PATH = "/admin/aml";
+
 interface SecondaryEntry {
   label: string;
   to: string;
@@ -94,12 +98,45 @@ interface Workspace {
 
 const LEGACY_WORKSPACES: Workspace[] = [
   {
+    /*
+      ── Compliance Home owns the triage surfaces now ──────────────────
+      It used to own one URL and draw no secondary strip. Regulatory &
+      Assurance held four pages; AUSTRAC Hub is a workspace of its own now
+      (it is the daily job, and it was two clicks down), and the three that
+      remain — ongoing monitoring, enhanced due diligence, and records,
+      privacy and retention — are the work that surrounds a case rather than
+      a separate department. They belong beside the queues that count them.
+
+      This is what let the "Your queues" card go: every destination it
+      listed is in the navigation, so a card repeating them was a third way
+      to reach the same five pages.
+    */
     key: "home",
     label: "Compliance Home",
     icon: Home,
-    paths: ["/admin/aml"],
+    paths: [
+      "/admin/aml",
+      "/admin/aml/monitoring",
+      "/admin/aml/investigations",
+      "/admin/aml/records",
+      "/admin/aml/configuration",
+    ],
     defaultPath: "/admin/aml",
     minCapability: "aml.view",
+    /*
+      ── Owned, and not offered ────────────────────────────────────────
+      `paths` and `secondary` answer two different questions. `paths` is
+      OWNERSHIP: it decides which workspace a URL belongs to, and a URL
+      belonging to nothing draws no chrome at all and highlights Compliance
+      Home — reachable, and looking broken. `secondary` is what is OFFERED.
+
+      Monitoring, Investigations & EDD, Records & Privacy and Configuration
+      keep the first and lose the second: every route resolves, every page
+      keeps its header and its trail, and nothing is drawn for them. A strip
+      holding one entry is not a tab bar, so Compliance Home draws none —
+      which is the shape it had before these arrived.
+    */
+    secondary: [],
   },
   {
     key: "customer",
@@ -158,50 +195,25 @@ const LEGACY_WORKSPACES: Workspace[] = [
     ],
   },
   {
-    key: "regulatory",
-    label: "Regulatory & Assurance",
-    icon: Gavel,
-    paths: [
-      "/admin/aml/monitoring",
-      "/admin/aml/investigations",
-      "/admin/aml/austrac",
-      "/admin/aml/records",
-      // `/admin/aml/governance` is NOT here: it belongs to Organisation
-      // Settings now, which is where the V3 navigation always put it. A path
-      // listed in two workspaces resolves to whichever appears first, so the
-      // page would have drawn the Regulatory strip with nothing active in it.
-    ],
-    defaultPath: "/admin/aml/monitoring",
-    minCapability: "aml.view",
     /*
-      ── Four surfaces, and why Governance is not one of them ───────────
-      These four are the regulator's business or the customer's: ongoing
-      monitoring and the reviews it raises, enhanced due diligence, the
-      AUSTRAC reporting channel, and records, privacy and retention. Three
-      of them are empty on a young tenant and that is the correct state —
-      an SMR channel and a privacy-request queue exist before they are
-      needed, not after.
+      ── AUSTRAC Hub is a workspace, not a tab inside one ──────────────
+      Lodging a report is the reporting entity's most consequential
+      obligation and, on this deployment, the operator's daily job — and it
+      was two clicks down, behind a workspace called "Regulatory &
+      Assurance" that held three other things.
 
-      Governance renders FIVE tabs in this deployment — Release Gate, AI
-      Approvals, Step-Up Sessions, Resilience Drills, Runbooks — and every
-      one of them is platform or IT operations rather than AML/CTF work.
-      Its one compliance tab, Contacts (the designated compliance officer
-      and senior manager), is gated on `aml_v3_org_settings`, which is off:
-      so on this deployment the page carries no AML content at all, and
-      `senior_manager_designations` is empty because there is no switched-on
-      surface that writes it.
-
-      The route is untouched. If that flag is turned on, Governance earns a
-      place back — and the V3 navigation already anticipates it, renaming it
-      "Governance & Contacts" and putting it FIRST in Organisation Settings,
-      which is where a designation belongs.
+      It owns its drafting routes by prefix: `pathMatchesWorkspace` matches
+      `p` or `p + "/"`, so `/austrac/new` and `/austrac/:id/edit` resolve
+      here and keep the strip. It draws no secondary strip because it is one
+      destination — a workspace holding one tab is not a tab bar, and
+      Compliance Home has always been the same shape.
     */
-    secondary: [
-      { label: "Monitoring", to: "/admin/aml/monitoring", capability: "aml.view" },
-      { label: "Investigations & EDD", to: "/admin/aml/investigations", capability: "aml.investigate" },
-      { label: "AUSTRAC Hub", to: "/admin/aml/austrac", capability: "aml.report" },
-      { label: "Records & Privacy", to: "/admin/aml/records", capability: "aml.view" },
-    ],
+    key: "austrac",
+    label: "AUSTRAC Hub",
+    icon: Gavel,
+    paths: ["/admin/aml/austrac"],
+    defaultPath: "/admin/aml/austrac",
+    minCapability: "aml.report",
   },
   {
     key: "admin",
@@ -235,13 +247,19 @@ const LEGACY_WORKSPACES: Workspace[] = [
       work actually happens.
     */
     hidden: true,
+    /*
+      Configuration is NOT here any more. A path belongs to exactly one
+      workspace — listed in two it resolves to whichever comes first and the
+      other silently loses it — and it is an entry in Compliance Home's strip
+      now, so it belongs to Home. What is left is the build and platform
+      tooling that keeps its routes and its chrome without being offered.
+    */
     paths: [
-      "/admin/aml/configuration",
       "/admin/aml/launch-ops",
       "/admin/aml/partner-operations",
       "/admin/aml/governance",
     ],
-    defaultPath: "/admin/aml/configuration",
+    defaultPath: "/admin/aml/launch-ops",
     minCapability: "aml.view",
     secondary: [],
   },
@@ -261,12 +279,34 @@ const LEGACY_WORKSPACES: Workspace[] = [
  */
 const V3_WORKSPACES: Workspace[] = [
   {
+    // Mirrors the legacy shell: the triage surfaces sit under Home, and
+    // AUSTRAC Hub is a workspace of its own.
     key: "home",
     label: "Compliance Home",
     icon: Home,
-    paths: ["/admin/aml"],
+    paths: [
+      "/admin/aml",
+      "/admin/aml/monitoring",
+      "/admin/aml/investigations",
+      "/admin/aml/records",
+      "/admin/aml/configuration",
+    ],
     defaultPath: "/admin/aml",
     minCapability: "aml.view",
+    /*
+      ── Owned, and not offered ────────────────────────────────────────
+      `paths` and `secondary` answer two different questions. `paths` is
+      OWNERSHIP: it decides which workspace a URL belongs to, and a URL
+      belonging to nothing draws no chrome at all and highlights Compliance
+      Home — reachable, and looking broken. `secondary` is what is OFFERED.
+
+      Monitoring, Investigations & EDD, Records & Privacy and Configuration
+      keep the first and lose the second: every route resolves, every page
+      keeps its header and its trail, and nothing is drawn for them. A strip
+      holding one entry is not a tab bar, so Compliance Home draws none —
+      which is the shape it had before these arrived.
+    */
+    secondary: [],
   },
   {
     key: "customer",
@@ -303,31 +343,35 @@ const V3_WORKSPACES: Workspace[] = [
     ],
   },
   {
-    key: "regulatory",
-    label: "Regulatory & Assurance",
+    /*
+      ── AUSTRAC Hub is a workspace, not a tab inside one ──────────────
+      Lodging a report is the reporting entity's most consequential
+      obligation and, on this deployment, the operator's daily job — and it
+      was two clicks down, behind a workspace called "Regulatory &
+      Assurance" that held three other things.
+
+      It owns its drafting routes by prefix: `pathMatchesWorkspace` matches
+      `p` or `p + "/"`, so `/austrac/new` and `/austrac/:id/edit` resolve
+      here and keep the strip. It draws no secondary strip because it is one
+      destination — a workspace holding one tab is not a tab bar, and
+      Compliance Home has always been the same shape.
+    */
+    key: "austrac",
+    label: "AUSTRAC Hub",
     icon: Gavel,
-    paths: [
-      "/admin/aml/monitoring",
-      "/admin/aml/investigations",
-      "/admin/aml/austrac",
-      "/admin/aml/records",
-    ],
-    defaultPath: "/admin/aml/monitoring",
-    minCapability: "aml.view",
-    secondary: [
-      { label: "Monitoring", to: "/admin/aml/monitoring", capability: "aml.view" },
-      { label: "Investigations", to: "/admin/aml/investigations", capability: "aml.investigate" },
-      { label: "AUSTRAC Hub", to: "/admin/aml/austrac", capability: "aml.report" },
-      { label: "Records & Retention", to: "/admin/aml/records", capability: "aml.view" },
-    ],
+    paths: ["/admin/aml/austrac"],
+    defaultPath: "/admin/aml/austrac",
+    minCapability: "aml.report",
   },
   {
     key: "admin",
     label: "Organisation Settings",
     icon: Settings2,
+    // Configuration belongs to Compliance Home's strip now — a path belongs
+    // to exactly one workspace, or it resolves to whichever comes first and
+    // the other silently loses it.
     paths: [
       "/admin/aml/governance",
-      "/admin/aml/configuration",
       "/admin/aml/launch-ops",
       "/admin/aml/partner-operations",
     ],
@@ -335,7 +379,6 @@ const V3_WORKSPACES: Workspace[] = [
     minCapability: "aml.view",
     secondary: [
       { label: "Governance & Contacts", to: "/admin/aml/governance", capability: "aml.view" },
-      { label: "Configuration", to: "/admin/aml/configuration", capability: "aml.configure" },
       { label: "Launch Operations", to: "/admin/aml/launch-ops", capability: "aml.view" },
       { label: "Partner Operations", to: "/admin/aml/partner-operations", capability: "aml.view" },
     ],
@@ -354,12 +397,20 @@ const OWNERSHIP_ENTRY: SecondaryEntry = {
 };
 
 function pathMatchesWorkspace(pathname: string, workspace: Workspace): boolean {
-  // Compliance Home matches only the exact root — every other path belongs to
-  // the workspace whose `paths` list contains a matching prefix.
-  if (workspace.key === "home") return pathname === "/admin/aml";
-  return workspace.paths.some(
-    (p) => pathname === p || pathname.startsWith(p + "/"),
-  );
+  /*
+    The module root is matched EXACTLY and never as a prefix.
+
+    `/admin/aml` is the ancestor of every AML URL, so prefix-matching it would
+    make Compliance Home claim the whole module and every other workspace
+    would be dead — the tab bar would highlight Home on the case register.
+    Home owns real paths now (monitoring, investigations, records), and those
+    match on the ordinary prefix rule like everybody else's.
+  */
+  return workspace.paths.some((p) => (
+    p === AML_ROOT_PATH
+      ? pathname === AML_ROOT_PATH
+      : pathname === p || pathname.startsWith(p + "/")
+  ));
 }
 
 export function AmlLayout() {
@@ -456,10 +507,11 @@ export function AmlLayout() {
   // strapline reads better than a one-crumb trail.
   // Role chips + module status intentionally removed per Version 2 spec.
   const showTrail = activeWorkspace && activeWorkspace.key !== "home";
+  const canConfigure = hasAmlCapability(roles, "aml.configure");
   const [lastRefreshed, setLastRefreshed] = useState(() => new Date());
   const refreshModule = () => {
     setLastRefreshed(new Date());
-    window.dispatchEvent(new CustomEvent("aml-command-refresh"));
+    window.dispatchEvent(new CustomEvent(AML_COMMAND_REFRESH_EVENT));
   };
 
   return (
@@ -492,11 +544,24 @@ export function AmlLayout() {
                 <RefreshCw aria-hidden="true" className="mr-2 h-3.5 w-3.5" />
                 Refresh
               </Button>
-              {activeWorkspace && (
-                <Button asChild size="sm" className="h-8">
-                  <Link to={activeWorkspace.defaultPath}>{activeWorkspace.key === "home" ? "Open queue" : `Open ${t(activeWorkspace.label)}`}</Link>
-                </Button>
-              )}
+              {/*
+                ── Two buttons that had no work to do ───────────────────
+                "Open queue" linked to the active workspace's `defaultPath`,
+                which is the page an operator is already looking at: they
+                arrive at a workspace BY its default path, so the button
+                navigated to where they already were. On Compliance Home it
+                was a no-op every single time.
+
+                Configuration went with it. It is not gone — it is an entry
+                in Compliance Home's own strip now, gated on `aml.configure`
+                so an ordinary operator never sees it, and sitting beside
+                Records & Privacy, the other surface that is set up once and
+                revisited rarely. It keeps a door because hiding the PAGE is
+                what once stranded the sanctions register's health behind a
+                blocked case; it does not keep a button in the chrome of
+                every screen, because nothing in it is ever the next thing
+                to do.
+              */}
             </div>
           </div>
 

@@ -148,7 +148,18 @@ describe('the Street View stage applies the guard and records its evidence', () 
   });
 
   it('records the refusal as unavailable rather than as an image', () => {
-    expect(IMAGES).toContain("recordStageUnavailable(\n        db, item, 'google_maps', 'unavailable', usefulness.reason, 'google')");
+    expect(IMAGES).toContain("db, item, 'google_maps', 'unavailable', usefulness.reason, 'google'");
+  });
+
+  it('and records it as a stage that RAN, so the rung is not bought again', () => {
+    /*
+     * Google WAS asked, about this property, and replied — the panorama it
+     * offered is simply too far away to be a photograph of it. That is a
+     * finding, so the ladder moves on. The `false` arm of the same argument is
+     * for a stage that never ran (an outage, a missing address), which is
+     * withheld and retried under a ceiling.
+     */
+    expect(IMAGES).toContain("usefulness.reason, 'google', true)");
   });
 
   it('does not fall back to a satellite tile to fill the gap', () => {

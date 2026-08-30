@@ -63,6 +63,8 @@ vi.mock("@/lib/aml/useAmlV3Flags", () => ({
   useAmlV3Flags: () => ({ regulatoryHub: false, loading: false }),
 }));
 
+import { Toaster, toast } from "sonner";
+
 import AmlAustracReporting from "../AmlAustracReporting";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
@@ -78,8 +80,13 @@ const REPORT = {
 
 beforeEach(() => {
   // Call history must not leak between tests: one of these asserts that a
-  // write was NOT made, which the previous test had already made.
+  // write was NOT made, which the previous test had already made. Spies on
+  // `window.confirm` are restored for the same reason — a stale one that
+  // answers "no" makes the next test's archive silently not happen — and
+  // sonner's store is global, so its toasts are cleared too.
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  toast.dismiss();
   listReports.mockResolvedValue([REPORT]);
   getReport.mockResolvedValue({ report: REPORT, versions: [], submissions: [] });
   summary.mockResolvedValue({ draft: 1, awaiting_mlro: 0, approved: 0, submitted: 0, acknowledged: 0, rejected: 0, archived: 2 });
@@ -102,11 +109,15 @@ function Where() {
   return <span data-testid="where">{useLocation().pathname + useLocation().search}</span>;
 }
 
+/* The Toaster is mounted so the undo affordance is asserted as an operator
+   meets it — a real button in a real toast — rather than as an option object
+   passed to a spy. */
 const renderPage = (entry = "/admin/aml/austrac") =>
   render(
     <MemoryRouter initialEntries={[entry]}>
       <AmlAustracReporting />
       <Where />
+      <Toaster />
     </MemoryRouter>,
   );
 
@@ -417,11 +428,73 @@ describe("archiving is putting away, not throwing away", () => {
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
     const asked = String(confirmed.mock.calls[0]?.[0] ?? "");
-    expect(asked).toMatch(/kept in full/i);
+    expect(asked).toMatch(/Everything is kept/i);
     expect(asked).toMatch(/restore/i);
     /* Lodged with no receipt on file — said, not hidden. */
     expect(asked).toMatch(/No AUSTRAC receipt/i);
     expect(archiveReport).not.toHaveBeenCalled();
+  });
+
+  it("lets the operator choose which reports to archive", async () => {
+    /* "Choose the report to archive" — an explicit pick rather than
+       something a stray click does to a row nobody meant. */
+    listReports.mockResolvedValue([LODGED, { ...LODGED, id: "r6", title: "Second lodged" }]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Select Lodged SMR" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Second lodged" }));
+    expect(await screen.findByText("2 reports selected")).toBeInTheDocument();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: /Archive selected/i }));
+    await waitFor(() => expect(archiveReport).toHaveBeenCalledTimes(2));
+    expect(archiveReport).toHaveBeenCalledWith("r5");
+    expect(archiveReport).toHaveBeenCalledWith("r6");
+  });
+
+  it("offers no checkbox on a report the archive would refuse", async () => {
+    /* A control that exists to be turned down teaches an operator to
+       distrust the page. The checkbox reads the same rule the row's button
+       and the server both read. */
+    listReports.mockResolvedValue([{ ...REPORT, id: "r7", status: "approved", title: "Approved SMR" }]);
+    renderPage();
+    await screen.findByRole("button", { name: "Approved SMR" });
+    expect(screen.queryByRole("checkbox", { name: "Select Approved SMR" })).not.toBeInTheDocument();
+  });
+
+  it("selects every archivable report at once, and only those", async () => {
+    listReports.mockResolvedValue([
+      LODGED,
+      { ...REPORT, id: "r8", status: "approved", title: "Approved SMR" },
+    ]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("checkbox", {
+      name: /Select every report that can be archived/i,
+    }));
+    expect(await screen.findByText("1 report selected")).toBeInTheDocument();
+  });
+
+  it("offers Undo on what it just archived", async () => {
+    /* Telling somebody a thing is reversible and then making them go and
+       find the other view to reverse it is not the same as reversing it. */
+    listReports.mockResolvedValue([LODGED]);
+    renderPage();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(archiveReport).toHaveBeenCalledWith("r5"));
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restoreReport).toHaveBeenCalledWith("r5"));
+  });
+
+  it("does not ask a second time when undoing", async () => {
+    /* Undoing is not a new decision. */
+    listReports.mockResolvedValue([LODGED]);
+    renderPage();
+    const confirmed = vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(archiveReport).toHaveBeenCalled());
+    expect(confirmed).toHaveBeenCalledTimes(1);
+    fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(restoreReport).toHaveBeenCalled());
+    expect(confirmed).toHaveBeenCalledTimes(1);
   });
 
   it("has its own view, and restores from it", async () => {

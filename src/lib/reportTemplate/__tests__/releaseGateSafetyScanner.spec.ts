@@ -117,6 +117,51 @@ describe('scanPdfImportUnsafeSourcePatterns', () => {
   });
 });
 
+describe('a committed asset is not a generated artifact', () => {
+  /* The classification was the extension alone, which made a brand asset
+     unlandable: `public/brand/aurixa-emblem-240.png` had been corrupted on a
+     downstream clone and the repair could not merge, because the pull request
+     carrying it failed `[critical] no_generated_images_staged` — naming a file
+     that is supposed to be in the repository. */
+  it('passes a raster inside a shipped asset tree', () => {
+    expect(
+      scanPdfImportPrivateArtifacts([
+        'public/brand/aurixa-emblem-240.png',
+        'public/icons/icon-512.png',
+        'public/templates/npc-qa-content.jpg',
+        'src/assets/brands/logo.webp',
+      ]),
+    ).toEqual([]);
+  });
+
+  it('still fails a raster anywhere else', () => {
+    /* A scratch file left in `reports/`, `tmp/` or the repository root is the
+       quiet slip this rule is aimed at, and prime already carries one such
+       stray at its root. */
+    const findings = scanPdfImportPrivateArtifacts([
+      'reports/page-3.png',
+      'tmp/render.jpg',
+      'final.png',
+    ]);
+    expect(findings.map((f) => f.path)).toEqual(['reports/page-3.png', 'tmp/render.jpg', 'final.png']);
+    expect(findings.every((f) => f.code === 'private_image')).toBe(true);
+  });
+
+  it('never exempts a PDF, even in an asset tree', () => {
+    /* A PDF under `public/` is not a brand asset — it is a document published
+       to the internet, which is the more serious version of what this catches. */
+    const findings = scanPdfImportPrivateArtifacts(['public/brand/client-report.pdf']);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].code).toBe('private_pdf');
+    expect(findings[0].severity).toBe('critical');
+  });
+
+  it('exempts the tree, not the extension — a log in public/ still fails', () => {
+    const findings = scanPdfImportPrivateArtifacts(['public/debug.log']);
+    expect(findings[0]?.code).toBe('private_log_or_env');
+  });
+});
+
 describe('buildSafetyScanGateResults', () => {
   it('builds passing checks with no findings and failing checks with findings', () => {
     const checks = buildSafetyScanGateResults({

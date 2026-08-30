@@ -77,3 +77,13 @@ export function amlAustracDraftPath(reportId?: string | null): string {
 export function amlAustracReportPath(reportId: string): string {
   return `${ADMIN_AML_AUSTRAC_PATH}?report=${encodeURIComponent(reportId)}`;
 }
+
+/**
+ * The command centre's Refresh.
+ *
+ * `AmlLayout` dispatches this and a page answers it. It was a literal in the
+ * shell and nothing anywhere listened for it, so the button moved a "Refreshed
+ * HH:MM" stamp and nothing else — named here so the two ends cannot drift, and
+ * so the next page that wants to be refreshable can find it.
+ */
+export const AML_COMMAND_REFRESH_EVENT = "aml-command-refresh";

@@ -4,14 +4,15 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  AUSTRAC_OBLIGATIONS, MIN_NARRATIVE_CHARS, TERRORISM_FINANCING_HOURS,
+  AUSTRAC_OBLIGATIONS, TERRORISM_FINANCING_HOURS,
   addBusinessDays, austracHeadline, austracReadiness, deriveAustracPath,
   lodgementClock, type AustracReportFacts,
 } from "./austracReportPath.pure";
 
 const facts = (over: Partial<AustracReportFacts> = {}): AustracReportFacts => ({
   kind: "smr", status: "draft", caseId: "case-1", subjectLabel: "Rugesh Naidu",
-  title: "SMR — unusual cash deposits", narrative: "x".repeat(MIN_NARRATIVE_CHARS),
+  title: "SMR — unusual cash deposits",
+  narrative: "Third-party funds arrived with no explained connection to the buyer.",
   periodStart: null, periodEnd: null, mlroSignedAt: null, submittedAt: null,
   externalReference: null, receiptReference: null,
   obligationAt: "2026-08-27T00:00:00.000Z", ...over,

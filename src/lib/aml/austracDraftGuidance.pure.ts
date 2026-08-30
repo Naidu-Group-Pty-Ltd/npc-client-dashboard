@@ -32,7 +32,7 @@
  * is the one translation, and it returns null rather than guessing.
  */
 import {
-  AUSTRAC_OBLIGATIONS, MIN_NARRATIVE_CHARS, isCustomerReport, lodgementClock,
+  AUSTRAC_OBLIGATIONS, isCustomerReport, lodgementClock, narrativeIsWritten,
   type AustracReportKind, type LodgementClock,
 } from "@/lib/aml/austracReportPath.pure";
 
@@ -231,7 +231,6 @@ export interface DraftSection {
 export function draftSections(f: DraftFacts): DraftSection[] {
   const kind = toObligationKind(f.kind);
   const obligation = kind ? AUSTRAC_OBLIGATIONS[kind] : null;
-  const narrativeChars = (f.narrative ?? "").trim().length;
 
   const clockOwed = Boolean(obligation && obligation.businessDays !== null);
   const obligationDone = Boolean(kind) && (!clockOwed || Boolean(f.obligationAt));
@@ -240,7 +239,7 @@ export function draftSections(f: DraftFacts): DraftSection[] {
   const customerDone = !customerOwed || Boolean(f.caseId);
 
   const titleDone = Boolean((f.title ?? "").trim());
-  const narrativeDone = narrativeChars >= MIN_NARRATIVE_CHARS;
+  const narrativeDone = narrativeIsWritten(f.narrative);
 
   const periodSet = Boolean(f.periodStart && f.periodEnd);
   const periodOwed = Boolean(kind && !isCustomerReport(kind));
@@ -282,7 +281,7 @@ export function draftSections(f: DraftFacts): DraftSection[] {
         ? "Give the report a title."
         : narrativeDone
           ? null
-          : `The narrative is ${narrativeChars} of ${MIN_NARRATIVE_CHARS} characters.`,
+          : "Set out what happened, in the narrative.",
     },
     {
       key: "period",

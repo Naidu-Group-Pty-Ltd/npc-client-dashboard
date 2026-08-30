@@ -125,6 +125,91 @@ describe("the page", () => {
   });
 });
 
+describe("choosing the customer", () => {
+  const manyCases = Array.from({ length: 60 }, (_, i) => ({
+    id: `c${i}`,
+    subject_display_name: `Customer ${i}`,
+    case_reference: `AML-2026-${String(i).padStart(5, "0")}`,
+  }));
+
+  it("is typed rather than scrolled", async () => {
+    /* A plain drop-down of every open case is not a picker on a tenant with
+       two hundred customers; it is a haystack. */
+    listCases.mockResolvedValue({ cases: manyCases, total: manyCases.length });
+    renderNew();
+    const trigger = await screen.findByLabelText("Customer");
+    expect(trigger).toHaveAttribute("role", "combobox");
+    fireEvent.click(trigger);
+    const input = await screen.findByPlaceholderText(/Type a name or a Passport reference/i);
+    expect(input).toBeInTheDocument();
+  });
+
+  it("finds a customer by their Passport reference, hyphens or not", async () => {
+    /* A reference is read off one screen and re-typed on another. */
+    listCases.mockResolvedValue({ cases: manyCases, total: manyCases.length });
+    renderNew();
+    fireEvent.click(await screen.findByLabelText("Customer"));
+    fireEvent.change(await screen.findByPlaceholderText(/Type a name or a Passport reference/i), {
+      target: { value: "aml202600042" },
+    });
+    expect(await screen.findByText("AML-2026-00042")).toBeInTheDocument();
+    expect(screen.queryByText("AML-2026-00041")).not.toBeInTheDocument();
+  });
+
+  it("selects the customer, and shows who was chosen", async () => {
+    renderNew();
+    fireEvent.click(await screen.findByLabelText("Customer"));
+    fireEvent.change(await screen.findByPlaceholderText(/Type a name or a Passport reference/i), {
+      target: { value: "rugesh" },
+    });
+    fireEvent.click(await screen.findByText("Rugesh Naidu"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Customer")).toHaveTextContent("Rugesh Naidu — AML-2026-00005"));
+  });
+
+  it("says so when nothing matches, rather than showing an empty box", async () => {
+    renderNew();
+    fireEvent.click(await screen.findByLabelText("Customer"));
+    fireEvent.change(await screen.findByPlaceholderText(/Type a name or a Passport reference/i), {
+      target: { value: "zzzzz" },
+    });
+    expect(await screen.findByText(/No customer matches that/i)).toBeInTheDocument();
+  });
+});
+
+describe("the narrative", () => {
+  it("carries no character count", async () => {
+    /* AUSTRAC sets no threshold, and the one this had rendered as
+       `298 / 200 characters` — the shape of an overrun, on the one field
+       where running out of room would be a serious problem. */
+    renderNew();
+    await screen.findByLabelText(/Narrative/i);
+    expect(screen.queryByText(/\d+\s*\/\s*\d+\s*characters/)).not.toBeInTheDocument();
+  });
+
+  it("is complete once something has been written, however brief", async () => {
+    renderNew();
+    expect(await screen.findByText(/3 things outstanding/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Title$/i), { target: { value: "A matter" } });
+    fireEvent.change(screen.getByLabelText(/Narrative/i), {
+      target: { value: "Cash paid at settlement with no explanation." },
+    });
+    /* Forty-three characters. Under the old floor this was still owed. */
+    await waitFor(() =>
+      expect(screen.getByText(/2 things outstanding/i)).toBeInTheDocument());
+  });
+
+  it("labels the box without sitting on top of it", async () => {
+    /* The label shared a `flex items-end` row with the counter: the counter
+       made the row taller, `items-end` dropped the label to its foot, and
+       `leading-none` left the descenders on the textarea's own border. */
+    renderNew();
+    const label = await screen.findByText("Narrative");
+    expect(label.closest(".flex")).toBeNull();
+    expect(label.parentElement?.className).toContain("space-y-1.5");
+  });
+});
+
 describe("why the report is being made", () => {
   it("explains the obligation and when AUSTRAC must be informed", async () => {
     renderNew();

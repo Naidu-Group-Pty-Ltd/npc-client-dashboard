@@ -27,7 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   AustracDraftGuidancePanel, AustracTippingOffNotice,
 } from "@/components/aml/AustracDraftGuidancePanel";
-import { AUSTRAC_OBLIGATIONS, MIN_NARRATIVE_CHARS, isCustomerReport } from "@/lib/aml/austracReportPath.pure";
+import { AustracCustomerPicker } from "@/components/aml/AustracCustomerPicker";
+import { AUSTRAC_OBLIGATIONS, isCustomerReport } from "@/lib/aml/austracReportPath.pure";
 import {
   AUSTRAC_KIND_LABEL, KIND_GUIDANCE, draftClock, draftSections, narrativeSkeleton,
   toObligationKind, type DraftFacts, type DraftSection,
@@ -117,7 +118,7 @@ export function AustracReportDraftForm({
   const obligation = kind ? AUSTRAC_OBLIGATIONS[kind] : null;
   const sections = draftSections(facts);
   const deadline = draftClock(facts);
-  const narrativeChars = (draft.narrative ?? "").trim().length;
+  const narrativeIsEmpty = (draft.narrative ?? "").trim().length === 0;
 
   return (
     <div className="space-y-5">
@@ -127,7 +128,7 @@ export function AustracReportDraftForm({
         <div className="space-y-8">
           <DraftStep section={sections[0]}>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div>
+              <div className="space-y-1.5">
                 <Label htmlFor="draft-kind">Kind of report</Label>
                 <Select
                   value={String(draft.kind ?? "smr")}
@@ -141,7 +142,7 @@ export function AustracReportDraftForm({
                   </SelectContent>
                 </Select>
               </div>
-              <div>
+              <div className="space-y-1.5">
                 <Label htmlFor="draft-ref">Your reference code</Label>
                 <Input
                   id="draft-ref"
@@ -163,7 +164,7 @@ export function AustracReportDraftForm({
             */}
             {obligation && obligation.businessDays !== null && (
               <div className="grid gap-4 sm:grid-cols-2">
-                <div>
+                <div className="space-y-1.5">
                   <Label htmlFor="draft-obligation-at">Obligation arose</Label>
                   <Input
                     id="draft-obligation-at"
@@ -177,7 +178,7 @@ export function AustracReportDraftForm({
                       },
                     }))}
                   />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     {obligation.clockStarts.replace(/^the /, "The ")} — this is what the deadline is
                     counted from, and it is not the reporting period.
                   </p>
@@ -247,26 +248,19 @@ export function AustracReportDraftForm({
                 instead.
               </p>
             ) : (
-              <div className="max-w-xl">
+              <div className="max-w-xl space-y-1.5">
                 <Label htmlFor="draft-case">Customer</Label>
-                <Select
-                  value={draft.case_id ?? "none"}
-                  onValueChange={(v) => onChange((d) => ({ ...d, case_id: v === "none" ? null : v }))}
-                >
-                  <SelectTrigger id="draft-case">
-                    <SelectValue placeholder="Choose the customer this report is about" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Not yet chosen</SelectItem>
-                    {cases.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>
-                        {c.subject_display_name} — {c.case_reference}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <AustracCustomerPicker
+                  id="draft-case"
+                  cases={cases}
+                  value={draft.case_id ?? null}
+                  onChange={(caseId) => onChange((d) => ({ ...d, case_id: caseId }))}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Type part of the name, or the Passport reference — with or without its hyphens.
+                </p>
                 {casesFailed && (
-                  <p className="mt-1.5 text-xs text-warning">
+                  <p className="text-xs text-warning">
                     The compliance cases could not be listed. The draft can still be saved and the
                     customer linked afterwards.
                   </p>
@@ -276,7 +270,7 @@ export function AustracReportDraftForm({
           </DraftStep>
 
           <DraftStep section={sections[2]}>
-            <div className="max-w-2xl">
+            <div className="max-w-2xl space-y-1.5">
               <Label htmlFor="draft-title">Title</Label>
               <Input
                 id="draft-title"
@@ -285,13 +279,16 @@ export function AustracReportDraftForm({
                 placeholder="A short description of the matter"
               />
             </div>
-            <div>
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <Label htmlFor="draft-narrative">Narrative</Label>
-                <span className={"text-xs " + (narrativeChars >= MIN_NARRATIVE_CHARS ? "text-success" : "text-muted-foreground")}>
-                  {narrativeChars} / {MIN_NARRATIVE_CHARS} characters
-                </span>
-              </div>
+            <div className="space-y-1.5">
+              {/*
+                One label, above the box, with room between them.
+                It used to share a `flex items-end` row with a character
+                counter: the counter made the row taller, `items-end` dropped
+                the label to the row's foot, and `leading-none` left its
+                descenders sitting on the textarea's own border. There is no
+                counter now, so there is no row.
+              */}
+              <Label htmlFor="draft-narrative">Narrative</Label>
               <Textarea
                 id="draft-narrative"
                 rows={18}
@@ -305,7 +302,7 @@ export function AustracReportDraftForm({
                 the QUESTIONS rather than any answer — nothing it produces can
                 reach a lodged report as an assertion nobody made.
               */}
-              {kind && narrativeChars === 0 && (
+              {kind && narrativeIsEmpty && (
                 <Button
                   type="button"
                   variant="outline"
@@ -333,7 +330,7 @@ export function AustracReportDraftForm({
 
           <DraftStep section={sections[3]}>
             <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
-              <div>
+              <div className="space-y-1.5">
                 <Label htmlFor="draft-period-start">Period start</Label>
                 <Input
                   id="draft-period-start"
@@ -345,7 +342,7 @@ export function AustracReportDraftForm({
                   }))}
                 />
               </div>
-              <div>
+              <div className="space-y-1.5">
                 <Label htmlFor="draft-period-end">Period end</Label>
                 <Input
                   id="draft-period-end"

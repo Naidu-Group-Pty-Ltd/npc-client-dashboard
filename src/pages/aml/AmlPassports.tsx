@@ -15,6 +15,7 @@ import {
 } from "@/components/aml/primitives";
 import { PassportWorkspace } from "@/components/aml/passport/design/PassportWorkspace";
 import { cn } from "@/lib/utils";
+import { filterCases } from "@/lib/aml/caseSearch.pure";
 
 /**
  * Compliance Passport — the module-level destination.
@@ -65,13 +66,14 @@ export default function AmlPassports() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return cases;
-    return cases.filter((c) =>
-      (c.subject_display_name ?? "").toLowerCase().includes(q) ||
-      (c.case_reference ?? "").toLowerCase().includes(q));
-  }, [cases, search]);
+  /*
+    The matching rule is shared with the AUSTRAC draft's customer picker. A
+    customer who can be found on one screen and not on another is how an
+    operator concludes a case does not exist — and this filter is where the
+    convention started, so it is the one that moved rather than a second one
+    that agrees with it.
+  */
+  const filtered = useMemo(() => filterCases(cases, search), [cases, search]);
 
   const selectedCase = cases.find((c) => c.id === selected) ?? null;
 

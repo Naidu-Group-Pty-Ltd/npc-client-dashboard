@@ -355,6 +355,14 @@ describe("the whole process happens in the report", () => {
     expect(within(step).getByText("Lodge it at AUSTRAC Online")).toBeInTheDocument();
   });
 
+  it("does not call itself Edit when nothing on it can be edited", async () => {
+    /* A report past the draft statuses is READ. Naming the page "Edit" is
+       the same defect the read-only form itself fixes. */
+    renderEdit({ ...REPORT, status: "submitted" });
+    expect(await screen.findByRole("heading", { name: "AUSTRAC report" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Edit AUSTRAC report/i })).not.toBeInTheDocument();
+  });
+
   it("refuses to edit a report that has already been approved, and says why", async () => {
     /* `upsert_report` refuses anything past the draft statuses, so an
        editable form here would have a Save the server answers 403 to. */

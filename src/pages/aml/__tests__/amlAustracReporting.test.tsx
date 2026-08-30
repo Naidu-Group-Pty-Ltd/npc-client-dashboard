@@ -21,6 +21,8 @@ const listCases = vi.fn();
 const exportBundle = vi.fn();
 const upsertReport = vi.fn();
 const mlroSignoff = vi.fn();
+const archiveReport = vi.fn();
+const restoreReport = vi.fn();
 
 vi.mock("@/lib/aml/amlReportingApi", async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -30,6 +32,8 @@ vi.mock("@/lib/aml/amlReportingApi", async (orig) => ({
     getReport: (id: string) => getReport(id),
     deleteReport: vi.fn(),
     mlroSignoff: (id: string) => mlroSignoff(id),
+    archiveReport: (id: string) => archiveReport(id),
+    restoreReport: (id: string) => restoreReport(id),
     mlroReject: vi.fn(), withdrawReport: vi.fn(), submitRecord: vi.fn(),
     recordReceipt: vi.fn(), createVersion: vi.fn(),
     exportBundle: (id: string) => exportBundle(id),
@@ -78,13 +82,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   listReports.mockResolvedValue([REPORT]);
   getReport.mockResolvedValue({ report: REPORT, versions: [], submissions: [] });
-  summary.mockResolvedValue({ drafts: 1, awaiting_mlro: 0, approved: 0, submitted: 0, acknowledged: 0, rejected: 0 });
+  summary.mockResolvedValue({ draft: 1, awaiting_mlro: 0, approved: 0, submitted: 0, acknowledged: 0, rejected: 0, archived: 2 });
   exportBundle.mockResolvedValue({
     bundle: { report: REPORT, versions: [], submissions: [], exported_at: "2026-08-30T05:00:00.000Z", exported_by: "R Naidu" },
     content_hash: "f".repeat(64),
   });
   upsertReport.mockResolvedValue({ ...REPORT, status: "awaiting_mlro" });
   mlroSignoff.mockResolvedValue({ report: { ...REPORT, status: "approved" } });
+  archiveReport.mockResolvedValue({ ...REPORT, archived_at: "2026-08-30T00:00:00.000Z" });
+  restoreReport.mockResolvedValue({ ...REPORT, archived_at: null });
   listCases.mockResolvedValue({
     cases: [{ id: "case-1", subject_display_name: "Rugesh Naidu", case_reference: "AML-2026-00005" }],
     total: 1,
@@ -103,6 +109,19 @@ const renderPage = (entry = "/admin/aml/austrac") =>
       <Where />
     </MemoryRouter>,
   );
+
+/**
+ * Select a report by clicking its ROW.
+ *
+ * The title is no longer the way to select: it opens the report's own page,
+ * which is what a title should do and what an operator could not do at all
+ * for a submitted report.
+ */
+const selectRow = async (title: string) => {
+  const row = (await screen.findByRole("button", { name: title })).closest("tr")!;
+  fireEvent.click(row);
+  return row;
+};
 
 describe("drafting is a page, not a dialog", () => {
   /*
@@ -143,7 +162,7 @@ describe("drafting is a page, not a dialog", () => {
 describe("the guided path", () => {
   it("renders, and leads with what to do next", async () => {
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     await waitFor(() =>
       expect(screen.getByText("Suspicious Matter Report")).toBeInTheDocument());
     /* Five numbered steps, one of them open. It was six: a "clear the
@@ -163,14 +182,14 @@ describe("the guided path", () => {
   it("shows the statutory deadline and the section it comes from", async () => {
     /* A deadline nobody can see is a deadline nobody meets. */
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     await waitFor(() =>
       expect(screen.getAllByText(/AML\/CTF Act 2006 \(Cth\) s\.41/).length).toBeGreaterThan(0));
   });
 
   it("says the platform never lodges, on the page rather than in a tooltip", async () => {
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     await waitFor(() =>
       expect(screen.getByText(/holds no AUSTRAC credentials and submits nothing on your behalf/i))
         .toBeInTheDocument());
@@ -227,7 +246,7 @@ describe("the guided path leads somewhere", () => {
        they are not looking at. The step opens the report itself, where the
        checks, the narrative and the approval are all on one screen. */
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     fireEvent.click(await screen.findByRole("button", { name: /Review and approve/i }));
     expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/r1/edit");
     expect(mlroSignoff).not.toHaveBeenCalled();
@@ -239,7 +258,7 @@ describe("the guided path leads somewhere", () => {
        MLRO — most of them — a hand-off step is a report sent from somebody
        to themselves before they can act on it. */
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     await screen.findByRole("button", { name: /Review and approve/i });
     expect(screen.queryByRole("button", { name: /Send to the MLRO/i })).not.toBeInTheDocument();
     expect(upsertReport).not.toHaveBeenCalled();
@@ -254,7 +273,7 @@ describe("the guided path leads somewhere", () => {
   it("keeps the row's own approval for an MLRO who has already read it", async () => {
     /* Removing a control is not what opening the report was for. */
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     const confirmed = vi.spyOn(window, "confirm");
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     await waitFor(() => expect(mlroSignoff).toHaveBeenCalledWith("r1"));
@@ -267,7 +286,7 @@ describe("the guided path leads somewhere", () => {
     listReports.mockResolvedValue([withGaps]);
     getReport.mockResolvedValue({ report: withGaps, versions: [], submissions: [] });
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(confirmed).toHaveBeenCalled();
@@ -281,7 +300,7 @@ describe("the guided path leads somewhere", () => {
     listReports.mockResolvedValue([withGaps]);
     getReport.mockResolvedValue({ report: withGaps, versions: [], submissions: [] });
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     const asked = String(confirmed.mock.calls[0]?.[0] ?? "");
@@ -297,8 +316,7 @@ describe("which report am I looking at", () => {
     /* A 40%-opacity muted tint on a dark theme is the same charcoal as the
        row beside it. Three signals rather than one. */
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
-    const row = screen.getByText("SMR — unusual cash deposits").closest("tr")!;
+    const row = await selectRow("SMR — unusual cash deposits");
     await waitFor(() => expect(row).toHaveAttribute("aria-selected", "true"));
     expect(within(row).getByText(/Viewing/i)).toBeInTheDocument();
   });
@@ -307,7 +325,7 @@ describe("which report am I looking at", () => {
     /* The row was click-only, so the register could not be worked without
        a mouse at all. */
     renderPage();
-    const row = (await screen.findByText("SMR — unusual cash deposits")).closest("tr")!;
+    const row = (await screen.findByRole("button", { name: "SMR — unusual cash deposits" })).closest("tr")!;
     expect(row).toHaveAttribute("tabIndex", "0");
     fireEvent.keyDown(row, { key: "Enter" });
     await waitFor(() => expect(getReport).toHaveBeenCalledWith("r1"));
@@ -317,7 +335,7 @@ describe("which report am I looking at", () => {
     /* It said "Detail" with the title in muted small print, naming neither
        the obligation nor the status. */
     renderPage();
-    fireEvent.click(await screen.findByText("SMR — unusual cash deposits"));
+    await selectRow("SMR — unusual cash deposits");
     await waitFor(() =>
       expect(screen.getByText("Suspicious Matter Report")).toBeInTheDocument());
     expect(screen.getAllByText(/^SMR$/).length).toBeGreaterThan(0);
@@ -341,6 +359,86 @@ describe("which report am I looking at", () => {
     listReports.mockResolvedValue([]);
     renderPage();
     expect(await screen.findByText(/Choose a report on the left/i)).toBeInTheDocument();
+  });
+});
+
+describe("a report can be opened from the register", () => {
+  /* "Edit" was offered on a draft alone, so a submitted or approved report
+     could be SELECTED and never opened: the register showed a status and a
+     date and there was no way to read the document behind them. */
+  const LODGED = { ...REPORT, id: "r5", status: "submitted", title: "Lodged SMR" };
+
+  it("opens the report when its title is clicked, whatever its status", async () => {
+    listReports.mockResolvedValue([LODGED]);
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Lodged SMR" }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/r5/edit");
+  });
+
+  it("still selects the report when the row itself is clicked", async () => {
+    renderPage();
+    await selectRow("SMR — unusual cash deposits");
+    await waitFor(() => expect(getReport).toHaveBeenCalledWith("r1"));
+  });
+});
+
+describe("archiving is putting away, not throwing away", () => {
+  const LODGED = { ...REPORT, id: "r5", status: "submitted", title: "Lodged SMR" };
+
+  it("offers Archive on a report whose lodgement is behind it", async () => {
+    listReports.mockResolvedValue([LODGED]);
+    renderPage();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(archiveReport).toHaveBeenCalledWith("r5"));
+  });
+
+  it("does not offer it on a draft, which is deleted instead", async () => {
+    /* A button that exists in order to be refused teaches an operator to
+       distrust the page. */
+    renderPage();
+    await screen.findByText("SMR — unusual cash deposits");
+    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Delete/i })).toBeInTheDocument();
+  });
+
+  it("does not offer it on an approved report that has not been lodged", async () => {
+    /* The rule the whole feature turns on: hiding it would lose a statutory
+       deadline, not tidy a list. */
+    listReports.mockResolvedValue([{ ...REPORT, id: "r6", status: "approved", title: "Approved SMR" }]);
+    renderPage();
+    await screen.findByRole("button", { name: "Approved SMR" });
+    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+  });
+
+  it("says what is kept before it archives anything", async () => {
+    listReports.mockResolvedValue([LODGED]);
+    renderPage();
+    const confirmed = vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent.click(await screen.findByRole("button", { name: "Archive" }));
+    const asked = String(confirmed.mock.calls[0]?.[0] ?? "");
+    expect(asked).toMatch(/kept in full/i);
+    expect(asked).toMatch(/restore/i);
+    /* Lodged with no receipt on file — said, not hidden. */
+    expect(asked).toMatch(/No AUSTRAC receipt/i);
+    expect(archiveReport).not.toHaveBeenCalled();
+  });
+
+  it("has its own view, and restores from it", async () => {
+    renderPage();
+    await screen.findByText("SMR — unusual cash deposits");
+    listReports.mockResolvedValue([{ ...LODGED, archived_at: "2026-08-30T00:00:00.000Z" }]);
+    fireEvent.click(screen.getByRole("button", { name: /^Archived/ }));
+    await waitFor(() => expect(listReports).toHaveBeenCalledWith(
+      expect.objectContaining({ archived: "archived" })));
+    fireEvent.click(await screen.findByRole("button", { name: /Restore/i }));
+    await waitFor(() => expect(restoreReport).toHaveBeenCalledWith("r5"));
+  });
+
+  it("asks for the working register by default", async () => {
+    renderPage();
+    await waitFor(() => expect(listReports).toHaveBeenCalledWith(
+      expect.objectContaining({ archived: "live" })));
   });
 });
 

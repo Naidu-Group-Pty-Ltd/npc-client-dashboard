@@ -21,12 +21,12 @@ import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { suggestAmlLanding } from "@/lib/aml/defaultLanding";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { caseStage } from "@/lib/aml/caseDimensions";
+import { cn } from "@/lib/utils";
 import {
   AmlEmptyState,
   AmlErrorState,
   AmlMetricCard,
   AmlPageHeader,
-  AmlPageSection,
   AmlRefreshButton,
   AmlRiskBadge,
   AmlStageBadge,
@@ -52,6 +52,30 @@ interface QueueLink {
   capability: AmlCapability;
 }
 
+/**
+ * The queues, and what a queue IS.
+ *
+ * ── Two entries left, and why ─────────────────────────────────────────
+ * This list says "workspaces available to you right now" — work that is
+ * waiting for somebody. Two of the six were not that.
+ *
+ * **Transactions** went. `aml.transactions` and `aml.transaction_parties`
+ * both hold zero rows on this deployment, and the page it pointed at is a
+ * PER-CASE surface that loads with `cases[0]` selected — the newest case,
+ * chosen for the operator rather than by them. That is exactly why the
+ * navigation audit already folded Transactions into Customer Compliance as a
+ * stage inside a named customer's case and took it out of the strip; leaving
+ * it here contradicted a decision the product had already made. The route,
+ * the page and the per-case stage are all untouched.
+ *
+ * **Configuration** went, and did NOT become unreachable. It is not a queue:
+ * nothing waits there, it is set once and revisited rarely, and it is
+ * step-up protected — an administrator's destination rather than a shift's
+ * work. But it is also the only discoverable route to the sanctions
+ * register's health, and hiding the page entirely is what once stranded that
+ * behind a blocked case. So it moved to the page header, where settings
+ * belong, still gated on `aml.configure`.
+ */
 const QUEUE_LINKS: QueueLink[] = [
   {
     key: "cases",
@@ -78,28 +102,12 @@ const QUEUE_LINKS: QueueLink[] = [
     capability: "aml.investigate",
   },
   {
-    key: "transactions",
-    label: "Transactions",
-    description: "Investigate flagged transactions and IFTI/TTR triggers.",
-    to: "/admin/aml/transactions",
-    cta: "Open transactions",
-    capability: "aml.investigate",
-  },
-  {
     key: "austrac",
     label: "AUSTRAC Hub",
     description: "SMR / TTR / IFTI drafting, MLRO approval and lodgement.",
     to: "/admin/aml/austrac",
     cta: "Open AUSTRAC Hub",
     capability: "aml.report",
-  },
-  {
-    key: "configuration",
-    label: "Configuration",
-    description: "Tenant, thresholds, provider keys and program version.",
-    to: "/admin/aml/configuration",
-    cta: "Open configuration",
-    capability: "aml.configure",
   },
 ];
 
@@ -245,7 +253,27 @@ function AmlOverviewV2() {
         title="Compliance Home"
         description="Your queues and case activity across the AML/CTF program."
         icon={ShieldCheck}
-        actions={<AmlRefreshButton onClick={refresh} loading={loadingCases || loadingMonitoring} />}
+        actions={
+          <>
+            <AmlRefreshButton onClick={refresh} loading={loadingCases || loadingMonitoring} />
+            {/*
+              Configuration is not a queue — nothing waits there, it is set
+              once and revisited rarely, and it is step-up protected. It sits
+              in the header because that is where settings belong, and it is
+              here at all because it is the only discoverable route to the
+              sanctions register's health: hiding the page is what once
+              stranded that behind a blocked case.
+            */}
+            {canConfigure && (
+              <Button asChild size="sm" variant="ghost">
+                <Link to="/admin/aml/configuration">
+                  <Settings2 aria-hidden="true" className="mr-2 h-4 w-4" />
+                  Configuration
+                </Link>
+              </Button>
+            )}
+          </>
+        }
       />
 
       {/* Role-adaptive landing hint */}
@@ -274,67 +302,102 @@ function AmlOverviewV2() {
         />
       )}
 
-      {/* Case tiles — always visible for aml.view */}
-      <AmlPageSection title="Customer cases" description="Case volume and what is waiting on a decision.">
-        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-          <AmlMetricCard
-            title="Total cases"
-            icon={Users}
-            state={caseMetricState}
-            value={totalCases}
-            hint="Across all statuses in this tenant."
-            to="/admin/aml/cases"
-          />
-          <AmlMetricCard
-            title="Open (recent)"
-            icon={Gauge}
-            state={caseMetricState}
-            value={openCount}
-            hint={`Of the latest ${cases.length || 0} cases, still under investigation.`}
-            to="/admin/aml/cases"
-          />
-          <AmlMetricCard
-            title="Awaiting decision"
-            icon={ShieldCheck}
-            state={caseMetricState}
-            value={escalated}
-            hint="Escalated cases awaiting a decision."
-            to="/admin/aml/cases?view=awaiting_decision"
-          />
-        </div>
-      </AmlPageSection>
+      {/*
+        ── One strip, not six cards ──────────────────────────────────
+        These were six full metric cards in two sections: six borders, six
+        paddings and six headers around six single-digit numbers, most of
+        them a healthy zero — taking more height than the case list they sit
+        above. They are a glance, not a reading.
 
-      {/* Investigate-only tiles: monitoring queue snapshot */}
-      {canInvestigate && (
-        <AmlPageSection title="Monitoring" description="Alert triage and periodic review backlog.">
-          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-            <AmlMetricCard
-              title="Open alerts"
-              icon={Bell}
-              state={monitoringMetricState}
-              value={monitoring?.open_alerts}
-              hint={monitoring ? `${monitoring.critical_alerts} critical` : undefined}
-              to="/admin/aml/monitoring"
-            />
-            <AmlMetricCard
-              title="Unprocessed events"
-              icon={Gauge}
-              state={monitoringMetricState}
-              value={monitoring?.unprocessed_events}
-              hint="Rule engine backlog."
-              to="/admin/aml/monitoring"
-            />
-            <AmlMetricCard
-              title="Periodic reviews"
-              icon={ShieldCheck}
-              state={monitoringMetricState}
-              value={monitoring?.pending_reviews}
-              hint={monitoring ? `${monitoring.overdue_reviews} overdue` : undefined}
-              to="/admin/aml/monitoring"
-            />
-          </div>
-        </AmlPageSection>
-      )}
+        One card, two labelled groups, six dense cells. Every cell keeps its
+        deep link, its loading skeleton and its "Not available" reading, so
+        nothing about what the numbers MEAN changed — only how much of the
+        page they take to say it.
+      */}
+      <Card>
+        <CardContent className={cn(
+          "grid gap-x-6 gap-y-5 p-4",
+          canInvestigate && "lg:grid-cols-2 lg:divide-x lg:divide-border/60",
+        )}>
+          <section aria-labelledby="home-cases-heading">
+            <h2
+              id="home-cases-heading"
+              className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
+            >
+              Customer cases
+            </h2>
+            <div className="grid grid-cols-1 divide-y divide-border/50 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+              <AmlMetricCard
+                dense
+                title="Total"
+                icon={Users}
+                state={caseMetricState}
+                value={totalCases}
+                hint="All statuses."
+                to="/admin/aml/cases"
+              />
+              <AmlMetricCard
+                dense
+                title="Open"
+                icon={Gauge}
+                state={caseMetricState}
+                value={openCount}
+                hint={`Of the ${cases.length || 0} most recent.`}
+                to="/admin/aml/cases"
+              />
+              <AmlMetricCard
+                dense
+                title="Awaiting decision"
+                icon={ShieldCheck}
+                state={caseMetricState}
+                value={escalated}
+                hint="Escalated to the MLRO."
+                to="/admin/aml/cases?view=awaiting_decision"
+              />
+            </div>
+          </section>
+
+          {canInvestigate && (
+            <section aria-labelledby="home-monitoring-heading" className="lg:pl-6">
+              <h2
+                id="home-monitoring-heading"
+                className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground"
+              >
+                Monitoring
+              </h2>
+              <div className="grid grid-cols-1 divide-y divide-border/50 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                <AmlMetricCard
+                  dense
+                  title="Open alerts"
+                  icon={Bell}
+                  state={monitoringMetricState}
+                  value={monitoring?.open_alerts}
+                  hint={monitoring ? `${monitoring.critical_alerts} critical` : undefined}
+                  to="/admin/aml/monitoring"
+                />
+                <AmlMetricCard
+                  dense
+                  title="Unprocessed"
+                  icon={Gauge}
+                  state={monitoringMetricState}
+                  value={monitoring?.unprocessed_events}
+                  hint="Rule engine backlog."
+                  to="/admin/aml/monitoring"
+                />
+                <AmlMetricCard
+                  dense
+                  title="Periodic reviews"
+                  icon={ShieldCheck}
+                  state={monitoringMetricState}
+                  value={monitoring?.pending_reviews}
+                  hint={monitoring ? `${monitoring.overdue_reviews} overdue` : undefined}
+                  to="/admin/aml/monitoring"
+                />
+              </div>
+            </section>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Queue directory — only entries the user can reach */}
       <Card>
@@ -416,8 +479,8 @@ function AmlOverviewV2() {
         </CardContent>
       </Card>
 
-      {/* Restricted-capability affordances live in tiles above; nothing more
-          leaks into the home for users without the underlying permission. */}
+      {/* Restricted-capability affordances are gated where they are drawn;
+          nothing more leaks into the home for users without the permission. */}
       {!canReport && !canConfigure && (
         <p className="text-xs text-muted-foreground">
           Reporting and configuration surfaces are restricted and only appear for MLRO users.
@@ -427,10 +490,13 @@ function AmlOverviewV2() {
         A second Configuration button used to sit here, under a comment that
         already said "restricted-capability affordances live in tiles above".
         It went to the same place as the tile and contradicted its own
-        neighbour. Configuration is now reached from exactly two places: that
-        tile — gated on `aml.configure`, so an ordinary operator never sees it
-        — and Stage 5's "open list health" when screening cannot run. It is no
-        longer in the navigation at all.
+        neighbour. Configuration is still reached from exactly two places, and
+        the first of them has MOVED: the page header — gated on
+        `aml.configure`, so an ordinary operator never sees it — and Stage 5's
+        "open list health" when screening cannot run. It left the queue list
+        because it is not a queue, and it did not leave the page, because
+        hiding it is what once stranded the sanctions register behind a
+        blocked case. It is still not in the navigation at all.
       */}
     </div>
   );

@@ -244,7 +244,10 @@ export default function AmlAustracReportDraft() {
   return (
     <div className="space-y-6 pb-28">
       <AmlPageHeader
-        title={reportId ? "Edit AUSTRAC report" : "Start an AUSTRAC report"}
+        /* A report past the draft statuses is READ. Calling the page "Edit"
+           when nothing on it can be edited is the same defect the read-only
+           form itself fixes. */
+        title={!reportId ? "Start an AUSTRAC report" : editable ? "Edit AUSTRAC report" : "AUSTRAC report"}
         description="Assemble the report, hold it on the customer's compliance file, and record who approved it. Lodgement is made in your organisation's own AUSTRAC Online account — nothing here is sent to AUSTRAC."
         icon={FileText}
         actions={

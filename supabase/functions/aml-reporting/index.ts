@@ -9,6 +9,7 @@
  *   list_versions, create_version,
  *   submit_start (mlro), submit_record (mlro), record_receipt (mlro),
  *   mlro_signoff, mlro_reject, withdraw_report,
+ *   archive_report, restore_report,
  *   export_bundle, summary
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -17,6 +18,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireStepUpSession } from "../_shared/aml/step-up.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { archiveBlockReason } from "../_shared/aml/austracArchive.pure.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -109,6 +111,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // ── LIST / GET ────────────────────────────────
     if (op === "list_reports") {
       let q = aml.from("reports").select("*").order("created_at", { ascending: false }).limit(Number(body.limit ?? 200));
+      /*
+        Archived rows are RETAINED and hidden, never deleted. The register
+        asks for the working list by default and for the archive explicitly,
+        so a report can never be lost by being put away — and `archived:
+        "all"` exists because an auditor asking "every report we have ever
+        made" is a real question with one answer.
+      */
+      const archived = String(body.archived ?? "live");
+      if (archived === "live") q = q.is("archived_at", null);
+      else if (archived === "archived") q = q.not("archived_at", "is", null);
       if (body.status) q = q.eq("status", String(body.status));
       if (body.kind) q = q.eq("kind", String(body.kind));
       if (body.case_id) q = q.eq("case_id", String(body.case_id));
@@ -141,6 +153,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       // Never allow client to short-circuit MLRO fields or terminal lifecycle state on upsert.
       delete row.mlro_signed_by; delete row.mlro_signed_at;
       delete row.submitted_at; delete row.submitted_by; delete row.acknowledged_at;
+      /*
+        Nor the archive stamp. `upsert_report` spreads the caller's object, so
+        without this a client could archive a report by SAVING it — straight
+        past `archiveBlockReason`, which is the one guard that stops an
+        approved-but-unlodged report being hidden while its deadline runs.
+        Archiving has its own op precisely so it has its own rule.
+      */
+      delete row.archived_at; delete row.archived_by;
       if (typeof row.status === "string" && !DRAFT_REPORT_STATUSES.has(row.status)) {
         return jr({ error: "Report status changes to approved, submitted, acknowledged, rejected, or withdrawn must use the MLRO workflow" }, 403);
       }
@@ -311,6 +331,55 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       return jr({ receipt });
     }
 
+    // ── ARCHIVE ──────────────────────────────────
+    /*
+      Archiving is not deleting. `delete_report` refuses anything past the
+      draft statuses because a lodged report is a retained record kept for
+      seven years with the evidence behind it — so this stamps the row and
+      keeps every byte of it: the row, its versions, its submissions, its
+      receipts and its case events. It is reversible, and both directions are
+      written to the customer's case timeline.
+
+      The rule it enforces is `archiveBlockReason`, which the register renders
+      from as well: a report may be archived only once NOTHING IS OWED TO
+      AUSTRAC. An archive that can hide an approved-but-unlodged suspicious
+      matter report is not a tidy-up feature, it is a way to lose a statutory
+      deadline.
+    */
+    if (op === "archive_report") {
+      requireWrite();
+      const { data: existing } = await aml.from("reports")
+        .select("id, status, case_id, kind, title, archived_at").eq("id", String(body.id)).maybeSingle();
+      if (!existing) return jr({ error: "Report not found" }, 404);
+      if (existing.archived_at) return jr({ report: existing });
+      const blocked = archiveBlockReason(existing.status);
+      if (blocked) return jr({ error: blocked }, 400);
+      const { data, error } = await aml.from("reports").update({
+        archived_at: new Date().toISOString(), archived_by: userId,
+      }).eq("id", existing.id).select("*").single();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCaseEvent(admin, data.case_id, "system",
+        `AUSTRAC ${data.kind.toUpperCase()} report archived: ${data.title}`,
+        { report_id: data.id, status: data.status }, userId, userLabel);
+      return jr({ report: redactSmr(data) });
+    }
+
+    if (op === "restore_report") {
+      requireWrite();
+      const { data: existing } = await aml.from("reports")
+        .select("id, case_id, kind, title, archived_at").eq("id", String(body.id)).maybeSingle();
+      if (!existing) return jr({ error: "Report not found" }, 404);
+      if (!existing.archived_at) return jr({ report: existing });
+      const { data, error } = await aml.from("reports").update({
+        archived_at: null, archived_by: null,
+      }).eq("id", existing.id).select("*").single();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCaseEvent(admin, data.case_id, "system",
+        `AUSTRAC ${data.kind.toUpperCase()} report restored to the register: ${data.title}`,
+        { report_id: data.id, status: data.status }, userId, userLabel);
+      return jr({ report: redactSmr(data) });
+    }
+
     // ── EXPORT ───────────────────────────────────
     if (op === "export_bundle") {
       // Read-only: returns a signed JSON bundle suitable for archiving alongside the AUSTRAC submission.
@@ -328,13 +397,18 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     // ── SUMMARY ──────────────────────────────────
     if (op === "summary") {
-      const [draft, awaiting, approved, submitted, ackd, rejected] = await Promise.all([
-        aml.from("reports").select("id", { count: "exact", head: true }).eq("status", "draft"),
-        aml.from("reports").select("id", { count: "exact", head: true }).in("status", ["in_review", "awaiting_mlro"]),
-        aml.from("reports").select("id", { count: "exact", head: true }).eq("status", "approved"),
-        aml.from("reports").select("id", { count: "exact", head: true }).eq("status", "submitted"),
-        aml.from("reports").select("id", { count: "exact", head: true }).eq("status", "acknowledged"),
-        aml.from("reports").select("id", { count: "exact", head: true }).eq("status", "rejected"),
+      // The tiles count the WORKING register. An archived report is a
+      // retained record rather than an outstanding one, and counting it
+      // would put a number beside a row nobody can see.
+      const live = () => aml.from("reports").select("id", { count: "exact", head: true }).is("archived_at", null);
+      const [draft, awaiting, approved, submitted, ackd, rejected, archivedCount] = await Promise.all([
+        live().eq("status", "draft"),
+        live().in("status", ["in_review", "awaiting_mlro"]),
+        live().eq("status", "approved"),
+        live().eq("status", "submitted"),
+        live().eq("status", "acknowledged"),
+        live().eq("status", "rejected"),
+        aml.from("reports").select("id", { count: "exact", head: true }).not("archived_at", "is", null),
       ]);
       return jr({
         draft: draft.count ?? 0,
@@ -343,6 +417,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         submitted: submitted.count ?? 0,
         acknowledged: ackd.count ?? 0,
         rejected: rejected.count ?? 0,
+        archived: archivedCount.count ?? 0,
       });
     }
 

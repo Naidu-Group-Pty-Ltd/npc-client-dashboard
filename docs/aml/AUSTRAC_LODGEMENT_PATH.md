@@ -526,3 +526,64 @@ two renderings of the same path, free to disagree about which step is open, so
 the rail's list is suppressed exactly when the card is mounted — and the card
 is mounted only for a saved report, which is the only kind that has anything
 to approve.
+
+---
+
+## Opening a report, and putting one away
+
+### The title opens the report
+
+**Edit** was offered on a draft alone, so a submitted or approved report could
+be *selected* and never *opened*: the register showed a status and a date, and
+there was no way to read the document behind them. The title is the way in for
+every status now.
+
+That is safe to offer on all of them because the report page already renders
+**read-only where the server would refuse a write** — and it no longer calls
+itself "Edit" when nothing on it can be edited.
+
+Clicking the row still selects it. Clicking the title opens it.
+
+### Archiving is putting away, never throwing away
+
+`delete_report` refuses anything past the draft statuses, and that is correct:
+an approved, lodged, acknowledged, rejected or withdrawn report is a
+**retained record**, kept for seven years with the evidence behind it. So the
+register listed every report the entity had ever made, for ever, and the two
+that still needed something were buried among the ones that did not.
+
+Archiving hides a row from the working list and keeps every byte of it — the
+row, its versions, its submissions, its receipts and its case events. It is
+reversible from the archive view, and both directions are written to the
+customer's case timeline. `archived_at` is the whole mechanism; `archived_by`
+records who, because a compliance record's disappearance from a list is itself
+worth being able to explain.
+
+**The rule the whole feature turns on: a report may be archived only once
+nothing is owed to AUSTRAC.** An archive that can hide an
+approved-but-unlodged Suspicious Matter Report is not a tidy-up feature, it is
+a way to lose a statutory deadline — the report leaves the list, the clock
+keeps running, and nobody is looking. So `submitted`, `acknowledged`,
+`rejected` and `withdrawn` archive; `draft`, `in_review`, `awaiting_mlro` and
+`approved` refuse and say why, and a draft is pointed at delete instead.
+
+`archiveBlockReason` is in `_shared` and is rendered by the register and
+enforced by the edge function, so a button that exists in order to be refused
+cannot happen.
+
+Three more things it holds:
+
+- **A lodged report with no receipt is archivable, and says so.** AUSTRAC's
+  acknowledgement may never arrive, and waiting for one for ever is not a
+  filing system — but the confirmation names it rather than hiding it.
+- **It cannot be archived by saving the report.** `upsert_report` spreads the
+  caller's object, so without stripping the stamp a client could archive a
+  report by SAVING it, straight past the guard. It is deleted from the row
+  alongside the MLRO and submission fields, for the same reason they are.
+- **The tiles count the working register.** An archived report is a retained
+  record rather than an outstanding one, and counting it would put a number
+  beside a row nobody can see. The archive has its own count, on its own view.
+
+Archived is a **view**, not a status filter: it is not a state a report is in,
+it is whether the register is showing it. Putting it in the status list would
+have made "All statuses" a lie.

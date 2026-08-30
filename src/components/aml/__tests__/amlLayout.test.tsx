@@ -145,13 +145,20 @@ describe("AmlLayout — legacy (V2) navigation", () => {
 
   it("offers exactly ONE door to Configuration, and it is capability-gated", () => {
     /* Compliance Home carried two — a tile, and a button sitting directly
-       under a comment saying restricted affordances live in the tiles. The
-       tile survives, gated on `aml.configure`, so an operator holding only
-       `aml.view` sees Configuration nowhere at all. */
+       under a comment saying restricted affordances live in the tiles. One
+       door survives, gated on `aml.configure`, so an operator holding only
+       `aml.view` sees Configuration nowhere at all.
+
+       Re-pinned to the RULE rather than to where the door is drawn: the
+       door left the "Your queues" list (nothing waits in Configuration — it
+       is settings, not a queue) for the page header, so the gate is now
+       `canConfigure` rather than a `QueueLink` capability field. One door,
+       still gated, is what this test is for. */
     const home = readFileSync("src/pages/aml/AmlOverview.tsx", "utf8");
     const code = home.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
     expect(code.match(/\/admin\/aml\/configuration/g) ?? []).toHaveLength(1);
-    expect(home).toContain('capability: "aml.configure"');
+    expect(code).toMatch(/canConfigure && \(/);
+    expect(home).toContain('hasAmlCapability(roles, "aml.configure")');
   });
 
   it("a page with no tab still BELONGS to one workspace", () => {

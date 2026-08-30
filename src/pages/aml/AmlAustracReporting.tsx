@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, PlusCircle, ShieldCheck, Send, Download, CheckCircle2, XCircle, History, Eye } from "lucide-react";
+import { FileText, Loader2, PlusCircle, ShieldCheck, Send, Download, CheckCircle2, XCircle, History, Eye, Archive, ArchiveRestore } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { approvalConfirmation, type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
 import { AUSTRAC_KIND_LABEL as KIND_LABEL, toObligationKind } from "@/lib/aml/austracDraftGuidance.pure";
 import { amlAustracDraftPath } from "@/lib/aml/amlRoutes";
+import { archiveBlockReason, archiveWarning } from "@/lib/aml/austracArchive";
 import {
   AmlAccessGate,
   AmlLoadingState,
@@ -98,6 +99,13 @@ export default function AmlAustracReporting() {
   const [reports, setReports] = useState<AmlReport[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [kindFilter, setKindFilter] = useState<string>("all");
+  /*
+    Archived reports are RETAINED and hidden, never deleted. The register asks
+    for the working list by default; the archive is a deliberate look, so it
+    is a view rather than a filter buried in the status list.
+  */
+  const [view, setView] = useState<"live" | "archived">("live");
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   /**
    * The customers a report can be filed against.
@@ -139,6 +147,7 @@ export default function AmlAustracReporting() {
         amlReportingApi.listReports({
           status: statusFilter === "all" ? undefined : statusFilter,
           kind: kindFilter === "all" ? undefined : kindFilter,
+          archived: view,
         }),
       ]);
       setSummary(sum); setReports(list);
@@ -155,7 +164,7 @@ export default function AmlAustracReporting() {
     } catch (e: any) { toast.error(e?.message ?? "Failed to load report detail"); }
   };
 
-  useEffect(() => { if (hasAnyRole) load(); /* eslint-disable-next-line */ }, [statusFilter, kindFilter, hasAnyRole]);
+  useEffect(() => { if (hasAnyRole) load(); /* eslint-disable-next-line */ }, [statusFilter, kindFilter, view, hasAnyRole]);
   useEffect(() => { if (selectedId) loadDetail(selectedId); else { setSelectedReport(null); setSelectedVersions([]); setSelectedSubs([]); } }, [selectedId]);
   useEffect(() => { if (requestedReport) setSelectedId(requestedReport); }, [requestedReport]);
 
@@ -263,6 +272,53 @@ export default function AmlAustracReporting() {
     const reason = prompt("Withdrawal reason?") ?? "";
     try { await amlReportingApi.withdrawReport(r.id, reason); toast.success("Report withdrawn"); await load(); if (selectedId === r.id) await loadDetail(r.id); }
     catch (e: any) { toast.error(e?.message ?? "Withdraw failed"); }
+  };
+
+  /**
+   * Put a finished report away, or bring it back.
+   *
+   * ── Archiving is not deleting ─────────────────────────────────────
+   * `delete_report` refuses anything past the draft statuses because a
+   * lodged report is a retained record — kept for seven years with the
+   * evidence behind it. Archiving keeps every byte of it and takes it off
+   * the working list, and it is reversible from the archive view.
+   *
+   * The rule is the server's and this renders from the same module, so what
+   * an operator is offered and what the server accepts cannot become two
+   * standards: a report may be archived only once NOTHING IS OWED TO
+   * AUSTRAC. Hiding an approved-but-unlodged report would be a way to lose
+   * a statutory deadline, not a tidy-up.
+   */
+  const archive = async (r: AmlReport) => {
+    const blocked = archiveBlockReason(r.status);
+    if (blocked) { toast.error("It cannot be archived yet", { description: blocked }); return; }
+    const warning = archiveWarning({
+      status: r.status,
+      hasReceipt: Boolean(r.acknowledged_at) || (selectedId === r.id && selectedSubs.some(
+        (sub) => ((sub as any)?.receipts ?? []).length > 0)),
+    });
+    const ask = `Archive "${r.title}"?\n\nIt is kept in full — the report, its versions, its `
+      + `submissions and its receipts — and taken off the working register. You can restore it `
+      + `from the archive at any time.${warning ? `\n\n${warning}` : ""}`;
+    if (!window.confirm(ask)) return;
+    setArchivingId(r.id);
+    try {
+      await amlReportingApi.archiveReport(r.id);
+      toast.success("Archived", { description: "It is retained in full and can be restored." });
+      if (selectedId === r.id) setSelectedId(null);
+      await load();
+    } catch (e: any) { toast.error(e?.message ?? "It could not be archived"); }
+    finally { setArchivingId(null); }
+  };
+
+  const restore = async (r: AmlReport) => {
+    setArchivingId(r.id);
+    try {
+      await amlReportingApi.restoreReport(r.id);
+      toast.success("Restored to the register");
+      await load();
+    } catch (e: any) { toast.error(e?.message ?? "It could not be restored"); }
+    finally { setArchivingId(null); }
   };
 
   const openSubmitFor = (r: AmlReport) => {
@@ -406,8 +462,35 @@ export default function AmlAustracReporting() {
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle>Reports</CardTitle>
-              <div className="flex gap-2">
+              <CardTitle>{view === "archived" ? "Archived reports" : "Reports"}</CardTitle>
+              <div className="flex flex-wrap items-center gap-2">
+                {/*
+                  A view rather than a status filter: archived is not a
+                  status a report is IN, it is whether the register is
+                  showing it. Putting it in the status list would have made
+                  "All statuses" a lie.
+                */}
+                <div className="flex items-center rounded-md border border-border/70 p-0.5" role="group" aria-label="Register view">
+                  {(["live", "archived"] as const).map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      aria-pressed={view === v}
+                      onClick={() => { setSelectedId(null); setView(v); }}
+                      className={cn(
+                        "rounded px-2.5 py-1 text-xs font-medium transition-colors",
+                        view === v
+                          ? "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      {v === "live" ? "On the register" : "Archived"}
+                      {v === "archived" && summary?.archived
+                        ? <span className="ml-1.5 tabular-nums opacity-70">{summary.archived}</span>
+                        : null}
+                    </button>
+                  ))}
+                </div>
                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                   <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -484,9 +567,31 @@ export default function AmlAustracReporting() {
                         {r.kind.toUpperCase()}
                       </Badge>
                     </TableCell>
-                    <TableCell className={cn("font-medium", active && "text-primary")}>
+                    <TableCell className="font-medium">
+                      {/*
+                        ── The title opens the report ─────────────────
+                        "Edit" was offered on a draft alone, so a submitted
+                        or approved report could be SELECTED and never
+                        opened: the register showed a status and a date and
+                        there was no way to read the document behind them.
+                        The title is the way in for every status — the page
+                        renders read-only where the server would refuse a
+                        write, which is why this is safe to offer on all of
+                        them.
+                      */}
                       <span className="flex items-center gap-2">
-                        {r.title}
+                        <button
+                          type="button"
+                          className={cn(
+                            "truncate rounded-sm text-left underline-offset-4 hover:underline",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            active ? "text-primary" : "text-foreground",
+                          )}
+                          title="Open this report"
+                          onClick={(e) => { e.stopPropagation(); navigate(amlAustracDraftPath(r.id)); }}
+                        >
+                          {r.title}
+                        </button>
                         {active && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
                             <Eye aria-hidden className="h-3 w-3" /> Viewing
@@ -534,6 +639,39 @@ export default function AmlAustracReporting() {
                         {canWrite && r.status === "draft" && (
                           <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); removeReport(r); }} className="text-destructive">Delete</Button>
                         )}
+                        {/*
+                          Archive is offered only where the server would
+                          accept it, and the reason is rendered from the same
+                          module the server enforces — a button that exists
+                          to be refused teaches an operator to distrust the
+                          page.
+                        */}
+                        {canWrite && view === "live" && !archiveBlockReason(r.status) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={archivingId === r.id}
+                            onClick={(e) => { e.stopPropagation(); void archive(r); }}
+                          >
+                            {archivingId === r.id
+                              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              : <Archive className="h-4 w-4 mr-1" />}
+                            Archive
+                          </Button>
+                        )}
+                        {canWrite && view === "archived" && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={archivingId === r.id}
+                            onClick={(e) => { e.stopPropagation(); void restore(r); }}
+                          >
+                            {archivingId === r.id
+                              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              : <ArchiveRestore className="h-4 w-4 mr-1" />}
+                            Restore
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -541,7 +679,11 @@ export default function AmlAustracReporting() {
                 })}
                 {!reports.length && loading && <AmlTableLoadingRow colSpan={5} label="Loading reports…" />}
                 {!reports.length && !loading && (
-                  <AmlTableEmptyRow colSpan={5}>No reports match these filters. Try clearing the status or kind filter{canWrite ? ", or start a new draft" : ""}.</AmlTableEmptyRow>
+                  <AmlTableEmptyRow colSpan={5}>
+                    {view === "archived"
+                      ? "Nothing has been archived. A report is archived once its lodgement is behind it; it is kept in full and can be restored."
+                      : `No reports match these filters. Try clearing the status or kind filter${canWrite ? ", or start a new draft" : ""}.`}
+                  </AmlTableEmptyRow>
                 )}
               </TableBody>
             </Table>

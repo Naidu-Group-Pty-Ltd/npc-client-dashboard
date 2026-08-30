@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, Check, FileText, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, FileText, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
@@ -31,8 +31,19 @@ import { AmlAccessGate, AmlLoadingState, AmlPageHeader } from "@/components/aml/
 import { AustracReportDraftForm, type DraftCaseOption } from "@/components/aml/AustracReportDraftForm";
 import { draftSectionsForReport, draftSummary } from "@/lib/aml/austracDraftGuidance.pure";
 import { amlAustracReportPath, ADMIN_AML_AUSTRAC_PATH } from "@/lib/aml/amlRoutes";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { amlCasesApi } from "@/lib/aml/amlCasesApi";
-import { amlReportingApi, type AmlReport } from "@/lib/aml/amlReportingApi";
+import {
+  amlReportingApi, type AmlReport, type AmlReportSubmission,
+} from "@/lib/aml/amlReportingApi";
+import { AustracReportPathCard } from "@/components/aml/AustracReportPathCard";
+import {
+  approvalConfirmation, type AustracReportFacts,
+} from "@/lib/aml/austracReportPath.pure";
+import { toObligationKind } from "@/lib/aml/austracDraftGuidance.pure";
+
+/** What `upsert_report` still accepts. Past these the server refuses. */
+const DRAFT_STATUSES = new Set(["draft", "in_review", "awaiting_mlro"]);
 
 /** A fresh draft. Same starting shape the dialog used. */
 const BLANK: Partial<AmlReport> = { kind: "smr", title: "", narrative: "" };
@@ -40,7 +51,7 @@ const BLANK: Partial<AmlReport> = { kind: "smr", title: "", narrative: "" };
 export default function AmlAustracReportDraft() {
   const { reportId } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
-  const { canWrite, hasAnyRole, loading: accessLoading } = useAmlAccess();
+  const { canWrite, hasAnyRole, isMlro, loading: accessLoading } = useAmlAccess();
 
   const [draft, setDraft] = useState<Partial<AmlReport>>(BLANK);
   const [cases, setCases] = useState<DraftCaseOption[]>([]);
@@ -48,6 +59,9 @@ export default function AmlAustracReportDraft() {
   const [loading, setLoading] = useState(Boolean(reportId));
   const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [approving, setApproving] = useState(false);
+  /** Needed for the lodgement and receipt readings on the path. */
+  const [submissions, setSubmissions] = useState<AmlReportSubmission[]>([]);
   /** Set by the first edit, cleared by a save. Guards leaving. */
   const [dirty, setDirty] = useState(false);
   const savedRef = useRef(false);
@@ -71,6 +85,7 @@ export default function AmlAustracReportDraft() {
         if (!live) return;
         if (!r.report) { setNotFound(true); return; }
         setDraft({ ...r.report });
+        setSubmissions(r.submissions ?? []);
       })
       .catch((e: unknown) => {
         if (!live) return;
@@ -103,6 +118,48 @@ export default function AmlAustracReportDraft() {
   const outstanding = sections.some((s) => s.state === "outstanding");
   const canSave = Boolean(draft.kind && (draft.title ?? "").trim());
 
+  /**
+   * The report as the guided path reads it, from what is ON SCREEN.
+   *
+   * Built from `draft` rather than from the loaded row, so the checks and
+   * the steps answer to what the operator has typed rather than to what was
+   * last saved. An approver watching "Narrative written" go green as they
+   * write is the whole point of putting the path here.
+   */
+  const pathFacts: AustracReportFacts | null = useMemo(() => {
+    const kind = toObligationKind(draft.kind ?? null);
+    if (!kind) return null;
+    const meta = (draft.metadata as Record<string, unknown> | undefined) ?? {};
+    const latest = submissions[0] ?? null;
+    return {
+      kind,
+      status: draft.status ?? "draft",
+      caseId: draft.case_id ?? null,
+      subjectLabel: cases.find((c) => c.id === draft.case_id)?.subject_display_name ?? null,
+      title: draft.title ?? null,
+      narrative: draft.narrative ?? null,
+      periodStart: draft.reporting_period_start ?? null,
+      periodEnd: draft.reporting_period_end ?? null,
+      mlroSignedAt: draft.mlro_signed_at ?? null,
+      submittedAt: draft.submitted_at ?? null,
+      externalReference: latest?.external_reference ?? null,
+      receiptReference: (latest as { receipts?: Array<{ receipt_reference?: string }> } | null)
+        ?.receipts?.[0]?.receipt_reference ?? (draft.acknowledged_at ? "recorded" : null),
+      obligationAt: meta.obligation_at ? String(meta.obligation_at) : null,
+      terrorismFinancing: meta.terrorism_financing === true,
+    };
+  }, [draft, cases, submissions]);
+
+  /**
+   * A report that can no longer be edited here.
+   *
+   * `upsert_report` refuses anything past the draft statuses, so an approved
+   * or lodged report opened at this address would render an editable form
+   * whose Save the server answers 403 — a page that looks like it works and
+   * does not. It renders read-only and says why instead.
+   */
+  const editable = !draft.status || DRAFT_STATUSES.has(draft.status);
+
   const leave = (to: string) => {
     if (dirty && !savedRef.current
       && !window.confirm("This draft has changes that have not been saved. Leave without saving?")) return;
@@ -126,6 +183,43 @@ export default function AmlAustracReportDraft() {
     } catch (e: unknown) {
       toast.error((e as Error)?.message ?? "Save failed");
     } finally { setSaving(false); }
+  };
+
+  /**
+   * Approve it, here, from the document being approved.
+   *
+   * ── Why it saves first ────────────────────────────────────────────
+   * The MLRO approves what they are LOOKING AT. If the narrative on screen
+   * has not been written to the record, signing off would attest to a
+   * version nobody read — so an unsaved change is persisted before the
+   * decision, in one act, and the approval attaches to the version the
+   * approver actually reviewed.
+   *
+   * ── And why it leaves ─────────────────────────────────────────────
+   * Approval takes the report out of the draft statuses, so this page can no
+   * longer write to it and the next step is not here: it is the lodgement,
+   * which is recorded on the hub. The operator is taken there with the
+   * report already selected and step 4 open, rather than left on a form
+   * that has become read-only under them.
+   */
+  const approveHere = async () => {
+    if (!isMlro || !reportId) return;
+    const ask = pathFacts ? approvalConfirmation(pathFacts) : null;
+    if (ask && !window.confirm(ask)) return;
+    setApproving(true);
+    try {
+      if (dirty) {
+        await amlReportingApi.upsertReport(draft);
+        setDirty(false);
+      }
+      await amlReportingApi.mlroSignoff(reportId);
+      savedRef.current = true;
+      setDirty(false);
+      toast.success("Approved", { description: "Next: lodge it in your AUSTRAC Online account." });
+      navigate(amlAustracReportPath(reportId));
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message ?? "The approval could not be recorded");
+    } finally { setApproving(false); }
   };
 
   if (accessLoading) return <AmlLoadingState variant="spinner" label="Checking your access…" />;
@@ -160,12 +254,74 @@ export default function AmlAustracReportDraft() {
         }
       />
 
-      <AustracReportDraftForm
-        draft={draft}
-        onChange={onChange}
-        cases={cases}
-        casesFailed={casesFailed}
-      />
+      {/*
+        ── The whole process, in the report ──────────────────────────
+        The path was on the hub alone, so an MLRO reviewing a report had the
+        checks on one screen and the document on another. It leads with the
+        checks now — which is what "review" means — and its approval step
+        acts here, on the report being read.
+
+        It is mounted only for a SAVED report: a draft that does not exist
+        yet has nothing to approve and no submission to lodge, and the
+        guidance rail beside the form already orients somebody starting one.
+      */}
+      {reportId && pathFacts && (
+        <AustracReportPathCard
+          facts={pathFacts}
+          stepActions={{
+            ...(isMlro && editable
+              ? {
+                approve: {
+                  label: dirty ? "Save and approve" : "Approve this report",
+                  run: () => { void approveHere(); },
+                  busy: approving,
+                },
+              }
+              : {}),
+            ...(draft.status === "approved"
+              ? {
+                lodge: {
+                  label: "Record the lodgement",
+                  run: () => leave(amlAustracReportPath(reportId)),
+                },
+              }
+              : {}),
+            receipt: {
+              label: "Open it on the hub",
+              run: () => leave(amlAustracReportPath(reportId)),
+            },
+          }}
+          /* The two steps this screen IS. Neither has a button here,
+             because the form below them is the act. */
+          stepNotes={{
+            identify: "On this screen",
+            assemble: "On this screen",
+            ...(isMlro ? {} : { approve: "The MLRO's decision" }),
+          }}
+        />
+      )}
+
+      {!editable && (
+        <Alert>
+          <ShieldCheck aria-hidden className="h-4 w-4" />
+          <AlertDescription>
+            This report has been approved, so it can no longer be edited here — an approval
+            attaches to the version that was approved. The remaining steps, and the record of
+            them, are on the AUSTRAC hub.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <fieldset disabled={!editable} className={editable ? undefined : "opacity-70"}>
+        <AustracReportDraftForm
+          draft={draft}
+          onChange={onChange}
+          cases={cases}
+          casesFailed={casesFailed}
+          /* One path rendering per screen: the card above is the live one. */
+          showPath={!reportId}
+        />
+      </fieldset>
 
       {/*
         The action bar is fixed to the foot of the viewport rather than the
@@ -182,11 +338,30 @@ export default function AmlAustracReportDraft() {
             <span>{draftSummary(sections)}</span>
           </p>
           <div className="flex shrink-0 gap-2">
-            <Button variant="ghost" onClick={() => leave(ADMIN_AML_AUSTRAC_PATH)}>Cancel</Button>
-            <Button onClick={save} disabled={saving || !canSave}>
-              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {reportId ? "Save draft" : "Save and continue"}
+            <Button variant="ghost" onClick={() => leave(ADMIN_AML_AUSTRAC_PATH)}>
+              {editable ? "Cancel" : "Back to the hub"}
             </Button>
+            {editable && (
+              <Button variant="outline" onClick={save} disabled={saving || approving || !canSave}>
+                {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {reportId ? "Save draft" : "Save and continue"}
+              </Button>
+            )}
+            {/*
+              The approval sits beside the save, because on a report the
+              same person drafts and approves the two acts happen in one
+              sitting — and it says "Save and approve" while there is an
+              unsaved change, so nobody has to wonder which version they
+              are signing off.
+            */}
+            {reportId && isMlro && editable && (
+              <Button onClick={() => { void approveHere(); }} disabled={approving || saving || !canSave}>
+                {approving
+                  ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  : <ShieldCheck className="mr-2 h-4 w-4" />}
+                {dirty ? "Save and approve" : "Approve"}
+              </Button>
+            )}
           </div>
         </div>
       </div>

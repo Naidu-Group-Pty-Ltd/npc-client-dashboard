@@ -86,13 +86,21 @@ function DraftStep({ section, children }: { section: DraftSection; children: Rea
 }
 
 export function AustracReportDraftForm({
-  draft, onChange, cases, casesFailed,
+  draft, onChange, cases, casesFailed, showPath = true,
 }: {
   draft: Partial<AmlReport>;
   onChange: (next: (d: Partial<AmlReport>) => Partial<AmlReport>) => void;
   cases: DraftCaseOption[];
   /** The case list could not be read — a draft can still be written. */
   casesFailed?: boolean;
+  /**
+   * Draw the six-step orientation list in the reference panel.
+   *
+   * False where the live path card is already on the page: two renderings
+   * of the same path on one screen is how they come to disagree about which
+   * step is open.
+   */
+  showPath?: boolean;
 }) {
   const obligationAt = (draft.metadata as Record<string, unknown> | undefined)?.obligation_at ?? null;
 
@@ -371,6 +379,7 @@ export function AustracReportDraftForm({
               caseId={draft.case_id ?? null}
               title={draft.title ?? null}
               narrative={draft.narrative ?? null}
+              showPath={showPath}
             />
           </div>
         )}

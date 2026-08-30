@@ -26,12 +26,14 @@ import { KIND_GUIDANCE } from "@/lib/aml/austracDraftGuidance.pure";
 const IN_DIALOG = new Set(["identify", "assemble"]);
 
 export function AustracDraftGuidancePanel({
-  kind, caseId, title, narrative,
+  kind, caseId, title, narrative, showPath = true,
 }: {
   kind: AustracReportKind;
   caseId: string | null;
   title: string | null;
   narrative: string | null;
+  /** False where the live path card is already on the page. */
+  showPath?: boolean;
 }) {
   const obligation = AUSTRAC_OBLIGATIONS[kind];
   const guidance = KIND_GUIDANCE[kind];
@@ -96,6 +98,7 @@ export function AustracDraftGuidancePanel({
           done from this screen. Steps outside the dialog are drawn faintly
           rather than omitted: what happens next is exactly what nobody
           could see before.                                              */}
+      {showPath && (
       <section className="space-y-1.5 border-t border-border/60 pt-3">
         <h4 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           <BookOpen aria-hidden className="h-3 w-3" /> The whole path
@@ -142,6 +145,7 @@ export function AustracDraftGuidancePanel({
           itself is made in your organisation's own AUSTRAC Online account.
         </p>
       </section>
+      )}
     </aside>
   );
 }

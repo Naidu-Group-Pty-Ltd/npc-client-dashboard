@@ -300,6 +300,63 @@ describe('a settled property that loses its picture is not settled', () => {
   });
 });
 
+describe('a property stranded BEFORE the fix existed is still reached', () => {
+  const sql = () => readSource(
+    'supabase/migrations/20261026000000_builder_stock_reopen_stranded.sql');
+
+  it('the in-process hook cannot reach one, which is why this exists', () => {
+    /*
+     * `chooseAndStorePrimaryImage` re-opens a settled property whose pointer
+     * it has just cleared — and it runs only while something is PROCESSING
+     * the item, while the per-item claim selects `image_work_stage <>
+     * 'settled'`. A property that settled before its verdict changed is
+     * invisible to every part of the engine, permanently.
+     */
+    const claim = readSource('supabase/migrations/20261022000000_builder_stock_safe_publication.sql');
+    expect(claim).toContain("c.image_work_stage <> 'settled'");
+  });
+
+  it('re-opens on TIME, not on image semantics', () => {
+    // settled at T, and an image re-judged after T -> the conclusion was drawn
+    // from evidence that no longer stands.
+    expect(sql()).toContain('x.updated_at > i.image_work_updated_at');
+    expect(sql()).toContain("AND i.image_work_stage = 'settled'");
+    expect(sql()).toContain('AND i.primary_image_id IS NULL');
+  });
+
+  it('never touches a property that has a picture, or one still working', () => {
+    const fn = sql().slice(sql().indexOf('FUNCTION public.reopen_builder_stock_stranded_items'));
+    expect(fn).toContain('AND i.primary_image_id IS NULL');
+    expect(fn).toContain("AND i.image_work_stage = 'settled'");
+    expect(fn).toContain("i.lifecycle_status IN ('active', 'staged')");
+  });
+
+  it('cannot loop: re-opening stamps the timestamp the test reads', () => {
+    const fn = sql().slice(sql().indexOf('FUNCTION public.reopen_builder_stock_stranded_items'));
+    expect(fn).toContain('image_work_updated_at = now()');
+  });
+
+  it('runs before the counting, or the scheduler retires on top of it', () => {
+    const body = sql();
+    const tick = body.slice(body.indexOf(
+      'FUNCTION public.settle_builder_stock_marketplace_eligibility_tick'));
+    const reopen = tick.indexOf('PERFORM public.reopen_builder_stock_stranded_items()');
+    expect(reopen).toBeGreaterThan(-1);
+    expect(reopen).toBeLessThan(tick.indexOf('SELECT count(*) INTO v_item_work'));
+    expect(reopen).toBeLessThan(tick.indexOf('IF v_outstanding'));
+    // And the publication sweep it sits beside is still first and still there.
+    expect(tick.indexOf('PERFORM public.publish_ready_builder_stock_uploads()'))
+      .toBeLessThan(reopen);
+  });
+
+  it('is locked to the service role', () => {
+    expect(sql()).toMatch(
+      /REVOKE ALL ON FUNCTION public\.reopen_builder_stock_stranded_items\(\)\s*\n?\s*FROM PUBLIC, anon, authenticated/);
+    expect(sql()).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.reopen_builder_stock_stranded_items\(\)\s*\n?\s*TO postgres, service_role/);
+  });
+});
+
 function readSource(relative: string): string {
   const { readFileSync } = require('node:fs') as typeof import('node:fs');
   const { resolve } = require('node:path') as typeof import('node:path');

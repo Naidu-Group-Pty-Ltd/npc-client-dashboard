@@ -102,6 +102,20 @@ export const AUSTRAC_OBLIGATIONS: Readonly<Record<AustracReportKind, AustracObli
  */
 export const TERRORISM_FINANCING_HOURS = 24;
 
+/**
+ * True where the report is about a customer rather than about the business.
+ *
+ * The annual compliance report under s.47 accounts for the reporting
+ * entity's own programme; there is no customer to file it against. Without
+ * this the "filed against a customer" check read BLOCKED on a report that
+ * can never have one, and the first step of the path could never complete —
+ * a permanent red on a correctly drafted report, which teaches an operator
+ * to read past the checks.
+ */
+export function isCustomerReport(kind: AustracReportKind): boolean {
+  return kind !== "compliance_report";
+}
+
 /** `n` business days after `from`, skipping Saturdays and Sundays. */
 export function addBusinessDays(from: Date, n: number): Date {
   const d = new Date(from.getTime());
@@ -226,14 +240,17 @@ export const MIN_NARRATIVE_CHARS = 200;
 export function austracReadiness(f: AustracReportFacts): ReadinessCheck[] {
   const checks: ReadinessCheck[] = [];
 
+  const customerOwed = isCustomerReport(f.kind);
   checks.push({
     key: "customer",
-    label: "Filed against a customer",
-    state: f.caseId ? "done" : "blocked",
-    detail: f.caseId
-      ? `On ${f.subjectLabel ?? "the customer"}'s compliance file.`
-      : "Link the compliance case this report is about. A report filed against "
-        + "nobody is not on anybody's file, and cannot be found from the customer's record.",
+    label: customerOwed ? "Filed against a customer" : "About the reporting entity",
+    state: !customerOwed ? "done" : f.caseId ? "done" : "blocked",
+    detail: !customerOwed
+      ? "An annual compliance report accounts for the business's own programme, so no customer is linked."
+      : f.caseId
+        ? `On ${f.subjectLabel ?? "the customer"}'s compliance file.`
+        : "Link the compliance case this report is about. A report filed against "
+          + "nobody is not on anybody's file, and cannot be found from the customer's record.",
   });
 
   checks.push({
@@ -318,7 +335,7 @@ export function deriveAustracPath(f: AustracReportFacts): PathStep[] {
       key: "identify",
       label: "Identify the obligation and the customer",
       detail: `${AUSTRAC_OBLIGATIONS[f.kind].label} — ${AUSTRAC_OBLIGATIONS[f.kind].purpose}`,
-      done: Boolean(f.caseId),
+      done: Boolean(f.caseId) || !isCustomerReport(f.kind),
     },
     {
       key: "assemble",
@@ -367,7 +384,7 @@ export function austracHeadline(f: AustracReportFacts): string {
   if (f.receiptReference) return "Lodged and acknowledged. The obligation is discharged and on file.";
   if (f.submittedAt) return "Lodged at AUSTRAC. Record the receipt when it arrives.";
   if (f.mlroSignedAt) return "Approved. Lodge it in your AUSTRAC Online account, then record the reference.";
-  if (!f.caseId) return "This report is not yet filed against a customer.";
+  if (!f.caseId && isCustomerReport(f.kind)) return "This report is not yet filed against a customer.";
   const open = deriveAustracPath(f).find((s) => s.state === "open");
   return open ? open.label : "Ready for the MLRO.";
 }

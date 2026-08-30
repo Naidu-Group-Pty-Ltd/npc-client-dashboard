@@ -26,6 +26,8 @@ export { default as AmlInvestigations } from "./AmlInvestigations";
 
 export { default as AmlAustracReporting } from "./AmlAustracReporting";
 
+export { default as AmlAustracReportDraft } from "./AmlAustracReportDraft";
+
 export { default as AmlRecords } from "./AmlRecords";
 
 export { default as AmlGovernance } from "./AmlGovernance";

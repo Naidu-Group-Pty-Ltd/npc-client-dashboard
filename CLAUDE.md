@@ -605,6 +605,38 @@ tooltip. And **tipping off is guarded at the projection** — both
 `CLIENT_RESTRICTED_KEYS` and `PARTNER_RESTRICTED_KEYS` already carry `smr`,
 `austrac` and `suspic`, and a test pins them rather than trusting them.
 
+The draft dialog now says **why**, and `austracDraftGuidance.pure.ts` is where
+that lives: per obligation, what the report is for, when AUSTRAC must be
+informed, what it is NOT for and where that belongs instead, and what the
+narrative has to answer. Four rules. **It advises and never decides** — no
+field is written from it, and a test rejects any sentence that could read as
+permission to lodge nothing, while the narrative helper inserts QUESTIONS
+into an empty box so nothing it produces can be lodged as an assertion nobody
+made. **The tipping-off warning is in the main column and on the SMR alone**:
+below `lg` the reference panel drops under the whole form, and a prohibition
+on what an operator may say cannot be below the fold. **The stored kind is
+translated, never used as a table key** — `reports.kind` accepts five values
+and `AUSTRAC_OBLIGATIONS` is keyed by four (`compliance` and `annual` are one
+obligation), so a raw read is `undefined` and the next property access is a
+crash; `toObligationKind` returns null rather than guessing. And **an annual
+report is not a customer report**: it accounts for the business's own
+programme, so demanding a case left the customer check permanently blocked
+and step 1 of the path unable ever to complete.
+
+**Drafting is a PAGE now** (`/admin/aml/austrac/new`,
+`/admin/aml/austrac/:reportId/edit`). A report to a regulator is the longest
+single piece of writing in this product, written against a statutory deadline
+over more than one sitting, and a modal cannot be deep-linked, reopened where
+it was left, sent to a colleague or reached with the back button — and closes
+on an outside click with whatever was typed in it. Four rules. **The path sits
+UNDER the hub's**, because `pathMatchesWorkspace` matches a prefix plus `/`
+and a page in no workspace draws no strip. **Saving hands the report back**
+via `?report=<id>`, which is what the dialog's close did implicitly. **An
+unsaved change guards leaving** — registered only while there is one. And the
+hub's action is **"Start AUSTRAC Report"**: "New Draft" named the row it would
+add to a table, not the act. `AUSTRAC_KIND_LABEL` and `draftSectionsForReport`
+are in the pure module because both were about to exist twice.
+
 ## The photograph on the Compliance Passport
 Read [`docs/aml/PASSPORT_IDENTITY_PORTRAIT.md`](./docs/aml/PASSPORT_IDENTITY_PORTRAIT.md)
 before touching `_shared/aml/passport/identityPortrait.pure.ts`,

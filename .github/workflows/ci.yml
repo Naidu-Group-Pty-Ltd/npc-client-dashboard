@@ -242,7 +242,8 @@ jobs:
             src/lib/__tests__/builderStockImageryInheritance.test.ts \
             src/lib/__tests__/builderStockNotionViewContract.test.ts \
             src/lib/__tests__/builderStockUploadContract.test.ts \
-            src/lib/__tests__/builderStockLadderExhaustion.test.ts
+            src/lib/__tests__/builderStockLadderExhaustion.test.ts \
+            src/lib/__tests__/builderStockGoogleSheetsSource.test.ts
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
       # scanner, lint run or typecheck ever reached it — its test file sat

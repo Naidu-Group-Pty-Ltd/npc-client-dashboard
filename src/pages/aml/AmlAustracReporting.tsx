@@ -17,9 +17,10 @@ import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
 import { AustracReportPathCard } from "@/components/aml/AustracReportPathCard";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
-import {
-  AUSTRAC_OBLIGATIONS, type AustracReportFacts, type AustracReportKind,
-} from "@/lib/aml/austracReportPath.pure";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
+import { AUSTRAC_KIND_LABEL as KIND_LABEL, toObligationKind } from "@/lib/aml/austracDraftGuidance.pure";
+import { amlAustracDraftPath } from "@/lib/aml/amlRoutes";
 import {
   AmlAccessGate,
   AmlLoadingState,
@@ -30,18 +31,11 @@ import {
 } from "@/components/aml/primitives";
 import {
   amlReportingApi,
-  type AmlReport, type AmlReportKind, type AmlReportStatus,
+  type AmlReport, type AmlReportStatus,
   type AmlReportSubmission, type AmlReportVersion, type AmlReportingSummary,
   type AmlSubmissionChannel,
 } from "@/lib/aml/amlReportingApi";
 
-const KIND_LABEL: Record<AmlReportKind, string> = {
-  smr: "Suspicious Matter Report",
-  ttr: "Threshold Transaction Report",
-  ifti: "International Funds Transfer Instruction",
-  compliance: "Compliance Report",
-  annual: "Annual Compliance Report",
-};
 const STATUS_TONE: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
   in_review: "bg-primary/15 text-primary",
@@ -58,6 +52,15 @@ function fmt(d: string | null | undefined) { return d ? new Date(d).toLocaleStri
 export default function AmlAustracReporting() {
   const { canWrite, isMlro, hasAnyRole, loading: accessLoading } = useAmlAccess();
   const { regulatoryHub } = useAmlV3Flags();
+  const navigate = useNavigate();
+  /*
+    `?report=` is how the draft page hands a saved report back. Without it,
+    saving on a page rather than in a dialog would return the operator to a
+    list with nothing selected — the dialog closed onto the report it had
+    just written, and losing that is the one thing the move could have cost.
+  */
+  const [searchParams] = useSearchParams();
+  const requestedReport = searchParams.get("report");
 
   const [summary, setSummary] = useState<AmlReportingSummary | null>(null);
   const [reports, setReports] = useState<AmlReport[]>([]);
@@ -78,10 +81,6 @@ export default function AmlAustracReporting() {
   const [selectedVersions, setSelectedVersions] = useState<AmlReportVersion[]>([]);
   const [selectedSubs, setSelectedSubs] = useState<AmlReportSubmission[]>([]);
   const [selectedReport, setSelectedReport] = useState<AmlReport | null>(null);
-
-  const [openDraft, setOpenDraft] = useState(false);
-  const [draft, setDraft] = useState<Partial<AmlReport>>({ kind: "smr", title: "", narrative: "" });
-  const [saving, setSaving] = useState(false);
 
   const [openSubmit, setOpenSubmit] = useState(false);
   const [submitChannel, setSubmitChannel] = useState<AmlSubmissionChannel>("austrac_online");
@@ -122,6 +121,7 @@ export default function AmlAustracReporting() {
 
   useEffect(() => { if (hasAnyRole) load(); /* eslint-disable-next-line */ }, [statusFilter, kindFilter, hasAnyRole]);
   useEffect(() => { if (selectedId) loadDetail(selectedId); else { setSelectedReport(null); setSelectedVersions([]); setSelectedSubs([]); } }, [selectedId]);
+  useEffect(() => { if (requestedReport) setSelectedId(requestedReport); }, [requestedReport]);
 
   useEffect(() => {
     if (!hasAnyRole) return;
@@ -131,8 +131,6 @@ export default function AmlAustracReporting() {
       // below will say it is not filed against anybody, which is true.
       .catch(() => setCases([]));
   }, [hasAnyRole]);
-
-  const obligationAt = (draft.metadata as any)?.obligation_at ?? null;
 
   /**
    * The selected report as the guided path reads it.
@@ -144,10 +142,14 @@ export default function AmlAustracReporting() {
    */
   const pathFacts: AustracReportFacts | null = useMemo(() => {
     if (!selectedReport) return null;
+    // A kind the obligation table does not carry gets no path rather than a
+    // crash: `AUSTRAC_OBLIGATIONS[undefined]` is what the card would read.
+    const kind = toObligationKind(selectedReport.kind);
+    if (!kind) return null;
     const latestSub = selectedSubs[0] ?? null;
     const meta = (selectedReport.metadata ?? {}) as Record<string, any>;
     return {
-      kind: selectedReport.kind as AustracReportKind,
+      kind,
       status: selectedReport.status,
       caseId: selectedReport.case_id ?? null,
       subjectLabel: cases.find((c) => c.id === selectedReport.case_id)?.subject_display_name ?? null,
@@ -165,19 +167,18 @@ export default function AmlAustracReporting() {
     };
   }, [selectedReport, selectedSubs, cases]);
 
-  const startNew = () => { setDraft({ kind: "smr", title: "", narrative: "" }); setOpenDraft(true); };
-  const editExisting = (r: AmlReport) => { setDraft({ ...r }); setOpenDraft(true); };
-
-  const saveDraft = async () => {
-    if (!draft.kind || !draft.title) { toast.error("Kind and title are required"); return; }
-    setSaving(true);
-    try {
-      const saved = await amlReportingApi.upsertReport(draft);
-      toast.success("Draft saved");
-      setOpenDraft(false); setSelectedId(saved.id); await load();
-    } catch (e: any) { toast.error(e?.message ?? "Save failed"); }
-    finally { setSaving(false); }
-  };
+  /*
+    ── Drafting happens on a page now ────────────────────────────────
+    A report to a regulator is the longest single piece of writing anyone
+    does in this product, written against a statutory deadline and usually
+    over more than one sitting. A modal could not be linked to, returned to
+    with the back button, or reopened where it was left, and it closed on an
+    outside click with whatever was in it. All three entry points — starting
+    one, editing one, and the two path steps that are about the draft
+    itself — go to the same URL.
+  */
+  const startNew = () => navigate(amlAustracDraftPath());
+  const editExisting = (r: AmlReport) => navigate(amlAustracDraftPath(r.id));
 
   const removeReport = async (r: AmlReport) => {
     if (!confirm(`Delete draft "${r.title}"? This cannot be undone.`)) return;
@@ -284,7 +285,16 @@ export default function AmlAustracReporting() {
         actions={
           <>
             <AmlRefreshButton onClick={load} loading={loading} />
-            {canWrite && <Button size="sm" onClick={startNew}><PlusCircle aria-hidden="true" className="h-4 w-4 mr-2" /> New Draft</Button>}
+            {/*
+              "New Draft" named the row it would add to a table. This names
+              the act: an operator asked to inform AUSTRAC about something is
+              looking for the report, not for a draft record.
+            */}
+            {canWrite && (
+              <Button size="sm" onClick={startNew}>
+                <PlusCircle aria-hidden="true" className="h-4 w-4 mr-2" /> Start AUSTRAC Report
+              </Button>
+            )}
           </>
         }
       />
@@ -459,127 +469,6 @@ export default function AmlAustracReporting() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Draft dialog */}
-      <Dialog open={openDraft} onOpenChange={setOpenDraft}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>{draft.id ? "Edit report draft" : "New AUSTRAC report draft"}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>Kind</Label>
-                <Select value={String(draft.kind ?? "smr")} onValueChange={(v) => setDraft((d) => ({ ...d, kind: v as AmlReportKind }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{Object.entries(KIND_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{k.toUpperCase()} — {l}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Reference code</Label>
-                <Input value={draft.reference_code ?? ""} onChange={(e) => setDraft((d) => ({ ...d, reference_code: e.target.value }))} />
-              </div>
-            </div>
-            {/*
-              ── Which customer this is about ──────────────────────────
-              The field the dialog never had. Without it the report is
-              filed against nobody: it does not reach the customer's
-              compliance file, does not appear on their case timeline, and
-              cannot be found from their record. The server has always
-              written the case event when given a case; it was never given
-              one.
-            */}
-            <div>
-              <Label>Customer</Label>
-              <Select
-                value={draft.case_id ?? "none"}
-                onValueChange={(v) => setDraft((d) => ({ ...d, case_id: v === "none" ? null : v }))}
-              >
-                <SelectTrigger><SelectValue placeholder="Choose the customer this report is about" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Not yet chosen</SelectItem>
-                  {cases.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.subject_display_name} — {c.case_reference}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                The report is held on this customer's compliance file, and the drafting is
-                recorded on their case timeline.
-              </p>
-            </div>
-            <div>
-              <Label>Title</Label>
-              <Input value={draft.title ?? ""} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Narrative</Label>
-              <Textarea rows={6} value={draft.narrative ?? ""} onChange={(e) => setDraft((d) => ({ ...d, narrative: e.target.value }))} />
-            </div>
-            {/*
-              ── What starts the statutory clock ────────────────────────
-              An SMR is due 3 business days after the suspicion was FORMED
-              (24 hours where it concerns terrorism financing); a TTR and an
-              IFTI 10 business days after the transaction or instruction.
-              None of those is the reporting period, so the date is asked
-              for separately and kept in `metadata` — a deadline derived
-              from the wrong date is worse than none.
-            */}
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>Obligation arose</Label>
-                <Input
-                  type="datetime-local"
-                  value={obligationAt ? String(obligationAt).slice(0, 16) : ""}
-                  onChange={(e) => setDraft((d) => ({
-                    ...d,
-                    metadata: {
-                      ...(d.metadata ?? {}),
-                      obligation_at: e.target.value ? new Date(e.target.value).toISOString() : null,
-                    },
-                  }))}
-                />
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {AUSTRAC_OBLIGATIONS[(draft.kind ?? "smr") as AustracReportKind].clockStarts
-                    .replace(/^the /, "The ")} — this is what the deadline is counted from.
-                </p>
-              </div>
-              {(draft.kind ?? "smr") === "smr" && (
-                <div className="flex items-start gap-2 pt-6">
-                  <Checkbox
-                    id="draft-tf"
-                    checked={Boolean((draft.metadata as any)?.terrorism_financing)}
-                    onCheckedChange={(v) => setDraft((d) => ({
-                      ...d,
-                      metadata: { ...(d.metadata ?? {}), terrorism_financing: v === true },
-                    }))}
-                  />
-                  <Label htmlFor="draft-tf" className="text-xs font-normal leading-snug">
-                    The suspicion concerns terrorism financing
-                    <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                      Tightens the deadline to 24 hours.
-                    </span>
-                  </Label>
-                </div>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <Label>Period start</Label>
-                <Input type="datetime-local" value={draft.reporting_period_start ? String(draft.reporting_period_start).slice(0, 16) : ""} onChange={(e) => setDraft((d) => ({ ...d, reporting_period_start: e.target.value ? new Date(e.target.value).toISOString() : null }))} />
-              </div>
-              <div>
-                <Label>Period end</Label>
-                <Input type="datetime-local" value={draft.reporting_period_end ? String(draft.reporting_period_end).slice(0, 16) : ""} onChange={(e) => setDraft((d) => ({ ...d, reporting_period_end: e.target.value ? new Date(e.target.value).toISOString() : null }))} />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setOpenDraft(false)}>Cancel</Button>
-            <Button onClick={saveDraft} disabled={saving}>{saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Save draft</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Submit dialog */}
       <Dialog open={openSubmit} onOpenChange={setOpenSubmit}>

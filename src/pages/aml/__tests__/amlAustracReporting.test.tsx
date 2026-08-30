@@ -9,7 +9,7 @@
  * filed against nobody.
  */
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -65,8 +65,54 @@ beforeEach(() => {
   });
 });
 
-const renderPage = () =>
-  render(<MemoryRouter><AmlAustracReporting /></MemoryRouter>);
+/** Shows where the router ended up, so a navigation can be asserted. */
+function Where() {
+  return <span data-testid="where">{useLocation().pathname + useLocation().search}</span>;
+}
+
+const renderPage = (entry = "/admin/aml/austrac") =>
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <AmlAustracReporting />
+      <Where />
+    </MemoryRouter>,
+  );
+
+describe("drafting is a page, not a dialog", () => {
+  /*
+    A report to a regulator is the longest single piece of writing anyone
+    does in this product, written against a statutory deadline and usually
+    over more than one sitting. A modal could not be linked to, returned to
+    with the back button, or reopened where it was left, and it closed on an
+    outside click with whatever was in it.
+  */
+  it("names the act rather than the record it would add", async () => {
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Start AUSTRAC Report" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /New Draft/i })).not.toBeInTheDocument();
+  });
+
+  it("opens no dialog at all — it navigates", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "Start AUSTRAC Report" }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/new");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("edits an existing report at its own address", async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /^Edit$/ }));
+    expect(screen.getByTestId("where")).toHaveTextContent("/admin/aml/austrac/r1/edit");
+  });
+
+  it("selects the report the draft page hands back", async () => {
+    /* The dialog closed onto the report it had just written. Losing that on
+       the move to a page is the one thing it could have cost, so the page
+       returns with `?report=` and the hub opens it. */
+    renderPage("/admin/aml/austrac?report=r1");
+    await waitFor(() => expect(getReport).toHaveBeenCalledWith("r1"));
+  });
+});
 
 describe("the guided path", () => {
   it("renders, and leads with what to do next", async () => {
@@ -94,25 +140,6 @@ describe("the guided path", () => {
     await waitFor(() =>
       expect(screen.getByText(/holds no AUSTRAC credentials and submits nothing on your behalf/i))
         .toBeInTheDocument());
-  });
-});
-
-describe("a report is filed against a customer", () => {
-  it("asks which customer, in the draft dialog", async () => {
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /New Draft/i }));
-    expect(await screen.findByText("Customer")).toBeInTheDocument();
-    expect(screen.getByText(/held on this customer's compliance file/i)).toBeInTheDocument();
-  });
-
-  it("asks what starts the clock, separately from the reporting period", async () => {
-    /* An SMR is due from the day the suspicion was FORMED, which is not the
-       reporting period. A deadline derived from the wrong date is worse
-       than none. */
-    renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: /New Draft/i }));
-    expect(await screen.findByText("Obligation arose")).toBeInTheDocument();
-    expect(screen.getByText("Period start")).toBeInTheDocument();
   });
 });
 

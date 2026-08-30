@@ -40,3 +40,40 @@ export const ADMIN_AML_CONFIGURATION_PATH = "/admin/aml/configuration";
  */
 export const ADMIN_AML_LIST_HEALTH_PATH =
   `${ADMIN_AML_CONFIGURATION_PATH}?tab=providers#sanctions-list-health`;
+
+/** The AUSTRAC reporting hub — the list, the detail and the lodgement path. */
+export const ADMIN_AML_AUSTRAC_PATH = "/admin/aml/austrac";
+
+/**
+ * Where a report is written.
+ *
+ * ── Why it is a page and not a dialog ─────────────────────────────────
+ * Drafting a report to a regulator is not a quick edit. It is the longest
+ * single piece of writing anyone does in this product — a narrative AUSTRAC
+ * reads, against a statutory deadline, with the reasons for it beside the
+ * form — and it was being done in a modal: a fixed box that darkens the page
+ * behind it, cannot be deep-linked, cannot be reopened where it was left,
+ * and closes on an outside click or the Escape key with whatever was typed
+ * in it. A colleague cannot be sent to it, and a browser's back button does
+ * not return to it.
+ *
+ * A URL fixes all of those at once, which is why this is a route rather than
+ * a bigger modal. It also puts the draft where every other long-form record
+ * in this product already lives: a case, a Passport and an analysis are all
+ * pages, and a report to the regulator is not the one exception.
+ *
+ * The path sits UNDER the hub's own, which is what keeps it in the
+ * Regulatory & Assurance workspace: `pathMatchesWorkspace` matches a prefix
+ * followed by `/`, so a page listed nowhere would draw no secondary strip
+ * and highlight Compliance Home instead — reachable and looking broken.
+ */
+export function amlAustracDraftPath(reportId?: string | null): string {
+  return reportId
+    ? `${ADMIN_AML_AUSTRAC_PATH}/${reportId}/edit`
+    : `${ADMIN_AML_AUSTRAC_PATH}/new`;
+}
+
+/** The hub, with one report already selected. */
+export function amlAustracReportPath(reportId: string): string {
+  return `${ADMIN_AML_AUSTRAC_PATH}?report=${encodeURIComponent(reportId)}`;
+}

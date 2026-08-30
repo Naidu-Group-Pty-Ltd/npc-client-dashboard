@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Loader2, PlusCircle, ShieldCheck, Send, Download, CheckCircle2, XCircle, History } from "lucide-react";
+import { FileText, Loader2, PlusCircle, ShieldCheck, Send, Download, CheckCircle2, XCircle, History, Eye } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,8 +18,14 @@ import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
 import { AustracReportPathCard } from "@/components/aml/AustracReportPathCard";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
+import { useBrand } from "@/branding/BrandProvider";
+import { loadRecordBrandLogo, resolveRecordBrand } from "@/lib/aml/submissionRecordBrand";
+import { generateSubmissionRecordPdf, submissionRecordPdfFilename } from "@/lib/aml/submissionRecordPdf";
+import {
+  austracBundleIdentity, buildAustracBundleRecord,
+} from "@/lib/aml/austracBundleRecord.pure";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
+import { austracReadiness, type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
 import { AUSTRAC_KIND_LABEL as KIND_LABEL, toObligationKind } from "@/lib/aml/austracDraftGuidance.pure";
 import { amlAustracDraftPath } from "@/lib/aml/amlRoutes";
 import {
@@ -35,6 +42,30 @@ import {
   type AmlReportSubmission, type AmlReportVersion, type AmlReportingSummary,
   type AmlSubmissionChannel,
 } from "@/lib/aml/amlReportingApi";
+
+/**
+ * Colour marks ONE thing: the report whose existence must not be disclosed.
+ *
+ * A tone per obligation was the obvious first answer and it was wrong. In
+ * the dark theme `--primary` and `--warning` are both the brand gold, so
+ * five kinds in five tones rendered as five near-identical amber chips —
+ * colour noise carrying no information, which is worse than no colour at
+ * all. The three letters are what tells the obligations apart, and they
+ * already do it.
+ *
+ * So the SMR alone is tinted, because s.123 makes disclosing one an offence
+ * and that is a fact about how the row must be handled rather than a
+ * category. Everything else is a neutral outline.
+ */
+const KIND_TONE: Record<string, string> = {
+  smr: "border-warning/50 bg-warning/10 text-warning",
+};
+
+/** What a writer may still change, and what the MLRO may still sign off.
+ *  Both mirror `aml-reporting`'s own guards — the server refuses either way;
+ *  these decide whether a step is worth OFFERING. */
+const DRAFT_EDITABLE = new Set(["draft", "in_review"]);
+const SIGNOFF_STATUSES = new Set(["draft", "in_review", "awaiting_mlro"]);
 
 const STATUS_TONE: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
@@ -53,6 +84,7 @@ export default function AmlAustracReporting() {
   const { canWrite, isMlro, hasAnyRole, loading: accessLoading } = useAmlAccess();
   const { regulatoryHub } = useAmlV3Flags();
   const navigate = useNavigate();
+  const { settings: brandSettings } = useBrand();
   /*
     `?report=` is how the draft page hands a saved report back. Without it,
     saving on a page rather than in a dialog would return the operator to a
@@ -81,6 +113,10 @@ export default function AmlAustracReporting() {
   const [selectedVersions, setSelectedVersions] = useState<AmlReportVersion[]>([]);
   const [selectedSubs, setSelectedSubs] = useState<AmlReportSubmission[]>([]);
   const [selectedReport, setSelectedReport] = useState<AmlReport | null>(null);
+
+  /** The report whose record is being drawn, so its button can say so. */
+  const [bundling, setBundling] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   const [openSubmit, setOpenSubmit] = useState(false);
   const [submitChannel, setSubmitChannel] = useState<AmlSubmissionChannel>("austrac_online");
@@ -204,6 +240,40 @@ export default function AmlAustracReporting() {
     catch (e: any) { toast.error(e?.message ?? "Withdraw failed"); }
   };
 
+  /**
+   * Step 3's act: put the report in front of the MLRO.
+   *
+   * `upsert_report` already accepts `awaiting_mlro` — it is one of the three
+   * draft statuses the server permits a writer to set — so this is the
+   * existing endpoint rather than a new one, and `deriveAustracPath` already
+   * counts step 3 done once the status reaches it.
+   *
+   * It confirms first when checks are still outstanding. Sending an
+   * incomplete report is a legitimate thing to do (the MLRO may be the
+   * person who resolves what is missing) but it should never happen by
+   * accident.
+   */
+  const sendToMlro = async (r: AmlReport) => {
+    const outstanding = pathFacts
+      ? austracReadiness(pathFacts).filter((c) => c.state === "blocked" || c.state === "attention")
+      : [];
+    if (outstanding.length > 0) {
+      const list = outstanding.map((c) => `• ${c.label}`).join("\n");
+      if (!window.confirm(
+        `${outstanding.length} check${outstanding.length === 1 ? " is" : "s are"} still outstanding:\n\n${list}`
+        + "\n\nSend it to the MLRO anyway?",
+      )) return;
+    }
+    setSending(true);
+    try {
+      await amlReportingApi.upsertReport({ ...r, status: "awaiting_mlro" });
+      toast.success("Sent to the MLRO", { description: "It is now waiting on their decision." });
+      await load();
+      await loadDetail(r.id);
+    } catch (e: any) { toast.error(e?.message ?? "It could not be sent to the MLRO"); }
+    finally { setSending(false); }
+  };
+
   const openSubmitFor = (r: AmlReport) => {
     setSelectedId(r.id); setSubmitReport(r);
     setSubmitChannel("austrac_online"); setSubmitRef(""); setSubmitBundlePath("");
@@ -244,16 +314,47 @@ export default function AmlAustracReporting() {
     } catch (e: any) { toast.error(e?.message ?? "Receipt failed"); }
   };
 
+  /**
+   * The archive record for one AUSTRAC report, downloaded as a document.
+   *
+   * It used to download the edge function's JSON response — `austrac-smr-
+   * <uuid>.json`, which opens in a text editor, carries no identity, no
+   * branding and no statement of what it is. The archive record for a report
+   * to a regulator was a developer artefact.
+   *
+   * It is a PDF now, drawn by the SAME renderer, under the SAME white-label
+   * brand resolver, as the client submission record: the workspace's own
+   * identity when it has configured one, and Aurixa Systems when it has not
+   * — never an empty masthead. Everything on the page comes from the bundle
+   * the server assembled and hashed; nothing here is a second source.
+   */
   const exportBundle = async (r: AmlReport) => {
+    setBundling(r.id);
     try {
       const { bundle, content_hash } = await amlReportingApi.exportBundle(r.id);
-      const blob = new Blob([JSON.stringify({ ...bundle, content_hash }, null, 2)], { type: "application/json" });
+      const brand = resolveRecordBrand(brandSettings);
+      // A logo that cannot be fetched degrades to the wordmark rather than
+      // failing the download: identity is required, a picture is not.
+      brand.logoDataUrl = await loadRecordBrandLogo(brandSettings, brand.tenantBranded);
+      const linked = cases.find((c) => c.id === (bundle.report?.case_id ?? r.case_id));
+      const record = buildAustracBundleRecord({
+        bundle: { ...bundle, report: bundle.report ?? r },
+        contentHash: content_hash,
+        subjectLabel: linked?.subject_display_name ?? null,
+        caseReference: linked?.case_reference ?? null,
+        issuedBy: brand.name,
+      });
+      const blob = await generateSubmissionRecordPdf(
+        record, brand, austracBundleIdentity(record, bundle.report ?? r),
+      );
+      const filename = submissionRecordPdfFilename(record);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url; a.download = `austrac-${r.kind}-${r.id}.json`; a.click();
+      a.href = url; a.download = filename; a.click();
       URL.revokeObjectURL(url);
-      toast.success("Bundle exported");
-    } catch (e: any) { toast.error(e?.message ?? "Export failed"); }
+      toast.success("Report record downloaded", { description: `${filename} · issued by ${brand.name}` });
+    } catch (e: any) { toast.error(e?.message ?? "The report record could not be produced"); }
+    finally { setBundling(null); }
   };
 
   const tiles = useMemo(() => summary ? [
@@ -346,10 +447,62 @@ export default function AmlAustracReporting() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {reports.map((r) => (
-                  <TableRow key={r.id} className={selectedId === r.id ? "bg-muted/40" : ""} onClick={() => setSelectedId(r.id)}>
-                    <TableCell><Badge variant="outline">{r.kind.toUpperCase()}</Badge></TableCell>
-                    <TableCell className="font-medium">{r.title}</TableCell>
+                {/*
+                  ── Which one am I looking at? ────────────────────────
+                  The selected row was a 40%-opacity muted tint and nothing
+                  else, which on the dark theme is a shade of the same
+                  charcoal as the row beside it. With two reports on the
+                  register an operator could not tell which one the whole
+                  right-hand panel was describing.
+
+                  Three signals rather than one, because a single tint is
+                  what failed: a solid accent bar down the leading edge, a
+                  tinted ground, and the word "Viewing" beside the title.
+                  `aria-selected` carries the same fact to a screen reader,
+                  and the row is a real button for the keyboard — it was
+                  click-only, so the register could not be driven without a
+                  mouse at all.
+                */}
+                {reports.map((r) => {
+                  const active = selectedId === r.id;
+                  return (
+                  <TableRow
+                    key={r.id}
+                    aria-selected={active}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedId(r.id); }
+                    }}
+                    className={cn(
+                      "relative cursor-pointer transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                      active
+                        ? "bg-primary/10 hover:bg-primary/10"
+                        : "hover:bg-muted/40",
+                    )}
+                    onClick={() => setSelectedId(r.id)}
+                  >
+                    <TableCell className="relative">
+                      {active && (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 left-0 w-1 rounded-r bg-primary"
+                        />
+                      )}
+                      <Badge variant="outline" className={cn("font-semibold", KIND_TONE[r.kind] ?? "")}>
+                        {r.kind.toUpperCase()}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className={cn("font-medium", active && "text-primary")}>
+                      <span className="flex items-center gap-2">
+                        {r.title}
+                        {active && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                            <Eye aria-hidden className="h-3 w-3" /> Viewing
+                          </span>
+                        )}
+                      </span>
+                    </TableCell>
                     <TableCell><Badge className={STATUS_TONE[r.status] ?? ""}>{r.status.replace(/_/g," ")}</Badge></TableCell>
                     <TableCell className="text-xs text-muted-foreground">{fmt(r.updated_at)}</TableCell>
                     <TableCell className="text-right">
@@ -366,14 +519,25 @@ export default function AmlAustracReporting() {
                         {isMlro && ["approved","in_review","awaiting_mlro"].includes(r.status) && (
                           <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); reject(r); }}><XCircle className="h-4 w-4 mr-1" /> Reject</Button>
                         )}
-                        <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); exportBundle(r); }}><Download className="h-4 w-4 mr-1" /> Bundle</Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={bundling === r.id}
+                          onClick={(e) => { e.stopPropagation(); void exportBundle(r); }}
+                        >
+                          {bundling === r.id
+                            ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            : <Download className="h-4 w-4 mr-1" />}
+                          Record
+                        </Button>
                         {canWrite && r.status === "draft" && (
                           <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); removeReport(r); }} className="text-destructive">Delete</Button>
                         )}
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                  );
+                })}
                 {!reports.length && loading && <AmlTableLoadingRow colSpan={5} label="Loading reports…" />}
                 {!reports.length && !loading && (
                   <AmlTableEmptyRow colSpan={5}>No reports match these filters. Try clearing the status or kind filter{canWrite ? ", or start a new draft" : ""}.</AmlTableEmptyRow>
@@ -383,13 +547,46 @@ export default function AmlAustracReporting() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Detail</CardTitle>
-            <CardDescription>{selectedReport ? selectedReport.title : "Select a report to view versions and submissions."}</CardDescription>
+        {/*
+          The panel used to head itself "Detail" with the title in muted
+          small print underneath, which named neither the obligation nor the
+          status — an operator reading it had to look back at the table to
+          know which report it was about, and the table did not say either.
+        */}
+        <Card className={selectedReport ? "border-primary/30" : undefined}>
+          <CardHeader className="pb-3">
+            {selectedReport ? (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className={cn("font-semibold", KIND_TONE[selectedReport.kind] ?? "")}>
+                    {selectedReport.kind.toUpperCase()}
+                  </Badge>
+                  <Badge className={STATUS_TONE[selectedReport.status] ?? ""}>
+                    {selectedReport.status.replace(/_/g, " ")}
+                  </Badge>
+                </div>
+                <CardTitle className="text-base leading-snug">{selectedReport.title}</CardTitle>
+                <CardDescription>
+                  {KIND_LABEL[selectedReport.kind] ?? selectedReport.kind}
+                  {selectedReport.case_id
+                    ? ` · ${cases.find((c) => c.id === selectedReport.case_id)?.subject_display_name ?? "linked customer"}`
+                    : " · not filed against a customer"}
+                </CardDescription>
+              </div>
+            ) : (
+              <>
+                <CardTitle className="text-base">Detail</CardTitle>
+                <CardDescription>Select a report to view versions and submissions.</CardDescription>
+              </>
+            )}
           </CardHeader>
           <CardContent className="space-y-4">
-            {!selectedReport && <div className="text-sm text-muted-foreground">Nothing selected.</div>}
+            {!selectedReport && (
+              <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-sm text-muted-foreground">
+                Choose a report on the left to see what it still needs, when it is due, and how to
+                lodge it.
+              </div>
+            )}
             {/*
               The path leads, because "what now" is the question an operator
               opens a report with. The tabs below keep every existing detail
@@ -398,9 +595,46 @@ export default function AmlAustracReporting() {
             {selectedReport && pathFacts && (
               <AustracReportPathCard
                 facts={pathFacts}
-                onOpenStep={(key) => {
-                  if (key === "identify" || key === "assemble") editExisting(selectedReport);
-                  else if (key === "lodge") { setSubmitRef(""); setOpenSubmit(true); }
+                /*
+                  One entry per step this operator can actually act on. A
+                  step with no entry draws no button — the MLRO's sign-off,
+                  to an analyst, is a real state with no act, and offering a
+                  dead "Open" is what made step 3 look broken.
+                */
+                stepActions={{
+                  ...(canWrite && DRAFT_EDITABLE.has(selectedReport.status)
+                    ? {
+                      identify: { label: "Open the draft", run: () => editExisting(selectedReport) },
+                      assemble: { label: "Write the narrative", run: () => editExisting(selectedReport) },
+                      review: {
+                        label: "Send to the MLRO",
+                        run: () => { void sendToMlro(selectedReport); },
+                        busy: sending,
+                      },
+                    }
+                    : {}),
+                  ...(isMlro && SIGNOFF_STATUSES.has(selectedReport.status)
+                    ? { signoff: { label: "Sign it off", run: () => { void signoff(selectedReport); } } }
+                    : {}),
+                  ...(isMlro && selectedReport.status === "approved"
+                    ? {
+                      lodge: {
+                        label: "Record the lodgement",
+                        run: () => openSubmitFor(selectedReport),
+                      },
+                    }
+                    : {}),
+                  ...(isMlro && selectedSubs.length > 0
+                    ? {
+                      receipt: {
+                        label: "Capture the receipt",
+                        run: () => {
+                          setOpenReceipt(selectedSubs[0]);
+                          setReceiptRef(""); setReceiptNotes("");
+                        },
+                      },
+                    }
+                    : {}),
                 }}
               />
             )}

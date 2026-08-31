@@ -990,6 +990,38 @@
   box-shadow: 0 0 14px 3px rgba(0, 0, 0, 0.45);
 }
 
+/* ── panning a magnified board ──────────────────────────────────────────
+   The reader can enlarge the document past the space it is drawn in, and
+   what they get then is a document larger than its window. It has to be
+   movable, and — the part that is easy to leave out — it has to LOOK
+   movable.
+
+   The platform default here is either a chunky light scrollbar with stepper
+   arrows bolted onto a navy dialog, or, where the browser uses overlay
+   scrollbars, no visible affordance at all until something has already been
+   scrolled. Neither tells a reader that the page they are looking at can be
+   moved. So the bars are drawn in the document's own gold on its own navy,
+   always present while there is somewhere to go — the same treatment the
+   other scrolling dialogs in this product use. The grab cursor is the
+   component's; this is what is left when a pointer is not over the board.
+
+   `overflow` is applied by the component and never here: whether the board
+   has anywhere to go is a measurement, and a stylesheet cannot make it. */
+.passport-pan {
+  scrollbar-width: thin;
+  scrollbar-color: var(--passport-gold-faint) var(--passport-bg);
+}
+
+.passport-pan::-webkit-scrollbar { width: 11px; height: 11px; }
+.passport-pan::-webkit-scrollbar-track { background: var(--passport-bg); }
+.passport-pan::-webkit-scrollbar-thumb {
+  border: 2px solid var(--passport-bg);
+  border-radius: 999px;
+  background: var(--passport-gold-faint);
+}
+.passport-pan::-webkit-scrollbar-thumb:hover { background: var(--passport-gold-dim); }
+.passport-pan::-webkit-scrollbar-corner { background: var(--passport-bg); }
+
 .passport-bookbar {
   border-bottom: 1px solid var(--passport-hairline);
   background: linear-gradient(180deg, rgba(217, 166, 31, 0.06), transparent);

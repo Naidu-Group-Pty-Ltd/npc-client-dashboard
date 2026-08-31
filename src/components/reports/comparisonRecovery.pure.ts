@@ -144,3 +144,30 @@ export function matchesSelectedReportIds(
   const sortedSelected = [...selectedReportIds].sort();
   return sortedRow.every((id, index) => id === sortedSelected[index]);
 }
+
+/**
+ * Should the modal ask the database whether the analysis actually completed?
+ *
+ * Yes for every failure where NO response arrived, and only those. `network` is
+ * set solely on the transport's own failure path, so a server-side failure that
+ * merely mentions a timeout — a 502 naming a provider timeout — is excluded: it
+ * carries a response, and a response is an answer.
+ *
+ * This used to additionally require `provider_timeout`, i.e. our own 150s
+ * abort. That excluded the case it most needed to catch. A request the gateway
+ * cuts short reports `network_error`, and `compare-investment-reports` declared
+ * `request_timeout = 120` against its own ceiling of 125s (`ANALYSIS_BUDGET_MS`
+ * + `RESPONSE_RESERVE_MS`) — so the gateway was always the one to cut, the
+ * recovery never ran, and a run that had finished and stored its analysis was
+ * reported to the person who asked as a failure. The browser renders a severed
+ * request as `Failed to fetch`, which the transport labels a CORS problem,
+ * which is why this presented as a configuration fault for so long.
+ *
+ * Both cases share the only property that matters here: nobody knows whether
+ * the server finished, so the row is the authority rather than the error.
+ */
+export function shouldAttemptRecovery(
+  error: { network?: boolean } | null | undefined,
+): boolean {
+  return !!error && error.network === true;
+}

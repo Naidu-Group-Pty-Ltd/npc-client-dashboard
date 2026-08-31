@@ -900,8 +900,33 @@ export interface BookletZoom {
   /** Drawn size of the spread at that scale. */
   width: number;
   height: number;
-  /** True once the drawing exceeds the space — the board must pan. */
-  overflows: boolean;
+  /*
+   * There is deliberately no `overflows` here.
+   *
+   * It used to be `zoom > 1` — "the reader asked for more than the fit, so it
+   * must be spilling" — and the viewer read it to decide whether the board
+   * could be panned at all. It was wrong in both directions. It said NO on a
+   * board that was already too big, because the fit has a `MIN_SCALE` floor
+   * and a short window draws a leaf larger than its space at 100%. And it
+   * said YES on a board that still fitted, shunting a centred document into
+   * the corner the moment anybody touched the zoom.
+   *
+   * The obvious repair — carry the measured box on the geometry and compare —
+   * does not work either, and the reason is worth recording. Where the
+   * container is content-sized (the Client Portal mounts the viewer on an
+   * ordinary page; so does a dialog shorter than its cap) the box the board
+   * is measured against is the box the board itself produces. Measurement
+   * feeds size feeds measurement, the two settle a frame apart, and a flag
+   * derived from them flaps between true and false while nothing on screen
+   * moves. In that configuration there is no independent "space available" to
+   * exceed at all.
+   *
+   * So whether the board has anywhere to pan is a question about the DOM, and
+   * the viewer asks the DOM: `scrollWidth`/`scrollHeight` against
+   * `clientWidth`/`clientHeight`, which is the same question with no second
+   * definition of it. This module answers what it can answer without a
+   * layout — how large the drawing is.
+   */
   /** For the control: what the reader is currently asking for. */
   zoom: number;
   percent: number;
@@ -928,7 +953,6 @@ export function bookletZoom(
     scale,
     width: geometry.spreadWidth * scale,
     height: LEAF_H * scale,
-    overflows: clamped > min,
     zoom: clamped,
     percent: Math.round(clamped * 100),
     canZoomIn: clamped < max,

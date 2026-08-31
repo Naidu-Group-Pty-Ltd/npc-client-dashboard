@@ -247,7 +247,6 @@ describe("the reader can enlarge the document", () => {
     const view = bookletZoom(geometry, 1);
     expect(view.scale).toBe(geometry.scale);
     expect(view.width).toBe(geometry.width);
-    expect(view.overflows).toBe(false);
     expect(view.canZoomOut).toBe(false);
   });
 
@@ -256,8 +255,24 @@ describe("the reader can enlarge the document", () => {
     expect(view.scale).toBeCloseTo(geometry.scale * 2, 10);
     expect(view.width).toBeCloseTo(geometry.width * 2, 10);
     expect(view.height).toBeCloseTo(geometry.height * 2, 10);
-    expect(view.overflows).toBe(true);
     expect(view.percent).toBe(200);
+  });
+
+  it("says how large the drawing is and never whether it fits", () => {
+    /* `overflows` used to live here as `zoom > 1`, and the viewer read it to
+       decide whether the board could be panned at all. It was wrong in both
+       directions — the fit has a minimum-scale floor, so a short window
+       overflows at 100%, while one leaf at 125% in a wide dialog does not —
+       and carrying the measured box here instead flaps where the container is
+       content-sized, because then the box is the one the board itself makes.
+       Whether there is anywhere to pan is a question about the DOM and the
+       viewer asks the DOM. */
+    expect(Object.keys(bookletZoom(geometry, 2))).not.toContain("overflows");
+    const book = readFileSync(
+      "src/components/aml/passport/design/PassportBook.tsx", "utf8",
+    );
+    expect(book).toContain("scrollWidth");
+    expect(book).toContain("clientWidth");
   });
 
   it("clamps whatever a control hands it", () => {

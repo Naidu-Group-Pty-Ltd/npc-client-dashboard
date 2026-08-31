@@ -16,6 +16,7 @@ import {
   isDisplayableComparisonRow,
   matchesSelectedReportIds,
   normaliseComparisonAnalysis,
+  shouldAttemptRecovery,
 } from './comparisonRecovery.pure';
 
 const shapeARow = () => ({
@@ -181,5 +182,33 @@ describe('naming the sections an analysis does not carry', () => {
       'Red flags',
       'Final recommendation',
     ]);
+  });
+});
+
+/**
+ * Audit item 34: "Analysis Failed — Network/CORS error calling
+ * compare-investment-reports."
+ *
+ * CORS was measured correct (exact origin, credentials, POST allowed). The
+ * request was being cut short, and a severed request reaches the browser as
+ * `Failed to fetch` — which the transport labels a CORS/deployment fault.
+ * Recovery only ran for our own 150s abort, so the failure most likely to have
+ * left a finished row behind was the one that never looked for it.
+ */
+describe('shouldAttemptRecovery', () => {
+  it('recovers after a severed connection, not just our own abort', () => {
+    // The gateway cut the request: `compare-investment-reports` declared
+    // request_timeout = 120 against its own 125s ceiling.
+    expect(shouldAttemptRecovery({ network: true, code: 'network_error' } as any)).toBe(true);
+    // Our own 150s abort — the case that already worked.
+    expect(shouldAttemptRecovery({ network: true, code: 'provider_timeout' } as any)).toBe(true);
+  });
+
+  it('does not recover when a response actually arrived', () => {
+    // A 502 naming a provider timeout is an answer, not an unknown.
+    expect(shouldAttemptRecovery({ status: 502, message: 'provider timed out' } as any)).toBe(false);
+    expect(shouldAttemptRecovery({ status: 400 } as any)).toBe(false);
+    expect(shouldAttemptRecovery(null)).toBe(false);
+    expect(shouldAttemptRecovery(undefined)).toBe(false);
   });
 });

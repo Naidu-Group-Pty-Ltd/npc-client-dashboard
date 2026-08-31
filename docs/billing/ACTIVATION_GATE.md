@@ -28,7 +28,7 @@ The obvious design is a `status` column that a worker flips to `locked` when
 the deadline passes. It is rejected, and the reason is in this platform's own
 history.
 
-`aurixa-mission-control/docs/THE_CLONING_ENGINE.md` records six pg_cron jobs
+Mission Control's own `THE_CLONING_ENGINE.md` records six pg_cron jobs
 that were **never scheduled at all** — silently, for months. A migration read
 an empty vault, raised a NOTICE nobody reads, and returned; the job was never
 created; and a job that does not exist has no failing run to report. Two of the
@@ -155,7 +155,7 @@ payment failed — this build cannot know that — and a test asserts the wordin
 
 ## Files
 
-**Mission Control** (`aurixa-mission-control`)
+**Mission Control**
 
 | File | What it is |
 | ---- | ---------- |

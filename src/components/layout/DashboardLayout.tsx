@@ -13,6 +13,8 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
+import { PaymentGateOutlet } from '@/components/billing/PaymentGateOutlet';
+import { PaymentGateBanner } from '@/components/billing/PaymentGateScreen';
 import { PlanChangeBanner } from '@/components/billing/PlanChangeBanner';
 import { FeedbackPromptBanner } from '@/components/billing/FeedbackPromptBanner';
 import { GlobalCommandPalette } from './GlobalCommandPalette';
@@ -25,6 +27,7 @@ export function DashboardLayout() {
   // Desktop sidebar shell only mounts at >= 1024px.
   if (breakpoint !== 'desktop') {
     return (
+      <PaymentGateOutlet>
       <div className="dashboard-shell flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden">
         <MobileHeader
           theme={theme}
@@ -38,6 +41,7 @@ export function DashboardLayout() {
           <div className="dashboard-content">
             <ErrorBoundary>
               <DashboardPageShell>
+                <PaymentGateBanner />
                 <PlanChangeBanner />
                 <FeedbackPromptBanner />
                 <TokenBalanceBanner />
@@ -52,12 +56,13 @@ export function DashboardLayout() {
         <InternalMessageToasts />
         <GlobalCommandPalette />
       </div>
-
+      </PaymentGateOutlet>
     );
   }
 
   // Desktop Layout (>= 1024px)
   return (
+    <PaymentGateOutlet>
     <SidebarProvider>
       <div className="dashboard-shell flex min-h-svh w-full">
         <DashboardSidebar />
@@ -73,6 +78,7 @@ export function DashboardLayout() {
             <div className="dashboard-content">
               <ErrorBoundary>
                 <DashboardPageShell>
+                  <PaymentGateBanner />
                   <PlanChangeBanner />
                   <FeedbackPromptBanner />
                   <TokenBalanceBanner />
@@ -87,6 +93,6 @@ export function DashboardLayout() {
       <InternalMessageToasts />
       <GlobalCommandPalette />
     </SidebarProvider>
-
+    </PaymentGateOutlet>
   );
 }

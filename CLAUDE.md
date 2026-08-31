@@ -148,6 +148,29 @@ so, rather than rendering this deployment's widget on another tenant's page. And
 `turnstileIdentity.spec.ts`. Aurixa Mission Control mints each clone its own
 widget and publishes `VITE_TURNSTILE_SITE_KEY`.
 
+## The activation gate (a clone may be locked until it pays)
+Read [`docs/billing/ACTIVATION_GATE.md`](./docs/billing/ACTIVATION_GATE.md)
+before touching `_shared/paymentGate*.ts`, `mission-control-gate`,
+`usePaymentGate` or the `PaymentGateOutlet` in `DashboardLayout`. A clone
+provisioned onto a PAID plan boots on a clock (72h by default) and is locked
+behind a payment screen when it runs out, until Stripe captures the activation
+payment. **The prime and every clone that already exists are not gated and
+cannot become gated** — a `clone_payment_gates` row IS the gate, only
+provisioning writes one, and a test asserts no migration backfills the table.
+
+Three rules bite. **The status is derived, never stored** — nothing closes a
+gate, because `THE_CLONING_ENGINE.md` records six pg_cron jobs that were never
+scheduled at all, silently, and a gate whose closing depends on a worker fails
+OPEN under exactly that fault with nothing reporting it. **Only an explicit
+locked answer locks**: an unreachable Mission Control, a timeout, an
+unparseable body or an unrecognised reason word all render the dashboard,
+because the enforcement that protects revenue is Mission Control's own 402 on
+`tokens/reserve` and `seats/reserve` (an unpaid clone spends the PRIME'S
+forwarded vendor keys), while the failure this screen could cause is locking
+out somebody who has paid. And **a top-up does not activate a workspace** —
+`seat_plan` and `setup_package` settle the gate, so a $50 credit pack cannot
+open a $2,015/month plan.
+
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
 the run engine, the trigger-capture triggers or the dispatcher. One engine serves

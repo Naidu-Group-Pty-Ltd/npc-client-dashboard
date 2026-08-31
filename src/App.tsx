@@ -13,6 +13,7 @@ import { useBuildVersionCheck } from "@/hooks/useBuildVersionCheck";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
 import { WorkspaceEntitlementsProvider } from "@/hooks/useWorkspaceEntitlements";
+import { PaymentGateProvider } from "@/hooks/usePaymentGate";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
@@ -386,6 +387,7 @@ const App = () => (
           <BrandProvider>
             <PermissionsProvider>
               <WorkspaceEntitlementsProvider>
+              <PaymentGateProvider>
               <BrowserRouter>
                 <PathNormalizer />
                 <NotificationsProvider>
@@ -858,6 +860,7 @@ const App = () => (
                   </ComparisonProvider>
                 </NotificationsProvider>
               </BrowserRouter>
+              </PaymentGateProvider>
               </WorkspaceEntitlementsProvider>
             </PermissionsProvider>
           </BrandProvider>

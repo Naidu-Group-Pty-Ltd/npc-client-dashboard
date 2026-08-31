@@ -840,6 +840,16 @@ verify_jwt = false
 [functions.mission-control-balance]
 verify_jwt = false
 
+# The activation gate. `verify_jwt = false` for the same reason as its
+# siblings: the function verifies the session itself with `verifyAuth`, which
+# accepts this app's own HttpOnly cookie as well as a Supabase JWT, and the
+# platform gate would reject the cookie-only case before the handler runs.
+# Declared explicitly because an OMITTED block is read as `true` — see
+# docs/security/VERIFY_JWT.md, where that default was wrong for 91 of 425
+# functions.
+[functions.mission-control-gate]
+verify_jwt = false
+
 # Both verify the session themselves via `verifyAuth`, exactly as
 # mission-control-balance does, so the platform JWT gate stays off. Absent from
 # this file they defaulted to `verify_jwt = true` — and were never deployed at

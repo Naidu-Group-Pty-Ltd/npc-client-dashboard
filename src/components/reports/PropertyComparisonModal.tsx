@@ -29,7 +29,7 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
 import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { ComparisonWeights, DEFAULT_COMPARISON_SETTINGS, DEFAULT_COMPARISON_WEIGHTS, cloneComparisonWeights, comparisonWeightsEqual, parseComparisonTemplateSettings, validateComparisonWeights } from './comparisonConfiguration';
-import { analysisFromComparisonRow, isDisplayableComparisonRow, matchesSelectedReportIds, normaliseComparisonAnalysis } from './comparisonRecovery.pure';
+import { analysisFromComparisonRow, isDisplayableComparisonRow, matchesSelectedReportIds, normaliseComparisonAnalysis, shouldAttemptRecovery } from './comparisonRecovery.pure';
 import { ComparisonResultsPanel } from './ComparisonResultsPanel';
 
 interface PropertyComparisonModalProps {
@@ -280,14 +280,11 @@ export function PropertyComparisonModal({
 
       let { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
 
-      // ── The request timed out; the analysis may well have completed ──
-      // Only the transport's own abort counts: `network` is set solely on the
-      // fetch-failed path, so a server-side failure whose message happens to
-      // mention a timeout (a 502 naming a provider timeout) is not mistaken
-      // for a request the server might still be finishing.
-      const timedOut = !!error && error.network === true
-        && (error.code === 'provider_timeout' || /timed out/i.test(error.message || ''));
-      if (timedOut) {
+      // ── No response arrived; the analysis may well have completed ──
+      // The rule lives in the pure module beside the shapes it recovers, and
+      // records why requiring `provider_timeout` here excluded the very case
+      // it most needed to catch.
+      if (shouldAttemptRecovery(error)) {
         setIsRecovering(true);
         try {
           const row = await recoverStoredComparison(attemptStartedIso);
@@ -304,9 +301,15 @@ export function PropertyComparisonModal({
           } else {
             error = {
               ...error!,
-              message: 'The analysis service did not respond in time, and no completed analysis '
-                + 'was found. It may still finish in the background — check History in a minute, '
-                + 'or try again.',
+              // Deliberately says nothing about the cause. The transport's own
+              // message here is "Network/CORS error … check the function
+              // deployment and auth/CORS configuration", which is advice about
+              // the one thing measured to be correct; the real cause has been a
+              // request cut short. The underlying message is still logged for
+              // whoever is reading a console.
+              message: 'The analysis did not return a result, and no completed analysis was '
+                + 'found. It may still be finishing in the background — check History in a '
+                + 'minute, or try again.',
             };
           }
         } finally {

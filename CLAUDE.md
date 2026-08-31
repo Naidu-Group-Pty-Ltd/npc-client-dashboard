@@ -419,6 +419,29 @@ control. The space that frees is not cosmetic: `bookletGeometry` fits the
 spread to the box it is given, so container width and board height convert
 directly into legible document.
 
+**A magnified booklet has to be movable, and had nothing to move it with.**
+Zooming severed the right-hand leaf at the dialog's edge, pushed the turn bar
+off the bottom and offered a scrollbar on neither axis — and the same fault
+crops the document at 100% on a short window or a phone. The scroll container
+asked for `h-full`, which resolves against a containing block whose height
+comes from flex rather than from a declared length, so it computed to `auto`,
+the scroller grew to its own content (1,553px inside a 667px box) and
+`overflow: auto` had nothing left to clip. A flex column plus `min-h-0 flex-1`
+takes percentage resolution out of the path and still works where the holder
+has no bounded height (the Client Portal). Four rules follow. **Centring is by
+auto margin, never `justify-content`** — centring an overflowing box pins it
+at a negative offset no scrollbar can reach, and one layout then serves the
+fitted document and the magnified one. **Whether there is anywhere to pan is
+asked of the DOM**: `overflows` was `zoom > 1`, which is neither necessary nor
+sufficient, and a measured box carried on the geometry FLAPS where the
+container is content-sized, because the box is then the one the board itself
+makes — so `BookletZoom.overflows` is gone rather than left to be believed.
+**A hidden affordance is no affordance** (drag to pan, and scrollbars drawn in
+the document's own palette, because the platform default is browser chrome or
+nothing at all). And **the arrow keys mean what they mean where the reader is
+standing** — panning inside a magnified board, turning the page everywhere
+else.
+
 The booklet's own chrome answers to one more: **`.passport-action` must not
 declare a width.** It declared `width: 100%`, and `.w-auto` — which every one
 of its nineteen call sites pairs it with — is also a single-class selector, so

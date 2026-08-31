@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Columns2, RectangleVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -230,6 +231,97 @@ export function PassportBook({
 
   const { ref, geometry } = useBookGeometry(onePage);
   const view = bookletZoom(geometry, zoom);
+
+  /* ── panning a magnified document ───────────────────────────────────
+     Scrollbars alone are a poor way to move around a page you are reading
+     at 250%: they are at the edges of a box the document fills, and the
+     reader's attention is in the middle of it. Every document viewer a
+     person has used — a PDF reader, a map, a photo — is dragged, so this
+     one is too. It is offered only while the board actually overflows, so
+     a fitted document keeps ordinary text selection and an ordinary
+     cursor. */
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [panning, setPanning] = useState(false);
+
+  /* Whether there is anywhere to pan is asked of the DOM, every time the
+     drawing changes size. See the note on `BookletZoom` for why it is not
+     derived from the magnification: `zoom > 1` was neither necessary nor
+     sufficient, and a measured box carried on the geometry flaps where the
+     container is content-sized. One pixel of tolerance, because the board is
+     drawn at whole pixels and a sub-pixel overflow can be neither seen nor
+     scrolled to. */
+  const [canPan, setCanPan] = useState(false);
+  const measurePan = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const over = el.scrollWidth - el.clientWidth > 1 || el.scrollHeight - el.clientHeight > 1;
+    setCanPan((prev) => (prev === over ? prev : over));
+  }, []);
+  useLayoutEffect(() => {
+    measurePan();
+    const el = scrollerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // The scroller for the space, its board for the drawing: either changing
+    // changes the answer, and the board changes without the scroller does.
+    const ro = new ResizeObserver(measurePan);
+    ro.observe(el);
+    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    return () => ro.disconnect();
+  }, [measurePan]);
+  // Re-asked on every change that redraws the board, so the answer is never a
+  // frame behind what the reader is looking at.
+  useLayoutEffect(measurePan, [measurePan, view.scale, geometry.perSpread, onePage]);
+  const onPanStart = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const el = scrollerRef.current;
+    // Only a primary drag on a surface that has somewhere to go. A secondary
+    // button is the context menu, and a board that fits has no pan.
+    if (!el || e.button !== 0) return;
+    if (el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const fromLeft = el.scrollLeft;
+    const fromTop = el.scrollTop;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      // A click that wanders three pixels is still a click. Only past that
+      // does this become a drag and start suppressing selection.
+      if (!moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+      moved = true;
+      setPanning(true);
+      el.scrollLeft = fromLeft - dx;
+      el.scrollTop = fromTop - dy;
+    };
+    const up = () => {
+      setPanning(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    // Listened for on the WINDOW, not the element: a pointer that leaves the
+    // board mid-drag must keep panning and must still release, or the reader
+    // is left holding a document that follows the mouse.
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  }, []);
+
+  /* Magnifying holds the middle of the page still.
+     Zooming from the top-left corner throws whatever the reader was looking
+     at off the screen, and they then have to find it again with the very
+     scrollbars this change added. The centre of the viewport before the
+     step is the centre after it. */
+  const lastScale = useRef(view.scale);
+  useLayoutEffect(() => {
+    const el = scrollerRef.current;
+    const previous = lastScale.current;
+    lastScale.current = view.scale;
+    if (!el || previous === view.scale || previous <= 0) return;
+    const ratio = view.scale / previous;
+    el.scrollLeft = (el.scrollLeft + el.clientWidth / 2) * ratio - el.clientWidth / 2;
+    el.scrollTop = (el.scrollTop + el.clientHeight / 2) * ratio - el.clientHeight / 2;
+  }, [view.scale]);
   const [index, setIndex] = useState(0);
   const [turn, setTurn] = useState<"fwd" | "back" | null>(null);
 
@@ -274,8 +366,17 @@ export function PassportBook({
     <div
       className={cn("flex flex-col", className)}
       onKeyDown={(e) => {
-        if (e.key === "ArrowRight") go(1);
-        if (e.key === "ArrowLeft") go(-1);
+        /* Arrows turn the page — unless the reader is standing IN a
+           magnified board, where the same keys are how anybody moves around
+           a document that is bigger than its window. The board is focusable
+           only while it overflows, so this can never swallow a page turn on
+           a document that fits, and Previous / Next / the page chips turn
+           the page from anywhere. */
+        const inBoard = canPan
+          && scrollerRef.current?.contains(e.target as Node)
+          && e.target !== e.currentTarget;
+        if (!inBoard && e.key === "ArrowRight") go(1);
+        if (!inBoard && e.key === "ArrowLeft") go(-1);
         // The magnification keys everybody already knows, so the control is
         // discoverable without being the only way in.
         if (e.key === "+" || e.key === "=") setZoom((z) => nextBookletZoom(z, 1));
@@ -381,7 +482,27 @@ export function PassportBook({
       </div>
 
       {/* board */}
-      <div className="relative min-h-0 flex-1">
+      {/* A FLEX COLUMN, and that is the whole fix for "the zoomed passport is
+          cut off and will not scroll".
+
+          The scroller inside asked for `h-full`. A percentage height resolves
+          against the containing block's height, and this box is a flex ITEM
+          whose height comes from the flex algorithm rather than from a
+          declared length — so Chrome resolved `height: 100%` to `auto`, the
+          scroller grew to its own content (1,553px inside a 667px box), and
+          `overflow: auto` had nothing left to clip. The board spilled past the
+          dialog, which clips it, and the reader got a cropped document with no
+          scrollbar on either axis: the horizontal bar existed, 1,553px down,
+          off the bottom of the screen.
+
+          Making this a column and giving the scroller `min-h-0 flex-1` takes
+          percentage resolution out of the path entirely — the scroller's
+          height is whatever flex gives it, which is exactly this box. It also
+          keeps working where this box has NO bounded height (the Client
+          Portal mounts the viewer on an ordinary page): there the flex item
+          grows with its content, exactly as it does today, and the page
+          scrolls. */}
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {/* The measuring probe.
             The ref used to sit on the box that HOLDS the board, which was
             correct while the board could only ever be as large as the space —
@@ -393,16 +514,34 @@ export function PassportBook({
             as fast as the reader enlarges it. So the probe is now a sibling
             that draws nothing and never changes size. `inset-4` is the same
             16px the scroller's `p-4` reserves, so its rect is still exactly
-            the padding-free space, and content cannot feed back into the fit. */}
+            the padding-free space, and content cannot feed back into the fit.
+            It is absolutely positioned, so it is not a flex item and adds
+            nothing to the column. */}
         <div ref={ref} aria-hidden className="pointer-events-none absolute inset-4" />
         <div
+          ref={scrollerRef}
+          onPointerDown={onPanStart}
+          /* A scroll container that a keyboard cannot reach is a scroll
+             container half the readers of this document do not have. It
+             takes focus only while there is somewhere to scroll. */
+          tabIndex={canPan ? 0 : -1}
+          role={canPan ? "region" : undefined}
+          aria-label={canPan ? "Passport board — scrollable" : undefined}
           className={cn(
-            "flex h-full w-full p-4",
-            // Magnified, the board is larger than the space and the reader
-            // pans it. Centring a box wider than its container pins it to a
-            // negative offset no scrollbar can reach, so alignment starts at
-            // the top-left the moment it overflows.
-            view.overflows ? "items-start justify-start overflow-auto" : "items-center justify-center",
+            /* Always a scroll container, and always aligned to the start.
+               Centring with `justify-content` is what makes an overflowing
+               box unreachable — it is pinned at a negative offset no
+               scrollbar can reach — so the centring is done by the board's
+               own `m-auto` instead: an auto margin takes the free space when
+               there is some and collapses to zero when there is not. One
+               layout serves both states, which is also what makes the
+               overflow measurement below trustworthy: `scrollWidth` on a
+               centred box reports half the overflow. */
+            "passport-pan flex min-h-0 w-full flex-1 items-start justify-start overflow-auto p-4",
+            canPan
+              && "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset "
+                + "focus-visible:ring-[color:var(--passport-gold)] "
+                + (panning ? "cursor-grabbing select-none" : "cursor-grab"),
           )}
         >
           <div

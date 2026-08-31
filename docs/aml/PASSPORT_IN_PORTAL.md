@@ -302,6 +302,68 @@ All three portals get this from the one shared workspace; the only per-portal
 difference is what each calls a matter (`ownReferenceLabel`: File, Contract,
 Matter).
 
+## The magnified document has to be movable, and had nothing to move it with
+
+The reader can enlarge the booklet past the space it is fitted into — that is
+what the magnification is for. Doing so severed the right-hand leaf at the
+dialog's edge, pushed the turn bar off the bottom, and offered a scrollbar on
+neither axis. Reported from the Command Centre at 125%; it was worse than
+reported, because the same fault crops the document at **100%** on a short
+window or a phone.
+
+**The cause is a percentage height that could not resolve.** The scroll
+container asked for `h-full`. A percentage height resolves against the
+containing block's height, and the box holding it is a flex ITEM whose height
+comes from the flex algorithm rather than from a declared length — so
+`height: 100%` computed to `auto`, the scroller grew to its own content
+(measured in Chromium: **1,553px inside a 667px box**), and `overflow: auto`
+had nothing left to clip. The board spilled past the dialog, which clips it.
+The horizontal scrollbar was not missing; it was 1,553px down, off the bottom
+of the screen. Making the holder a flex column and giving the scroller
+`min-h-0 flex-1` takes percentage resolution out of the path entirely, and it
+keeps working where the holder has no bounded height at all — the Client
+Portal mounts the viewer on an ordinary page, and there the box still grows
+with its content and the page scrolls.
+
+Four rules carry the rest.
+
+**Centring is done by auto margins, never by `justify-content`.** Centring a
+box wider than its container pins it at a negative offset no scrollbar can
+reach, so the start of the document becomes unreachable; an auto margin takes
+the free space when there is some and collapses to zero when there is not.
+That is one layout for the fitted document and the magnified one, which is
+also what makes the overflow measurement below trustworthy — `scrollWidth` on
+a centred box reports half the overflow.
+
+**Whether there is anywhere to pan is asked of the DOM.** It used to be
+`zoom > 1`, which is neither necessary nor sufficient: the fit has a
+`MIN_SCALE` floor, so a short window draws a leaf larger than its space at
+100%, while one leaf at 125% in a wide dialog still fits and was being shunted
+into the corner for a pan nobody needed. Carrying the measured box on
+`BookletGeometry` instead looks like the obvious repair and is not: where the
+container is content-sized, the box the board is measured against is the box
+the board itself produces, the two settle a frame apart, and the flag flaps
+while nothing on screen moves. `scrollWidth`/`scrollHeight` against
+`clientWidth`/`clientHeight` is the same question with no second definition of
+it, so `BookletZoom.overflows` is **gone** rather than left to be believed.
+
+**A hidden affordance is no affordance.** The board is dragged, like every
+other document viewer a person has used, with a grab cursor while there is
+somewhere to go; the scrollbars are drawn in the document's own gold on its
+own navy, because the platform default is either browser chrome bolted onto a
+navy dialog or — where the browser uses overlay scrollbars — nothing visible
+at all until something has already been scrolled.
+
+**And the arrow keys mean what they mean where the reader is standing.**
+Inside a magnified board they pan, because a scroll container a keyboard
+cannot reach is a scroll container half these readers do not have; everywhere
+else they still turn the page, and Previous / Next and the page chips turn it
+from anywhere.
+
+One viewer serves the Command Centre dialog, the emailed public link, the
+Client Portal and all three partner portals, so this reaches every surface at
+once — which is the point of there being one.
+
 ## The nav entry sits under the Dashboard
 
 In all four portals — Finance, Builder/Developer, Solicitor and the Client

@@ -161,9 +161,9 @@ export function AdvancedTab({
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Warning Banner */}
-      <Alert variant="default" className="border-brand-500/50 bg-brand-500/5">
-        <AlertTriangle className="h-4 w-4 text-brand-600" />
-        <AlertDescription className="text-brand-700">
+      <Alert variant="default" className="border-warning/50 bg-warning/10">
+        <AlertTriangle className="h-4 w-4 text-warning" />
+        <AlertDescription className="text-foreground">
           These are optional advanced overrides. Leave empty to use default calculations.
         </AlertDescription>
       </Alert>

@@ -25,8 +25,22 @@
 /** The Aurixa Systems emblem. Must match the `<link rel="icon">` in `index.html`. */
 export const PLATFORM_FAVICON = '/brand/aurixa-notification-192.png';
 
-/** The same mark at tile size, for iOS home screens. */
-export const PLATFORM_APPLE_TOUCH_ICON = '/icons/apple-touch-icon.png';
+/**
+ * The same mark at tile size, for iOS home screens.
+ *
+ * This slot used to hold `/icons/apple-touch-icon.png`, which is not an icon:
+ * it is the NPC email-signature BANNER letterboxed into a square, and at any
+ * size the OS renders it legibly it carries a named individual, their title,
+ * their email and their personal mobile number. On a clone handed to a client
+ * with no brand of their own, adding the app to a phone put another business's
+ * director on that phone's home screen.
+ *
+ * The 512 rather than the 192: this is fetched only when somebody adds the app
+ * to their home screen, never on the page-load path, and iOS draws it at up to
+ * 540 device pixels on a 3x display — so the larger file costs nothing where it
+ * is not wanted and is sharp where it is.
+ */
+export const PLATFORM_APPLE_TOUCH_ICON = '/brand/aurixa-notification-512.png';
 
 /**
  * The mark to paint for a workspace, given whatever its brand settings resolve

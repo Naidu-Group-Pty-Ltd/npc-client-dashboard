@@ -43,7 +43,6 @@ if (!source.includes('await request.formData()')) {
 
 for (const [what, needle] of [
   ['the declared-length ceiling', 'MAX_BODY_BYTES'],
-  ['the pre-parse length refusal', "request.headers.get('content-length')"],
   ['the square-patch pin', 'imageDims.width !== imageDims.height'],
   ['the patch edge ceiling', 'MAX_PATCH_EDGE'],
   ['the mask ink measurement', 'maskInkShare(mask)'],
@@ -52,6 +51,29 @@ for (const [what, needle] of [
   ['the nosniff header', "'x-content-type-options': 'nosniff'"],
 ]) {
   if (!source.includes(needle)) failures.push(`${what} is gone (${needle})`);
+}
+
+/*
+  The pre-parse length refusal, asserted as a CONTROL rather than as a string.
+
+  This was `source.includes("request.headers.get('content-length')")`, and the
+  negative-test harness caught what that really checked: the worker reads that
+  header in two places, so replacing the guarding read with `const declared = 0`
+  left the substring present, the gate green, and every oversized body buffered
+  before anything looked at its size. A gate that passes with its control
+  removed is asserting something other than the property it claims.
+
+  What matters is the SEQUENCE — the declared length is taken from the header
+  and then compared against the ceiling — so that is what is matched, within a
+  short window, so a second unrelated read of the same header cannot satisfy it.
+*/
+const preParseRefusal =
+  /const declared = Number\(\s*request\.headers\.get\('content-length'\)[\s\S]{0,200}?declared > MAX_BODY_BYTES/;
+if (!preParseRefusal.test(source)) {
+  failures.push(
+    'the pre-parse length refusal is gone (the declared content-length must be ' +
+      'compared against MAX_BODY_BYTES before the body is buffered)',
+  );
 }
 
 // The worker names no endpoint: the AI binding is its whole world. Any URL

@@ -11,6 +11,7 @@ import {
   defaultBrandThemeConfig,
 } from './brand-defaults';
 import { getBrandAssetSrc } from './brand-assets';
+import { appleTouchIconFor, faviconFor } from './platformBrand';
 import { setBrandNotificationIcon } from '@/lib/desktopMessageAlerts';
 import { applyBrandTokenMap, resolveBrandFontVars, resolveBrandTokens } from './token-resolver';
 import type { BrandContextValue, BrandLogoConfig, BrandSaveResult, BrandThemeConfig, EmailSignatureSettings, ThemeMode, WhiteLabelSettings } from './brand-types';
@@ -256,9 +257,21 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     setBrandNotificationIcon(getBrandAssetSrc(settings, 'favicon'));
   }, [settings]);
 
+  /**
+   * The tab icon, and the one place a clone with no branding shows whose
+   * platform it is.
+   *
+   * This used to `return` early when the tenant had no favicon, on the
+   * reasoning that `index.html` already declares the platform mark. True on a
+   * first load, and wrong the moment a tenant CLEARS their favicon: the href
+   * written by the previous render stays on the element, so the tab kept
+   * showing a mark the workspace no longer had until a full reload. Resolving
+   * through `faviconFor` means an empty brand always paints the Aurixa mark
+   * rather than whatever was there before.
+   */
   useEffect(() => {
-    const favicon = getBrandAssetSrc(settings, 'favicon');
-    if (!favicon) return;
+    const favicon = faviconFor(getBrandAssetSrc(settings, 'favicon'));
+    const appleIcon = appleTouchIconFor(getBrandAssetSrc(settings, 'favicon'));
 
     // <link rel="icon">
     const iconLink = document.querySelector("link[rel~='icon']") as HTMLLinkElement | null;
@@ -274,11 +287,11 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     // <link rel="apple-touch-icon">
     const appleLink = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement | null;
     if (appleLink) {
-      appleLink.href = favicon;
+      appleLink.href = appleIcon;
     } else {
       const newApple = document.createElement('link');
       newApple.rel = 'apple-touch-icon';
-      newApple.href = favicon;
+      newApple.href = appleIcon;
       document.head.appendChild(newApple);
     }
   }, [settings]);

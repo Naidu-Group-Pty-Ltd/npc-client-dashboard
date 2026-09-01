@@ -121,7 +121,10 @@ request_timeout = 120
 
 [functions.generate-portfolio-analysis]
 verify_jwt = true
-request_timeout = 120
+# A fourteen-section analysis took 78s of model time at a 8,000-token budget,
+# and that budget was the reason every answer arrived truncated. A larger one
+# is a longer call, so the wall clock moves with it. `report-qa` sits at 300.
+request_timeout = 240
 
 [functions.calculate-borrowing-capacity]
 verify_jwt = true
@@ -1190,6 +1193,13 @@ verify_jwt = false
 # feature flag. Both answer a preflight 200 with the exact origin today; these
 # blocks declare what is already deployed.
 [functions.builder-portal-stock]
+verify_jwt = false
+
+# Authenticated by a per-request one-time capability token presented as a
+# bearer, not by a Supabase JWT: the caller is a Make scenario with no Supabase
+# identity. Declared explicitly because an omitted block reads as `true`, which
+# would assert a gateway check that is not what guards this function.
+[functions.builder-stock-link-callback]
 verify_jwt = false
 
 # Internal callers only, through the signed envelope (`verifyInternal`). The

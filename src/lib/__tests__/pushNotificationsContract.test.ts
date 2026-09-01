@@ -198,7 +198,11 @@ describe('the app is installable, which is what iOS requires for push', () => {
   });
 
   it('gives iOS a PNG home-screen icon', () => {
-    expect(html).toMatch(/rel="apple-touch-icon"[^>]*href="\/icons\/apple-touch-icon\.png"/);
+    // The PATH is not the contract — `platformBrand.ts` owns which mark this
+    // is, and pinning one filename here is what made moving it off the NPC
+    // email-signature banner look like a test failure. What iOS needs is a
+    // declared PNG.
+    expect(html).toMatch(/rel="apple-touch-icon"[^>]*href="[^"]+\.png"/);
     expect(html).toMatch(/apple-mobile-web-app-capable/);
   });
 });

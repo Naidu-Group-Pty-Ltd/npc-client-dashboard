@@ -30,6 +30,20 @@ name: Deploy Supabase functions
 # So the gate now FAILS when there is something to deploy and no credential to
 # deploy it with. A red check on an unconfigured repo is the cheapest possible
 # version of this lesson; a green one is the most expensive.
+#
+# There is exactly ONE case where green is truthful without a credential here:
+# something else already deployed it. Aurixa Mission Control holds the prime's
+# Management API token and pushes function bundles and pending migrations into
+# a clone's Supabase project itself, on the cascade that delivered them — so on
+# a clone this workflow is a second route, not the only one, and failing it
+# every push trains people to ignore a red check that still matters on the
+# prime.
+#
+# That stand-down is a POSITIVE assertion and never an inference from absence.
+# It requires the repository variable `BACKEND_DEPLOYED_BY` to say, in as many
+# words, who deploys instead. Remove the variable and this fails exactly as it
+# does today — which is the behaviour the paragraph above was written for, and
+# which the prime relies on, because nothing else deploys the prime.
 
 on:
   push:
@@ -122,15 +136,52 @@ jobs:
         id: gate
         env:
           TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          DEPLOYER: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: |
           if [ -n "${TOKEN:-}" ]; then
             echo 'ready=true' >> "$GITHUB_OUTPUT"
           else
             echo 'ready=false' >> "$GITHUB_OUTPUT"
           fi
+          # An unrecognised name is not evidence that anybody deploys, so it
+          # is treated exactly like an unset variable: this job stays red.
+          if [ "${DEPLOYER:-}" = "mission-control" ]; then
+            echo 'elsewhere=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'elsewhere=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report that Mission Control deploys this project
+        if: >-
+          ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true'
+              && steps.gate.outputs.elsewhere == 'true' }}
+        run: |
+          {
+            echo '### Supabase functions deployed by Mission Control'
+            echo
+            echo 'This repository holds no `SUPABASE_ACCESS_TOKEN`, and that is'
+            echo 'deliberate: a Supabase personal access token carries every'
+            echo 'permission on every project the account can reach, so one copy'
+            echo 'per clone would put fleet-wide database administration in every'
+            echo 'clone repository. Mission Control holds the credential and'
+            echo 'deploys these functions into this project itself, on the cascade'
+            echo 'that delivered them.'
+            echo
+            echo 'Changed here, and queued there:'
+            echo
+            for fn in ${{ steps.changed.outputs.list }}; do echo "- \`$fn\`"; done
+            echo
+            echo 'Verify in Mission Control under the clone'"'"'s self-healing runs'
+            echo '(`edge_function_deploy`). If nothing is queued there, this'
+            echo 'repository is NOT being deployed by anything — remove the'
+            echo '`BACKEND_DEPLOYED_BY` repository variable and this check will'
+            echo 'go red again, which is the state that tells you so.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail when there is something to deploy and no credential
-        if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true' }}
+        if: >-
+          ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true'
+              && steps.gate.outputs.elsewhere != 'true' }}
         run: |
           echo "::warning title=Supabase functions NOT deployed::No SUPABASE_ACCESS_TOKEN secret is set. ${{ steps.changed.outputs.list }} changed on main but production still runs the previous version. Add the secret in Settings → Secrets → Actions."
           {

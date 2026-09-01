@@ -250,7 +250,7 @@ export function SendToClientModal({
 
         {sent ? (
           <div className="flex flex-col items-center gap-3 py-8">
-            <CheckCircle2 className="h-12 w-12 text-success-foreground0" />
+            <CheckCircle2 className="h-12 w-12 text-success" />
             <p className="text-sm font-medium text-foreground">Report sent successfully!</p>
           </div>
         ) : (

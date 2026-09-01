@@ -239,11 +239,11 @@ export function BulkGenerationModal({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
-        return <CheckCircle2 className="h-4 w-4 text-success-foreground0" />;
+        return <CheckCircle2 className="h-4 w-4 text-success" />;
       case 'failed':
-        return <XCircle className="h-4 w-4 text-destructive-foreground0" />;
+        return <XCircle className="h-4 w-4 text-destructive" />;
       case 'processing':
-        return <Loader2 className="h-4 w-4 text-info-foreground0 animate-spin" />;
+        return <Loader2 className="h-4 w-4 text-info animate-spin" />;
       default:
         return <Clock className="h-4 w-4 text-muted-foreground" />;
     }

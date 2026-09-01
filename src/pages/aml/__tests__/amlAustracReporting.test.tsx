@@ -10,7 +10,7 @@
  */
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -77,17 +77,18 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
  * that clock expires — which turns the plain approval below into one that
  * asks `window.confirm` first. This fixture used to carry a literal
  * `2026-08-27`: a Thursday, so the report fell due at 2026-09-01T00:00Z, and
- * at 00:45Z that morning CI went red on a suite nobody had touched. The
- * calendar was the change.
+ * at 00:45Z that morning CI went red on a suite nobody had touched. Between
+ * the last green run and the first red one the only change to the repository
+ * was in Builder Stock. The calendar was the change.
  *
  * A fixture that is inside its statutory window has to SAY it is inside it,
  * not name a date that was. Today's date is always inside a window measured
- * forward from today, on any day the suite is ever run. (Ported from the
- * prime, which hit this first; the register-on-a-phone suite it also carries
- * is a page change this repository has not received and is deliberately not
- * brought across with it.)
+ * forward from today, on any day the suite is ever run.
  */
 const nowIso = () => new Date().toISOString();
+
+/** Well past any window this product measures, on any day. */
+const longOverdueIso = () => new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString();
 
 const REPORT = {
   id: "r1", kind: "smr", case_id: "case-1", title: "SMR — unusual cash deposits",
@@ -153,6 +154,84 @@ const selectRow = async (title: string) => {
   fireEvent.click(row);
   return row;
 };
+
+/**
+ * The register on a phone.
+ *
+ * At 390px the table was 775px wide inside a horizontal scroller: Status,
+ * Updated and every action sat off the right-hand edge, the Kind chip was
+ * squeezed to 40px and set `COMPLIANCE_REPORT` one letter per line, and each
+ * row stood 150px tall to hold it. An operator could see that reports
+ * existed and do nothing with them.
+ */
+describe("the register is a list of cards under 768px", () => {
+  /* jsdom's window is 1024px wide and stays however a test leaves it, so the
+     width is put back as well as the mock: `useIsMobile`'s listener reads
+     `innerWidth`, and a test that leaves it at 390 makes every test after it
+     a phone. */
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+  });
+
+  const mobile = () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    vi.spyOn(window, "matchMedia").mockImplementation((q: string) => ({
+      matches: /max-width/.test(q), media: q, onchange: null,
+      addListener: () => {}, removeListener: () => {},
+      addEventListener: () => {}, removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList);
+  };
+
+  it("draws the cards and not the table", async () => {
+    mobile();
+    const { container } = renderPage();
+    await screen.findByRole("button", { name: REPORT.title });
+    expect(container.querySelector("table")).toBeNull();
+  });
+
+  it("draws the table and not the cards on a desktop", async () => {
+    const { container } = renderPage();
+    await screen.findByRole("button", { name: REPORT.title });
+    expect(container.querySelector("table")).not.toBeNull();
+  });
+
+  it("never draws both, so nothing is announced twice", async () => {
+    /* A CSS-hidden copy still carries every accessible name in the
+       document: assistive technology would meet each report's title, its
+       checkbox and each of its actions twice, on whichever layout it is not
+       looking at. `ResponsiveTable` — this repository's own mobile-table
+       pattern — switches on the same hook for the same reason. */
+    mobile();
+    renderPage();
+    expect((await screen.findAllByRole("button", { name: REPORT.title })).length).toBe(1);
+  });
+
+  it("offers the same acts on a card as in a row", async () => {
+    /* One definition of what can be done to a row, rendered in both
+       places. Two copies is how a phone comes to offer an Approve that the
+       desktop has already taken away. */
+    mobile();
+    renderPage();
+    await screen.findByRole("button", { name: REPORT.title });
+    for (const act of ["Edit", "Approve", "Record", "Delete"]) {
+      expect(screen.getByRole("button", { name: new RegExp(`^${act}$`) })).toBeInTheDocument();
+    }
+    const page = read("src/pages/aml/AmlAustracReporting.tsx");
+    expect(page).toContain("rowActions(r, \"end\")");
+    expect(page).toContain("rowActions(r, \"start\")");
+  });
+
+  it("names the kind and the status rather than printing the column", async () => {
+    mobile();
+    renderPage();
+    await screen.findByRole("button", { name: REPORT.title });
+    const page = read("src/pages/aml/AmlAustracReporting.tsx")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(page).not.toContain("r.kind.toUpperCase()");
+    expect(page).not.toContain("r.status.replace(/_/g");
+  });
+});
 
 describe("drafting is a page, not a dialog", () => {
   /*
@@ -297,9 +376,10 @@ describe("the guided path leads somewhere", () => {
 
   /* Complete enough to reach the approval, and past its statutory window —
      the one check that can still be outstanding when the approval is the
-     open step. A suspicion formed in January is long past three business
-     days. */
-  const withGaps = { ...REPORT, metadata: { obligation_at: "2026-01-05T00:00:00.000Z" } };
+     open step. Measured backwards from today for the same reason the fixture
+     above is measured forwards: a literal date is only ever correct for a
+     while. */
+  const withGaps = { ...REPORT, metadata: { obligation_at: longOverdueIso() } };
 
   it("keeps the row's own approval for an MLRO who has already read it", async () => {
     /* Removing a control is not what opening the report was for. */
@@ -386,10 +466,17 @@ describe("which report am I looking at", () => {
     }
   });
 
-  it("invites a choice when nothing is selected", async () => {
+  it("invites a choice when nothing is selected, without saying where to look", async () => {
+    /* It read "Choose a report on the left". The register IS on the left on
+       a desktop and directly above on a phone, so the sentence was wrong on
+       every small screen — the same rule the AUSTRAC path already holds, that
+       no step may describe its own position. The assertion is the rule
+       rather than the wording. */
     listReports.mockResolvedValue([]);
     renderPage();
-    expect(await screen.findByText(/Choose a report on the left/i)).toBeInTheDocument();
+    const invite = await screen.findByText(/Choose a report/i);
+    expect(invite).toBeInTheDocument();
+    expect(invite.textContent).not.toMatch(/\b(on the left|on the right|above|below)\b/i);
   });
 });
 

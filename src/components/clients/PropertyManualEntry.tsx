@@ -784,7 +784,7 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
                   <>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Monthly Rental Income</span>
-                      <span className="font-medium text-success-foreground0">
+                      <span className="font-medium text-success">
                         {formatCurrency(monthlyRentalIncome)}
                       </span>
                     </div>
@@ -847,13 +847,13 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
                   <>
                     <div className="flex justify-between text-sm font-medium">
                       <span>Net Monthly Cashflow</span>
-                      <span className={netMonthlyCashflow >= 0 ? 'text-success-foreground0' : 'text-destructive'}>
+                      <span className={netMonthlyCashflow >= 0 ? 'text-success' : 'text-destructive'}>
                         {formatCurrency(netMonthlyCashflow)}
                       </span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Net Monthly Rental Position</span>
-                      <span className={netMonthlyRentalPosition >= 0 ? 'text-success-foreground0' : 'text-destructive'}>
+                      <span className={netMonthlyRentalPosition >= 0 ? 'text-success' : 'text-destructive'}>
                         {formatCurrency(netMonthlyRentalPosition)}
                       </span>
                     </div>

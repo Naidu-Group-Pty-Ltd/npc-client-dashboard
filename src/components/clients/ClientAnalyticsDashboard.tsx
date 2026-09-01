@@ -166,15 +166,15 @@ export function ClientAnalyticsDashboard({ clients }: ClientAnalyticsDashboardPr
       description: 'Clients with GoHighLevel sync errors that need attention.',
       containerClass: analytics.errorCount > 0
         ? 'border-destructive/25 bg-destructive/10 hover:border-destructive/50 hover:bg-destructive/15'
-        : 'border-border/15 bg-muted0/5 hover:border-border/25 hover:bg-muted0/10',
+        : 'border-border/15 bg-muted/5 hover:border-border/25 hover:bg-muted/10',
       iconClass: analytics.errorCount > 0
         ? 'border-destructive/25 bg-destructive/15 text-destructive dark:text-destructive shadow-destructive/20'
-        : 'border-border/20 bg-muted0/10 text-muted-foreground dark:text-muted-foreground shadow-sm dark:shadow-black/10',
+        : 'border-border/20 bg-muted/10 text-muted-foreground dark:text-muted-foreground shadow-sm dark:shadow-black/10',
       labelClass: analytics.errorCount > 0 ? 'text-destructive dark:text-destructive-foreground' : 'text-muted-foreground dark:text-foreground',
       valueClass: analytics.errorCount > 0 ? 'text-destructive dark:text-destructive-foreground' : 'text-muted-foreground dark:text-foreground',
       progressClass: analytics.errorCount > 0
         ? 'bg-destructive/70 shadow-inner shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30 [&>div]:bg-gradient-to-r [&>div]:from-destructive [&>div]:via-destructive [&>div]:to-destructive [&>div]:shadow-[0_0_18px_rgba(248,113,113,0.36)]'
-        : 'bg-background/70 shadow-inner shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30 [&>div]:bg-muted0/50',
+        : 'bg-background/70 shadow-inner shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30 [&>div]:bg-muted/50',
     },
   ];
 

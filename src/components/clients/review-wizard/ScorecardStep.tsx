@@ -73,11 +73,11 @@ export function ScorecardStep({
       case 'Star':
         return <Star className="h-4 w-4 text-brand-500 fill-brand-500" />;
       case 'Good':
-        return <ThumbsUp className="h-4 w-4 text-success-foreground0" />;
+        return <ThumbsUp className="h-4 w-4 text-success" />;
       case 'Average':
         return <Minus className="h-4 w-4 text-muted-foreground" />;
       case 'Underperformer':
-        return <ThumbsDown className="h-4 w-4 text-destructive-foreground0" />;
+        return <ThumbsDown className="h-4 w-4 text-destructive" />;
       default:
         return null;
     }
@@ -94,7 +94,7 @@ export function ScorecardStep({
       case 'Good':
         return <Badge className="bg-success/10 text-success border-success/20">Good</Badge>;
       case 'Average':
-        return <Badge className="bg-muted0/10 text-muted-foreground border-border/20">Average</Badge>;
+        return <Badge className="bg-muted/10 text-muted-foreground border-border/20">Average</Badge>;
       case 'Underperformer':
         return <Badge className="bg-destructive/10 text-destructive border-destructive/20">Underperformer</Badge>;
       default:

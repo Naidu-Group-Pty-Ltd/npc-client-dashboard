@@ -6,6 +6,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { FALLBACK_CALENDAR_COLOR } from '@/lib/calendarColors';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -40,6 +41,7 @@ export interface RescheduleData {
   assignedUserId?: string;
   secondaryRecipients?: { financeContactId: string; name: string; email: string }[];
   bookingRecipients?: { name: string; email: string }[];
+  notes?: string;
 }
 
 interface EventDetailsModalProps {
@@ -97,6 +99,10 @@ export function EventDetailsModal({
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [rescheduleDuration, setRescheduleDuration] = useState(30);
   const [rescheduleTimezone, setRescheduleTimezone] = useState<string>(() => getBookingTimezone());
+  // A reschedule usually happens for a reason and the form had nowhere to
+  // record one (audit item 29). Seeded from the booking's existing notes so
+  // rescheduling never silently discards them.
+  const [rescheduleNotes, setRescheduleNotes] = useState('');
   
   // New: Override availability, team member, finance contacts, booking recipients
   const [overrideAvailability, setOverrideAvailability] = useState(false);
@@ -182,6 +188,7 @@ export function EventDetailsModal({
       setEditNotes(event.notes || '');
       setEditStatus(event.appointmentStatus || event.status || '');
       
+      setRescheduleNotes(event.notes || '');
       // Initialize reschedule form with current event times in Sydney timezone
       const sydneyStart = getSydneyDateTimeParts(event.startTime);
       setRescheduleDate(sydneyStart.dateStr);
@@ -199,7 +206,7 @@ export function EventDetailsModal({
   const startDate = parseISO(event.startTime);
   const endDate = parseISO(event.endTime);
   const durationMinutes = Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60));
-  const calendarColor = event.calendarColor || '#3b82f6';
+  const calendarColor = event.calendarColor || FALLBACK_CALENDAR_COLOR;
   const tzAbbr = getSydneyTzAbbr(event.startTime);
   const showLocalTime = isNonSydneyTimezone();
 
@@ -271,6 +278,7 @@ export function EventDetailsModal({
       assignedUserId: (selectedTeamMemberId && selectedTeamMemberId !== 'auto') ? selectedTeamMemberId : undefined,
       secondaryRecipients: secondaryRecipients.length > 0 ? secondaryRecipients : undefined,
       bookingRecipients: bookingRecipientsPayload.length > 0 ? bookingRecipientsPayload : undefined,
+      notes: rescheduleNotes,
     });
     
     setIsSaving(false);
@@ -637,26 +645,18 @@ export function EventDetailsModal({
                 </button>
               </div>
               
-              <div className="flex gap-2 pt-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleCancelReschedule}
-                  disabled={isSaving}
-                  className="flex-1"
-                >
-                  <X className="h-3.5 w-3.5 mr-1" />
-                  Cancel
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleReschedule}
-                  disabled={isSaving || !rescheduleDate || !rescheduleTime}
-                  className="flex-1"
-                >
-                  <RefreshCw className="h-3.5 w-3.5 mr-1" />
-                  {isSaving ? 'Saving...' : 'Confirm'}
-                </Button>
+              <div className="space-y-2 pt-2">
+                <Label htmlFor="reschedule-notes" className="flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  Notes
+                </Label>
+                <Textarea
+                  id="reschedule-notes"
+                  value={rescheduleNotes}
+                  onChange={(e) => setRescheduleNotes(e.target.value)}
+                  placeholder="Why is this moving? Anything the attendees should know."
+                  rows={3}
+                />
               </div>
             </div>
           ) : (
@@ -794,6 +794,33 @@ export function EventDetailsModal({
         </ScrollArea>
 
         {/* Footer with actions */}
+        {/* The reschedule actions are pinned here rather than living inside the
+            scrolling body. They used to sit below "Notify Finance Contacts",
+            past the fold, and the footer was suppressed while rescheduling — so
+            the primary action of the screen was off-screen with no scrollbar
+            visible to suggest it existed (audit item 29). */}
+        {isRescheduling && (
+          <DialogFooter className="shrink-0 flex-row gap-2 pt-4 sm:justify-between">
+            <Button
+              variant="outline"
+              onClick={handleCancelReschedule}
+              disabled={isSaving}
+              className="flex-1"
+            >
+              <X className="mr-1 h-4 w-4" />
+              Cancel
+            </Button>
+            <Button
+              onClick={handleReschedule}
+              disabled={isSaving || !rescheduleDate || !rescheduleTime}
+              className="flex-1"
+            >
+              <RefreshCw className="mr-1 h-4 w-4" />
+              {isSaving ? 'Saving…' : 'Confirm reschedule'}
+            </Button>
+          </DialogFooter>
+        )}
+
         {(onUpdateEvent || onDeleteEvent) && !isRescheduling && (
           <DialogFooter className="flex-row justify-between sm:justify-between gap-2 pt-4">
             {onDeleteEvent && (

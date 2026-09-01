@@ -29,15 +29,15 @@ const FN = 'finance-portal-batch7';
 
 const STATUS_TONE: Record<string, string> = {
   pending: 'bg-muted text-muted-foreground border-border',
-  sent: 'bg-info/15 text-info-foreground0 border-info/30',
-  in_progress: 'bg-info/15 text-info-foreground0 border-info/30',
-  consent_sent: 'bg-info/15 text-info-foreground0 border-info/30',
-  connected: 'bg-info/15 text-info-foreground0 border-info/30',
-  signed: 'bg-success/15 text-success-foreground0 border-success/30',
-  passed: 'bg-success/15 text-success-foreground0 border-success/30',
-  complete: 'bg-success/15 text-success-foreground0 border-success/30',
-  received: 'bg-success/15 text-success-foreground0 border-success/30',
-  ready: 'bg-success/15 text-success-foreground0 border-success/30',
+  sent: 'bg-info/15 text-info border-info/30',
+  in_progress: 'bg-info/15 text-info border-info/30',
+  consent_sent: 'bg-info/15 text-info border-info/30',
+  connected: 'bg-info/15 text-info border-info/30',
+  signed: 'bg-success/15 text-success border-success/30',
+  passed: 'bg-success/15 text-success border-success/30',
+  complete: 'bg-success/15 text-success border-success/30',
+  received: 'bg-success/15 text-success border-success/30',
+  ready: 'bg-success/15 text-success border-success/30',
   warning: 'bg-brand-500/15 text-brand-500 border-brand-500/30',
   draft: 'bg-brand-500/15 text-brand-500 border-brand-500/30',
   expired: 'bg-brand-500/15 text-brand-500 border-brand-500/30',
@@ -663,7 +663,7 @@ function NccpBundleCard({ fileId }: { fileId: string }) {
                     <div className="text-xs text-muted-foreground">{m.category}</div>
                   </div>
                   {m.present
-                    ? <Badge variant="outline" className="bg-success/15 text-success-foreground0 border-success/30"><CheckCircle2 className="h-3 w-3 mr-1" />Present</Badge>
+                    ? <Badge variant="outline" className="bg-success/15 text-success border-success/30"><CheckCircle2 className="h-3 w-3 mr-1" />Present</Badge>
                     : <Badge variant="outline" className="bg-destructive/15 text-destructive border-destructive/30"><AlertTriangle className="h-3 w-3 mr-1" />Missing</Badge>
                   }
                 </div>

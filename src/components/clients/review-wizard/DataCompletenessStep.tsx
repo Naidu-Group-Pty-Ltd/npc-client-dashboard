@@ -53,7 +53,7 @@ export function DataCompletenessStep({
               </div>
               {criticalIssues > 0 && (
                 <div className="flex items-center gap-2 justify-end">
-                  <AlertCircle className="h-4 w-4 text-destructive-foreground0" />
+                  <AlertCircle className="h-4 w-4 text-destructive" />
                   <span className="text-sm text-destructive">{criticalIssues} critical issues</span>
                 </div>
               )}

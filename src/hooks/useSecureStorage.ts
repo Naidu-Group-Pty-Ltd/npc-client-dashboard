@@ -15,6 +15,21 @@ type StorageBucket =
 interface UploadOptions {
   contentType?: string;
   upsert?: boolean;
+  /**
+   * The row this upload belongs to, which the server uses to derive the
+   * destination path, the owner and the client binding.
+   *
+   * `secure-storage` requires it for every human caller and every bucket
+   * except `branding-assets`, and refuses the upload with "Invalid upload
+   * resource" without it — but this helper never sent the field, so no upload
+   * from a browser could succeed. `client_files` records 13 uploads in July,
+   * 25 in June and none since (audit items 5, 7 and 8).
+   *
+   * Which id depends on the bucket, and `resolveHumanUploadBinding` is the
+   * authority: `investment-reports` wants an investment report, `qa_exports` a
+   * Q&A conversation, and everything else the CLIENT the file belongs to.
+   */
+  resourceId?: string;
 }
 
 interface UploadResult {
@@ -302,6 +317,7 @@ export const secureStorageUpload = async (
       path,
       file_data: fileData,
       content_type: contentType,
+      resource_id: options?.resourceId,
       upsert: options?.upsert || false
     });
 

@@ -148,7 +148,25 @@ describe('finance delivery names a relationship, never a person', () => {
   it('states the refusal beside a partner rather than hiding them', () => {
     const picker = code(PICKER);
     expect(picker).toContain('{recipient.blocked_message}');
-    expect(picker).toContain('disabled={!recipient.eligible || busy}');
+    // Selectability is decided by `canReceive`, which asks what the delivery
+    // actually needs (audit item 12). The rule this test protects — a partner
+    // the send would refuse cannot be chosen — is unchanged for the Finance
+    // Portal share; see the assertions below.
+    expect(picker).toContain('disabled={!canReceive(recipient) || busy}');
+    expect(picker).toMatch(/byEmail \? Boolean\(recipient\.email\) : recipient\.eligible/);
+  });
+
+  it('does not withhold an email from a partner the PORTAL would refuse', () => {
+    // Audit item 12. "Send to Finance -> Compose Email with PDF" used to
+    // address the client; it asks who now, through this same picker. But a
+    // partner without a Finance Portal account can still be emailed — that is
+    // most of the reason to compose one — so portal eligibility must not
+    // disable them here, while the refusal itself stays on screen.
+    const picker = code(PICKER);
+    expect(picker).toMatch(/deliveryMode\?: 'portal' \| 'email'/);
+    expect(picker).toContain("deliveryMode = 'portal'");
+    expect(picker).toContain("const byEmail = deliveryMode === 'email';");
+    expect(picker).toContain('They can still be emailed.');
   });
 
   it('offers a route out of an empty list instead of a dead end', () => {

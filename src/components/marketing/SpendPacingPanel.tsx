@@ -165,7 +165,7 @@ export function SpendPacingPanel({ campaigns, insights, datePreset, loading }: S
                     {pacing.pacingStatus === 'overspend' && (
                       <Tooltip>
                         <TooltipTrigger>
-                          <AlertTriangle className="h-3.5 w-3.5 text-destructive-foreground0" />
+                          <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
                         </TooltipTrigger>
                         <TooltipContent>
                           Spending faster than expected. Projected to exhaust budget early.

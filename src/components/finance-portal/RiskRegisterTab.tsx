@@ -29,15 +29,15 @@ const SEVERITIES = ['low','medium','high','critical'];
 
 const SEV_TONE: Record<string, string> = {
   low:      'bg-muted text-muted-foreground border-border',
-  medium:   'bg-info/15 text-info-foreground0 border-info/30',
+  medium:   'bg-info/15 text-info border-info/30',
   high:     'bg-brand-500/15 text-brand-500 border-brand-500/30',
   critical: 'bg-destructive/15 text-destructive border-destructive/30',
 };
 const STATUS_TONE: Record<string, string> = {
   open:        'bg-destructive/15 text-destructive border-destructive/30',
   in_progress: 'bg-brand-500/15 text-brand-500 border-brand-500/30',
-  mitigated:   'bg-info/15 text-info-foreground0 border-info/30',
-  resolved:    'bg-success/15 text-success-foreground0 border-success/30',
+  mitigated:   'bg-info/15 text-info border-info/30',
+  resolved:    'bg-success/15 text-success border-success/30',
   accepted:    'bg-muted text-muted-foreground border-border',
 };
 
@@ -100,7 +100,7 @@ export function RiskRegisterTab({ fileId }: { fileId: string }) {
                 {r.due_date && <Badge variant="outline">Due {r.due_date}</Badge>}
               </div>
               {r.description && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{r.description}</p>}
-              {r.resolution_note && <p className="text-xs text-success-foreground0 mt-1 flex items-start gap-1"><CheckCircle2 className="h-3 w-3 mt-0.5" />{r.resolution_note}</p>}
+              {r.resolution_note && <p className="text-xs text-success mt-1 flex items-start gap-1"><CheckCircle2 className="h-3 w-3 mt-0.5" />{r.resolution_note}</p>}
             </div>
             <div className="flex flex-col items-end gap-1">
               <Select value={r.status} onValueChange={(v) => setStatus(r.id, v)}>

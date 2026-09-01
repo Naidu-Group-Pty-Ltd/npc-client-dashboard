@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { useMutation } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -28,94 +27,49 @@ interface AIInsight {
   recommendations: string[];
 }
 
-/**
- * Secure fetch for AI insights data using HttpOnly cookies
- */
-async function fetchAIInsightsDataSecure(clientId: string) {
-  const { data, error } = await invokeSecureFunction('get-client-data', {
-    clientId,
-    include: { client: true, properties: true },
-  });
-
-  if (error) throw new Error(error.message);
-  if (!data?.success) throw new Error('Failed to fetch client data');
-  
-  const client = data.client;
-  const properties = data.properties || [];
-  return {
-    clientName: `${client?.primary_first_name} ${client?.primary_surname}`,
-    portfolioValue: Number(client?.total_portfolio_value) || 0,
-    debt: Number(client?.total_debt) || 0,
-    cashFlow: Number(client?.net_monthly_cash_flow) || 0,
-    properties,
-  };
-}
-
 export function ClientAIInsights({ clientId }: ClientAIInsightsProps) {
   const [insights, setInsights] = useState<AIInsight | null>(null);
 
-  // Fetch client data
-  const { data: clientData } = useQuery({
-    queryKey: ['client-ai-data', clientId],
-    queryFn: () => fetchAIInsightsDataSecure(clientId),
-  });
-
-  const clientName = clientData?.clientName || 'Client';
-  const portfolioValue = clientData?.portfolioValue || 0;
-  const debt = clientData?.debt || 0;
-  const cashFlow = clientData?.cashFlow || 0;
-  const properties = clientData?.properties || [];
-  const propertyCount = properties.length;
+  // No client data is loaded here any more. It was fetched to build the
+  // prompt, the prompt is now built on the server from the database, and
+  // nothing this component renders ever read it — so the `get-client-data`
+  // call it made on every mount of the AI tab bought nothing.
 
   const generateInsightsMutation = useMutation({
+    /**
+     * Audit item 10 — "Generate AI Insights" answered
+     * `Failed to generate insights: Not found` for everyone, every time.
+     *
+     * The 404 came from `report-qa`, and it was correct. That function's
+     * `chat` action carries `access: 'write'`, meaning it authorises against
+     * a Report Q&A CONVERSATION; this card has none, so the pre-dispatch gate
+     * refused with a deliberate 404 — a caller must not be able to tell a
+     * conversation it cannot reach from one that does not exist. The card had
+     * been asking the wrong endpoint a question it could never answer.
+     *
+     * Two more things were wrong even had it worked. A card on the Clients
+     * page required the unrelated `report_qa` module permission, and it spent
+     * Report Q&A's shared paid quota. And the entire prompt was composed
+     * here, in the browser, which made that endpoint a free-text model proxy.
+     *
+     * `generate-portfolio-analysis` is the endpoint that already answers this
+     * question: it authorises the CLIENT, reads the portfolio server-side and
+     * meters the call. So the request is now a client id and a mode, and the
+     * numbers the model sees come from the database rather than from whatever
+     * this component happened to have loaded.
+     */
     mutationFn: async () => {
-      const ltv = portfolioValue > 0 ? (debt / portfolioValue) * 100 : 0;
-      const avgPropertyValue = propertyCount > 0 ? portfolioValue / propertyCount : 0;
-      const totalRentalIncome = properties.reduce((sum: number, p: any) => sum + (Number(p.monthly_rental_income) || 0), 0);
-      const grossYield = portfolioValue > 0 ? (totalRentalIncome * 12 / portfolioValue) * 100 : 0;
-
-      const prompt = `Analyze this property investment portfolio and provide insights:
-
-Client: ${clientName}
-Portfolio Value: $${portfolioValue.toLocaleString('en-AU')}
-Total Debt: $${debt.toLocaleString('en-AU')}
-LTV Ratio: ${ltv.toFixed(1)}%
-Properties: ${propertyCount}
-Monthly Cash Flow: $${cashFlow.toLocaleString('en-AU')}
-Gross Yield: ${grossYield.toFixed(2)}%
-Average Property Value: $${avgPropertyValue.toLocaleString('en-AU')}
-
-Property breakdown:
-${properties.map((p: any) => `- ${p.address}: Value $${Number(p.value).toLocaleString('en-AU')}, Loan $${Number(p.loan_remaining).toLocaleString('en-AU')}, Monthly Rent $${Number(p.monthly_rental_income).toLocaleString('en-AU')}, Net Cash Flow $${Number(p.net_monthly_cashflow).toLocaleString('en-AU')}`).join('\n')}
-
-Provide a JSON response with this structure:
-{
-  "summary": "2-3 sentence overall assessment",
-  "strengths": ["strength 1", "strength 2", "strength 3"],
-  "opportunities": ["opportunity 1", "opportunity 2"],
-  "risks": ["risk 1", "risk 2"],
-  "recommendations": ["specific recommendation 1", "specific recommendation 2", "specific recommendation 3"]
-}`;
-
-      const { data, error } = await invokeSecureFunction('report-qa', {
-        action: 'chat',
-        messages: [{ role: 'user', content: prompt }],
-        question: prompt,
-        reportContents: [],
-        reportNames: [],
-        context: `You are a property investment advisor. Analyze portfolios and provide actionable insights.`
+      const { data, error } = await invokeSecureFunction('generate-portfolio-analysis', {
+        clientId,
+        mode: 'insights',
       });
 
-      if (error) throw error;
-
-      // Parse JSON from response
-      const responseText = data.response || data.choices?.[0]?.message?.content;
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('Could not parse AI response');
+      if (error) throw new Error(error.message);
+      if (!data?.success || !data.insights) {
+        throw new Error(data?.error || 'Could not generate insights');
       }
 
-      return JSON.parse(jsonMatch[0]) as AIInsight;
+      return data.insights as AIInsight;
     },
     onSuccess: (data) => {
       setInsights(data);
@@ -198,7 +152,7 @@ Provide a JSON response with this structure:
               <ul className="space-y-1">
                 {insights.strengths.map((strength, i) => (
                   <li key={i} className="text-sm flex items-start gap-2">
-                    <span className="text-success-foreground0 mt-1">•</span>
+                    <span className="text-success mt-1">•</span>
                     {strength}
                   </li>
                 ))}
@@ -214,7 +168,7 @@ Provide a JSON response with this structure:
               <ul className="space-y-1">
                 {insights.opportunities.map((opp, i) => (
                   <li key={i} className="text-sm flex items-start gap-2">
-                    <span className="text-info-foreground0 mt-1">•</span>
+                    <span className="text-info mt-1">•</span>
                     {opp}
                   </li>
                 ))}
@@ -230,7 +184,7 @@ Provide a JSON response with this structure:
               <ul className="space-y-1">
                 {insights.risks.map((risk, i) => (
                   <li key={i} className="text-sm flex items-start gap-2">
-                    <span className="text-warning-foreground0 mt-1">•</span>
+                    <span className="text-warning mt-1">•</span>
                     {risk}
                   </li>
                 ))}

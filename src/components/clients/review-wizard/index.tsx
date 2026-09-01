@@ -17,6 +17,7 @@ import { FlagsScenariosStep } from './FlagsScenariosStep';
 import { RecommendationsStep } from './RecommendationsStep';
 import { GenerateReportStep } from './GenerateReportStep';
 import type { ReviewWizardProps } from './types';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 export function ReviewWizard({
   clientId,
@@ -105,8 +106,8 @@ export function ReviewWizard({
       >
         <DialogHeader className="min-w-0 border-b bg-background px-6 py-5">
           <div className="flex items-center justify-between">
-            <DialogTitle className="min-w-0 truncate pr-4">Portfolio Review: {clientName}</DialogTitle>
-            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close portfolio review" className="shrink-0">
+            <DialogTitle className="min-w-0 truncate pr-4">{PORTFOLIO_REPORT_LABEL}: {clientName}</DialogTitle>
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label={`Close ${PORTFOLIO_REPORT_LABEL}`} className="shrink-0">
               <X className="h-4 w-4" />
             </Button>
           </div>

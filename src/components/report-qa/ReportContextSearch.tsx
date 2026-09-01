@@ -221,7 +221,7 @@ export function ReportSearch({ reports, onResultClick, className }: ReportSearch
                   }}
                 >
                   <div className="flex items-center gap-2 mb-1">
-                    <FileText className="h-3.5 w-3.5 text-destructive-foreground0 flex-shrink-0" />
+                    <FileText className="h-3.5 w-3.5 text-destructive flex-shrink-0" />
                     <span className="text-xs font-medium truncate">
                       {result.reportName.replace('.pdf', '')}
                     </span>

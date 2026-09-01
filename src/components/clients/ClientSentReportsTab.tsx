@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Card, CardContent } from '@/components/ui/card';
@@ -28,15 +28,33 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { secureStorageUpload, secureStorageDownload } from '@/hooks/useSecureStorage';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { PublishFromReportsPicker } from './PublishFromReportsPicker';
+import { useClientReportInventory } from '@/hooks/useClientReportInventory';
+import { publishReportToPortal } from '@/lib/reports/publishReportToPortal';
+import {
+  PORTAL_REPORT_TYPE,
+  publishableReports,
+  type PublishVerdict,
+  type UnifiedReport,
+} from '@/lib/reports/clientReportInventory.pure';
+import { parseStorageRef, bucketCandidates } from '@/lib/reports/storageRef';
 
 interface ClientSentReportsTabProps {
   clientId: string;
   clientName: string;
+  /**
+   * The client's properties, so the picker can offer their investment
+   * reports — those are found by property id rather than by client. Optional
+   * because everything else in this tab works without them.
+   */
+  properties?: Array<{ id: string }>;
 }
 
 const reportTypeConfig: Record<string, { label: string; icon: typeof FileText; color: string }> = {
   investment: { label: 'Investment Report', icon: FileBarChart, color: 'bg-info/10 text-info' },
-  portfolio: { label: 'Portfolio Review', icon: BarChart3, color: 'bg-success/10 text-success' },
+  portfolio: { label: PORTFOLIO_REPORT_LABEL, icon: BarChart3, color: 'bg-success/10 text-success' },
   borrowing_capacity: { label: 'Borrowing Capacity', icon: PiggyBank, color: 'bg-brand-500/10 text-brand-600' },
   cash_flow: { label: 'Cash Flow Analysis', icon: TrendingUp, color: 'bg-accent/10 text-accent' },
   general: { label: 'General', icon: FileText, color: 'bg-muted text-muted-foreground' },
@@ -52,13 +70,62 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ClientSentReportsTab({ clientId, clientName }: ClientSentReportsTabProps) {
+export function ClientSentReportsTab({ clientId, clientName, properties = [] }: ClientSentReportsTabProps) {
   const queryClient = useQueryClient();
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [reportToDelete, setReportToDelete] = useState<any>(null);
   const [deleting, setDeleting] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  /**
+   * Which of the two sources the dialog is publishing from.
+   *
+   * The upload path is unchanged and is still the right answer for a document
+   * written somewhere else. What it was NOT the right answer for is the five
+   * formats this product generates itself: those had to be downloaded and
+   * re-uploaded to reach the same portal, which produced a second copy of a
+   * file the workspace already held and could silently go stale against it.
+   */
+  const [publishSource, setPublishSource] = useState<'generated' | 'upload'>('generated');
+  const [selectedReport, setSelectedReport] = useState<UnifiedReport | null>(null);
+  const [selectedVerdict, setSelectedVerdict] = useState<PublishVerdict | null>(null);
+  const [publishStep, setPublishStep] = useState<string | null>(null);
+
+  const propertyIds = useMemo(() => properties.map((p) => p.id), [properties]);
+  const inventory = useClientReportInventory(clientId, propertyIds);
+
+  /**
+   * Fetch a published report's file.
+   *
+   * This asked `client-files` for the raw column, which is right only when
+   * the column holds a bare key in that one bucket. `storageRef.ts` records
+   * four shapes these columns carry — a key, a public URL, a signed URL and a
+   * stringified upload result — and two of them are absolute. Publishing a
+   * report the workspace generated makes the other shapes common here rather
+   * than rare, so the reference is resolved and the bucket it named is tried
+   * first. `investment-reports` stays as the fallback for a bare key from
+   * that era, which is what the portal's own download already does.
+   */
+  const fetchReportBlob = useCallback(async (storagePath: string) => {
+    const ref = parseStorageRef(storagePath);
+    if (/^https?:\/\//i.test(ref.path)) {
+      throw new Error('This report is stored somewhere this workspace cannot serve from.');
+    }
+    let lastError = 'Download failed';
+    // `bucketCandidates` is generic over bucket names because a reference can
+    // name one this list does not; the storage client's own union is the
+    // authority on what it will accept.
+    const candidates = bucketCandidates(ref, 'client-files', 'investment-reports') as Array<
+      Parameters<typeof secureStorageDownload>[0]
+    >;
+    for (const bucket of candidates) {
+      const attempt = await secureStorageDownload(bucket, ref.path);
+      if (attempt.success && attempt.blob) return attempt.blob;
+      lastError = attempt.error || lastError;
+    }
+    throw new Error(lastError);
+  }, []);
 
   const handleDownload = async (report: any) => {
     if (!report.storage_path) {
@@ -67,10 +134,8 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
     }
     setDownloadingId(report.id);
     try {
-      const result = await secureStorageDownload('client-files', report.storage_path);
-      if (!result.success || !result.blob) {
-        throw new Error(result.error || 'Download failed');
-      }
+      const blob = await fetchReportBlob(report.storage_path);
+      const result = { blob };
       const url = URL.createObjectURL(result.blob);
       const a = document.createElement('a');
       a.href = url;
@@ -178,6 +243,9 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
       const uploadResult = await secureStorageUpload('client-files', storagePath, uploadedFile, {
         contentType: uploadedFile.type || 'application/octet-stream',
         upsert: true,
+        // The client this file belongs to. `secure-storage` derives the
+        // destination and the owner from it and refuses the upload without it.
+        resourceId: clientId,
       });
 
       if (!uploadResult.success) {
@@ -212,6 +280,66 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
     }
   };
 
+  /**
+   * Choosing a report the workspace already produced.
+   *
+   * Selecting one fills the title and the category from the report itself, so
+   * the common case is two clicks and nothing typed — but both fields stay
+   * editable, because what the CLIENT should see this document called is not
+   * always what the workspace named it.
+   */
+  const handleSelectGenerated = useCallback((report: UnifiedReport, verdict: PublishVerdict) => {
+    setSelectedReport(report);
+    setSelectedVerdict(verdict);
+    setNewReport((p) => ({
+      ...p,
+      report_title: report.name,
+      report_type: PORTAL_REPORT_TYPE[report.type] || p.report_type,
+    }));
+  }, []);
+
+  const handlePublishGenerated = async () => {
+    if (!selectedReport) {
+      toast.error('Choose a report to publish');
+      return;
+    }
+    if (!newReport.report_title.trim()) {
+      toast.error('Report title is required');
+      return;
+    }
+
+    setPublishing(true);
+    setPublishStep(null);
+    try {
+      const outcome = await publishReportToPortal({
+        report: selectedReport,
+        clientId,
+        clientName,
+        title: newReport.report_title,
+        reportType: newReport.report_type || undefined,
+        notes: newReport.notes || null,
+        onProgress: setPublishStep,
+      });
+
+      if (!outcome.ok) {
+        toast.error('Failed to publish: ' + outcome.error);
+        return;
+      }
+
+      toast.success(
+        outcome.generated
+          ? 'Report generated and published to portal'
+          : 'Report published to portal',
+      );
+      handleClosePublish(false);
+      queryClient.invalidateQueries({ queryKey: ['client-portal-reports', clientId] });
+      queryClient.invalidateQueries({ queryKey: ['client-portal-reports-unified', clientId] });
+    } finally {
+      setPublishing(false);
+      setPublishStep(null);
+    }
+  };
+
   const handleDelete = async () => {
     if (!reportToDelete) return;
     setDeleting(true);
@@ -237,6 +365,9 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
     if (!open) {
       setShowPublishDialog(false);
       setUploadedFile(null);
+      setSelectedReport(null);
+      setSelectedVerdict(null);
+      setPublishStep(null);
       setNewReport({ report_title: '', report_type: '', report_tier: '', notes: '' });
     }
   };
@@ -256,7 +387,20 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
           <h3 className="text-sm font-semibold text-foreground">Sent Reports</h3>
           <p className="text-xs text-muted-foreground">Reports published to {clientName}'s portal</p>
         </div>
-        <Button size="sm" onClick={() => setShowPublishDialog(true)}>
+        <Button
+          size="sm"
+          onClick={() => {
+            /* Open on the source that has something in it. A client with
+               nothing generated should not land on an empty list, and one
+               with reports waiting should not have to find the tab. */
+            setPublishSource(
+              publishableReports(inventory.reports, inventory.publishedFiles).length > 0
+                ? 'generated'
+                : 'upload',
+            );
+            setShowPublishDialog(true);
+          }}
+        >
           <Plus className="h-3.5 w-3.5 mr-1.5" />
           Publish Report
         </Button>
@@ -286,7 +430,7 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
                         <p className="text-sm font-medium text-foreground truncate">{report.report_title}</p>
                         {report.is_read ? (
                           <Badge variant="outline" className="text-[10px] gap-1">
-                            <CheckCircle2 className="h-2.5 w-2.5 text-success-foreground0" />
+                            <CheckCircle2 className="h-2.5 w-2.5 text-success" />
                             Read
                           </Badge>
                         ) : (
@@ -326,11 +470,7 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
                       </Button>
                       {report.storage_path && /\.pdf$/i.test(report.storage_path) && (
                         <FlattenPdfIconButton
-                          getPdfBlob={async () => {
-                            const r = await secureStorageDownload('client-files', report.storage_path);
-                            if (!r.success || !r.blob) throw new Error(r.error || 'Download failed');
-                            return r.blob;
-                          }}
+                          getPdfBlob={() => fetchReportBlob(report.storage_path)}
                           filename={`${(report.report_title || 'Report').replace(/\s+/g, '_')}.pdf`}
                           variant="ghost"
                           size="icon"
@@ -387,9 +527,41 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
               <Upload className="h-4 w-4" />
               Publish Report to Portal
             </DialogTitle>
-            <DialogDescription>Upload a file and publish it to {clientName}'s client portal.</DialogDescription>
+            <DialogDescription>
+              Publish a report to {clientName}'s client portal — one this workspace has already
+              produced, or a file of your own.
+            </DialogDescription>
           </DialogHeader>
           <div className="w-full max-w-full min-w-0 space-y-4 mt-2">
+            <Tabs
+              value={publishSource}
+              onValueChange={(v) => setPublishSource(v as 'generated' | 'upload')}
+            >
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="generated">This client's reports</TabsTrigger>
+                <TabsTrigger value="upload">Upload a file</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="generated" className="mt-3">
+                <PublishFromReportsPicker
+                  reports={inventory.reports}
+                  publishedFiles={inventory.publishedFiles}
+                  selectedId={selectedReport?.id ?? null}
+                  onSelect={handleSelectGenerated}
+                />
+                {selectedVerdict?.alreadyPublished && (
+                  <p className="mt-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    {clientName} already has this document
+                    {selectedVerdict.publishedAt
+                      ? ` (shared ${format(new Date(selectedVerdict.publishedAt), 'dd MMM yyyy')})`
+                      : ''}
+                    . Publishing again adds a second entry to their portal rather than replacing
+                    the first.
+                  </p>
+                )}
+              </TabsContent>
+
+              <TabsContent value="upload" className="mt-3 space-y-4">
             {/* Drag & Drop Upload Zone */}
             <div className="w-full max-w-full min-w-0">
               <Label>Upload File *</Label>
@@ -439,6 +611,8 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
                 </div>
               )}
             </div>
+              </TabsContent>
+            </Tabs>
 
             {/* Report Title */}
             <div className="w-full max-w-full min-w-0">
@@ -460,7 +634,7 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="investment">Investment Report</SelectItem>
-                  <SelectItem value="portfolio">Portfolio Review</SelectItem>
+                  <SelectItem value="portfolio">{PORTFOLIO_REPORT_LABEL}</SelectItem>
                   <SelectItem value="borrowing_capacity">Borrowing Capacity</SelectItem>
                   <SelectItem value="cash_flow">Cash Flow Analysis</SelectItem>
                   <SelectItem value="general">General Document</SelectItem>
@@ -480,16 +654,27 @@ export function ClientSentReportsTab({ clientId, clientName }: ClientSentReports
               />
             </div>
 
-            <Button onClick={handlePublish} disabled={publishing || !uploadedFile || !newReport.report_title.trim()} className="w-full">
+            <Button
+              onClick={publishSource === 'generated' ? handlePublishGenerated : handlePublish}
+              disabled={
+                publishing ||
+                !newReport.report_title.trim() ||
+                (publishSource === 'upload' ? !uploadedFile : !selectedReport)
+              }
+              className="w-full"
+            >
               {publishing ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Uploading & Publishing...
+                  {publishStep ?? (publishSource === 'upload' ? 'Uploading & Publishing...' : 'Publishing...')}
                 </>
               ) : (
                 <>
                   <Send className="h-4 w-4 mr-2" />
-                  Publish to Portal
+                  {/* The one path that makes a document says so before it is clicked. */}
+                  {publishSource === 'generated' && selectedVerdict?.readiness === 'on_publish'
+                    ? 'Generate & Publish to Portal'
+                    : 'Publish to Portal'}
                 </>
               )}
             </Button>

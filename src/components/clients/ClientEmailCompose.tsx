@@ -61,6 +61,15 @@ interface ClientEmailComposeProps {
   clientId: string;
   clientName: string;
   clientEmail: string | null;
+  /**
+   * Who this particular email is for, when that is not the client.
+   *
+   * Audit item 12 — "Send to Finance → Compose Email with PDF" opened this
+   * dialog addressed to the customer, because `clientEmail` was the only
+   * address it had ever been given. A finance send now names its recipient;
+   * everything else omits it and keeps the client defaults unchanged.
+   */
+  recipient?: { name: string; email: string } | null;
   attachments?: Array<{
     id: string;
     file_name: string;
@@ -80,13 +89,14 @@ export function ClientEmailCompose({
   clientId,
   clientName,
   clientEmail,
+  recipient = null,
   attachments = [],
   preSelectedAttachmentId,
   defaultSubject,
   defaultBody,
   inlineAttachment = null
 }: ClientEmailComposeProps) {
-  const [to, setTo] = useState(clientEmail || '');
+  const [to, setTo] = useState(recipient?.email || clientEmail || '');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [subject, setSubject] = useState('');
@@ -109,10 +119,23 @@ export function ClientEmailCompose({
   // Set defaults when modal opens
   useEffect(() => {
     if (open) {
-      setTo(clientEmail || '');
-      // Use provided defaults or fallback to generic template
-      setSubject(defaultSubject || `Portfolio Update - ${clientName}`);
-      setBody(defaultBody || `Dear ${clientName.split(' ')[0]},\n\nPlease find attached your updated portfolio documentation.\n\nKind regards`);
+      setTo(recipient?.email || clientEmail || '');
+      // Use provided defaults or fallback to a template addressed to whoever
+      // this email is actually for. The client wording said "your updated
+      // portfolio", which is wrong in both directions when the reader is the
+      // finance partner: it is not their portfolio, and it does not say whose.
+      setSubject(
+        defaultSubject
+          || (recipient
+            ? `Client details - ${clientName}`
+            : `Portfolio Update - ${clientName}`),
+      );
+      setBody(
+        defaultBody
+          || (recipient
+            ? `Dear ${recipient.name.split(' ')[0]},\n\nPlease find attached the client details for ${clientName}.\n\nKind regards`
+            : `Dear ${clientName.split(' ')[0]},\n\nPlease find attached your updated portfolio documentation.\n\nKind regards`),
+      );
       
       // Pre-select attachment if specified
       if (preSelectedAttachmentId) {
@@ -125,7 +148,7 @@ export function ClientEmailCompose({
         setSelectedMailbox(defaultMailbox.id);
       }
     }
-  }, [open, clientEmail, clientName, preSelectedAttachmentId, defaultMailbox, selectedMailbox, defaultSubject, defaultBody]);
+  }, [open, clientEmail, clientName, recipient, preSelectedAttachmentId, defaultMailbox, selectedMailbox, defaultSubject, defaultBody]);
 
   const toggleAttachment = (attachmentId: string) => {
     setSelectedAttachments(prev => 
@@ -247,7 +270,9 @@ export function ClientEmailCompose({
             Compose Email
           </DialogTitle>
           <DialogDescription className="text-left">
-            Send an email to {clientName}
+            {recipient
+              ? `Send an email to ${recipient.name} about ${clientName}`
+              : `Send an email to ${clientName}`}
           </DialogDescription>
         </DialogHeader>
 

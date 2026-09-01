@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { isAssignablePerson } from '@/lib/team/assignablePerson.pure';
 
 export interface TeamUser {
   id: string;
@@ -30,7 +31,12 @@ export function useTeamUsers() {
       if (error) throw error;
       // Edge function returns { success, records, count }
       const records = data?.records || data || [];
-      return (Array.isArray(records) ? records : []) as TeamUser[];
+      // Seeded compliance accounts are addressed at reserved domains that
+      // resolve nowhere, so an invite to one could never arrive. They were
+      // being offered as meeting attendees (audit item 28). Filtered here
+      // rather than deleted: both hold real AML case history.
+      return (Array.isArray(records) ? records : [])
+        .filter((user: TeamUser) => isAssignablePerson(user)) as TeamUser[];
     },
     staleTime: 5 * 60 * 1000,
   });

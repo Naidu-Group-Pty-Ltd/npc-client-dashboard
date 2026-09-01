@@ -120,6 +120,7 @@ export function AssetLibraryDialog({ open, onOpenChange, templateId, pageWidth, 
       const folder = templateId ?? 'asset-library';
       const path = `${folder}/lib-${Date.now()}.${ext}`;
       const result = await secureStorageUpload('report-templates', path, file, {
+        resourceId: templateId,
         contentType: file.type,
         upsert: true,
       });

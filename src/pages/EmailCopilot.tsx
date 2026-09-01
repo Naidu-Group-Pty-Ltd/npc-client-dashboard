@@ -52,6 +52,9 @@ import {
   MessageCircle,
   Bell,
   BellOff,
+  Volume2,
+  VolumeX,
+  Maximize2,
   Mic,
   MicOff,
   Loader2,
@@ -307,6 +310,16 @@ export default function EmailCopilot() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showDraftModal, setShowDraftModal] = useState(false);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
+  /**
+   * Audit item 42 — the email body sat in a small box.
+   *
+   * The panel is capped at `min(62dvh, 44rem)`, but everything above it — the
+   * page header, the human-in-the-loop banner, the subject, From, To, Cc and
+   * the date — leaves only a few lines of that on a short window, which is
+   * what the report shows. This opens the SAME `EmailBodyView`, with the same
+   * prose styling, in a dialog that uses the whole screen.
+   */
+  const [showBodyModal, setShowBodyModal] = useState(false);
   const [showSendConfirmModal, setShowSendConfirmModal] = useState(false);
   const [showEditDraftModal, setShowEditDraftModal] = useState(false);
   const [editableDraft, setEditableDraft] = useState('');
@@ -1045,9 +1058,14 @@ export default function EmailCopilot() {
         urgency_level: nextSummary.urgencyLevel,
         status: 'summarized',
       } : e));
-    } catch (error) {
+    } catch (error: any) {
+      // Audit item 43 — this discarded the reason, so a rejected credential, an
+      // exhausted balance and a rate limit all read as one sentence. The
+      // Intelligence panel beside it already showed `e?.message`, which is why
+      // Analyze and Translate reported "internal error" while Summarize said
+      // nothing at all. Both say what happened now.
       console.error('Error summarizing:', error);
-      toast.error('Failed to summarize email');
+      toast.error(error?.message || 'Failed to summarize email');
     } finally {
       setIsSummarizing(false);
     }
@@ -1184,10 +1202,18 @@ export default function EmailCopilot() {
   };
 
   // Parse comma-separated emails
+  /**
+   * A typed recipient list, split on comma OR semicolon.
+   *
+   * Outlook writes semicolons, and somebody pasting a list out of it should
+   * not have to know that this box wanted commas — a semicolon-separated paste
+   * used to parse as one address containing several `@`s and reach nobody.
+   * `send-email-reply` splits on the same two characters.
+   */
   const parseEmailList = (emails: string): string[] => {
     const safeEmails = toSafeString(emails);
     if (!safeEmails.trim()) return [];
-    return safeEmails.split(',').map(e => e.trim()).filter(e => e.includes('@'));
+    return safeEmails.split(/[,;]/).map(e => e.trim()).filter(e => e.includes('@'));
   };
 
   // Initialize reply fields when opening draft modal
@@ -1225,8 +1251,20 @@ export default function EmailCopilot() {
       toast.error('Cannot send empty email');
       return;
     }
-    if (!replyTo.trim() || !replyTo.includes('@')) {
+    // Audit item 45 — To takes a list now, like Cc and Bcc always have, so
+    // the check is "did we get at least one address" rather than "does this
+    // string contain an @". A typed list with one bad entry is named, because
+    // silently dropping a recipient is how somebody does not get an email.
+    const toEntries = replyTo.split(/[,;]/).map((e) => e.trim()).filter(Boolean);
+    const validTo = toEntries.filter((e) => e.includes('@'));
+    if (validTo.length === 0) {
       toast.error('Please enter a valid recipient email');
+      return;
+    }
+    if (validTo.length < toEntries.length) {
+      toast.error('One of the recipients is not a valid email address', {
+        description: toEntries.filter((e) => !e.includes('@')).join(', '),
+      });
       return;
     }
     // Missing-attachment guard
@@ -1436,7 +1474,7 @@ export default function EmailCopilot() {
       );
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
-        to: forwardTo,
+        to: parseEmailList(forwardTo),
         subject: `Fwd: ${selectedEmail.subject}`,
         body: forwardBody,
         cc: ccList.length > 0 ? ccList : undefined,
@@ -1517,7 +1555,7 @@ export default function EmailCopilot() {
       );
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
-        to: replyTo,
+        to: parseEmailList(replyTo),
         subject: replySubject,
         body: currentDraft,
         cc: ccList.length > 0 ? ccList : undefined,
@@ -1621,7 +1659,7 @@ export default function EmailCopilot() {
       }
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
-        to: composeEmail.to,
+        to: parseEmailList(composeEmail.to),
         subject: composeEmail.subject || '(No Subject)',
         body: composeEmail.body,
         cc: ccList.length > 0 ? ccList : undefined,
@@ -1755,7 +1793,7 @@ export default function EmailCopilot() {
       read: { label: 'Read', className: 'bg-muted text-muted-foreground' },
       summarized: { label: 'Summarized', className: 'bg-success/10 text-success border-success/20' },
       drafted: { label: 'Draft Ready', className: 'bg-accent/10 text-accent border-accent/20' },
-      archived: { label: 'Archived', className: 'bg-muted0/10 text-muted-foreground border-border/20' }
+      archived: { label: 'Archived', className: 'bg-muted/10 text-muted-foreground border-border/20' }
     };
     const { label, className } = config[status] || config.read;
     return <Badge variant="outline" className={className}>{label}</Badge>;
@@ -1805,6 +1843,26 @@ export default function EmailCopilot() {
     return new Date(bEmails[0].received_at).getTime() - new Date(aEmails[0].received_at).getTime();
   });
   
+  /**
+   * Audit item 40 — Sent had no search.
+   *
+   * `filteredEmails` has always applied `searchQuery` to sent emails, including
+   * their recipients; what was missing was the box, and this list. The Sent
+   * view shows synced sent emails AND replies composed here, so searching one
+   * and not the other would be worse than searching neither.
+   */
+  const filteredSentReplies = sentReplies.filter((reply) => {
+    if (!searchQuery) return true;
+    const query = searchQuery.toLowerCase();
+    return [
+      reply.recipient,
+      reply.subject,
+      reply.body,
+      ...(reply.cc_recipients ?? []),
+      ...(reply.bcc_recipients ?? []),
+    ].some((field) => toSafeString(field).toLowerCase().includes(query));
+  });
+
   const inboxEmails = emails.filter(e => e.folder === 'inbox' && e.status !== 'archived');
   const sentEmails = emails.filter(e => e.folder === 'sent');
   const unreadCount = inboxEmails.filter(e => e.status === 'unread').length;
@@ -1846,10 +1904,22 @@ export default function EmailCopilot() {
             aria-label={soundEnabled ? 'Disable sound notifications' : 'Enable sound notifications'}
             className="h-10 w-10 rounded-xl border border-border/70 bg-background/65 shadow-sm transition-all hover:-translate-y-px hover:border-primary/45 hover:bg-primary/10 hover:text-primary hover:shadow-[0_0_18px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
           >
+            {/*
+              Audit item 41 — these two buttons drew the SAME icon. One mutes a
+              sound and one stops a browser notification, and a reader had only
+              position to tell them apart; the second's colour did not help
+              either, because `text-success` is not a token and
+              compiled to nothing, so both bells inherited the same colour.
+
+              A speaker for the sound and a bell for the notification says
+              which is which without depending on colour at all — which is what
+              a reader needs when the two sit side by side, and what a
+              colour-blind reader needs regardless.
+            */}
             {soundEnabled ? (
-              <Bell className="h-4 w-4 text-primary" />
+              <Volume2 className="h-4 w-4 text-primary" />
             ) : (
-              <BellOff className="h-4 w-4 text-muted-foreground" />
+              <VolumeX className="h-4 w-4 text-muted-foreground" />
             )}
           </Button>
           <Button 
@@ -1861,7 +1931,7 @@ export default function EmailCopilot() {
             className="h-10 w-10 rounded-xl border border-border/70 bg-background/65 shadow-sm transition-all hover:-translate-y-px hover:border-success/45 hover:bg-success/10 hover:text-success hover:shadow-[0_0_18px_hsl(142_71%_45%/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success/40"
           >
             {browserNotificationsEnabled ? (
-              <Bell className="h-4 w-4 text-success-foreground0" />
+              <Bell className="h-4 w-4 text-success" />
             ) : (
               <BellOff className="h-4 w-4 text-muted-foreground" />
             )}
@@ -2013,10 +2083,19 @@ export default function EmailCopilot() {
             </div>
           </div>
 
-          {viewMode === 'inbox' ? (
-            <>
-              {/* Search and Filter Bar */}
-              <div className="shrink-0 space-y-3 border-b border-border/70 bg-background/20 px-3 py-3">
+          {/*
+            Audit item 40 — Sent had no search while Inbox did.
+
+            One control above the branch rather than a second copy inside it:
+            `searchQuery` already drove `filteredEmails` for BOTH folders,
+            matching recipients as well as sender, subject and body — what was
+            missing was the box. `filteredSentReplies` now applies the same
+            query to replies composed here, because searching the synced half
+            of Sent and not the composed half would be worse than searching
+            neither. The status filter and Show Archived stay inbox-only:
+            neither means anything for Sent.
+          */}
+          <div className="shrink-0 border-b border-border/70 bg-background/20 px-3 py-3">
                 {/* Search */}
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/70" />
@@ -2037,11 +2116,24 @@ export default function EmailCopilot() {
                     </button>
                   )}
                 </div>
-                
-                {/* Filters */}
+          </div>
+
+          {viewMode === 'inbox' ? (
+            <>
+              {/*
+                Audit item 39 — the inbox fitted one email.
+
+                Four stacked rows stood between the tabs and the first message:
+                search, the status filter with Show Archived, and a count row
+                of its own. On a laptop that is most of the column. The filters
+                and the count are one row now — the count is a reading OF the
+                filter, so it belongs beside it — which buys back a row and a
+                border without removing anything.
+              */}
+              <div className="shrink-0 border-b border-border/70 bg-background/20 px-3 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger aria-label="Filter emails by status" className="h-10 min-w-[150px] flex-1 rounded-xl border-primary/15 bg-background/75 text-xs shadow-sm transition-all hover:border-primary/55 hover:bg-primary/5 hover:shadow-[0_0_18px_hsl(var(--primary)/0.10)] focus:ring-2 focus:ring-primary/40">
+                    <SelectTrigger aria-label="Filter emails by status" className="h-9 min-w-[130px] flex-1 rounded-xl border-primary/15 bg-background/75 text-xs shadow-sm transition-all hover:border-primary/55 hover:bg-primary/5 hover:shadow-[0_0_18px_hsl(var(--primary)/0.10)] focus:ring-2 focus:ring-primary/40">
                       <Filter className="h-3 w-3 mr-1" />
                       <SelectValue placeholder="Filter by status" />
                     </SelectTrigger>
@@ -2055,10 +2147,10 @@ export default function EmailCopilot() {
                       <SelectItem value="archived">Archived</SelectItem>
                     </SelectContent>
                   </Select>
-                  
-                  <Badge 
-                    variant={showArchived ? "default" : "outline"} 
-                    className={`min-h-10 cursor-pointer rounded-xl px-3 text-xs font-semibold transition-all hover:-translate-y-px hover:border-primary/50 hover:bg-primary/10 hover:shadow-[0_0_18px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 ${showArchived ? 'border-primary/35 bg-primary/15 text-primary shadow-sm shadow-primary/10' : 'border-border/70 bg-background/70 text-muted-foreground hover:text-foreground'}`}
+
+                  <Badge
+                    variant={showArchived ? "default" : "outline"}
+                    className={`min-h-9 cursor-pointer rounded-xl px-2.5 text-xs font-semibold transition-all hover:-translate-y-px hover:border-primary/50 hover:bg-primary/10 hover:shadow-[0_0_18px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45 ${showArchived ? 'border-primary/35 bg-primary/15 text-primary shadow-sm shadow-primary/10' : 'border-border/70 bg-background/70 text-muted-foreground hover:text-foreground'}`}
                     onClick={() => setShowArchived(!showArchived)}
                     role="button"
                     tabIndex={0}
@@ -2069,25 +2161,15 @@ export default function EmailCopilot() {
                     <Archive className="h-3 w-3 mr-1" />
                     {showArchived ? 'Showing' : 'Show'} Archived
                   </Badge>
-                </div>
-              </div>
-              
-              {/* Email List Header */}
-              <div className="shrink-0 border-b border-primary/10 bg-[linear-gradient(135deg,hsl(var(--muted)/0.28),hsl(var(--background)/0.22))] px-4 py-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full border border-primary/15 bg-primary/10">
-                      <Inbox className="h-3.5 w-3.5 text-primary" />
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums text-foreground">
-                      {filteredEmails.length} {filteredEmails.length === 1 ? 'email' : 'emails'}
-                    </span>
+
+                  <span className="ml-auto whitespace-nowrap text-xs font-semibold tabular-nums text-muted-foreground">
+                    {filteredEmails.length} {filteredEmails.length === 1 ? 'email' : 'emails'}
                     {sortedThreadKeys.length !== filteredEmails.length && (
-                      <span className="rounded-full border border-border/60 bg-background/55 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-                        {sortedThreadKeys.length} {sortedThreadKeys.length === 1 ? 'thread' : 'threads'}
+                      <span className="ml-1 font-medium text-muted-foreground/75">
+                        · {sortedThreadKeys.length} {sortedThreadKeys.length === 1 ? 'thread' : 'threads'}
                       </span>
                     )}
-                  </div>
+                  </span>
                 </div>
               </div>
             </>
@@ -2218,12 +2300,12 @@ export default function EmailCopilot() {
                                   )}
                                   {hasDraft && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-accent border-accent/30 bg-accent/5">
-                                      <MessageSquare className="h-2.5 w-2.5 mr-0.5 text-accent-foreground0" /> Draft
+                                      <MessageSquare className="h-2.5 w-2.5 mr-0.5 text-accent" /> Draft
                                     </Badge>
                                   )}
                                   {latestEmail.status === 'replied' && (
                                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-info border-info/30 bg-info/5">
-                                      <Reply className="h-2.5 w-2.5 mr-0.5 text-info-foreground0" /> Replied
+                                      <Reply className="h-2.5 w-2.5 mr-0.5 text-info" /> Replied
                                     </Badge>
                                   )}
                                   {isNonEmptyArray(latestEmail.attachments) && (
@@ -2232,7 +2314,7 @@ export default function EmailCopilot() {
                                     </Badge>
                                   )}
                                   {latestEmail.status === 'archived' && (
-                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-border/20 bg-muted0/10">
+                                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-muted-foreground border-border/20 bg-muted/10">
                                       <Archive className="h-2.5 w-2.5 mr-0.5" /> Archived
                                     </Badge>
                                   )}
@@ -2279,10 +2361,10 @@ export default function EmailCopilot() {
                                         {extractSenderName(email.sender)}
                                       </span>
                                       {email.summary && (
-                                        <Sparkles className="h-3 w-3 text-success-foreground0 flex-shrink-0" />
+                                        <Sparkles className="h-3 w-3 text-success flex-shrink-0" />
                                       )}
                                       {email.draft_reply && (
-                                        <MessageSquare className="h-3 w-3 text-accent-foreground0 flex-shrink-0" />
+                                        <MessageSquare className="h-3 w-3 text-accent flex-shrink-0" />
                                       )}
                                       {isNonEmptyArray(email.attachments) && (
                                         <Paperclip className="h-3 w-3 text-primary flex-shrink-0" />
@@ -2328,10 +2410,10 @@ export default function EmailCopilot() {
             ) : (
               // Sent view - shows both synced sent emails AND manually sent replies
               <>
-                {filteredEmails.length === 0 && sentReplies.length === 0 ? (
+                {filteredEmails.length === 0 && filteredSentReplies.length === 0 ? (
                   <div className="m-4 rounded-[1.75rem] border border-dashed border-success/25 bg-[linear-gradient(135deg,hsl(var(--card)/0.76),hsl(var(--background)/0.58))] p-8 text-center shadow-inner shadow-sm dark:shadow-black/10">
                     <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-success/20 bg-success/10">
-                      <Send className="h-7 w-7 text-success-foreground0/55" />
+                      <Send className="h-7 w-7 text-success/55" />
                     </span>
                     <p className="text-sm font-semibold text-foreground">No sent emails</p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -2398,7 +2480,7 @@ export default function EmailCopilot() {
                     ))}
                     
                     {/* Show manually sent replies from the dashboard */}
-                    {sentReplies.map((reply) => (
+                    {filteredSentReplies.map((reply) => (
                       <div
                         key={`reply-${reply.id}`}
                         role="button"
@@ -2720,9 +2802,22 @@ export default function EmailCopilot() {
                   {/* Email Body */}
                   <div className="min-w-0 overflow-hidden rounded-[1.75rem] border border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)/0.96),hsl(var(--background)/0.88))] shadow-[0_18px_48px_hsl(var(--background)/0.18)]">
                     <div className="border-b border-border/55 bg-muted/20 px-5 py-3">
-                      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                        <Mail className="h-3.5 w-3.5 text-primary/70" />
-                        Email body
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          <Mail className="h-3.5 w-3.5 text-primary/70" />
+                          Email body
+                        </div>
+                        {/* Audit item 42 — read it in the whole window. */}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowBodyModal(true)}
+                          aria-label="Expand email body"
+                          className="h-8 shrink-0 gap-1.5 rounded-full text-xs hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                        >
+                          <Maximize2 className="h-3.5 w-3.5" />
+                          Expand
+                        </Button>
                       </div>
                     </div>
                     <div className="max-h-[min(62dvh,44rem)] overflow-auto overscroll-contain px-5 py-5 [scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin] sm:px-7 sm:py-6">
@@ -2780,7 +2875,7 @@ export default function EmailCopilot() {
                             <ul className="mt-3 space-y-2">
                               {toStringArray(selectedEmail.summary.requiredActions).map((action, i) => (
                                 <li key={i} className="flex items-start gap-2 text-sm leading-6">
-                                  <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-success-foreground0" />
+                                  <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-success" />
                                   <span className="min-w-0 break-words text-foreground/85">{action}</span>
                                 </li>
                               ))}
@@ -3062,7 +3157,7 @@ export default function EmailCopilot() {
                     value={replyTo}
                     aria-label="Reply recipient"
                     onChange={(e) => setReplyTo(e.target.value)}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 text-xs focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)] sm:text-sm"
                   />
                 </div>
@@ -3422,7 +3517,7 @@ export default function EmailCopilot() {
                     <ul className="mt-2 space-y-2">
                       {toStringArray(selectedEmail.summary.requiredActions).map((action, i) => (
                         <li key={i} className="text-sm flex items-start gap-2 p-2 bg-success/10 rounded-lg">
-                          <CheckCircle className="h-4 w-4 text-success-foreground0 flex-shrink-0 mt-0.5" />
+                          <CheckCircle className="h-4 w-4 text-success flex-shrink-0 mt-0.5" />
                           <span>{action}</span>
                         </li>
                       ))}
@@ -3476,7 +3571,7 @@ export default function EmailCopilot() {
                     value={composeEmail.to}
                     aria-label="Recipient email address"
                     onChange={(e) => setComposeEmail({ ...composeEmail, to: e.target.value })}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)]"
                   />
                 </div>
@@ -3726,7 +3821,7 @@ export default function EmailCopilot() {
                     value={replyTo}
                     aria-label="Reply recipient"
                     onChange={(e) => setReplyTo(e.target.value)}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-8"
                   />
                 </div>
@@ -3850,7 +3945,7 @@ export default function EmailCopilot() {
                   <Input
                     value={forwardTo}
                     onChange={(e) => setForwardTo(e.target.value)}
-                    placeholder="recipient@example.com"
+                    placeholder="name@example.com, second@example.com"
                     className="h-8"
                   />
                 </div>
@@ -3994,6 +4089,38 @@ export default function EmailCopilot() {
         snippets={snippets}
         onChanged={refreshSnippets}
       />
+      {/*
+        Audit item 42 — the email body, in the whole window.
+
+        The SAME `EmailBodyView` with the SAME prose classes as the panel, so
+        the expanded reading cannot become a second rendering of the message
+        that differs from the one beside it. A flex column with the scroll on
+        the body means a long email scrolls inside the dialog rather than
+        pushing its own header off the top.
+      */}
+      <Dialog open={showBodyModal} onOpenChange={setShowBodyModal}>
+        <DialogContent className="flex h-[92dvh] max-h-[92dvh] w-[calc(100vw-1.5rem)] max-w-5xl flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
+            <DialogTitle className="pr-8 text-left text-base leading-6">
+              {selectedEmail?.subject || '(No subject)'}
+            </DialogTitle>
+            <DialogDescription className="text-left">
+              {selectedEmail?.sender}
+              {selectedEmail?.received_at ? ` — ${formatEmailDate(selectedEmail.received_at)}` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-auto overscroll-contain px-1 py-2 [scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin]">
+            {selectedEmail && (
+              <EmailBodyView
+                content={selectedEmail.body}
+                html={selectedEmail.body_html}
+                className="prose prose-sm max-w-none leading-7 text-foreground/90 dark:prose-invert prose-a:font-medium prose-a:text-primary prose-a:underline-offset-4 prose-a:break-words prose-p:my-3 prose-blockquote:rounded-2xl prose-blockquote:border-l-primary/45 prose-blockquote:bg-muted/35 prose-blockquote:px-4 prose-blockquote:py-3 prose-blockquote:text-muted-foreground prose-pre:whitespace-pre-wrap prose-pre:break-words prose-code:break-words prose-table:block prose-table:max-w-full prose-table:overflow-x-auto [&_*]:max-w-full [&_*]:break-words"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <ScheduledSendsDialog
         open={showScheduledList}
         onOpenChange={setShowScheduledList}

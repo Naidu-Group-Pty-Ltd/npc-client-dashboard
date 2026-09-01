@@ -274,7 +274,7 @@ export function DataQualityAnalysis({ listings }: DataQualityAnalysisProps) {
                     <div className="flex min-w-0 items-center gap-2">
                       {issue.count > 0 && issue.severity === 'critical' && <XCircle className="h-3.5 w-3.5 text-destructive" />}
                       {issue.count > 0 && issue.severity === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-brand-500" />}
-                      {(issue.count === 0 || issue.severity === 'info') && <CheckCircle2 className="h-3.5 w-3.5 text-success-foreground0" />}
+                      {(issue.count === 0 || issue.severity === 'info') && <CheckCircle2 className="h-3.5 w-3.5 text-success" />}
                       <span className="reports-quality-issue-label">{issue.label}</span>
                     </div>
                     <div className="flex items-center gap-2">

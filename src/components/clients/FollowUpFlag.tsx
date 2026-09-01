@@ -23,6 +23,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface FollowUpFlagProps {
   clientId: string;
@@ -34,7 +35,7 @@ interface FollowUpFlagProps {
 
 const reminderTypes = [
   { value: 'follow_up', label: 'Follow Up', icon: Bell },
-  { value: 'review', label: 'Portfolio Review', icon: FileText },
+  { value: 'review', label: PORTFOLIO_REPORT_LABEL, icon: FileText },
   { value: 'call', label: 'Phone Call', icon: Phone },
   { value: 'meeting', label: 'Meeting', icon: Users },
   { value: 'document', label: 'Document', icon: FileText },

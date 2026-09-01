@@ -34,7 +34,7 @@ export function RecordingIndicator({
   // Different styling for paused vs recording state
   const borderColor = isPaused ? 'border-warning/30' : 'border-destructive/30';
   const bgColor = isPaused ? 'bg-warning/10' : 'bg-destructive/10';
-  const accentColor = isPaused ? 'text-warning-foreground0' : 'text-destructive-foreground0';
+  const accentColor = isPaused ? 'text-warning' : 'text-destructive';
   const progressBgColor = isPaused ? 'bg-warning/20' : 'bg-destructive/20';
   const progressFillColor = isNearLimit ? 'bg-warning' : (isPaused ? 'bg-warning/60' : 'bg-destructive/60');
 
@@ -55,7 +55,7 @@ export function RecordingIndicator({
         <div className="relative" aria-hidden="true">
           {isPaused ? (
             <div className="w-5 h-5 rounded-full bg-warning/20 flex items-center justify-center">
-              <Pause className="w-3 h-3 text-warning-foreground0" />
+              <Pause className="w-3 h-3 text-warning" />
             </div>
           ) : (
             <>
@@ -90,7 +90,7 @@ export function RecordingIndicator({
         {duration > 0 && (
           <span className={cn(
             "text-xs font-mono ml-auto",
-            isNearLimit ? "text-warning-foreground0 font-semibold" : accentColor + '/70'
+            isNearLimit ? "text-warning font-semibold" : accentColor + '/70'
           )}>
             {formatDuration(duration)} / {formatDuration(maxDuration)}
           </span>
@@ -107,7 +107,7 @@ export function RecordingIndicator({
       
       {/* Near limit warning */}
       {isNearLimit && (
-        <p className="text-xs text-warning-foreground0 font-medium">
+        <p className="text-xs text-warning font-medium">
           ⚠️ Recording will stop in {formatDuration(maxDuration - duration)}
         </p>
       )}
@@ -123,7 +123,7 @@ export function RecordingIndicator({
       {/* Live transcription preview */}
       {liveTranscript && !isPaused && (
         <div className="text-sm text-muted-foreground italic border-t border-destructive/20 pt-2 mt-1">
-          <span className="text-destructive-foreground0/60 text-xs mr-1">Live:</span>
+          <span className="text-destructive/60 text-xs mr-1">Live:</span>
           {liveTranscript}
           <span className="inline-block w-1 h-4 bg-destructive/50 ml-0.5 animate-pulse motion-reduce:animate-none" />
         </div>
@@ -132,7 +132,7 @@ export function RecordingIndicator({
       {/* Paused instructions */}
       {isPaused && (
         <p className="text-xs text-muted-foreground mt-1">
-          Click <span className="text-warning-foreground0 font-medium">Resume</span> to continue or <span className="text-destructive font-medium">Stop</span> to transcribe
+          Click <span className="text-warning font-medium">Resume</span> to continue or <span className="text-destructive font-medium">Stop</span> to transcribe
         </p>
       )}
       

@@ -413,6 +413,27 @@ export function useRecoverStockSourceImages() {
   });
 }
 
+/**
+ * Ask again for the brochure links a Google Sheet would not export.
+ *
+ * The SOURCE only. No rows are re-imported, no stock data is touched, and no
+ * price, availability or client selection moves — this exists precisely so a
+ * builder does not have to delete and re-upload a working stock list to pick
+ * up a document link. The server refuses unless the upload is a Google Sheet
+ * currently reporting that its workbook could not be exported.
+ */
+export function useRefreshBrochureLinks() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (uploadId: string) =>
+      invoke<{ requested: boolean }>({
+        operation: 'refresh_brochure_links',
+        upload_id: uploadId,
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
+
 /** Resume enrichment for stock left pending by an earlier upload. */
 export function useEnrichPendingStockImages() {
   const queryClient = useQueryClient();

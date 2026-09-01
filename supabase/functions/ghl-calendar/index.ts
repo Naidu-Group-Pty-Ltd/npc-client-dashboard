@@ -6,6 +6,71 @@ import { internalError } from '../_shared/errorResponse.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
+/**
+ * Notes for an appointment live in THIS database, not in GoHighLevel.
+ *
+ * Measured against the live account on 2026-08-31: of 65 appointments, 62
+ * carry a `notes` key and one has anything in it. GHL returns the field on
+ * both the list and the detail endpoint, so nothing is lost on the way in —
+ * it was never stored on the appointment. `appointment_notes` is where it goes.
+ *
+ * Every one of these degrades to a no-op rather than failing the act it
+ * accompanies: a booking must not fail because a note could not be filed, and
+ * a calendar must not fail to load because notes could not be read.
+ */
+async function saveAppointmentNotes(
+  supabase: any,
+  appointmentGhlId: string | null | undefined,
+  notes: string | null | undefined,
+  userId?: string | null,
+): Promise<void> {
+  if (!appointmentGhlId || notes === undefined || notes === null) return;
+  try {
+    const { error } = await supabase
+      .from('appointment_notes')
+      .upsert({
+        appointment_ghl_id: appointmentGhlId,
+        notes,
+        updated_at: new Date().toISOString(),
+        updated_by: userId ?? null,
+      }, { onConflict: 'appointment_ghl_id' });
+    if (error) console.error('[ghl-calendar] Could not store appointment notes:', error.message);
+  } catch (e) {
+    console.error('[ghl-calendar] Could not store appointment notes:', String(e));
+  }
+}
+
+/** Stored notes for a set of appointments, keyed by GHL event id. */
+async function loadAppointmentNotes(
+  supabase: any,
+  ids: string[],
+): Promise<Record<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return {};
+  try {
+    const { data, error } = await supabase
+      .from('appointment_notes')
+      .select('appointment_ghl_id, notes')
+      .in('appointment_ghl_id', unique);
+    if (error) {
+      console.error('[ghl-calendar] Could not read appointment notes:', error.message);
+      return {};
+    }
+    const map: Record<string, string> = {};
+    for (const row of data ?? []) {
+      if (typeof row?.notes === 'string' && row.notes.trim() !== '') {
+        map[row.appointment_ghl_id] = row.notes;
+      }
+    }
+    return map;
+  } catch (e) {
+    console.error('[ghl-calendar] Could not read appointment notes:', String(e));
+    return {};
+  }
+}
+
+
+
 interface GHLTeamMember {
   userId: string;
   name?: string;
@@ -221,12 +286,17 @@ Deno.serve(async (req) => {
 
       // Map calendar names and colors to events
       const calendarMap = new Map(calendars.map(c => [c.id, { name: c.name, color: c.eventColor }]));
+      // Notes come from this database, not from GHL. Every path that returns
+      // events merges them, or the panel shows "No notes" depending on which
+      // action happened to fetch the day.
+      const storedNotesAll = await loadAppointmentNotes(supabase, allEvents.map((e: any) => e?.id));
       const eventsWithCalendarInfo = allEvents.map(event => {
         const calInfo = calendarMap.get(event.calendarId);
         return {
           ...event,
           calendarName: calInfo?.name || 'Unknown Calendar',
           calendarColor: calInfo?.color || CALENDAR_COLORS[0],
+          notes: storedNotesAll[event.id] ?? event.notes ?? '',
         };
       });
 
@@ -293,12 +363,18 @@ Deno.serve(async (req) => {
         }
 
         const calendarMap = new Map(calendars.map(c => [c.id, { name: c.name, color: c.eventColor }]));
+        // Notes come from this database, not from GHL — see the helpers at the
+        // top of this file. A stored note wins; GHL's own value is the fallback
+        // so an appointment created outside this product still shows whatever
+        // it carries.
+        const storedNotes = await loadAppointmentNotes(supabase, allEvents.map((e: any) => e?.id));
         const eventsWithCalendarInfo = allEvents.map(event => {
           const calInfo = calendarMap.get(event.calendarId);
           return {
             ...event,
             calendarName: calInfo?.name || 'Unknown Calendar',
             calendarColor: calInfo?.color || CALENDAR_COLORS[0],
+            notes: storedNotes[event.id] ?? event.notes ?? '',
           };
         });
 
@@ -325,9 +401,14 @@ Deno.serve(async (req) => {
       }
 
       const eventsData = await eventsResponse.json();
+      const singleCalendarEvents = eventsData.events || [];
+      const storedNotesSingle = await loadAppointmentNotes(supabase, singleCalendarEvents.map((e: any) => e?.id));
       return new Response(JSON.stringify({
         success: true,
-        events: eventsData.events || [],
+        events: singleCalendarEvents.map((e: any) => ({
+          ...e,
+          notes: storedNotesSingle[e?.id] ?? e?.notes ?? '',
+        })),
         dateRange: { start: defaultStartTime, end: defaultEndTime },
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -355,6 +436,8 @@ Deno.serve(async (req) => {
       if (newEndTime) updatePayload.endTime = newEndTime;
       if (title !== undefined) updatePayload.title = title;
       if (notes !== undefined) updatePayload.notes = notes;
+      // Filed on our side as well; see saveAppointmentNotes.
+      await saveAppointmentNotes(supabase, eventId, notes, userId);
       if (appointmentStatus) updatePayload.appointmentStatus = appointmentStatus;
       if (assignedUserId) updatePayload.assignedUserId = assignedUserId;
       // When overrideAvailability is true, tell GHL to skip free-slot validation
@@ -743,11 +826,16 @@ Deno.serve(async (req) => {
       }
 
       const createData = await createResponse.json();
+      const createdEvent = createData.appointment || createData;
       console.log('Appointment created successfully:', createData?.id || createData?.appointment?.id);
+
+      // GHL accepts the field and does not keep it, so the note is filed here.
+      // Never fails the booking.
+      await saveAppointmentNotes(supabase, createdEvent?.id, notes, userId);
 
       return new Response(JSON.stringify({
         success: true,
-        event: createData.appointment || createData,
+        event: { ...createdEvent, notes: notes ?? createdEvent?.notes ?? '' },
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });

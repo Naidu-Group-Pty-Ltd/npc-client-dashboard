@@ -16,6 +16,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface Props {
   clientId: string;
@@ -23,7 +24,7 @@ interface Props {
 }
 
 const requestTypeConfig: Record<string, { label: string; icon: typeof BarChart3; color: string }> = {
-  portfolio_review: { label: 'Portfolio Review', icon: BarChart3, color: 'bg-success/10 text-success' },
+  portfolio_review: { label: PORTFOLIO_REPORT_LABEL, icon: BarChart3, color: 'bg-success/10 text-success' },
   borrowing_capacity: { label: 'Borrowing Capacity', icon: PiggyBank, color: 'bg-brand-500/10 text-brand-600' },
   investment_property: { label: 'Investment Property', icon: Building2, color: 'bg-info/10 text-info' },
 };

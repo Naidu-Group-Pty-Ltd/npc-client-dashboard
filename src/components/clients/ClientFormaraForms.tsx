@@ -458,7 +458,8 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
       // 8. Store the file in storage via secure Edge Function
       const filePath = `${clientId}/${Date.now()}_${file.name}`;
       const uploadResult = await secureStorageUpload('formara-forms', filePath, file, {
-        contentType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        contentType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        resourceId: clientId,
       });
 
       if (uploadResult.success) {

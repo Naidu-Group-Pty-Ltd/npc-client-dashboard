@@ -4,6 +4,7 @@ import { Clock, Plus, CheckCircle2 } from 'lucide-react';
 import { GHLEvent } from '@/hooks/useGHLCalendar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 interface AvailabilitySlotsProps {
@@ -125,9 +126,9 @@ export function AvailabilitySlots({
             variant="outline" 
             className={cn(
               'text-xs',
-              availabilityPercentage > 70 ? 'text-success-foreground0 border-success/50' :
+              availabilityPercentage > 70 ? 'text-success border-success/50' :
               availabilityPercentage > 30 ? 'text-brand-500 border-brand-500/50' :
-              'text-destructive-foreground0 border-destructive/50'
+              'text-destructive border-destructive/50'
             )}
           >
             {availabilityPercentage}% free
@@ -138,7 +139,7 @@ export function AvailabilitySlots({
       {/* Stats */}
       <div className="grid grid-cols-2 gap-2 text-sm">
         <div className="flex items-center gap-2 p-2 rounded-lg bg-success/10 border border-success/20">
-          <CheckCircle2 className="h-4 w-4 text-success-foreground0" />
+          <CheckCircle2 className="h-4 w-4 text-success" />
           <span className="text-success dark:text-success">{freeSlots.length} free slots</span>
         </div>
         <div className="flex items-center gap-2 p-2 rounded-lg bg-muted border border-border">
@@ -148,6 +149,7 @@ export function AvailabilitySlots({
       </div>
 
       {/* Time Slots Grid */}
+      <TooltipProvider delayDuration={150}>
       <div className="space-y-1.5">
           {timeSlots.map((slot, index) => (
             <div
@@ -156,18 +158,24 @@ export function AvailabilitySlots({
                 'group flex items-center justify-between p-2 rounded-lg border transition-all duration-200',
                 slot.isFree
                   ? 'bg-success/5 border-success/20 hover:bg-success/10 hover:border-success/40 cursor-pointer'
-                  : 'bg-muted/50 border-border opacity-60'
+                  // A booked slot is OCCUPIED, not disabled. It carried
+                  // `opacity-60` over `bg-muted/50` with muted-foreground text,
+                  // which is this system's vocabulary for a control you cannot
+                  // use — so a slot holding a real client read as broken chrome,
+                  // and the time in it could barely be read at all. It gets a
+                  // surface of its own and full-strength text instead.
+                  : 'border-primary/35 bg-primary/10'
               )}
               onClick={() => slot.isFree && onSlotClick?.(slot.start, slot.end)}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2">
                 <div
                   className={cn(
-                    'w-2 h-2 rounded-full',
-                    slot.isFree ? 'bg-success' : 'bg-muted-foreground'
+                    'h-2 w-2 shrink-0 rounded-full',
+                    slot.isFree ? 'bg-success' : 'bg-primary'
                   )}
                 />
-                <span className={cn('text-sm font-medium', slot.isFree ? 'text-foreground' : 'text-muted-foreground')}>
+                <span className="truncate text-sm font-medium text-foreground">
                   {format(slot.start, 'h:mm a')} - {format(slot.end, 'h:mm a')}
                 </span>
               </div>
@@ -186,13 +194,24 @@ export function AvailabilitySlots({
                   Book
                 </Button>
               ) : (
-                <span className="text-xs text-muted-foreground truncate max-w-[100px]">
-                  {slot.eventTitle || 'Busy'}
-                </span>
+                // Truncation with no way to read the rest. The tooltip is the
+                // way, and it is safe here now that tooltip content is
+                // portalled rather than clipped by the panel it sits in.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="max-w-[9rem] shrink-0 truncate text-xs font-medium text-foreground/85">
+                      {slot.eventTitle || 'Busy'}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="left">
+                    {slot.eventTitle || 'Busy'}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </div>
           ))}
       </div>
+      </TooltipProvider>
 
       {/* Working Hours Note */}
       <p className="text-xs text-muted-foreground text-center">

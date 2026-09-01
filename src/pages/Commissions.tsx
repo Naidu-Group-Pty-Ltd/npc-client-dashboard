@@ -92,7 +92,7 @@ export default function Commissions() {
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs text-muted-foreground uppercase tracking-wide">Clawback</span>
-                <TrendingUp className="h-4 w-4 text-destructive-foreground0 rotate-180" />
+                <TrendingUp className="h-4 w-4 text-destructive rotate-180" />
               </div>
               <p className="text-2xl font-bold text-destructive">{fmtCurrency(stats.totalClawback)}</p>
             </CardContent>

@@ -91,7 +91,7 @@ export function RegenerateWithPerplexityButton({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="flex items-center gap-2">
-              <RefreshCw className="h-5 w-5 text-success-foreground0" />
+              <RefreshCw className="h-5 w-5 text-success" />
               Regenerate this report?
             </AlertDialogTitle>
             <AlertDialogDescription className="space-y-2">

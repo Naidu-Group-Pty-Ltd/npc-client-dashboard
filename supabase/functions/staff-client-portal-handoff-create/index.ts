@@ -51,13 +51,35 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       return jsonResponse({ error: 'client_id required' }, 400);
     }
 
-    // Find an active client portal user for this client
-    const { data: targetPortalUser } = await supabase
+    // Find an active client portal user for this client.
+    //
+    // The error is READ, not discarded. A read that failed is not a row that is
+    // absent: with the error thrown away, a database fault was reported as
+    // "this client has no portal account", which sends the operator to create
+    // an account that already exists. `maybeSingle()` also errors when more
+    // than one row matches, and that is a data problem to be told about rather
+    // than a missing account.
+    const { data: targetPortalUser, error: portalLookupError } = await supabase
       .from('client_portal_users')
       .select('id, email, status')
       .eq('client_id', client_id)
       .eq('status', 'active')
       .maybeSingle();
+
+    if (portalLookupError) {
+      console.error('[staff-client-portal-handoff-create] Portal user lookup failed', {
+        client_id,
+        code: portalLookupError.code,
+        message: portalLookupError.message,
+        details: portalLookupError.details,
+      });
+      return jsonResponse({
+        error: portalLookupError.code === 'PGRST116'
+          ? 'This client has more than one active portal account, so there is no single one to open. Ask an administrator to disable the duplicate.'
+          : 'Could not read this client\'s portal account. This is usually temporary — please try again.',
+        code: portalLookupError.code ?? null,
+      }, 503);
+    }
 
     if (!targetPortalUser) {
       return jsonResponse({
@@ -85,7 +107,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         user_agent: userAgent,
       });
 
-    if (insErr) throw insErr;
+    if (insErr) {
+      // Named rather than folded into a generic 500. Every failure here used to
+      // read "Internal error", which says nothing about which step failed or
+      // what to do about it (audit item 13).
+      console.error('[staff-client-portal-handoff-create] Could not mint handoff token', {
+        client_id,
+        staff_user_id: auth.userId,
+        target_portal_user_id: targetPortalUser.id,
+        code: insErr.code,
+        message: insErr.message,
+        details: insErr.details,
+        hint: insErr.hint,
+      });
+      return jsonResponse({
+        error: 'Could not create the one-time access link for this client. The failure has been logged.',
+        code: insErr.code ?? null,
+      }, 500);
+    }
 
     // Audit on the client side
     await supabase.from('client_activity_log').insert({
@@ -110,6 +149,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     });
   } catch (err: any) {
     console.error('[staff-client-portal-handoff-create] Error:', err);
+    console.error('[staff-client-portal-handoff-create] Unhandled failure', {
+      message: err?.message, code: err?.code, details: err?.details,
+    });
     return jsonResponse({ ...internalError(err, 'staff-client-portal-handoff-create') }, 500);
   }
 });

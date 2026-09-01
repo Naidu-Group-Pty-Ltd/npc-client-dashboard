@@ -25,9 +25,10 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { cn } from '@/lib/utils';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 const requestTypeConfig: Record<string, { label: string; icon: typeof BarChart3; color: string }> = {
-  portfolio_review: { label: 'Portfolio Review', icon: BarChart3, color: 'border border-success/25 bg-gradient-to-br from-success/20 via-success/10 to-success/10 text-success ring-1 ring-success/20' },
+  portfolio_review: { label: PORTFOLIO_REPORT_LABEL, icon: BarChart3, color: 'border border-success/25 bg-gradient-to-br from-success/20 via-success/10 to-success/10 text-success ring-1 ring-success/20' },
   borrowing_capacity: { label: 'Borrowing Capacity', icon: PiggyBank, color: 'border border-brand-300/25 bg-gradient-to-br from-brand-300/20 via-brand-500/10 to-warning/10 text-brand-200 ring-1 ring-brand-300/20' },
   investment_property: { label: 'Investment Property', icon: Building2, color: 'border border-info/25 bg-gradient-to-br from-info/20 via-info/10 to-accent/10 text-info ring-1 ring-info/20' },
 };
@@ -340,7 +341,7 @@ export default function ReportRequests() {
               </SelectTrigger>
               <SelectContent className="overflow-hidden rounded-2xl border-border dark:border-white/10 bg-background/95 dark:bg-background/95 p-1 text-foreground dark:text-foreground shadow-2xl shadow-sm dark:shadow-black/50 backdrop-blur-xl">
                 <SelectItem className="rounded-xl font-medium focus:bg-brand-300/10 focus:text-brand-100 data-[highlighted]:bg-brand-300/10 data-[highlighted]:text-brand-100" value="all">All Types</SelectItem>
-                <SelectItem className="rounded-xl focus:bg-brand-300/10 focus:text-brand-100 data-[highlighted]:bg-brand-300/10 data-[highlighted]:text-brand-100" value="portfolio_review">Portfolio Review</SelectItem>
+                <SelectItem className="rounded-xl focus:bg-brand-300/10 focus:text-brand-100 data-[highlighted]:bg-brand-300/10 data-[highlighted]:text-brand-100" value="portfolio_review">{PORTFOLIO_REPORT_LABEL}</SelectItem>
                 <SelectItem className="rounded-xl focus:bg-brand-300/10 focus:text-brand-100 data-[highlighted]:bg-brand-300/10 data-[highlighted]:text-brand-100" value="borrowing_capacity">Borrowing Capacity</SelectItem>
                 <SelectItem className="rounded-xl focus:bg-brand-300/10 focus:text-brand-100 data-[highlighted]:bg-brand-300/10 data-[highlighted]:text-brand-100" value="investment_property">Investment Property</SelectItem>
               </SelectContent>

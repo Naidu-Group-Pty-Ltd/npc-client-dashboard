@@ -125,7 +125,7 @@ export function ClientEmailPreview({
                   {formatDistanceToNow(new Date(email.received_at), { addSuffix: true })}
                 </span>
                 {email.summary && (
-                  <Sparkles className="h-2.5 w-2.5 text-success-foreground0 flex-shrink-0" />
+                  <Sparkles className="h-2.5 w-2.5 text-success flex-shrink-0" />
                 )}
               </div>
             </div>

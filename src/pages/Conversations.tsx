@@ -202,10 +202,31 @@ interface ExportJobStatus {
 }
 
 // ── Sync helper ──────────────────────────────────────────────
+/**
+ * Audit item 37 — "Sync could not complete. Request timed out."
+ *
+ * That sentence is the browser's own abort, not an answer from the server.
+ * `invokeSecureFunction` defaults to 60 seconds and this passed no override,
+ * while `supabase/config.toml` declares `request_timeout = 120` for
+ * `sync-ghl-conversations`. The server was permitted twice as long as the
+ * client would wait, so a sync running its declared budget was reported as a
+ * failure at the halfway mark — while it carried on and finished.
+ *
+ * It is not a fast function by design: it paces itself at 500ms between
+ * contacts and 300ms between message fetches, because GoHighLevel rate-limits.
+ * Sixty seconds was never going to be enough, and the fix is for the caller to
+ * wait as long as the function is allowed rather than for the function to
+ * hurry.
+ *
+ * `ghlSyncTimeout.spec.ts` reads the declared value out of `config.toml` and
+ * fails if the two drift apart again.
+ */
+const GHL_SYNC_TIMEOUT_MS = 120_000;
+
 async function triggerGhlSync() {
   const { data, error } = await invokeSecureFunction("sync-ghl-conversations", {
     mode: "incremental",
-  });
+  }, { timeoutMs: GHL_SYNC_TIMEOUT_MS });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
   return data;
@@ -1293,7 +1314,7 @@ export default function Conversations() {
             {/* Conversation list */}
             <ScrollArea
               aria-label="Conversation list"
-              className="min-h-0 flex-1 basis-0 overscroll-contain bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.055),transparent_34%)] [scrollbar-color:rgba(161,161,170,0.72)_rgba(9,9,11,0.72)] [scrollbar-width:thin] [&_[data-orientation=vertical]]:w-3 [&_[data-orientation=vertical]]:border-l-white/5 [&_[data-radix-scroll-area-thumb]]:bg-gradient-to-b [&_[data-radix-scroll-area-thumb]]:from-brand-200/70 [&_[data-radix-scroll-area-thumb]]:via-muted0/80 [&_[data-radix-scroll-area-thumb]]:to-background/80 [&_[data-radix-scroll-area-thumb]]:shadow-[0_0_14px_rgba(245,158,11,0.18)]"
+              className="min-h-0 flex-1 basis-0 overscroll-contain bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.055),transparent_34%)] [scrollbar-color:rgba(161,161,170,0.72)_rgba(9,9,11,0.72)] [scrollbar-width:thin] [&_[data-orientation=vertical]]:w-3 [&_[data-orientation=vertical]]:border-l-white/5 [&_[data-radix-scroll-area-thumb]]:bg-gradient-to-b [&_[data-radix-scroll-area-thumb]]:from-brand-200/70 [&_[data-radix-scroll-area-thumb]]:via-muted/80 [&_[data-radix-scroll-area-thumb]]:to-background/80 [&_[data-radix-scroll-area-thumb]]:shadow-[0_0_14px_rgba(245,158,11,0.18)]"
             >
               {loadingConversations ? (
                 <div className="space-y-3.5 p-4">
@@ -1644,7 +1665,7 @@ export default function Conversations() {
               {/* Messages */}
               <ScrollArea
                 aria-label="Selected conversation message thread"
-                className="min-h-0 flex-1 basis-0 overscroll-contain bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.035),transparent_38%)] [scrollbar-color:rgba(161,161,170,0.72)_rgba(9,9,11,0.72)] [scrollbar-width:thin] [&_[data-orientation=vertical]]:w-3 [&_[data-orientation=vertical]]:border-l-white/5 [&_[data-radix-scroll-area-thumb]]:bg-gradient-to-b [&_[data-radix-scroll-area-thumb]]:from-brand-200/70 [&_[data-radix-scroll-area-thumb]]:via-muted0/80 [&_[data-radix-scroll-area-thumb]]:to-background/80 [&_[data-radix-scroll-area-thumb]]:shadow-[0_0_14px_rgba(245,158,11,0.18)]"
+                className="min-h-0 flex-1 basis-0 overscroll-contain bg-[radial-gradient(circle_at_center,rgba(255,255,255,0.035),transparent_38%)] [scrollbar-color:rgba(161,161,170,0.72)_rgba(9,9,11,0.72)] [scrollbar-width:thin] [&_[data-orientation=vertical]]:w-3 [&_[data-orientation=vertical]]:border-l-white/5 [&_[data-radix-scroll-area-thumb]]:bg-gradient-to-b [&_[data-radix-scroll-area-thumb]]:from-brand-200/70 [&_[data-radix-scroll-area-thumb]]:via-muted/80 [&_[data-radix-scroll-area-thumb]]:to-background/80 [&_[data-radix-scroll-area-thumb]]:shadow-[0_0_14px_rgba(245,158,11,0.18)]"
               >
                 <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-6">
                   {loadingMessages ? (

@@ -13,6 +13,7 @@
  * CRITICAL: Changing DEFAULT values here changes calculation outputs.
  * The defaults are calibrated to match the legacy system exactly.
  */
+import { householdCategory } from '@/lib/householdComposition.pure';
 
 // ============================================
 // INCOME SHADING RULES
@@ -402,12 +403,12 @@ export function getHemBenchmarkFromPolicy(
   dependentsCount: number | null,
   grossAnnualIncome: number,
   config: HemConfig,
+  /** `clients.secondary_first_name` — see `householdComposition.pure.ts`. */
+  secondaryApplicantName?: string | null,
 ): number {
-  const status = maritalStatus?.toLowerCase() || 'single';
-  const isCouple = ['married', 'de facto', 'couple', 'partnered'].includes(status);
   const dependents = Math.min(dependentsCount || 0, 3);
 
-  const category = isCouple ? 'couple' : 'single';
+  const category = householdCategory({ maritalStatus, secondaryApplicantName });
   const baseHem = config.baseBenchmarks[category][dependents] || config.baseBenchmarks[category][0];
 
   let multiplier = 1.0;

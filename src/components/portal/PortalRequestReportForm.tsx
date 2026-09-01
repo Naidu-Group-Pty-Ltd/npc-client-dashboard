@@ -17,6 +17,7 @@ import { PortalEmptyState } from '@/components/portal/PortalEmptyState';
 import { PortalPanel, PortalPanelContent, PortalPanelHeader, PortalPanelTitle } from '@/components/portal/PortalSurface';
 import { portalSessionBodyFields, portalSessionHeaders } from '@/lib/portalSession';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/integrations/supabase/env';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 
 interface Prediction {
@@ -44,7 +45,7 @@ interface Props {
 const reportTypes = [
   {
     value: 'portfolio_review',
-    label: 'Portfolio Performance Review',
+    label: PORTFOLIO_REPORT_LABEL,
     description: 'A comprehensive analysis of your entire investment portfolio performance, equity growth, and projections.',
     icon: BarChart3,
     color: 'border-success/20 bg-success/10 hover:bg-success/15',

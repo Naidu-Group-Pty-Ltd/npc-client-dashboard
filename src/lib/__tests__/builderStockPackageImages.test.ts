@@ -415,6 +415,72 @@ describe('recovering a row-linked package image', () => {
     expect(outcome.status).toBe('unreachable');
   });
 
+  /**
+   * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`.
+   *
+   * The row's `Siting  / Masterplan` column links a bare image — Lot 117's is a
+   * 169 KB JPEG, Lot 607's a 29 KB WebP, both answering HTTP 200. Because the
+   * only test applied to the bytes was "does it start %PDF-", both were called
+   * "not publicly downloadable": an `unreachable`, which records no verdict, so
+   * the branch was re-opened and re-asked on every tick and the two branches
+   * behind it were never reached once in ten attempts. Forty-nine properties
+   * sat on `source` with `progressed: false`.
+   *
+   * A link that downloads is not a link that needs a sign-in. It is read, it is
+   * answered, and the answer is banked.
+   */
+  it('answers a direct link to an image, rather than calling it unreachable', async () => {
+    const jpeg = new Uint8Array(64);
+    jpeg.set([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+    const outcome = await recoverPackageImage(
+      {
+        packageUrl: 'https://drive.google.com/file/d/1HCZ5YS2Q5JyGwF09_WySBPCtme3fsnjd/view',
+        label: LOT_43_LABEL,
+      },
+      { fetchPackage: async (url: string) => ({ bytes: jpeg, finalUrl: url }) },
+    );
+    // A finding, so it is written down and the property moves on to its next
+    // branch — never `unreachable`, which is what re-asked it for ever.
+    expect(outcome.status).toBe('not_identified');
+  });
+
+  it('does not take a directly linked image as the property\'s own photograph', async () => {
+    const png = new Uint8Array(64);
+    png.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    const outcome = await recoverPackageImage(
+      {
+        packageUrl: 'https://drive.google.com/file/d/1l93VIaycKn-5lAryKtUy1hnHL6Yt_6R3/view',
+        label: LOT_43_LABEL,
+      },
+      { fetchPackage: async (url: string) => ({ bytes: png, finalUrl: url }) },
+    );
+    /*
+     * `recovered_photograph` is licensed by a FOLDER named for the lot. A file
+     * a row points at establishes nothing about which property it is of — one
+     * live folder is shared by forty-four rows — so promoting it would be
+     * attribution by row position wearing another name.
+     */
+    expect(outcome.status).not.toBe('recovered_photograph');
+    expect(outcome.status).not.toBe('recovered');
+  });
+
+  it('still reports a sign-in page as unreachable, not as a finding', async () => {
+    const outcome = await recoverPackageImage(
+      {
+        packageUrl: 'https://drive.google.com/file/d/1PQfyfbscQnJPUouTK85fnnAYeMceFvop/view',
+        label: LOT_43_LABEL,
+      },
+      {
+        fetchPackage: async (url: string) => ({
+          bytes: new TextEncoder().encode('<html><body>Request access</body></html>'),
+          finalUrl: url,
+        }),
+      },
+    );
+    // Nothing was learned, so nothing may be banked: it may open tomorrow.
+    expect(outcome.status).toBe('unreachable');
+  });
+
   it('will not follow a package link off Drive', async () => {
     let called = false;
     const outcome = await recoverPackageImage(

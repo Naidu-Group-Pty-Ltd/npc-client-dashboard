@@ -3475,7 +3475,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
         'investment-reports',
         fileName,
         blob,
-        { contentType: 'application/pdf', upsert: true }
+        { contentType: 'application/pdf', upsert: true, resourceId: report.id }
       );
 
       if (!uploadResult.success) {

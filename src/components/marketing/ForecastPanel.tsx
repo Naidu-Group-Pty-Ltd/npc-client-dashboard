@@ -35,8 +35,8 @@ interface ForecastPanelProps {
 }
 
 function TrendIcon({ trend }: { trend: string }) {
-  if (trend === 'increasing' || trend === 'improving') return <TrendingUp className="h-3.5 w-3.5 text-success-foreground0" />;
-  if (trend === 'decreasing' || trend === 'worsening') return <TrendingDown className="h-3.5 w-3.5 text-destructive-foreground0" />;
+  if (trend === 'increasing' || trend === 'improving') return <TrendingUp className="h-3.5 w-3.5 text-success" />;
+  if (trend === 'decreasing' || trend === 'worsening') return <TrendingDown className="h-3.5 w-3.5 text-destructive" />;
   return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 

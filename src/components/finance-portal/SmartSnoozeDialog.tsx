@@ -115,7 +115,7 @@ export function SmartSnoozeDialog({
               ))}
             </div>
             {parsed ? (
-              <p className="text-xs text-success-foreground0 flex items-center gap-1 pt-1">
+              <p className="text-xs text-success flex items-center gap-1 pt-1">
                 <Sparkles className="h-3 w-3" />
                 Parsed: {parsed.toLocaleString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
               </p>

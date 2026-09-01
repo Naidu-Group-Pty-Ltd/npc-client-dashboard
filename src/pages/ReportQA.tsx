@@ -3224,7 +3224,7 @@ export default function ReportQA() {
                     onClick={resumeRecording}
                     disabled={isProcessing || isTranscribing}
                     title="Resume recording"
-                    className="report-qa-composer-control report-qa-composer-control-secondary h-11 w-11 flex-shrink-0 border-warning/30 text-warning-foreground0 hover:bg-warning/10"
+                    className="report-qa-composer-control report-qa-composer-control-secondary h-11 w-11 flex-shrink-0 border-warning/30 text-warning hover:bg-warning/10"
                   >
                     <Play className="h-4 w-4" />
                   </Button>

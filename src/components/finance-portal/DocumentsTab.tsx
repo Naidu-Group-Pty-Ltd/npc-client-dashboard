@@ -48,8 +48,8 @@ const CATEGORY_ORDER = [
 const STATUS_META: Record<string, { label: string; tone: string; icon: any }> = {
   required:   { label: 'Required',  tone: 'bg-muted text-muted-foreground', icon: Clock },
   requested:  { label: 'Requested', tone: 'bg-brand-500/15 text-brand-500',  icon: Send },
-  uploaded:   { label: 'Uploaded',  tone: 'bg-info/15 text-info-foreground0',      icon: FileCheck },
-  verified:   { label: 'Verified',  tone: 'bg-success/15 text-success-foreground0', icon: ShieldCheck },
+  uploaded:   { label: 'Uploaded',  tone: 'bg-info/15 text-info',      icon: FileCheck },
+  verified:   { label: 'Verified',  tone: 'bg-success/15 text-success', icon: ShieldCheck },
   waived:     { label: 'Waived',    tone: 'bg-muted text-muted-foreground',  icon: AlertCircle },
   expired:    { label: 'Expired',   tone: 'bg-destructive/15 text-destructive', icon: AlertCircle },
 };
@@ -334,8 +334,8 @@ export function DocumentsTab({ fileId, purchaseType }: Props) {
             <div className="flex flex-wrap gap-5 text-sm">
               <Stat label="Total" value={stats.total} />
               <Stat label="Outstanding" value={stats.outstanding} tone="text-brand-500" />
-              <Stat label="Requested" value={stats.requested} tone="text-info-foreground0" />
-              <Stat label="Verified" value={stats.verified} tone="text-success-foreground0" />
+              <Stat label="Requested" value={stats.requested} tone="text-info" />
+              <Stat label="Verified" value={stats.verified} tone="text-success" />
               <Stat label="Quality flags" value={stats.qualityIssues} tone={stats.qualityIssues > 0 ? 'text-destructive' : undefined} />
               <Stat label="Expiring ≤30d" value={stats.expiringSoon} tone={stats.expiringSoon > 0 ? 'text-brand-500' : undefined} />
             </div>
@@ -429,7 +429,7 @@ export function DocumentsTab({ fileId, purchaseType }: Props) {
                                 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded',
                                 req.quality_status === 'error' && 'bg-destructive/15 text-destructive',
                                 req.quality_status === 'warning' && 'bg-brand-500/15 text-brand-500',
-                                req.quality_status === 'ok' && 'bg-success/15 text-success-foreground0',
+                                req.quality_status === 'ok' && 'bg-success/15 text-success',
                               )}>
                                 {req.quality_status === 'ok' ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
                                 {req.quality_status === 'ok' ? 'Quality OK' : `Quality ${req.quality_status}`}
@@ -498,7 +498,7 @@ export function DocumentsTab({ fileId, purchaseType }: Props) {
                             onClick={() => toggleVerify(req)}
                           >
                             {req.status === 'verified'
-                              ? <ShieldCheck className="h-4 w-4 text-success-foreground0" />
+                              ? <ShieldCheck className="h-4 w-4 text-success" />
                               : <CheckCircle2 className="h-4 w-4 text-muted-foreground" />}
                           </Button>
                           <Button
@@ -514,7 +514,7 @@ export function DocumentsTab({ fileId, purchaseType }: Props) {
                       </div>
                       {req.finance_portal_documents && (
                         <div className="mt-2 rounded-md bg-muted/40 px-2 py-1.5 text-xs flex items-center gap-1.5">
-                          <FileCheck className="h-3.5 w-3.5 text-success-foreground0" />
+                          <FileCheck className="h-3.5 w-3.5 text-success" />
                           <span className="truncate">{req.finance_portal_documents.original_filename}</span>
                         </div>
                       )}

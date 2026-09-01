@@ -21,7 +21,7 @@ type Req = {
 };
 
 const LEVEL_TONE: Record<string, string> = {
-  gentle: 'bg-info/15 text-info-foreground0',
+  gentle: 'bg-info/15 text-info',
   firm: 'bg-brand-500/15 text-brand-500',
   broker_notified: 'bg-destructive/15 text-destructive',
 };

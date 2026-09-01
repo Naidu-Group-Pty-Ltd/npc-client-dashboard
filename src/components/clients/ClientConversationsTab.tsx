@@ -551,10 +551,10 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
                     const getTimestampClass = () => {
                       if (!isOutbound) return 'text-muted-foreground';
                       switch (msgChannel) {
-                        case 'sms': return 'text-info-foreground0 dark:text-info';
+                        case 'sms': return 'text-info dark:text-info';
                         case 'whatsapp': return 'text-success dark:text-success';
                         case 'email': return 'text-brand-600 dark:text-brand-400';
-                        default: return 'text-info-foreground0 dark:text-info';
+                        default: return 'text-info dark:text-info';
                       }
                     };
 

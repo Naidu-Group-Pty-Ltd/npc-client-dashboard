@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useAmlNavEntry } from '@/hooks/useAmlNavEntry';
 import { useNavigationVisibility } from '@/hooks/useNavigation';
+import { AML_NAV_GROUP_TITLE } from '@/lib/navigation/amlEntry';
 import {
   NAVIGATION_GROUP_ORDER,
   navItemIsActive,
@@ -21,6 +23,12 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
   const location = useLocation();
   const currentPath = location.pathname;
   const { visibleNavItems, visibleAdminItems } = useNavigationVisibility();
+  /* The AML/CTF module is gated by the `aml_ctf` flag and an assigned AML
+     role rather than by a module entitlement, so it is not in the shared
+     registry and this surface never drew it — on a phone the module had no
+     door at all. One definition, asked here as it is asked by the desktop
+     sidebar and the command palette. */
+  const amlEntry = useAmlNavEntry();
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const isActive = (item: NavItemDef) => navItemIsActive(item, currentPath);
@@ -37,6 +45,11 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
         items: mobileNavItems.filter((item) => item.group === title),
       })).filter((group) => group.items.length > 0),
     [mobileNavItems],
+  );
+
+  const amlGroup = useMemo(
+    () => (amlEntry ? { title: AML_NAV_GROUP_TITLE, items: [amlEntry] } : null),
+    [amlEntry],
   );
 
   const groupedAdminItems = useMemo(
@@ -125,7 +138,18 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
 
       <ScrollArea className="flex-1">
         <nav className="dashboard-sidebar-nav" aria-label="Dashboard navigation">
-          {groupedNavItems.map((group) => renderGroup(group))}
+          {/* AML/CTF sits directly after Main Dashboard and before Reports &
+              Analysis — the position it holds on the desktop sidebar. */}
+          {groupedNavItems.map((group) => (
+            <Fragment key={group.title}>
+              {renderGroup(group)}
+              {group.title === 'Main Dashboard' && amlGroup ? renderGroup(amlGroup) : null}
+            </Fragment>
+          ))}
+
+          {/* Main Dashboard hidden or entitled away: AML still gets its door. */}
+          {amlGroup && !groupedNavItems.some((g) => g.title === 'Main Dashboard')
+            && renderGroup(amlGroup)}
 
           {groupedAdminItems.items.length > 0 && (
             <div className="dashboard-sidebar-admin-divider">

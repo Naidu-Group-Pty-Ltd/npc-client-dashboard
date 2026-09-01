@@ -58,7 +58,7 @@ export function CashFlowExportMenu({
           <ChevronDown className="ml-1 h-3 w-3" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[calc(100vw-2rem)] max-w-[380px] overflow-hidden border bg-background p-0 shadow-xl">
+      <DropdownMenuContent align="end" className="w-[calc(100vw-2rem)] max-w-[380px] border bg-background p-0 shadow-xl">
         <div className="border-b bg-gradient-to-br from-card dark:from-background via-card dark:via-background to-background p-4 text-foreground dark:text-white">
           <DropdownMenuLabel className="p-0 text-sm text-foreground dark:text-white">Export & Publish</DropdownMenuLabel>
           <p className="mt-1 text-xs text-muted-foreground dark:text-foreground">Package this analysis for download, print, or client delivery.</p>

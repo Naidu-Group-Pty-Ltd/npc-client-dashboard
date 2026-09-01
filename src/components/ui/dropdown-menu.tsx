@@ -1,5 +1,26 @@
 import * as React from "react"
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
+
+/**
+ * Audit item 15 — a menu taller than the room below its trigger.
+ *
+ * The cash-flow "Export & Publish" menu is a header, six actions, a template
+ * chooser and a list of PDF options. Opened from a button near the top of the
+ * page it ran off the bottom of the window, and the only way to reach the last
+ * checkbox was to scroll the page BEFORE opening it — after which the menu
+ * moves with the trigger and the same edge is still missing.
+ *
+ * Same rule as the popover (audit item 3): a menu may not borrow the page's
+ * scrollbar. Radix publishes the room it has as
+ * `--radix-dropdown-menu-content-available-height` and nothing here read it,
+ * so content rendered at its natural height whatever the room.
+ *
+ * `overflow-hidden` becomes `overflow-y-auto`: it still clips, so the rounded
+ * corners and the highlighted-item corners are unchanged, and it now scrolls
+ * when there is something to scroll. Checked across the 67 files that draw
+ * one — none positions a child outside its own box, and the two that set their
+ * own overflow keep it, because `cn` is tailwind-merge and the caller wins.
+ */
 import { Check, ChevronRight, Circle } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -45,7 +66,7 @@ const DropdownMenuSubContent = React.forwardRef<
   <DropdownMenuPrimitive.SubContent
     ref={ref}
     className={cn(
-      "luxury-dropdown-content z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+      "luxury-dropdown-content z-50 min-w-[8rem] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-md border p-1 text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
       className
     )}
     {...props}
@@ -57,13 +78,14 @@ DropdownMenuSubContent.displayName =
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
+>(({ className, sideOffset = 4, collisionPadding = 8, ...props }, ref) => (
   <DropdownMenuPrimitive.Portal>
     <DropdownMenuPrimitive.Content
       ref={ref}
       sideOffset={sideOffset}
+      collisionPadding={collisionPadding}
       className={cn(
-        "luxury-dropdown-content z-50 min-w-[8rem] overflow-hidden rounded-md border p-1 text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+        "luxury-dropdown-content z-50 min-w-[8rem] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-md border p-1 text-popover-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
         className
       )}
       {...props}

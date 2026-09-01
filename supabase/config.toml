@@ -1192,6 +1192,13 @@ verify_jwt = false
 [functions.builder-portal-stock]
 verify_jwt = false
 
+# Authenticated by a per-request one-time capability token presented as a
+# bearer, not by a Supabase JWT: the caller is a Make scenario with no Supabase
+# identity. Declared explicitly because an omitted block reads as `true`, which
+# would assert a gateway check that is not what guards this function.
+[functions.builder-stock-link-callback]
+verify_jwt = false
+
 # Internal callers only, through the signed envelope (`verifyInternal`). The
 # gateway must NOT be asked for a Supabase JWT: pg_cron signs its own envelope
 # and carries no user session.

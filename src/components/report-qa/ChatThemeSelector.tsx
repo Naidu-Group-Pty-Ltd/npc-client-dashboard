@@ -60,7 +60,7 @@ const themes: Theme[] = [
     preview: 'bg-gradient-to-r from-muted to-muted',
     userBg: 'bg-background text-foreground dark:text-primary-foreground dark:bg-muted dark:text-foreground',
     assistantBg: 'bg-muted dark:bg-background',
-    accent: 'bg-muted0/10'
+    accent: 'bg-muted/10'
   },
 ];
 

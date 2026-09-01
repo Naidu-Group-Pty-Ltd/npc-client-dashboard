@@ -271,7 +271,7 @@ function LenderComparePanel({ fileId, file }: { fileId: string; file: any }) {
                         <div className="flex gap-1 mt-1">
                           {c.offset_available && <Badge variant="outline" className="text-[10px]">Offset</Badge>}
                           {c.redraw_available && <Badge variant="outline" className="text-[10px]">Redraw</Badge>}
-                          {c.lmi_waived && <Badge variant="outline" className="text-[10px] border-success/30 text-success-foreground0">LMI waived</Badge>}
+                          {c.lmi_waived && <Badge variant="outline" className="text-[10px] border-success/30 text-success">LMI waived</Badge>}
                         </div>
                       </TableCell>
                       <TableCell className="text-right">{Number(c.rate_pa).toFixed(2)}%</TableCell>
@@ -687,7 +687,7 @@ function NumField({ label, value, onChange, step = 1 }: { label: string; value: 
 }
 
 function Row({ k, v, tone, bold }: { k: string; v: string; tone?: 'ok' | 'warn'; bold?: boolean }) {
-  const toneCls = tone === 'warn' ? 'text-brand-500' : tone === 'ok' ? 'text-success-foreground0' : '';
+  const toneCls = tone === 'warn' ? 'text-brand-500' : tone === 'ok' ? 'text-success' : '';
   return (
     <div className="flex items-center justify-between text-sm">
       <span className="text-muted-foreground">{k}</span>

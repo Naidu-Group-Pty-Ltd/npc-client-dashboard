@@ -233,7 +233,7 @@ export function HarveyCountdown() {
                 <PartyPopper className="h-6 w-6 text-primary animate-bounce [animation-delay:100ms]" />
                 <Sparkles className="h-7 w-7 text-brand-500 animate-bounce [animation-delay:200ms]" />
                 <Star className="h-6 w-6 text-primary animate-bounce [animation-delay:300ms]" />
-                <Heart className="h-7 w-7 text-destructive-foreground0 animate-bounce [animation-delay:400ms]" />
+                <Heart className="h-7 w-7 text-destructive animate-bounce [animation-delay:400ms]" />
               </>
             ) : (
               <>

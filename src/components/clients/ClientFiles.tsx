@@ -79,13 +79,13 @@ const fileCategories = [
 ];
 
 const categoryColors: Record<string, string> = {
-  general: 'bg-muted0/10 text-muted-foreground',
+  general: 'bg-muted/10 text-muted-foreground',
   contract: 'bg-info/10 text-info',
   id: 'bg-accent/10 text-accent',
   financial: 'bg-success/10 text-success',
   property: 'bg-warning/10 text-warning',
   correspondence: 'bg-info/10 text-info',
-  other: 'bg-muted0/10 text-muted-foreground',
+  other: 'bg-muted/10 text-muted-foreground',
 };
 
 /**

@@ -1,10 +1,14 @@
 import { useMemo } from 'react';
-import { format, startOfWeek, endOfWeek, eachDayOfInterval, eachHourOfInterval, setHours, setMinutes, differenceInMinutes, getDay, getHours, addHours } from 'date-fns';
-import { Sparkles, Clock, TrendingUp, Lightbulb, CheckCircle2, Calendar } from 'lucide-react';
+import { format, setHours } from 'date-fns';
+import { CalendarDays, Clock, TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
+import { fallsOutsideWeek, resolveRecommendedSlot } from '@/lib/calendar/recommendedSlot.pure';
+import {
+  describeSlot,
+  summariseBookings,
+  type SlotFacts,
+} from '@/lib/calendar/bookingPatterns.pure';
 
 interface ResourceOptimizationProps {
   events: Array<{
@@ -17,18 +21,33 @@ interface ResourceOptimizationProps {
   onSlotSelect?: (date: Date, hour: number) => void;
 }
 
-interface TimeSlotScore {
-  day: number;
-  hour: number;
-  score: number;
-  reasons: string[];
-  historicalSuccess: number;
-}
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export function ResourceOptimization({ events, currentWeek, selectedDate, onSlotSelect }: ResourceOptimizationProps) {
-  const safeParseISO = (value: string | undefined): Date | null => {
+/**
+ * Booking patterns — what the calendar can actually say about when this
+ * business books.
+ *
+ * This panel used to show a "Daily Availability Score" and an "Hourly
+ * Performance" bar, and neither could be explained (audit item 20). Both came
+ * from a 0–100 number invented here: 50 to start with, ±5 for the day of week,
+ * ±10 for business hours, ±10 for how full the slot was, then averaged and
+ * printed as a percentage. A time nobody had ever booked was given a
+ * "historical success" of 50%, so an untested hour scored the same as one with
+ * a perfect record. A card of generic advice ("mid-week slots typically have
+ * the best show rates") sat underneath it, presented as a finding about this
+ * business.
+ *
+ * Everything here is a count of appointments that exist, and a time with no
+ * history says so.
+ */
+export function ResourceOptimization({
+  events,
+  currentWeek,
+  selectedDate,
+  onSlotSelect,
+}: ResourceOptimizationProps) {
+  const safeParseISO = (value: string): Date | null => {
     try {
-      if (!value) return null;
       const d = new Date(value);
       return Number.isNaN(d.getTime()) ? null : d;
     } catch {
@@ -36,295 +55,154 @@ export function ResourceOptimization({ events, currentWeek, selectedDate, onSlot
     }
   };
 
-  const weekStart = startOfWeek(currentWeek);
-  const weekEnd = endOfWeek(currentWeek);
-  const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
+  const weekStart = useMemo(() => {
+    const d = new Date(currentWeek);
+    d.setDate(d.getDate() - d.getDay());
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }, [currentWeek]);
 
-  // Analyze historical patterns and calculate optimal slots
-  const analysis = useMemo(() => {
-    // Count events by day of week and hour
-    const dayHourCounts: Record<string, { total: number; confirmed: number; noshow: number }> = {};
-    
-    events.forEach(event => {
-      const start = safeParseISO(event.startTime);
-      if (start) {
-        const day = getDay(start);
-        const hour = getHours(start);
-        const key = `${day}-${hour}`;
-        
-        if (!dayHourCounts[key]) {
-          dayHourCounts[key] = { total: 0, confirmed: 0, noshow: 0 };
-        }
-        dayHourCounts[key].total++;
-        
-        if (event.appointmentStatus === 'confirmed' || event.appointmentStatus === 'showed') {
-          dayHourCounts[key].confirmed++;
-        } else if (event.appointmentStatus === 'noshow') {
-          dayHourCounts[key].noshow++;
-        }
-      }
-    });
+  const patterns = useMemo(
+    () => summariseBookings(events, safeParseISO),
+    [events],
+  );
 
-    // Calculate success rate for each time slot
-    const slotScores: TimeSlotScore[] = [];
-    const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const busiestDay = useMemo(
+    () => patterns.byDay.reduce((max, d) => (d.booked > max.booked ? d : max), patterns.byDay[0]),
+    [patterns],
+  );
+  const busiestHourCount = useMemo(
+    () => Math.max(0, ...patterns.byHour.map((h) => h.booked)),
+    [patterns],
+  );
 
-    for (let day = 0; day < 7; day++) {
-      for (let hour = 8; hour < 18; hour++) { // Business hours 8 AM - 6 PM
-        const key = `${day}-${hour}`;
-        const data = dayHourCounts[key] || { total: 0, confirmed: 0, noshow: 0 };
-        
-        const reasons: string[] = [];
-        let score = 50; // Base score
+  if (patterns.total === 0) {
+    return (
+      <div className="space-y-4">
+        <h3 className="flex items-center gap-2 text-sm font-medium">
+          <TrendingUp className="h-4 w-4 text-primary" />
+          Booking Patterns
+        </h3>
+        <Card className="border-dashed p-6 text-center">
+          <p className="text-sm font-medium text-foreground">No bookings in view</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Patterns appear once there are appointments in the selected range.
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
-        // Factor 1: Historical success rate
-        if (data.total > 0) {
-          const successRate = (data.confirmed / data.total) * 100;
-          score += (successRate - 50) * 0.3;
-          if (successRate > 80) reasons.push('High success rate');
-          if (data.noshow / data.total > 0.3) {
-            score -= 15;
-            reasons.push('High no-show rate');
-          }
-        }
-
-        // Factor 2: Time of day preferences (morning meetings tend to have better attendance)
-        if (hour >= 9 && hour <= 11) {
-          score += 10;
-          reasons.push('Morning slot - higher attendance');
-        } else if (hour >= 14 && hour <= 16) {
-          score += 5;
-          reasons.push('Afternoon slot - good productivity');
-        } else if (hour >= 17) {
-          score -= 10;
-          reasons.push('Late day - may conflict with personal time');
-        }
-
-        // Factor 3: Day of week
-        if (day === 0 || day === 6) { // Weekend
-          score -= 20;
-          reasons.push('Weekend');
-        } else if (day === 1) { // Monday
-          score += 5;
-          reasons.push('Start of week');
-        } else if (day === 5) { // Friday
-          score -= 5;
-          reasons.push('End of week');
-        }
-
-        // Factor 4: Utilization (avoid overcrowded slots)
-        if (data.total > 3) {
-          score -= 10;
-          reasons.push('High demand slot');
-        } else if (data.total === 0) {
-          score += 5;
-          reasons.push('Underutilized slot');
-        }
-
-        // Check if slot is available this week
-        const dayDate = weekDays[day];
-        const slotTime = setMinutes(setHours(dayDate, hour), 0);
-        const isOccupied = events.some(e => {
-          const start = safeParseISO(e.startTime);
-          const end = safeParseISO(e.endTime);
-          if (!start || !end) return false;
-          return slotTime >= start && slotTime < end;
-        });
-
-        if (isOccupied) {
-          score = 0;
-          reasons.length = 0;
-          reasons.push('Already booked');
-        }
-
-        slotScores.push({
-          day,
-          hour,
-          score: Math.max(0, Math.min(100, score)),
-          reasons: reasons.length > 0 ? reasons : ['Standard slot'],
-          historicalSuccess: data.total > 0 ? Math.round((data.confirmed / data.total) * 100) : 50,
-        });
-      }
-    }
-
-    // Get top recommendations (only available slots)
-    const recommendations = slotScores
-      .filter(s => s.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 6);
-
-    // Calculate daily optimization scores
-    const dailyScores = dayNames.map((name, day) => {
-      const daySlots = slotScores.filter(s => s.day === day && s.score > 0);
-      const avgScore = daySlots.length > 0 
-        ? Math.round(daySlots.reduce((sum, s) => sum + s.score, 0) / daySlots.length)
-        : 0;
-      const availableSlots = daySlots.length;
-      return { name: name.substring(0, 3), fullName: name, day, avgScore, availableSlots };
-    });
-
-    // Peak hours analysis
-    const hourlyAverages = Array.from({ length: 10 }, (_, i) => {
-      const hour = i + 8; // 8 AM to 5 PM
-      const hourSlots = slotScores.filter(s => s.hour === hour);
-      const avgScore = Math.round(hourSlots.reduce((sum, s) => sum + s.score, 0) / hourSlots.length);
-      return { hour, label: format(setHours(new Date(), hour), 'h a'), avgScore };
-    });
-
-    const peakHours = hourlyAverages
-      .filter(h => h.avgScore > 60)
-      .map(h => h.label)
-      .slice(0, 3);
-
-    return { recommendations, dailyScores, peakHours, hourlyAverages };
-  }, [events, weekDays]);
-
-  const getScoreColor = (score: number) => {
-    if (score >= 70) return 'text-success';
-    if (score >= 50) return 'text-brand-400';
-    if (score >= 30) return 'text-warning';
-    return 'text-destructive';
-  };
-
-  const getScoreBg = (score: number) => {
-    if (score >= 70) return 'bg-success/20 border-success/30';
-    if (score >= 50) return 'bg-brand-500/20 border-brand-500/30';
-    if (score >= 30) return 'bg-warning/20 border-warning/30';
-    return 'bg-destructive/20 border-destructive/30';
-  };
+  const topSlots: SlotFacts[] = patterns.slots.slice(0, 6);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
-          Resource Optimization
+        <h3 className="flex items-center gap-2 text-sm font-medium">
+          <TrendingUp className="h-4 w-4 text-primary" />
+          Booking Patterns
         </h3>
+        <span className="text-xs text-muted-foreground">
+          {patterns.total} appointment{patterns.total !== 1 ? 's' : ''} in view
+        </span>
       </div>
 
-      <div className="space-y-4">
-          {/* Peak Hours Summary */}
-          <Card className="p-3 bg-primary/5 border-primary/20">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              <span className="text-xs font-medium">Optimal Booking Windows</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {analysis.peakHours.map((hour, idx) => (
-                <Badge key={idx} className="bg-primary/20 text-primary border-primary/30">
-                  {hour}
-                </Badge>
-              ))}
-              {analysis.peakHours.length === 0 && (
-                <span className="text-xs text-muted-foreground">No clear peak hours detected</span>
-              )}
-            </div>
-          </Card>
-
-          {/* Top Recommendations */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              <Lightbulb className="h-3 w-3" />
-              Recommended Time Slots
-            </h4>
-            <div className="grid grid-cols-2 gap-2">
-              {analysis.recommendations.map((slot, idx) => {
-                const dayDate = weekDays[slot.day];
-                const slotTime = setMinutes(setHours(dayDate, slot.hour), 0);
-                
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => onSlotSelect?.(dayDate, slot.hour)}
-                    className={cn(
-                      'p-2 rounded-lg border text-left transition-all hover:scale-[1.02]',
-                      getScoreBg(slot.score)
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium">
-                        {format(dayDate, 'EEE')} {format(slotTime, 'h:mm a')}
-                      </span>
-                      <span className={cn('text-xs font-bold', getScoreColor(slot.score))}>
-                        {slot.score}%
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground truncate">
-                      {slot.reasons[0]}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Daily Optimization Scores */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              <Calendar className="h-3 w-3" />
-              Daily Availability Score
-            </h4>
-            <div className="space-y-2">
-              {analysis.dailyScores.map((day) => (
-                <div key={day.day} className="flex items-center gap-2">
-                  <span className="text-xs w-8">{day.name}</span>
-                  <div className="flex-1">
-                    <Progress value={day.avgScore} className="h-2" />
-                  </div>
-                  <span className={cn('text-xs font-medium w-12 text-right', getScoreColor(day.avgScore))}>
-                    {day.avgScore}%
-                  </span>
-                  <span className="text-[10px] text-muted-foreground w-16">
-                    {day.availableSlots} slots
-                  </span>
+      {/* Times this business actually books. Clicking one opens the booking
+          form on the next occurrence of that slot, never one already past. */}
+      <div className="space-y-2">
+        <h4 className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          <Clock className="h-3 w-3" />
+          Most-booked times
+        </h4>
+        <div className="grid grid-cols-2 gap-2">
+          {topSlots.map((slot) => {
+            const slotTime = resolveRecommendedSlot(slot.day, slot.hour);
+            const nextWeek = fallsOutsideWeek(slotTime, weekStart);
+            return (
+              <button
+                key={`${slot.day}-${slot.hour}`}
+                type="button"
+                onClick={() => onSlotSelect?.(slotTime, slot.hour)}
+                className="rounded-lg border border-border bg-card/60 p-2 text-left transition-colors hover:border-primary/40 hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
+              >
+                <div className="text-xs font-medium text-foreground">
+                  {format(slotTime, 'EEE d MMM')} {format(setHours(new Date(), slot.hour), 'h a')}
+                  {nextWeek && (
+                    <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                      next week
+                    </span>
+                  )}
                 </div>
-              ))}
-            </div>
-          </div>
+                <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                  {describeSlot(slot)}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
-          {/* Hourly Heatmap */}
-          <div className="space-y-2">
-            <h4 className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              Hourly Performance
-            </h4>
-            <div className="flex gap-1">
-              {analysis.hourlyAverages.map((h) => (
+      {/* Per weekday. Counts, not a score — an empty day reads as empty. */}
+      <div className="space-y-2">
+        <h4 className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          <CalendarDays className="h-3 w-3" />
+          By weekday
+        </h4>
+        <div className="space-y-1.5">
+          {patterns.byDay.map((day) => (
+            <div key={day.day} className="flex items-center gap-2">
+              <span className="w-8 text-xs text-foreground">{DAY_LABELS[day.day]}</span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
                 <div
-                  key={h.hour}
-                  className="flex-1 text-center"
-                  title={`${h.label}: ${h.avgScore}% score`}
-                >
-                  <div
-                    className={cn(
-                      'h-8 rounded-sm mb-1 transition-all hover:scale-105',
-                      h.avgScore >= 70 && 'bg-success/60',
-                      h.avgScore >= 50 && h.avgScore < 70 && 'bg-brand-500/60',
-                      h.avgScore >= 30 && h.avgScore < 50 && 'bg-warning/60',
-                      h.avgScore < 30 && 'bg-destructive/30'
-                    )}
-                    style={{ opacity: 0.3 + (h.avgScore / 100) * 0.7 }}
-                  />
-                  <span className="text-[8px] text-muted-foreground">{h.label}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Tips */}
-          <Card className="p-3 bg-muted/30">
-            <div className="flex items-start gap-2">
-              <CheckCircle2 className="h-4 w-4 text-success mt-0.5" />
-              <div className="space-y-1">
-                <p className="text-xs font-medium">Optimization Tips</p>
-                <ul className="text-[10px] text-muted-foreground space-y-0.5">
-                  <li>• Schedule important meetings in the morning for better attendance</li>
-                  <li>• Avoid back-to-back bookings to reduce no-shows</li>
-                  <li>• Mid-week slots typically have the best show rates</li>
-                </ul>
+                  className="h-full rounded-full bg-primary/70"
+                  style={{
+                    width: busiestDay.booked > 0
+                      ? `${Math.round((day.booked / busiestDay.booked) * 100)}%`
+                      : '0%',
+                  }}
+                />
               </div>
+              <span className="w-24 text-right text-[10px] text-muted-foreground">
+                {day.booked === 0
+                  ? 'none'
+                  : describeSlot(day)}
+              </span>
             </div>
-          </Card>
+          ))}
+        </div>
+      </div>
+
+      {/* Per hour of the working day. */}
+      <div className="space-y-2">
+        <h4 className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+          <Clock className="h-3 w-3" />
+          By hour
+        </h4>
+        <div className="flex gap-1">
+          {patterns.byHour.map((h) => (
+            <div key={h.hour} className="flex-1 text-center">
+              <div
+                title={`${format(setHours(new Date(), h.hour), 'h a')}: ${h.booked} booked`}
+                className={cn(
+                  'mb-1 flex h-8 items-end rounded-sm',
+                  h.booked === 0 ? 'bg-muted/70' : 'bg-primary/20',
+                )}
+              >
+                <div
+                  className="w-full rounded-sm bg-primary/70"
+                  style={{
+                    height: busiestHourCount > 0
+                      ? `${Math.max(h.booked === 0 ? 0 : 12, (h.booked / busiestHourCount) * 100)}%`
+                      : '0%',
+                  }}
+                />
+              </div>
+              <span className="text-[8px] text-muted-foreground">
+                {format(setHours(new Date(), h.hour), 'ha')}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

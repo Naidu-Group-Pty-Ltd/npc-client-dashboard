@@ -91,9 +91,15 @@ export function AmlMetricCard({
         as three different things. Reserving the line costs a few pixels on
         a strip that saved a few hundred.
       */}
-      <span className="flex min-h-[2.1em] items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.05] tracking-[0.12em] text-muted-foreground">
+      {/* `min-w-0` and `break-words` are what keep a long single word inside
+          its own cell. On a phone the strip is three cells of ~110px and
+          "UNPROCESSED" is ~105px of letter-spaced capitals: with neither, it
+          overflowed into the cell beside it and printed across the next
+          label's icon. It breaks only when a word cannot fit at all, so
+          every label that can wrap normally still does. */}
+      <span className="flex min-h-[2.1em] min-w-0 items-start gap-1.5 text-[10px] font-semibold uppercase leading-[1.05] tracking-[0.12em] text-muted-foreground">
         {Icon && <Icon aria-hidden="true" className="mt-[1px] h-3 w-3 shrink-0" />}
-        <span>{title}</span>
+        <span className="min-w-0 break-words">{title}</span>
       </span>
       {state === "loading" ? (
         <>

@@ -28,6 +28,8 @@ import {
   type BandThresholds,
   type ConservativeModeConfig,
 } from './policyEngine';
+// Audit item 9 — the one place that decides whether a household is a couple.
+import { householdCategory } from '@/lib/householdComposition.pure';
 
 // ============================================
 // TYPES
@@ -300,12 +302,21 @@ export interface HemBreakdown {
   finalHem: number;
 }
 
-export function getHemBreakdown(maritalStatus: string | null, dependentsCount: number | null, grossAnnualIncome: number = 0): HemBreakdown {
-  const status = maritalStatus?.toLowerCase() || 'single';
-  const isCouple = ['married', 'de facto', 'couple', 'partnered'].includes(status);
+export function getHemBreakdown(
+  maritalStatus: string | null,
+  dependentsCount: number | null,
+  grossAnnualIncome: number = 0,
+  /**
+   * `clients.secondary_first_name`. Optional so every existing caller keeps
+   * compiling, but a caller that has the client row should pass it: a second
+   * person on the assessment is a couple household however the status field
+   * is spelled, and omitting them is half of audit item 9.
+   */
+  secondaryApplicantName?: string | null,
+): HemBreakdown {
   const dependents = Math.min(dependentsCount || 0, 3);
-  
-  const householdType = isCouple ? 'couple' : 'single';
+
+  const householdType = householdCategory({ maritalStatus, secondaryApplicantName });
   const baseHem = HEM_BENCHMARKS_BASE[householdType][dependents] || HEM_BENCHMARKS_BASE[householdType][0];
   
   // Find income tier and multiplier
@@ -335,8 +346,13 @@ export function getHemBreakdown(maritalStatus: string | null, dependentsCount: n
   };
 }
 
-export function getHemBenchmark(maritalStatus: string | null, dependentsCount: number | null, grossAnnualIncome: number = 0): number {
-  return getHemBreakdown(maritalStatus, dependentsCount, grossAnnualIncome).finalHem;
+export function getHemBenchmark(
+  maritalStatus: string | null,
+  dependentsCount: number | null,
+  grossAnnualIncome: number = 0,
+  secondaryApplicantName?: string | null,
+): number {
+  return getHemBreakdown(maritalStatus, dependentsCount, grossAnnualIncome, secondaryApplicantName).finalHem;
 }
 
 /**

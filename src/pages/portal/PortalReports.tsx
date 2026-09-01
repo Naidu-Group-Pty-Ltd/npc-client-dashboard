@@ -17,6 +17,7 @@ import { PortalEmptyState } from '@/components/portal/PortalEmptyState';
 import { PortalPanel, PortalPanelContent } from '@/components/portal/PortalSurface';
 import { getPortalSessionToken } from '@/lib/portalSession';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/integrations/supabase/env';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 
 function getSessionToken(): string | null {
@@ -27,7 +28,7 @@ function getSessionToken(): string | null {
 
 const reportTypeConfig: Record<string, { label: string; icon: typeof FileText; color: string }> = {
   investment: { label: 'Investment Report', icon: FileBarChart, color: 'border border-primary/20 bg-primary/10 text-primary' },
-  portfolio: { label: 'Portfolio Review', icon: BarChart3, color: 'border border-primary/20 bg-primary/10 text-primary' },
+  portfolio: { label: PORTFOLIO_REPORT_LABEL, icon: BarChart3, color: 'border border-primary/20 bg-primary/10 text-primary' },
   borrowing_capacity: { label: 'Borrowing Capacity', icon: PiggyBank, color: 'border border-primary/20 bg-primary/10 text-primary' },
   cash_flow: { label: 'Cash Flow Analysis', icon: TrendingUp, color: 'border border-primary/20 bg-primary/10 text-primary' },
 };
@@ -52,7 +53,7 @@ const requestStatusConfig: Record<string, { label: string; icon: typeof Clock; c
 };
 
 const requestTypeLabels: Record<string, string> = {
-  portfolio_review: 'Portfolio Performance Review',
+  portfolio_review: PORTFOLIO_REPORT_LABEL,
   borrowing_capacity: 'Borrowing Capacity Snapshot',
   investment_property: 'Investment Property Report',
 };
@@ -292,7 +293,7 @@ export default function PortalReports() {
               className="client-portal-soft-panel"
               icon={<Send className="h-8 w-8" />}
               title="No report requests yet"
-              description="Request a portfolio review, borrowing capacity snapshot, or investment property report when you need a fresh analysis."
+              description={`Request a ${PORTFOLIO_REPORT_LABEL}, borrowing capacity snapshot, or investment property report when you need a fresh analysis.`}
               actionLabel="Make Your First Request"
               onAction={() => setShowRequestForm(true)}
             />

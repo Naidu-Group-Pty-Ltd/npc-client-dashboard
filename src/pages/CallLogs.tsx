@@ -647,7 +647,7 @@ const CallLogs = () => {
           <CardContent className="p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <span className={premiumMetricLabel}>Total</span>
-              <div className={cn(premiumMetricIcon, "border-border/25 bg-muted0/10 text-muted-foreground dark:text-foreground")}>
+              <div className={cn(premiumMetricIcon, "border-border/25 bg-muted/10 text-muted-foreground dark:text-foreground")}>
                 <Phone className="h-4 w-4" />
               </div>
             </div>
@@ -1403,12 +1403,12 @@ const CallLogs = () => {
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {selectedCall.call_direction === 'inbound' ? (
                             <>
-                              <PhoneIncoming className="w-4 h-4 flex-shrink-0 text-success-foreground0" />
+                              <PhoneIncoming className="w-4 h-4 flex-shrink-0 text-success" />
                               <span className="text-sm font-medium">Inbound</span>
                             </>
                           ) : (
                             <>
-                              <PhoneOutgoing className="w-4 h-4 flex-shrink-0 text-info-foreground0" />
+                              <PhoneOutgoing className="w-4 h-4 flex-shrink-0 text-info" />
                               <span className="text-sm font-medium">Outbound</span>
                             </>
                           )}
@@ -1464,12 +1464,12 @@ const CallLogs = () => {
                           <div className="flex items-center gap-1.5 mt-1">
                             {selectedCall.call_direction === 'inbound' ? (
                               <>
-                                <PhoneIncoming className="w-4 h-4 text-success-foreground0" />
+                                <PhoneIncoming className="w-4 h-4 text-success" />
                                 <span className="text-sm">Inbound</span>
                               </>
                             ) : (
                               <>
-                                <PhoneOutgoing className="w-4 h-4 text-info-foreground0" />
+                                <PhoneOutgoing className="w-4 h-4 text-info" />
                                 <span className="text-sm">Outbound</span>
                               </>
                             )}

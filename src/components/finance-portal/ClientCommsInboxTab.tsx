@@ -48,9 +48,9 @@ type UnifiedMessage = {
 };
 
 const CHANNEL_META: Record<string, { label: string; icon: any; tone: string }> = {
-  sms:      { label: 'SMS',      icon: Phone,         tone: 'bg-info/15 text-info-foreground0 border-info/30' },
-  whatsapp: { label: 'WhatsApp', icon: MessageSquare, tone: 'bg-success/15 text-success-foreground0 border-success/30' },
-  email:    { label: 'Email',    icon: Mail,          tone: 'bg-accent/15 text-accent-foreground0 border-accent/30' },
+  sms:      { label: 'SMS',      icon: Phone,         tone: 'bg-info/15 text-info border-info/30' },
+  whatsapp: { label: 'WhatsApp', icon: MessageSquare, tone: 'bg-success/15 text-success border-success/30' },
+  email:    { label: 'Email',    icon: Mail,          tone: 'bg-accent/15 text-accent border-accent/30' },
   portal:   { label: 'Portal',   icon: Globe,         tone: 'bg-primary/15 text-primary border-primary/30' },
 };
 

@@ -28,11 +28,7 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
-  importBuilderStockUrl,
-  useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections,
-  useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages,
-  useRecoverStockSourceImages, useSetBuilderStockAvailability, uploadBuilderStockFile,
-  type StockImportSummary, type StockUploadProgress, type StockUploadResult,
+  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useSetBuilderStockAvailability,
 } from '@/lib/builderStockQueries';
 import {
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
@@ -44,6 +40,7 @@ import {
   type StockImageStage, type StockSelectionStatus, type StockUploadStatus,
 } from '@/lib/builderStock';
 import { isNonBlockingSourceNotice } from '../../../supabase/functions/_shared/builderStock/sourceAccessNotice.pure';
+import { isRecoverableStoredAvailability } from '../../../supabase/functions/_shared/builderStock/linkRecovery.pure';
 
 /**
  * Builder Portal — Stock List.
@@ -138,6 +135,7 @@ export default function BuilderStockList() {
   const enrichPending = useEnrichPendingStockImages();
   const deleteSource = useDeleteBuilderStockSource();
   const recoverImages = useRecoverStockSourceImages();
+  const refreshLinks = useRefreshBrochureLinks();
 
   const records = itemsQuery.data?.records ?? [];
   const pagination = itemsQuery.data?.pagination;
@@ -212,6 +210,36 @@ export default function BuilderStockList() {
    * availability and every client selection stay exactly where they are, and
    * only the pictures change.
    */
+  /**
+   * Only a Google Sheet whose workbook would not export has links to recover.
+   *
+   * The same condition the server enforces, read from the upload's own
+   * recorded reason rather than from its message — so the control appears
+   * exactly where the act is possible, and the server is still the authority.
+   */
+  const canRefreshBrochureLinks = useCallback((upload: BuilderStockUpload) => (
+    isRecoverableStoredAvailability((upload.error_detail as { reason?: string } | null)?.reason)
+  ), []);
+
+  const refreshBrochureLinks = useCallback((upload: BuilderStockUpload) => {
+    refreshLinks.mutate(upload.id, {
+      onSuccess: () => {
+        toast({
+          title: 'Looking for the brochure links',
+          description: 'Your stock list is unchanged. Any documents we recover will '
+            + 'be attached to their properties shortly.',
+        });
+      },
+      onError: (error) => {
+        toast({
+          title: 'Brochure links could not be refreshed',
+          description: error instanceof Error ? error.message : 'Please try again shortly.',
+          variant: 'destructive',
+        });
+      },
+    });
+  }, [refreshLinks, toast]);
+
   const recoverSourceImages = useCallback((upload: BuilderStockUpload) => {
     recoverImages.mutate(upload.id, {
       onSuccess: (response) => {
@@ -732,6 +760,26 @@ export default function BuilderStockList() {
                           untouched — deleting and re-uploading a stock list to
                           fix a picture is not a repair.
                         */}
+                        {/*
+                          Ask again for the document links this sheet would not
+                          export. Shown only where there is something to
+                          recover; the server refuses in every other case, so
+                          this is a convenience rather than the control.
+                        */}
+                        {canRefreshBrochureLinks(upload) ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={refreshLinks.isPending || busy}
+                            onClick={() => refreshBrochureLinks(upload)}
+                            aria-label={`Refresh brochure links for ${stockSourceLabel(upload)}`}
+                          >
+                            <Link2 className="h-4 w-4" aria-hidden />
+                            <span className="sr-only sm:not-sr-only sm:ml-2">
+                              Refresh brochure links
+                            </span>
+                          </Button>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="sm"

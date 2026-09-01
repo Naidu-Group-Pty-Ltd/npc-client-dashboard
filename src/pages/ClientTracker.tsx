@@ -1541,7 +1541,7 @@ export default function ClientTracker() {
                               {client.follow_up_date && (
                                 <div className="mt-2 flex items-center gap-1.5 text-sm">
                                   <CalendarIcon className="h-3 w-3 shrink-0" />
-                                  <span className={isOverdue ? 'text-destructive-foreground0' : 'text-muted-foreground'}>
+                                  <span className={isOverdue ? 'text-destructive' : 'text-muted-foreground'}>
                                     Follow-up: {format(new Date(client.follow_up_date), 'MMM d, yyyy')}
                                   </span>
                                 </div>
@@ -1549,13 +1549,13 @@ export default function ClientTracker() {
                               {(client.borrowing_capacity || client.equity_release) && (
                                 <div className="flex items-center gap-4 mt-2 text-sm">
                                   {client.borrowing_capacity && (
-                                    <span className="flex items-center gap-1 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 font-semibold text-success-foreground0">
+                                    <span className="flex items-center gap-1 rounded-full border border-success/20 bg-success/10 px-2 py-0.5 font-semibold text-success">
                                       <DollarSign className="h-3 w-3" />
                                       BC: {formatCurrency(client.borrowing_capacity)}
                                     </span>
                                   )}
                                   {client.equity_release && (
-                                    <span className="rounded-full border border-info/20 bg-info/10 px-2 py-0.5 font-semibold text-info-foreground0">
+                                    <span className="rounded-full border border-info/20 bg-info/10 px-2 py-0.5 font-semibold text-info">
                                       Equity: {formatCurrency(client.equity_release)}
                                     </span>
                                   )}
@@ -1693,14 +1693,14 @@ export default function ClientTracker() {
                               : <span className="text-muted-foreground/55">-</span>
                             }
                           </TableCell>
-                          <TableCell className={cn("whitespace-nowrap text-right text-sm font-semibold tabular-nums", client.borrowing_capacity ? "text-success-foreground0" : "text-muted-foreground/55")}>{formatCurrency(client.borrowing_capacity)}</TableCell>
+                          <TableCell className={cn("whitespace-nowrap text-right text-sm font-semibold tabular-nums", client.borrowing_capacity ? "text-success" : "text-muted-foreground/55")}>{formatCurrency(client.borrowing_capacity)}</TableCell>
                           <TableCell className="whitespace-nowrap text-right text-sm tabular-nums">
                             {client.proposed_rental_income 
-                              ? <span className="font-semibold text-success-foreground0">${client.proposed_rental_income}/wk</span>
+                              ? <span className="font-semibold text-success">${client.proposed_rental_income}/wk</span>
                               : <span className="text-muted-foreground/55">-</span>
                             }
                           </TableCell>
-                          <TableCell className={cn("whitespace-nowrap text-right text-sm font-semibold tabular-nums", client.equity_release ? "text-success-foreground0" : "text-muted-foreground/55")}>{formatCurrency(client.equity_release)}</TableCell>
+                          <TableCell className={cn("whitespace-nowrap text-right text-sm font-semibold tabular-nums", client.equity_release ? "text-success" : "text-muted-foreground/55")}>{formatCurrency(client.equity_release)}</TableCell>
                           <TableCell className="text-right">
                             <Dialog>
                               <DialogTrigger asChild>
@@ -1999,7 +1999,7 @@ function KanbanCard({
         {client.follow_up_date && (
           <p className={cn(
             "flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs font-medium",
-            isOverdue ? 'text-destructive-foreground0' : 'text-muted-foreground'
+            isOverdue ? 'text-destructive' : 'text-muted-foreground'
           )}>
             <CalendarIcon className="h-3 w-3 shrink-0" />
             {format(new Date(client.follow_up_date), 'MMM d')}

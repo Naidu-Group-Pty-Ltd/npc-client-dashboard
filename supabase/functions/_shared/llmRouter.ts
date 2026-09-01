@@ -563,19 +563,50 @@ export async function callLLM(args: CallLLMArgs): Promise<CallLLMResult> {
       };
     }
 
-    // If non-retryable, stop the chain
+    // If non-retryable, stop the chain — but SAY SO first.
+    //
+    // Audit item 43. This `throw` used to jump straight past the recording
+    // block below, so `agent_model_assignments.last_error` was written only
+    // when a chain exhausted itself with retryable errors. The non-retryable
+    // set is {401, 402, 403, 429}: a missing or rejected credential, an
+    // account out of funds, a forbidden model and a rate limit — the four
+    // failures an operator most needs named, and the four that were silently
+    // dropped.
+    //
+    // Measured on this deployment: 46 assignments across three routes, 0 with
+    // any recorded error, while Email Copilot's summarize, analyze and
+    // translate all fail on an agent (`email_copilot`, route `native`) whose
+    // last success was 2026-08-01. The one field the configuration screen
+    // shows for diagnosis had never been written.
     if (res.status && NON_RETRYABLE_STATUSES.has(res.status)) {
+      await recordAssignmentFailure(args.agentKey, attempts);
       throw new LLMError(`[llmRouter] Non-retryable error from ${step.route}/${step.model_id}: ${res.status}`, res.status, attempts);
     }
     // Otherwise continue to next fallback (retryable or unknown error)
   }
 
   // All chain steps failed → record + throw
+  await recordAssignmentFailure(args.agentKey, attempts);
+  throw new LLMError(`[llmRouter] All ${chain.length} models failed for agent_key=${args.agentKey}`, 503, attempts);
+}
+
+/**
+ * Leave the reason where an operator will look for it.
+ *
+ * Never allowed to change the outcome of the call it is describing: a failure
+ * to record a failure is still just the original failure.
+ */
+async function recordAssignmentFailure(
+  agentKey: string,
+  attempts: CallLLMResult['attempts'],
+): Promise<void> {
   try {
     const admin = getAdminClient();
-    await admin.from('agent_model_assignments').update({ last_error: JSON.stringify(attempts).slice(0, 500) }).eq('agent_key', args.agentKey);
+    await admin
+      .from('agent_model_assignments')
+      .update({ last_error: JSON.stringify(attempts).slice(0, 500) })
+      .eq('agent_key', agentKey);
   } catch { /* swallow */ }
-  throw new LLMError(`[llmRouter] All ${chain.length} models failed for agent_key=${args.agentKey}`, 503, attempts);
 }
 
 export class LLMError extends Error {

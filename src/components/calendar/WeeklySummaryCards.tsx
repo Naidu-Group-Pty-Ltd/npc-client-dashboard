@@ -52,13 +52,13 @@ function StatCard({ title, value, subtitle, trend, trendValue, trendLabel = 'vs 
 
       {trend && trendValue && (
         <div className="flex items-center gap-1 mt-2">
-          {trend === 'up' && <TrendingUp className="h-3 w-3 text-success-foreground0" />}
-          {trend === 'down' && <TrendingDown className="h-3 w-3 text-destructive-foreground0" />}
+          {trend === 'up' && <TrendingUp className="h-3 w-3 text-success" />}
+          {trend === 'down' && <TrendingDown className="h-3 w-3 text-destructive" />}
           {trend === 'neutral' && <Minus className="h-3 w-3 text-muted-foreground" />}
           <span className={cn(
             'text-xs font-medium',
-            trend === 'up' && 'text-success-foreground0',
-            trend === 'down' && 'text-destructive-foreground0',
+            trend === 'up' && 'text-success',
+            trend === 'down' && 'text-destructive',
             trend === 'neutral' && 'text-muted-foreground'
           )}>
             {trendValue}
@@ -230,7 +230,7 @@ export function WeeklySummaryCards({ events, currentWeek, selectedDate }: Weekly
         <StatCard
           title="Total Events"
           value={stats.totalEvents}
-          icon={<Calendar className="h-4 w-4 text-info-foreground0" />}
+          icon={<Calendar className="h-4 w-4 text-info" />}
           color="bg-info"
           trend={stats.trends.events.direction}
           trendValue={stats.trends.events.value}
@@ -239,7 +239,7 @@ export function WeeklySummaryCards({ events, currentWeek, selectedDate }: Weekly
         <StatCard
           title="Time Booked"
           value={`${stats.totalHours}h`}
-          icon={<Clock className="h-4 w-4 text-accent-foreground0" />}
+          icon={<Clock className="h-4 w-4 text-accent" />}
           color="bg-accent"
           trend={stats.trends.hours.direction}
           trendValue={stats.trends.hours.value}
@@ -249,7 +249,7 @@ export function WeeklySummaryCards({ events, currentWeek, selectedDate }: Weekly
           title="Confirmed"
           value={stats.confirmed}
           subtitle={`${stats.showRate}% show rate`}
-          icon={<CheckCircle2 className="h-4 w-4 text-success-foreground0" />}
+          icon={<CheckCircle2 className="h-4 w-4 text-success" />}
           color="bg-success"
           trend={stats.trends.showRate.direction}
           trendValue={stats.trends.showRate.value}
@@ -258,7 +258,7 @@ export function WeeklySummaryCards({ events, currentWeek, selectedDate }: Weekly
         <StatCard
           title="No Shows"
           value={stats.noShows}
-          icon={<XCircle className="h-4 w-4 text-destructive-foreground0" />}
+          icon={<XCircle className="h-4 w-4 text-destructive" />}
           color="bg-destructive"
           trend={stats.trends.noShows.direction}
           trendValue={stats.trends.noShows.value}
@@ -277,7 +277,7 @@ export function WeeklySummaryCards({ events, currentWeek, selectedDate }: Weekly
           title={isDateSelected ? 'Day' : 'Busiest Day'}
           value={stats.busiestDay}
           subtitle={`${stats.busiestDayCount} event${stats.busiestDayCount !== 1 ? 's' : ''}`}
-          icon={<Zap className="h-4 w-4 text-warning-foreground0" />}
+          icon={<Zap className="h-4 w-4 text-warning" />}
           color="bg-warning"
         />
       </div>

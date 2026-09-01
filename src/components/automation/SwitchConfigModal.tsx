@@ -485,9 +485,9 @@ export const SwitchConfigModal = ({
             {conflicts.length > 0 && (
               <div className="rounded-2xl border border-info/25 bg-[linear-gradient(135deg,hsl(var(--info)/0.10),hsl(var(--card)/0.86))] p-4 shadow-sm">
                 <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-5 w-5 text-info-foreground0 mt-0.5" />
+                  <AlertTriangle className="h-5 w-5 text-info mt-0.5" />
                   <div className="min-w-0">
-                    <p className="font-medium text-info-foreground0">Overlapping Criteria</p>
+                    <p className="font-medium text-info">Overlapping Criteria</p>
                     <p className="mt-1 break-words text-sm leading-5 text-muted-foreground">
                       This switch has overlapping criteria with: {conflicts.join(', ')}. 
                       Using OR logic, a listing only needs to match one switch to trigger a report.

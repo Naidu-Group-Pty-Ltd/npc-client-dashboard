@@ -26,7 +26,7 @@
  * bearer, same PNG bytes, same recorded model.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import worker, {
@@ -796,14 +796,54 @@ describe('the worker bounds what it will even look at', () => {
 // ---------------------------------------------------------------------------
 
 describe('this file runs where it claims to', () => {
-  it('CI names this test file — an unrun proof proves nothing', () => {
-    // This file sat beside the named Builder Stock list in ci.yml without
-    // being on it, so every assertion here — the no-external-URL proof, the
-    // constant-time proof, the wrangler-has-no-credentials proof — ran on no
-    // runner. A test that asserts its own wiring cannot silently fall off.
+  it('CI runs EVERY Builder Stock suite — an unrun proof proves nothing', () => {
+    /*
+     * This file sat beside the named Builder Stock list in ci.yml without
+     * being on it, so every assertion here — the no-external-URL proof, the
+     * constant-time proof, the wrangler-has-no-credentials proof — ran on no
+     * runner. A test that asserts its own wiring cannot silently fall off.
+     *
+     * IT USED TO ASSERT ONE FILENAME, AND THAT WAS TOO WEAK BY SIXTEEN.
+     *
+     * Naming this file in the list proves this file runs. It proves nothing
+     * about the file written next week, and the list it was defending rotted
+     * anyway: 39 entries against 56 suites on disk. Seventeen ran on no
+     * runner, `builderStockSettlementRecovery` among them — which is the suite
+     * for `enforceStrictPrimaryImages`, the function that went on enforcing a
+     * repealed ranking rule until it cleared 45 marketplace pointers in
+     * production.
+     *
+     * So the guarantee is the one that was actually wanted: every Builder
+     * Stock and Builder Portal suite ON DISK is covered by the step, whether
+     * it is named outright or picked up by a path prefix. A file added
+     * tomorrow is covered by construction, and a step narrowed to exclude one
+     * fails here.
+     */
     const workflow = readFileSync(
       resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
-    expect(workflow).toContain('builderStockCloudflareWorker.test.ts');
+
+    const step = workflow.slice(workflow.indexOf('Unit tests (Builder Stock images)'));
+    const block = step.slice(0, step.indexOf('\n      - name:'));
+    expect(block).toContain('vitest run');
+
+    // Every path-shaped token the step hands to vitest. Vitest matches these
+    // positionally as path substrings, so a bare directory prefix covers the
+    // files under it.
+    const filters = block.match(/src\/[^\s\\]+/g) ?? [];
+    expect(filters.length).toBeGreaterThan(0);
+
+    const dir = resolve(process.cwd(), 'src/lib/__tests__');
+    const suites = readdirSync(dir)
+      .filter((name) => /^builder(Stock|Portal).*\.test\.tsx?$/.test(name))
+      .map((name) => `src/lib/__tests__/${name}`);
+    expect(suites.length).toBeGreaterThan(40);
+
+    const uncovered = suites.filter(
+      (path) => !filters.some((filter) => path.startsWith(filter)));
+    expect(uncovered, 'Builder Stock suites CI never runs').toEqual([]);
+
+    // And this file among them, which is where the rule came from.
+    expect(suites).toContain('src/lib/__tests__/builderStockCloudflareWorker.test.ts');
   });
 
   it('the worker hardening gate names the worker source', () => {

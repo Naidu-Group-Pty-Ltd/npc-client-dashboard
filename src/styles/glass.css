@@ -368,12 +368,36 @@
      components layer, so a single-class rule here would lose. No blur:
      this selector is broad and cannot know how many it will match. */
   .border.bg-card,
-  .bg-card.border,
-  .border.bg-popover,
-  .bg-popover.border {
+  .bg-card.border {
     border-color: var(--glass-stroke);
     background-color: var(--glass-fill);
     background-image: var(--glass-sheen);
+  }
+
+  /* `bg-popover` is NOT a card, and took the card fill above until the
+     recipient dropdown in Quick Add was reported as "transparent". At
+     `--glass-fill` the contact list sat at 55% over the form it covers, so
+     "Additional Invite Recipients", the Name/Email inputs and "Title *" all
+     read straight through the three contacts on top of them.
+
+     `--popover` is the token for a surface that FLOATS above content, and the
+     one thing such a surface has to do is hide what it covers. So it is opaque,
+     not glass.
+
+     Blur is not the alternative here. The raised fill works for Radix's own
+     select and dropdown because those PORTAL to the body, where their backdrop
+     is the page. These are hand-rolled and render inline — usually inside a
+     dialog that already carries `backdrop-filter` — and a nested backdrop
+     filter does not blur the dialog's own content. Measured at both
+     `--glass-fill-raised` and raised-plus-blur, the text underneath stayed
+     legible through the overlay in each case.
+
+     Same (0,2,0) specificity as the rule above, for the same reason. */
+  .border.bg-popover,
+  .bg-popover.border {
+    border-color: var(--glass-stroke);
+    background-color: hsl(var(--popover));
+    background-image: none;
   }
 
   /* ── Chrome ───────────────────────────────────────────────────────

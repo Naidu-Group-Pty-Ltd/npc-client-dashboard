@@ -209,22 +209,22 @@ export const AgentPerformanceFlags = ({ calls }: AgentPerformanceFlagsProps) => 
           <CardContent className="p-3">
             <div className="flex items-center gap-2 mb-1">
               <div className="p-1.5 rounded-lg bg-destructive/10">
-                <TrendingDown className="w-3.5 h-3.5 text-destructive-foreground0" />
+                <TrendingDown className="w-3.5 h-3.5 text-destructive" />
               </div>
               <span className="text-xs text-muted-foreground">Declining</span>
             </div>
-            <p className="text-xl font-bold text-destructive-foreground0">{summaryStats.decliningAgents}</p>
+            <p className="text-xl font-bold text-destructive">{summaryStats.decliningAgents}</p>
           </CardContent>
         </Card>
         <Card className="bg-gradient-to-br from-success/5 to-card">
           <CardContent className="p-3">
             <div className="flex items-center gap-2 mb-1">
               <div className="p-1.5 rounded-lg bg-success/10">
-                <TrendingUp className="w-3.5 h-3.5 text-success-foreground0" />
+                <TrendingUp className="w-3.5 h-3.5 text-success" />
               </div>
               <span className="text-xs text-muted-foreground">Improving</span>
             </div>
-            <p className="text-xl font-bold text-success-foreground0">{summaryStats.improvingAgents}</p>
+            <p className="text-xl font-bold text-success">{summaryStats.improvingAgents}</p>
           </CardContent>
         </Card>
       </div>
@@ -287,7 +287,7 @@ export const AgentPerformanceFlags = ({ calls }: AgentPerformanceFlagsProps) => 
                               <AlertCircle className="w-3 h-3" />
                               Negative Rate
                             </div>
-                            <p className={`font-semibold ${agent.negativeRate > 20 ? 'text-destructive-foreground0' : ''}`}>
+                            <p className={`font-semibold ${agent.negativeRate > 20 ? 'text-destructive' : ''}`}>
                               {agent.negativeRate.toFixed(1)}%
                             </p>
                           </div>
@@ -313,7 +313,7 @@ export const AgentPerformanceFlags = ({ calls }: AgentPerformanceFlagsProps) => 
                         <CheckCircle className="w-3 h-3" />
                         Success Rate
                       </div>
-                      <p className={`font-semibold ${agent.successRate < 60 ? 'text-destructive-foreground0' : 'text-success-foreground0'}`}>
+                      <p className={`font-semibold ${agent.successRate < 60 ? 'text-destructive' : 'text-success'}`}>
                         {agent.successRate.toFixed(0)}%
                       </p>
                     </div>

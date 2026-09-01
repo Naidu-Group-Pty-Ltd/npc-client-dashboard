@@ -301,25 +301,49 @@ async function listTeamAvailability(
   startTime: string,
   endTime: string,
 ) {
-  // Get all active users with microsoft_email
+  // Every active colleague, not only the ones with Outlook linked.
+  //
+  // Audit item 27: the panel showed two people and the third was simply absent,
+  // with nothing to say why. It filtered on `microsoft_email is not null`, and
+  // of the four real accounts only two have one set — so a colleague who has
+  // never connected Outlook was indistinguishable from one who does not exist.
+  // They are returned with `outlookConnected: false` and no busy slots, so the
+  // panel can say "not connected" instead of quietly leaving them out.
   const { data: users } = await supabase
     .from('custom_users')
     .select('id, username, microsoft_email, email')
-    .eq('is_active', true)
-    .not('microsoft_email', 'is', null);
+    .eq('is_active', true);
 
   if (!users?.length) return [];
 
+  // Seeded accounts addressed at reserved domains are not colleagues; the same
+  // rule the pickers use (see `assignablePerson.pure.ts`).
+  const unroutable = (address: string) => /\.(invalid|test|example|localhost)$|@example\.(com|net|org)$/i.test(address.trim());
+
   const results: any[] = [];
   for (const user of users) {
-    const msEmail = user.microsoft_email || user.email;
-    if (!msEmail) continue;
+    const accountEmail = String(user.email ?? '');
+    if (accountEmail && unroutable(accountEmail)) continue;
+
+    const msEmail = user.microsoft_email;
+    if (!msEmail) {
+      results.push({
+        userId: user.id,
+        username: user.username,
+        email: user.email ?? null,
+        events: [],
+        busySlots: [],
+        outlookConnected: false,
+      });
+      continue;
+    }
     try {
       const events = await listEvents(accessToken, msEmail, startTime, endTime);
       results.push({
         userId: user.id,
         username: user.username,
         email: msEmail,
+        outlookConnected: true,
         events,
         busySlots: events
           .filter((e: any) => ['busy', 'tentative', 'oof', 'workingElsewhere'].includes(e.showAs))
@@ -331,6 +355,7 @@ async function listTeamAvailability(
         userId: user.id,
         username: user.username,
         email: msEmail,
+        outlookConnected: true,
         events: [],
         busySlots: [],
         error: (e as Error).message,

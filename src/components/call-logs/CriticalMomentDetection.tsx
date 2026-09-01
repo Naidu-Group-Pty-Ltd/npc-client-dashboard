@@ -48,15 +48,15 @@ interface CriticalMomentDetectionProps {
 
 const ROOT_CAUSE_LABELS: Record<string, { label: string; color: string }> = {
   pricing_objection: { label: 'Pricing Objection', color: 'text-brand-500' },
-  service_complaint: { label: 'Service Complaint', color: 'text-destructive-foreground0' },
-  agent_confusion: { label: 'Agent Confusion', color: 'text-warning-foreground0' },
+  service_complaint: { label: 'Service Complaint', color: 'text-destructive' },
+  agent_confusion: { label: 'Agent Confusion', color: 'text-warning' },
   long_hold_time: { label: 'Long Hold Time', color: 'text-brand-500' },
-  unresolved_query: { label: 'Unresolved Query', color: 'text-accent-foreground0' },
-  technical_issue: { label: 'Technical Issue', color: 'text-info-foreground0' },
-  miscommunication: { label: 'Miscommunication', color: 'text-accent-foreground0' },
+  unresolved_query: { label: 'Unresolved Query', color: 'text-accent' },
+  technical_issue: { label: 'Technical Issue', color: 'text-info' },
+  miscommunication: { label: 'Miscommunication', color: 'text-accent' },
   customer_frustration: { label: 'Customer Frustration', color: 'text-destructive' },
-  wrong_transfer: { label: 'Wrong Transfer', color: 'text-accent-foreground0' },
-  information_gap: { label: 'Information Gap', color: 'text-info-foreground0' },
+  wrong_transfer: { label: 'Wrong Transfer', color: 'text-accent' },
+  information_gap: { label: 'Information Gap', color: 'text-info' },
 };
 
 export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps) => {
@@ -116,7 +116,7 @@ export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps)
   }, [callsWithCriticalMoments]);
 
   const getSeverityColor = (severity: number | null) => {
-    if (!severity) return 'bg-muted0';
+    if (!severity) return 'bg-muted';
     if (severity <= 2) return 'bg-brand-500';
     if (severity <= 3) return 'bg-warning';
     if (severity <= 4) return 'bg-destructive';
@@ -142,11 +142,11 @@ export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps)
           <CardContent className="p-3">
             <div className="flex items-center gap-2 mb-1">
               <div className="p-1.5 rounded-lg bg-destructive/10">
-                <AlertCircle className="w-3.5 h-3.5 text-destructive-foreground0" />
+                <AlertCircle className="w-3.5 h-3.5 text-destructive" />
               </div>
               <span className="text-xs text-muted-foreground">Critical (4-5)</span>
             </div>
-            <p className="text-xl font-bold text-destructive-foreground0">{stats.critical}</p>
+            <p className="text-xl font-bold text-destructive">{stats.critical}</p>
           </CardContent>
         </Card>
         <Card className="bg-gradient-to-br from-brand-500/5 to-card">
@@ -258,8 +258,8 @@ export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps)
                         {/* Critical Moment Highlight */}
                         <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 mb-2">
                           <div className="flex items-center gap-2 mb-1">
-                            <AlertTriangle className="w-3.5 h-3.5 text-destructive-foreground0" />
-                            <span className="text-xs font-medium text-destructive-foreground0">Trigger Phrase:</span>
+                            <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+                            <span className="text-xs font-medium text-destructive">Trigger Phrase:</span>
                           </div>
                           <p className="text-sm italic">
                             "{call.negative_sentiment_moment?.triggerPhrase}"
@@ -297,7 +297,7 @@ export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps)
         <DialogContent className="flex max-h-[90vh] w-[95vw] max-w-2xl flex-col overflow-hidden sm:w-auto sm:max-h-[90vh] sm:overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Zap className="w-5 h-5 text-destructive-foreground0" />
+              <Zap className="w-5 h-5 text-destructive" />
               Critical Moment Analysis
             </DialogTitle>
           </DialogHeader>
@@ -331,8 +331,8 @@ export const CriticalMomentDetection = ({ calls }: CriticalMomentDetectionProps)
               {/* Critical Moment */}
               <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
                 <div className="flex items-center gap-2 mb-3">
-                  <AlertTriangle className="w-5 h-5 text-destructive-foreground0" />
-                  <h3 className="font-semibold text-destructive-foreground0">Critical Moment Detected</h3>
+                  <AlertTriangle className="w-5 h-5 text-destructive" />
+                  <h3 className="font-semibold text-destructive">Critical Moment Detected</h3>
                 </div>
                 
                 <div className="space-y-3">

@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
-import { canAccessAllClients, canAccessClient } from '../_shared/clientAccess.ts';
+import { canAccessAllClients, canAccessAllOf } from '../_shared/clientAccess.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
@@ -118,13 +118,19 @@ Deno.serve(async (req) => {
     // Caller-supplied IDs are selectors, not authorization. Hide inaccessible
     // clients behind a not-found response to avoid turning this broker into an
     // ID oracle, even for users who can view the client-management module.
-    for (const id of idsToFetch) {
-      if (!await canAccessClient(supabase, actor, id)) {
-        return new Response(
-          JSON.stringify({ error: 'Client not found', success: false }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        );
-      }
+    //
+    // Audit item 36 — the verdict is unchanged and all-or-nothing, exactly as
+    // the loop that was here gave it. What changed is the cost. This was a
+    // `for…of` with an `await` inside, so the CRM Conversations page, which
+    // resolves 722 client names on every load, made 722 sequential round trips
+    // each carrying its own superadmin read. At 80ms apiece that is 58 seconds
+    // against a browser that aborts at 60 — the name lookup failed, the map
+    // stayed empty, and every conversation rendered as "Unknown".
+    if (!await canAccessAllOf(supabase, actor, idsToFetch)) {
+      return new Response(
+        JSON.stringify({ error: 'Client not found', success: false }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
     }
 
     // Handle custom table queries in list mode

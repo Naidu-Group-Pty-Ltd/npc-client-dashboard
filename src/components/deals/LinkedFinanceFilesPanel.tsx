@@ -8,9 +8,9 @@ import type { DealWithClient } from '@/hooks/useAllDeals';
 
 const FINANCE_STATUS_TONE: Record<string, string> = {
   at_risk: 'border-destructive/40 bg-destructive/5 text-destructive',
-  unconditional_approval: 'border-success/40 bg-success/5 text-success-foreground0',
-  settled: 'border-success/40 bg-success/5 text-success-foreground0',
-  ready_for_settlement: 'border-success/40 bg-success/5 text-success-foreground0',
+  unconditional_approval: 'border-success/40 bg-success/5 text-success',
+  settled: 'border-success/40 bg-success/5 text-success',
+  ready_for_settlement: 'border-success/40 bg-success/5 text-success',
 };
 
 function statusLabel(s?: string | null) {

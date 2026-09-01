@@ -14,6 +14,8 @@ import { Loader2, Send, Paperclip, Download, X, ShieldCheck } from 'lucide-react
 import { format, isToday, isYesterday } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+// Audit item 48 — who sent this, and how the bubble reads.
+import { bubbleClassFor, senderIdentity } from '@/lib/finance-portal/messageSender.pure';
 
 export interface ThreadMessage {
   id: string;
@@ -208,13 +210,27 @@ export function FinanceMessagesThread({ threadId, viewerSide, invoke, onMessageS
                 <div key={m.id} className={cn('flex flex-col', mine ? 'items-end' : 'items-start')}>
                   <div className={cn(
                     'max-w-[92%] rounded-2xl sm:max-w-[82%] border px-3.5 py-2.5 text-sm leading-6 whitespace-pre-wrap break-words shadow-lg shadow-sm dark:shadow-black/15 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_32px_rgba(0,0,0,0.22)]',
-                    mine ? 'border-accent/30 bg-gradient-to-br from-accent to-info text-black' : 'border-info/15 bg-card dark:bg-background/95 text-foreground'
+                    // Audit item 48: every incoming message used one bubble,
+                    // so a client and a finance partner were indistinguishable
+                    // — which matters most when, as reported, both sides are
+                    // the same address.
+                    mine
+                      ? 'border-accent/30 bg-gradient-to-br from-accent to-info text-black'
+                      : bubbleClassFor(m.sender_type),
                   )}>
-                    {!mine && (
-                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-70">
-                        {m.sender_name || (m.sender_type === 'staff' ? 'Staff' : m.sender_type === 'client' ? 'Client' : 'Finance Partner')}
-                      </div>
-                    )}
+                    {!mine && (() => {
+                      // The role always, the person when the record holds one
+                      // that is not an email address. `sender_name` is the
+                      // partner's and the client's email for every message
+                      // stored so far.
+                      const { role, name } = senderIdentity(m.sender_type, m.sender_name);
+                      return (
+                        <div className="mb-1.5 flex flex-wrap items-baseline gap-x-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-70">
+                          <span>{role}</span>
+                          {name && <span className="normal-case tracking-normal opacity-90">{name}</span>}
+                        </div>
+                      );
+                    })()}
                     <div>{m.body}</div>
                     {m.attachment_path && m.attachment_filename && (
                       <button

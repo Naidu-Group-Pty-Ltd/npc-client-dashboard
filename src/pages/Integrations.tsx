@@ -359,7 +359,7 @@ export default function Integrations() {
     if (status === 'configured') {
       return {
         className: 'border-success/20 bg-success/10 text-success dark:text-success',
-        iconClassName: 'text-success-foreground0 dark:text-success',
+        iconClassName: 'text-success dark:text-success',
         label: 'Required credentials saved',
         detail: `${configuredRequiredFields.length}/${requiredFields.length} required fields configured`,
       };
@@ -388,14 +388,14 @@ export default function Integrations() {
     switch (status) {
       case 'configured':
         return (
-          <Badge variant="outline" className={`${baseBadgeClass} border-success/30 bg-success/10 text-success-foreground0 dark:text-success`}>
+          <Badge variant="outline" className={`${baseBadgeClass} border-success/30 bg-success/10 text-success dark:text-success`}>
             <CheckCircle2 className="h-3 w-3 shrink-0" />
             <span className="truncate">Configured</span>
           </Badge>
         );
       case 'connected':
         return (
-          <Badge variant="outline" className={`${baseBadgeClass} border-success/30 bg-success/10 text-success-foreground0 dark:text-success`}>
+          <Badge variant="outline" className={`${baseBadgeClass} border-success/30 bg-success/10 text-success dark:text-success`}>
             <CheckCircle2 className="h-3 w-3 shrink-0" />
             <span className="truncate">Connected</span>
           </Badge>
@@ -502,7 +502,7 @@ export default function Integrations() {
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Badge variant="outline" className="max-w-full gap-1 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-[11px] font-semibold leading-none text-success-foreground0 shadow-sm dark:text-success">
+              <Badge variant="outline" className="max-w-full gap-1 rounded-full border border-success/30 bg-success/10 px-2.5 py-1 text-[11px] font-semibold leading-none text-success shadow-sm dark:text-success">
                 <Cloud className="h-3 w-3 shrink-0" />
                 <span className="truncate">Supabase</span>
               </Badge>

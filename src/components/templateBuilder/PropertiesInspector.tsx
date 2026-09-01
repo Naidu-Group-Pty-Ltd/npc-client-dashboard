@@ -1435,6 +1435,7 @@ function ImageUploadField({
       const folder = templateId ?? 'unassigned';
       const path = `${folder}/${overlayId}-${Date.now()}.${ext}`;
       const result = await secureStorageUpload('report-templates', path, file, {
+        resourceId: templateId,
         contentType: file.type,
         upsert: true,
       });

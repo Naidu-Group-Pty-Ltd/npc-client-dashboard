@@ -47,8 +47,9 @@ import {
   type GoogleSheetsRef,
 } from './googleSheetsSource.pure.ts';
 import {
-  hyperlinkTargetOf, matchWorksheet, mergeHyperlinkColumns, type HyperlinkAvailability, type WorkbookSheet,
+  matchWorksheet, mergeHyperlinkColumns, type HyperlinkAvailability, type WorkbookSheet,
 } from './sheetHyperlinks.pure.ts';
+import { readWorkbookSheets } from './workbookSheets.ts';
 import { parseDelimited } from './table.pure.ts';
 import { matrixToCsv } from './notionRecordMap.pure.ts';
 
@@ -252,50 +253,6 @@ async function enrichWithHyperlinks(
   if (!merged.linksResolved) return { csv, availability: 'none_present' };
 
   return { csv: matrixToCsv(merged.matrix), availability: 'resolved' };
-}
-
-/**
- * Every worksheet's visible values and its hyperlink targets.
- *
- * SheetJS surfaces a link as `cell.l.Target` beside the displayed `cell.v`, so
- * a labelled cell that carries no link is distinguishable from one that does
- * rather than inferred. The reader is the one this repository already loads
- * for spreadsheet sources; nothing new is introduced into the runtime.
- */
-async function readWorkbookSheets(bytes: Uint8Array): Promise<WorkbookSheet[]> {
-  const XLSX = await import('https://esm.sh/xlsx@0.18.5');
-  const workbook = XLSX.read(bytes, { type: 'array', cellDates: true });
-
-  return workbook.SheetNames.map((name: string) => {
-    const sheet = workbook.Sheets[name];
-    const values: (string | null)[][] = [];
-    const links: (string | null)[][] = [];
-    if (!sheet || !sheet['!ref']) return { name, values, links };
-
-    const range = XLSX.utils.decode_range(String(sheet['!ref']));
-    for (let r = range.s.r; r <= range.e.r; r += 1) {
-      const valueRow: (string | null)[] = [];
-      const linkRow: (string | null)[] = [];
-      for (let c = range.s.c; c <= range.e.c; c += 1) {
-        const cell = sheet[XLSX.utils.encode_cell({ r, c })];
-        valueRow.push(cell ? String(cell.w ?? cell.v ?? '') : null);
-        /*
-         * BOTH WAYS A CELL CAN POINT SOMEWHERE. `cell.l.Target` is the link
-         * RELATIONSHIP, which is what Insert > Link writes; a cell that IS
-         * `=HYPERLINK("…","Brochure")` carries no relationship at all and its
-         * target is an argument inside `cell.f`. Reading only the first
-         * dropped every brochure a builder typed as a formula.
-         */
-        linkRow.push(hyperlinkTargetOf({
-          link: cell?.l?.Target ?? null,
-          formula: cell?.f ?? null,
-        }));
-      }
-      values.push(valueRow);
-      links.push(linkRow);
-    }
-    return { name, values, links };
-  });
 }
 
 function decodeUtf8(bytes: Uint8Array): string {

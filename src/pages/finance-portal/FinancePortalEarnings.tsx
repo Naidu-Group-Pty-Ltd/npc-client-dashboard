@@ -119,7 +119,7 @@ function KpiCard({
                 <div className={cn(
                   'flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full',
                   trend === 'up' && 'text-success bg-success/10',
-                  trend === 'down' && 'text-destructive-foreground0 bg-destructive/10',
+                  trend === 'down' && 'text-destructive bg-destructive/10',
                   trend === 'flat' && 'text-muted-foreground bg-muted'
                 )}>
                   <TrendIcon className="h-3 w-3" />
@@ -831,7 +831,7 @@ export default function FinancePortalEarnings() {
                                   onClick={() => downloadStatement(s.id, 'pdf')}
                                   className="gap-1.5 rounded-lg text-xs h-8"
                                 >
-                                  <FileText className="h-3.5 w-3.5 text-destructive-foreground0" />
+                                  <FileText className="h-3.5 w-3.5 text-destructive" />
                                   PDF
                                 </Button>
                               )}
@@ -842,7 +842,7 @@ export default function FinancePortalEarnings() {
                                   onClick={() => downloadStatement(s.id, 'csv')}
                                   className="gap-1.5 rounded-lg text-xs h-8"
                                 >
-                                  <FileSpreadsheet className="h-3.5 w-3.5 text-success-foreground0" />
+                                  <FileSpreadsheet className="h-3.5 w-3.5 text-success" />
                                   CSV
                                 </Button>
                               )}
@@ -901,13 +901,13 @@ export default function FinancePortalEarnings() {
                           <div className="flex flex-wrap gap-2">
                             {s.pdf_storage_path && (
                               <Button size="sm" variant="outline" onClick={() => downloadStatement(s.id, 'pdf')} className="h-9 gap-1.5 rounded-lg text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                                <FileText className="h-3.5 w-3.5 text-destructive-foreground0" />
+                                <FileText className="h-3.5 w-3.5 text-destructive" />
                                 PDF
                               </Button>
                             )}
                             {s.remittance_csv_path && (
                               <Button size="sm" variant="outline" onClick={() => downloadStatement(s.id, 'csv')} className="h-9 gap-1.5 rounded-lg text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                                <FileSpreadsheet className="h-3.5 w-3.5 text-success-foreground0" />
+                                <FileSpreadsheet className="h-3.5 w-3.5 text-success" />
                                 CSV
                               </Button>
                             )}

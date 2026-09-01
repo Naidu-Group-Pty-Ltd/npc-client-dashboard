@@ -143,7 +143,7 @@ export default function AcceptInvite() {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardHeader className="text-center">
-            <CheckCircle className="h-16 w-16 text-success-foreground0 mx-auto mb-4" />
+            <CheckCircle className="h-16 w-16 text-success mx-auto mb-4" />
             <CardTitle>Account Created!</CardTitle>
             <CardDescription>{success}</CardDescription>
           </CardHeader>

@@ -2,7 +2,7 @@
  * The AUSTRAC path — the rules that make it a compliance record rather than
  * a form.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   AUSTRAC_OBLIGATIONS, TERRORISM_FINANCING_HOURS, approvalConfirmation,
   outstandingBeforeApproval,
@@ -10,13 +10,28 @@ import {
   lodgementClock, type AustracReportFacts,
 } from "./austracReportPath.pure";
 
+/**
+ * The default obligation is TODAY, so the default report is inside its window.
+ *
+ * An SMR is due three business days after the obligation, and this default
+ * used to be the literal `2026-08-27` — a Thursday, due 2026-09-01T00:00Z.
+ * At 00:45Z that morning "asks nothing of an approver whose report is clean"
+ * began failing on a suite nobody had touched, because a clean report had
+ * quietly become an overdue one. The clock is what these tests measure; it
+ * must not also be what they trip over.
+ *
+ * The tests BELOW that pass an explicit `obligationAt` keep their literal
+ * dates on purpose: those are the specification of the business-day rule
+ * itself — a Thursday is due the following Tuesday whatever today is — and a
+ * relative date there would assert nothing.
+ */
 const facts = (over: Partial<AustracReportFacts> = {}): AustracReportFacts => ({
   kind: "smr", status: "draft", caseId: "case-1", subjectLabel: "Rugesh Naidu",
   title: "SMR — unusual cash deposits",
   narrative: "Third-party funds arrived with no explained connection to the buyer.",
   periodStart: null, periodEnd: null, mlroSignedAt: null, submittedAt: null,
   externalReference: null, receiptReference: null,
-  obligationAt: "2026-08-27T00:00:00.000Z", ...over,
+  obligationAt: new Date().toISOString(), ...over,
 });
 
 describe("the statutory clock", () => {
@@ -165,6 +180,31 @@ describe("the path", () => {
     /* A clean report approves in one click; only a real gap interrupts. */
     expect(approvalConfirmation(facts())).toBeNull();
     expect(outstandingBeforeApproval(facts())).toEqual([]);
+  });
+
+  it("still asks nothing of that approver in five years' time", () => {
+    /* The property the fixture above depends on, asserted rather than
+       assumed. This suite went red at 00:45 on 1 September 2026 with no
+       change to the repository: the default obligation was a literal date
+       whose three-business-day window had just closed. A default measured
+       from `now` is inside its window on every day the suite is ever run,
+       and this is the test that says so — jump the clock five years, three
+       days, and onto a weekend, and a clean report is still clean. */
+    const originals = [
+      new Date("2031-09-01T02:13:00.000Z"), // five years on, a Monday
+      new Date("2031-09-06T23:59:59.000Z"), // a Saturday night
+      new Date("2032-02-29T12:00:00.000Z"), // a leap day
+    ];
+    for (const when of originals) {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(when);
+        expect(approvalConfirmation(facts()), when.toISOString()).toBeNull();
+        expect(outstandingBeforeApproval(facts()), when.toISOString()).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
   });
 
   it("never asks the approver to answer for the steps their own decision unlocks", () => {

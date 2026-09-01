@@ -408,7 +408,7 @@ export function VoiceNoteRecorder({ onTranscriptReady, noteType, disabled }: Voi
             <div className="relative">
               {isPaused ? (
                 <div className="w-5 h-5 rounded-full bg-warning/20 flex items-center justify-center">
-                  <Pause className="w-3 h-3 text-warning-foreground0" />
+                  <Pause className="w-3 h-3 text-warning" />
                 </div>
               ) : (
                 <>
@@ -438,14 +438,14 @@ export function VoiceNoteRecorder({ onTranscriptReady, noteType, disabled }: Voi
             
             <span className={cn(
               "text-xs font-medium",
-              isPaused ? "text-warning-foreground0" : "text-destructive-foreground0 animate-pulse"
+              isPaused ? "text-warning" : "text-destructive animate-pulse"
             )}>
               {isPaused ? 'Paused' : 'Recording...'}
             </span>
             
             <span className={cn(
               "text-xs font-mono ml-auto",
-              isNearLimit ? "text-warning-foreground0 font-semibold" : (isPaused ? "text-warning-foreground0/70" : "text-destructive-foreground0/70")
+              isNearLimit ? "text-warning font-semibold" : (isPaused ? "text-warning/70" : "text-destructive/70")
             )}>
               {formatDuration(recordingDuration)} / {formatDuration(MAX_RECORDING_DURATION)}
             </span>
@@ -467,7 +467,7 @@ export function VoiceNoteRecorder({ onTranscriptReady, noteType, disabled }: Voi
           
           {/* Near limit warning */}
           {isNearLimit && (
-            <p className="text-xs text-warning-foreground0 font-medium">
+            <p className="text-xs text-warning font-medium">
               ⚠️ Recording will stop in {formatDuration(MAX_RECORDING_DURATION - recordingDuration)}
             </p>
           )}
@@ -475,7 +475,7 @@ export function VoiceNoteRecorder({ onTranscriptReady, noteType, disabled }: Voi
           {/* Live transcript preview */}
           {liveTranscript && !isPaused && (
             <div className="text-sm text-muted-foreground italic border-t border-destructive/20 pt-2 mt-1">
-              <span className="text-destructive-foreground0/60 text-xs mr-1">Live:</span>
+              <span className="text-destructive/60 text-xs mr-1">Live:</span>
               {liveTranscript.length > 100 ? `${liveTranscript.slice(0, 100)}...` : liveTranscript}
               <span className="inline-block w-1 h-3 bg-destructive/50 ml-0.5 animate-pulse" />
             </div>
@@ -484,7 +484,7 @@ export function VoiceNoteRecorder({ onTranscriptReady, noteType, disabled }: Voi
           {/* Paused instructions */}
           {isPaused && (
             <p className="text-xs text-muted-foreground mt-1">
-              Click <span className="text-warning-foreground0 font-medium">Resume</span> to continue or <span className="text-destructive font-medium">Stop</span> to transcribe
+              Click <span className="text-warning font-medium">Resume</span> to continue or <span className="text-destructive font-medium">Stop</span> to transcribe
             </p>
           )}
         </div>
@@ -518,7 +518,7 @@ export function VoiceNoteRecorder({ onTranscriptReady, noteType, disabled }: Voi
                 variant="outline"
                 size="sm"
                 onClick={resumeRecording}
-                className="gap-1.5 border-warning/30 text-warning-foreground0 hover:bg-warning/10"
+                className="gap-1.5 border-warning/30 text-warning hover:bg-warning/10"
               >
                 <Play className="h-3.5 w-3.5" />
                 Resume

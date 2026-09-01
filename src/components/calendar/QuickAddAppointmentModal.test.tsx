@@ -84,3 +84,76 @@ describe('QuickAddAppointmentModal', () => {
     expect(showTimePicker).toHaveBeenCalledOnce();
   });
 });
+
+/**
+ * Audit item 22: the title was written once inside the contact picker and
+ * nothing ever revisited it, so choosing "Zoom Meeting" and a client and then
+ * switching to "Phone Call" sent out a booking still named "Zoom Meeting
+ * with <client>".
+ *
+ * The rule: a SUGGESTION follows the type; a title the operator typed is
+ * theirs. Both halves matter — re-deriving without the second would silently
+ * overwrite somebody's wording every time they changed a dropdown.
+ */
+describe('QuickAddAppointmentModal title suggestion', () => {
+  const searchContacts = vi.fn().mockResolvedValue([
+    { id: 'c1', name: 'Lavan Ravin', email: 'lavan@example.com' },
+  ]);
+
+  const renderWithContacts = () => render(
+    <QuickAddAppointmentModal
+      open
+      onOpenChange={vi.fn()}
+      calendars={calendars}
+      defaultDate={new Date(2026, 6, 24)}
+      defaultHour={9}
+      isLoading={false}
+      onSubmit={vi.fn().mockResolvedValue(true)}
+      onSearchContacts={searchContacts}
+    />,
+  );
+
+  const pickContact = async () => {
+    fireEvent.change(
+      screen.getByPlaceholderText('Search contacts by name, email, or phone...'),
+      { target: { value: 'Lavan' } },
+    );
+    fireEvent.click(await screen.findByText('Lavan Ravin'));
+  };
+
+  const chooseType = (label: string) =>
+    fireEvent.click(screen.getByText(label).closest('button')!);
+
+  it('follows the appointment type once a contact is chosen', async () => {
+    renderWithContacts();
+    chooseType('Zoom Meeting');
+    await pickContact();
+
+    const title = screen.getByLabelText('Title *') as HTMLInputElement;
+    expect(title.value).toBe('Zoom Meeting with Lavan Ravin');
+
+    chooseType('Phone Call');
+    expect(title.value).toBe('Phone Call with Lavan Ravin');
+  });
+
+  it('never overwrites a title the operator typed', async () => {
+    renderWithContacts();
+    chooseType('Zoom Meeting');
+    await pickContact();
+
+    const title = screen.getByLabelText('Title *') as HTMLInputElement;
+    fireEvent.change(title, { target: { value: 'Annual portfolio review' } });
+
+    chooseType('Phone Call');
+    chooseType('In Person');
+
+    expect(title.value).toBe('Annual portfolio review');
+  });
+
+  it('suggests nothing before a contact is chosen', () => {
+    renderWithContacts();
+    chooseType('Zoom Meeting');
+
+    expect((screen.getByLabelText('Title *') as HTMLInputElement).value).toBe('');
+  });
+});

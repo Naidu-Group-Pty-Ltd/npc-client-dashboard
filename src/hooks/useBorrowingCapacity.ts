@@ -142,7 +142,23 @@ export function useBorrowingCapacity({ clientId, autoFetch = true }: UseBorrowin
       queryClient.invalidateQueries({ queryKey: ['client-portfolio', 'industrial', clientId] });
       queryClient.invalidateQueries({ queryKey: ['commercial-properties', clientId] });
       queryClient.invalidateQueries({ queryKey: ['industrial-properties', clientId] });
-      toast.success('Borrowing capacity calculated successfully');
+
+      // Say what actually happened. The card reads the STORED assessment, so
+      // a save that failed leaves the operator looking at the old figure
+      // having just been told the new one succeeded — the recalculation is
+      // then indistinguishable from one that never ran. The server reports
+      // the save separately from the calculation because they can differ.
+      const saveFailed = (data as { saveRequested?: boolean; saved?: boolean })?.saveRequested === true
+        && (data as { saved?: boolean })?.saved === false;
+      if (saveFailed) {
+        const reason = (data as { saveError?: string | null })?.saveError;
+        toast.warning(
+          'Borrowing capacity calculated, but not saved',
+          { description: reason ? `${reason}. The figure on the card is unchanged.` : 'The figure on the card is unchanged.' },
+        );
+      } else {
+        toast.success('Borrowing capacity calculated successfully');
+      }
     },
     onError: (error: Error) => {
       console.error('Borrowing capacity calculation failed:', error);

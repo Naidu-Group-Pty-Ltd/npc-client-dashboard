@@ -19,6 +19,15 @@ interface TeamMemberAvailability {
   email: string;
   busySlots: BusySlot[];
   error?: string;
+  /**
+   * False when this colleague has no Outlook mailbox linked.
+   *
+   * They used to be filtered out server-side, so a colleague who had never
+   * connected Outlook was indistinguishable from one who did not exist — the
+   * panel listed two of three people and said nothing about the third
+   * (audit item 27).
+   */
+  outlookConnected?: boolean;
 }
 
 interface TeamOutlookAvailabilityProps {
@@ -107,7 +116,9 @@ export function TeamOutlookAvailability({
   };
 
   const conflictCount = useMemo(() => {
-    return team.filter(m => hasConflict(m.busySlots)).length;
+    // An unconnected colleague reports nothing, so they can neither clash nor
+    // be counted as clear.
+    return team.filter(m => m.outlookConnected !== false && hasConflict(m.busySlots)).length;
   }, [team, proposedStartTime, proposedEndTime]);
 
   if (!selectedDate) return null;
@@ -135,7 +146,7 @@ export function TeamOutlookAvailability({
             </Badge>
           )}
           {fetched && conflictCount === 0 && team.length > 0 && (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1 text-success-foreground0 border-success/30">
+            <Badge variant="outline" className="text-[9px] px-1 py-0 ml-1 text-success border-success/30">
               All free
             </Badge>
           )}
@@ -184,6 +195,7 @@ export function TeamOutlookAvailability({
                     <div className="flex items-center gap-2">
                       <div className={cn(
                         'w-2 h-2 rounded-full shrink-0',
+                        member.outlookConnected === false ? 'bg-muted-foreground/40' :
                         member.error ? 'bg-muted-foreground/30' :
                         conflict ? 'bg-destructive' :
                         member.busySlots.length > 0 ? 'bg-brand-500' : 'bg-success'
@@ -191,10 +203,12 @@ export function TeamOutlookAvailability({
                       <span className="font-medium truncate max-w-[120px]">{member.username}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      {member.error ? (
+                      {member.outlookConnected === false ? (
+                        <span className="text-[10px] text-muted-foreground">Outlook not connected</span>
+                      ) : member.error ? (
                         <span className="text-[10px] text-muted-foreground">Unavailable</span>
                       ) : member.busySlots.length === 0 ? (
-                        <span className="text-[10px] text-success-foreground0">Free all day</span>
+                        <span className="text-[10px] text-success">Free all day</span>
                       ) : conflict ? (
                         <span className="text-[10px] text-destructive font-medium">
                           {conflictingSlots.length} conflict{conflictingSlots.length !== 1 ? 's' : ''}

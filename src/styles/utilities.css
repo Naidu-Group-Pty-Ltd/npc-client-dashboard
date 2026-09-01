@@ -79,11 +79,40 @@ html {
   
   /* Mobile-optimized touch targets - 44x44px minimum */
   button, 
-  a, 
   [role="button"],
   input[type="checkbox"],
   input[type="radio"],
   .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* ── A link in a sentence is not a control ────────────────────────────
+     This selector was a bare `a`, so under 768px EVERY anchor in the
+     product — including one inside running text — was given a 44x44 box.
+     An inline link with a 44px minimum height no longer shares a line box
+     with the words around it: its text rides at the top of the box and the
+     line grows to 44px, so the link sits ~14px above the prose beside it
+     and consecutive links stand 44px apart.
+
+     Measured on Compliance Home's "Also in this workspace" footer, which is
+     one sentence of four links: the label and the first link were on the
+     same flex line and 14px apart vertically, and the four entries occupied
+     96px of a page whose whole line should be 16px. The same rule reaches
+     every inline link in every portal on a phone.
+
+     The floor is kept for every anchor that IS a control — anything with
+     the button treatment, a list entry, a navigation item — and dropped
+     only where the anchor is running text. `:where()` keeps the exclusion
+     at zero specificity, so the rules below it still win.
+
+     None of this lowers a real tap target: the `@media (pointer: coarse)`
+     block further down is the considered version of this accommodation, it
+     is keyed on the pointer rather than on the width, and it is what a
+     tablet and a phone actually match. */
+  a:not(
+    :where(p, td, dd, dt, figcaption, blockquote, h1, h2, h3, h4, h5, h6) a
+  ) {
     min-height: 44px;
     min-width: 44px;
   }
@@ -731,6 +760,30 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator {
 input[type="time"]::-webkit-calendar-picker-indicator {
   -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>");
   mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>");
+}
+
+/* Opt out, for a field that supplies its own picker button.
+   The replacement glyph above is a good default, but it is a UA pseudo-element:
+   it cannot be reached with Tab and carries no accessible name, so a field that
+   wants a keyboard-operable, labelled trigger has to draw a real button and
+   remove this one.
+
+   `display: none`, not `opacity: 0` — an invisible indicator still takes its
+   width and still answers a click, which is a second, unlabelled hit target
+   sitting next to the real one.
+
+   The class is required because of specificity. The rule above is an element
+   plus an attribute plus a pseudo-element, which out-ranks any utility class on
+   the same pseudo-element — `[&::-webkit-calendar-picker-indicator]:opacity-0`
+   was tried in Quick Add and did nothing at all, which is why that dialog drew
+   two calendars and two clocks (audit item 21). Adding the class here makes it
+   one rank higher, so it wins. */
+input[type="date"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="time"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="month"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="week"].has-custom-picker::-webkit-calendar-picker-indicator,
+input[type="datetime-local"].has-custom-picker::-webkit-calendar-picker-indicator {
+  display: none;
 }
 
 input[type="date"]::-webkit-calendar-picker-indicator:hover,

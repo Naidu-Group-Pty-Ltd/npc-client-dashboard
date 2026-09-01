@@ -152,8 +152,17 @@ export function AmlWorkspaceHeader({
           </div>
         </div>
 
-        {/* Two badges, kept apart: an assessment and a decision, not a chain. */}
-        <div className="flex shrink-0 flex-wrap items-center gap-2" aria-label="Case position">
+        {/* Two badges, kept apart: an assessment and a decision, not a chain.
+
+            NOT `shrink-0`. A flex item that cannot shrink keeps its
+            max-content width — here the three controls in a single row,
+            418px — so on a 390px screen the cluster hung 44px past the right
+            edge and "Service gate: Under review" was cut in half, with the
+            whole workspace scrolling sideways to reach it. The badges carry
+            their own `whitespace-nowrap`, so nothing inside them is squeezed
+            by letting the cluster shrink: it wraps onto a second line
+            instead, which is what `flex-wrap` was always here to do. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2" aria-label="Case position">
           {onClose && !closed && (
             <Button
               variant="ghost"

@@ -185,6 +185,14 @@ async function mcFetchRaw(path: string, init: RequestInit): Promise<Response> {
   assertConfigured();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MC_FETCH_TIMEOUT_MS);
+  // A caller's own signal is COMBINED with the ceiling above, never replaced by
+  // it. `{ ...init, signal: controller.signal }` discarded it: `getBalance`
+  // asks for 8s and was silently given 10, and any future caller wanting to
+  // cancel would have been ignored just as quietly. Combining can only ever
+  // abort sooner, so the ceiling still holds for callers that pass nothing.
+  const signal = init.signal
+    ? AbortSignal.any([init.signal, controller.signal])
+    : controller.signal;
   try {
     return await fetch(`${BASE_URL}${path}`, {
       ...init,
@@ -193,7 +201,7 @@ async function mcFetchRaw(path: string, init: RequestInit): Promise<Response> {
         "x-clone-api-key": API_KEY,
         ...(init.headers ?? {}),
       },
-      signal: controller.signal,
+      signal,
     });
   } catch (e) {
     if (isAbortError(e)) {

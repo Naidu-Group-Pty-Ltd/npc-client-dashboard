@@ -355,7 +355,7 @@ export function EnhancedResearchRenderer({
             >
               {copied ? (
                 <>
-                  <Check className="h-3 w-3 text-success-foreground0" />
+                  <Check className="h-3 w-3 text-success" />
                   Copied
                 </>
               ) : (

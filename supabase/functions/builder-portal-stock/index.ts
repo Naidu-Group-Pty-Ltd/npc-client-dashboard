@@ -40,6 +40,14 @@ import {
   runStockImport, type RunImportResult,
 } from '../_shared/builderStock/runImport.ts';
 import { sourceAccessNoticeFor } from '../_shared/builderStock/sourceAccessNotice.pure.ts';
+import {
+  linkRecoveryWebhookConfigured, requestLinkRecovery,
+} from '../_shared/builderStock/requestLinkRecovery.ts';
+import {
+  MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, shouldRequestLinkRecovery,
+} from '../_shared/builderStock/linkRecovery.pure.ts';
+import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure.ts';
+import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
 import type { HyperlinkAvailability } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
 import {
@@ -231,6 +239,8 @@ Deno.serve(async (req) => {
        * failure. See `sourceAccessNotice.pure.ts`.
        */
       sourceHyperlinks?: HyperlinkAvailability,
+      /** The URL the rows came from, for a Google Sheets recovery ask. */
+      sourceUrlForRecovery?: string | null,
     ) => {
       if (!result.ok) {
         if (result.code === 'duplicate_file') {
@@ -261,7 +271,44 @@ Deno.serve(async (req) => {
        * A row-level failure still wins the message, because rows that could
        * not be saved are the more serious of the two.
        */
-      const sourceNotice = sourceAccessNoticeFor(sourceHyperlinks);
+      /**
+     * Ask for this sheet's link addresses, where all four conditions hold.
+     *
+     * Every refusal is silent and operational: this is an auxiliary recovery,
+     * so a builder whose sheet is not a Google Sheet, or whose links were read
+     * cleanly, sees no difference from one whose recovery ran.
+     */
+    const maybeRequestLinkRecovery = async (
+      recoveryUploadId: string,
+      sourceUrl: string | null | undefined,
+      availability: HyperlinkAvailability | null | undefined,
+    ): Promise<void> => {
+      try {
+        const ref = googleSheetsRef(sourceUrl ?? null);
+        if (!shouldRequestLinkRecovery({
+          importSucceeded: true,
+          availability,
+          spreadsheetId: ref?.spreadsheetId ?? null,
+          webhookConfigured: linkRecoveryWebhookConfigured(),
+        })) return;
+
+        await requestLinkRecovery(supabase, {
+          organisationId: activeOrganisationId,
+          uploadId: recoveryUploadId,
+          spreadsheetId: ref!.spreadsheetId,
+          gid: ref!.gid,
+          origin: 'import',
+        });
+      } catch (error) {
+        // NEVER FATAL. The import is already complete and recorded.
+        console.warn('[builder-portal-stock] link recovery could not be requested', {
+          phase: 'link_recovery_dispatch', upload_id: recoveryUploadId,
+          detail: String((error as { message?: string })?.message ?? error).slice(0, 160),
+        });
+      }
+    };
+
+    const sourceNotice = sourceAccessNoticeFor(sourceHyperlinks);
       const { data: updated } = await supabase.from('builder_stock_uploads').update({
         status: result.uploadStatus,
         records_detected: result.summary.detected,
@@ -278,6 +325,21 @@ Deno.serve(async (req) => {
         processing_completed_at: new Date().toISOString(),
       }).eq('id', uploadId).eq('organisation_id', activeOrganisationId)
         .select(STOCK_UPLOAD_SELECT).single();
+
+      /*
+       * A SHEET THAT GAVE US ITS ROWS AND NOT ITS LINK ADDRESSES MAY BE
+       * READABLE BY SOMEBODY ELSE.
+       *
+       * `unavailable_source_export` means the workbook itself never arrived —
+       * the one reading a different, authorised reader can change. Every other
+       * reading either has the links already or had the file and could not use
+       * it, and asking again would spend a metered operation to learn nothing.
+       *
+       * AFTER the upload row is written and BEFORE nothing: the import is
+       * already complete and its result is already recorded, so this cannot
+       * delay, alter or fail it. `requestLinkRecovery` never throws.
+       */
+      await maybeRequestLinkRecovery(uploadId, sourceUrlForRecovery, sourceHyperlinks);
 
       await logBuilderProjectActivity(supabase, req, {
         builderUserId: me.id, organisationId: activeOrganisationId,
@@ -741,7 +803,7 @@ Deno.serve(async (req) => {
           strategy_source: 'url',
           ...(notionDiagnostics ? { notion_recovery: notionDiagnostics.recovery_ok } : {}),
           ...(fetched.hyperlinks ? { source_hyperlinks: fetched.hyperlinks } : {}),
-        }, fetched.hyperlinks);
+        }, fetched.hyperlinks, normalised.url);
       } catch (error) {
         console.error('[builder-portal-stock] url processing failed', error);
         return await failUpload(uploadId, 'processing_failed',
@@ -830,9 +892,19 @@ Deno.serve(async (req) => {
       /**
        * Settle EVERY property, not only the ones this run touched.
        *
-       * A property whose builder supplied nothing must end the run with no
-       * primary image rather than the Street View it had before the rule
-       * changed — that stale pointer IS the defect being repaired.
+       * A property whose pointer no longer matches what the ranking would pick
+       * — an image re-judged a marketing tile since it was chosen, a builder
+       * cover that has arrived for a property showing a fallback — must end the
+       * run pointing at the current answer rather than the old one.
+       *
+       * It settles to the SAME ranking the per-item path uses
+       * (`chooseCardImage`). This comment used to say the opposite: that a
+       * property whose builder supplied nothing must end with no image "rather
+       * than the Street View it had before the rule changed". That was true of
+       * the builder-or-nothing rule and stopped being true when
+       * `imagePriority.pure.ts` reinstated the fallback tiers; the function it
+       * describes went on enforcing the repealed rule, and this operation is
+       * the caller that could reach it. See `enforceStrictPrimaryImages`.
        */
       const primaries = await enforceStrictPrimaryImages(supabase, activeOrganisationId);
 
@@ -1180,6 +1252,89 @@ Deno.serve(async (req) => {
     // =====================================================================
     // Removing a stock-list source
     // =====================================================================
+
+    /*
+     * "Refresh brochure links" — the same recovery, asked again by hand.
+     *
+     * OFFERED ONLY WHERE IT CAN DO SOMETHING. The upload must be this
+     * organisation's, must be a Google Sheets source, and must currently carry
+     * the one availability an authorised re-read can change. Anything else is
+     * refused rather than quietly doing nothing, so the button in the portal
+     * and the server agree about when it applies.
+     *
+     * It re-reads the SOURCE ONLY. No rows are re-imported, no stock data is
+     * touched, and nothing about the marketplace changes until stage 1 opens a
+     * recovered document through the pipeline that already exists.
+     */
+    if (operation === 'refresh_brochure_links') {
+      const uploadId = String(body.upload_id || '');
+      if (!uploadId) return json({ success: false, error: 'upload_id is required.' }, 400);
+
+      const { data: upload } = await supabase.from('builder_stock_uploads')
+        .select('id, source_type, source_url, error_code, error_detail, deleted_at')
+        .eq('id', uploadId).eq('organisation_id', activeOrganisationId).maybeSingle();
+      if (!upload || upload.deleted_at) {
+        return json({ success: false, error: 'That stock list was not found.' }, 404);
+      }
+
+      /*
+       * The upload's OWN recorded reason, and both spellings of it. A row
+       * written before that reading was split in two carries the old name; it
+       * describes the same restricted export and the same act recovers it.
+       */
+      const availability = (upload.error_detail ?? {})?.reason ?? null;
+      if (!isRecoverableStoredAvailability(availability)) {
+        return json({
+          success: false,
+          error: 'This stock list does not have brochure links waiting to be recovered.',
+        }, 409);
+      }
+
+      const ref = googleSheetsRef(upload.source_url);
+      if (!ref) {
+        return json({ success: false, error: 'This stock list is not a Google Sheet.' }, 409);
+      }
+
+      if (!linkRecoveryWebhookConfigured()) {
+        return json({
+          success: false,
+          error: 'Brochure link recovery is not configured for this deployment.',
+        }, 409);
+      }
+
+      // One refresh per upload per window, on the SERVER, so a disabled button
+      // is a convenience rather than the control.
+      const limit = await consumeRateLimit(
+        supabase, `bs:link-refresh:${uploadId}`, 1, MANUAL_REFRESH_WINDOW_SECONDS);
+      if (!limit.allowed) {
+        return json({
+          success: false,
+          error: 'Brochure links were refreshed for this list recently. Try again shortly.',
+        }, 429);
+      }
+
+      const outcome = await requestLinkRecovery(supabase, {
+        organisationId: activeOrganisationId,
+        uploadId,
+        spreadsheetId: ref.spreadsheetId,
+        gid: ref.gid,
+        origin: 'manual_refresh',
+      });
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: 'builder_stock_brochure_links_refresh_requested',
+        entityType: 'stock_upload', entityId: uploadId,
+        metadata: { requested: outcome.requested },
+      });
+
+      return json({
+        success: outcome.requested,
+        requested: outcome.requested,
+        error: outcome.requested ? undefined
+          : 'Brochure links could not be requested just now. Your stock list is unchanged.',
+      }, outcome.requested ? 200 : 503);
+    }
 
     if (operation === 'delete_upload') {
       // Removing a source is a delete, so it needs the delete level — adding

@@ -269,14 +269,14 @@ export const CallLogsExport = ({ calls, stats, triggerClassName }: CallLogsExpor
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="csv" id="csv" />
                 <Label htmlFor="csv" className="flex items-center gap-2 cursor-pointer">
-                  <FileSpreadsheet className="w-4 h-4 text-success-foreground0" />
+                  <FileSpreadsheet className="w-4 h-4 text-success" />
                   CSV
                 </Label>
               </div>
               <div className="flex items-center space-x-2">
                 <RadioGroupItem value="pdf" id="pdf" />
                 <Label htmlFor="pdf" className="flex items-center gap-2 cursor-pointer">
-                  <FileText className="w-4 h-4 text-destructive-foreground0" />
+                  <FileText className="w-4 h-4 text-destructive" />
                   PDF
                 </Label>
               </div>

@@ -43,7 +43,7 @@ const typeStyles: Record<string, { variant: 'destructive' | 'default'; bg: strin
     variant: 'default',
     bg: 'bg-info/5 dark:bg-info/10',
     border: 'border-info/30',
-    icon: <Info className="h-4 w-4 text-info-foreground0" />,
+    icon: <Info className="h-4 w-4 text-info" />,
   },
 };
 

@@ -22,7 +22,7 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   },
   archived: {
     label: 'Archived',
-    className: 'border-border/35 bg-muted0/10 text-muted-foreground dark:text-foreground',
+    className: 'border-border/35 bg-muted/10 text-muted-foreground dark:text-foreground',
   },
 };
 

@@ -37,7 +37,7 @@ import {
   selectPdfPropertyPrimary, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
-import { MAX_SOURCE_IMAGE_BYTES } from './sourceAssets.pure.ts';
+import { MAX_SOURCE_IMAGE_BYTES, sniffImageContentType } from './sourceAssets.pure.ts';
 import { PRIMARY_ROLE, type SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
 
 /** Folder listings one repair run may read. Shared and cached across rows. */
@@ -487,6 +487,45 @@ async function extractFromDocument(
     };
   }
 
+  /**
+   * NOT A PDF IS TWO DIFFERENT FACTS, AND CALLING BOTH `unreachable` STARVED
+   * THE BRANCHES BEHIND THEM.
+   *
+   * A share that really does need a login answers with a sign-in page, and
+   * `unreachable` is right for that: nothing was learned, nothing is written
+   * down, and the same link may read perfectly well tomorrow.
+   *
+   * A link to an IMAGE is not that. It downloaded, it is exactly what the
+   * builder filed, and there is nothing to come back for. But an `unreachable`
+   * branch records no verdict, so `openBranches` returns it again next tick and
+   * `openNow[0]` picks it again — for ever, with every branch behind it never
+   * once tried.
+   *
+   * PRODUCTION, 31 AUGUST 2026. Upload `43ffa452` reopened 80 properties with
+   * recovered links. Forty-nine of them stopped dead with `progressed: false`
+   * in ~2.4 seconds a tick, having answered their `Brochure V002` and `Estate
+   * Brochure` branches and never once reached the two behind them, because the
+   * next open branch was a `Siting  / Masterplan` link — Lot 117's is a 169 KB
+   * JPEG, Lot 607's a 29 KB WebP, both HTTP 200 — reported as "not publicly
+   * downloadable" on every one of ten attempts.
+   *
+   * So an image answers `not_identified`, which is a finding and is banked: the
+   * link was read, and a siting plan or masterplan filed as a bare image is not
+   * a package document and states no cover page for this property. It is NOT
+   * taken as the property's photograph — that is `takePhotographAsFiled`, and
+   * what licenses it is a folder named for the lot. A `direct_link` establishes
+   * nothing about WHICH property a file is about (one folder on the live list
+   * is shared by forty-four rows), so promoting a pointed-at image would be
+   * attribution by row position under another name.
+   */
+  if (bytes.length >= 5 && String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-'
+    && sniffImageContentType(bytes)) {
+    return {
+      status: 'not_identified',
+      detail: 'That link is an image rather than a package document, so it presents no '
+        + 'page as this property\'s package cover.',
+    };
+  }
   // A share that actually needs a login answers with a sign-in page.
   if (bytes.length < 5 || String.fromCharCode(...bytes.subarray(0, 5)) !== '%PDF-') {
     return { status: 'unreachable', detail: 'That document is not publicly downloadable.' };

@@ -252,7 +252,7 @@ function CdnTab() {
           <Card className="min-w-0 overflow-hidden border-destructive/25 bg-[linear-gradient(135deg,hsl(var(--card)/0.94),hsl(var(--destructive)/0.06))] shadow-[0_14px_42px_rgba(127,29,29,0.08)] transition-all duration-200 hover:border-destructive/35 hover:shadow-[0_18px_48px_rgba(127,29,29,0.12)] dark:border-destructive/20 dark:bg-background/60 dark:shadow-black/25">
             <CardHeader className="min-w-0 pb-3 sm:pb-5">
               <div className="flex min-w-0 items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-destructive/25 bg-destructive/10 text-destructive-foreground0 dark:text-destructive">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-destructive/25 bg-destructive/10 text-destructive dark:text-destructive">
                   <AlertTriangle className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">
@@ -395,7 +395,7 @@ function WorkersTab() {
                             </p>
                           </div>
                         </div>
-                        <Badge variant="outline" className="flex-shrink-0 border-success/30 bg-success/10 text-[11px] text-success-foreground0 sm:text-xs">
+                        <Badge variant="outline" className="flex-shrink-0 border-success/30 bg-success/10 text-[11px] text-success sm:text-xs">
                           Active
                         </Badge>
                       </div>
@@ -410,7 +410,7 @@ function WorkersTab() {
               <CardHeader className="min-w-0 pb-3 sm:pb-5">
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-info/25 bg-info/10 text-info-foreground0 dark:text-info">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-info/25 bg-info/10 text-info dark:text-info">
                       <Globe className="h-5 w-5" />
                     </div>
                     <CardTitle className="min-w-0 truncate text-base">Pages Projects ({pagesList.length})</CardTitle>
@@ -437,7 +437,7 @@ function WorkersTab() {
                             {p.subdomain}.pages.dev
                           </p>
                         </div>
-                        <Badge variant="outline" className="flex-shrink-0 border-info/30 bg-info/10 text-[11px] text-info-foreground0 sm:text-xs">
+                        <Badge variant="outline" className="flex-shrink-0 border-info/30 bg-info/10 text-[11px] text-info sm:text-xs">
                           {p.latest_deployment?.environment || 'production'}
                         </Badge>
                       </div>
@@ -676,10 +676,10 @@ function FirewallTab() {
                       </div>
                       <div className="flex flex-shrink-0 items-center gap-2 self-end sm:self-auto">
                         <Badge variant="outline" className={`text-[11px] sm:text-xs ${
-                          rule.action === 'block' ? 'border-destructive/30 bg-destructive/10 text-destructive-foreground0' :
+                          rule.action === 'block' ? 'border-destructive/30 bg-destructive/10 text-destructive' :
                           rule.action === 'challenge' ? 'border-brand-500/30 bg-brand-500/10 text-brand-600 dark:text-brand-300' :
-                          rule.action === 'allow' ? 'border-success/30 bg-success/10 text-success-foreground0' :
-                          'border-info/30 bg-info/10 text-info-foreground0'
+                          rule.action === 'allow' ? 'border-success/30 bg-success/10 text-success' :
+                          'border-info/30 bg-info/10 text-info'
                         }`}>
                           {rule.action}
                         </Badge>

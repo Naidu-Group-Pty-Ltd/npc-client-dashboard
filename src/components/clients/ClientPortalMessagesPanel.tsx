@@ -35,12 +35,32 @@ interface ClientPortalMessage {
   created_at: string;
 }
 
-type MessageRoute = 'client_only' | 'finance_only' | 'client_finance' | 'internal';
+/**
+ * Audit item 47 — `finance_only` is gone from here.
+ *
+ * It opened a `command_finance_private` thread through
+ * `finance-portal-messages`: a Command Centre ↔ Finance conversation the
+ * client cannot see. That is precisely the Finance Messages tab, two tabs
+ * along, and the duplication showed: this panel renders only
+ * `command_client_private`, `command_client_with_finance_allocated` and
+ * `internal_command_only`, so a message sent from here landed somewhere this
+ * screen could not display it. You sent it and it vanished.
+ *
+ * Nothing is deleted on the way out. Every such message already lives in
+ * `finance-portal-messages` and is still read, written and replied to on the
+ * Finance Messages tab; only this second door onto it has closed.
+ *
+ * `client_finance` stays, and is a different act: it messages the CLIENT and
+ * allocates that client-facing thread to Finance. `internal` also stays —
+ * the audit offered to retire it in favour of the client card's notes, but
+ * an offer is not an instruction and a staff-only note in the conversation
+ * it belongs to is not the same thing as a note on the record.
+ */
+type MessageRoute = 'client_only' | 'client_finance' | 'internal';
 type FinanceAllocationStatus = 'finance_action_required' | 'finance_review_required' | 'finance_input_required' | 'allocate_to_finance';
 
 const ROUTING_PRESETS: { value: MessageRoute; label: string; description: string }[] = [
   { value: 'client_only', label: 'Send to Client only', description: 'Client Portal + Command Centre only. Finance is blocked.' },
-  { value: 'finance_only', label: 'Send to Finance only', description: 'Private Command Centre ↔ Finance thread. Client is blocked.' },
   { value: 'client_finance', label: 'Send to Client + allocate Finance', description: 'Client sees the advisory message; Finance gets access only to the allocated thread.' },
   { value: 'internal', label: 'Internal note', description: 'Command Centre staff-only note. Client and Finance are blocked.' },
 ];
@@ -156,45 +176,23 @@ export function ClientPortalMessagesPanel({ clientId, clientName, className, fil
     if (!trimmed || sending) return;
     setSending(true);
     try {
-      if (route === 'finance_only') {
-        const { data: thread, error: tErr } = await invokeSecureFunction('finance-portal-messages', {
-          operation: 'get_or_create_thread',
-          client_id: clientId,
-          visibility_scope: 'command_finance_private',
-          thread_type: 'command_finance',
-          allocation_status: 'none',
-          finance_allocated: false,
-        });
-        if (tErr || !thread?.thread) throw new Error(tErr?.message || 'No finance partner assigned');
-        const { error } = await invokeSecureFunction('finance-portal-messages', {
-          operation: 'send_message',
-          thread_id: thread.thread.id,
-          body: trimmed,
-          visibility_scope: 'command_finance_private',
-          thread_type: 'command_finance',
-          allocation_status: 'none',
-        });
-        if (error) throw new Error(error.message || 'Send failed');
-        toast.success('Sent to Finance Portal only');
-      } else {
-        const financeAllocated = route === 'client_finance';
-        const { error } = await invokeSecureFunction('staff-client-portal-messages', {
-          operation: 'send_reply',
-          client_id: clientId,
-          message: trimmed,
-          is_internal: route === 'internal',
-          visibility_scope: financeAllocated ? 'command_client_with_finance_allocated' : undefined,
-          allocation_status: financeAllocated ? financeAllocationStatus : undefined,
-        });
-        if (error) throw new Error(error.message || 'Send failed');
-        toast.success(
-          route === 'client_finance'
-            ? 'Sent to Client Portal and allocated to Finance'
-            : route === 'internal'
-              ? 'Internal note saved'
-              : 'Sent to Client Portal only',
-        );
-      }
+      const financeAllocated = route === 'client_finance';
+      const { error } = await invokeSecureFunction('staff-client-portal-messages', {
+        operation: 'send_reply',
+        client_id: clientId,
+        message: trimmed,
+        is_internal: route === 'internal',
+        visibility_scope: financeAllocated ? 'command_client_with_finance_allocated' : undefined,
+        allocation_status: financeAllocated ? financeAllocationStatus : undefined,
+      });
+      if (error) throw new Error(error.message || 'Send failed');
+      toast.success(
+        route === 'client_finance'
+          ? 'Sent to Client Portal and allocated to Finance'
+          : route === 'internal'
+            ? 'Internal note saved'
+            : 'Sent to Client Portal only',
+      );
       setDraft('');
       await load(false);
     } catch (e: any) {
@@ -360,7 +358,6 @@ export function ClientPortalMessagesPanel({ clientId, clientName, className, fil
             placeholder={
               route === 'client_finance' ? 'Message the client and allocate this thread to Finance...'
               : route === 'internal' ? 'Add an internal staff-only note...'
-              : route === 'finance_only' ? 'Message the finance partner privately...'
               : 'Reply to the client...'
             }
             value={draft}

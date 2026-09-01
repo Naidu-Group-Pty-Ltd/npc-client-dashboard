@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
@@ -671,7 +672,7 @@ export function useReviewWizard(
       nextReviewDue.setDate(nextReviewDue.getDate() + frequencyDays);
 
       // Generate executive summary
-      const executiveSummary = `Portfolio review for ${clientName} completed on ${new Date().toLocaleDateString('en-AU')}. ` +
+      const executiveSummary = `${PORTFOLIO_REPORT_LABEL} for ${clientName} completed on ${new Date().toLocaleDateString('en-AU')}. ` +
         `Overall portfolio score: ${scorecard.overallScore}/100. ` +
         `Risk level: ${scorecard.riskLevel}. ` +
         `Total portfolio value: $${metrics.portfolioTotals.totalValue.toLocaleString('en-AU')}. ` +

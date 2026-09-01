@@ -22,8 +22,8 @@ type Tone = 'neutral'|'progress'|'positive'|'caution'|'critical';
 
 const TONE_CLASS: Record<Tone, string> = {
   neutral:  'bg-muted text-muted-foreground border-border',
-  progress: 'bg-info/15 text-info-foreground0 border-info/30',
-  positive: 'bg-success/15 text-success-foreground0 border-success/30',
+  progress: 'bg-info/15 text-info border-info/30',
+  positive: 'bg-success/15 text-success border-success/30',
   caution:  'bg-brand-500/15 text-brand-500 border-brand-500/30',
   critical: 'bg-destructive/15 text-destructive border-destructive/30',
 };
@@ -455,7 +455,7 @@ function FileCard({ file }: { file: FileRow }) {
                   <Link to="/client/action-items">Open <ArrowRight className="h-4 w-4 ml-1" /></Link>
                 </Button>
               ) : (
-                <span className="text-success-foreground0 flex items-center gap-1 text-sm"><CheckCircle2 className="h-4 w-4" />Clear</span>
+                <span className="text-success flex items-center gap-1 text-sm"><CheckCircle2 className="h-4 w-4" />Clear</span>
               )}
             </div>
             {file.next_task_due && (

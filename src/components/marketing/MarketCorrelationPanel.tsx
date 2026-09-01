@@ -46,8 +46,8 @@ const REPORT_TYPE_OPTIONS = [
 type MarketCorrelationReportType = (typeof REPORT_TYPE_OPTIONS)[number]['value'];
 
 function ImpactIcon({ impact }: { impact: string }) {
-  if (impact === 'positive') return <ArrowUp className="h-3.5 w-3.5 text-success-foreground0" />;
-  if (impact === 'negative') return <ArrowDown className="h-3.5 w-3.5 text-destructive-foreground0" />;
+  if (impact === 'positive') return <ArrowUp className="h-3.5 w-3.5 text-success" />;
+  if (impact === 'negative') return <ArrowDown className="h-3.5 w-3.5 text-destructive" />;
   return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 

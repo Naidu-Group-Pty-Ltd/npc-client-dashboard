@@ -3079,7 +3079,7 @@ export function PortfolioAnalysisPDFGenerator({
             'client-files',
             storagePath,
             blob,
-            { contentType: 'application/pdf', upsert: true }
+            { contentType: 'application/pdf', upsert: true, resourceId: clientId }
           );
           
           if (!uploadResult.success) {

@@ -82,6 +82,17 @@ const EXPECTED_FUNCTIONS = [
     // surface. Declared in config.toml and reviewed in SECURITY_REGISTRY.json,
     // both of which this list's own loop below re-checks.
     'builder-stock-image-settler',
+    // Google Sheets hyperlink recovery callback. Authenticated by a per-request
+    // one-time capability token presented as `Authorization: Bearer` rather
+    // than by a portal session, because the caller is an external automation
+    // with no Supabase identity. Each request mints its own token and stores
+    // only its SHA-256, so there is no shared secret in two systems. It holds a
+    // service-role client and crosses organisations, so like the settler above
+    // it is deliberately NOT a portal-reachable surface — the authority for
+    // every write comes from a stored request row this product wrote, never
+    // from the payload. Declared in config.toml and reviewed in
+    // SECURITY_REGISTRY.json, both of which this list's own loop re-checks.
+    'builder-stock-link-callback',
     'builder-stock-marketplace',
     'builder-transactions-admin',
     'builder-workspace-admin',

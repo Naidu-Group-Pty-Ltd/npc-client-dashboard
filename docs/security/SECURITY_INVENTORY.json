@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "source": "repository-static-analysis",
-  "edge_function_count": 424,
-  "config_declared_function_count": 424,
-  "registry_function_count": 424,
-  "verify_jwt_false_count": 338,
+  "edge_function_count": 425,
+  "config_declared_function_count": 425,
+  "registry_function_count": 425,
+  "verify_jwt_false_count": 339,
   "exposure_class_counts": {
     "authenticated-or-service": 1,
     "authenticated-staff": 6,
@@ -18,7 +18,7 @@
     "superadmin-only": 1,
     "webhook": 2,
     "webhook-clientstate": 1,
-    "webhook-secret": 6
+    "webhook-secret": 7
   },
   "needs_review_count": 0,
   "functions_importing_shared_auth_modules": {
@@ -579,7 +579,9 @@
       "agent-planner/index.ts",
       "aml-idv-retention/index.ts",
       "aml-verification-processor/index.ts",
+      "builder-portal-stock/index.ts",
       "builder-stock-image-settler/index.ts",
+      "builder-stock-link-callback/index.ts",
       "client-legal-workspace/index.ts",
       "commercial-bc-scenario-agent/index.ts",
       "dispatch-marketing-reports/index.ts",

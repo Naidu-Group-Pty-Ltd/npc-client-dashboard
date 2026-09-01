@@ -112,11 +112,44 @@ async function canAdministerBranding(supabase: any, actorId: string) {
   return false;
 }
 
+/**
+ * May this user manage report templates?
+ *
+ * The same shape as `canAdministerBranding`, for the same reason: a template
+ * being CREATED has no row to be owned by yet — the file is uploaded and the
+ * `report_templates` row is written from the result — so there is nothing to
+ * bind to and the permission has to stand in its place. `report_templates` is
+ * governed by the `templates` module.
+ */
+async function canManageTemplates(supabase: any, actorId: string) {
+  if (await isSuperadmin(supabase, actorId)) return true;
+  for (const moduleKey of ['templates', 'platform_administration']) {
+    const perm = await requireModulePermission(supabase, { userId: actorId, authMethod: 'human' }, moduleKey, 'can_edit');
+    if (perm.ok) return true;
+  }
+  return false;
+}
+
 /** Resolve browser upload binding fields exclusively from authoritative rows. */
 async function resolveHumanUploadBinding(supabase: any, bucket: string, resourceId: unknown, actorId: string) {
   if (bucket === 'branding-assets') {
     if (!(await canAdministerBranding(supabase, actorId))) return { ok: false as const, reason: 'branding_permission_required' };
     return { ok: true as const, resourceType: 'branding_asset', resourceId: null, clientId: null, ownerUserId: actorId };
+  }
+
+  if (bucket === 'report-templates') {
+    // Editing an existing template binds to that template. Creating one cannot:
+    // the uploader writes the file first and the row from the result, so at
+    // upload time there is no row. Permission stands in for ownership there,
+    // exactly as it does for branding.
+    if (typeof resourceId === 'string' && /^[0-9a-f-]{36}$/i.test(resourceId)) {
+      const { data } = await supabase.from('report_templates').select('id, created_by').eq('id', resourceId).maybeSingle();
+      if (data) {
+        return { ok: true as const, resourceType: 'report_template', resourceId: data.id, clientId: null, ownerUserId: data.created_by };
+      }
+    }
+    if (!(await canManageTemplates(supabase, actorId))) return { ok: false as const, reason: 'template_permission_required' };
+    return { ok: true as const, resourceType: 'report_template', resourceId: null, clientId: null, ownerUserId: actorId };
   }
 
   if (typeof resourceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(resourceId)) return { ok: false as const, reason: 'resource_required' };
@@ -133,8 +166,25 @@ async function resolveHumanUploadBinding(supabase: any, bucket: string, resource
   // Client/document uploads use the client record itself as the authoritative
   // resource; callers never provide owner or client metadata separately.
   const { data } = await supabase.from('clients').select('id, created_by, assigned_team_user_id').eq('id', resourceId).maybeSingle();
-  if (!data) return { ok: false as const, reason: 'resource_not_found' };
-  return { ok: true as const, resourceType: 'client', resourceId: data.id, clientId: data.id, ownerUserId: data.created_by || data.assigned_team_user_id || null };
+  if (data) {
+    return { ok: true as const, resourceType: 'client', resourceId: data.id, clientId: data.id, ownerUserId: data.created_by || data.assigned_team_user_id || null };
+  }
+
+  // An attachment to the user's own agent conversation. Tried only after the
+  // client lookup misses, so every existing binding resolves exactly as before.
+  // Scoped to conversations the actor owns: a staff member may attach a file to
+  // their own chat and to nobody else's.
+  const { data: conversation } = await supabase
+    .from('agent_conversations')
+    .select('id, user_id')
+    .eq('id', resourceId)
+    .eq('user_id', actorId)
+    .maybeSingle();
+  if (conversation) {
+    return { ok: true as const, resourceType: 'agent_conversation', resourceId: conversation.id, clientId: null, ownerUserId: conversation.user_id };
+  }
+
+  return { ok: false as const, reason: 'resource_not_found' };
 }
 
 Deno.serve(async (req) => {
@@ -342,7 +392,9 @@ Deno.serve(async (req) => {
             return jsonResponse(
               { success: false, error: uploadBinding.reason === 'branding_permission_required'
                 ? 'You do not have permission to manage branding assets'
-                : 'Invalid upload resource' },
+                : uploadBinding.reason === 'template_permission_required'
+                  ? 'You do not have permission to manage report templates'
+                  : 'Invalid upload resource' },
               corsHeaders,
               403,
             );

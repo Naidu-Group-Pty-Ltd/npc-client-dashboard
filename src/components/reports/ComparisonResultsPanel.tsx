@@ -67,9 +67,9 @@ function getRiskColor(riskLevel: string | null | undefined) {
 
 function getSeverityIcon(severity: string | null | undefined) {
   const sev = (severity || '').toLowerCase();
-  if (sev.includes('high') || sev.includes('critical')) return <XCircle className="h-4 w-4 text-destructive-foreground0" />;
+  if (sev.includes('high') || sev.includes('critical')) return <XCircle className="h-4 w-4 text-destructive" />;
   if (sev.includes('medium')) return <AlertCircle className="h-4 w-4 text-brand-500" />;
-  return <AlertTriangle className="h-4 w-4 text-warning-foreground0" />;
+  return <AlertTriangle className="h-4 w-4 text-warning" />;
 }
 
 // ── Results sections ────────────────────────────────────────────────────────

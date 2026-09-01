@@ -297,7 +297,7 @@ export default function Settings() {
                 key={label}
                 className="dashboard-surface-control flex min-w-0 items-center gap-2 rounded-2xl px-3 py-2 text-xs font-medium text-muted-foreground"
               >
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success-foreground0" />
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
                 <span className="truncate">{label}</span>
               </div>
             ))}

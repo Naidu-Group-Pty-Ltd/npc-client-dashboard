@@ -2,6 +2,9 @@ import { useMemo } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 import { differenceInMinutes, format, startOfWeek, endOfWeek, eachDayOfInterval, getDay } from 'date-fns';
 import { Card } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import { statusBadgeClass, statusLabel } from '@/lib/calendar/eventColour.pure';
+import { FALLBACK_CALENDAR_COLOR } from '@/lib/calendarColors';
 
 interface TimeAllocationDashboardProps {
   events: Array<{
@@ -15,8 +18,6 @@ interface TimeAllocationDashboardProps {
   currentWeek: Date;
   selectedDate?: Date | null;
 }
-
-const COLORS = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
 
 export function TimeAllocationDashboard({ events, calendars, currentWeek, selectedDate }: TimeAllocationDashboardProps) {
   const safeParseISO = (value: string | undefined): Date | null => {
@@ -63,7 +64,7 @@ export function TimeAllocationDashboard({ events, calendars, currentWeek, select
       return {
         name: cal?.name || 'Unknown',
         value: Math.round(minutes / 60 * 10) / 10,
-        color: cal?.eventColor || '#6b7280',
+        color: cal?.eventColor || FALLBACK_CALENDAR_COLOR,
         minutes,
       };
     }).sort((a, b) => b.value - a.value);
@@ -119,19 +120,16 @@ export function TimeAllocationDashboard({ events, calendars, currentWeek, select
       }
     });
 
-    const statusColors: Record<string, string> = {
-      confirmed: '#22c55e',
-      showed: '#10b981',
-      booked: '#3b82f6',
-      pending: '#f59e0b',
-      noshow: '#ef4444',
-      cancelled: '#6b7280',
-    };
-
+    // No colour here. A status is drawn as a BADGE and a calendar as a coloured
+    // dot, because the two used to share both the mark and the hue: "Confirmed"
+    // wore the same green round dot as the "Strategy Session" calendar directly
+    // above it. Colour alone could never separate them — a calendar's colour is
+    // assigned from an open palette that contains greens — so form carries the
+    // distinction and `statusBadgeClass` carries the hue.
     return Object.entries(data).map(([status, count]) => ({
-      name: status.charAt(0).toUpperCase() + status.slice(1),
+      status,
+      name: statusLabel(status),
       value: count,
-      color: statusColors[status] || '#6b7280',
     }));
   }, [events, rangeStart, rangeEnd, isDateSelected]);
 
@@ -253,10 +251,11 @@ export function TimeAllocationDashboard({ events, calendars, currentWeek, select
             {statusDistribution.map((status, idx) => (
               <div
                 key={idx}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs"
-                style={{ backgroundColor: `${status.color}20` }}
+                className={cn(
+                  'flex items-center gap-1.5 border px-2 py-1 text-xs',
+                  statusBadgeClass(status.status),
+                )}
               >
-                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: status.color }} />
                 <span>{status.name}</span>
                 <span className="font-medium">{status.value}</span>
               </div>

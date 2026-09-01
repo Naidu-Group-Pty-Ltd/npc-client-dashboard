@@ -55,6 +55,37 @@ export const PACKAGE_RECOVERY_ATTEMPT = 'package_recovery_attempt' as const;
  */
 export const MAX_PACKAGE_ATTEMPTS = 2;
 
+/**
+ * How many times a branch may answer `unreachable` before it is retired.
+ *
+ * WHY THIS HAS TO EXIST AT ALL. `unreachable` records nothing, deliberately:
+ * a sign-in wall may open tomorrow and banking "no image" for it would suppress
+ * a document that reads perfectly well. But `openBranches` then returns the
+ * branch again on the next tick, for ever — and a property whose every
+ * remaining branch is unreachable never leaves the source stage, so it never
+ * reaches the fallback ladder that would have given it a picture.
+ *
+ * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`. Thirteen properties were
+ * claimed every sixty seconds, indefinitely, on branches that can never
+ * answer: two Drive files returning 404 (deleted, or their permission
+ * revoked), one answering `Google Drive: Sign-in`, and single-page siting
+ * plans with no text layer for the reader to read. Rotation gave each of them
+ * its turn and each turn answered the same nothing.
+ *
+ * SIX, not two. An unreachable answer costs one cheap fetch rather than a
+ * killed worker, and the failures it covers include genuinely transient ones —
+ * a slow origin, a rate limit, a cold cache — so it is worth several more
+ * goes. What it must not be is unbounded, because "we keep trying" is not the
+ * alternative to retiring: the alternative is a property pinned on the source
+ * stage with no picture at all.
+ *
+ * And retiring is not for ever. The question is keyed on the provenance
+ * version, the package and the anchor, so a bumped extractor or a re-imported
+ * row asks again from zero — which is exactly the asymmetry
+ * `recordPackageUnprocessable` already embodies for the kill case.
+ */
+export const MAX_UNREACHABLE_ATTEMPTS = 6;
+
 export interface PackageAttemptRecord {
   result: typeof PACKAGE_RECOVERY_ATTEMPT;
   provenance_version: number;
@@ -62,6 +93,16 @@ export interface PackageAttemptRecord {
   source_anchor: string | null;
   /** How many times this exact question has been started and not finished. */
   attempts: number;
+  /**
+   * How many times this exact question RETURNED `unreachable`.
+   *
+   * Kept apart from `attempts` because the two are different failures with
+   * different budgets: `attempts` counts a worker this package DESTROYED, and
+   * two is plenty because a third would destroy another one. This counts a
+   * link that answered cleanly and told us nothing, which costs one cheap
+   * fetch, so it is given several more goes before it is retired.
+   */
+  unreachable?: number;
   started_at: string;
 }
 
@@ -90,6 +131,70 @@ export function attemptsSoFar(stored: unknown, question: ProvenanceQuestion): nu
   if (!record) return 0;
   const attempts = Number(record.attempts);
   return Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0;
+}
+
+/** How many times this exact question has answered `unreachable`. */
+export function unreachableSoFar(stored: unknown, question: ProvenanceQuestion): number {
+  const record = attemptFor(stored, question);
+  if (!record) return 0;
+  const n = Number(record.unreachable);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+/**
+ * What the column holds after a branch answered `unreachable`.
+ *
+ * The spend RETURNED, so the kill claim is spent and must not stand — that is
+ * what `provenanceAfterAttempt` is for, and its reasoning is unchanged. What
+ * is kept is the count of how many times this link has told us nothing, so the
+ * budget above can be reached at all. `attempts` is reset to zero because no
+ * worker was destroyed: an unreachable answer must never push a package
+ * towards the resource-limit retirement, which is a different finding.
+ */
+export function recordUnreachableAttempt(
+  stored: unknown,
+  question: ProvenanceQuestion,
+  now: () => Date = () => new Date(),
+): PackageAttemptRecord {
+  return {
+    result: PACKAGE_RECOVERY_ATTEMPT,
+    provenance_version: question.provenanceVersion,
+    package_reference: question.packageReference,
+    source_anchor: question.sourceAnchor,
+    attempts: 0,
+    unreachable: unreachableSoFar(stored, question) + 1,
+    started_at: now().toISOString(),
+  };
+}
+
+/** Has this link told us nothing often enough to be retired? */
+export function unreachableAttemptsExhausted(
+  stored: unknown,
+  question: ProvenanceQuestion,
+): boolean {
+  return unreachableSoFar(stored, question) >= MAX_UNREACHABLE_ATTEMPTS;
+}
+
+/**
+ * The terminal answer for a link that can be fetched but never read.
+ *
+ * AN HONEST ONE, and deliberately not the same sentence as the resource-limit
+ * retirement: an operator reading the column is told the link could not be
+ * reached, not that the builder's document was empty and not that it broke the
+ * worker. A 404, a sign-in page and a scan with no text layer all land here,
+ * and all three are facts about our access rather than about the property.
+ */
+export function recordPackageUnreachable(
+  question: ProvenanceQuestion,
+  now: () => Date = () => new Date(),
+) {
+  return recordNoDeterministicImage(
+    question,
+    `That link could not be read after ${MAX_UNREACHABLE_ATTEMPTS} attempts — `
+    + `it answered with no readable document — so no builder image was taken `
+    + `from it.`,
+    now,
+  );
 }
 
 /**

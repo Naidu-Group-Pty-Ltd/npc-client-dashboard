@@ -574,7 +574,7 @@ const [rateInputMode, setRateInputMode] = useState<'preset' | 'custom'>('preset'
                   You save {formatCurrency(calculationResult.interestSavedVsBaseline)} in interest
                 </span>
               </div>
-              <p className="text-xs text-success dark:text-success-foreground0 mt-1">
+              <p className="text-xs text-success dark:text-success mt-1">
                 Compared to no extra repayments or offset
               </p>
             </div>

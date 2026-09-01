@@ -129,6 +129,51 @@ export function rowSourceBranches(
   return branches;
 }
 
+/**
+ * THE ROW AS THE DOCUMENT STATES IT, PLUS THE TARGETS ONLY RECOVERY COULD SEE.
+ *
+ * A Google Sheet carries its documents as HYPERLINKS, and a sheet whose owner
+ * has turned off "viewers can download, print, copy" publishes no
+ * representation carrying a link target at all — every CSV of it shows the
+ * word `Brochure` and no address. The recovery reads those cells through an
+ * authorised connection and writes each row's own targets onto that row, so
+ * for such a document the stored row is the ONLY place the address exists.
+ *
+ * Re-reading the source stays right — a builder edits their sheet and those
+ * edits must land. But a re-read must not LOSE what the re-read can never
+ * contain, so the recovered columns are laid over the freshly parsed row: the
+ * document remains the authority on everything it can express, and the row is
+ * the authority on the one thing it cannot.
+ *
+ * Only columns the recovery NAMED are overlaid, and only where what it stored
+ * actually carries a link — so this can never invent a source, and a row that
+ * has had no recovery is returned exactly as the document stated it.
+ *
+ * Measured in production before this existed: 350 targets recovered onto 86
+ * properties, correctly attributed, and every one invisible to stage 1, which
+ * re-read the sheet, saw five labels and no addresses, and reported
+ * `stored 0, matched 0` for all eighty properties.
+ */
+export function unmappedWithRecoveredLinks(
+  unmapped: Record<string, string> | null | undefined,
+  storedRow: Record<string, unknown> | null | undefined,
+): Record<string, string> {
+  const base = { ...(unmapped ?? {}) };
+  const row = (storedRow ?? {}) as Record<string, unknown>;
+  const columns = Array.isArray(row.recovered_link_columns)
+    ? row.recovered_link_columns as unknown[] : [];
+  if (!columns.length) return base;
+
+  const stored = (row.unmapped ?? {}) as Record<string, unknown>;
+  for (const column of columns) {
+    if (typeof column !== 'string') continue;
+    const value = stored[column];
+    if (typeof value !== 'string' || !/https?:\/\//i.test(value)) continue;
+    base[column] = value;
+  }
+  return base;
+}
+
 // ---------------------------------------------------------------------------
 // Per-branch state
 // ---------------------------------------------------------------------------
@@ -240,6 +285,37 @@ export function openBranches(
 ): RowSourceBranch[] {
   return branches.filter((branch) => !branchTerminal(
     stored, branch, branchQuestion(branch, provenanceVersion, sourceAnchor)));
+}
+
+/**
+ * WHICH open branch this attempt takes.
+ *
+ * A run opens ONE branch: it downloads a multi-megabyte document and
+ * classifies its rasters, and that budget is what keeps a killed worker from
+ * pinning a whole upload. So the property comes back for the rest — and which
+ * one it takes next has to ADVANCE, or it never gets to the rest at all.
+ *
+ * Always taking the first open branch does not advance. An `unreachable`
+ * branch deliberately records nothing (a sign-in wall may open tomorrow, and
+ * banking "no image" for it would suppress a document that reads perfectly
+ * well), so it is open again on the next tick, and first again, for ever.
+ *
+ * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`. Forty-nine properties sat on
+ * `source` across ten attempts each, answering in ~2.4 seconds with
+ * `progressed: false`. Each had answered its `Brochure V002` and `Estate
+ * Brochure` branches and had two more behind a `Siting  / Masterplan` link
+ * that could never answer — so those two were never asked once.
+ *
+ * Rotating on the property's own claim counter fixes it with no new state: the
+ * settler already increments it once per claim and resets it on a stage
+ * change, and every open branch therefore comes up within `open.length`
+ * attempts however any of them answers.
+ */
+export function branchForAttempt<T>(open: readonly T[], attempts: number): T | null {
+  if (!open.length) return null;
+  const n = Number(attempts);
+  const safe = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  return open[safe % open.length];
 }
 
 /**

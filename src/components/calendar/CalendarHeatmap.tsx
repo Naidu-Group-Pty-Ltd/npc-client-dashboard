@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, isSameMonth, isToday, isSameDay } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { workloadBand, workloadLegend } from '@/lib/calendar/eventColour.pure';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface CalendarHeatmapProps {
@@ -41,54 +42,28 @@ export function CalendarHeatmap({ events, currentMonth, selectedDate, onDateSele
     return counts;
   }, [events]);
 
-  const maxEvents = useMemo(() => {
-    const counts = Object.values(eventCountByDay);
-    return counts.length > 0 ? Math.max(...counts) : 1;
-  }, [eventCountByDay]);
-
-  const getHeatmapColor = (count: number) => {
-    if (count === 0) return 'bg-muted/30';
-    const intensity = count / maxEvents;
-    if (intensity <= 0.25) return 'bg-success/20 border-success/30';
-    if (intensity <= 0.5) return 'bg-brand-500/30 border-brand-500/40';
-    if (intensity <= 0.75) return 'bg-warning/40 border-warning/50';
-    return 'bg-destructive/50 border-destructive/60';
-  };
-
-  const getHeatmapLabel = (count: number) => {
-    if (count === 0) return 'Free';
-    const intensity = count / maxEvents;
-    if (intensity <= 0.25) return 'Light';
-    if (intensity <= 0.5) return 'Moderate';
-    if (intensity <= 0.75) return 'Busy';
-    return 'Very Busy';
-  };
+  // Busy-ness is an absolute count, never a share of the busiest day in view.
+  // It used to be `count / maxEvents`, so on a month whose fullest day held one
+  // meeting that day scored 1.0 and was painted red for "Very Busy" — which is
+  // what was reported. A heatmap of a quiet month should be allowed to say the
+  // month was quiet. The bands live in `eventColour.pure` with the rest of the
+  // calendar's colour vocabulary.
+  const getHeatmapColor = (count: number) => workloadBand(count).cell;
+  const getHeatmapLabel = (count: number) => workloadBand(count).label;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">Busy Days Heatmap</h3>
+        {/* Drawn from the same bands the cells are painted from, so the legend
+            cannot describe a scale the grid is not using. */}
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded bg-muted/30" />
-            <span>Free</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded bg-success/20" />
-            <span>Light</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded bg-brand-500/30" />
-            <span>Moderate</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded bg-warning/40" />
-            <span>Busy</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded bg-destructive/50" />
-            <span>Very Busy</span>
-          </div>
+          {workloadLegend().map((band) => (
+            <div key={band.id} className="flex items-center gap-1">
+              <div className={cn('h-3 w-3 rounded', band.swatch)} />
+              <span>{band.label}</span>
+            </div>
+          ))}
         </div>
       </div>
 

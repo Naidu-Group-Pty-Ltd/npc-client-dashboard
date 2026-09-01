@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
     // Docs pending
     const { data: docInstances } = await supabase
       .from('document_requirement_instances')
-      .select('id, purchase_file_id, category, requirement_name, status, requested_at')
+      .select('id, purchase_file_id, category, label, status, requested_at')
       .in('purchase_file_id', (files || []).map((f: any) => f.id).length ? (files || []).map((f: any) => f.id) : ['00000000-0000-0000-0000-000000000000'])
       .in('status', ['required', 'requested']);
 
@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
     // Recent activity
     const { data: history } = await supabase
       .from('purchase_file_status_history')
-      .select('id, purchase_file_id, event_type, from_status, to_status, note, created_at')
+      .select('id, purchase_file_id, event_type, from_value, to_value, created_at')
       .in('purchase_file_id', (files || []).map((f: any) => f.id).length ? (files || []).map((f: any) => f.id) : ['00000000-0000-0000-0000-000000000000'])
       .order('created_at', { ascending: false })
       .limit(20);

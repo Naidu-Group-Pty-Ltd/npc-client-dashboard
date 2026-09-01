@@ -130,11 +130,27 @@ async function canManageTemplates(supabase: any, actorId: string) {
   return false;
 }
 
-/** Resolve browser upload binding fields exclusively from authoritative rows. */
+/**
+ * Resolve browser upload binding fields exclusively from authoritative rows.
+ *
+ * Two different questions about a client are answered here and they are not the
+ * same question:
+ *
+ *  - `clientId` is **who this upload is authorised against**. The caller named
+ *    a client, so the canonical ownership check runs before the object is
+ *    written and an arbitrary client UUID cannot be attached.
+ *  - `objectClientId` is **whose file this object is**. It is recorded on the
+ *    `storage_object_bindings` row so the client's own staff can read it back
+ *    later, and it authorises nothing at upload time.
+ *
+ * They are the same value everywhere the caller supplies the client. They part
+ * company on `investment-reports`, where the caller names a *report* and the
+ * client is derived from it — see that branch.
+ */
 async function resolveHumanUploadBinding(supabase: any, bucket: string, resourceId: unknown, actorId: string) {
   if (bucket === 'branding-assets') {
     if (!(await canAdministerBranding(supabase, actorId))) return { ok: false as const, reason: 'branding_permission_required' };
-    return { ok: true as const, resourceType: 'branding_asset', resourceId: null, clientId: null, ownerUserId: actorId };
+    return { ok: true as const, resourceType: 'branding_asset', resourceId: null, clientId: null, objectClientId: null, ownerUserId: actorId };
   }
 
   if (bucket === 'report-templates') {
@@ -143,45 +159,97 @@ async function resolveHumanUploadBinding(supabase: any, bucket: string, resource
     // upload time there is no row. Permission stands in for ownership there,
     // exactly as it does for branding.
     if (typeof resourceId === 'string' && /^[0-9a-f-]{36}$/i.test(resourceId)) {
-      const { data } = await supabase.from('report_templates').select('id, created_by').eq('id', resourceId).maybeSingle();
+      const { data, error } = await supabase.from('report_templates').select('id, created_by').eq('id', resourceId).maybeSingle();
+      if (error) return { ok: false as const, reason: 'resource_lookup_failed' };
       if (data) {
-        return { ok: true as const, resourceType: 'report_template', resourceId: data.id, clientId: null, ownerUserId: data.created_by };
+        return { ok: true as const, resourceType: 'report_template', resourceId: data.id, clientId: null, objectClientId: null, ownerUserId: data.created_by };
       }
     }
     if (!(await canManageTemplates(supabase, actorId))) return { ok: false as const, reason: 'template_permission_required' };
-    return { ok: true as const, resourceType: 'report_template', resourceId: null, clientId: null, ownerUserId: actorId };
+    return { ok: true as const, resourceType: 'report_template', resourceId: null, clientId: null, objectClientId: null, ownerUserId: actorId };
   }
 
   if (typeof resourceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(resourceId)) return { ok: false as const, reason: 'resource_required' };
   if (bucket === 'qa_exports') {
-    const { data } = await supabase.from('report_qa_conversations').select('id, created_by, client_id').eq('id', resourceId).maybeSingle();
+    const { data, error } = await supabase.from('report_qa_conversations').select('id, created_by, client_id').eq('id', resourceId).maybeSingle();
+    if (error) return { ok: false as const, reason: 'resource_lookup_failed' };
     if (!data) return { ok: false as const, reason: 'resource_not_found' };
-    return { ok: true as const, resourceType: 'report_qa_conversation', resourceId: data.id, clientId: data.client_id, ownerUserId: data.created_by };
+    return { ok: true as const, resourceType: 'report_qa_conversation', resourceId: data.id, clientId: data.client_id, objectClientId: data.client_id, ownerUserId: data.created_by };
   }
   if (bucket === 'investment-reports') {
-    const { data } = await supabase.from('investment_reports').select('id, client_id, created_by').eq('id', resourceId).maybeSingle();
+    // `investment_reports` has neither `client_id` nor `created_by`; it names
+    // them `client_property_id` and `generated_by`. PostgREST answers 42703 for
+    // a column that does not exist, the discarded `error` left `data` null, and
+    // a *failed read* was then reported as an *absent row* — so every human
+    // upload to this bucket was refused 403 "Invalid upload resource". That is
+    // what reached an adviser as "PDF generation failed. Please try again." on
+    // the Cash Flow Analysis send-to-client. Same class as
+    // `_shared/aml/caseTenant.ts`.
+    const { data, error } = await supabase
+      .from('investment_reports')
+      .select('id, client_property_id')
+      .eq('id', resourceId)
+      .maybeSingle();
+    if (error) return { ok: false as const, reason: 'resource_lookup_failed' };
     if (!data) return { ok: false as const, reason: 'resource_not_found' };
-    return { ok: true as const, resourceType: 'investment_report', resourceId: data.id, clientId: data.client_id, ownerUserId: data.created_by };
+
+    // Authorisation for this bucket is the `reports` module, and it has already
+    // run: the write gate above requires `can_edit` on it before a binding is
+    // resolved at all, and reads require `can_view` on the same module. So the
+    // upload binds to the actor.
+    //
+    // It deliberately does NOT bind to `generated_by`. That column is not an
+    // access control: the report library is listed by module permission rather
+    // than by who generated a row, so a colleague may open this very report on
+    // the Cash Flow Analysis page — and it is nullable, so a bulk-generated
+    // report has nobody in it. Binding to it would refuse both, as a bare
+    // "Not found", for an act the page itself offers.
+    //
+    // The report's client is recorded on the binding rather than checked here.
+    // A report reaches a client through the property it was written about;
+    // `client_property_id` is null for a report drawn from a listing or a bare
+    // address, which is the ordinary case and not a failure.
+    let objectClientId: string | null = null;
+    if (data.client_property_id) {
+      const { data: property, error: propertyError } = await supabase
+        .from('client_properties')
+        .select('client_id')
+        .eq('id', data.client_property_id)
+        .maybeSingle();
+      if (propertyError) return { ok: false as const, reason: 'resource_lookup_failed' };
+      objectClientId = property?.client_id || null;
+    }
+
+    return {
+      ok: true as const,
+      resourceType: 'investment_report',
+      resourceId: data.id,
+      clientId: null,
+      objectClientId,
+      ownerUserId: actorId,
+    };
   }
   // Client/document uploads use the client record itself as the authoritative
   // resource; callers never provide owner or client metadata separately.
-  const { data } = await supabase.from('clients').select('id, created_by, assigned_team_user_id').eq('id', resourceId).maybeSingle();
+  const { data, error } = await supabase.from('clients').select('id, created_by, assigned_team_user_id').eq('id', resourceId).maybeSingle();
+  if (error) return { ok: false as const, reason: 'resource_lookup_failed' };
   if (data) {
-    return { ok: true as const, resourceType: 'client', resourceId: data.id, clientId: data.id, ownerUserId: data.created_by || data.assigned_team_user_id || null };
+    return { ok: true as const, resourceType: 'client', resourceId: data.id, clientId: data.id, objectClientId: data.id, ownerUserId: data.created_by || data.assigned_team_user_id || null };
   }
 
   // An attachment to the user's own agent conversation. Tried only after the
   // client lookup misses, so every existing binding resolves exactly as before.
   // Scoped to conversations the actor owns: a staff member may attach a file to
   // their own chat and to nobody else's.
-  const { data: conversation } = await supabase
+  const { data: conversation, error: conversationError } = await supabase
     .from('agent_conversations')
     .select('id, user_id')
     .eq('id', resourceId)
     .eq('user_id', actorId)
     .maybeSingle();
+  if (conversationError) return { ok: false as const, reason: 'resource_lookup_failed' };
   if (conversation) {
-    return { ok: true as const, resourceType: 'agent_conversation', resourceId: conversation.id, clientId: null, ownerUserId: conversation.user_id };
+    return { ok: true as const, resourceType: 'agent_conversation', resourceId: conversation.id, clientId: null, objectClientId: null, ownerUserId: conversation.user_id };
   }
 
   return { ok: false as const, reason: 'resource_not_found' };
@@ -389,12 +457,25 @@ Deno.serve(async (req) => {
           // it defensively (the Branding page did) — ignore it instead.
           uploadBinding = await resolveHumanUploadBinding(supabase, bucket, resource_id, actorId);
           if (!uploadBinding.ok) {
+            // A read that FAILED is not a resource that is ABSENT. Answering a
+            // database fault with 403 tells the operator they are not allowed
+            // to do something they are allowed to do, and there is nothing to
+            // retry; 503 says what it is and that trying again may work.
+            if (uploadBinding.reason === 'resource_lookup_failed') {
+              return jsonResponse(
+                { success: false, error: 'The record this upload belongs to could not be read. Please try again.' },
+                corsHeaders,
+                503,
+              );
+            }
             return jsonResponse(
               { success: false, error: uploadBinding.reason === 'branding_permission_required'
                 ? 'You do not have permission to manage branding assets'
                 : uploadBinding.reason === 'template_permission_required'
                   ? 'You do not have permission to manage report templates'
-                  : 'Invalid upload resource' },
+                  : uploadBinding.reason === 'resource_required'
+                    ? 'This upload did not say which record it belongs to'
+                    : 'Invalid upload resource' },
               corsHeaders,
               403,
             );
@@ -403,12 +484,15 @@ Deno.serve(async (req) => {
           // The probe has no binding; use the canonical client ownership check
           // directly so an arbitrary client UUID cannot be attached.
           if (uploadBinding.clientId) {
-            const { data: client } = await supabase.from('clients').select('created_by, assigned_team_user_id').eq('id', uploadBinding.clientId).maybeSingle();
+            const { data: client, error: clientError } = await supabase.from('clients').select('created_by, assigned_team_user_id').eq('id', uploadBinding.clientId).maybeSingle();
+            // Again: a read that failed is not a client who is absent. This one
+            // discarded its error too, so a database fault answered "Not found".
+            if (clientError) return jsonResponse({ success: false, error: 'The client record could not be read. Please try again.' }, corsHeaders, 503);
             if (!client || (client.created_by !== actorId && client.assigned_team_user_id !== actorId && !(await isSuperadmin(supabase, actorId)))) return jsonResponse({ success: false, error: 'Not found' }, corsHeaders, 404);
           } else if (uploadBinding.ownerUserId !== actorId && !(await isSuperadmin(supabase, actorId))) {
             return jsonResponse({ success: false, error: 'Not found' }, corsHeaders, 404);
           }
-          uploadPath = `${uploadBinding.clientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}-${safeFileName(path)}`;
+          uploadPath = `${uploadBinding.clientId || uploadBinding.objectClientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}-${safeFileName(path)}`;
         }
 
         // Enforce size cap BEFORE decoding (base64 is ~4/3 of binary size)
@@ -464,7 +548,10 @@ Deno.serve(async (req) => {
             object_path: data.path,
             resource_type: isInternal ? (typeof resource_type === 'string' && resource_type ? resource_type : 'generic') : uploadBinding.resourceType,
             resource_id: isInternal ? (typeof resource_id === 'string' ? resource_id : null) : uploadBinding.resourceId,
-            client_id: isInternal ? (typeof bindingClientId === 'string' ? bindingClientId : null) : uploadBinding.clientId,
+            // `objectClientId` rather than `clientId`: what this object is
+            // about, not what the upload was authorised against. They differ
+            // only on `investment-reports` — see `resolveHumanUploadBinding`.
+            client_id: isInternal ? (typeof bindingClientId === 'string' ? bindingClientId : null) : uploadBinding.objectClientId,
             owner_user_id: resolvedOwner,
             sensitivity: sensitivityAtUpload,
             created_by: isInternal ? null : actorId,

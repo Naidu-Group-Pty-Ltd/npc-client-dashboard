@@ -65,6 +65,11 @@ function fakeDb(seed: { items?: Row[]; images?: Row[] } = {}) {
     const api: Record<string, unknown> = {
       select() { return api; },
       order() { return api; },
+      // A paged read asks for one page at a time, because the API caps every
+      // response at `db-max-rows` however large a `.limit()` it is given.
+      range(from: number, to: number) {
+        return Promise.resolve(api as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+      },
       limit() { return api; },
       in() { return api; },
       or() { return api; },

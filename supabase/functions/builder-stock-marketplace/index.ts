@@ -29,6 +29,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
 import { rankImage } from '../_shared/builderStock/imagePriority.pure.ts';
+import { readAllRows } from '../_shared/builderStock/pagedRead.ts';
 import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
@@ -183,12 +184,15 @@ Deno.serve(async (req) => {
     if (operation === 'list_builders') {
       // The organisations that actually have live stock, for the filter. A
       // full builder directory is not this endpoint's business.
-      const { data } = await supabase
-        .from('builder_stock_items')
-        .select('organisation_id')
-        .eq('lifecycle_status', 'active')
-        .limit(10000);
-      const ids = Array.from(new Set((data ?? []).map((row: any) => row.organisation_id)));
+      // Paged: the API caps a response at 1,000 rows whatever `.limit()` says,
+      // and a truncated read here drops builders out of the filter entirely.
+      const builderPage = await readAllRows<{ organisation_id: string }>(
+        () => supabase
+          .from('builder_stock_items')
+          .select('organisation_id')
+          .eq('lifecycle_status', 'active')
+          .order('id', { ascending: true }));
+      const ids = Array.from(new Set(builderPage.rows.map((row) => row.organisation_id)));
       if (!ids.length) return json({ success: true, records: [] });
       const { data: organisations } = await supabase
         .from('builder_organisations')

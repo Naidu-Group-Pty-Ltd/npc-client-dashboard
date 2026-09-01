@@ -580,3 +580,63 @@ describe('nothing about an image is decided here', () => {
     }
   });
 });
+
+/**
+ * BUILDER STOCK — AN EMPTY ITEM QUEUE IS WHEN THE UPLOAD MARKERS ARE OWED.
+ *
+ * PRODUCTION, 30 AUGUST - 1 SEPTEMBER 2026. Upload `a0f8dfe4` (`export.csv`,
+ * 26 properties) settled every one of its items and then sat at
+ * `status = 'enriching'` for thirty-six hours with all three upload markers
+ * NULL — `source_images_settled_version`,
+ * `marketplace_eligibility_settled_version`,
+ * `image_sanitization_settled_version`.
+ *
+ * The per-item queue replaced the upload walk for finding and judging
+ * pictures, but never took over stamping those markers: only
+ * `settleUploadSourceImages` writes them, and it is reached only through the
+ * sweep that sits BELOW the deployment-skew branch. With the claim function
+ * deployed, that branch is unreachable — measured, 4,438 settler invocations
+ * in twenty-four hours, every one an item tick, NOT ONE a settlement tick and
+ * not one reporting skew.
+ *
+ * `builder_stock_uploads` therefore never stopped counting as outstanding, so
+ * `settle_builder_stock_marketplace_eligibility_tick` could never satisfy its
+ * own retirement condition and the cron fired once a minute for ever against
+ * an empty queue.
+ */
+describe('a drained per-item queue continues to the upload-level sweep', () => {
+  it('returns early only while item work is still outstanding', () => {
+    // Nothing due but something still leased or backing off is the case the
+    // early return exists for, and it keeps it.
+    expect(SETTLER).toMatch(/if \(pending\.outstanding > 0\) \{/);
+  });
+
+  it('falls through when the queue is genuinely empty', () => {
+    expect(SETTLER).toMatch(/itemQueueDrained = true;/);
+    // And the sweep that stamps the markers is what it falls through to.
+    const afterDrain = SETTLER.slice(SETTLER.indexOf('itemQueueDrained = true;'));
+    expect(afterDrain).toMatch(/runSettlementTick\(/);
+    expect(afterDrain).toMatch(/settleUploadSourceImages\(/);
+  });
+
+  it('does not cry deployment skew when the queue is merely empty', () => {
+    // The warning names an unapplied migration and a remedy. Emitting it on a
+    // healthy deployment every minute would make a real skew unfindable.
+    expect(SETTLER).toMatch(/if \(!itemQueueDrained\) \{\s*console\.warn/);
+  });
+
+  it('still reports skew when the claim function really is missing', () => {
+    // Unchanged: `available: false` sets nothing, so the warning still fires.
+    const skew = SETTLER.slice(SETTLER.indexOf('DEPLOYMENT SKEW'));
+    expect(skew).toMatch(/deployment_skew/);
+    expect(skew).toMatch(/20261019000000_builder_stock_item_work_claim\.sql/);
+  });
+
+  it('reaches the sweep under the SAME lease, so two ticks cannot overlap', () => {
+    const drainAt = SETTLER.indexOf('itemQueueDrained = true;');
+    const leaseAt = SETTLER.indexOf("claim_builder_stock_settlement_lease");
+    expect(drainAt).toBeGreaterThan(-1);
+    expect(leaseAt).toBeGreaterThan(drainAt);
+  });
+});
+

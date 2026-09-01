@@ -28,7 +28,8 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
-  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useSetBuilderStockAvailability,
+  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
+  useSetBuilderStockAvailability,
 } from '@/lib/builderStockQueries';
 import {
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
@@ -136,6 +137,7 @@ export default function BuilderStockList() {
   const deleteSource = useDeleteBuilderStockSource();
   const recoverImages = useRecoverStockSourceImages();
   const refreshLinks = useRefreshBrochureLinks();
+  const reprocessSource = useReprocessStockSource();
 
   const records = itemsQuery.data?.records ?? [];
   const pagination = itemsQuery.data?.pagination;
@@ -239,6 +241,47 @@ export default function BuilderStockList() {
       },
     });
   }, [refreshLinks, toast]);
+
+  /**
+   * Read this source again with today's parsers.
+   *
+   * Offered on a source that has already been read — a source still waiting
+   * for its first pass has `process_upload`, which reports its own progress
+   * and its own duplicate refusal, and the server refuses this one for it.
+   *
+   * The confirmation says what actually changes, because this is the one
+   * control here that DOES rewrite property data: prices, sizes, designs and
+   * document links are re-read from the file. What it cannot do is lose a
+   * property or a selection — the import matches by the same identity rule it
+   * always has and updates in place.
+   */
+  const canReprocess = useCallback((upload: BuilderStockUpload) => (
+    !upload.deleted_at
+    && !['uploaded', 'failed', 'parsing'].includes(String(upload.status ?? ''))
+  ), []);
+
+  const reprocessStockSource = useCallback((upload: BuilderStockUpload) => {
+    reprocessSource.mutate(upload.id, {
+      onSuccess: (response) => {
+        const summary = response.summary;
+        toast({
+          title: 'Source read again',
+          description: summary
+            ? `${summary.imported ?? 0} added, ${summary.updated ?? 0} updated. `
+              + 'Any pictures we can now reach will appear shortly.'
+            : 'Any pictures we can now reach will appear shortly.',
+        });
+        void uploadsQuery.refetch();
+      },
+      onError: (error) => {
+        toast({
+          title: 'That source could not be read again',
+          description: error instanceof Error ? error.message : 'Please try again shortly.',
+          variant: 'destructive',
+        });
+      },
+    });
+  }, [reprocessSource, toast, uploadsQuery]);
 
   const recoverSourceImages = useCallback((upload: BuilderStockUpload) => {
     recoverImages.mutate(upload.id, {
@@ -780,6 +823,24 @@ export default function BuilderStockList() {
                             </span>
                           </Button>
                         ) : null}
+                        {/*
+                          Read the file again with today's parsers. Shown only
+                          on a source that has already been read; the server
+                          refuses the rest, so this is a convenience rather
+                          than the control.
+                        */}
+                        {canReprocess(upload) ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={reprocessSource.isPending || busy}
+                            onClick={() => reprocessStockSource(upload)}
+                            aria-label={`Read ${stockSourceLabel(upload)} again`}
+                          >
+                            <RefreshCw className="h-4 w-4" aria-hidden />
+                            <span className="sr-only sm:not-sr-only sm:ml-2">Read again</span>
+                          </Button>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -1154,12 +1215,27 @@ function PriceBlock({ item }: { item: BuilderStockItem }) {
 function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; showLabels?: boolean }) {
   const image = primaryStockImage(item);
   const stages = stockImageStageSummary(item);
+  /*
+   * "No image yet" reads as something the product is still doing, and for a
+   * row whose stock list attaches no brochure it never will be — the picture
+   * comes out of the builder's own document, and there is no document. Saying
+   * so is the only reading here a person can act on.
+   *
+   * Counted by the server with the rule the image pipeline itself uses, so
+   * this cannot promise a document the pipeline would not read.
+   */
+  const noDocument = !image && item.source_documents === 0;
 
   return (
     <div className="flex min-w-0 flex-col items-start gap-1.5">
       <Badge
         variant="outline"
-        title={image ? STOCK_IMAGE_STAGE_BADGES[image.source_stage] : 'No image yet'}
+        title={image
+          ? STOCK_IMAGE_STAGE_BADGES[image.source_stage]
+          : noDocument
+            ? 'This stock list attaches no brochure or plan to this property. '
+              + 'Add a link to its row and the photograph is read from it.'
+            : 'No image yet'}
         className={cn(
           'max-w-full gap-1 px-1.5 py-0 text-[11px] font-medium',
           image
@@ -1171,7 +1247,9 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
           ? <ImageIcon className="h-3 w-3 shrink-0" aria-hidden />
           : <ImageOff className="h-3 w-3 shrink-0" aria-hidden />}
         <span className="truncate">
-          {image ? STOCK_IMAGE_STAGE_BADGES[image.source_stage] : 'No image yet'}
+          {image
+            ? STOCK_IMAGE_STAGE_BADGES[image.source_stage]
+            : noDocument ? 'No brochure on this row' : 'No image yet'}
         </span>
       </Badge>
 

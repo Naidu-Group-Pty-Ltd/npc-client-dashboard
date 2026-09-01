@@ -136,11 +136,11 @@ async function loadPfContext(supabase: any, pfId: string) {
   const [pfRes, datesRes, decisionsRes, condRes, valRes, docsRes, statusRes, msgsRes] = await Promise.all([
     supabase.from("purchase_files").select("*").eq("id", pfId).maybeSingle(),
     supabase.from("purchase_file_critical_dates").select("date_type, due_date, status").eq("purchase_file_id", pfId),
-    supabase.from("purchase_file_finance_decisions").select("outcome, decision_date, lender, max_approved_budget, lvr_pct, broker_notes, expiry_date").eq("purchase_file_id", pfId).order("decision_date", { ascending: false }).limit(5),
-    supabase.from("purchase_file_conditions").select("label, status, due_date").eq("purchase_file_id", pfId),
-    supabase.from("purchase_file_valuations").select("lender, status, amount, valuation_date").eq("purchase_file_id", pfId),
+    supabase.from("purchase_file_finance_decisions").select("outcome, decided_at, snapshot_lender, snapshot_max_approved_budget, lvr, broker_notes, decision_expiry_date").eq("purchase_file_id", pfId).order("decided_at", { ascending: false }).limit(5),
+    supabase.from("purchase_file_conditions").select("title, status, due_date").eq("purchase_file_id", pfId),
+    supabase.from("purchase_file_valuations").select("status, result, valuation_amount, ordered_date, returned_date").eq("purchase_file_id", pfId),
     supabase.from("document_requirement_instances").select("label, status, owner, category, uploaded_at").eq("purchase_file_id", pfId).limit(40),
-    supabase.from("purchase_file_status_history").select("from_status, to_status, changed_at").eq("purchase_file_id", pfId).order("changed_at", { ascending: false }).limit(8),
+    supabase.from("purchase_file_status_history").select("from_value, to_value, created_at").eq("purchase_file_id", pfId).order("created_at", { ascending: false }).limit(8),
     supabase.from("finance_outbound_messages").select("channel, body, created_at, read_at").eq("purchase_file_id", pfId).order("created_at", { ascending: false }).limit(10),
   ]);
   return {
@@ -192,7 +192,7 @@ async function draftReply(supabase: any, pfId: string | null, clientId: string |
     const ctx = await loadPfContext(supabase, pfId);
     ctxBlock = `\nPurchase File context:\n${JSON.stringify({ file: ctx.file, decisions: ctx.decisions, dates: ctx.dates }, null, 2)}`;
   } else if (clientId) {
-    const { data: client } = await supabase.from("clients").select("first_name, last_name, email, phone").eq("id", clientId).maybeSingle();
+    const { data: client } = await supabase.from("clients").select("primary_first_name, primary_surname, primary_email, primary_mobile").eq("id", clientId).maybeSingle();
     ctxBlock = `\nClient: ${JSON.stringify(client)}`;
   }
   const text = await callAI(
@@ -302,7 +302,7 @@ async function recommendLenders(supabase: any, pfId: string) {
   if (!ctx.file) throw new Error("Purchase file not found");
   const { data: playbooks } = await supabase
     .from("lender_playbooks")
-    .select("lender_key, niche_strengths, watchouts, typical_turnaround_days")
+    .select("lender_key, lender_label, quirks, rate_band_pa, rate_notes, document_rules, typical_turnaround_days_override")
     .limit(30);
   const result = await callAI(
     "You are an Australian mortgage lender selector. Pick the 3 best-fit lenders given the borrower profile. Use ONLY the provided lender playbooks. Be honest about uncertainty.",
@@ -354,14 +354,14 @@ async function scanRisk(supabase: any, userId: string) {
   if (!clientIds.length) return { alerts: [] };
   const { data: pfs } = await supabase
     .from("purchase_files")
-    .select("id, address, purchase_price, lender, status, settlement_date, finance_due_date, deal_type")
+    .select("id, property_address, purchase_price, lender, status, settlement_date, finance_clause_date, purchase_type")
     .in("client_id", clientIds)
     .neq("status", "settled")
     .neq("status", "cancelled")
     .limit(50);
   const { data: decisions } = await supabase
     .from("purchase_file_finance_decisions")
-    .select("purchase_file_id, outcome, lvr_pct, lmi_required, expiry_date, broker_notes")
+    .select("purchase_file_id, outcome, lvr, lmi_applicable, decision_expiry_date, broker_notes")
     .in("purchase_file_id", (pfs ?? []).map((p: any) => p.id));
   const result = await callAI(
     "You are an Australian mortgage risk sniffer. Identify HIGH-IMPACT risks across this partner's active deals (LVR cliffs, expiring approvals, settlement clashes, employment mismatches, LMI exposure, doc gaps, valuation concerns). Be precise. Skip low-signal items.",
@@ -420,8 +420,8 @@ async function scanRisk(supabase: any, userId: string) {
 async function coachInsights(supabase: any, userId: string) {
   // Pull partner KPIs and recent activity
   const [kpisRes, activityRes] = await Promise.all([
-    supabase.from("finance_partner_commissions").select("milestone, amount, created_at").eq("finance_user_id", userId).limit(20),
-    supabase.from("finance_partner_daily_activity").select("activity_date, actions").eq("finance_user_id", userId).order("activity_date", { ascending: false }).limit(14),
+    supabase.from("finance_partner_commissions").select("milestone, net_amount, created_at").eq("finance_contact_id", userId).limit(20),
+    supabase.from("finance_partner_daily_activity").select("activity_date, action_count").eq("finance_contact_id", userId).order("activity_date", { ascending: false }).limit(14),
   ]);
   const result = await callAI(
     "You are an Australian mortgage broker performance coach. Give 2–3 sharp, specific coaching insights based on patterns in the broker's activity. Each should be actionable today.",

@@ -531,10 +531,10 @@ Deno.serve(async (req) => {
           : Promise.resolve({ data: [] }),
         supabase
           .from('finance_outbound_messages')
-          .select('id, channel, body, client_id, sent_at')
-          .eq('finance_user_id', portalUser.id)
+          .select('id, channel, body, client_id, created_at')
+          .eq('finance_contact_id', portalUser.id)
           .ilike('body', like)
-          .order('sent_at', { ascending: false })
+          .order('created_at', { ascending: false })
           .limit(8),
         supabase
           .from('finance_portal_messages')
@@ -546,9 +546,9 @@ Deno.serve(async (req) => {
         pfIds.length
           ? supabase
               .from('document_requirement_instances')
-              .select('id, label, purchase_file_id, file_name')
+              .select('id, label, purchase_file_id')
               .in('purchase_file_id', pfIds)
-              .or(`label.ilike.${like},file_name.ilike.${like}`)
+              .ilike('label', like)
               .limit(10)
           : Promise.resolve({ data: [] }),
       ]);
@@ -574,7 +574,7 @@ Deno.serve(async (req) => {
       ].slice(0, 12);
 
       const docs = ((docsRes.data as any[]) || []).map(d => ({
-        id: d.id, label: d.label || d.file_name || 'Document',
+        id: d.id, label: d.label || 'Document',
         purchase_file_id: d.purchase_file_id,
         pf_title: pfMap.get(d.purchase_file_id) || null,
       }));

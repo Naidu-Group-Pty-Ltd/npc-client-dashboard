@@ -11,6 +11,14 @@
  *     image/png bytes (200) with `x-inpaint-model` naming what ran, or
  *     { "error": "..." } (4xx/5xx).
  *
+ * POST /v1/classify
+ *   Headers:
+ *     Authorization: Bearer <BUILDER_STOCK_IMAGE_WORKER_TOKEN>
+ *   Body (multipart/form-data, `image-<key>` parts only, at most six):
+ *     image-<key>: one picture taken out of ONE builder document
+ *   Returns:
+ *     { "model": "...", "verdicts": [{ "key", "subject", "confident" }, ...] }
+ *
  * GET /healthz -> 200 "ok"    (unauthenticated liveness, nothing else is)
  *
  * WHAT THIS SERVICE IS AND IS NOT. It is the third stage of Builder Stock's
@@ -23,6 +31,18 @@
  * property's own photograph, and there is no URL input, no reference-image
  * input, no property lookup and no way for this process to reach any other
  * picture. Property isolation is structural.
+ *
+ * The SECOND endpoint answers a different question about the same kind of
+ * input and inherits every one of those properties. `/v1/classify` is handed
+ * pictures taken out of one builder document and says what each one SHOWS — a
+ * house from the street, a floor plan, a logo, a page of text. It decides
+ * nothing: it cannot see a property, a label, a lot number or another
+ * document, it cannot rank, and its whole vocabulary is a closed list this
+ * source declares. The caller keeps the decision, and the only verdict that
+ * can ever promote a picture is `house_exterior` on a page the document had
+ * already designated for that property by its own text. Everything else this
+ * can say is a demotion, and a batch it cannot answer leaves the caller
+ * exactly where it was.
  *
  * THE PROMPT IS PINNED HERE AND CANNOT ARRIVE IN A REQUEST. The inpainting
  * model requires a text prompt; it is a constant in this reviewed source, a
@@ -417,6 +437,442 @@ async function inpaint(request: Request, env: Env): Promise<Response> {
   });
 }
 
+// ---------------------------------------------------------------------------
+// /v1/classify — what a picture SHOWS, and nothing else
+// ---------------------------------------------------------------------------
+
+/**
+ * The vision model, pinned here for the same reason the inpainting one is.
+ *
+ * Chosen off the live Workers AI catalog: natively multimodal, Cloudflare-
+ * hosted, and pinned by Cloudflare itself rather than carrying a licence gate
+ * that has to be accepted out of band before the binding will answer — which
+ * the alternative vision model does, and which fails as an ordinary model
+ * error long after a deploy looks successful.
+ */
+export const CLASSIFY_MODEL = '@cf/meta/llama-4-scout-17b-16e-instruct';
+
+/**
+ * THE WHOLE VOCABULARY, and a closed list on purpose.
+ *
+ * Every member is prefixed `shows_`, and that is not decoration. It shares no
+ * value with `SourceImageRole` in `sourceImageRole.pure.ts` — which already
+ * spells `site_plan`, `interior` and `floorplan` — because a subject is not a
+ * role. "This shows a house from the street" is a fact about pixels; "this is
+ * the property's primary image" is a conclusion about a document, and the
+ * second is never inferred from the first alone. A test asserts the two
+ * vocabularies cannot be confused, and the prefix is also what makes the
+ * last-resort keyword scan below safe: `shows_floor_plan` is not a phrase that
+ * turns up in a sentence by accident, where `floor plan` is.
+ *
+ * Exactly one member can ever lead a listing. Every other member is a
+ * DEMOTION, so a model that is wrong in any direction other than
+ * `house_exterior` costs the caller nothing it had.
+ */
+export const CLASSIFY_SUBJECTS = [
+  'shows_house_exterior',
+  'shows_house_interior',
+  'shows_floor_plan',
+  'shows_site_plan',
+  'shows_finishes',
+  'shows_logo',
+  'shows_document',
+  'shows_people',
+  'shows_other',
+] as const;
+
+export type ClassifySubject = (typeof CLASSIFY_SUBJECTS)[number];
+
+/** The one subject a caller may act on. Everything else can only demote. */
+export const LEADING_SUBJECT: ClassifySubject = 'shows_house_exterior';
+
+/**
+ * The instruction, pinned in this reviewed source exactly as the inpainting
+ * one is, and for the same reason: a request carrying anything but pictures is
+ * refused, so there is no field through which a caller can tell the model what
+ * it hopes to see. In particular the model is never told which property, lot,
+ * estate or design the document is about — a classifier that has been told
+ * what to look for will find it.
+ */
+export const CLASSIFY_SYSTEM_PROMPT =
+  'You sort pictures taken out of a property brochure by what they SHOW. '
+  + 'Report only what is visible. Never guess what a picture is for, who it '
+  + 'belongs to, or what it is worth.';
+
+export const CLASSIFY_USER_PROMPT =
+  'What does this picture show? Choose one subject:\n'
+  + 'shows_house_exterior - the outside of a home: its facade, roof, garage or '
+  + 'street frontage, as a photograph or an architectural render.\n'
+  + 'shows_house_interior - inside a home: a kitchen, living area, bedroom or '
+  + 'bathroom.\n'
+  + 'shows_floor_plan - a plan, elevation or dimensioned drawing of a '
+  + 'building.\n'
+  + 'shows_site_plan - an estate masterplan, subdivision, lot layout, aerial '
+  + 'diagram or map.\n'
+  + 'shows_finishes - samples of materials, colours, tiles, benchtops, tapware '
+  + 'or appliances.\n'
+  + 'shows_logo - a brand mark, wordmark, letterhead or badge, with no scene '
+  + 'behind it.\n'
+  + 'shows_document - a page of text, a table, a price panel, a list or a '
+  + 'chart.\n'
+  + 'shows_people - a picture led by people rather than by a building.\n'
+  + 'shows_other - none of these.\n'
+  + 'Set confident to false if the picture is unclear, is cut off, or could '
+  + 'reasonably be two of these.';
+
+/**
+ * The answer's shape, asked for as a schema so the model returns a value
+ * rather than a sentence. It is still parsed defensively below: JSON mode is
+ * a request, not a guarantee, and an unparseable answer must degrade to "no
+ * verdict" rather than to a guess.
+ */
+const CLASSIFY_SCHEMA = {
+  type: 'object',
+  properties: {
+    subject: { type: 'string', enum: [...CLASSIFY_SUBJECTS] },
+    confident: { type: 'boolean' },
+  },
+  required: ['subject', 'confident'],
+} as const;
+
+/** Deterministic: this is a classification, not a composition. */
+const CLASSIFY_TEMPERATURE = 0;
+/** A verdict is two fields. Anything longer is prose, and prose is not asked for. */
+const CLASSIFY_MAX_TOKENS = 96;
+
+/**
+ * How many pictures one request may carry.
+ *
+ * The caller CHUNKS: a brochure page presents a handful of rasters and a
+ * document presents a few pages of them, so six is a page's worth and a
+ * document is a few requests. Deliberately small — each picture is a separate
+ * model call (see `classifyOne` for why), and a request that fans out
+ * unboundedly is one stolen token away from being this account's whole Workers
+ * AI allowance.
+ */
+const MAX_CLASSIFY_IMAGES = 6;
+/** Per picture. A brochure raster is well under this; headroom, not invitation. */
+const MAX_CLASSIFY_PART_BYTES = 3 * 1024 * 1024;
+/** The whole request, refused off its declared length before the body is buffered. */
+const MAX_CLASSIFY_BODY_BYTES = 10 * 1024 * 1024;
+
+/** `image-<key>`, where the key is the caller's own and comes back verbatim. */
+const CLASSIFY_PART_NAME = /^image-([A-Za-z0-9_.:-]{1,64})$/;
+
+/**
+ * The picture's type, read from its own first bytes.
+ *
+ * Sniffed rather than taken from the part's `content-type`, because a declared
+ * type is the caller's claim and the bytes are the fact — and the model is
+ * handed a data URI whose type has to be the truth or the decode fails
+ * somewhere with no useful error.
+ */
+function imageMediaType(bytes: Uint8Array): string | null {
+  if (bytes.length >= 8 && PNG_MAGIC.every((byte, i) => bytes[i] === byte)) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    bytes.length >= 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) return 'image/webp';
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return 'image/gif';
+  }
+  return null;
+}
+
+/** Bytes to base64, chunked so a megabyte does not blow the argument list. */
+function toBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 0x8000;
+  for (let at = 0; at < bytes.length; at += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(at, at + CHUNK));
+  }
+  return btoa(binary);
+}
+
+/**
+ * The two documented ways Workers AI takes a picture, tried in order.
+ *
+ * The catalog documents the OpenAI-shaped content parts for its multimodal
+ * models and a top-level `image` field for the older vision ones, and does not
+ * say which this model takes. GUESSING ONE WOULD BE THE WHOLE FEATURE FAILING
+ * SILENTLY — every verdict `unavailable`, which reads exactly like a model
+ * that has no opinion — so both are attempted and the response says which ran.
+ *
+ * The one that answers is remembered FOR THE REQUEST and no longer, so a batch
+ * of six costs at most one wasted call. Deliberately not remembered for the
+ * isolate's life: that is invisible cross-request state whose behaviour
+ * depends on which request happened to run first, and a probe poisoned by one
+ * transient fault would then answer for every request after it.
+ */
+type ClassifyTransport = 'content_parts' | 'image_field';
+const CLASSIFY_TRANSPORTS: ClassifyTransport[] = ['content_parts', 'image_field'];
+
+function classifyInputs(transport: ClassifyTransport, dataUri: string): Record<string, unknown> {
+  const shared = {
+    response_format: { type: 'json_schema', json_schema: CLASSIFY_SCHEMA },
+    temperature: CLASSIFY_TEMPERATURE,
+    max_tokens: CLASSIFY_MAX_TOKENS,
+  };
+  if (transport === 'content_parts') {
+    return {
+      ...shared,
+      messages: [
+        { role: 'system', content: CLASSIFY_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: CLASSIFY_USER_PROMPT },
+            { type: 'image_url', image_url: { url: dataUri } },
+          ],
+        },
+      ],
+    };
+  }
+  return {
+    ...shared,
+    messages: [
+      { role: 'system', content: CLASSIFY_SYSTEM_PROMPT },
+      { role: 'user', content: CLASSIFY_USER_PROMPT },
+    ],
+    image: dataUri,
+  };
+}
+
+/**
+ * The model's answer, read out of whatever it actually returned.
+ *
+ * A schema is a request. What comes back may be the object, a JSON string, a
+ * fenced block, or a sentence with the word in it — so every shape is tried
+ * and NONE of them invents a verdict: an answer that names no subject in the
+ * closed vocabulary returns null, which the caller records as "not answered".
+ */
+export function readClassifyVerdict(
+  output: unknown,
+): { subject: ClassifySubject; confident: boolean } | null {
+  const candidates: unknown[] = [];
+  const seen = new Set<unknown>();
+  const consider = (value: unknown) => {
+    if (value === null || value === undefined || seen.has(value)) return;
+    seen.add(value);
+    candidates.push(value);
+  };
+  consider(output);
+  if (output && typeof output === 'object') {
+    const record = output as Record<string, unknown>;
+    consider(record.response);
+    consider(record.result);
+    consider(record.output);
+  }
+
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'object') {
+      const record = candidate as Record<string, unknown>;
+      const subject = String(record.subject ?? '');
+      if ((CLASSIFY_SUBJECTS as readonly string[]).includes(subject)) {
+        return {
+          subject: subject as ClassifySubject,
+          // Absent is NOT confident: the field is required by the schema, so a
+          // missing one means the model did not answer the question asked.
+          confident: record.confident === true,
+        };
+      }
+      continue;
+    }
+    if (typeof candidate !== 'string') continue;
+    const text = candidate.trim();
+    if (!text) continue;
+    // A JSON object anywhere in the text, fenced or bare.
+    const brace = text.indexOf('{');
+    const close = text.lastIndexOf('}');
+    if (brace >= 0 && close > brace) {
+      try {
+        const parsed = JSON.parse(text.slice(brace, close + 1));
+        const nested = readClassifyVerdict(parsed);
+        if (nested) return nested;
+      } catch {
+        /* not JSON after all; the keyword scan below is the last resort */
+      }
+    }
+    /*
+     * The last resort, and deliberately strict: EXACTLY ONE of the closed
+     * vocabulary's words must appear. A sentence naming two of them has not
+     * chosen, and picking the first would turn "this is a floor plan, not a
+     * house exterior" into a promotion. `shows_house_exterior` is a token the
+     * model was given rather than a phrase English produces, which is what
+     * makes scanning for it something other than guessing.
+     */
+    const named = CLASSIFY_SUBJECTS.filter((subject) => text.includes(subject));
+    if (named.length === 1) {
+      // A bare word carries no confidence, and unstated confidence is not
+      // confidence — see the schema.
+      return { subject: named[0], confident: /"?confident"?\s*[:=]\s*true/i.test(text) };
+    }
+  }
+  return null;
+}
+
+/** One picture, one model call, one verdict — or a stated absence. */
+async function classifyOne(
+  env: Env,
+  bytes: Uint8Array,
+  mediaType: string,
+  known: ClassifyTransport | null,
+): Promise<{
+  subject: ClassifySubject | null;
+  confident: boolean;
+  transport: ClassifyTransport | null;
+  unavailable: string | null;
+}> {
+  /*
+   * ONE PICTURE PER CALL, and the batching is at the REQUEST rather than at
+   * the model. A single call carrying six pictures answers about six pictures
+   * in one list, and a list that comes back short, long or reordered is a
+   * verdict attached to the wrong photograph — which is the one failure this
+   * whole subsystem exists to prevent, and which is undetectable from the
+   * answer. Six calls cost six calls; a misattributed hero costs a client's
+   * card.
+   */
+  const dataUri = `data:${mediaType};base64,${toBase64(bytes)}`;
+  const order = known ? [known] : CLASSIFY_TRANSPORTS;
+
+  let lastError = '';
+  for (const transport of order) {
+    let output: unknown;
+    try {
+      output = await env.AI.run(CLASSIFY_MODEL, classifyInputs(transport, dataUri));
+    } catch (error) {
+      lastError = String(error).slice(0, 160);
+      continue;
+    }
+    const verdict = readClassifyVerdict(output);
+    if (!verdict) {
+      // The call SUCCEEDED, so the transport is right and the model simply did
+      // not answer in the vocabulary. Trying the other shape would only ask a
+      // question that already got a reply.
+      return {
+        subject: null,
+        confident: false,
+        transport,
+        unavailable: 'the model did not name a subject this service recognises',
+      };
+    }
+    return { ...verdict, transport, unavailable: null };
+  }
+  return {
+    subject: null,
+    confident: false,
+    transport: null,
+    unavailable: lastError
+      ? `the model could not be reached (${lastError})`
+      : 'the model could not be reached',
+  };
+}
+
+async function classify(request: Request, env: Env): Promise<Response> {
+  const declared = Number(request.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_CLASSIFY_BODY_BYTES) {
+    return json(413, 'the request is larger than this service accepts');
+  }
+
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return json(422, 'the request is not multipart/form-data');
+  }
+
+  /*
+   * `image-<key>` PARTS AND NOTHING ELSE. No prompt, no label, no lot, no
+   * design, no reference picture, no URL: the same closed contract the repair
+   * endpoint keeps, and here it is what makes the verdict a fact about pixels
+   * rather than an answer the caller asked for.
+   */
+  const names = [...new Set(form.keys())];
+  const keys: string[] = [];
+  for (const name of names) {
+    const match = CLASSIFY_PART_NAME.exec(name);
+    if (!match) {
+      return json(422, "every part must be named 'image-<key>' and carry one picture");
+    }
+    keys.push(match[1]);
+  }
+  if (!keys.length) return json(422, 'the request carries no pictures');
+  if (keys.length > MAX_CLASSIFY_IMAGES) {
+    return json(422, `this service classifies at most ${MAX_CLASSIFY_IMAGES} pictures `
+      + 'per request; send them in smaller batches');
+  }
+
+  const pictures: Array<{ key: string; bytes: Uint8Array; mediaType: string }> = [];
+  for (const name of names) {
+    const key = String(CLASSIFY_PART_NAME.exec(name)?.[1]);
+    const part = form.get(name);
+    if (part === null || typeof part === 'string') {
+      return json(422, `the '${name}' part is text, not a picture`);
+    }
+    if (part.size === 0) return json(422, `the '${name}' part is empty`);
+    if (part.size > MAX_CLASSIFY_PART_BYTES) {
+      return json(422, `the '${name}' part is larger than this service accepts`);
+    }
+    const bytes = new Uint8Array(await part.arrayBuffer());
+    const mediaType = imageMediaType(bytes);
+    if (!mediaType) return json(422, `the '${name}' part is not a picture this service reads`);
+    pictures.push({ key, bytes, mediaType });
+  }
+
+  /*
+   * Sequential, and that is the point rather than an omission. Six parallel
+   * calls arrive at Workers AI as a burst this account is rate-limited on, and
+   * a rate-limited call is indistinguishable in the answer from a picture the
+   * model had no opinion about — see `unavailable`. One at a time is slower
+   * and it is legible.
+   */
+  const verdicts: Array<Record<string, unknown>> = [];
+  let answered = 0;
+  let transportUsed: ClassifyTransport | null = null;
+  for (const picture of pictures) {
+    const verdict = await classifyOne(env, picture.bytes, picture.mediaType, transportUsed);
+    if (verdict.transport) transportUsed = verdict.transport;
+    if (verdict.subject) answered += 1;
+    verdicts.push({
+      // Echoed VERBATIM rather than returned in order: a caller that matched
+      // verdicts to pictures by position would attach one photograph's subject
+      // to another the moment anything reordered, and nothing in a list says
+      // it has been reordered.
+      key: picture.key,
+      subject: verdict.subject,
+      confident: verdict.confident,
+      unavailable: verdict.unavailable,
+    });
+  }
+
+  /*
+   * A batch NONE of which was answered is an operational fault — the binding,
+   * the account's allowance, the model — and the caller should retry it rather
+   * than record that a document contains no house. A batch that was partly
+   * answered is a normal answer: the caller's own rule decides what a missing
+   * verdict means, and for every caller here it means "no promotion".
+   */
+  if (!answered) {
+    return json(502, String(verdicts[0]?.unavailable
+      ?? 'the model answered nothing about any picture in this batch'));
+  }
+
+  return new Response(JSON.stringify({ model: CLASSIFY_MODEL, verdicts }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'x-classify-model': CLASSIFY_MODEL,
+      ...(transportUsed ? { 'x-classify-transport': transportUsed } : {}),
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
+
 const worker = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -428,11 +884,15 @@ const worker = {
       });
     }
 
-    if (url.pathname !== '/v1/inpaint') return json(404, 'not found');
+    const known = url.pathname === '/v1/inpaint' || url.pathname === '/v1/classify';
+    if (!known) return json(404, 'not found');
     if (request.method !== 'POST') return json(405, 'method not allowed');
     // Auth before any parsing: an unauthenticated request costs nothing and
-    // learns nothing, whatever it carries.
+    // learns nothing, whatever it carries. One token guards both endpoints —
+    // they are one private service, and a second credential is a second thing
+    // to rotate and forget.
     if (!(await authorised(request, env))) return json(401, 'unauthorized');
+    if (url.pathname === '/v1/classify') return await classify(request, env);
     return await inpaint(request, env);
   },
 };

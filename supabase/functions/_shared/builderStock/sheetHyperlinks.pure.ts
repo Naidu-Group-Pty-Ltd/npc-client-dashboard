@@ -363,6 +363,68 @@ export function mergeHyperlinkColumns(
 }
 
 /**
+ * THE SAME MERGE FOR A WORKBOOK WE ALREADY HOLD.
+ *
+ * `mergeHyperlinkColumns` above aligns TWO representations — a proven CSV and
+ * a workbook fetched separately — because for a Google Sheets URL those are
+ * different documents and their row numbers disagree. A workbook a builder
+ * UPLOADED has no such problem: the values and the link targets came out of
+ * the same sheet in the same pass, so row `i` is row `i` and there is nothing
+ * to align.
+ *
+ * What must not differ is the NAME. Both paths append `"<heading> URL"`, from
+ * the one `LINK_COLUMN_SUFFIX`, because the column that comes out of this is
+ * what `rowSourceBranches` later scans for an address — and a builder whose
+ * brochure column is called `DOWNLOAD` must reach the same place whether they
+ * pasted a Sheets link or dragged in the file.
+ *
+ * Three rules. A column is added only where SOME kept row carries a target,
+ * so a sheet with no links is returned untouched. An existing key is never
+ * overwritten — a builder who already has a `DOWNLOAD URL` column of their own
+ * keeps what they wrote. And a row with no target gets the empty string rather
+ * than being skipped, so every row has the same shape and a missing document
+ * is a blank cell rather than an absent column.
+ */
+export function attachRowHyperlinks(input: {
+  /** The keyed rows, as `keyRowsByHeader` produced them. */
+  rows: Array<Record<string, unknown>>;
+  /** Each kept row's index into the sheet, from the same call. */
+  rowIndexes: number[];
+  /** The header labels, index-aligned with the sheet's columns. */
+  headers: string[];
+  /** The sheet's own link targets, `links[row][column]`. */
+  links: ReadonlyArray<ReadonlyArray<string | null>>;
+}): { columnsAdded: string[]; linksResolved: number } {
+  const { rows, rowIndexes, headers, links } = input;
+  const targetAt = (position: number, column: number): string => {
+    const sheetRow = rowIndexes[position] ?? -1;
+    if (sheetRow < 0) return '';
+    return links[sheetRow]?.[column] ?? '';
+  };
+
+  const columnsAdded: string[] = [];
+  let linksResolved = 0;
+
+  for (let column = 0; column < headers.length; column += 1) {
+    const carries = rows.some((_row, position) => !!targetAt(position, column));
+    if (!carries) continue;
+
+    const name = `${headers[column] || `Column ${column + 1}`}${LINK_COLUMN_SUFFIX}`;
+    // The builder's own column of that name wins. See rule three.
+    if (rows.some((row) => Object.prototype.hasOwnProperty.call(row, name))) continue;
+    columnsAdded.push(name);
+
+    rows.forEach((row, position) => {
+      const target = targetAt(position, column);
+      if (target) linksResolved += 1;
+      row[name] = target;
+    });
+  }
+
+  return { columnsAdded, linksResolved };
+}
+
+/**
  * THE TARGET OF A CELL, HOWEVER THE BUILDER WROTE IT.
  *
  * A spreadsheet stores "this text points somewhere" two different ways, and

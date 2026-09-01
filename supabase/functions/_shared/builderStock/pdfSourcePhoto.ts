@@ -37,8 +37,9 @@
 import {
   flattenedPageImageFrom, objectStreamSlices, pageOrderIsAuthoritative,
   parseImagePlacements, parseObjectStream, qualifyingPhotographsFrom, readPdfPage,
-  resolveDrawnForms, resolveDrawnImages, selectPropertyPhotographFrom, IDENTITY,
-  type DrawnImage, type Matrix, type PdfScope,
+  resolveDrawnForms, resolveDrawnImages, selectPropertyPhotographFrom, widgetBaseMatrix,
+  IDENTITY,
+  type DrawnImage, type Matrix, type PdfScope, type PdfWidget,
 } from './pdfPageImages.pure.ts';
 import { assignPdfMediaRoles, type PdfMediaPlacement } from './pdfPrimaryImage.pure.ts';
 import { isolatePhotographBand } from './pdfFlattenedPhoto.pure.ts';
@@ -97,6 +98,13 @@ const MAX_FORMS_PER_PAGE = 48;
  *
  * Names stay scoped to the resources that drew them, so `/X0` in one form and
  * `/X0` in another remain two different pictures.
+ *
+ * AND A PAGE SHOWS ITS WIDGETS TOO. A form field's appearance is not named by
+ * the content stream and is not in the page's `/Resources` — it hangs off
+ * `/Annots` — so a brochure filled from a template put its facade render
+ * somewhere no reader here looked. `widgets` carries the visible ones and each
+ * is descended exactly as a drawn form is, under the matrix that maps its
+ * appearance onto the rectangle the page shows it in. See `PdfWidget`.
  */
 async function collectDrawnImages(
   bytes: Uint8Array,
@@ -105,9 +113,25 @@ async function collectDrawnImages(
   base: Matrix,
   depth: number,
   budget = { forms: 0 },
+  widgets: readonly PdfWidget[] = [],
 ): Promise<DrawnImage[]> {
   const placements = parseImagePlacements(content, base);
   const out: DrawnImage[] = resolveDrawnImages(scope, placements);
+
+  for (const widget of widgets) {
+    if (budget.forms >= MAX_FORMS_PER_PAGE) break;
+    budget.forms += 1;
+    const raw = bytes.slice(widget.form.start, widget.form.end);
+    let text: string;
+    try {
+      text = new TextDecoder('latin1').decode(widget.form.flate ? await inflate(raw) : raw);
+    } catch {
+      continue; // an appearance we cannot inflate simply contributes nothing
+    }
+    out.push(...await collectDrawnImages(
+      bytes, widget.form, text, widgetBaseMatrix(widget), depth + 1, budget));
+  }
+
   if (depth >= 4) return out;
 
   for (const { form, base: formBase } of resolveDrawnForms(scope, placements)) {
@@ -186,7 +210,8 @@ export async function extractPdfPagePhoto(
       /* an unreadable content stream simply contributes nothing */
     }
   }
-  const drawn = await collectDrawnImages(bytes, page, content, IDENTITY, 0);
+  const drawn = await collectDrawnImages(
+    bytes, page, content, IDENTITY, 0, { forms: 0 }, page.widgets);
 
   // (1) The photograph the layout leads with.
   const chosen = selectPropertyPhotographFrom(drawn, page.width, page.height);
@@ -391,7 +416,8 @@ async function discoverCandidates(
         /* an unreadable content stream simply contributes nothing */
       }
     }
-    const drawn = await collectDrawnImages(bytes, page, content, IDENTITY, 0);
+    const drawn = await collectDrawnImages(
+      bytes, page, content, IDENTITY, 0, { forms: 0 }, page.widgets);
 
     for (const candidate of qualifyingPhotographsFrom(drawn, page.width, page.height)) {
       const key = `${candidate.image.objectNumber}:${candidate.image.name}`;
@@ -547,6 +573,11 @@ export async function selectPdfPropertyPrimary(
      * `assignPdfMediaRoles`.
      */
     structuralCoverPage?: number | null;
+    /**
+     * The house design this row states, from the canonical `house_design`
+     * field. Used only where no page named the property itself.
+     */
+    design?: string | null;
   } = {},
 ): Promise<{
   assets: PdfSourceAsset[];
@@ -558,6 +589,7 @@ export async function selectPdfPropertyPrimary(
   // The SAME decision an upload and a repair make, over the same inputs.
   const roles = assignPdfMediaRoles({
     label: options.label ?? null,
+    design: options.design ?? null,
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),

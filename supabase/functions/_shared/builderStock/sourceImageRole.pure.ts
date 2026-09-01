@@ -72,8 +72,25 @@ export type SourceImageRole =
 /** The ONE role a Builder Stock card may draw. */
 export const PRIMARY_ROLE: SourceImageRole = 'primary_property';
 
-/** How strongly the source stated it. Null where nothing stated a hero. */
-export type PrimaryEvidenceLevel = 1 | 2 | 3 | null;
+/**
+ * How strongly the source stated it. Null where nothing stated a hero.
+ *
+ * LOWER IS STRONGER — `comparePrimaryEvidence` sorts ascending and ranks null
+ * last. 4 is the DESIGN level: the builder's own document names the house
+ * design this row states, and does not name this lot. It is deliberately
+ * weaker than 3, the package cover that names the property itself, so a
+ * lot-specific image always takes the card back from a design render.
+ */
+export type PrimaryEvidenceLevel = 1 | 2 | 3 | 4 | null;
+
+/**
+ * The level a design-matched image carries.
+ *
+ * Named rather than written as a literal because two places have to agree
+ * about it: the assignment that mints it and the rule that keeps it below a
+ * lot match.
+ */
+export const DESIGN_EVIDENCE_LEVEL: PrimaryEvidenceLevel = 4;
 
 /**
  * The role, and the source's own words for why.
@@ -262,6 +279,37 @@ export function roleFromPropertyCover(input: {
 }
 
 /**
+ * LEVEL 4 — the builder's document names the DESIGN this row states.
+ *
+ * WHAT THIS IS, SAID HONESTLY. Not a photograph of this lot, and the wording
+ * never claims one: it is the builder's own imagery for the exact house design
+ * the row says this lot is being sold with. Several lots that state the same
+ * design may legitimately carry the same render, because they are the same
+ * house — and that is the source's own statement, not an inference from a
+ * shared URL or a spreadsheet row.
+ *
+ * WEAKEST ON PURPOSE. Every property-specific level outranks it, so a document
+ * that names this lot always takes the card, and one arriving later takes it
+ * back — `comparePrimaryEvidence` does that without this module's help.
+ */
+export function roleFromDesignCover(input: {
+  where: string;
+  design: string;
+  packageFacts: string[];
+}): SourceImageRoleAssignment {
+  const facts = input.packageFacts.slice(0, 4).join(', ');
+  return {
+    role: PRIMARY_ROLE,
+    evidenceLevel: DESIGN_EVIDENCE_LEVEL,
+    evidence: `${input.where} presents the house design "${input.design}"`
+      + `${facts ? ` with ${facts}` : ''}, which is the design this property states`,
+    reason: 'builder-supplied imagery for the exact house design assigned to this '
+      + 'property; the document names the design and not this lot, so a '
+      + 'lot-specific image outranks it',
+  };
+}
+
+/**
  * LEVEL 3 — a structural container designated this image.
  *
  * A Notion row's own `page_cover`, an HTML property card's hero, the image cell
@@ -315,7 +363,7 @@ export function readStoredEvidenceLevel(
   sourceDetail: Record<string, unknown> | null | undefined,
 ): PrimaryEvidenceLevel {
   const raw = (sourceDetail ?? {}).role_evidence_level;
-  return raw === 1 || raw === 2 || raw === 3 ? raw : null;
+  return raw === 1 || raw === 2 || raw === 3 || raw === 4 ? raw : null;
 }
 
 /**

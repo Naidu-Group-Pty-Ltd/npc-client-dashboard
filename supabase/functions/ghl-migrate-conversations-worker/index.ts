@@ -414,16 +414,19 @@ Deno.serve(async (req) => {
         }
 
         try {
-          // Upsert conversation row
-          await supabase.from('ghl_conversations').upsert({
+          // Upsert conversation row.
+          //
+          // The row id is read back because `ghl_conversation_messages.conversation_id`
+          // is a foreign key to THIS row, not GHL's own conversation id — see
+          // `one-time-bulk-conversation-sync`, which is the writer that works.
+          const { data: upsertedConv } = await supabase.from('ghl_conversations').upsert({
             ghl_conversation_id: conv.id,
             ghl_contact_id: conv.contactId,
             channel_type: convChannel,
             last_message_body: (conv.lastMessageBody || conv.snippet || '').substring(0, 1000),
-            last_message_at: conv.lastMessageDate || conv.dateUpdated || null,
+            last_message_date: conv.lastMessageDate || conv.dateUpdated || null,
             unread_count: conv.unreadCount || 0,
-            source_account_label: sourceAccount,
-          } as any, { onConflict: 'ghl_conversation_id' });
+          } as any, { onConflict: 'ghl_conversation_id' }).select('id').maybeSingle();
 
           // In upload mode we use the embedded message (if any) from the
           // CSV/XLSX row. Otherwise, pull recent messages from GHL — pacing
@@ -454,17 +457,20 @@ Deno.serve(async (req) => {
             if (channelFilter.size > 0 && !channelFilter.has(msgChannel)) continue;
             if (sinceTs > 0 && msgTs > 0 && msgTs < sinceTs) continue;
 
+            // `ghl_conversation_messages` names them `conversation_id`,
+            // `ghl_date_added` and `attachment_urls`, and has no column for the
+            // source account at all. Every mirrored message was rejected.
+            if (!upsertedConv?.id) continue;
             const row: any = {
               ghl_message_id: msg.id,
-              ghl_conversation_id: conv.id,
+              conversation_id: upsertedConv.id,
               direction: msgDir,
               channel_type: msgChannel,
               body: (msg.body || msg.message || '').substring(0, 4000),
-              sent_at: msg.dateAdded || msg.dateCreated || null,
-              source_account_label: sourceAccount,
+              ghl_date_added: msg.dateAdded || msg.dateCreated || null,
             };
-            if (!skipAttachments && msg.attachments) {
-              row.attachments = msg.attachments;
+            if (!skipAttachments && Array.isArray(msg.attachments)) {
+              row.attachment_urls = msg.attachments.map((a: any) => a?.url ?? a).filter(Boolean);
             }
             await supabase.from('ghl_conversation_messages').upsert(row, { onConflict: 'ghl_message_id' });
           }

@@ -51,13 +51,28 @@ const ORG = 'org-a';
 
 interface Row extends Record<string, unknown> { id: string }
 
-/** Enough of PostgREST for a select-and-update over two tables. */
-function fakeDb(items: Row[], images: Row[]) {
+/**
+ * Enough of PostgREST for a select-and-update over two tables — INCLUDING the
+ * part that caused the second defect this file now covers.
+ *
+ * `serverCap` is `db-max-rows`, which is 1,000 on the deployment and is applied
+ * to EVERY response whatever `.limit()` asked for. The double enforces it, so a
+ * reader that trusts its own limit sees a truncated set here exactly as it does
+ * in production. `failReads` is the other half: a read that errors must never
+ * reach the sweep as an empty organisation.
+ */
+function fakeDb(
+  items: Row[],
+  images: Row[],
+  options: { serverCap?: number; failReads?: string } = {},
+) {
+  const serverCap = options.serverCap ?? 1000;
   const tables: Record<string, Row[]> = {
     builder_stock_items: items,
     builder_stock_item_images: images,
   };
   const updates: Array<{ table: string; patch: Record<string, unknown>; id: string }> = [];
+  const reads: Array<{ table: string; from: number; to: number }> = [];
 
   const from = (table: string) => {
     let rows = [...(tables[table] ?? [])];
@@ -65,6 +80,11 @@ function fakeDb(items: Row[], images: Row[]) {
     const api: Record<string, unknown> = {
       select: () => api,
       limit: () => api,
+      order: (column: string, opts?: { ascending?: boolean }) => {
+        const direction = opts?.ascending === false ? -1 : 1;
+        rows.sort((a, b) => (String(a[column]) < String(b[column]) ? -direction : direction));
+        return api;
+      },
       eq: (column: string, value: unknown) => {
         if (patch) {
           for (const row of (tables[table] ?? []).filter((r) => r[column] === value)) {
@@ -81,16 +101,26 @@ function fakeDb(items: Row[], images: Row[]) {
         return api;
       },
       update: (next: Record<string, unknown>) => { patch = next; return api; },
+      // The server's own cap wins over the range the caller asked for.
+      range: (start: number, end: number) => {
+        reads.push({ table, from: start, to: end });
+        if (options.failReads === table) {
+          return Promise.resolve({ data: null, error: { message: 'connection reset' } });
+        }
+        const width = Math.min(end - start + 1, serverCap);
+        return Promise.resolve({ data: rows.slice(start, start + width), error: null });
+      },
       then: (resolve: (value: { data: Row[]; error: null }) => unknown) =>
-        resolve({ data: rows, error: null }),
+        resolve({ data: rows.slice(0, serverCap), error: null }),
     };
     return api;
   };
 
-  return { from, tables, updates } as unknown as {
+  return { from, tables, updates, reads } as unknown as {
     from: (table: string) => unknown;
     tables: Record<string, Row[]>;
     updates: typeof updates;
+    reads: typeof reads;
   };
 }
 
@@ -264,5 +294,91 @@ describe('the two writers can no longer disagree', () => {
         `${label}: the sweep and the ranking must agree`,
       ).toBe(chooseCardImage(images as never[])?.image.id ?? null);
     }
+  });
+});
+
+/**
+ * THE SECOND WAY THE TWO WRITERS DISAGREED, and the one that was live.
+ *
+ * The sweep read the organisation's images with `.limit(200000)` and treated
+ * the answer as the whole set. PostgREST caps a response at `db-max-rows` —
+ * 1,000 here, declared in `supabase/config.toml` and measured against
+ * production, where a request for 200,000 rows of an 18,519-row table answered
+ * `content-range: 0-999/18519` with HTTP 200 and no error.
+ *
+ * The organisation held 1,926 images. The sweep saw 1,000. The missing 926 did
+ * not read as unloaded; they read as ABSENT — so every property whose
+ * photograph sat past the cut reached `chooseCardImage([])` and had its pointer
+ * CLEARED. All eleven properties holding an eligible builder photograph had it
+ * at physical position 1,125-1,781, and all eleven were blank. Live pointers
+ * fell 27 to 6 in an hour, because `chooseAndStorePrimaryImage` asks for ONE
+ * property's images — never truncated — and put them back between sweeps.
+ */
+describe('the response cap must not read as an absent photograph', () => {
+  it('keeps a builder photograph that sits beyond the server row cap', async () => {
+    // Eleven properties whose images fill the first pages, and a twelfth whose
+    // photograph is last by id and therefore invisible to a single-page read.
+    const filler = Array.from({ length: 11 }, (_, n) =>
+      builderNoRole(`img-${String(n).padStart(2, '0')}`, `item-${n}`));
+    const target = builderClean('zz-target-image', 'item-target');
+
+    const db = fakeDb(
+      [...filler.map((image, n) => item(`item-${n}`, String(image.id))),
+        item('item-target', 'zz-target-image')],
+      [...filler, target],
+      { serverCap: 5 },
+    );
+
+    const enforced = await enforceStrictPrimaryImages(db as never, ORG);
+
+    // Every property was inspected, not just the first page of them.
+    expect(enforced.inspected).toBe(12);
+    // And the photograph on page three is still the card's.
+    expect(db.tables.builder_stock_items
+      .find((row) => row.id === 'item-target')?.primary_image_id).toBe('zz-target-image');
+    // The eleven legacy rows are still cleared: nothing here loosens the rule.
+    expect(enforced.cleared).toBe(11);
+  });
+
+  it('reads in pages rather than trusting one oversized request', async () => {
+    const images = Array.from({ length: 7 }, (_, n) =>
+      builderClean(`img-${n}`, `item-${n}`));
+    const db = fakeDb(images.map((image, n) => item(`item-${n}`, String(image.id))),
+      images, { serverCap: 3 });
+
+    await enforceStrictPrimaryImages(db as never, ORG);
+
+    const imageReads = db.reads.filter((read) => read.table === 'builder_stock_item_images');
+    // Three full pages and the empty one that ends it — never a single request
+    // whose answer is believed to be complete.
+    expect(imageReads.length).toBeGreaterThan(1);
+    expect(imageReads[0].from).toBe(0);
+    expect(imageReads[1].from).toBe(3);
+  });
+});
+
+describe('a read that failed is not an organisation with no images', () => {
+  it('clears nothing when the images cannot be read', async () => {
+    const db = fakeDb([item('item-clean', 'image-clean')],
+      [builderClean('image-clean', 'item-clean')],
+      { failReads: 'builder_stock_item_images' });
+
+    const enforced = await enforceStrictPrimaryImages(db as never, ORG);
+
+    expect(db.updates).toHaveLength(0);
+    expect(enforced.cleared).toBe(0);
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('image-clean');
+  });
+
+  it('clears nothing when the properties cannot be read', async () => {
+    const db = fakeDb([item('item-clean', 'image-clean')],
+      [builderClean('image-clean', 'item-clean')],
+      { failReads: 'builder_stock_items' });
+
+    const enforced = await enforceStrictPrimaryImages(db as never, ORG);
+
+    expect(db.updates).toHaveLength(0);
+    expect(enforced.inspected).toBe(0);
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('image-clean');
   });
 });

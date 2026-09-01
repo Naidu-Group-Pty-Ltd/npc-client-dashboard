@@ -571,7 +571,7 @@ async function resolveRecipients(supabase: any, schedule: any): Promise<Recipien
     // Query ghl_client_opportunities using the internal UUID pipeline_id
     let query = supabase
       .from('ghl_client_opportunities')
-      .select('client_id, ghl_contact_id, contact_name, contact_email')
+      .select('client_id, ghl_contact_id')
       .eq('pipeline_id', target.pipeline_id);
 
     if (target.stage_id) {
@@ -586,11 +586,11 @@ async function resolveRecipients(supabase: any, schedule: any): Promise<Recipien
     }
 
     for (const opp of (opportunities || [])) {
-      let email = opp.contact_email;
-      let name = opp.contact_name || '';
-
-      // If no email on opportunity, try the clients table
-      if (!email && opp.client_id) {
+      // The client record is the only source of a contact name and email
+      // here; the opportunity row has neither.
+      let email: string | null = null;
+      let name = '';
+      if (opp.client_id) {
         const { data: client } = await supabase
           .from('clients')
           .select('primary_email, primary_first_name, primary_surname')

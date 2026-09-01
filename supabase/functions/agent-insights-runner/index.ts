@@ -61,17 +61,17 @@ async function runForUser(sb: any, userId: string) {
   // 1. Stale deals (>7d without update) → warning
   const staleCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
   const { data: staleDeals } = await sb.from('client_deals')
-    .select('id, deal_name, stage, updated_at, client_id')
-    .eq('assigned_user_id', userId)
+    .select('id, property_address, current_stage, updated_at, client_id')
+    .eq('created_by', userId)
     .lt('updated_at', staleCutoff)
-    .not('stage', 'in', '(settled,lost)')
+    .not('current_stage', 'in', '(settled,lost)')
     .limit(20);
   if (staleDeals && staleDeals.length) {
     const r = await upsertInsight(sb, {
       user_id: userId, kind: 'stale_deals', severity: 'warning',
       title: `${staleDeals.length} deal${staleDeals.length > 1 ? 's' : ''} sitting >7 days without an update`,
       summary: 'These need a nudge or a stage change.',
-      body_markdown: staleDeals.map((d: any) => `- **${d.deal_name || 'Untitled'}** — stage \`${d.stage}\` (last updated ${new Date(d.updated_at).toLocaleDateString('en-AU')})`).join('\n'),
+      body_markdown: staleDeals.map((d: any) => `- **${d.property_address || 'Untitled deal'}** — stage \`${d.current_stage}\` (last updated ${new Date(d.updated_at).toLocaleDateString('en-AU')})`).join('\n'),
       payload: { deal_ids: staleDeals.map((d: any) => d.id) },
     });
     if (r.inserted) results.push('stale_deals');
@@ -96,14 +96,14 @@ async function runForUser(sb: any, userId: string) {
   // 3. Settlement countdown (next 14 days) → info
   const twoWeeks = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
   const { data: settling } = await sb.from('client_deals')
-    .select('id, deal_name, settlement_date, client_id')
-    .eq('assigned_user_id', userId)
+    .select('id, property_address, settlement_date, client_id')
+    .eq('created_by', userId)
     .gte('settlement_date', nowIso).lte('settlement_date', twoWeeks).limit(10);
   if (settling && settling.length) {
     const r = await upsertInsight(sb, {
       user_id: userId, kind: 'settlement_countdown', severity: 'info',
       title: `${settling.length} settlement${settling.length > 1 ? 's' : ''} in the next 14 days`,
-      body_markdown: settling.map((d: any) => `- **${d.deal_name || 'Untitled'}** — settles ${new Date(d.settlement_date).toLocaleDateString('en-AU')}`).join('\n'),
+      body_markdown: settling.map((d: any) => `- **${d.property_address || 'Untitled deal'}** — settles ${new Date(d.settlement_date).toLocaleDateString('en-AU')}`).join('\n'),
       payload: { deal_ids: settling.map((d: any) => d.id) },
     });
     if (r.inserted) results.push('settlement_countdown');

@@ -25,7 +25,7 @@ Deno.serve(async (req) => {
 
   const { data: rows, error } = await sb
     .from('market_update_questions')
-    .select('confidence, model, retrieved_ids, used_ids, answer, meta')
+    .select('confidence_score, model_used, source_update_ids, answer, metadata')
     .gte('created_at', since.toISOString())
     .limit(5000);
   if (error) {
@@ -36,22 +36,20 @@ Deno.serve(async (req) => {
   let refusals = 0;
   let confSum = 0;
   let confCount = 0;
-  let retrievedSum = 0;
   let usedSum = 0;
   let lowConf = 0;
   const modelMix: Record<string, number> = {};
 
   for (const r of rows ?? []) {
-    const isRefusal = !!(r as any).meta?.refused || /not enough sourced/i.test(String((r as any).answer ?? ''));
+    const isRefusal = !!(r as any).metadata?.refused || /not enough sourced/i.test(String((r as any).answer ?? ''));
     if (isRefusal) refusals += 1;
-    if (typeof (r as any).confidence === 'number') {
-      confSum += (r as any).confidence;
+    if (typeof (r as any).confidence_score === 'number') {
+      confSum += (r as any).confidence_score;
       confCount += 1;
-      if ((r as any).confidence < 0.5) lowConf += 1;
+      if ((r as any).confidence_score < 0.5) lowConf += 1;
     }
-    retrievedSum += ((r as any).retrieved_ids ?? []).length;
-    usedSum += ((r as any).used_ids ?? []).length;
-    const m = (r as any).model ?? 'unknown';
+    usedSum += ((r as any).source_update_ids ?? []).length;
+    const m = (r as any).model_used ?? 'unknown';
     modelMix[m] = (modelMix[m] ?? 0) + 1;
   }
 
@@ -61,7 +59,9 @@ Deno.serve(async (req) => {
     refusal_count: refusals,
     refusal_rate: total > 0 ? refusals / total : 0,
     avg_confidence: confCount > 0 ? confSum / confCount : null,
-    avg_retrieved_ids: total > 0 ? retrievedSum / total : 0,
+    // Not recorded: the table keeps the ids that ANSWERED the question and
+    // not the ids retrieval considered, and the column is nullable.
+    avg_retrieved_ids: null,
     avg_used_ids: total > 0 ? usedSum / total : 0,
     model_mix: modelMix,
     low_confidence_count: lowConf,

@@ -75,14 +75,14 @@ const __corsWrappedHandler = async (req: Request) => {
 
       const { data: question } = await sb
         .from('market_update_questions')
-        .select('id, question, answer, used_ids, retrieved_ids, confidence, model, created_at, meta')
+        .select('id, question, answer, source_update_ids, confidence_score, model_used, created_at, metadata')
         .eq('id', share.question_id)
         .maybeSingle();
       if (!question) return json({ error: 'not_found' }, 404);
 
-      const ids: string[] = (question.used_ids ?? question.retrieved_ids ?? []) as string[];
+      const ids: string[] = (question.source_update_ids ?? []) as string[];
       const { data: sources } = ids.length
-        ? await sb.from('market_updates').select('id, title, summary, source_url, source_name, published_at, impact_level').in('id', ids).is('archived_at', null)
+        ? await sb.from('market_updates').select('id, title, ai_summary, source_url, source_name, source_published_at, impact_level').in('id', ids).is('archived_at', null)
         : { data: [] as unknown[] };
 
       // Fire-and-forget view-count bump.

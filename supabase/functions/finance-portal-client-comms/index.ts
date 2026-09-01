@@ -18,6 +18,7 @@ import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { bestEffort } from '../_shared/bestEffortWrite.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 const corsHeaderDefaults: Record<string, string> = {
@@ -223,7 +224,7 @@ async function sendMessage(supabase: any, partner: any, body: any, json: JsonRes
   // Lookup client recipient info
   const { data: client } = await supabase
     .from('clients')
-    .select('id, primary_email, secondary_email, primary_phone, secondary_phone, primary_contact_name')
+    .select('id, primary_email, secondary_email, primary_mobile, secondary_mobile')
     .eq('id', client_id)
     .maybeSingle();
   if (!client) return json({ error: 'client_not_found' }, 404);
@@ -264,7 +265,7 @@ async function sendMessage(supabase: any, partner: any, body: any, json: JsonRes
 
     recipient = channel === 'email'
       ? (client.primary_email || client.secondary_email)
-      : (client.primary_phone || client.secondary_phone);
+      : (client.primary_mobile || client.secondary_mobile);
 
     let finalBody = text;
     if (channel === 'email') {
@@ -324,7 +325,11 @@ async function sendMessage(supabase: any, partner: any, body: any, json: JsonRes
 
   // Mark template usage
   if (template_id) {
-    await supabase.rpc('increment_template_use', { p_template_id: template_id }).catch(() => {});
+    // `.rpc()` returns the same Thenable, so `.catch()` threw here too.
+    await bestEffort(
+      supabase.rpc('increment_template_use', { p_template_id: template_id }),
+      'increment_template_use',
+    );
     await supabase.from('finance_partner_message_templates')
       .update({ last_used_at: new Date().toISOString() })
       .eq('id', template_id);

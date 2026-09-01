@@ -210,11 +210,11 @@ Deno.serve(async (req) => {
       try {
         const { data: comm } = await supabase
           .from('finance_partner_commissions')
-          .select('amount_net, paid_at, purchase_file_id')
+          .select('net_amount, paid_at, purchase_file_id')
           .in('purchase_file_id', fileIds.length ? fileIds : ['00000000-0000-0000-0000-000000000000'])
           .gte('paid_at', sinceISO)
           .lte('paid_at', untilISO);
-        commission_realized = (comm || []).reduce((s: number, c: any) => s + Number(c.amount_net || 0), 0);
+        commission_realized = (comm || []).reduce((s: number, c: any) => s + Number(c.net_amount || 0), 0);
       } catch { /* ledger may not exist for partner yet */ }
 
       // Monthly settlement trend (last 6 months from window end)
@@ -263,7 +263,7 @@ Deno.serve(async (req) => {
       const { data: subs } = fileIds.length
         ? await supabase
             .from('lender_submissions')
-            .select('lender_name, status, submitted_at, conditional_approved_at, purchase_file_id')
+            .select('lender_name, status, submitted_at, approved_at, purchase_file_id')
             .in('purchase_file_id', fileIds)
             .limit(5000)
         : { data: [] as any[] };
@@ -272,10 +272,10 @@ Deno.serve(async (req) => {
         const name = (s.lender_name || 'Unknown').trim();
         const r = byLender.get(name) || { subs: 0, cond: 0, uncond: 0, settled: 0, days: [] };
         r.subs++;
-        if (s.status === 'conditional' || s.conditional_approved_at) r.cond++;
+        if (s.status === 'conditional' || s.approved_at) r.cond++;
         if (s.status === 'unconditional') r.uncond++;
         if (s.status === 'settled') r.settled++;
-        if (s.submitted_at && s.conditional_approved_at) r.days.push(daysBetween(s.submitted_at, s.conditional_approved_at));
+        if (s.submitted_at && s.approved_at) r.days.push(daysBetween(s.submitted_at, s.approved_at));
         byLender.set(name, r);
       }
       // Merge in PF lender counts (when no submission was logged yet)

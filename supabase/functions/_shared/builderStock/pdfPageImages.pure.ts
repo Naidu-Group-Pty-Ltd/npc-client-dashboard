@@ -96,6 +96,36 @@ export interface PdfFirstPage {
   forms: PdfForm[];
   /** Content stream slices, in order. The caller inflates what needs it. */
   contents: Array<{ start: number; end: number; flate: boolean }>;
+  /** Visible widget annotations, each an appearance the page also shows. */
+  widgets: PdfWidget[];
+}
+
+/**
+ * A FOURTH place a page's picture can be, and the one that emptied three of
+ * six sampled Luxton brochures.
+ *
+ * A brochure produced by filling a template carries its facade render inside a
+ * form field's APPEARANCE STREAM — `/Subtype /Widget`, `/FT /Btn`, `/T (Facade
+ * image)`, `/AP << /N … >>` — and the page's own `/Resources /XObject` names
+ * nothing at all. Every reader here looked at the content stream and the forms
+ * it draws, found no raster on the page whose fields state the lot, the
+ * address and the price, and refused; the render was a 2000x1250 JPEG one
+ * dictionary away, in a field the builder had named for it.
+ *
+ * An appearance is an ordinary form XObject, so it is READ as one and joins
+ * the same descent, the same floors and the same repetition rules as anything
+ * else on the page. What it needs extra is where the page PUTS it: an
+ * appearance is placed by mapping its own bounding box onto the widget's
+ * rectangle, which the content stream never mentions, so the rectangle travels
+ * with it and `widgetBaseMatrix` performs that mapping.
+ */
+export interface PdfWidget {
+  /** The `/AP /N` appearance, read exactly as a drawn form XObject is. */
+  form: PdfForm;
+  /** `/Rect`, normalised — where on the page the appearance is shown. */
+  rect: Rect;
+  /** The appearance's own `/BBox`, normalised. */
+  bbox: Rect;
 }
 
 /** Anything that can name images and forms: a page, or a form inside one. */
@@ -469,6 +499,129 @@ export function readPdfPage(
   return {
     width: box.width, height: box.height,
     images: scope.images, forms: scope.forms, contents,
+    widgets: readWidgets(page.header, bytes, objects),
+  };
+}
+
+/** How many widgets one page may contribute. A cost guard, not a rule. */
+const MAX_WIDGETS_PER_PAGE = 24;
+
+/**
+ * The visible widget annotations a page carries, with their appearances read.
+ *
+ * TWO RULES, and both are about what a person actually sees.
+ *
+ * A HIDDEN WIDGET IS NOT ON THE PAGE. `/F` bit 2 is Hidden and bit 6 is
+ * NoView; a template's working fields are exactly the ones set that way, and a
+ * picture nobody is shown must not be able to become a property's photograph.
+ *
+ * AND ONLY THE NORMAL APPEARANCE. `/AP` may also carry `/D` (what the widget
+ * looks like while it is being clicked) and `/R` (while the pointer is over
+ * it). Neither is what the page shows at rest, and a document that gave them
+ * different pictures would otherwise contribute both.
+ */
+function readWidgets(
+  pageHeader: string,
+  bytes: Uint8Array,
+  objects: Map<number, PdfObject>,
+): PdfWidget[] {
+  const widgets: PdfWidget[] = [];
+  const annots = arrayFor(pageHeader, 'Annots', objects);
+  if (!annots) return widgets;
+
+  for (const entry of annots.matchAll(/(\d{1,7})\s+\d{1,5}\s+R/g)) {
+    if (widgets.length >= MAX_WIDGETS_PER_PAGE) break;
+    const annotation = objects.get(Number(entry[1]));
+    if (!annotation) continue;
+    if (!/\/Subtype\s*\/Widget\b/.test(annotation.header)) continue;
+
+    const flags = Number(/\/F\s+(\d{1,6})\b/.exec(annotation.header)?.[1] ?? 0);
+    // bit 2 (value 2) Hidden, bit 6 (value 32) NoView.
+    if ((flags & 2) !== 0 || (flags & 32) !== 0) continue;
+
+    const rect = rectangleFrom(/\/Rect\s*\[([^\]]{0,120})\]/.exec(annotation.header)?.[1]);
+    if (!rect || rect.width <= 0 || rect.height <= 0) continue;
+
+    const appearances = dictionaryFor(annotation.header, 'AP', objects);
+    const normal = /\/N\s+(\d{1,7})\s+\d{1,5}\s+R/.exec(appearances);
+    if (!normal) continue;
+    const stream = objects.get(Number(normal[1]));
+    if (!stream || !/\/Subtype\s*\/Form\b/.test(stream.header)) continue;
+    const slice = streamSlice(stream, bytes);
+    if (!slice) continue;
+    const bbox = rectangleFrom(/\/BBox\s*\[([^\]]{0,120})\]/.exec(stream.header)?.[1]);
+    if (!bbox || bbox.width <= 0 || bbox.height <= 0) continue;
+
+    const numbers = /\/Matrix\s*\[\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)/
+      .exec(stream.header);
+    const matrix: Matrix = numbers
+      ? numbers.slice(1, 7).map(Number) as Matrix
+      : [...IDENTITY] as Matrix;
+
+    const inner = readScope(stream.header, bytes, objects, 1);
+    widgets.push({
+      form: {
+        // Named for the field so a provenance record says where it came from.
+        name: /\/T\s*\(([^)]{0,64})\)/.exec(annotation.header)?.[1] ?? 'Widget',
+        objectNumber: stream.number,
+        start: slice.start,
+        end: slice.end,
+        flate: slice.flate,
+        matrix: matrix.every(Number.isFinite) ? matrix : [...IDENTITY] as Matrix,
+        images: inner.images,
+        forms: inner.forms,
+      },
+      rect,
+      bbox,
+    });
+  }
+  return widgets;
+}
+
+/**
+ * Resolve `/Key [ … ]` or `/Key 12 0 R` to an ARRAY's text.
+ *
+ * `/Annots` is an array, not a dictionary, and a writer may put it inline or
+ * behind a reference — Adobe's own exporter uses the reference. Reading it
+ * with `dictionaryFor` returns the empty string for the indirect form, which
+ * is indistinguishable from a page carrying no annotations at all: the widgets
+ * are simply never seen, which is the shape of this bug the first time it was
+ * written.
+ */
+function arrayFor(
+  header: string,
+  key: string,
+  objects: Map<number, PdfObject>,
+): string {
+  const at = new RegExp(`/${key}\\b`).exec(header);
+  if (!at) return '';
+  const after = header.slice(at.index + at[0].length);
+  const indirect = /^\s*(\d{1,7})\s+\d{1,5}\s+R/.exec(after);
+  const text = indirect ? (objects.get(Number(indirect[1]))?.header ?? '') : after;
+  const open = text.indexOf('[');
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === '[') { depth += 1; continue; }
+    if (text[i] === ']') {
+      depth -= 1;
+      if (depth === 0) return text.slice(open + 1, i);
+    }
+  }
+  return '';
+}
+
+/** `[x1 y1 x2 y2]` as a rectangle, normalised so the sides are positive. */
+function rectangleFrom(literal: string | undefined): Rect | null {
+  if (!literal) return null;
+  const numbers = literal.trim().split(/\s+/).map(Number);
+  if (numbers.length < 4 || !numbers.slice(0, 4).every(Number.isFinite)) return null;
+  const [x1, y1, x2, y2] = numbers;
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1),
   };
 }
 
@@ -834,6 +987,44 @@ export function resolveDrawnImages(scope: PdfScope, placements: PdfPlacement[]):
  */
 export function formBaseMatrix(form: PdfForm, placement: PdfPlacement): Matrix {
   return multiply(form.matrix, placement.ctm);
+}
+
+/**
+ * Where on the page a widget's appearance is actually drawn.
+ *
+ * PDF 32000-1 12.5.5, and it is not optional arithmetic: an appearance stream
+ * is authored in its own coordinates and the viewer FITS it to the widget's
+ * rectangle. Skipping this and using the identity would report a 2000x1250
+ * facade as covering whatever the appearance's own bounding box happened to
+ * say, which the page-area floor then accepts or rejects for a reason
+ * unrelated to what the page shows.
+ *
+ * The transformed bounding box maps onto the rectangle; a degenerate box
+ * (zero-width after the matrix, which a malformed appearance can produce)
+ * falls back to the rectangle's own placement rather than dividing by zero.
+ */
+export function widgetBaseMatrix(widget: PdfWidget): Matrix {
+  const { form, rect, bbox } = widget;
+  const corners: Array<[number, number]> = [
+    [bbox.x, bbox.y],
+    [bbox.x + bbox.width, bbox.y],
+    [bbox.x, bbox.y + bbox.height],
+    [bbox.x + bbox.width, bbox.y + bbox.height],
+  ];
+  const [a, b, c, d, e, f] = form.matrix;
+  const xs = corners.map(([x, y]) => a * x + c * y + e);
+  const ys = corners.map(([x, y]) => b * x + d * y + f);
+  const left = Math.min(...xs);
+  const bottom = Math.min(...ys);
+  const width = Math.max(...xs) - left;
+  const height = Math.max(...ys) - bottom;
+  if (!(width > 0) || !(height > 0)) {
+    return multiply(form.matrix, [1, 0, 0, 1, rect.x, rect.y]);
+  }
+  const sx = rect.width / width;
+  const sy = rect.height / height;
+  const fit: Matrix = [sx, 0, 0, sy, rect.x - left * sx, rect.y - bottom * sy];
+  return multiply(form.matrix, fit);
 }
 
 /** The forms a scope's placements actually drew, with their base matrices. */

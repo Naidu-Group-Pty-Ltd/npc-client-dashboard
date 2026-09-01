@@ -22,6 +22,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  COMPARISON_CANDIDATE_PAGE_LIMIT,
+  COMPARISON_CANDIDATE_PAGE_SIZE,
+  COMPARISON_TOTAL_REPORTS,
+  MAX_COMPARISON_PEERS,
   comparisonCandidates,
   dedupeByProperty,
   hasComparableFigures,
@@ -136,5 +140,124 @@ describe('what it must not do', () => {
     const before = fetched.map((r) => r.id);
     comparisonCandidates(fetched);
     expect(fetched.map((r) => r.id)).toEqual(before);
+  });
+});
+
+/**
+ * The picker read "No properties found." on a library of 1,169 completed
+ * reports, and this is why.
+ *
+ * `get-investment-reports` declares `listOptions.select` "deprecated and
+ * deliberately ignored — callers cannot define database projections", so the
+ * picker's request for `financial_calculations` got the DEFAULT `library`
+ * projection, which does not select that column. `hasComparableFigures` tested
+ * a field the response could never contain and rejected every row, which looks
+ * exactly like a workspace with nothing to compare.
+ *
+ * The projection built for cash-flow surfaces is `cashFlowLibrary`: it resolves
+ * the two headline figures server-side into scalars and deletes the source
+ * blob. So the rule has to hold for both shapes of the same report.
+ */
+describe('the shape the list endpoint actually returns', () => {
+  const libraryRow = (id: string, address: string, over: Record<string, unknown> = {}) => ({
+    id,
+    property_address: address,
+    // Exactly what `cashFlowLibrary` publishes: no `financial_calculations`
+    // key at all, because `toLibraryFinancialSummary` deletes it.
+    cash_flow_purchase_price: 800_000,
+    cash_flow_weekly_rent: 700,
+    ...over,
+  });
+
+  it('accepts a row carrying only the resolved scalars', () => {
+    expect(hasComparableFigures(libraryRow('a', '10 Chester Street'))).toBe(true);
+  });
+
+  it('accepts a price with no rent, and a rent with no price', () => {
+    // Either figure alone is something a projection can be drawn from; the
+    // engine defaults the other, and the card says which one is missing.
+    expect(hasComparableFigures(libraryRow('a', '1 St', { cash_flow_weekly_rent: null }))).toBe(true);
+    expect(hasComparableFigures(libraryRow('a', '1 St', { cash_flow_purchase_price: null }))).toBe(true);
+  });
+
+  it('still rejects a row with neither figure and no source blob', () => {
+    expect(hasComparableFigures(libraryRow('a', '1 St', {
+      cash_flow_purchase_price: null,
+      cash_flow_weekly_rent: null,
+    }))).toBe(false);
+  });
+
+  it('offers the library rows the popover used to reject wholesale', () => {
+    const fetched = [
+      libraryRow('chester', '10 Chester Street, Newcastle NSW 2300'),
+      libraryRow('bligh', '28 Bligh Street, Muswellbrook NSW 2333'),
+      libraryRow('empty', '99 Empty Road', {
+        cash_flow_purchase_price: null,
+        cash_flow_weekly_rent: null,
+      }),
+    ];
+    expect(comparisonCandidates(fetched).map((r) => r.id)).toEqual(['chester', 'bligh']);
+  });
+
+  it('reads a manual override the same way the cash-flow engine does', () => {
+    expect(hasComparableFigures({
+      id: 'a',
+      property_address: '1 St',
+      manual_overrides: { weeklyRent: 650 },
+    })).toBe(true);
+  });
+});
+
+describe('a comparison holds five reports', () => {
+  it('names the ceiling once, as a total and as peers', () => {
+    // Three surfaces state it — the toggle's ceiling, the picker's counter and
+    // the "maximum reached" message — and three literals is how a picker comes
+    // to offer a fifth peer the handler then refuses.
+    expect(COMPARISON_TOTAL_REPORTS).toBe(5);
+    expect(MAX_COMPARISON_PEERS).toBe(COMPARISON_TOTAL_REPORTS - 1);
+  });
+
+  it('walks the library in pages the endpoint accepts', () => {
+    // 200 is `get-investment-reports`' maximum; the default of 50 is what made
+    // the picker show a handful of addresses out of ~98 properties.
+    expect(COMPARISON_CANDIDATE_PAGE_SIZE).toBe(200);
+    expect(COMPARISON_CANDIDATE_PAGE_SIZE).toBeLessThanOrEqual(200);
+    expect(COMPARISON_CANDIDATE_PAGE_LIMIT).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe('the property being analysed is not offered as its own peer', () => {
+  const open = { id: 'open-report', property_address: '48 Budgeree Street, Tea Gardens NSW 2324' };
+  const sibling = {
+    id: 'sibling-report',
+    property_address: '48 Budgeree Street, Tea Gardens NSW 2324',
+    cash_flow_purchase_price: 1_190_000,
+  };
+  const other = {
+    id: 'other',
+    property_address: '10 Chester Street, Newcastle NSW 2300',
+    cash_flow_purchase_price: 845_000,
+  };
+
+  it('drops the sibling reports of the property already open', () => {
+    // One property has up to twenty completed reports, so excluding the open
+    // report by id alone left its own address one row below itself.
+    const offered = comparisonCandidates([sibling, other], open.id, open.property_address);
+    expect(offered.map((r) => r.id)).toEqual(['other']);
+  });
+
+  it('matches the property across case and spacing', () => {
+    const shouty = { ...sibling, property_address: '48 BUDGEREE  STREET, TEA GARDENS NSW 2324' };
+    expect(comparisonCandidates([shouty, other], open.id, open.property_address).map((r) => r.id))
+      .toEqual(['other']);
+  });
+
+  it('still excludes by id when the open report has no address', () => {
+    const openRow = { ...sibling, id: open.id };
+    expect(comparisonCandidates([openRow, other], open.id, null).map((r) => r.id)).toEqual(['other']);
+  });
+
+  it('offers everything when no exclusion is given', () => {
+    expect(comparisonCandidates([sibling, other]).map((r) => r.id)).toEqual(['sibling-report', 'other']);
   });
 });

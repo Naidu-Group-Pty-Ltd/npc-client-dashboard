@@ -136,6 +136,11 @@ function fakeDb(options: {
       lt(c: string, v: unknown) { filters.push(['lt', c, v]); return builder; },
       is(c: string, v: unknown) { filters.push(['is', c, v]); return builder; },
       order() { return builder; },
+      // A paged read asks for one page at a time, because the API caps every
+      // response at `db-max-rows` however large a `.limit()` it is given.
+      range(from: number, to: number) {
+        return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+      },
       limit(v: number) { limit = v; return builder; },
       then(resolve: (r: { data: Row[] | null; error: unknown }) => unknown, reject?: unknown) {
         if (missingTables.has(table)) {
@@ -757,6 +762,11 @@ describe('a missing migration is an operational failure, never a quiet success',
           is(column: string, value: unknown) { filters.push(['is', column, value]); return builder; },
           lt(column: string, value: unknown) { filters.push(['lt', column, value]); return builder; },
           order() { return builder; },
+          // A paged read asks for one page at a time, because the API caps every
+          // response at `db-max-rows` however large a `.limit()` it is given.
+          range(from: number, to: number) {
+            return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+          },
           limit() { return builder; },
           then(resolve: (value: unknown) => unknown, reject?: unknown) {
             const data = rows.filter((row) => filters.every(([op, column, value]) => {

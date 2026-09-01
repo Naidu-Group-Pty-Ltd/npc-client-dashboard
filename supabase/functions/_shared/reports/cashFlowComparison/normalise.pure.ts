@@ -542,15 +542,21 @@ export function toRankings(raw: unknown, properties: readonly ComparedProperty[]
  * `has_ai_analysis` means what it says.
  *
  * Every block is independently conditional, which is load-bearing rather than
- * defensive. `compare-cash-flow-reports` asks for eight sections with
- * `maxTokens: 4000` (`:219`) — a third of what the sibling comparison function
- * asks for against a schema of comparable size, and that one truncated 94% of
- * its five-property calls. Here truncation fails loudly (the parse at `:257`
- * throws, `:261` returns a 500, nothing is stored, and the modal only sets state
- * on `success`), so there is no salvage problem and no salvager. What does
- * arrive is sometimes a model that closed its braces early — and
- * `overallRecommendation`, written last, is both the least likely to be there
- * and the one an adviser most expects.
+ * defensive. `compare-cash-flow-reports` used to ask for eight sections with
+ * `maxTokens: 4000` — a third of what the sibling comparison function asks for
+ * against a schema of comparable size, and that one truncated 94% of its
+ * five-property calls. It did truncate, on every call an adviser made, and the
+ * producer reported it as "Failed to parse AI analysis" because its fence regex
+ * required a closing fence and nothing read `finish_reason`.
+ * `analysisRequest.pure.ts` is where that was fixed: the budget is sized by the
+ * property count, the shape is asked for as a schema, and a partial answer is
+ * kept with `missing` travelling beside it rather than 500-ing.
+ *
+ * So a partial answer is now a NORMAL arrival rather than an impossible one,
+ * and the independence below is what carries it. What arrives partial is a
+ * model that closed its braces early — and `overallRecommendation`, written
+ * last, is both the least likely to be there and the one an adviser most
+ * expects.
  */
 export function toAnalysis(
   raw: unknown,

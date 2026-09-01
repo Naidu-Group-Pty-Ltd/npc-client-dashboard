@@ -3215,7 +3215,7 @@ async function executeGetClientEmails(sb: any, args: any) {
   if (!v.valid) return { error: v.error };
   const cid = v.resolvedId || args.client_id;
   const limit = args.limit || 15;
-  const { data } = await sb.from('email_copilot_emails').select('id, subject, sender, received_at, body_preview, is_read, conversation_id').eq('client_id', cid).order('received_at', { ascending: false }).limit(limit);
+  const { data } = await sb.from('email_copilot_emails').select('id, subject, sender, received_at, body_preview, status, conversation_id').eq('client_id', cid).order('received_at', { ascending: false }).limit(limit);
   return { emails: data || [] };
 }
 
@@ -3225,8 +3225,22 @@ async function executeSearchEmails(sb: any, args: any) {
   return { emails: data || [], count: data?.length || 0 };
 }
 
+/**
+ * The property ids a set of clients own.
+ *
+ * `investment_reports` has no `client_id` and never has: a report reaches a
+ * client through `client_property_id`. Selecting or filtering on `client_id`
+ * made PostgREST answer 42703, and the discarded error left `data` null — so
+ * every report tool below reported "no reports" for clients who have them.
+ */
+async function clientPropertyIds(sb: any, clientIds: string[]): Promise<string[]> {
+  if (!clientIds.length) return [];
+  const { data } = await sb.from('client_properties').select('id').in('client_id', clientIds);
+  return (data || []).map((row: any) => row.id);
+}
+
 async function executeGetEmailThread(sb: any, args: any) {
-  const { data } = await sb.from('email_copilot_emails').select('id, subject, sender, to_recipients, cc_recipients, received_at, body_preview, is_read').eq('conversation_id', args.conversation_id).order('received_at');
+  const { data } = await sb.from('email_copilot_emails').select('id, subject, sender, to_recipients, cc_recipients, received_at, body_preview, status').eq('conversation_id', args.conversation_id).order('received_at');
   return { thread: data || [] };
 }
 
@@ -3708,8 +3722,12 @@ async function executeGetInvestmentReports(sb: any, args: any) {
     if (!v.valid) return { error: v.error };
     resolvedClientId = v.resolvedId || args.client_id;
   }
-  let query = sb.from('investment_reports').select('id, property_address, status, quality_score, created_at, client_id');
-  if (resolvedClientId) query = query.eq('client_id', resolvedClientId);
+  let query = sb.from('investment_reports').select('id, property_address, status, created_at, client_property_id');
+  if (resolvedClientId) {
+    const propertyIds = await clientPropertyIds(sb, [resolvedClientId]);
+    if (!propertyIds.length) return { reports: [] };
+    query = query.in('client_property_id', propertyIds);
+  }
   const { data } = await query.order('created_at', { ascending: false }).limit(limit);
   return { reports: data || [] };
 }
@@ -3720,7 +3738,7 @@ async function executeGetReportDetails(sb: any, args: any) {
 }
 
 async function executeSearchReportsByAddress(sb: any, args: any) {
-  const { data } = await sb.from('investment_reports').select('id, property_address, status, quality_score, created_at').ilike('property_address', `%${args.address}%`).order('created_at', { ascending: false }).limit(20);
+  const { data } = await sb.from('investment_reports').select('id, property_address, status, created_at').ilike('property_address', `%${args.address}%`).order('created_at', { ascending: false }).limit(20);
   return { reports: data || [], count: data?.length || 0 };
 }
 
@@ -4062,11 +4080,11 @@ async function executeCreateDeal(sb: any, args: any, userId: string) {
   if (!v.valid) return { error: v.error };
   const cid = v.resolvedId || args.client_id;
   const { data: u } = await sb.from('custom_users').select('id').eq('id', userId).maybeSingle();
-  const insert: any = { client_id: cid, deal_type: args.deal_type || 'Purchase', deal_name: args.deal_name || args.property_address || 'New Deal', property_address: args.property_address, loan_amount: args.loan_amount, current_stage: args.stage || 'New Lead', risk_status: 'on_track' };
+  const insert: any = { client_id: cid, deal_type: args.deal_type || 'Purchase', property_address: args.property_address || args.deal_name || null, loan_amount: args.loan_amount, current_stage: args.stage || 'New Lead', risk_status: 'on_track' };
   if (u) insert.created_by = userId;
   const { data, error } = await sb.from('client_deals').insert(insert).select().single();
   if (error) return { error: error.message };
-  return { success: true, message: `Deal "${insert.deal_name}" created for ${clientName(v.client)}.`, deal: data };
+  return { success: true, message: `Deal "${insert.property_address || 'New Deal'}" created for ${clientName(v.client)}.`, deal: data };
 }
 
 async function executeDeleteDeal(sb: any, args: any) {
@@ -4141,7 +4159,7 @@ async function executeGetCashFlowAnalysis(sb: any, args: any) {
 
     const { data: addressReports, error: addressReportError } = await sb
       .from('investment_reports')
-      .select('id, property_address, status, client_id, created_at')
+      .select('id, property_address, status, client_property_id, created_at')
       .ilike('property_address', `%${q}%`)
       .order('created_at', { ascending: false })
       .limit(25);
@@ -4173,8 +4191,8 @@ async function executeGetCashFlowAnalysis(sb: any, args: any) {
     if (clientIds.length) {
       const { data: clientReports, error: clientReportError } = await sb
         .from('investment_reports')
-        .select('id, property_address, status, client_id, created_at')
-        .in('client_id', clientIds)
+        .select('id, property_address, status, client_property_id, created_at')
+        .in('client_property_id', await clientPropertyIds(sb, clientIds))
         .order('created_at', { ascending: false })
         .limit(25);
       if (clientReportError) return { error: `Failed to resolve client reports for cash-flow query: ${clientReportError.message}` };
@@ -4926,8 +4944,8 @@ async function executeGenerateClientSummaryReport(sb: any, args: any) {
     r.push('## Deals'); if (deals?.length) deals.forEach((d:any,i:number)=>r.push(`${i+1}. **${d.property_address||'N/A'}** — ${d.current_stage||'N/A'} | Loan: $${d.loan_amount?.toLocaleString()||'N/A'}`)); else r.push('_None._'); r.push('');
   }
   if (secs.includes('properties')) {
-    const { data: props } = await sb.from('client_properties').select('address,property_type,current_value').eq('client_id',args.client_id);
-    r.push('## Properties'); if (props?.length) props.forEach((p:any)=>r.push(`- ${p.address||'N/A'} (${p.property_type||'N/A'}) — $${p.current_value?.toLocaleString()||'N/A'}`)); else r.push('_None._'); r.push('');
+    const { data: props } = await sb.from('client_properties').select('address,property_type,value').eq('client_id',args.client_id);
+    r.push('## Properties'); if (props?.length) props.forEach((p:any)=>r.push(`- ${p.address||'N/A'} (${p.property_type||'N/A'}) — $${p.value?.toLocaleString()||'N/A'}`)); else r.push('_None._'); r.push('');
   }
   if (secs.includes('reminders')) {
     const { data: rems } = await sb.from('client_reminders').select('title,due_date,priority').eq('client_id',args.client_id).eq('status','pending').order('due_date').limit(10);
@@ -5100,16 +5118,16 @@ async function executeExportClientPortfolio(sb: any, args: any) {
   const [client, deals, props, inc, liab, bc] = await Promise.all([
     sb.from('clients').select('*').eq('id', cid).single(),
     sb.from('client_deals').select('deal_type, current_stage, property_address, loan_amount, commission_estimate, settlement_date, risk_status').eq('client_id', cid),
-    sb.from('client_properties').select('address, property_type, current_value, loan_balance, rental_income_weekly').eq('client_id', cid),
-    sb.from('client_income').select('income_type, amount, frequency').eq('client_id', cid),
-    sb.from('client_liabilities').select('liability_type, balance, repayment_amount').eq('client_id', cid),
+    sb.from('client_properties').select('address, property_type, value, loan_remaining, weekly_rental_income').eq('client_id', cid),
+    sb.from('client_income').select('contact_type, gross_salary, bonus, commission, allowance, other_taxable_income, salary_frequency').eq('client_id', cid),
+    sb.from('client_liabilities').select('liability_type, current_balance, monthly_repayment').eq('client_id', cid),
     sb.from('borrowing_capacity_assessments').select('borrowing_capacity, serviceability_band, monthly_surplus').eq('client_id', cid).order('created_at', { ascending: false }).limit(1),
   ]);
   if (!client.data) return { error: 'Client not found.' };
   const c = client.data;
-  const totalProperty = (props.data || []).reduce((s: number, p: any) => s + (p.current_value || 0), 0);
-  const totalLoans = (props.data || []).reduce((s: number, p: any) => s + (p.loan_balance || 0), 0);
-  const totalLiabilities = (liab.data || []).reduce((s: number, l: any) => s + (l.balance || 0), 0);
+  const totalProperty = (props.data || []).reduce((s: number, p: any) => s + (p.value || 0), 0);
+  const totalLoans = (props.data || []).reduce((s: number, p: any) => s + (p.loan_remaining || 0), 0);
+  const totalLiabilities = (liab.data || []).reduce((s: number, l: any) => s + (l.current_balance || 0), 0);
   const netPosition = totalProperty - totalLoans - totalLiabilities;
   return {
     portfolio: {
@@ -5291,7 +5309,7 @@ async function executeWhatIfAnalysis(sb: any, args: any) {
 async function executeGetDocumentReadiness(sb: any, args: any) {
   const { data: deal } = await sb.from('client_deals').select('*, clients:client_id(primary_first_name, primary_surname)').eq('id', args.deal_id).single();
   if (!deal) return { error: 'Deal not found.' };
-  const { data: files } = await sb.from('client_files').select('file_name, file_type, created_at').eq('client_id', deal.client_id);
+  const { data: files } = await sb.from('client_files').select('file_name, file_type, uploaded_at').eq('client_id', deal.client_id);
   const requiredDocs = ['ID Verification', 'Income Evidence', 'Bank Statements', 'Tax Returns', 'Employment Letter', 'Contract of Sale', 'Valuation Report', 'Insurance Certificate'];
   const fileNames = (files || []).map((f: any) => f.file_name?.toLowerCase() || '');
   const checklist = requiredDocs.map(doc => {
@@ -5323,9 +5341,9 @@ async function executeGetDashboardSummary(sb: any) {
   const now = new Date().toISOString();
   const [clients, deals, reminders, settlements, activities] = await Promise.all([
     sb.from('clients').select('id, primary_first_name, primary_surname, pipeline_status, total_portfolio_value, net_monthly_cash_flow', { count: 'exact' }),
-    sb.from('client_deals').select('id, deal_name, current_stage, risk_status, settlement_date, finance_due_date, deal_amount', { count: 'exact' }),
+    sb.from('client_deals').select('id, property_address, current_stage, risk_status, settlement_date, finance_clause_expiry, loan_amount', { count: 'exact' }),
     sb.from('client_reminders').select('id, title, due_date, priority, status').eq('status', 'pending').order('due_date'),
-    sb.from('client_deals').select('id, deal_name, settlement_date, current_stage, deal_amount, clients:client_id(primary_first_name, primary_surname)').gte('settlement_date', now).order('settlement_date').limit(10),
+    sb.from('client_deals').select('id, property_address, settlement_date, current_stage, loan_amount, clients:client_id(primary_first_name, primary_surname)').gte('settlement_date', now).order('settlement_date').limit(10),
     sb.from('activity_logs').select('id, action_type, entity_type, entity_name, created_at').order('created_at', { ascending: false }).limit(10),
   ]);
 
@@ -5336,7 +5354,7 @@ async function executeGetDashboardSummary(sb: any) {
   const urgentReminders = reminderData.filter((r: any) => r.priority === 'high' || r.priority === 'urgent');
   const activeDeals = dealData.filter((d: any) => d.current_stage !== 'settled' && d.current_stage !== 'fallen_through');
   const atRiskDeals = dealData.filter((d: any) => d.risk_status === 'at_risk' || d.risk_status === 'urgent');
-  const totalPipelineValue = activeDeals.reduce((s: number, d: any) => s + (Number(d.deal_amount) || 0), 0);
+  const totalPipelineValue = activeDeals.reduce((s: number, d: any) => s + (Number(d.loan_amount) || 0), 0);
   const totalAUM = clientData.reduce((s: number, c: any) => s + (Number(c.total_portfolio_value) || 0), 0);
 
   return {
@@ -5344,7 +5362,7 @@ async function executeGetDashboardSummary(sb: any) {
     clients: { total: clients.count || clientData.length, by_status: clientData.reduce((acc: any, c: any) => { acc[c.pipeline_status || 'unknown'] = (acc[c.pipeline_status || 'unknown'] || 0) + 1; return acc; }, {}) },
     deals: { total: deals.count || dealData.length, active: activeDeals.length, at_risk: atRiskDeals.length, total_pipeline_value: totalPipelineValue },
     reminders: { pending: reminderData.length, overdue: overdueReminders.length, urgent: urgentReminders.length },
-    upcoming_settlements: (settlements.data || []).slice(0, 5).map((s: any) => ({ deal: s.deal_name, date: s.settlement_date, amount: s.deal_amount, client: `${s.clients?.primary_first_name || ''} ${s.clients?.primary_surname || ''}`.trim() })),
+    upcoming_settlements: (settlements.data || []).slice(0, 5).map((s: any) => ({ deal: s.property_address, date: s.settlement_date, amount: s.loan_amount, client: `${s.clients?.primary_first_name || ''} ${s.clients?.primary_surname || ''}`.trim() })),
     total_aum: totalAUM,
     recent_activity: (activities.data || []).slice(0, 5).map((a: any) => ({ type: a.action_type, entity: a.entity_name, when: a.created_at })),
   };
@@ -5658,7 +5676,7 @@ async function executeGetCloudflareStatus() {
 }
 
 async function executeGetUserList(sb: any, args: any) {
-  let query = sb.from('custom_users').select('id, username, email, role, is_active, created_at, last_sign_in');
+  let query = sb.from('custom_users').select('id, username, email, role, is_active, created_at, last_login_at');
   if (!args.include_inactive) query = query.eq('is_active', true);
   const { data } = await query.order('username').limit(100);
   return { users: data || [], count: data?.length || 0 };
@@ -6904,7 +6922,6 @@ async function executeAddGamePlanMilestone(sb: any, args: any) {
     description: args.description || null,
     due_date: args.due_date || null,
     owner: args.owner || null,
-    priority: args.priority || 'medium',
     display_order: (count || 0) + 1,
   }).select().single();
   if (error) return { error: error.message };
@@ -6926,7 +6943,6 @@ async function executeAddGamePlanKPI(sb: any, args: any) {
     target_value: args.target_value,
     current_value: args.current_value || 0,
     unit: args.unit || '',
-    format: args.format || 'number',
     display_order: (count || 0) + 1,
   }).select().single();
   if (error) return { error: error.message };
@@ -6955,8 +6971,8 @@ async function executeAddGamePlanAction(sb: any, args: any) {
   const { count } = await sb.from('game_plan_actions').select('id', { count: 'exact', head: true }).eq('phase_id', args.phase_id);
   const { data, error } = await sb.from('game_plan_actions').insert({
     phase_id: args.phase_id,
-    title: args.title,
-    assignee: args.assignee || null,
+    label: args.title,
+    assigned_to: args.assignee || null,
     display_order: (count || 0) + 1,
   }).select().single();
   if (error) return { error: error.message };
@@ -6965,7 +6981,7 @@ async function executeAddGamePlanAction(sb: any, args: any) {
 
 async function executeToggleGamePlanAction(sb: any, args: any) {
   const { data, error } = await sb.from('game_plan_actions').update({
-    is_completed: args.is_completed,
+    is_done: args.is_completed,
     completed_at: args.is_completed ? new Date().toISOString() : null,
   }).eq('id', args.action_id).select().single();
   if (error) return { error: error.message };

@@ -228,6 +228,11 @@ function dbHolding(existing: StoredItem[]) {
         or() { return builder; }, not() { return builder; }, neq() { return builder; },
         in() { return builder; }, is() { return builder; },
         order() { return builder; }, limit() { return builder; },
+        // A paged read asks for one page at a time, because the API caps every
+        // response at `db-max-rows` however large a `.limit()` it is given.
+        range(from: number, to: number) {
+          return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+        },
         maybeSingle() { return Promise.resolve({ data: null, error: null }); },
         insert(payload: Record<string, unknown>) { state.insert = payload; return builder; },
         update(payload: Record<string, unknown>) { state.update = payload; return builder; },

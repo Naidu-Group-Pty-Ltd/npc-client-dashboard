@@ -648,7 +648,7 @@ Deno.serve(async (req) => {
           .limit(2000),
         supabase
           .from('finance_portal_documents')
-          .select('id, finance_user_id, client_id, file_size, created_at')
+          .select('id, client_id, file_size, created_at')
           .gte('created_at', sinceDate)
           .limit(5000),
       ]);

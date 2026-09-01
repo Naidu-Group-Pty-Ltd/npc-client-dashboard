@@ -90,6 +90,61 @@ export function classifyBranch(url: string): BranchKind {
   return 'unsupported';
 }
 
+/**
+ * THE ADDRESS OF THE FILE, WHERE A HOST PUBLISHES A PREVIEW PAGE AT THE LINK.
+ *
+ * A shared-link host serves two different things at one address: a person
+ * opening it gets an interactive preview, and the file itself is behind a
+ * parameter the host publishes for exactly that purpose. Fetched without it,
+ * a brochure link answers 207 KB of `text/html` — the viewer APPLICATION —
+ * and the reader downstream does not fail, it succeeds at reading the wrong
+ * thing. Measured on the live Luxton source: every one of its thirteen
+ * brochures came back as Dropbox's preview page, and the PDF behind it is
+ * 6.2 MB.
+ *
+ * THIS IS NOT A USER-AGENT TRICK, and that was measured too. Dropbox serves
+ * the file to `curl/8.5.0` and the preview to `python-requests`, to
+ * `Mozilla/5.0`, to a Chrome string and to no user agent at all — so the only
+ * stable way through is the one the host documents, and dressing this client
+ * up as a browser would be both dishonest and unreliable.
+ *
+ * THREE RULES, and the first is what makes it safe to run on every retrieval:
+ *
+ *   ONLY A QUERY PARAMETER MOVES. The scheme, the host, the port and the path
+ *   are returned exactly as they arrived, so this cannot redirect a fetch
+ *   anywhere — the SSRF guard downstream is judging the same origin it would
+ *   have judged, and a test asserts it.
+ *
+ *   ONLY A HOST THAT PUBLISHES ONE. There is one entry below because one was
+ *   measured. A host added here without a retrieval that proves it is a guess
+ *   about somebody else's service, and the failure it produces is the silent
+ *   kind. Google Drive is absent because it never reaches here: a Drive link
+ *   classifies as `drive_file` or `drive_folder` and `driveDownloadUrl`
+ *   already addresses it.
+ *
+ *   AND IT IS IDEMPOTENT. A builder who pastes the download form of their own
+ *   link gets it back unchanged.
+ */
+export function sharedLinkFileUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return rawUrl;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return rawUrl;
+
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  // Dropbox: `dl=1` is its own published way of asking for the file rather
+  // than the viewer. `dl=0` is what a "Copy link" button writes.
+  if (host === 'dropbox.com' || host === 'dropboxusercontent.com') {
+    if (parsed.searchParams.get('dl') === '1') return rawUrl;
+    parsed.searchParams.set('dl', '1');
+    return parsed.toString();
+  }
+  return rawUrl;
+}
+
 /** A branch this pipeline can actually try to take a photograph out of. */
 export function isTraversableBranch(branch: RowSourceBranch): boolean {
   return branch.kind !== 'unsupported';

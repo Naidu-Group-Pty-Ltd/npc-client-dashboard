@@ -248,6 +248,13 @@ Deno.serve(async (req: Request) => {
     leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
   });
 
+  /*
+   * Set when the per-item queue is deployed AND completely empty, so the tick
+   * continues to the upload-level sweep below rather than falling into it as
+   * deployment skew. See the fall-through comment where it is read.
+   */
+  let itemQueueDrained = false;
+
   if (itemClaim.available) {
     if (!itemClaim.item) {
       /*
@@ -260,12 +267,45 @@ Deno.serve(async (req: Request) => {
         phase: 'item_work', claimed: 0,
         claimable: pending.claimable, outstanding: pending.outstanding,
       });
-      return json({
-        success: true, path: 'item_work', settled: 0,
-        claimable: pending.claimable, outstanding: pending.outstanding,
-        complete: pending.outstanding === 0, deploymentReady: true,
-      });
-    }
+      /*
+       * AN EMPTY ITEM QUEUE IS WHEN THE UPLOAD-LEVEL SWEEP IS OWED, NOT WHEN
+       * IT IS SKIPPED.
+       *
+       * The per-item queue replaced the upload walk for finding and judging
+       * PICTURES, and it does that job completely. What it never took over is
+       * stamping the three UPLOAD markers — `source_images_settled_version`,
+       * `marketplace_eligibility_settled_version`,
+       * `image_sanitization_settled_version` — which only
+       * `settleUploadSourceImages` writes, and which reach it only through the
+       * sweep below. Returning here left that sweep behind the deployment-skew
+       * branch, so on a healthy deployment it never ran at all.
+       *
+       * PRODUCTION, 30 AUGUST - 1 SEPTEMBER 2026. Upload `a0f8dfe4`
+       * (`export.csv`, 26 properties) finished every item and then sat at
+       * `status = 'enriching'` for thirty-six hours with all three markers
+       * NULL. 4,438 settler invocations over the preceding twenty-four hours
+       * were item ticks; NOT ONE was a settlement tick and not one reported
+       * deployment skew. Because `builder_stock_uploads` still counted as
+       * outstanding, `settle_builder_stock_marketplace_eligibility_tick` could
+       * never satisfy its own retirement condition, so the cron went on firing
+       * once a minute for ever against a queue with nothing in it.
+       *
+       * Continuing here is safe and self-limiting: it happens only when NO
+       * property is claimable, the sweep takes the same lease it always did so
+       * two ticks cannot overlap, an upload whose branches are all answered
+       * costs a marker read rather than a re-fetch, and the markers are
+       * terminal — so once they are stamped the queue empties and the cron
+       * retires itself, which is what stops this path running at all.
+       */
+      if (pending.outstanding > 0) {
+        return json({
+          success: true, path: 'item_work', settled: 0,
+          claimable: pending.claimable, outstanding: pending.outstanding,
+          complete: false, deploymentReady: true,
+        });
+      }
+      itemQueueDrained = true;
+    } else {
 
     const claimed = itemClaim.item;
     /*
@@ -385,11 +425,20 @@ Deno.serve(async (req: Request) => {
       claimable: pending.claimable, outstanding: pending.outstanding,
       complete: pending.outstanding === 0, deploymentReady: true,
     });
+    }
   }
 
   /*
    * ═══════════════════════════════════════════════════════════════════════
-   * DEPLOYMENT SKEW. The claim function is not there yet.
+   * DEPLOYMENT SKEW, OR AN EMPTY PER-ITEM QUEUE.
+   *
+   * Two ways to arrive: the claim function is not deployed (the original
+   * reason, below), or it is deployed and has nothing left to hand out, which
+   * is when the upload-level markers below are owed. Only the first is skew,
+   * so only the first is warned about.
+   * ═══════════════════════════════════════════════════════════════════════
+   *
+   * The original reason. The claim function is not there yet.
    * ═══════════════════════════════════════════════════════════════════════
    *
    * Edge functions ship automatically when `main` moves; migrations here are
@@ -400,11 +449,13 @@ Deno.serve(async (req: Request) => {
    *
    * Loud, and then the old path, unchanged. Slow is not an outage.
    */
-  console.warn('[builder-stock-image-settler] per-item claim not deployed — using the upload walk', {
-    phase: 'deployment_skew',
-    missing: 'public.claim_builder_stock_image_work',
-    remedy: 'apply supabase/migrations/20261019000000_builder_stock_item_work_claim.sql',
-  });
+  if (!itemQueueDrained) {
+    console.warn('[builder-stock-image-settler] per-item claim not deployed — using the upload walk', {
+      phase: 'deployment_skew',
+      missing: 'public.claim_builder_stock_image_work',
+      remedy: 'apply supabase/migrations/20261019000000_builder_stock_item_work_claim.sql',
+    });
+  }
 
   /*
    * ONE SETTLER AT A TIME.

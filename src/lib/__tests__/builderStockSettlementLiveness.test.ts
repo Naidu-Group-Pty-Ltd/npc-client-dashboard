@@ -30,8 +30,15 @@ import {
 import {
   nextImageStage,
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
-
-const PROVENANCE_VERSION = 5;
+/*
+ * THE REAL CONSTANT, NOT A COPY OF IT. This was `const PROVENANCE_VERSION = 5`
+ * — a literal restating a value that exists to be raised, so every bump broke
+ * two tests that had no opinion about the version at all. A literal at each end
+ * is how two ends drift.
+ */
+import {
+  PROVENANCE_VERSION,
+} from '../../../supabase/functions/_shared/builderStock/sourceImages';
 
 describe('A — the package link is readable without the live source', () => {
   it('a stored source_row carries the package link and the anchor', () => {
@@ -249,6 +256,11 @@ function liveDb(seed: { uploads: FakeRow[]; items: FakeRow[] }) {
       in(c: string, v: unknown) { filters.push(['in', c, v]); return builder; },
       limit() { return builder; },
       order() { return builder; },
+      // A paged read asks for one page at a time, because the API caps every
+      // response at `db-max-rows` however large a `.limit()` it is given.
+      range(from: number, to: number) {
+        return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+      },
       maybeSingle() {
         const rows = (tables[table] ?? []).filter((row) => matches(row, filters));
         return Promise.resolve({ data: rows[0] ?? null, error: null });

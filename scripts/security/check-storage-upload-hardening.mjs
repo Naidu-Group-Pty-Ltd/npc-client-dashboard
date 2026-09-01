@@ -18,8 +18,14 @@ for (const bucket of ['investment-reports', 'quantitative-reports', 'qa_exports'
 // The two needles that carry that (the randomised uploadPath, and the
 // isInternal-gated upsert) are asserted below and are together sufficient —
 // dropping either one fails this gate.
+//
+// Every term in the path is resolved server-side from an authoritative row —
+// `objectClientId` is the client the stored object belongs to, derived from the
+// report rather than supplied by the caller — and the randomised segment is
+// what makes the destination unique. A caller-supplied value appearing in this
+// expression is what this needle exists to catch.
 for (const required of [
-  'uploadPath = `${uploadBinding.clientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}',
+  'uploadPath = `${uploadBinding.clientId || uploadBinding.objectClientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}',
   'resource_type: isInternal',
   'upsert: isInternal ? upsert === true : false',
 ]) if (!storage.includes(required)) failures.push(`missing human upload control: ${required}`);

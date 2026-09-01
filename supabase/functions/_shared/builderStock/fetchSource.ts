@@ -49,6 +49,7 @@ import {
 import {
   matchWorksheet, mergeHyperlinkColumns, type HyperlinkAvailability, type WorkbookSheet,
 } from './sheetHyperlinks.pure.ts';
+import { sharedLinkFileUrl } from './sourceBranches.pure.ts';
 import { readWorkbookSheets } from './workbookSheets.ts';
 import { parseDelimited } from './table.pure.ts';
 import { matrixToCsv } from './notionRecordMap.pure.ts';
@@ -106,7 +107,16 @@ export async function fetchStockSource(startUrl: string): Promise<FetchedSource>
   const sheets = googleSheetsRef(startUrl);
   if (sheets) return await fetchGoogleSheet(sheets, startUrl);
 
-  return await fetchOrdinaryUrl(startUrl);
+  /*
+   * AND A SHARED-LINK HOST IS ASKED FOR THE FILE, for the same reason and in
+   * the same place. A Dropbox brochure link answers 207 KB of `text/html` —
+   * the viewer application — where the PDF behind it is 6.2 MB, and every one
+   * of the live Luxton source's thirteen brochures came back that way. See
+   * `sharedLinkFileUrl`: it moves a query parameter the host publishes and
+   * nothing else, so the address the SSRF guard judges is the address it would
+   * have judged.
+   */
+  return await fetchOrdinaryUrl(sharedLinkFileUrl(startUrl));
 }
 
 /**

@@ -94,14 +94,31 @@ function stockDb(seed: Row[]) {
     },
     from(name: string) {
       const state: any = { filters: [] as Array<[string, string, unknown]> };
-      const matches = (row: Row) => state.filters.every(([op, column, value]: [string, string, unknown]) =>
-        (op === 'in' ? (value as unknown[]).includes(row[column]) : row[column] === value));
+      /*
+       * `is` IS A FILTER, and a double that ignores one lets a write reach
+       * rows the server would never have handed it. This one returned the
+       * builder unchanged, so an `.is('primary_image_id', null)` narrowed
+       * nothing and the test agreed with code the database would have
+       * disagreed with — the exact shape this repository has already paid for
+       * once, with an `.or()` emulated by a regex.
+       */
+      const matches = (row: Row) => state.filters.every(([op, column, value]: [string, string, unknown]) => {
+        if (op === 'in') return (value as unknown[]).includes(row[column]);
+        if (op === 'is') return (row[column] ?? null) === value;
+        return row[column] === value;
+      });
       const builder: any = {
         select() { return builder; },
         eq(c: string, v: unknown) { state.filters.push(['eq', c, v]); return builder; },
         in(c: string, v: unknown) { state.filters.push(['in', c, v]); return builder; },
         or() { return builder; }, not() { return builder; }, neq() { return builder; },
-        is() { return builder; }, order() { return builder; }, limit() { return builder; },
+        is(c: string, v: unknown) { state.filters.push(['is', c, v]); return builder; },
+        order() { return builder; }, limit() { return builder; },
+        // A paged read asks for one page at a time, because the API caps every
+        // response at `db-max-rows` however large a `.limit()` it is given.
+        range(from: number, to: number) {
+          return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+        },
         maybeSingle() { return Promise.resolve({ data: table(name).find(matches) ?? null, error: null }); },
         insert(payload: Row) { state.insert = payload; return builder; },
         update(payload: Row) { state.update = payload; return builder; },
@@ -307,6 +324,46 @@ describe('before publication, the Marketplace still serves the OLD dataset', () 
     expect(a?.price).toBe(800000);
     expect(a?.availability_status).toBe('available');
     expect(a?.primary_image_id).toBe('image-A');
+  });
+
+  /*
+   * A RE-IMPORT MAKES AN IMAGE-LESS PROPERTY VISIBLE TO THE LADDER AGAIN.
+   *
+   * `enrichment_status` was never the only latch. `image_work_stage` is, and a
+   * property that has been through the ladder once is left `settled` — which
+   * the settler reads as "there is nothing further to try". So a re-import
+   * that handed a property a document the reader had only just learned to see
+   * updated its price and its sizes and then never looked at the document.
+   *
+   * The rule is the link recovery's own, in its own words: reopened only where
+   * there is something to gain. A property that came through the import
+   * holding a picture — its own, or one carried forward from the row it
+   * matched — is left alone, because re-running the source stage for it would
+   * spend a claim to reach the answer it already has.
+   *
+   * This is pipeline state and never property data, which is what the
+   * byte-for-byte assertion above is for.
+   */
+  it('reopens the image ladder for a property with no picture, and only that one', async () => {
+    const db = stockDb(PUBLISHED);
+    for (const row of db.items) row.image_work_stage = 'settled';
+    await importReplacement(db);
+
+    // `notion:C` is new: it has no picture and nothing to carry one from.
+    const added = db.row('notion:C');
+    expect(added.primary_image_id ?? null).toBeNull();
+    expect(added.image_work_stage).toBe('source');
+    expect(added.image_work_claim_until).toBeNull();
+    expect(added.image_work_next_attempt_at).toBeTruthy();
+
+    // `notion:A` is re-stated by the new list and keeps the picture it had, so
+    // nothing is re-asked about it.
+    expect(db.row('notion:A').primary_image_id).toBe('image-A');
+    expect(db.row('notion:A').image_work_stage).toBe('settled');
+
+    // `notion:B` is absent from the new list — untouched, and not put back
+    // into any queue by an import that never mentioned it.
+    expect(db.row('notion:B').image_work_stage).toBe('settled');
   });
 });
 

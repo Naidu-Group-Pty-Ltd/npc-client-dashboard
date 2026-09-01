@@ -296,7 +296,7 @@ Deno.serve(async (req) => {
 
       const q = supabase
         .from('purchase_files')
-        .select('id, address, purchase_price, max_approved_budget, lender, kanban_position, finance_status')
+        .select('id, property_address, purchase_price, max_approved_budget, lender, kanban_position, finance_status')
         .in('id', accessibleIds);
       const { data: files, error } = await q;
       if (error) return json({ error: error.message }, 500);
@@ -310,7 +310,7 @@ Deno.serve(async (req) => {
           const after = monthlyPI(loan, newRate, term);
           return {
             id: f.id,
-            address: f.address,
+            address: f.property_address,
             lender: f.lender,
             loan,
             before_monthly: Math.round(before),

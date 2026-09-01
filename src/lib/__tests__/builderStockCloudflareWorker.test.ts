@@ -30,7 +30,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import worker, {
-  INPAINT_MODEL as WORKER_MODEL, INPAINT_NEGATIVE_PROMPT, INPAINT_PROMPT, pngDimensions,
+  CLASSIFY_MODEL, CLASSIFY_SUBJECTS, CLASSIFY_SYSTEM_PROMPT, CLASSIFY_USER_PROMPT,
+  INPAINT_MODEL as WORKER_MODEL, INPAINT_NEGATIVE_PROMPT, INPAINT_PROMPT,
+  LEADING_SUBJECT, pngDimensions, readClassifyVerdict,
   type Env,
 } from '../../../cloudflare/builder-stock-image-worker/src/index';
 import {
@@ -851,5 +853,306 @@ describe('this file runs where it claims to', () => {
       resolve(process.cwd(), 'scripts/security/check-cloudflare-worker-hardening.mjs'),
       'utf8');
     expect(gate).toContain('cloudflare/builder-stock-image-worker/src/index.ts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// /v1/classify — what a picture SHOWS, and the proofs it decides nothing
+// ---------------------------------------------------------------------------
+
+/**
+ * The second endpoint, and the reason it is on this worker rather than beside
+ * it: it is the same private service, behind the same bearer, calling the same
+ * binding, with the same closed contract of "pictures in, nothing else".
+ *
+ * What it answers is a fact about pixels — a house from the street, a floor
+ * plan, a wordmark — and the whole point of these tests is that it can never
+ * be more than that. The vocabulary shares no value with the role vocabulary
+ * the product decides with; exactly one of its members can lead a listing and
+ * every other member can only demote; and every way the model can fail —
+ * unreachable, unparseable, a word nobody recognises, two words at once —
+ * degrades to "no verdict" rather than to a guess.
+ *
+ * The caller's own rule then does the deciding, and for every caller here a
+ * missing verdict means no promotion. So a batch this endpoint gets wrong in
+ * any direction other than `shows_house_exterior` costs a property nothing it
+ * had.
+ */
+describe('the picture classifier', () => {
+  const PNG_1x1 = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde,
+  ]);
+  const JPEG_HEAD = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+  type Call = { model: string; inputs: Record<string, unknown> };
+
+  function classifyEnv(
+    answer: (call: Call, index: number) => unknown,
+  ): { env: Env; calls: Call[] } {
+    const calls: Call[] = [];
+    return {
+      calls,
+      env: {
+        BUILDER_STOCK_IMAGE_WORKER_TOKEN: TOKEN,
+        AI: {
+          run(model: string, inputs: Record<string, unknown>) {
+            const call = { model, inputs };
+            calls.push(call);
+            return Promise.resolve(answer(call, calls.length - 1)).then((value) => {
+              if (value instanceof Error) throw value;
+              return value;
+            });
+          },
+        },
+      } as Env,
+    };
+  }
+
+  /**
+   * The body is assembled BYTE BY BYTE, through the same `multipartBody` the
+   * repair tests use: jsdom's `Blob` stringifies a `Uint8Array` to the nine
+   * bytes of the word "undefined", so a test built with `FormData.append`
+   * would send text and prove nothing about a picture.
+   */
+  function classifyRequest(
+    parts: Array<[string, Uint8Array]>,
+    init: { token?: string | null } = {},
+  ): Request {
+    const { body, contentType } = multipartBody(
+      parts.map(([name, bytes]) => ({ name, bytes })),
+    );
+    const headers: Record<string, string> = { 'content-type': contentType };
+    const token = init.token === undefined ? TOKEN : init.token;
+    if (token !== null) headers.Authorization = `Bearer ${token}`;
+    return new Request('https://builder-stock-image-worker.internal.workers.dev/v1/classify', {
+      method: 'POST', headers, body: body as unknown as BodyInit,
+    });
+  }
+
+  const said = (subject: string, confident = true) => ({
+    response: JSON.stringify({ subject, confident }),
+  });
+
+  it('IT IS PRIVATE — the same bearer guards both endpoints, and fails closed', async () => {
+    const { env, calls } = classifyEnv(() => said('shows_house_exterior'));
+    for (const token of [null, '', 'not-the-token']) {
+      const response = await worker.fetch(classifyRequest([['image-a', PNG_1x1]], { token }), env);
+      expect(response.status).toBe(401);
+    }
+    // And with no token configured at all, a correct-looking request is refused.
+    const unconfigured = { ...env, BUILDER_STOCK_IMAGE_WORKER_TOKEN: undefined } as Env;
+    const response = await worker.fetch(classifyRequest([['image-a', PNG_1x1]]), unconfigured);
+    expect(response.status).toBe(401);
+    // Nothing was ever sent to the model.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('IT IS NARROW — pictures only, so no request can tell the model what to see', async () => {
+    const { env, calls } = classifyEnv(() => said('shows_house_exterior'));
+    for (const name of ['prompt', 'label', 'lot', 'design', 'reference', 'url', 'image']) {
+      const response = await worker.fetch(
+        classifyRequest([['image-a', PNG_1x1], [name, PNG_1x1]]), env);
+      expect(response.status).toBe(422);
+      expect((await response.json() as { error: string }).error)
+        .toContain("named 'image-<key>'");
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('answers one verdict per picture, keyed by the caller\'s own key', async () => {
+    const { env, calls } = classifyEnv((call) => {
+      const uri = JSON.stringify(call.inputs);
+      return said(uri.includes('/9j/') ? 'shows_logo' : 'shows_house_exterior');
+    });
+    const response = await worker.fetch(classifyRequest([
+      ['image-34:X13', PNG_1x1],
+      ['image-35:X14', JPEG_HEAD],
+    ]), env);
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      model: string; verdicts: Array<{ key: string; subject: string; confident: boolean }>;
+    };
+    expect(body.model).toBe(CLASSIFY_MODEL);
+    // Keyed, never positional: a caller matching by position would attach one
+    // photograph's subject to another the moment anything reordered.
+    expect(body.verdicts.map((verdict) => verdict.key)).toEqual(['34:X13', '35:X14']);
+    expect(body.verdicts[0].subject).toBe('shows_house_exterior');
+    expect(body.verdicts[1].subject).toBe('shows_logo');
+    // ONE PICTURE PER CALL. A single call about six pictures answers in a list,
+    // and a list that comes back short or reordered is a verdict on the wrong
+    // photograph — undetectable from the answer.
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(call.model).toBe(CLASSIFY_MODEL);
+      expect(JSON.stringify(call.inputs).match(/data:image\//g) ?? []).toHaveLength(1);
+    }
+  });
+
+  it('THE VOCABULARY IS CLOSED, and shares no value with the role vocabulary', async () => {
+    // A subject is a fact about pixels; a role is a conclusion about a
+    // document. `sourceImageRole.pure.ts` already spells `site_plan`,
+    // `interior` and `floorplan`, so the prefix is what keeps one from being
+    // read as the other.
+    const roles = readFileSync(
+      resolve(process.cwd(), 'supabase/functions/_shared/builderStock/sourceImageRole.pure.ts'),
+      'utf8',
+    );
+    const declared = /export type SourceImageRole =([\s\S]*?);/.exec(roles)?.[1] ?? '';
+    const roleValues = [...declared.matchAll(/'([a-z_]+)'/g)].map((entry) => entry[1]);
+    expect(roleValues).toContain('site_plan');
+    expect(roleValues).toContain('primary_property');
+    for (const subject of CLASSIFY_SUBJECTS) {
+      expect(subject.startsWith('shows_')).toBe(true);
+      expect(roleValues).not.toContain(subject);
+    }
+    // And exactly one subject can ever lead a listing.
+    expect(LEADING_SUBJECT).toBe('shows_house_exterior');
+    expect(CLASSIFY_SUBJECTS).toContain(LEADING_SUBJECT);
+  });
+
+  it('the instruction is pinned here, and never says what to look FOR', async () => {
+    /*
+     * A classifier that has been told what to look for will find it. The
+     * request carries pictures and nothing else, so there is no field through
+     * which a caller could name the lot, the design or the estate — and the
+     * pinned wording must not do it either. What the model may be told is
+     * where the pictures came from; what it may never be told is which
+     * property is asking.
+     */
+    const pinned = `${CLASSIFY_SYSTEM_PROMPT} ${CLASSIFY_USER_PROMPT}`.toLowerCase();
+    for (const steering of [
+      'this property', 'the property\'s', 'listing', 'hero', 'the best',
+      'primary', 'should be used', 'most suitable', 'which one',
+    ]) {
+      expect(pinned).not.toContain(steering);
+    }
+    /*
+     * And they are CONSTANTS: nothing in the request reaches the wording, so
+     * neither declaration may interpolate. The words "lot layout" and "estate
+     * masterplan" do appear — they define `shows_site_plan` — and that is the
+     * difference this test has to keep: naming a CATEGORY is the question,
+     * naming a PROPERTY would be the answer.
+     */
+    const declarations = /export const CLASSIFY_SYSTEM_PROMPT =[\s\S]*?;[\s\S]*?export const CLASSIFY_USER_PROMPT =[\s\S]*?;/
+      .exec(WORKER_SOURCE)?.[0] ?? '';
+    expect(declarations).not.toBe('');
+    expect(declarations).not.toContain('${');
+    expect(CLASSIFY_SYSTEM_PROMPT.toLowerCase()).toContain('never guess');
+    // Every member of the closed vocabulary is described to the model, so the
+    // answer it is asked for is the answer this source can read.
+    for (const subject of CLASSIFY_SUBJECTS) {
+      expect(CLASSIFY_USER_PROMPT).toContain(subject);
+    }
+  });
+
+  it('reads a verdict out of whatever the model actually returned', () => {
+    const cases: Array<[unknown, { subject: string; confident: boolean } | null]> = [
+      // The schema honoured, as an object and as a JSON string.
+      [{ subject: 'shows_floor_plan', confident: true }, { subject: 'shows_floor_plan', confident: true }],
+      [{ response: '{"subject":"shows_logo","confident":true}' }, { subject: 'shows_logo', confident: true }],
+      // Fenced, which a model does whatever the schema says.
+      [{ response: '```json\n{"subject":"shows_people","confident":false}\n```' },
+        { subject: 'shows_people', confident: false }],
+      // A bare token in prose: accepted, but confidence unstated is not confidence.
+      [{ response: 'This is shows_house_exterior.' }, { subject: 'shows_house_exterior', confident: false }],
+      // Confidence absent from an otherwise valid object is likewise not confidence.
+      [{ subject: 'shows_house_exterior' }, { subject: 'shows_house_exterior', confident: false }],
+    ];
+    for (const [output, expected] of cases) {
+      expect(readClassifyVerdict(output)).toEqual(expected);
+    }
+  });
+
+  it('and NEVER invents one — an unknown word, two words, or no answer is no verdict', () => {
+    for (const output of [
+      null,
+      {},
+      { response: '' },
+      { response: 'I cannot tell what this is.' },
+      // A word outside the closed vocabulary is not evidence, however plausible.
+      { subject: 'facade', confident: true },
+      { response: '{"subject":"house","confident":true}' },
+      // TWO of them is a sentence that has not chosen. Taking the first would
+      // turn "a floor plan, not a house exterior" into a promotion.
+      { response: 'shows_floor_plan, not shows_house_exterior' },
+    ]) {
+      expect(readClassifyVerdict(output)).toBeNull();
+    }
+  });
+
+  it('finds the transport the platform actually takes, and says which ran', async () => {
+    // The catalog documents two shapes for a picture and does not say which
+    // this model takes. Guessing would fail silently — every verdict absent,
+    // which reads exactly like a model with no opinion.
+    const { env, calls } = classifyEnv((call) => (
+      'image' in call.inputs
+        ? said('shows_house_exterior')
+        : new Error('this model does not accept content parts')
+    ));
+    const response = await worker.fetch(classifyRequest([
+      ['image-a', PNG_1x1], ['image-b', PNG_1x1],
+    ]), env);
+    expect(response.status).toBe(200);
+    let transport: string | null = null;
+    for (const [name, value] of response.headers.entries()) {
+      if (name.toLowerCase() === 'x-classify-transport') transport = value;
+    }
+    expect(transport).toBe('image_field');
+    // Probed once for the batch, not once per picture: three calls for two
+    // pictures, never four.
+    expect(calls).toHaveLength(3);
+  });
+
+  it('a model fault is OPERATIONAL — a whole batch unanswered is 502, not a finding', async () => {
+    const { env } = classifyEnv(() => new Error('inference queue is full'));
+    const response = await worker.fetch(classifyRequest([['image-a', PNG_1x1]]), env);
+    expect(response.status).toBe(502);
+    expect((await response.json() as { error: string }).error).toContain('could not be reached');
+  });
+
+  it('but one picture the model would not answer about is a normal answer', async () => {
+    const { env } = classifyEnv((_call, index) => (
+      index === 0 ? said('shows_house_exterior') : new Error('rate limited')
+    ));
+    const response = await worker.fetch(classifyRequest([
+      ['image-a', PNG_1x1], ['image-b', PNG_1x1],
+    ]), env);
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      verdicts: Array<{ key: string; subject: string | null; unavailable: string | null }>;
+    };
+    expect(body.verdicts[0]).toMatchObject({ key: 'a', subject: 'shows_house_exterior' });
+    expect(body.verdicts[1].subject).toBeNull();
+    expect(body.verdicts[1].unavailable).toContain('could not be reached');
+  });
+
+  it('refuses a batch larger than it will fan out for, and anything that is not a picture', async () => {
+    const { env, calls } = classifyEnv(() => said('shows_house_exterior'));
+
+    const tooMany = await worker.fetch(classifyRequest(
+      Array.from({ length: 7 }, (_, index) => [`image-${index}`, PNG_1x1] as [string, Uint8Array]),
+    ), env);
+    expect(tooMany.status).toBe(422);
+    expect((await tooMany.json() as { error: string }).error).toContain('smaller batches');
+
+    const notAPicture = await worker.fetch(
+      classifyRequest([['image-a', new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])]]), env);
+    expect(notAPicture.status).toBe(422);
+    expect((await notAPicture.json() as { error: string }).error).toContain('not a picture');
+
+    const nothing = await worker.fetch(classifyRequest([]), env);
+    expect(nothing.status).toBe(422);
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('the worker still names no URL, and calls the binding for both endpoints', () => {
+    expect(WORKER_SOURCE).not.toContain('https://');
+    expect(WORKER_SOURCE).not.toContain('http://');
+    expect(WORKER_SOURCE).toContain('env.AI.run(CLASSIFY_MODEL');
+    expect(CLASSIFY_MODEL.startsWith('@cf/')).toBe(true);
   });
 });

@@ -414,6 +414,45 @@ export function useRecoverStockSourceImages() {
 }
 
 /**
+ * Read a source this organisation already imported, again, with today's parsers.
+ *
+ * A stock list is read once at upload and never again, so every correction to
+ * the readers reaches only the NEXT builder's file — the rows already
+ * published keep whatever the parser believed on the day. Two such corrections
+ * are why this exists: an uploaded workbook was read for its displayed values
+ * alone, so every brochure link in it was discarded; and a `LAND $` column
+ * normalised to the same key as `LAND M2`, so the land PRICE was published as
+ * the land SIZE.
+ *
+ * IT IS NOT A RE-UPLOAD, and re-uploading is not an alternative: identical
+ * bytes are refused by a unique index, so the only route used to be deleting
+ * the source and adding it again — which discards its history and every client
+ * selection made against its properties. This re-reads the file already in the
+ * bucket and updates each property in place, so ids, selections and the audit
+ * trail all survive.
+ *
+ * It DOES rewrite what the source states — a price, a land size, a design, a
+ * document link — because that is the point. What it cannot do is invent a
+ * property or move one that the source no longer describes; the import's own
+ * identity rule decides that, exactly as it does on any re-import.
+ */
+export function useReprocessStockSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (uploadId: string) =>
+      invoke<{
+        upload: BuilderStockUpload;
+        summary: StockImportSummary;
+        enrichment_pending: number;
+      }>({
+        operation: 'reprocess_upload',
+        upload_id: uploadId,
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
+
+/**
  * Ask again for the brochure links a Google Sheet would not export.
  *
  * The SOURCE only. No rows are re-imported, no stock data is touched, and no

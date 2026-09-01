@@ -22,9 +22,9 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
   const roles = (roleRows ?? []).map((r: any) => r.role);
   if (roles.includes("admin") || roles.includes("superadmin") || roles.includes("super_admin")) return true;
   const { data: cu } = await sb
-    .from("custom_users").select("role_display, is_active").eq("id", userId).maybeSingle();
+    .from("custom_users").select("role, is_active").eq("id", userId).maybeSingle();
   if (cu?.is_active) {
-    const r = String(cu.role_display ?? "").toLowerCase();
+    const r = String(cu.role ?? "").toLowerCase();
     if (r === "super_admin" || r === "superadmin" || r === "admin") return true;
   }
   return false;

@@ -86,10 +86,10 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
   if (roles.some((role: string) => ["admin", "superadmin", "super_admin"].includes(role))) return true;
 
   const { data: customUser } = await sb
-    .from("custom_users").select("role_display, is_active").eq("id", userId).maybeSingle();
+    .from("custom_users").select("role, is_active").eq("id", userId).maybeSingle();
   if (!customUser?.is_active) return false;
   return ["admin", "superadmin", "super_admin"].includes(
-    String(customUser.role_display ?? "").toLowerCase(),
+    String(customUser.role ?? "").toLowerCase(),
   );
 }
 

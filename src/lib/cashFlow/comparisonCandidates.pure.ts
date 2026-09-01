@@ -37,25 +37,71 @@
  * sort here.
  */
 
-export interface ComparisonCandidate {
+import {
+  resolveCashFlowFinancialSummary,
+  type CashFlowFinancialSource,
+} from '@/components/cash-flow/financialSummary';
+
+/**
+ * A comparison holds five reports: the one open, plus four peers.
+ *
+ * Named once because three surfaces state it — the toggle's ceiling, the
+ * picker's counter and the "maximum reached" message — and three literals is
+ * how a picker comes to offer a fifth peer the handler then refuses.
+ */
+export const COMPARISON_TOTAL_REPORTS = 5;
+export const MAX_COMPARISON_PEERS = COMPARISON_TOTAL_REPORTS - 1;
+
+/**
+ * How the candidate library is walked.
+ *
+ * 200 is the endpoint's maximum page size, and the limit bounds the dialog: a
+ * library larger than 2,000 completed reports offers its most recent 2,000
+ * rather than holding the picker open on an unbounded walk.
+ */
+export const COMPARISON_CANDIDATE_PAGE_SIZE = 200;
+export const COMPARISON_CANDIDATE_PAGE_LIMIT = 10;
+
+export interface ComparisonCandidate extends CashFlowFinancialSource {
   id: string;
   property_address?: string | null;
-  financial_calculations?: unknown;
+}
+
+/**
+ * Is this a non-empty object of figures?
+ *
+ * `financial_calculations` arrives as an object, as `{}` from a report whose
+ * generation never reached the financial section, and as null. Only the first
+ * carries anything.
+ */
+function carriesSourceFigures(figures: unknown): boolean {
+  if (figures === null || figures === undefined) return false;
+  if (typeof figures !== 'object') return false;
+  if (Array.isArray(figures)) return figures.length > 0;
+  return Object.keys(figures as Record<string, unknown>).length > 0;
 }
 
 /**
  * Does this report carry figures a comparison can draw?
  *
- * `financial_calculations` arrives as an object, as `{}` from a report whose
- * generation never reached the financial section, and as null. Only the first
- * is comparable.
+ * The question is asked of TWO shapes, because the same report reaches this
+ * function two ways. The list projection (`cashFlowLibrary`) resolves the
+ * headline figures server-side into `cash_flow_purchase_price` /
+ * `cash_flow_weekly_rent` and **deletes** `financial_calculations`; the
+ * comparison projection keeps the source blob. Testing only the blob is why
+ * the picker read "No properties found" on every deployment: the endpoint
+ * ignores a caller-supplied `select`, the default projection carries no blob
+ * at all, and a filter written against a field the response never contains
+ * rejects every row while looking exactly like an empty library.
+ *
+ * So a report is comparable when the shared resolver finds a price or a rent,
+ * or — the conservative floor, for a blob whose figures sit under keys the
+ * resolver does not know — when the source blob has anything in it.
  */
 export function hasComparableFigures(report: ComparisonCandidate): boolean {
-  const figures = report.financial_calculations;
-  if (figures === null || figures === undefined) return false;
-  if (typeof figures !== 'object') return false;
-  if (Array.isArray(figures)) return figures.length > 0;
-  return Object.keys(figures as Record<string, unknown>).length > 0;
+  const { purchasePrice, weeklyRent } = resolveCashFlowFinancialSummary(report);
+  if (purchasePrice !== null || weeklyRent !== null) return true;
+  return carriesSourceFigures(report.financial_calculations);
 }
 
 /** A stable key for "the same property", tolerant of case and stray spacing. */
@@ -83,12 +129,26 @@ export function dedupeByProperty<T extends ComparisonCandidate>(reports: T[]): T
  *
  * `excludeId` is the report already open — comparing a report with itself is
  * the one entry that is certainly useless.
+ *
+ * `excludeAddress` is that report's PROPERTY, and it is a separate exclusion
+ * because one property has up to twenty completed reports here. Dropping the
+ * open report by id alone leaves its siblings, and this is a property picker:
+ * the address the analysis is already about was offered as something to
+ * compare it against, one row down from itself. Excluding by address covers
+ * both, and the id is still excluded because a report with no address cannot
+ * be matched that way.
  */
 export function comparisonCandidates<T extends ComparisonCandidate>(
   reports: T[],
   excludeId?: string | null,
+  excludeAddress?: string | null,
 ): T[] {
+  const excludedProperty = propertyKey(excludeAddress);
   return dedupeByProperty(
-    reports.filter((report) => report.id !== excludeId && hasComparableFigures(report)),
+    reports.filter((report) => {
+      if (report.id === excludeId) return false;
+      if (excludedProperty && propertyKey(report.property_address) === excludedProperty) return false;
+      return hasComparableFigures(report);
+    }),
   );
 }

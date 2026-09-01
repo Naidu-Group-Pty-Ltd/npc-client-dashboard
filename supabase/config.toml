@@ -121,7 +121,10 @@ request_timeout = 120
 
 [functions.generate-portfolio-analysis]
 verify_jwt = true
-request_timeout = 120
+# A fourteen-section analysis took 78s of model time at a 8,000-token budget,
+# and that budget was the reason every answer arrived truncated. A larger one
+# is a longer call, so the wall clock moves with it. `report-qa` sits at 300.
+request_timeout = 240
 
 [functions.calculate-borrowing-capacity]
 verify_jwt = true

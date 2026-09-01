@@ -117,6 +117,70 @@ export function parseLlmJson<T = unknown>(content: string | null | undefined): T
   }
 }
 
+/**
+ * Reading a model's JSON answer, WITH the reason when it cannot be read.
+ *
+ * `parseLlmJson` answers null for two situations an operator has to tell
+ * apart, and `generate-portfolio-analysis` proved why. Its two callers each
+ * hand-rolled their own fence regex; both required a CLOSING fence, and on
+ * 1 September 2026 every Portfolio Analysis and every AI Insight in
+ * production failed, because the answers were being cut off before the model
+ * could write one:
+ *
+ *   insights   max_tokens 1200  ->  completion_tokens 1196
+ *   insights   max_tokens 1200  ->  completion_tokens 1196
+ *   full       max_tokens 8000  ->  completion_tokens 7996
+ *   full       max_tokens 8000  ->  completion_tokens 7996
+ *
+ * Four short of the ceiling, every time. The gateway still reported
+ * `status: success` — a truncated answer is a successful HTTP call — and the
+ * only thing that knew was `finish_reason`, which nothing read. So the
+ * operator was told "Failed to parse analysis results" about a model that had
+ * answered perfectly and simply run out of room, and the one number that would
+ * have fixed it appeared nowhere.
+ *
+ * The order matters: PARSE first, and use `finishReason` only to explain a
+ * failure. A truncated top-level object never balances, so `scanBalanced`
+ * already refuses it; if parsing succeeded the object closed, which means it
+ * is whole whatever the finish reason says.
+ */
+export type ModelJsonRead<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: 'empty' | 'truncated' | 'not_json'; message: string };
+
+export function readModelJson<T = unknown>(
+  content: string | null | undefined,
+  finishReason?: string | null,
+): ModelJsonRead<T> {
+  const text = String(content ?? '').trim();
+  if (!text) {
+    return {
+      ok: false,
+      reason: 'empty',
+      message: 'The model returned nothing at all.',
+    };
+  }
+
+  const parsed = parseLlmJson<T>(text);
+  if (parsed !== null && parsed !== undefined) return { ok: true, value: parsed };
+
+  if (String(finishReason ?? '').toLowerCase() === 'length') {
+    return {
+      ok: false,
+      reason: 'truncated',
+      message:
+        "The model's answer was cut off before it finished — it ran out of its token budget. "
+        + 'Raise the budget for this call rather than retrying, which will stop at the same place.',
+    };
+  }
+
+  return {
+    ok: false,
+    reason: 'not_json',
+    message: 'The model did not answer with JSON.',
+  };
+}
+
 // ── Null-ish sentinels ───────────────────────────────────────────────────────
 
 /**

@@ -46,8 +46,9 @@ import {
   negativeProvenanceStillStands, recordNoDeterministicImage,
 } from './negativeProvenance.pure.ts';
 import {
-  attemptsSoFar, packageAttemptsExhausted, recordPackageAttempt,
-  recordPackageUnprocessable, provenanceAfterAttempt,
+  attemptsSoFar, MAX_UNREACHABLE_ATTEMPTS, packageAttemptsExhausted,
+  recordPackageAttempt, recordPackageUnprocessable, recordPackageUnreachable,
+  recordUnreachableAttempt, unreachableAttemptsExhausted, provenanceAfterAttempt,
 } from './packageAttempt.pure.ts';
 import {
   demoteUnprovenSourceImage, hasReadySourceImage, readPrimaryImageStanding,
@@ -55,7 +56,8 @@ import {
 } from './sourceImages.ts';
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
-  branchRecord, openBranches, rowSourceBranches, writeBranchState,
+  branchForAttempt, branchRecord, openBranches, rowSourceBranches,
+  unmappedWithRecoveredLinks, writeBranchState,
 } from './sourceBranches.pure.ts';
 import {
   DriveListingCache, recoverPackageImage, type PackageFetcher, type PackageOutcome,
@@ -118,6 +120,8 @@ interface ExistingItem {
    * package, when it read the package and the package named no image.
    */
   source_provenance_result?: unknown;
+  /** Claims at the current stage. Rotates which open branch a run takes. */
+  image_work_attempts?: number | null;
 }
 
 /** A stage-1 row, as the re-audit needs to see it. */
@@ -567,7 +571,7 @@ export async function repairSourceImagesForUpload(
   // The stock this organisation already holds, and nobody else's.
   const { data: existingRows } = await db
     .from('builder_stock_items')
-    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result')
+    .select('id, external_reference, development_name, project_name, unit_number, lot_number, source_row, primary_image_id, source_provenance_result, image_work_attempts')
     .eq('organisation_id', input.organisationId)
     .in('lifecycle_status', PROCESSED_LIFECYCLE)
     .order('created_at', { ascending: true })
@@ -595,9 +599,29 @@ export async function repairSourceImagesForUpload(
    * whether to skip would give most of that back.
    */
   const negativeBefore = new Map<string, unknown>();
+  /**
+   * Each property's stored row, so the branch derivation can lay the recovered
+   * link columns over the freshly parsed one — see
+   * `unmappedWithRecoveredLinks`. Read from the rows already loaded here, so
+   * this costs no query of its own.
+   */
+  const storedRowByItem = new Map<string, Record<string, unknown>>();
+  /**
+   * How many times the settler has claimed this property at its current stage.
+   *
+   * Read here for one purpose: to ROTATE which of a property's open branches
+   * this run takes. See the selection below.
+   */
+  const attemptsByItem = new Map<string, number>();
   for (const item of (existingRows ?? []) as ExistingItem[]) {
     primaryBefore.set(item.id, item.primary_image_id ?? null);
     if (item.source_provenance_result) negativeBefore.set(item.id, item.source_provenance_result);
+    const attempts = Number(item.image_work_attempts);
+    attemptsByItem.set(item.id, Number.isFinite(attempts) && attempts > 0 ? Math.floor(attempts) : 0);
+
+    if (item.source_row) {
+      storedRowByItem.set(item.id, item.source_row as Record<string, unknown>);
+    }
     const reference = referenceKey(item);
     if (reference) byReference.set(reference, item.id);
     const developmentUnit = developmentUnitKey(item);
@@ -712,7 +736,13 @@ export async function repairSourceImagesForUpload(
      * paths need it: the no-assets path, and the path below where the row's
      * own cover turns out to be a convicted marketing tile.
      */
-    const branches = rowSourceBranches(record.unmapped);
+    /*
+     * The row as the builder's document states it, plus the targets only the
+     * recovery could see. Recovered columns win because the re-read cannot
+     * carry a link at all — it has nothing to overwrite them with.
+     */
+    const branches = rowSourceBranches(
+      unmappedWithRecoveredLinks(record.unmapped, storedRowByItem.get(itemId)));
 
     if (all.length) {
       outcome.matched += 1;
@@ -864,7 +894,30 @@ export async function repairSourceImagesForUpload(
       outcome.packageAlreadyAnswered += 1;
       continue;
     }
-    const branch = openNow[0];
+    /**
+     * WHICH open branch, and why it must not always be the same one.
+     *
+     * An `unreachable` branch records NOTHING — deliberately, because a
+     * sign-in wall may open tomorrow and banking "no image" for it would
+     * suppress a document that reads perfectly well. But `openBranches` then
+     * returns it again on the next tick, so taking `openNow[0]` every time
+     * means one unanswerable link is asked for ever and every branch behind it
+     * is never asked at all.
+     *
+     * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`: forty-nine properties sat
+     * on `source` across ten attempts each, `progressed: false` in ~2.4
+     * seconds, because their next open branch was a bare image reported as
+     * "not publicly downloadable" (fixed at its own site in `packageImages`)
+     * and the two branches behind it were never reached.
+     *
+     * So the run rotates on the property's own claim counter, which the
+     * settler already increments once per claim and resets on a stage change.
+     * Deterministic, needs no new column, keeps the one-expensive-step-per-run
+     * budget exactly as it was, and guarantees every open branch comes up
+     * within `openNow.length` attempts however any of them answers.
+     */
+    const branch = branchForAttempt(openNow, attemptsByItem.get(itemId) ?? 0);
+    if (!branch) continue;
     const packageUrl = branch.url;
     const question = {
       provenanceVersion: PROVENANCE_VERSION,
@@ -997,6 +1050,54 @@ export async function repairSourceImagesForUpload(
      * abandoning the rest of the upload, and it is emphatically NOT recorded as
      * "no image": the run stays incomplete so the property is asked again.
      */
+    /**
+     * A BRANCH THAT CAN BE FETCHED AND NEVER READ IS STILL AN ANSWER, EVENTUALLY.
+     *
+     * `unreachable` records nothing on purpose — a sign-in wall may open
+     * tomorrow. But the branch is then open again next tick, for ever, and a
+     * property whose every remaining branch is unreachable never leaves the
+     * source stage and so never reaches the fallback ladder that would have
+     * given it a picture.
+     *
+     * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`: thirteen properties
+     * claimed every sixty seconds, indefinitely, on two Drive files answering
+     * 404, one answering `Google Drive: Sign-in`, and single-page siting plans
+     * with no text layer. Rotation gave each branch its turn; each turn
+     * answered the same nothing.
+     *
+     * So the nothing is COUNTED, and past `MAX_UNREACHABLE_ATTEMPTS` the
+     * branch is retired with a verdict that says what actually happened. The
+     * count is kept on the same attempt record the kill path uses, under its
+     * own key and its own budget, because a link that answered cleanly and a
+     * package that destroyed the worker are different failures.
+     */
+    const bankUnreachable = async () => {
+      if (unreachableAttemptsExhausted(branchBefore, question)) {
+        const { error: bankError } = await db
+          .from('builder_stock_items')
+          .update({ source_provenance_result: writeBranchState(
+            negativeBefore.get(itemId), packageUrl, recordPackageUnreachable(question)) })
+          .eq('id', itemId)
+          .eq('organisation_id', input.organisationId);
+        // Unrecorded means unadvanced; say so rather than settle on it.
+        if (bankError) outcome.incomplete = true;
+        else outcome.packageNotIdentified += 1;
+        outcome.problems.push({
+          reference: packageUrl.slice(0, 400),
+          reason: `link retired after ${MAX_UNREACHABLE_ATTEMPTS} unreadable answers`,
+        });
+        return;
+      }
+      await db
+        .from('builder_stock_items')
+        .update({ source_provenance_result: writeBranchState(
+          negativeBefore.get(itemId), packageUrl,
+          recordUnreachableAttempt(branchBefore, question)) })
+        .eq('id', itemId)
+        .eq('organisation_id', input.organisationId);
+      outcome.incomplete = true;
+    };
+
     let recovered: PackageOutcome;
     try {
       recovered = await recoverPackageImage(
@@ -1010,14 +1111,13 @@ export async function repairSourceImagesForUpload(
         { fetchPackage: deps.fetchPackage, cache, readPageTexts: deps.readPageTexts },
       );
     } catch (error) {
-      await clearAttempt();
       outcome.packageUnreachable += 1;
-      outcome.incomplete = true;
       outcome.problems.push({
         reference: packageUrl.slice(0, 400),
         reason: String((error as { safeMessage?: string; message?: string })?.safeMessage
           ?? (error as { message?: string })?.message ?? error).slice(0, 200),
       });
+      await bankUnreachable();
       continue;
     }
 
@@ -1028,9 +1128,8 @@ export async function repairSourceImagesForUpload(
      * suppress a package that may be perfectly readable tomorrow.
      */
     if (recovered.status === 'unreachable') {
-      await clearAttempt();
       outcome.packageUnreachable += 1;
-      outcome.incomplete = true;
+      await bankUnreachable();
       continue;
     }
 

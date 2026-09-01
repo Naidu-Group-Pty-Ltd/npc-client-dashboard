@@ -144,7 +144,7 @@ export function MultiCalendarOverlay({
                   style={{ backgroundColor: '#0078d4' }}
                 />
                 {outlookVisible && (
-                  <Check className="absolute -top-1 -right-1 h-3 w-3 text-success-foreground0 bg-background rounded-full" />
+                  <Check className="absolute -top-1 -right-1 h-3 w-3 text-success bg-background rounded-full" />
                 )}
               </div>
               <div>
@@ -192,7 +192,7 @@ export function MultiCalendarOverlay({
                         style={{ backgroundColor: calendar.eventColor || '#3b82f6' }}
                       />
                       {isVisible && (
-                        <Check className="absolute -top-1 -right-1 h-3 w-3 text-success-foreground0 bg-background rounded-full" />
+                        <Check className="absolute -top-1 -right-1 h-3 w-3 text-success bg-background rounded-full" />
                       )}
                     </div>
                     <div>

@@ -58,6 +58,76 @@ export const AUSTRAC_KIND_LABEL: Readonly<Record<AustracWireKind, string>> = Obj
 });
 
 /**
+ * The same five, short enough for a chip.
+ *
+ * The register drew `report.kind.toUpperCase()`, which is the column's own
+ * value — so a compliance report wore a chip reading `COMPLIANCE_REPORT`,
+ * underscore and all. On a phone, where the column is 40px wide, that chip
+ * set one letter per line and made the row 150px tall.
+ *
+ * It sits beside the full label rather than in the register, because a
+ * second place that decides what a report kind is called is how two screens
+ * come to call it different things.
+ */
+export const AUSTRAC_KIND_SHORT: Readonly<Record<AustracWireKind, string>> = Object.freeze({
+  smr: "SMR",
+  ttr: "TTR",
+  ifti: "IFTI",
+  compliance: "Compliance",
+  annual: "Annual",
+});
+
+/**
+ * What a report's `status` is called on screen.
+ *
+ * `status.replace(/_/g, " ")` is not a translation: it produced "awaiting
+ * mlro", which spells an office's name in lower case, and "in review" for a
+ * value an operator has never seen written down. The vocabulary rule this
+ * repository already holds is that database vocabulary never reaches the
+ * operator — an unmapped value falls back to the de-underscored form rather
+ * than to nothing, because a status nobody named is still a status.
+ */
+export const AUSTRAC_STATUS_LABEL: Readonly<Record<string, string>> = Object.freeze({
+  draft: "Draft",
+  in_review: "In review",
+  awaiting_mlro: "Awaiting MLRO",
+  approved: "Approved",
+  submitted: "Lodged",
+  acknowledged: "Acknowledged",
+  rejected: "Rejected",
+  withdrawn: "Withdrawn",
+});
+
+/** The reading for a status, never the stored value. */
+export function austracStatusLabel(status: string | null | undefined): string {
+  const raw = (status ?? "").trim();
+  if (!raw) return "\u2014";
+  const known = AUSTRAC_STATUS_LABEL[raw];
+  if (known) return known;
+  const words = raw.replace(/_/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/**
+ * The chip reading for a kind, never the stored value.
+ *
+ * It covers every spelling the column accepts rather than the five the wire
+ * type names — `compliance_report` is one of them, and it is the one that
+ * produced the defect.
+ */
+export function austracKindChip(kind: string | null | undefined): string {
+  switch (kind) {
+    case "smr": return AUSTRAC_KIND_SHORT.smr;
+    case "ttr": return AUSTRAC_KIND_SHORT.ttr;
+    case "ifti": return AUSTRAC_KIND_SHORT.ifti;
+    case "annual": return AUSTRAC_KIND_SHORT.annual;
+    case "compliance":
+    case "compliance_report": return AUSTRAC_KIND_SHORT.compliance;
+    default: return (kind ?? "").replace(/_/g, " ").toUpperCase() || "\u2014";
+  }
+}
+
+/**
  * The obligation a stored kind belongs to, or null.
  *
  * `compliance` and `annual` are one obligation under two spellings — the

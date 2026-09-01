@@ -65,12 +65,12 @@ interface ErrorStats {
 }
 
 const SOURCE_CONFIG: Record<ErrorSource, { label: string; icon: React.ElementType; color: string }> = {
-  investment_report: { label: 'Investment Reports', icon: FileText, color: 'text-info-foreground0' },
-  bulk_generation: { label: 'Bulk Generation', icon: Zap, color: 'text-accent-foreground0' },
-  vapi_call: { label: 'Voice AI (Vapi)', icon: Phone, color: 'text-success-foreground0' },
-  api_service: { label: 'API Services', icon: Bot, color: 'text-warning-foreground0' },
-  email_sync: { label: 'Email Sync', icon: Mail, color: 'text-info-foreground0' },
-  automation: { label: 'Automation', icon: RefreshCw, color: 'text-accent-foreground0' },
+  investment_report: { label: 'Investment Reports', icon: FileText, color: 'text-info' },
+  bulk_generation: { label: 'Bulk Generation', icon: Zap, color: 'text-accent' },
+  vapi_call: { label: 'Voice AI (Vapi)', icon: Phone, color: 'text-success' },
+  api_service: { label: 'API Services', icon: Bot, color: 'text-warning' },
+  email_sync: { label: 'Email Sync', icon: Mail, color: 'text-info' },
+  automation: { label: 'Automation', icon: RefreshCw, color: 'text-accent' },
 };
 
 const SEVERITY_CONFIG: Record<ErrorSeverity, { label: string; variant: 'destructive' | 'default' | 'outline'; icon: React.ElementType }> = {
@@ -443,7 +443,7 @@ export default function ErrorLogs() {
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="min-w-0 truncate text-sm font-medium text-muted-foreground">Trend</CardTitle>
               {stats.trend === 'down' ? (
-                <span className="rounded-xl border border-success/25 bg-success/10 p-2 text-success-foreground0">
+                <span className="rounded-xl border border-success/25 bg-success/10 p-2 text-success">
                   <TrendingDown className="h-4 w-4" />
                 </span>
               ) : stats.trend === 'up' ? (
@@ -696,7 +696,7 @@ function ErrorList({
     return (
       <Card className={`min-w-0 overflow-hidden rounded-[1.5rem] border ${hasActiveFilters ? 'border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--primary)/0.06))]' : 'border-success/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.98),hsl(160_84%_39%/0.06))]'} shadow-[0_16px_48px_rgba(15,23,42,0.08)] ring-1 ring-border/40 dark:border-white/10 dark:ring-white/10 dark:shadow-black/25`}>
         <CardContent className="flex min-w-0 flex-col items-center justify-center px-6 py-12 text-center">
-          <span className={`mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border ${hasActiveFilters ? 'border-primary/25 bg-primary/10 text-primary' : 'border-success/25 bg-success/10 text-success-foreground0'} shadow-sm`}>
+          <span className={`mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border ${hasActiveFilters ? 'border-primary/25 bg-primary/10 text-primary' : 'border-success/25 bg-success/10 text-success'} shadow-sm`}>
             {hasActiveFilters ? <Search className="h-7 w-7" /> : <CheckCircle2 className="h-7 w-7" />}
           </span>
           <h3 className="text-lg font-semibold text-foreground">No errors found</h3>

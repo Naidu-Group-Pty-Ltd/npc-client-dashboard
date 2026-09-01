@@ -18,7 +18,7 @@ const predefinedTags = [
   { name: 'Follow-up', color: 'bg-brand-500/20 text-brand-600 border-brand-500/30' },
   { name: 'Reviewed', color: 'bg-success/20 text-success border-success/30' },
   { name: 'Client Ready', color: 'bg-info/20 text-info border-info/30' },
-  { name: 'Archive', color: 'bg-muted0/20 text-muted-foreground border-border/30' },
+  { name: 'Archive', color: 'bg-muted/20 text-muted-foreground border-border/30' },
 ];
 
 const getTagColor = (tag: string) => {

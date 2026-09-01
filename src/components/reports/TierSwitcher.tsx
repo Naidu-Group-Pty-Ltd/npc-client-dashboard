@@ -183,7 +183,7 @@ export function TierSwitcher({
               <div className="flex-1 space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{info.name}</span>
-                  {isCurrentTier && <Check className="h-3 w-3 text-success-foreground0" />}
+                  {isCurrentTier && <Check className="h-3 w-3 text-success" />}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {info.description}

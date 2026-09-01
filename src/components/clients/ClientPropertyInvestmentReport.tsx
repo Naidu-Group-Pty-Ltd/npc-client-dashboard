@@ -379,12 +379,12 @@ export function ClientPropertyInvestmentReport({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'completed':
-        return <CheckCircle2 className="h-3 w-3 text-success-foreground0" />;
+        return <CheckCircle2 className="h-3 w-3 text-success" />;
       case 'pending':
       case 'processing':
         return <Clock className="h-3 w-3 text-brand-500 animate-pulse" />;
       case 'failed':
-        return <AlertCircle className="h-3 w-3 text-destructive-foreground0" />;
+        return <AlertCircle className="h-3 w-3 text-destructive" />;
       default:
         return null;
     }

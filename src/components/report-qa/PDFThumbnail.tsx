@@ -64,7 +64,7 @@ export function PDFThumbnail({
         <div className="absolute inset-4 flex flex-col">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-6 h-6 rounded bg-destructive/20 flex items-center justify-center">
-              <FileText className="h-3.5 w-3.5 text-destructive-foreground0" />
+              <FileText className="h-3.5 w-3.5 text-destructive" />
             </div>
             <div className="flex-1 h-2 bg-muted-foreground/10 rounded" />
           </div>
@@ -106,7 +106,7 @@ export function PDFThumbnail({
             <DialogContent className="max-w-2xl max-h-[80vh]">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <FileText className="h-5 w-5 text-destructive-foreground0" />
+                  <FileText className="h-5 w-5 text-destructive" />
                   {fileName}
                 </DialogTitle>
               </DialogHeader>
@@ -193,7 +193,7 @@ export function UploadProgressItem({ fileName, progress, status, error }: Upload
           status === 'error'
             ? "border-destructive/25 bg-destructive/15 text-destructive"
             : status === 'complete'
-              ? "border-success/25 bg-success/15 text-success-foreground0"
+              ? "border-success/25 bg-success/15 text-success"
               : "border-brand-500/25 bg-brand-500/15 text-brand-500"
         )}
       >

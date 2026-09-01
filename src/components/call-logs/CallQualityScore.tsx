@@ -173,18 +173,18 @@ const getGradeColor = (grade: string): string => {
 };
 
 const getGradeTextColor = (grade: string): string => {
-  if (grade.startsWith('A')) return 'text-success-foreground0';
-  if (grade.startsWith('B')) return 'text-info-foreground0';
+  if (grade.startsWith('A')) return 'text-success';
+  if (grade.startsWith('B')) return 'text-info';
   if (grade.startsWith('C')) return 'text-brand-500';
-  if (grade.startsWith('D')) return 'text-warning-foreground0';
-  return 'text-destructive-foreground0';
+  if (grade.startsWith('D')) return 'text-warning';
+  return 'text-destructive';
 };
 
 const getTrendIcon = (score: number, maxScore: number) => {
   const percentage = (score / maxScore) * 100;
-  if (percentage >= 70) return <TrendingUp className="w-3 h-3 text-success-foreground0" />;
+  if (percentage >= 70) return <TrendingUp className="w-3 h-3 text-success" />;
   if (percentage >= 40) return <Minus className="w-3 h-3 text-brand-500" />;
-  return <TrendingDown className="w-3 h-3 text-destructive-foreground0" />;
+  return <TrendingDown className="w-3 h-3 text-destructive" />;
 };
 
 export const CallQualityScore = ({

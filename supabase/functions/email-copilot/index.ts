@@ -6,7 +6,6 @@ import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 
-const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
@@ -71,16 +70,23 @@ Deno.serve(async (req) => {
 
     // Handle different actions
     switch (action) {
+      // Audit item 43 — these two used to refuse unless `OPENAI_API_KEY` was
+      // set, and neither has used it since both moved to `callLLMRaw`. The
+      // router owns credential resolution: which key a call spends follows
+      // from the agent's `route`, and `email_copilot` is configured `native`
+      // here, so a request that this gate let through would reach OpenAI
+      // anyway and a request it refused might have had a perfectly good
+      // gateway credential.
+      //
+      // Its practical effect was to make one action fail differently from its
+      // siblings: Summarize reported the client's generic "Failed to summarize
+      // email" while Analyze and Translate, which never had the gate, reported
+      // the server's "internal error" — two symptoms, one cause, and the gate
+      // disguising it.
       case 'summarize':
-        if (!openAIApiKey) {
-          throw new Error('OPENAI_API_KEY is not configured');
-        }
         return await handleSummarize(email, emailId, supabase, corsHeaders);
-      
+
       case 'draft_reply':
-        if (!openAIApiKey) {
-          throw new Error('OPENAI_API_KEY is not configured');
-        }
         return await handleDraftReply(email, emailId, linkedPropertyAddress, supabase, replyContext, corsHeaders);
 
       case 'draft_reply_v2':
@@ -123,6 +129,30 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+/**
+ * What the provider actually said, for a caller that can only show a sentence.
+ *
+ * Audit item 43 — every handler here reduced a failed model call to
+ * `LLM call failed`, which the outer catch turned into "internal error". The
+ * router already carries the status and the per-attempt detail; discarding it
+ * meant an expired credential, an exhausted balance and a rate limit were
+ * indistinguishable on screen and left nothing in the log either.
+ *
+ * Bounded, because this reaches a toast.
+ */
+async function describeLlmFailure(r: { status: number; text: () => Promise<string> }): Promise<string> {
+  let detail = '';
+  try { detail = (await r.text()).slice(0, 300); } catch { /* body already consumed */ }
+  const hint = r.status === 401 || r.status === 403
+    ? 'the AI provider rejected this deployment\'s credential'
+    : r.status === 402
+      ? 'the AI provider account has no remaining balance'
+      : r.status === 429
+        ? 'the AI provider is rate limiting this deployment'
+        : 'the AI provider did not answer';
+  return `AI request failed (${r.status}) — ${hint}.${detail ? ` ${detail}` : ''}`;
+}
 
 async function handleSummarize(email: EmailData, emailId: string | null, supabase: any, corsHeaders: Record<string, string>): Promise<Response> {
   console.log('[Email Copilot] Generating summary...');
@@ -172,8 +202,11 @@ ${email.body}`;
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[Email Copilot] OpenAI error:', errorText);
-      throw new Error(`OpenAI API error: ${response.status}`);
+      // "OpenAI API error" named the wrong party: the router chooses the
+      // provider, and this deployment's `email_copilot` assignment can be any
+      // of gateway, native or openrouter.
+      console.error('[Email Copilot] model call failed:', response.status, errorText);
+      throw new Error(await describeLlmFailure({ status: response.status, text: async () => errorText }));
     }
 
     const data = await response.json();
@@ -287,8 +320,11 @@ Please draft a suitable reply that addresses the sender's concerns or questions.
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('[Email Copilot] OpenAI error:', errorText);
-      throw new Error(`OpenAI API error: ${response.status}`);
+      // "OpenAI API error" named the wrong party: the router chooses the
+      // provider, and this deployment's `email_copilot` assignment can be any
+      // of gateway, native or openrouter.
+      console.error('[Email Copilot] model call failed:', response.status, errorText);
+      throw new Error(await describeLlmFailure({ status: response.status, text: async () => errorText }));
     }
 
     const data = await response.json();
@@ -569,7 +605,7 @@ Output ONLY the rewritten text. No preamble, no quotes, no markdown fences.${ton
       temperature: 0.4,
       maxTokens: 1200,
     });
-    if (!r.ok) throw new Error('LLM call failed');
+    if (!r.ok) throw new Error(await describeLlmFailure(r));
     const data = await r.json();
     const improved = (data.choices?.[0]?.message?.content || '').trim();
 
@@ -616,7 +652,7 @@ Return JSON: { "suggestions": ["...", "...", "..."] }${threadCtx}`;
       maxTokens: 200,
       responseFormat: { type: 'json_object' },
     });
-    if (!r.ok) throw new Error('LLM call failed');
+    if (!r.ok) throw new Error(await describeLlmFailure(r));
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content || '{}';
     let parsed: any = {};
@@ -675,7 +711,7 @@ Rules:
       maxTokens: 200,
       responseFormat: { type: 'json_object' },
     });
-    if (!r.ok) throw new Error('LLM call failed');
+    if (!r.ok) throw new Error(await describeLlmFailure(r));
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content || '{}';
     let parsed: any = {};
@@ -744,7 +780,7 @@ async function handleTranslate(args: any, supabase: any, corsHeaders: Record<str
       temperature: 0.2,
       maxTokens: 2000,
     });
-    if (!r.ok) throw new Error('LLM call failed');
+    if (!r.ok) throw new Error(await describeLlmFailure(r));
     const data = await r.json();
     const translated = (data.choices?.[0]?.message?.content || '').trim();
 
@@ -809,7 +845,7 @@ Be specific. If a section has nothing, return an empty array (or empty string fo
       maxTokens: 800,
       responseFormat: { type: 'json_object' },
     });
-    if (!r.ok) throw new Error('LLM call failed');
+    if (!r.ok) throw new Error(await describeLlmFailure(r));
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content || '{}';
     let parsed: any = {};

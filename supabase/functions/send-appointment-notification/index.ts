@@ -16,13 +16,36 @@ interface SecondaryRecipient {
   email: string;
 }
 
+/**
+ * Which notice this is.
+ *
+ * Audit item 33: a cancellation reached only the client, because the command
+ * centre never told anyone else — it set `appointmentStatus: 'cancelled'` on
+ * GHL and stopped, and GHL emails the client alone. The additional contact and
+ * the finance partner were invited by THIS function and had to be uninvited by
+ * it too.
+ *
+ * Optional, and absent means `booked`. Every existing caller omits it and is
+ * byte-for-byte unaffected.
+ */
+type NotificationKind = 'booked' | 'cancelled';
+
 interface NotificationRequest {
+  kind?: NotificationKind;
   appointmentGhlId: string;
   appointmentTitle: string;
   appointmentStart: string; // ISO string
   appointmentEnd: string;   // ISO string
   appointmentType: string;
   appointmentNotes?: string;
+  /**
+   * Where the meeting happens — for a Zoom booking this is the join link.
+   *
+   * Audit item 33: no Zoom link reached any of these people, because this
+   * function never carried one. GHL puts it on the appointment's `address`;
+   * nothing passed it here, so neither the email nor the .ics had it.
+   */
+  appointmentLocation?: string;
   calendarName?: string;
   recipients: SecondaryRecipient[];
 }
@@ -65,6 +88,9 @@ function generateICS(params: {
   attendeeName: string;
   uid: string;
   brandName: string;
+  /** Absent or false = the REQUEST this function has always produced. */
+  cancelled?: boolean;
+  location?: string;
 }): string {
   const formatICSDate = (iso: string): string => {
     const d = new Date(iso);
@@ -84,7 +110,7 @@ function generateICS(params: {
     'VERSION:2.0',
     `PRODID:-//${params.brandName}//Command Centre//EN`,
     'CALSCALE:GREGORIAN',
-    'METHOD:REQUEST',
+    params.cancelled ? 'METHOD:CANCEL' : 'METHOD:REQUEST',
     'BEGIN:VEVENT',
     `UID:${params.uid}`,
     `DTSTAMP:${now}`,
@@ -92,15 +118,20 @@ function generateICS(params: {
     `DTEND:${dtEnd}`,
     `SUMMARY:${escapeICS(params.title)}`,
     params.notes ? `DESCRIPTION:${escapeICS(params.notes)}` : '',
+    params.location ? `LOCATION:${escapeICS(params.location)}` : '',
     `ORGANIZER;CN=${escapeICS(params.brandName)}:mailto:${params.organizer}`,
     `ATTENDEE;CN=${escapeICS(params.attendeeName)};RSVP=TRUE:mailto:${params.attendeeEmail}`,
-    'STATUS:CONFIRMED',
-    'SEQUENCE:0',
-    'BEGIN:VALARM',
-    'TRIGGER:-PT15M',
-    'ACTION:DISPLAY',
-    'DESCRIPTION:Reminder',
-    'END:VALARM',
+    params.cancelled ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
+    // A cancellation must out-rank the invitation it withdraws, or the calendar
+    // client keeps the original. No alarm on a meeting that is not happening.
+    params.cancelled ? 'SEQUENCE:1' : 'SEQUENCE:0',
+    ...(params.cancelled ? [] : [
+      'BEGIN:VALARM',
+      'TRIGGER:-PT15M',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Reminder',
+      'END:VALARM',
+    ]),
     'END:VEVENT',
     'END:VCALENDAR',
   ].filter(Boolean).join('\r\n');
@@ -118,6 +149,9 @@ function buildEmailBody(params: {
   notes?: string;
   calendarName?: string;
   brandName: string;
+  /** Absent or false = the invitation this function has always sent. */
+  cancelled?: boolean;
+  location?: string;
 }): string {
   const startDate = new Date(params.start);
   const endDate = new Date(params.end);
@@ -143,12 +177,14 @@ function buildEmailBody(params: {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <div style="background: #1a1a2e; color: #d4a843; padding: 20px; border-radius: 8px 8px 0 0;">
-        <h2 style="margin: 0; font-size: 20px;">📅 Meeting Invitation</h2>
+        <h2 style="margin: 0; font-size: 20px;">${params.cancelled ? '🚫 Meeting Cancelled' : '📅 Meeting Invitation'}</h2>
         <p style="margin: 5px 0 0; opacity: 0.9; font-size: 14px;">${params.brandName} — Command Centre</p>
       </div>
       <div style="background: #ffffff; padding: 24px; border: 1px solid #e0e0e0; border-top: none;">
         <p style="color: #333; font-size: 15px;">Hi ${params.recipientName},</p>
-        <p style="color: #555; font-size: 14px;">You have been added as a participant to the following appointment:</p>
+        <p style="color: #555; font-size: 14px;">${params.cancelled
+          ? 'The following appointment has been cancelled. You do not need to attend, and no action is required.'
+          : 'You have been added as a participant to the following appointment:'}</p>
         
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
           <tr>
@@ -171,6 +207,13 @@ function buildEmailBody(params: {
           <tr>
             <td style="padding: 10px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; font-weight: bold; color: #333;">Calendar</td>
             <td style="padding: 10px 12px; border: 1px solid #e0e0e0; color: #333;">${params.calendarName}</td>
+          </tr>` : ''}
+          ${params.location ? `
+          <tr>
+            <td style="padding: 10px 12px; background: #f8f9fa; border: 1px solid #e0e0e0; font-weight: bold; color: #333;">${/^https?:\/\//i.test(params.location) ? 'Join' : 'Location'}</td>
+            <td style="padding: 10px 12px; border: 1px solid #e0e0e0; color: #333;">${/^https?:\/\//i.test(params.location)
+              ? `<a href="${params.location}" style="color: #1a1a2e; font-weight: bold;">${params.location}</a>`
+              : params.location}</td>
           </tr>` : ''}
           ${params.notes ? `
           <tr>
@@ -212,9 +255,13 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const {
+      kind = 'booked',
       appointmentGhlId, appointmentTitle, appointmentStart, appointmentEnd,
-      appointmentType, appointmentNotes, calendarName, recipients
+      appointmentType, appointmentNotes, appointmentLocation, calendarName, recipients
     }: NotificationRequest = body;
+    // Absent means an invitation, which is every caller that existed before
+    // cancellations were sent at all.
+    const isCancellation = kind === 'cancelled';
 
     // Auth
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -227,14 +274,46 @@ Deno.serve(async (req) => {
       return createUnauthorizedResponse(authError, corsHeaders);
     }
 
-    if (!recipients || recipients.length === 0) {
+    // A cancellation names an appointment, not a list. Whoever this function
+    // invited is already recorded against the booking, so the caller does not
+    // have to remember them — and the client never had them to remember: the
+    // cancel path is `updateEvent(id, { appointmentStatus: 'cancelled' })` and
+    // holds nothing else. Resolved here so one caller cannot uninvite a
+    // different set of people from the set that was invited.
+    let effectiveRecipients = recipients;
+    if (isCancellation && (!effectiveRecipients || effectiveRecipients.length === 0)) {
+      const { data: invited, error: lookupError } = await supabase
+        .from('appointment_secondary_recipients')
+        .select('finance_contact_id, contact_name, contact_email')
+        .eq('appointment_ghl_id', appointmentGhlId);
+      if (lookupError) {
+        console.error('[Appointment Notification] Could not read invited recipients:', lookupError.message);
+      }
+      // One notice per person, however many rows they have.
+      const seen = new Set<string>();
+      effectiveRecipients = (invited ?? [])
+        .filter((r: any) => {
+          const email = String(r?.contact_email ?? '').trim().toLowerCase();
+          if (!email || seen.has(email)) return false;
+          seen.add(email);
+          return true;
+        })
+        .map((r: any) => ({
+          financeContactId: r.finance_contact_id,
+          name: r.contact_name,
+          email: r.contact_email,
+        }));
+      console.log(`[Appointment Notification] Cancellation: ${effectiveRecipients.length} previously-invited recipient(s)`);
+    }
+
+    if (!effectiveRecipients || effectiveRecipients.length === 0) {
       return new Response(
         JSON.stringify({ success: true, message: 'No recipients to notify' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`[Appointment Notification] Sending to ${recipients.length} recipients for: ${appointmentTitle}`);
+    console.log(`[Appointment Notification] Sending ${kind} to ${effectiveRecipients.length} recipient(s) for: ${appointmentTitle}`);
 
     const brand = await getBrandConfig();
     const brandName = brand.companyName;
@@ -244,7 +323,7 @@ Deno.serve(async (req) => {
     const accessToken = await getAccessToken();
     const results: { email: string; success: boolean; error?: string }[] = [];
 
-    for (const recipient of recipients) {
+    for (const recipient of effectiveRecipients) {
       try {
         // Generate unique .ics for this recipient
         const icsContent = generateICS({
@@ -257,6 +336,8 @@ Deno.serve(async (req) => {
           attendeeName: recipient.name,
           uid: `${appointmentGhlId}-${recipient.financeContactId}@${uidDomain}`,
           brandName,
+          cancelled: isCancellation,
+          location: appointmentLocation,
         });
 
         const icsBase64 = btoa(icsContent);
@@ -270,18 +351,22 @@ Deno.serve(async (req) => {
           notes: appointmentNotes,
           calendarName,
           brandName,
+          cancelled: isCancellation,
+          location: appointmentLocation,
         });
 
         // Send via Microsoft Graph (always admin mailbox)
         const message = {
           message: {
-            subject: `Meeting Invitation: ${appointmentTitle}`,
+            subject: isCancellation
+              ? `Meeting Cancelled: ${appointmentTitle}`
+              : `Meeting Invitation: ${appointmentTitle}`,
             body: { contentType: 'HTML', content: emailBody },
             toRecipients: [{ emailAddress: { address: recipient.email } }],
             attachments: [{
               '@odata.type': '#microsoft.graph.fileAttachment',
               name: 'invite.ics',
-              contentType: 'text/calendar; method=REQUEST',
+              contentType: `text/calendar; method=${isCancellation ? 'CANCEL' : 'REQUEST'}`,
               contentBytes: icsBase64,
             }],
           },
@@ -303,8 +388,11 @@ Deno.serve(async (req) => {
           throw new Error(`Graph API ${sendResponse.status}: ${errorText}`);
         }
 
-        // Record success in DB
-        await supabase
+        // Record success in DB. Not for a cancellation: this table is the record
+        // of who was INVITED, and it is what a cancellation reads back to know
+        // whom to tell. Writing a row here would make the next cancellation
+        // find the same person twice.
+        if (!isCancellation) await supabase
           .from('appointment_secondary_recipients')
           .insert({
             appointment_ghl_id: appointmentGhlId,
@@ -327,8 +415,8 @@ Deno.serve(async (req) => {
       } catch (err: any) {
         console.error(`[Appointment Notification] ✗ Failed for ${recipient.email}:`, err.message);
         
-        // Record failure in DB
-        await supabase
+        // Record failure in DB — same reasoning as the success path above.
+        if (!isCancellation) await supabase
           .from('appointment_secondary_recipients')
           .insert({
             appointment_ghl_id: appointmentGhlId,
@@ -358,7 +446,7 @@ Deno.serve(async (req) => {
       metadata: {
         function: 'send-appointment-notification',
         appointment_id: appointmentGhlId,
-        recipients_total: recipients.length,
+        recipients_total: effectiveRecipients.length,
         recipients_success: results.filter(r => r.success).length,
         recipients_failed: results.filter(r => !r.success).length,
       },
@@ -368,7 +456,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Sent ${successCount}/${recipients.length} notifications`,
+        message: `Sent ${successCount}/${effectiveRecipients.length} notifications`,
         results,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

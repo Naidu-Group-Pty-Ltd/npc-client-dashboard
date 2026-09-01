@@ -21,14 +21,14 @@ import { useTeamUsers } from '@/hooks/useTeamUsers';
 const phaseStatusMap: Record<string, { label: string; icon: typeof CircleDot; color: string }> = {
   not_started: { label: 'Not Started', icon: Clock, color: 'text-muted-foreground' },
   in_progress: { label: 'In Progress', icon: CircleDot, color: 'text-primary' },
-  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success-foreground0' },
+  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success' },
   blocked: { label: 'Blocked', icon: AlertCircle, color: 'text-destructive' },
 };
 
 const milestoneStatusMap: Record<string, { label: string; icon: typeof CircleDot; color: string }> = {
   not_started: { label: 'Not Started', icon: Clock, color: 'text-muted-foreground' },
   in_progress: { label: 'In Progress', icon: CircleDot, color: 'text-primary' },
-  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success-foreground0' },
+  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success' },
   blocked: { label: 'Blocked', icon: AlertCircle, color: 'text-destructive' },
 };
 
@@ -724,7 +724,7 @@ function KPIRow({ kpi: k, mutations }: { kpi: GamePlanKPI; mutations: any }) {
                 className="h-6 w-20 text-xs" autoFocus onKeyDown={e => e.key === 'Enter' && saveValue()} />
               <span className="text-xs text-muted-foreground">/ {k.target_value}{k.unit}</span>
               <Button variant="ghost" size="icon" className="h-5 w-5" onClick={saveValue}>
-                <CheckCircle2 className="h-3 w-3 text-success-foreground0" />
+                <CheckCircle2 className="h-3 w-3 text-success" />
               </Button>
             </div>
           ) : (
@@ -744,7 +744,7 @@ function KPIRow({ kpi: k, mutations }: { kpi: GamePlanKPI; mutations: any }) {
           style={{ width: `${pct}%`, background: pct >= 100 ? 'hsl(var(--primary))' : pct >= 60 ? 'hsl(var(--primary))' : 'hsl(var(--warning, 38 92% 50%))' }} />
       </div>
       <div className="text-right mt-0.5">
-        <span className={cn('text-[10px] font-bold', pct >= 100 ? 'text-success-foreground0' : pct >= 60 ? 'text-primary' : 'text-brand-500')}>{pct}%</span>
+        <span className={cn('text-[10px] font-bold', pct >= 100 ? 'text-success' : pct >= 60 ? 'text-primary' : 'text-brand-500')}>{pct}%</span>
       </div>
     </div>
   );

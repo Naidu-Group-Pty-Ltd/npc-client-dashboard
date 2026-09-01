@@ -263,7 +263,10 @@ describe('the resolved links enter the pipeline that already exists', () => {
   });
 
   it('the spreadsheet reader is the one the runtime already loads', () => {
-    expect(source()).toContain("import('https://esm.sh/xlsx@0.18.5')");
+    // The reader lives in `workbookSheets.ts` now, shared with the hyperlink
+    // recovery so there is exactly one spreadsheet parser. Same runtime pin.
+    const reader = readSource('supabase/functions/_shared/builderStock/workbookSheets.ts');
+    expect(reader).toContain("import('https://esm.sh/xlsx@0.18.5')");
     const extract = readSource('supabase/functions/_shared/builderStock/extract.ts');
     expect(extract).toContain("import('https://esm.sh/xlsx@0.18.5')");
   });

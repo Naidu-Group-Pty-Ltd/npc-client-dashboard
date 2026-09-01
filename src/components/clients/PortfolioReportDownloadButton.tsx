@@ -40,6 +40,7 @@ import {
   deliverPortfolioReview,
   type PortfolioVariant,
 } from '@/lib/reports/portfolio/deliverPortfolioReview';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 export interface PortfolioReportDownloadButtonProps {
   /** The `portfolio_analysis_reports` row to typeset. */
@@ -108,8 +109,8 @@ export function PortfolioReportDownloadButton({
       } else if (which === 'server') {
         toast.success(
           result.reviewIncluded
-            ? 'Portfolio Performance Review ready, including the latest review'
-            : 'Portfolio Performance Review ready',
+            ? `${PORTFOLIO_REPORT_LABEL} ready, including the latest review`
+            : `${PORTFOLIO_REPORT_LABEL} ready`,
         );
       } else {
         toast.success('Saved PDF downloaded');

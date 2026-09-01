@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { secureStorageDownload, secureStorageUpload } from '@/hooks/useSecureStorage';
@@ -58,7 +57,11 @@ import { SnapshotDownloadButton } from '@/components/borrowing-capacity/Snapshot
 import { PortfolioReportDownloadButton } from '@/components/clients/PortfolioReportDownloadButton';
 import { snapshotBlob } from '@/lib/reports/borrowingCapacity/deliverSnapshot';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
+import { useClientReportInventory } from '@/hooks/useClientReportInventory';
+import { publishReportToPortal } from '@/lib/reports/publishReportToPortal';
+import type { UnifiedReport } from '@/lib/reports/clientReportInventory.pure';
 import { useAuth } from '@/hooks/useAuth';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface ClientReportsTabProps {
   clientId: string;
@@ -78,20 +81,7 @@ interface ClientReportsTabProps {
 type ReportType = 'all' | 'portfolio' | 'formara' | 'investment' | 'property' | 'borrowing' | 'published';
 type SortMode = 'newest' | 'oldest' | 'name';
 
-interface UnifiedReport {
-  id: string;
-  type: 'formara' | 'portfolio' | 'property' | 'investment' | 'borrowing' | 'published';
-  name: string;
-  generatedAt: string;
-  status: 'completed' | 'pending' | 'failed';
-  fileUrl?: string | null;
-  propertyAddress?: string;
-  source: 'file' | 'investment_report' | 'portfolio_report' | 'borrowing_assessment' | 'portal_report';
-  // Portfolio-specific fields
-  healthScore?: number | null;
-  overallHealth?: string | null;
-  portfolioValue?: number | null;
-}
+/* `UnifiedReport` is declared once, in `clientReportInventory.pure.ts`. */
 
 export function ClientReportsTab({
   clientId,
@@ -115,132 +105,27 @@ export function ClientReportsTab({
   const [generatingReportId, setGeneratingReportId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { user, loading: authLoading } = useAuth();
+  /* The signed-in reading is still the page's own: the hook declines to fetch
+     without a user, and this says why the library is empty rather than
+     leaving a blank panel. */
   const canFetchReports = !authLoading && !!user;
 
-  // Fetch client files that are reports
-  const { data: reportFiles = [] } = useQuery({
-    queryKey: ['client-report-files', clientId],
-    enabled: canFetchReports,
-    retry: false,
-    queryFn: async () => {
-      const { data, error } = await invokeSecureFunction('get-client-data', {
-        clientId,
-        include: { files: true },
-      });
-
-      if (error || !data?.success) {
-        console.warn('[ClientReportsTab] Failed to fetch client files:', error?.message || 'unknown error');
-        return [];
-      }
-
-      return (data.files || []).filter((f: any) => f.is_formara_form || f.report_type);
-    },
-  });
-
-  // Fetch investment reports linked to client properties via secure function
-  const propertyIds = properties.map((p) => p.id);
-  const { data: investmentReports = [] } = useQuery({
-    queryKey: ['client-investment-reports', clientId, propertyIds],
-    enabled: canFetchReports && propertyIds.length > 0,
-    retry: false,
-    queryFn: async () => {
-      if (propertyIds.length === 0) return [];
-
-      const { data, error } = await invokeSecureFunction('get-investment-reports', {
-        listMode: true,
-        listOptions: {
-          isClientReport: true,
-          clientPropertyIds: propertyIds,
-          select: 'id,property_address,status,created_at,client_property_id',
-          orderBy: 'created_at',
-          orderAsc: false,
-        }
-      });
-
-      if (error) {
-        console.warn('[ClientReportsTab] Failed to fetch investment reports:', error.message);
-        return [];
-      }
-
-      return data?.reports || [];
-    },
-  });
-
-  // Fetch borrowing capacity assessments for this client
-  const { data: bcAssessments = [] } = useQuery({
-    queryKey: ['client-bc-assessments', clientId],
-    enabled: canFetchReports,
-    retry: false,
-    queryFn: async () => {
-      const { data, error } = await invokeSecureFunction('get-client-data', {
-        listMode: true,
-        listOptions: {
-          table: 'borrowing_capacity_assessments',
-          select: 'id,created_at,borrowing_capacity,serviceability_band,updated_at',
-          orderBy: 'created_at',
-          order_asc: false,
-          filters: { client_id: clientId }
-        }
-      });
-
-      if (error) {
-        console.warn('[ClientReportsTab] Failed to fetch BC assessments:', error.message);
-        return [] as any[];
-      }
-
-      return (data?.records || []) as any[];
-    },
-  });
-
-  // Fetch portfolio analysis reports
-  const { data: portfolioReports = [], isLoading: portfolioLoading } = useQuery({
-    queryKey: ['portfolio-analysis-reports', clientId],
-    enabled: canFetchReports,
-    retry: false,
-    queryFn: async () => {
-      const { data, error } = await invokeSecureFunction('get-client-data', {
-        listMode: true,
-        listOptions: {
-          table: 'portfolio_analysis_reports',
-          select: '*',
-          orderBy: 'created_at',
-          order_asc: false,
-          filters: { client_id: clientId }
-        }
-      });
-
-      if (error) {
-        console.warn('[ClientReportsTab] Failed to fetch portfolio reports:', error.message);
-        return [] as any[];
-      }
-
-      return (data?.records || []) as any[];
-    },
-  });
-
-  // Fetch published portal reports for this client
-  const { data: portalReports = [] } = useQuery({
-    queryKey: ['client-portal-reports-unified', clientId],
-    enabled: canFetchReports,
-    retry: false,
-    queryFn: async () => {
-      const { data, error } = await invokeSecureFunction('get-client-data', {
-        listMode: true,
-        listOptions: {
-          table: 'client_portal_reports',
-          select: '*',
-          filters: { client_id: clientId },
-          orderBy: 'published_at',
-          order_asc: false,
-        },
-      });
-      if (error) {
-        console.warn('[ClientReportsTab] Failed to fetch portal reports:', error.message);
-        return [] as any[];
-      }
-      return (data?.records || []) as any[];
-    },
-  });
+  /**
+   * Every report this client has, from the five places they live.
+   *
+   * These queries used to be written out here and the Sent Reports tab had
+   * none of them, so publishing a generated report meant downloading it and
+   * uploading it again. They are one hook now, shared by both tabs with the
+   * same query keys — so the publish picker costs no extra round trip and
+   * neither list can quietly acquire a source the other lacks.
+   */
+  const propertyIds = useMemo(() => properties.map((p) => p.id), [properties]);
+  const {
+    reports: allReports,
+    publishedFiles,
+    isLoading: portfolioLoading,
+    portalReports,
+  } = useClientReportInventory(clientId, propertyIds);
 
   const deletePortfolioMutation = useMutation({
     mutationFn: async (reportId: string) => {
@@ -266,102 +151,6 @@ export function ClientReportsTab({
       toast.error('Portfolio report could not be deleted. No data was removed. Please try again.');
     },
   });
-
-  // Unified report list — merges all sources, deduplicates portfolio reports
-  const allReports: UnifiedReport[] = useMemo(() => {
-    const reports: UnifiedReport[] = [];
-
-    // Formara forms from files
-    reportFiles
-      .filter((f: any) => f.is_formara_form)
-      .forEach((f: any) => {
-        reports.push({
-          id: f.id,
-          type: 'formara',
-          name: f.file_name || 'Client Detail Form',
-          generatedAt: f.uploaded_at,
-          status: 'completed',
-          fileUrl: f.file_path,
-          source: 'file',
-        });
-      });
-
-    // Other report files (property reports etc) — exclude portfolio type (handled below)
-    reportFiles
-      .filter((f: any) => f.report_type && !f.is_formara_form && f.report_type !== 'portfolio')
-      .forEach((f: any) => {
-        reports.push({
-          id: f.id,
-          type: f.report_type as 'property' | 'investment',
-          name: f.file_name || `${f.report_type} Report`,
-          generatedAt: f.uploaded_at,
-          status: 'completed',
-          fileUrl: f.file_path,
-          propertyAddress: f.description,
-          source: 'file',
-        });
-      });
-
-    // Investment reports from investment_reports table
-    investmentReports.forEach((r: any) => {
-      reports.push({
-        id: r.id,
-        type: 'investment',
-        name: `Investment Report - ${r.property_address}`,
-        generatedAt: r.created_at,
-        status: (r.status === 'completed' ? 'completed' : r.status === 'failed' ? 'failed' : 'pending') as any,
-        fileUrl: r.pdf_url || null,
-        propertyAddress: r.property_address,
-        source: 'investment_report',
-      });
-    });
-
-    // Portfolio analysis reports from portfolio_analysis_reports table
-    portfolioReports.forEach((r: any) => {
-      reports.push({
-        id: r.id,
-        type: 'portfolio',
-        name: `Portfolio Analysis - ${format(new Date(r.created_at), 'dd MMM yyyy')}`,
-        generatedAt: r.created_at,
-        status: 'completed',
-        fileUrl: r.pdf_file_path,
-        source: 'portfolio_report',
-        healthScore: r.health_score,
-        overallHealth: r.overall_health,
-        portfolioValue: r.portfolio_value,
-      });
-    });
-
-    // Borrowing capacity assessments
-    bcAssessments.forEach((r: any) => {
-      const formattedCap = r.borrowing_capacity
-        ? `$${Number(r.borrowing_capacity).toLocaleString('en-AU', { maximumFractionDigits: 0 })}`
-        : '';
-      reports.push({
-        id: r.id,
-        type: 'borrowing',
-        name: `Borrowing Capacity${formattedCap ? ` – ${formattedCap}` : ''} (${r.serviceability_band || 'N/A'})`,
-        generatedAt: r.created_at,
-        status: 'completed',
-        source: 'borrowing_assessment',
-      });
-    });
-
-    // Published portal reports
-    portalReports.forEach((r: any) => {
-      reports.push({
-        id: `portal-${r.id}`,
-        type: 'published',
-        name: r.report_title || 'Published Report',
-        generatedAt: r.published_at || r.created_at,
-        status: 'completed',
-        fileUrl: r.storage_path,
-        source: 'portal_report',
-      });
-    });
-
-    return reports;
-  }, [reportFiles, investmentReports, portfolioReports, bcAssessments, portalReports]);
 
   // Filter + sort
   const filteredReports = useMemo(() => {
@@ -413,9 +202,9 @@ export function ClientReportsTab({
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed': return <CheckCircle2 className="h-3.5 w-3.5 text-success-foreground0" />;
+      case 'completed': return <CheckCircle2 className="h-3.5 w-3.5 text-success" />;
       case 'pending': return <Clock className="h-3.5 w-3.5 text-brand-500" />;
-      case 'failed': return <AlertCircle className="h-3.5 w-3.5 text-destructive-foreground0" />;
+      case 'failed': return <AlertCircle className="h-3.5 w-3.5 text-destructive" />;
       default: return null;
     }
   };
@@ -559,105 +348,30 @@ export function ClientReportsTab({
     }
   };
 
+  /**
+   * The paper-plane on a row, and the picker in the Sent Reports dialog, are
+   * the same act. `publishReportToPortal` is that act — including the
+   * borrowing-capacity assessment's render-on-publish, which used to be
+   * written out here and existed nowhere else.
+   */
   const handleSendToPortal = async (report: UnifiedReport) => {
-    const reportTypeMap: Record<string, string> = {
-      investment: 'investment',
-      portfolio: 'portfolio',
-      borrowing: 'borrowing_capacity',
-      formara: 'cash_flow',
-      property: 'investment',
-    };
-
-    let storagePath = report.fileUrl || null;
-
-    // For borrowing capacity reports, generate the PDF on-the-fly, upload to storage, then publish
-    if (report.source === 'borrowing_assessment' && !storagePath) {
-      toast.loading('Generating & uploading Borrowing Capacity PDF...', { id: 'portal-bc' });
-      try {
-        const { latestAssessment, incomeSources, liabilities, expenses, properties, client } =
-          await fetchLatestBorrowingCapacity(clientId);
-
-        if (!latestAssessment) {
-          toast.error('No borrowing capacity assessment found. Calculate capacity first.', { id: 'portal-bc' });
-          return;
-        }
-
-        // The only path that does not hand the file to the browser: it uploads
-        // to the portal prefix instead. `snapshotBlob` keeps that contract — a
-        // blob and a filename, produced with no download side effect — while
-        // giving this path the same renderer as every button beside it. The
-        // in-browser generator remains the fallback, and it is the one that
-        // knows this client's income, liabilities and expenses as loaded here.
-        const result = await snapshotBlob({
-          variant: 'server',
-          request: { clientId, clientName },
-          legacy: () => generateBorrowingCapacityPDF({
-            clientId,
-            clientName,
-            assessment: latestAssessment,
-            incomeSources,
-            liabilities,
-            expenses,
-            properties,
-            client,
-            returnBlob: true,
-          }),
-        });
-
-        if (!result?.blob) {
-          toast.error('PDF generation failed', { id: 'portal-bc' });
-          return;
-        }
-        if (result.brandGaps.length) {
-          toast.warning(`Publishing with gaps: ${result.brandGaps.join('; ')}`, { id: 'portal-bc-gaps' });
-        }
-
-        // Upload to storage
-        const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
-        const dateStr = format(new Date(), 'yyyy-MM-dd_HHmmss');
-        const uploadPath = `portal-reports/${clientId}/Borrowing_Capacity_${safeName}_${dateStr}.pdf`;
-
-        const uploadResult = await secureStorageUpload('client-files', uploadPath, result.blob, {
-          contentType: 'application/pdf',
-          upsert: true,
-        });
-
-        if (!uploadResult.success) {
-          toast.error('Failed to upload PDF: ' + uploadResult.error, { id: 'portal-bc' });
-          return;
-        }
-
-        storagePath = uploadResult.path || uploadPath;
-        toast.dismiss('portal-bc');
-      } catch (err: any) {
-        toast.error('Failed to generate PDF: ' + err.message, { id: 'portal-bc' });
-        return;
-      }
-    }
-
-    if (!storagePath) {
-      toast.error('No PDF available to send. Generate the report PDF first.');
+    const toastId = `portal-${report.id}`;
+    const outcome = await publishReportToPortal({
+      report,
+      clientId,
+      clientName,
+      onProgress: (message) => toast.loading(message, { id: toastId }),
+    });
+    toast.dismiss(toastId);
+    if (!outcome.ok) {
+      toast.error('Failed to publish: ' + outcome.error);
       return;
     }
-
-    try {
-      const { error } = await invokeSecureFunction('manage-client-data', {
-        operation: 'create',
-        table: 'client_portal_reports',
-        clientId,
-        data: {
-          report_title: report.name,
-          report_type: reportTypeMap[report.type] || 'investment',
-          storage_path: storagePath,
-          notes: report.propertyAddress ? `Property: ${report.propertyAddress}` : null,
-          published_at: new Date().toISOString(),
-        },
-      });
-      if (error) throw error;
-      toast.success('Report published to client portal');
-    } catch (err: any) {
-      toast.error('Failed to publish: ' + (err.message || 'Unknown error'));
-    }
+    toast.success(
+      outcome.generated ? 'Report generated and published to client portal' : 'Report published to client portal',
+    );
+    queryClient.invalidateQueries({ queryKey: ['client-portal-reports', clientId] });
+    queryClient.invalidateQueries({ queryKey: ['client-portal-reports-unified', clientId] });
   };
 
   const handleDelete = (report: UnifiedReport) => {
@@ -882,7 +596,7 @@ export function ClientReportsTab({
                 )}
 
                 {/*
-                  The typeset Portfolio Performance Review.
+                  The typeset {PORTFOLIO_REPORT_LABEL}.
 
                   Offered on every portfolio row, including the ones with no
                   `pdf_file_path` — 7 of the 21 stored reports are in that state
@@ -901,7 +615,7 @@ export function ClientReportsTab({
                     size="icon"
                     className="h-10 w-10 sm:h-8 sm:w-8"
                     icon={<Sparkles className="h-4 w-4" />}
-                    triggerLabel="Download the portfolio review"
+                    triggerLabel={`Download the ${PORTFOLIO_REPORT_LABEL}`}
                     reportId={report.id}
                     storedPath={report.fileUrl}
                     storedFileName={`${report.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`}

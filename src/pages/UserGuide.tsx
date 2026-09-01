@@ -70,7 +70,7 @@ const STATUS_DOT_CLASSES: Record<string, string> = {
   Active: 'bg-success',
   Pending: 'bg-brand-500',
   Sold: 'bg-info',
-  Withdrawn: 'bg-muted0',
+  Withdrawn: 'bg-muted',
   Expired: 'bg-destructive',
 };
 
@@ -374,7 +374,7 @@ export default function UserGuide() {
         <CardHeader className="space-y-2 border-b border-border/50 bg-[linear-gradient(135deg,hsl(var(--primary)/0.06),hsl(var(--muted)/0.16))]">
           <CardTitle className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-info/20 bg-info/10 shadow-inner shadow-info/10">
-              <AlertCircle className="h-5 w-5 text-info-foreground0" />
+              <AlertCircle className="h-5 w-5 text-info" />
             </span>
             <span className="min-w-0">Property Status Guide</span>
           </CardTitle>
@@ -576,7 +576,7 @@ export default function UserGuide() {
                             <ul className="grid min-w-0 gap-2 sm:grid-cols-2">
                               {item.features.map((feature, featureIndex) => (
                                 <li key={featureIndex} className="flex min-w-0 items-start gap-2.5 rounded-xl bg-background/55 p-2.5 text-sm leading-6 text-foreground/90 dark:bg-background/35">
-                                  <CheckCircle className="mt-1 h-4 w-4 flex-shrink-0 text-success-foreground0" />
+                                  <CheckCircle className="mt-1 h-4 w-4 flex-shrink-0 text-success" />
                                   <span className="min-w-0 break-words">{feature}</span>
                                 </li>
                               ))}

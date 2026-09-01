@@ -41,7 +41,27 @@ export function AmlPageHeader({
   return (
     <header className={cn("rounded-xl border border-border/60 bg-card/45 p-4 shadow-sm supports-[backdrop-filter]:bg-card/35 sm:p-5", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
-        <div className="flex min-w-0 flex-1 items-start gap-3">
+        {/*
+          ── `basis-72` is what makes this row wrap ─────────────────────
+          This was `flex-1` alone, which is `flex: 1 1 0%`. A flex line
+          wraps when the items' HYPOTHETICAL sizes overflow it, and a basis
+          of zero contributes nothing — so the line never overflowed, never
+          wrapped, and the title took whatever was left after the action
+          cluster had taken its content width. With `min-w-0` beside it,
+          "whatever was left" could be eighteen pixels.
+
+          Measured on the AUSTRAC hub, whose actions are Refresh and Start
+          AUSTRAC Report: at 430px the heading was 18px wide and 532px TALL
+          — one character per line — and it stayed broken at 480, 560 and
+          640. It escaped notice at 390 only because the action cluster
+          alone overflows there and forces the wrap by itself.
+
+          A real basis states what the title needs. Below it the row wraps
+          and the actions drop underneath; above it the title takes the
+          remaining width as before. 18rem is the same figure the case
+          workspace header already carries for the same reason.
+        */}
+        <div className="flex min-w-0 flex-1 basis-72 items-start gap-3">
           {Icon && (
             <div
               aria-hidden="true"

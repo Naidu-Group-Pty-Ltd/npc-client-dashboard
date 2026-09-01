@@ -256,7 +256,8 @@ export function ClientFormaraUpload({
       if (uploadedFile) {
         const filePath = `${clientId}/${Date.now()}_${uploadedFile.name}`;
         const uploadResult = await secureStorageUpload('client-documents', filePath, uploadedFile, {
-          contentType: uploadedFile.type
+          contentType: uploadedFile.type,
+          resourceId: clientId,
         });
 
         if (uploadResult.success) {

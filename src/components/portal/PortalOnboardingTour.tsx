@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePortalAuth } from '@/hooks/usePortalAuth';
 import { Button } from '@/components/ui/button';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 import { cn } from '@/lib/utils';
 import {
   Home, User, TrendingUp, Building2, BarChart3,
@@ -69,7 +70,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     targetSelector: '[data-tour="reports"]',
     title: 'Reports',
-    description: 'View investment reports, portfolio reviews, and other documents published by your advisor. Request new reports when needed.',
+    description: `View investment reports, ${PORTFOLIO_REPORT_LABEL} reports, and other documents published by your advisor. Request new reports when needed.`,
     icon: FileText,
     position: 'right',
   },

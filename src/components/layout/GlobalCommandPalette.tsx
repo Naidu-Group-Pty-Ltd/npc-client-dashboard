@@ -10,8 +10,8 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from '@/components/ui/command';
-import { Command as CommandIcon, ExternalLink, ShieldCheck } from 'lucide-react';
-import { useAmlAccess } from '@/hooks/useAmlAccess';
+import { Command as CommandIcon, ExternalLink } from 'lucide-react';
+import { useAmlNavEntry } from '@/hooks/useAmlNavEntry';
 import { useNavigationVisibility } from '@/hooks/useNavigation';
 import type { NavItemDef } from '@/lib/navigation/registry';
 
@@ -67,7 +67,6 @@ export function GlobalCommandPalette() {
   const [recent, setRecent] = React.useState<string[]>(() => readRecent());
   const navigate = useNavigate();
   const { paletteNavItems, paletteAdminItems } = useNavigationVisibility();
-  const aml = useAmlAccess();
 
   // Keyboard: ⌘K / Ctrl-K to toggle. `/` opens when nothing else has focus.
   React.useEffect(() => {
@@ -94,16 +93,11 @@ export function GlobalCommandPalette() {
     if (open) setRecent(readRecent());
   }, [open]);
 
-  const amlEntry: NavItemDef | null =
-    !aml.loading && aml.flagEnabled && aml.hasAnyRole
-      ? {
-          title: 'AML / CTF Compliance',
-          url: '/admin/aml',
-          icon: ShieldCheck,
-          moduleKey: '__aml__',
-          group: 'Compliance',
-        }
-      : null;
+  /* One definition, shared with both sidebars. This copy called the same
+     module "AML / CTF Compliance" and filed it under a group called
+     "Compliance" that no other surface used — which is what two copies of a
+     navigation entry become. */
+  const amlEntry = useAmlNavEntry();
 
   const allEntries = React.useMemo(() => {
     const list = [...paletteNavItems];

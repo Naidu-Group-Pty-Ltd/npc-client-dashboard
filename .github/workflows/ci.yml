@@ -211,55 +211,41 @@ jobs:
       # property, and an unrun test is not a test. Named by file rather than by
       # directory: the directory also holds contract specs that fail for reasons
       # of their own, and widening this to catch them would be a different job.
+      # NAMED BY PREFIX, NOT ONE BY ONE — because the hand-kept list rotted.
+      #
+      # This step used to enumerate 39 files. 56 exist, so SEVENTEEN Builder
+      # Stock suites ran on no runner: every proof in them was decorative, and
+      # a new test file joined them simply by being written. The list gave no
+      # sign of it — a missing entry looks exactly like a green step.
+      #
+      # It is not a hypothetical. `builderStockSettlementRecovery.test.ts` is
+      # the suite for `enforceStrictPrimaryImages`, and it was one of the
+      # seventeen. So when `imagePriority.pure.ts` replaced "the builder's own
+      # image, or nothing" with the fallback ladder and left that function
+      # behind on the repealed rule, nothing in CI was exercising it. The
+      # divergence reached production and cleared 45 marketplace pointers.
+      # Unrun too: `builderStockReimportIdentity` (cross-property attribution),
+      # `builderStockItemWorkClaim` (the claim RPC), `builderStockSafePublication`
+      # (publication atomicity) and the oversized-photo Street View guard.
+      #
+      # The comment below this step already records this exact failure once,
+      # for the Cloudflare worker: "its test file sat beside the list above
+      # without being on it". A list that has to be edited to stay correct will
+      # be wrong again, so there is no list. Vitest matches these positionally
+      # as path substrings, which is why a bare prefix picks up every file.
       - name: Unit tests (Builder Stock images)
         run: |
           npx vitest run \
-            src/lib/__tests__/builderStockAutomaticImages.test.ts \
-            src/lib/__tests__/builderStockPrimaryImageRole.test.ts \
-            src/lib/__tests__/builderStockExactSourceImage.test.ts \
-            src/lib/__tests__/builderStockPdfSourceImages.test.ts \
-            src/lib/__tests__/builderStockPackageImages.test.ts \
-            src/lib/__tests__/builderStockSourceImages.test.ts \
-            src/lib/__tests__/builderStockNotion.test.ts \
-            src/lib/__tests__/builderStockNormalise.test.ts \
-            src/lib/__tests__/builderStockUrlSource.test.ts \
-            src/lib/__tests__/builderStockMarketplaceEligibility.test.ts \
-            src/lib/__tests__/builderStockOverlayInpaint.test.ts \
-            src/lib/__tests__/builderStockDetectionResidue.test.ts \
-            src/lib/__tests__/builderStockSanitizeOverlay.test.ts \
-            src/lib/__tests__/builderStockDecodeFidelity.test.ts \
-            src/lib/__tests__/builderStockPreviewSanitization.test.ts \
-            src/lib/__tests__/builderStockImportBoundary.test.ts \
-            src/lib/__tests__/builderStockImagePriority.test.ts \
-            src/lib/__tests__/builderPortalTransport.test.ts \
-            src/lib/__tests__/builderStockSettlementLiveness.test.ts \
-            src/lib/__tests__/builderStockFallbackDriver.test.ts \
-            src/lib/__tests__/builderStockCronGate.test.ts \
-            src/lib/__tests__/builderStockPackageAttempt.test.ts \
-            src/lib/__tests__/builderStockCloudflareWorker.test.ts \
-            src/lib/__tests__/builderStockImportHandoff.test.ts \
-            src/lib/__tests__/builderStockPackageTieBreak.test.ts \
-            src/lib/__tests__/builderStockImageryInheritance.test.ts \
-            src/lib/__tests__/builderStockNotionViewContract.test.ts \
-            src/lib/__tests__/builderStockUploadContract.test.ts \
-            src/lib/__tests__/builderStockLadderExhaustion.test.ts \
-            src/lib/__tests__/builderStockGoogleSheetsSource.test.ts \
-            src/lib/__tests__/builderStockSheetHyperlinks.test.ts \
-            src/lib/__tests__/builderStockSourceBranches.test.ts \
-            src/lib/__tests__/builderStockSourceAccessNotice.test.ts \
-            src/lib/__tests__/builderStockCanonicalIdentity.test.ts \
-            src/lib/__tests__/builderStockLadderGeneration.test.ts \
-            src/lib/__tests__/builderStockWrongPhotograph.test.ts \
-            src/lib/__tests__/builderStockBrochureLinks.test.ts \
-            src/lib/__tests__/builderStockWebVerifiedStatus.test.ts
+            src/lib/__tests__/builderStock \
+            src/lib/__tests__/builderPortal
 
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
       # scanner, lint run or typecheck ever reached it — its test file sat
-      # beside the list above without being on it, and every proof in it (the
-      # no-external-URL assertion, the constant-time construction, the
-      # wrangler-has-no-credentials pin) ran on no runner. The test is named
-      # above; these two give the worker the lint and typecheck every other
-      # deployed process gets.
+      # beside the step above without being named by it, and every proof in it
+      # (the no-external-URL assertion, the constant-time construction, the
+      # wrangler-has-no-credentials pin) ran on no runner. The step above now
+      # matches it by prefix, for exactly that reason; these two give the worker
+      # the lint and typecheck every other deployed process gets.
       - name: Cloudflare worker — lint and typecheck
         run: |
           npx eslint cloudflare

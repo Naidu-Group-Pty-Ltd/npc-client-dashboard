@@ -51,6 +51,17 @@ export interface FinanceRecipientPickerProps {
   clientName: string;
   /** What is being sent, for the sentence above the list. */
   documentLabel?: string;
+  /**
+   * How it will reach them, which decides who may be chosen.
+   *
+   * Audit item 12. `'portal'` is the Finance Portal share, and a partner
+   * without a portal account cannot receive that — so they are listed with
+   * the refusal and cannot be selected. `'email'` needs an address and
+   * nothing else, so that refusal does not apply and must not disable them:
+   * the whole point of composing an email is reaching a partner the portal
+   * share cannot.
+   */
+  deliveryMode?: 'portal' | 'email';
   /** Disabled while the caller is producing or sending the document. */
   busy?: boolean;
   onConfirm: (recipient: FinanceReportRecipient) => void;
@@ -73,9 +84,14 @@ export function FinanceRecipientPicker({
   clientId,
   clientName,
   documentLabel = 'this report',
+  deliveryMode = 'portal',
   busy = false,
   onConfirm,
 }: FinanceRecipientPickerProps) {
+  const byEmail = deliveryMode === 'email';
+  /** Selectable here — not the same question as eligible for the portal. */
+  const canReceive = (recipient: FinanceReportRecipient) =>
+    byEmail ? Boolean(recipient.email) : recipient.eligible;
   const { recipients, eligible, suggested, isLoading, error, refetch } = useFinanceReportRecipients(
     clientId,
     open,
@@ -92,7 +108,9 @@ export function FinanceRecipientPicker({
     setSelectedId((current) => current ?? suggested?.id ?? null);
   }, [open, suggested?.id]);
 
-  const selected = eligible.find((recipient) => recipient.id === selectedId) ?? null;
+  const selected = (byEmail ? recipients : eligible).find(
+    (recipient) => recipient.id === selectedId && canReceive(recipient),
+  ) ?? null;
   const rows = order(recipients);
 
   return (
@@ -104,8 +122,8 @@ export function FinanceRecipientPicker({
             Send to Finance
           </DialogTitle>
           <DialogDescription className="text-left">
-            Choose the finance partner who should receive {documentLabel} for {clientName} through
-            the Finance Portal.
+            Choose the finance partner who should receive {documentLabel} for {clientName}
+            {byEmail ? ' by email.' : ' through the Finance Portal.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -143,7 +161,7 @@ export function FinanceRecipientPicker({
 
           {!isLoading && !error && rows.length > 0 && (
             <div className="space-y-2" role="radiogroup" aria-label="Finance partners">
-              {eligible.length === 0 && (
+              {!byEmail && eligible.length === 0 && (
                 <p className="mb-3 text-sm text-muted-foreground">
                   No finance partner is currently able to receive this client's reports. Assign one
                   to this client in Admin → Finance Portal, or invite them to the Finance Portal
@@ -158,12 +176,12 @@ export function FinanceRecipientPicker({
                     type="button"
                     role="radio"
                     aria-checked={isSelected}
-                    disabled={!recipient.eligible || busy}
+                    disabled={!canReceive(recipient) || busy}
                     onClick={() => setSelectedId(recipient.id)}
                     className={cn(
                       'glass-inset flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                      recipient.eligible ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
+                      canReceive(recipient) ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
                       isSelected && 'border-primary/50 ring-1 ring-primary/30',
                     )}
                   >
@@ -203,6 +221,7 @@ export function FinanceRecipientPicker({
                       {!recipient.eligible && recipient.blocked_message && (
                         <span className="mt-1.5 block text-xs text-warning">
                           {recipient.blocked_message}
+                          {byEmail && ' They can still be emailed.'}
                         </span>
                       )}
                     </span>
@@ -227,7 +246,7 @@ export function FinanceRecipientPicker({
             ) : (
               <Send className="mr-2 h-4 w-4" aria-hidden="true" />
             )}
-            {busy ? 'Sending…' : 'Send report'}
+            {busy ? 'Sending…' : byEmail ? 'Compose email' : 'Send report'}
           </Button>
         </DialogFooter>
       </DialogContent>

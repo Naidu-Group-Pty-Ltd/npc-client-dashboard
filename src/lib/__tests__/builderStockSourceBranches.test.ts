@@ -25,8 +25,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  allBranchesTerminal, branchQuestion, branchRecord, branchTerminal, classifyBranch,
-  openBranches, readBranchState, rowSourceBranches, writeBranchState,
+  allBranchesTerminal, branchForAttempt, branchQuestion, branchRecord, branchTerminal,
+  classifyBranch, openBranches, readBranchState, rowSourceBranches,
+  unmappedWithRecoveredLinks, writeBranchState,
 } from '../../../supabase/functions/_shared/builderStock/sourceBranches.pure';
 import {
   MAX_PACKAGE_ATTEMPTS, recordPackageAttempt, recordPackageUnprocessable,
@@ -298,10 +299,28 @@ describe('the traversal walks branches, and the old rule is gone', () => {
   it('one branch per tick, and the property comes back for the rest', () => {
     const body = source();
     expect(body).toContain('const openNow = openBranches(');
-    expect(body).toContain('const branch = openNow[0];');
     // More than one left means the property is not done, whatever this branch
     // answers, so the run may not report itself finished on its behalf.
     expect(body).toContain('if (openNow.length > 1) outcome.incomplete = true;');
+  });
+
+  /*
+   * This used to pin `const branch = openNow[0];`, and taking the first open
+   * branch every time is the defect: an `unreachable` branch records nothing,
+   * so it is open again next tick and first again, and the branches behind it
+   * are never asked. Upload `43ffa452` lost forty-nine properties to it.
+   */
+  it('rotates which open branch a run takes, so none can starve the rest', () => {
+    const code = stripComments(source());
+    expect(code).not.toContain('openNow[0]');
+    expect(code).toContain('branchForAttempt(openNow, attemptsByItem.get(itemId) ?? 0)');
+  });
+
+  it('rotates on the claim counter the settler already keeps', () => {
+    const code = stripComments(source());
+    // Read with the rows already loaded, so the rotation costs no query.
+    expect(code).toContain('image_work_attempts');
+    expect(code).toContain('attemptsByItem.set(item.id');
   });
 
   it('state is written per branch, never over the whole property', () => {
@@ -350,3 +369,138 @@ function readSource(relative: string): string {
   const { resolve } = require('node:path') as typeof import('node:path');
   return readFileSync(resolve(__dirname, '../../../', relative), 'utf8');
 }
+
+// ---------------------------------------------------------------------------
+// A re-read must not lose what the re-read cannot contain
+// ---------------------------------------------------------------------------
+
+/**
+ * A Google Sheet whose owner has turned off "viewers can download, print,
+ * copy" publishes no representation carrying a link target — every CSV of it
+ * shows the word `Brochure` and no address. The recovery reads those cells
+ * through an authorised connection and writes each row's own targets onto that
+ * row, so for such a document the stored row is the ONLY place the address
+ * exists.
+ *
+ * Measured in production before this existed: 350 targets recovered onto 86
+ * properties, correctly attributed, and every one invisible to stage 1 — which
+ * re-read the sheet, saw five labels and no addresses, and reported
+ * `stored 0, matched 0` for all eighty properties.
+ */
+describe('the recovered link is laid over the row the document re-stated', () => {
+  const documentRow = { 'Brochure V002': 'BROCHURE', 'Estate Brochure': 'Release Brochure' };
+  const storedRow = {
+    unmapped: {
+      'Brochure V002': 'BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view',
+      'Estate Brochure': 'Release Brochure https://drive.google.com/file/d/1BBBBBBBBBBBBBBBBBBBBBBBBBBESTATE/view',
+    },
+    recovered_link_columns: ['Brochure V002', 'Estate Brochure'],
+  };
+
+  it('gives the branch derivation an address the document could not state', () => {
+    const merged = unmappedWithRecoveredLinks(documentRow, storedRow);
+    expect(merged['Brochure V002'])
+      .toBe('BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view');
+
+    const branches = rowSourceBranches(merged);
+    expect(branches.map((branch) => branch.url)).toEqual([
+      'https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view',
+      'https://drive.google.com/file/d/1BBBBBBBBBBBBBBBBBBBBBBBBBBESTATE/view',
+    ]);
+    // Without the overlay the same row yields nothing at all — the defect.
+    expect(rowSourceBranches(documentRow)).toEqual([]);
+  });
+
+  it('returns the row untouched where no recovery has run', () => {
+    expect(unmappedWithRecoveredLinks(documentRow, { unmapped: {}, recovered_link_columns: [] }))
+      .toEqual(documentRow);
+    expect(unmappedWithRecoveredLinks(documentRow, null)).toEqual(documentRow);
+    expect(unmappedWithRecoveredLinks(documentRow, {})).toEqual(documentRow);
+  });
+
+  it('never invents a source: a named column with no link is ignored', () => {
+    const merged = unmappedWithRecoveredLinks(documentRow, {
+      unmapped: { 'Brochure V002': 'BROCHURE' },
+      recovered_link_columns: ['Brochure V002', 'Not A Column'],
+    });
+    expect(merged).toEqual(documentRow);
+    expect(rowSourceBranches(merged)).toEqual([]);
+  });
+
+  it('overlays only the columns the recovery named', () => {
+    const merged = unmappedWithRecoveredLinks(documentRow, {
+      unmapped: {
+        'Brochure V002': 'BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view',
+        'Estate Brochure': 'Release Brochure https://drive.google.com/file/d/1BBBBBBBBBBBBBBBBBBBBBBBBBBESTATE/view',
+      },
+      // Only one is claimed, so only one may be trusted.
+      recovered_link_columns: ['Brochure V002'],
+    });
+    expect(merged['Estate Brochure']).toBe('Release Brochure');
+    expect(rowSourceBranches(merged).map((b) => b.url))
+      .toEqual(['https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view']);
+  });
+
+  it('keeps each property to its own recovered link', () => {
+    const forLot = (lot: string) => unmappedWithRecoveredLinks(documentRow, {
+      unmapped: { 'Brochure V002': `BROCHURE https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA${lot}/view` },
+      recovered_link_columns: ['Brochure V002'],
+    });
+    const a = rowSourceBranches(forLot('1002')).map((b) => b.url);
+    const b = rowSourceBranches(forLot('1003')).map((b) => b.url);
+    expect(a).toEqual(['https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1002/view']);
+    expect(b).toEqual(['https://drive.google.com/file/d/1AAAAAAAAAAAAAAAAAAAAAAAAAAAA1003/view']);
+    expect(a[0]).not.toEqual(b[0]);
+  });
+});
+
+/**
+ * WHICH open branch a run takes.
+ *
+ * PRODUCTION, 31 AUGUST 2026, upload `43ffa452`. Forty-nine properties sat on
+ * the source stage across ten attempts each, `progressed: false` every time,
+ * because the branch selection was always `open[0]` and `open[0]` was a link
+ * that can never answer — a bare `Siting  / Masterplan` image, which is
+ * `unreachable` and therefore records nothing and is open again next tick. The
+ * two branches behind it were never asked once.
+ */
+describe('branchForAttempt', () => {
+  const open = ['brochure', 'estate', 'siting', 'stage-plan'];
+
+  it('reaches every open branch within one pass of the attempt counter', () => {
+    const seen = new Set<string>();
+    for (let attempt = 0; attempt < open.length; attempt += 1) {
+      seen.add(branchForAttempt(open, attempt)!);
+    }
+    // The whole point: a branch that can never answer cannot starve the rest.
+    expect([...seen].sort()).toEqual([...open].sort());
+  });
+
+  it('keeps asking a permanently unanswerable first branch, but not only it', () => {
+    // `siting` answers `unreachable` for ever, so it stays open for ever and
+    // stays first. Every OTHER branch must still come up.
+    const stillOpen = ['siting', 'stage-plan'];
+    const taken = [0, 1, 2, 3, 4].map((n) => branchForAttempt(stillOpen, n));
+    expect(taken).toEqual(['siting', 'stage-plan', 'siting', 'stage-plan', 'siting']);
+  });
+
+  it('is deterministic for one attempt count', () => {
+    expect(branchForAttempt(open, 5)).toBe(branchForAttempt(open, 5));
+  });
+
+  it('answers nothing when nothing is open', () => {
+    expect(branchForAttempt([], 3)).toBeNull();
+  });
+
+  it('treats an absent, negative or unparseable counter as the first attempt', () => {
+    for (const attempts of [0, -4, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(branchForAttempt(open, attempts)).toBe('brochure');
+    }
+  });
+
+  it('never returns a branch that is not open', () => {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      expect(open).toContain(branchForAttempt(open, attempt));
+    }
+  });
+});

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { ChevronDown, Search, ShieldCheck, X as XIcon } from 'lucide-react';
+import { ChevronDown, Search, X as XIcon } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -12,9 +12,9 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
-import { useAmlAccess } from '@/hooks/useAmlAccess';
+import { useAmlNavEntry } from '@/hooks/useAmlNavEntry';
 import { useNavigationVisibility } from '@/hooks/useNavigation';
-import { hasAmlCapability, type AmlCapability } from '@/lib/aml/permissions';
+import { AML_NAV_GROUP_TITLE } from '@/lib/navigation/amlEntry';
 import {
   NAVIGATION_GROUP_ORDER,
   navItemIsActive,
@@ -29,7 +29,7 @@ export function DashboardSidebar() {
   const currentPath = location.pathname;
   const { settings } = useWhiteLabel();
   const { visibleNavItems, visibleAdminItems } = useNavigationVisibility();
-  const aml = useAmlAccess();
+  const amlEntry = useAmlNavEntry();
   const isCollapsed = state === 'collapsed';
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [navFilter, setNavFilter] = useState('');
@@ -66,31 +66,13 @@ export function DashboardSidebar() {
     [visibleAdminItems, normalisedFilter],
   );
 
-  // AML/CTF Compliance — consolidated into a single sidebar entry. All
-  // sub-surfaces (Intake, Cases, Screening, AUSTRAC, Configuration, …) live
-  // as in-page tabs inside `/admin/aml` via `AmlLayout`. Gated by the AML
-  // feature flag AND the user's assigned AML role via useAmlAccess.
-  const amlGroupedItems = (() => {
-    if (aml.loading || !aml.flagEnabled || !aml.hasAnyRole) return null;
-    const amlCapabilities: AmlCapability[] = ['aml.view', 'aml.investigate', 'aml.report', 'aml.configure'];
-    const anyAllowed = amlCapabilities.some((capability) =>
-      hasAmlCapability(aml.roles, capability),
-    );
-    if (!anyAllowed) return null;
-    return {
-      title: 'AML/CTF Compliance',
-      items: [
-        {
-          title: 'AML/CTF Compliance',
-          url: '/admin/aml',
-          icon: ShieldCheck,
-          moduleKey: '__aml__',
-          group: 'AML/CTF Compliance',
-          activePatterns: ['/admin/aml'],
-        } satisfies NavItemDef,
-      ],
-    };
-  })();
+  // AML/CTF Compliance — one entry, defined in `lib/navigation/amlEntry.ts`
+  // and asked for by every navigation surface. It used to be built here and
+  // again in the command palette, and not at all in the two mobile surfaces,
+  // which is why the module had no door on a phone.
+  const amlGroupedItems = amlEntry
+    ? { title: AML_NAV_GROUP_TITLE, items: [amlEntry] }
+    : null;
 
   const renderNavigationItem = (item: NavItemDef, isAdministration = false) => {
     const active = isActive(item);

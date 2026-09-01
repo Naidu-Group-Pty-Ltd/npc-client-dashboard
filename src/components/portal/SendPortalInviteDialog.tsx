@@ -162,7 +162,7 @@ export function SendPortalInviteDialog({
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Compliance Tracking</p>
                     <div className="flex items-center gap-2">
                       {status.portal_user.has_accepted_terms ? (
-                        <CheckCircle className="h-4 w-4 text-success-foreground0 shrink-0" />
+                        <CheckCircle className="h-4 w-4 text-success shrink-0" />
                       ) : (
                         <CircleDot className="h-4 w-4 text-brand-500 shrink-0" />
                       )}
@@ -178,7 +178,7 @@ export function SendPortalInviteDialog({
                     )}
                     <div className="flex items-center gap-2">
                       {status.portal_user.has_completed_onboarding ? (
-                        <CheckCircle className="h-4 w-4 text-success-foreground0 shrink-0" />
+                        <CheckCircle className="h-4 w-4 text-success shrink-0" />
                       ) : (
                         <CircleDot className="h-4 w-4 text-brand-500 shrink-0" />
                       )}

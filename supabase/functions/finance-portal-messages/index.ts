@@ -231,7 +231,28 @@ Deno.serve(async (req) => {
       if (!portalUser.session_expires_at || new Date(portalUser.session_expires_at) < new Date()) {
         return jsonResponse({ error: 'Session expired' }, 401, corsHeaders);
       }
-      actor = { type: 'partner', portalUserId: portalUser.id, email: portalUser.email, name: portalUser.email };
+      // Audit item 48 — the display name was `portalUser.email`, so every
+      // message a finance partner sent was labelled with their address.
+      // `finance_portal_users` carries no name, but `finance_agent_contacts`
+      // does and is keyed by the same address. A failed or empty lookup falls
+      // back to the ROLE, never to the address: a label is for a reader, and
+      // an email tells them nothing a bubble position does not.
+      let partnerName: string | null = null;
+      if (portalUser.email) {
+        const { data: contact } = await supabase
+          .from('finance_agent_contacts')
+          .select('name')
+          .ilike('email', portalUser.email)
+          .maybeSingle();
+        const candidate = (contact?.name ?? '').trim();
+        if (candidate && !candidate.includes('@')) partnerName = candidate;
+      }
+      actor = {
+        type: 'partner',
+        portalUserId: portalUser.id,
+        email: portalUser.email,
+        name: partnerName ?? 'Finance Partner',
+      };
     } else if (portalToken) {
       const { data: session } = await supabase
         .from('client_portal_sessions')
@@ -243,11 +264,26 @@ Deno.serve(async (req) => {
       if (!portalUser || portalUser.status !== 'active') {
         return jsonResponse({ error: 'Invalid or expired client session' }, 401, corsHeaders);
       }
+      // Same fault, same rule: the client's name is on `clients`, and the
+      // portal user row holds only an address.
+      let clientName: string | null = null;
+      if (portalUser.client_id) {
+        const { data: clientRow } = await supabase
+          .from('clients')
+          .select('primary_first_name, primary_surname')
+          .eq('id', portalUser.client_id)
+          .maybeSingle();
+        const candidate = [clientRow?.primary_first_name, clientRow?.primary_surname]
+          .filter((part) => typeof part === 'string' && part.trim() !== '')
+          .join(' ')
+          .trim();
+        if (candidate && !candidate.includes('@')) clientName = candidate;
+      }
       actor = {
         type: 'client',
         portalUserId: portalUser.id,
         clientId: portalUser.client_id,
-        name: portalUser.email || 'Client',
+        name: clientName ?? 'Client',
       };
     } else {
       const auth = await verifyAuth(supabase, req.headers, body);

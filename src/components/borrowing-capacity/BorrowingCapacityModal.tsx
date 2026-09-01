@@ -477,12 +477,21 @@ export function BorrowingCapacityModal({
     return liabilityDebt + propertyDebt;
   }, [liabilitiesBreakdown, clientData?.properties]);
 
-  // Calculate HEM benchmark with breakdown
-  const isCouple = clientData?.client?.marital_status === 'married' || 
-                   clientData?.client?.marital_status === 'de_facto' ||
-                   !!clientData?.client?.secondary_first_name;
+  // Calculate HEM benchmark with breakdown.
+  //
+  // Audit item 9: this was its own household test — matching `de_facto` where
+  // the database holds `Defacto`, and `married` where it also holds `Married`
+  // — while the server ran a different list. The two answers were $2,940 and
+  // $4,130 a month for the same client, which is the whole $74,924 gap between
+  // the figure on the card and the figure on this screen. Both sides read the
+  // same rule now.
   const dependents = Math.min(3, clientData?.client?.dependents_count || 0);
-  const hemBreakdown: HemBreakdown = getHemBreakdown(isCouple ? 'couple' : 'single', dependents, totalGrossIncome);
+  const hemBreakdown: HemBreakdown = getHemBreakdown(
+    clientData?.client?.marital_status ?? null,
+    dependents,
+    totalGrossIncome,
+    clientData?.client?.secondary_first_name ?? null,
+  );
   const hemBenchmark = hemBreakdown.finalHem;
 
   // Sync declared expenses from database when data loads

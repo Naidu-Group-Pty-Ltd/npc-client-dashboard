@@ -14,6 +14,7 @@
  * the open stage. The rail is an ordered list inside a landmark, so
  * assistive technology reads it as the sequence it is.
  */
+import { useLayoutEffect, useRef } from "react";
 import { AlertTriangle, Check, HelpCircle, Minus } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -87,13 +88,43 @@ export function AmlJourneyRail({
 }: AmlJourneyRailProps) {
   const stages = journey.stages.filter((s) => visibleStages.has(s.id));
 
+  /*
+   * ── Bringing the open stage into view ────────────────────────────────
+   * Ten steps fit without scrolling from ~1024px up. Below that the rail
+   * scrolls, and clicking a step focuses it, which the browser scrolls into
+   * view on its own.
+   *
+   * Arriving is the case that was missed, and on a phone it is most of them.
+   * A deep link with `?stage=`, the Previous/Next stage buttons under the
+   * content, the next-action card and every link from Compliance Home all
+   * change the open stage without a step on this rail ever taking focus — so
+   * the rail stayed parked at Activation while the reader was on Screening,
+   * with the stage they were actually on clipped at the right-hand edge.
+   *
+   * `scrollLeft` is set directly rather than calling `scrollIntoView`: that
+   * method can scroll ancestors on both axes, and moving the PAGE because a
+   * strip inside it moved is a worse defect than the one being fixed.
+   */
+  const railRef = useRef<HTMLOListElement | null>(null);
+  useLayoutEffect(() => {
+    const rail = railRef.current;
+    if (!rail || !activeStageId) return;
+    if (rail.scrollWidth <= rail.clientWidth + 1) return;
+    const step = rail.querySelector<HTMLElement>(`[data-stage="${activeStageId}"]`);
+    if (!step) return;
+    const target = step.offsetLeft - (rail.clientWidth - step.offsetWidth) / 2;
+    const left = Math.max(0, Math.min(target, rail.scrollWidth - rail.clientWidth));
+    if (Math.abs(rail.scrollLeft - left) < 2) return;
+    const still = typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rail.scrollTo({ left, behavior: still ? "auto" : "smooth" });
+  }, [activeStageId, stages.length]);
+
   return (
     <nav aria-label="Compliance journey" className={cn("min-w-0", className)}>
-      {/* Ten steps fit without scrolling from ~1024px up; below that the rail
-          scrolls and snaps. Clicking a step focuses it, and a focused control
-          is scrolled into view by the browser — which is why this component
-          needs no layout effect of its own. */}
       <ol
+        ref={railRef}
         className="flex min-w-0 snap-x snap-proximity gap-0 overflow-x-auto pb-1 [scrollbar-width:thin]"
         aria-label="Compliance journey stages"
       >
@@ -103,6 +134,7 @@ export function AmlJourneyRail({
           return (
             <li
               key={stage.id}
+              data-stage={stage.id}
               aria-current={active ? "step" : undefined}
               className="relative flex min-w-[88px] max-w-[150px] flex-1 shrink-0 snap-center scroll-mx-4 flex-col items-center"
             >

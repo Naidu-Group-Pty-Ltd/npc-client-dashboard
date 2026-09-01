@@ -302,7 +302,7 @@ export function LandTaxCalculator({
           </h4>
           {isCalculating && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
           {result && !isCalculating && result.annualLandTax > 0 && (
-            <CheckCircle2 className="h-4 w-4 text-success-foreground0" />
+            <CheckCircle2 className="h-4 w-4 text-success" />
           )}
         </div>
 
@@ -316,7 +316,7 @@ export function LandTaxCalculator({
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger>
-                        <MapPin className="h-3 w-3 text-success-foreground0" />
+                        <MapPin className="h-3 w-3 text-success" />
                       </TooltipTrigger>
                       <TooltipContent>
                         <p>Auto-detected from address</p>

@@ -34,7 +34,7 @@ const TAG_COLORS = [
   { name: 'purple', class: 'bg-accent/20 text-accent border-accent/30' },
   { name: 'orange', class: 'bg-warning/20 text-warning border-warning/30' },
   { name: 'pink', class: 'bg-accent/20 text-accent border-accent/30' },
-  { name: 'gray', class: 'bg-muted0/20 text-muted-foreground border-border/30' },
+  { name: 'gray', class: 'bg-muted/20 text-muted-foreground border-border/30' },
 ];
 
 const getColorClass = (color: string) => {

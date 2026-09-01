@@ -28,6 +28,9 @@ import { EventDetailsModal } from '@/components/calendar/EventDetailsModal';
 import { CalendarSearchDropdown } from '@/components/calendar/CalendarSearchDropdown';
 import { TimelineView } from '@/components/calendar/TimelineView';
 import { DraggableEvent } from '@/components/calendar/DraggableEvent';
+import { eventColourSource, statusBadgeClass } from '@/lib/calendar/eventColour.pure';
+import { byStartTimeAscending } from '@/lib/calendar/eventOrder.pure';
+import { FALLBACK_CALENDAR_COLOR } from '@/lib/calendarColors';
 import { DropZone } from '@/components/calendar/DropZone';
 import { AvailabilitySlots } from '@/components/calendar/AvailabilitySlots';
 import { CalendarHeatmap } from '@/components/calendar/CalendarHeatmap';
@@ -625,7 +628,13 @@ export default function Calendar() {
     }
 
     return filtered;
-  }, [events, selectedCalendarId, searchQuery, outlookVisible, outlookEvents]);
+    // `visibleCalendars` and `calendars` are READ above (the overlay filter)
+    // and were missing here, so toggling a calendar in the overlay changed the
+    // state and this never recomputed — the grid, the events list, conflicts,
+    // the heatmap and analytics all kept the old set. That is audit item 26:
+    // "toggling on and off the calendar overlay but nothing happens". The
+    // Outlook toggle worked only because `outlookVisible` was already listed.
+  }, [events, calendars, visibleCalendars, selectedCalendarId, searchQuery, outlookVisible, outlookEvents]);
 
   const ghlExportFields = [
     { key: 'first_name', label: 'First Name' },
@@ -665,10 +674,12 @@ export default function Calendar() {
 
   const selectedDateEvents = useMemo(() => {
     if (!selectedDate) return [];
-    return filteredEvents.filter((event) => {
-      const d = safeParseISO(event.startTime);
-      return d ? isSameDay(d, selectedDate) : false;
-    });
+    return filteredEvents
+      .filter((event) => {
+        const d = safeParseISO(event.startTime);
+        return d ? isSameDay(d, selectedDate) : false;
+      })
+      .sort(byStartTimeAscending(safeParseISO));
   }, [filteredEvents, selectedDate]);
 
   const upcomingEvents = useMemo(() => {
@@ -703,11 +714,17 @@ export default function Calendar() {
     return Array.from({ length: 24 }, (_, i) => i);
   }, []);
 
+  // Earliest first. This only filtered before, so a day's pills came out in
+  // whatever order the provider happened to return — which is why the 28th read
+  // 16:00 above 13:00 while the 29th read 14:00 above 16:00 on the same screen.
+  // An unparseable start sorts last rather than throwing the order away.
   const getEventsForDay = (day: Date) => {
-    return filteredEvents.filter((event) => {
-      const d = safeParseISO(event.startTime);
-      return d ? isSameDay(d, day) : false;
-    });
+    return filteredEvents
+      .filter((event) => {
+        const d = safeParseISO(event.startTime);
+        return d ? isSameDay(d, day) : false;
+      })
+      .sort(byStartTimeAscending(safeParseISO));
   };
 
   const getEventsForDayAndHour = (day: Date, hour: number) => {
@@ -717,18 +734,11 @@ export default function Calendar() {
     });
   };
 
-  const getStatusColor = (status: string, appointmentStatus?: string) => {
-    const effectiveStatus = appointmentStatus || status;
-    switch (effectiveStatus?.toLowerCase()) {
-      case 'confirmed': return 'rounded-full border-success/25 bg-success/15 text-success';
-      case 'booked': return 'rounded-full border-info/25 bg-info/15 text-info';
-      case 'showed': return 'rounded-full border-success/25 bg-success/15 text-success';
-      case 'noshow': return 'rounded-full border-destructive/25 bg-destructive/15 text-destructive';
-      case 'cancelled': return 'rounded-full border-border bg-muted text-muted-foreground';
-      case 'pending': return 'rounded-full border-brand-400/25 bg-brand-500/15 text-brand-300';
-      default: return 'rounded-full border-border bg-card/85 text-muted-foreground';
-    }
-  };
+  // Delegates, so the chip here and the analytics breakdown cannot drift into
+  // two status vocabularies — which is how "Confirmed" came to wear a calendar's
+  // green dot on one panel and a badge on another.
+  const getStatusColor = (status: string, appointmentStatus?: string) =>
+    statusBadgeClass(appointmentStatus || status);
 
   const handleEventClick = (event: GHLEvent) => {
     setSelectedEvent(event);
@@ -747,28 +757,35 @@ export default function Calendar() {
       };
     }
 
-    // Cancelled appointments - Red styling with strikethrough effect
-    if (status === 'cancelled' || status === 'canceled') {
-      return {
-        backgroundColor: 'hsl(var(--destructive) / 0.15)',
-        borderLeft: '3px solid hsl(var(--destructive))',
-        color: 'hsl(var(--destructive))',
-        textDecoration: 'line-through',
-        opacity: 0.8,
-      };
-    }
+    // Only an EXCEPTIONAL state may take the pill's colour away from the
+    // calendar it belongs to. `confirmed` is not exceptional — it is how a live
+    // booking looks — and giving it a branch here painted every event on the
+    // grid the same green, so which calendar a booking belonged to (the one
+    // thing a month view is scanned for) never reached the pill. The events
+    // list beside it colours by calendar, which is why the two disagreed on
+    // screen. `eventColourSource` is the one place that rule is written.
+    if (eventColourSource(status) === 'status') {
+      // Cancelled - destructive, struck through.
+      if (status === 'cancelled' || status === 'canceled') {
+        return {
+          backgroundColor: 'hsl(var(--destructive) / 0.15)',
+          borderLeft: '3px solid hsl(var(--destructive))',
+          color: 'hsl(var(--destructive))',
+          textDecoration: 'line-through',
+          opacity: 0.8,
+        };
+      }
 
-    // Rescheduled appointments - Orange styling
-    if (status === 'rescheduled') {
-      return {
-        backgroundColor: 'hsl(38 92% 50% / 0.15)',
-        borderLeft: '3px solid hsl(38 92% 50%)',
-        color: 'hsl(38 92% 50%)',
-      };
-    }
+      // Rescheduled - this slot is not the one.
+      if (status === 'rescheduled') {
+        return {
+          backgroundColor: 'hsl(var(--warning) / 0.15)',
+          borderLeft: '3px solid hsl(var(--warning))',
+          color: 'hsl(var(--warning))',
+        };
+      }
 
-    // No-show appointments - Muted red
-    if (status === 'no_show' || status === 'noshow' || status === 'no-show') {
+      // No-show - destructive, dimmed.
       return {
         backgroundColor: 'hsl(var(--destructive) / 0.1)',
         borderLeft: '3px solid hsl(var(--destructive) / 0.6)',
@@ -777,16 +794,6 @@ export default function Calendar() {
       };
     }
 
-    // Confirmed appointments - Green styling
-    if (status === 'confirmed') {
-      return {
-        backgroundColor: 'hsl(142 76% 36% / 0.15)',
-        borderLeft: '3px solid hsl(142 76% 36%)',
-        color: 'hsl(142 76% 36%)',
-      };
-    }
-
-    // Default - Use calendar color
     const color = event.calendarColor || getCalendarColor(event.calendarId);
     return {
       backgroundColor: `${color}20`,
@@ -794,6 +801,49 @@ export default function Calendar() {
       color: color,
     };
   };
+
+  /**
+   * Cancel an appointment and tell the people who were invited to it.
+   *
+   * Audit item 33: only the client heard about a cancellation. The command
+   * centre set `appointmentStatus: 'cancelled'` on GHL and stopped there — GHL
+   * emails the client, and the additional contact and finance partner, who were
+   * invited by `send-appointment-notification`, were never told.
+   *
+   * The recipient list is resolved SERVER-side from what was actually invited,
+   * because this page has never held it: the cancel path knows an event id and
+   * nothing else.
+   *
+   * The notice is best-effort and deliberately after the fact. A cancellation
+   * that succeeded must not be reported as failed because an email did not go,
+   * and it must not be attempted twice.
+   */
+  const cancelEventAndNotify = useCallback(async (event: GHLEvent) => {
+    const result = await updateEvent(event.id, { appointmentStatus: 'cancelled' });
+    if (!result?.success) return result;
+
+    try {
+      await invokeSecureFunction('send-appointment-notification', {
+        kind: 'cancelled',
+        appointmentGhlId: event.id,
+        appointmentTitle: event.title || 'Appointment',
+        appointmentStart: event.startTime,
+        appointmentEnd: event.endTime,
+        appointmentType: 'call',
+        appointmentNotes: event.notes || undefined,
+        // The Zoom link, for a Zoom booking. GHL keeps it on `address`, and
+        // nothing used to pass it here — audit item 33.
+        appointmentLocation: event.address || undefined,
+        calendarName: event.calendarName,
+        // Omitted on purpose — the server reads who was invited.
+        recipients: [],
+      });
+    } catch (err) {
+      console.error('[Calendar] Cancellation notice failed to send', err);
+    }
+
+    return result;
+  }, [updateEvent]);
 
   // Go to today
   const goToToday = useCallback(() => {
@@ -887,7 +937,7 @@ export default function Calendar() {
             data.newEndTime,
             data.originalStartTime,
             data.originalEndTime,
-            { overrideAvailability: data.overrideAvailability, assignedUserId }
+            { overrideAvailability: data.overrideAvailability, assignedUserId, notes: data.notes }
           );
 
           if (result.success) {
@@ -911,6 +961,7 @@ export default function Calendar() {
                   appointmentEnd: data.newEndTime,
                   appointmentType: 'reschedule',
                   appointmentNotes: selectedEvent?.notes,
+                  appointmentLocation: selectedEvent?.address || undefined,
                   calendarName,
                   recipients: allNotificationRecipients,
                 });
@@ -1404,7 +1455,7 @@ export default function Calendar() {
                                     toast({ title: 'Event confirmed' });
                                   }}
                                   onCancel={async () => {
-                                    await updateEvent(event.id, { appointmentStatus: 'cancelled' });
+                                    await cancelEventAndNotify(event);
                                     toast({ title: 'Event cancelled' });
                                   }}
                                 >
@@ -1578,7 +1629,10 @@ export default function Calendar() {
                           aria-pressed={sidebarTab === tab.id}
                           aria-haspopup="menu"
                           aria-expanded={contextMenuTab === tab.id}
-                          title={tab.label}
+                          // Same as the expanded rail: the Radix tooltip names
+                          // this tool, so the browser's own would be a second
+                          // box beside it.
+
                           onClick={() => {
                             setSidebarTab(tab.id);
                             setSidebarCollapsed(false);
@@ -1679,7 +1733,11 @@ export default function Calendar() {
                               <ContextMenuTrigger asChild>
                               <TabsTrigger
                                 aria-label={`${tab.label}${isPinned ? ', pinned' : ''}`}
-                                title={tab.label}
+                                // No `title`. The Radix tooltip below already
+                                // names this tool and adds its shortcut and the
+                                // right-click hint; the browser's own tooltip
+                                // drew a second, smaller box beside it saying
+                                // only the label (audit item 32).
                                 value={tab.id}
                                 aria-haspopup="menu"
                                 aria-expanded={contextMenuTab === tab.id}
@@ -1918,6 +1976,7 @@ export default function Calendar() {
                   appointmentEnd: data.endTime,
                   appointmentType: 'call',
                   appointmentNotes: data.notes,
+                  appointmentLocation: result.event?.address || undefined,
                   calendarName,
                   recipients: allNotificationRecipients,
                 });
@@ -2088,7 +2147,10 @@ function EventCard({
   getStatusColor: (status: string, appointmentStatus?: string) => string;
   onClick: () => void;
 }) {
-  const color = event.calendarColor || '#3b82f6';
+  // The deterministic palette's first colour, not a literal blue: a card
+  // whose calendar colour has not resolved yet must not invent a hue that
+  // belongs to some other calendar.
+  const color = event.calendarColor || FALLBACK_CALENDAR_COLOR;
 
   return (
     <button

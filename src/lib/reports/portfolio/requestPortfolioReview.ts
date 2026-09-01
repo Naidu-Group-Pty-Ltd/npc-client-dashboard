@@ -24,6 +24,7 @@
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { looksUndeployed } from '../undeployedRoute';
+import { PORTFOLIO_REPORT_LABEL } from './label';
 
 export interface PortfolioReviewRequest {
   /** The `portfolio_analysis_reports` row to typeset. */
@@ -86,5 +87,5 @@ export async function requestPortfolioReview(
   }
 
   if (looksUndeployed(error)) throw new Error(UNDEPLOYED_MESSAGE);
-  throw new Error(error?.message || 'Could not generate the Portfolio Performance Review');
+  throw new Error(error?.message || `Could not generate the ${PORTFOLIO_REPORT_LABEL}`);
 }

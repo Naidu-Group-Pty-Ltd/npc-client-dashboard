@@ -18,12 +18,12 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@/integrations/supabase/env';
 
 
 const TYPE_META: Record<string, { label: string; icon: any; tone: string }> = {
-  document_upload:         { label: 'Document upload',         icon: FileText,    tone: 'bg-info/15 text-info-foreground0' },
+  document_upload:         { label: 'Document upload',         icon: FileText,    tone: 'bg-info/15 text-info' },
   lender_condition_action: { label: 'Lender condition',        icon: ShieldCheck, tone: 'bg-brand-500/15 text-brand-500' },
-  signature_request:       { label: 'Signature request',       icon: PenSquare,   tone: 'bg-accent/15 text-accent-foreground0' },
+  signature_request:       { label: 'Signature request',       icon: PenSquare,   tone: 'bg-accent/15 text-accent' },
   information_request:     { label: 'Information request',     icon: HelpCircle,  tone: 'bg-muted text-muted-foreground' },
-  decision_required:       { label: 'Decision required',       icon: AlertCircle, tone: 'bg-destructive/15 text-destructive-foreground0' },
-  payment_required:        { label: 'Payment required',        icon: Coins,       tone: 'bg-success/15 text-success-foreground0' },
+  decision_required:       { label: 'Decision required',       icon: AlertCircle, tone: 'bg-destructive/15 text-destructive' },
+  payment_required:        { label: 'Payment required',        icon: Coins,       tone: 'bg-success/15 text-success' },
   other:                   { label: 'Other',                   icon: Inbox,       tone: 'bg-muted text-muted-foreground' },
 };
 
@@ -211,7 +211,7 @@ function TaskRow({ task, onAction, muted }: { task: Task; onAction?: () => void;
             </span>
           )}
           {task.status === 'completed' && (
-            <span className="text-success-foreground0"><CheckCircle2 className="h-3 w-3 inline mr-1" />Completed</span>
+            <span className="text-success"><CheckCircle2 className="h-3 w-3 inline mr-1" />Completed</span>
           )}
         </div>
       </div>

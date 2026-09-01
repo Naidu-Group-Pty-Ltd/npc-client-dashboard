@@ -321,7 +321,7 @@ const Automation = () => {
           <CardContent className="p-4 sm:p-5">
             <div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 items-start gap-3 sm:gap-4">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-info/25 bg-info/15 text-info-foreground0 shadow-[0_12px_30px_hsl(var(--info)/0.14)] dark:text-info">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-info/25 bg-info/15 text-info shadow-[0_12px_30px_hsl(var(--info)/0.14)] dark:text-info">
                   <Zap className="h-5 w-5" />
                 </div>
                 <div className="min-w-0 space-y-2">

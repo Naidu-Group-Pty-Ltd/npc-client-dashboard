@@ -50,6 +50,13 @@ import { CashFlowAiPanel } from '@/components/cash-flow/modal/CashFlowAiPanel';
 import { CashFlowConstructionPanel } from '@/components/cash-flow/modal/CashFlowConstructionPanel';
 import { CashFlowProjectionTable } from '@/components/cash-flow/modal/CashFlowProjectionTable';
 import {
+  PROJECTION_TABLE_CLASS,
+  PROJECTION_LABEL_HEAD_CLASS,
+  PROJECTION_YEAR_HEAD_CLASS,
+  PROJECTION_YEAR_CELL_CLASS,
+  PROJECTION_YEAR_EDIT_CELL_CLASS,
+} from '@/lib/cashFlow/projectionTableGeometry.pure';
+import {
   get10YearLoanProjection,
   type MortgageInput,
   type RateChange,
@@ -61,6 +68,7 @@ import {
   resolveYearDepreciation,
   hydrateYearlyOverrides,
 } from '@/utils/cashFlowDepreciation';
+import { comparisonCandidates } from '@/lib/cashFlow/comparisonCandidates.pure';
 
 interface InvestmentReport {
   id: string;
@@ -480,9 +488,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
           });
 
           if (error) throw new Error(error.message);
-          // Filter out the current report
+          // Audit item 16 — the picker listed REPORTS and calls itself a
+          // property picker, so one address appeared once per report kind.
+          // `comparisonCandidates` keeps only reports that carry figures a
+          // comparison can draw, and one entry per property. Measured against
+          // production: 1,169 entries become 98, and 984 of the ones removed
+          // could not have been compared against at all.
           const allReports = (data?.reports || []) as InvestmentReport[];
-          setAvailableReports(allReports.filter(r => r.id !== report.id));
+          setAvailableReports(comparisonCandidates(allReports, report.id));
         } catch (error) {
           console.error('Error fetching reports for comparison:', error);
           toast({
@@ -2208,7 +2221,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     // and column jump). Fixed height + 1px border in every state. The md:*
     // variants pin the height/text-size across breakpoints so the shadcn Input
     // base classes (md:h-10 / md:text-sm) can't reintroduce a size mismatch.
-    const cellBox = 'box-border h-9 md:h-9 w-full min-w-[88px] rounded-lg border px-2 text-center text-xs md:text-xs';
+    const cellBox = 'box-border h-9 md:h-9 w-full rounded-lg border px-2 text-center text-xs md:text-xs';
 
     if (isEditing) {
       return (
@@ -3549,15 +3562,33 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   }, [report, baseFinancialData, projections, includeInputsSummaryInExport, includeConstructionScheduleInExport, constructionProgressSchedule, isNewBuild, chartExportToggles, excludeLandTaxFromCashFlow, toast]);
 
   // Generate PDF and upload to storage (for Send to Client)
+  /**
+   * Audit item 14 — "Export → Send to Client" reported
+   * `PDF generation failed. Please try again.`
+   *
+   * That message is `SendToClientModal`'s reading of a falsy return, and this
+   * function had FIVE ways to produce one: no report, no financial data, no
+   * blob, an upload that was refused, and anything thrown. Two of them logged
+   * nothing at all, and the refused upload discarded `uploadResult.error`
+   * entirely — which is where the reported failure almost certainly came from,
+   * because until the `resourceId` below was added, `secure-storage` answered
+   * `Invalid upload resource` to every human upload on this bucket (audit
+   * items 5, 7 and 8; `client_files` recorded no upload at all after July).
+   *
+   * So the cause is very probably already fixed. What was not fixed is that
+   * five different faults arrived as one sentence that names none of them.
+   * Each failure now throws its own reason, and the modal's catch renders it —
+   * `Failed to send: …` — so the next occurrence says what went wrong.
+   */
   const generateAndUploadCashFlowPDF = useCallback(async (chartOverrides?: { cashFlowTrends: boolean; yieldChart: boolean; comparisonChart: boolean }): Promise<string | null> => {
-    if (!report || !baseFinancialData) return null;
+    if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
+    if (!baseFinancialData) throw new Error('This report has no financial figures to render.');
 
     try {
       // Use the full PDF generator in blob mode, with optional chart overrides from Send to Client
       const pdfBlob = await exportSingleReportPDF({ returnBlob: true, chartOverrides });
       if (!pdfBlob || !(pdfBlob instanceof Blob)) {
-        console.error('PDF generation returned no blob');
-        return null;
+        throw new Error('The PDF renderer produced no document.');
       }
 
       const cleanedAddress = report.property_address.replace(/[_\s]?Copy[_\s]?\d*$/i, '').trim();
@@ -3567,16 +3598,21 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
       const uploadResult = await secureStorageUpload('investment-reports', fileName, file, {
         contentType: 'application/pdf',
+        // The `investment-reports` bucket binds to the report row itself.
+        resourceId: report.id,
       });
 
       if (uploadResult?.success && uploadResult.path) {
         setCashFlowStoragePath(uploadResult.path);
         return uploadResult.path;
       }
-      return null;
+      // The refusal, said rather than swallowed. `secure-storage` answers with
+      // a reason and this threw it away, which is how "Invalid upload resource"
+      // reached an operator as "PDF generation failed".
+      throw new Error(uploadResult?.error || 'The document could not be stored.');
     } catch (error) {
       console.error('Error generating cash flow PDF for upload:', error);
-      return null;
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }, [report, baseFinancialData, exportSingleReportPDF]);
 
@@ -5930,12 +5966,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
               </CardHeader>
               <CardContent className="p-0">
                 <div className="max-w-full overflow-x-auto rounded-b-2xl overscroll-x-contain border-t bg-background [-webkit-overflow-scrolling:touch]">
-                  <Table className="min-w-[1280px] border-separate border-spacing-0 text-sm">
+                  <Table className={PROJECTION_TABLE_CLASS}>
                     <TableHeader className="sticky top-0 z-30 shadow-sm">
                       <TableRow className="bg-card dark:bg-background hover:bg-background">
-                        <TableHead className="sticky left-0 z-30 min-w-[220px] bg-card dark:bg-background text-foreground dark:text-white shadow-[6px_0_12px_-12px_rgba(15,23,42,0.7)]">Overview</TableHead>
+                        <TableHead className={PROJECTION_LABEL_HEAD_CLASS}>Overview</TableHead>
                         {projections.map(p => (
-                          <TableHead key={p.year} className="min-w-[105px] bg-card dark:bg-background text-center text-foreground dark:text-white">
+                          <TableHead key={p.year} className={PROJECTION_YEAR_HEAD_CLASS}>
                             {p.year === 0 ? 'Today' : `Year ${p.year}`}
                             {p.year >= 1 && <span className="block text-[10px] font-normal text-muted-foreground dark:text-foreground">editable</span>}
                           </TableHead>
@@ -5947,7 +5983,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Capital Growth %</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '' : renderEditableCell(
                               p.year,
                               'capitalGrowthRate',
@@ -5962,7 +5998,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">CPI Growth %</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '' : renderEditableCell(
                               p.year,
                               'cpiGrowthRate',
@@ -5977,7 +6013,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Property Value $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {renderEditableCell(
                               p.year,
                               'propertyMarketValue',
@@ -5991,25 +6027,36 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Loan Amount $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.loanAmount.toLocaleString('en-AU')}</TableCell>
+                          <TableCell key={p.year} className={PROJECTION_YEAR_CELL_CLASS}>{p.loanAmount.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Statistics</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Statistics
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Equity $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center text-success">{p.equityInProperty.toLocaleString('en-AU')}</TableCell>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} text-success`}>{p.equityInProperty.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">LVR %</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.loanToValueRatio}</TableCell>
+                          <TableCell key={p.year} className={PROJECTION_YEAR_CELL_CLASS}>{p.loanToValueRatio}</TableCell>
                         ))}
                       </TableRow>
                       
@@ -6017,7 +6064,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Rental Income $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? `${baseFinancialData.weeklyRent}pw` : renderEditableCell(
                               p.year,
                               'rentalIncome',
@@ -6031,26 +6078,37 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Gross Yield %</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.year === 0 ? '' : p.grossYield}</TableCell>
+                          <TableCell key={p.year} className={PROJECTION_YEAR_CELL_CLASS}>{p.year === 0 ? '' : p.grossYield}</TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Yield %</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.year === 0 ? '' : p.netYield}</TableCell>
+                          <TableCell key={p.year} className={PROJECTION_YEAR_CELL_CLASS}>{p.year === 0 ? '' : p.netYield}</TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Cash Deductions</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Cash Deductions
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       {/* Property Expenses - Editable */}
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Property Expenses $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '0' : renderEditableCell(
                               p.year,
                               'propertyExpenses',
@@ -6066,7 +6124,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         <TableRow className="transition-colors hover:bg-primary/5">
                           <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Land Tax $</TableCell>
                           {projections.map(p => (
-                            <TableCell key={p.year} className="p-1 text-center align-middle">
+                            <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                               {p.year === 0 ? '' : renderEditableCell(
                                 p.year,
                                 'landTax',
@@ -6082,7 +6140,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Interest Rate %</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '' : renderEditableCell(
                               p.year,
                               'interestRate',
@@ -6097,7 +6155,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Interest Payments $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '0' : renderEditableCell(
                               p.year,
                               'interestPayment',
@@ -6112,7 +6170,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Principal Payments $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '0' : renderEditableCell(
                               p.year,
                               'principalPayment',
@@ -6126,7 +6184,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6135,21 +6193,32 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Non-Cash Deductions</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Non-Cash Deductions
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       {/* Depreciation - Editable */}
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Depreciation $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="p-1 text-center align-middle">
+                          <TableCell key={p.year} className={PROJECTION_YEAR_EDIT_CELL_CLASS}>
                             {p.year === 0 ? '' : renderEditableCell(
                               p.year,
                               'depreciation',
@@ -6161,20 +6230,31 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="sticky left-0 z-10 bg-primary/5 py-3 text-xs font-bold uppercase tracking-wide text-primary" colSpan={12}>Summary</TableCell>
+                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
+                          {/* Audit item 2: the label is what sticks, not the cell.
+                              `position: sticky` never moves an element outside its
+                              containing block, and a `colSpan={12}` cell is exactly as
+                              wide as the row — so it had no room to move and every
+                              section heading scrolled away while the narrow metric
+                              cells beside it stayed put. An inline-block inside the
+                              cell has the whole row to move within. */}
+                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
+                            Summary
+                          </span>
+                        </TableCell>
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Total Deductions $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center">{p.year === 0 ? '' : p.totalDeductions.toLocaleString('en-AU')}</TableCell>
+                          <TableCell key={p.year} className={PROJECTION_YEAR_CELL_CLASS}>{p.year === 0 ? '' : p.totalDeductions.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Profit/Loss $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.netProfitLoss.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6183,14 +6263,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Tax Refund $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className="text-center text-success">{p.year === 0 ? '' : p.taxRefund.toLocaleString('en-AU')}</TableCell>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} text-success`}>{p.year === 0 ? '' : p.taxRefund.toLocaleString('en-AU')}</TableCell>
                         ))}
                       </TableRow>
                       
                       <TableRow className="bg-primary/10">
                         <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6199,7 +6279,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="bg-primary/10">
                         <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}

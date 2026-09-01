@@ -64,7 +64,7 @@ const STATUS_TONE: Record<string, string> = {
   active: 'bg-primary/15 text-primary border-primary/30',
   on_hold: 'bg-brand-500/15 text-brand-500 border-brand-500/30',
   at_risk: 'bg-destructive/15 text-destructive border-destructive/30',
-  settled: 'bg-success/15 text-success-foreground0 border-success/30',
+  settled: 'bg-success/15 text-success border-success/30',
   cancelled: 'bg-muted text-muted-foreground',
 };
 
@@ -95,7 +95,7 @@ function urgencyTone(date: string | null | undefined) {
   const days = Math.ceil((new Date(date).getTime() - Date.now()) / 86_400_000);
   if (days < 0) return 'text-destructive';
   if (days <= 5) return 'text-brand-500';
-  return 'text-success-foreground0';
+  return 'text-success';
 }
 
 export default function FinancePortalPurchaseFiles() {

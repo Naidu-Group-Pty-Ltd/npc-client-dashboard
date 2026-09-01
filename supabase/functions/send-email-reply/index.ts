@@ -25,7 +25,19 @@ interface SendEmailRequest {
    * posts — so the new action cannot change what one of them does.
    */
   action?: 'list_senders';
-  to: string;
+  /**
+   * Audit item 45 — one address, or several.
+   *
+   * `cc` and `bcc` have always been arrays and the browser parsed a typed list
+   * into them; `to` was a bare string passed through raw and dropped into a
+   * single Graph `toRecipients` entry. Typing two addresses in To produced one
+   * malformed recipient rather than two people, which is why the report says
+   * there is "no way or any indication on how to add multiple recipients".
+   *
+   * A plain string still means exactly what it always did: every internal
+   * caller sends one, and one address parses to a list of one.
+   */
+  to: string | string[];
   subject: string;
   body: string;
   cc?: string[];
@@ -424,7 +436,16 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (!to || !subject || !emailBody) {
+    // Audit item 45 — To accepts a list, like Cc and Bcc always have.
+    // Split on comma or semicolon: Outlook writes semicolons, and a person
+    // pasting from it should not have to know that.
+    const toList = (Array.isArray(to) ? to : String(to ?? '').split(/[,;]/))
+      .map((address) => String(address ?? '').trim())
+      .filter((address) => address.includes('@'));
+    /** For the log line, the stored record and the notification. */
+    const toDisplay = toList.join(', ');
+
+    if (toList.length === 0 || !subject || !emailBody) {
       throw new Error('Missing required fields: to, subject, body');
     }
 
@@ -452,7 +473,7 @@ Deno.serve(async (req) => {
       resolvedMailbox = sender.personal_mailbox.trim();
     }
 
-    console.log(`[Send Email] Sending email to: ${to}, Subject: ${subject}, Source: ${source || 'user'}, Attachments: ${attachments?.length || 0}`);
+    console.log(`[Send Email] Sending email to: ${toDisplay}, Subject: ${subject}, Source: ${source || 'user'}, Attachments: ${attachments?.length || 0}`);
 
     // Outbound attachment ceiling (email send policy): cap count and aggregate
     // decoded size before shipping to Graph. Prevents a single request from
@@ -480,7 +501,7 @@ Deno.serve(async (req) => {
     const allowlistRaw = (Deno.env.get('EMAIL_RECIPIENT_ALLOWLIST') || '').trim();
     if (allowlistRaw) {
       const allowedDomains = allowlistRaw.toLowerCase().split(',').map((d) => d.trim().replace(/^@/, '')).filter(Boolean);
-      const allRecipients = [to, ...(cc || []), ...(bcc || [])].filter(Boolean) as string[];
+      const allRecipients = [...toList, ...(cc || []), ...(bcc || [])].filter(Boolean) as string[];
       const domainOf = (addr: string) => (addr.split('@')[1] || '').toLowerCase().trim();
       const offending = allRecipients.filter((r) => !allowedDomains.includes(domainOf(r)));
       if (offending.length > 0) {
@@ -592,11 +613,7 @@ Deno.serve(async (req) => {
           content: finalBody
         },
         toRecipients: [
-          {
-            emailAddress: {
-              address: to
-            }
-          }
+          ...toList.map((address) => ({ emailAddress: { address } })),
         ]
       },
       saveToSentItems: true
@@ -653,7 +670,7 @@ Deno.serve(async (req) => {
       endpoint: '/v1.0/users/sendMail',
       status: 'success',
       model_used: 'graph-api',
-      metadata: { to, subject, has_attachments: !!(attachments?.length) },
+      metadata: { to: toDisplay, subject, has_attachments: !!(attachments?.length) },
     });
 
     // Store attachment metadata (without contentBytes) for tracking
@@ -667,7 +684,7 @@ Deno.serve(async (req) => {
       .from('email_copilot_sent_replies')
       .insert({
         original_email_id: originalEmailId || null,
-        recipient: to,
+        recipient: toDisplay,
         subject: subject,
         body: emailBody,
         cc_recipients: cc || [],
@@ -691,7 +708,9 @@ Deno.serve(async (req) => {
     // service/agent sends, the email_copilot module viewers) instead of
     // broadcasting the recipient + subject to every authenticated user.
     if (!dbError) {
-      const recipientName = to.split('@')[0];
+      const recipientName = toList.length > 1
+        ? `${toList.length} recipients`
+        : toList[0].split('@')[0];
       const notification = {
         type: 'email_reply_sent',
         title: 'Email Sent',

@@ -506,7 +506,13 @@ export function AgentChatWidget() {
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const storagePath = `agent-uploads/${user.id}/${timestamp}-${file.name}`;
         try {
-          await secureStorageUpload('client-files', storagePath, file, { upsert: true });
+          // Bound to the conversation this attachment belongs to. `secure-storage`
+          // derives ownership from an authoritative row, and an agent
+          // attachment belongs to a chat rather than to any client.
+          await secureStorageUpload('client-files', storagePath, file, {
+            upsert: true,
+            resourceId: finalConvId,
+          });
           // Index in DB
           await invokeSecureFunction('ai-dashboard-agent', {
             action: 'index-file-upload',

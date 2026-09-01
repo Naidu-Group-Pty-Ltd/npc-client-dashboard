@@ -56,6 +56,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
 
 interface PortfolioAnalysisReport {
   id: string;
@@ -260,8 +261,8 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
       } else {
         toast.success(
           result.reviewIncluded
-            ? 'Portfolio Performance Review ready, including the latest review'
-            : 'Portfolio Performance Review ready',
+            ? `${PORTFOLIO_REPORT_LABEL} ready, including the latest review`
+            : `${PORTFOLIO_REPORT_LABEL} ready`,
         );
       }
     } catch (e: any) {
@@ -451,7 +452,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
               every row's typeset download reads it. */}
           <ReportTemplateSelector
             reportType="portfolio"
-            formatLabel="Portfolio Performance Review"
+            formatLabel={PORTFOLIO_REPORT_LABEL}
             className="mt-3"
           />
         </CardHeader>

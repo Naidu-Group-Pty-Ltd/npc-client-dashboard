@@ -13,6 +13,14 @@ import { Clock, CalendarIcon, Send, Loader2, X } from 'lucide-react';
 import { format, addDays, addHours, isAfter, set, nextMonday } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+// Audit item 46 — a scheduled time needs to say what clock it is on.
+import {
+  availableTimeZones,
+  currentTimeZone,
+  describeInstantIn,
+  describeTimeZone,
+  zonedWallClockToInstant,
+} from '@/lib/email/scheduleTimezone.pure';
 
 interface ScheduleSendButtonProps {
   disabled?: boolean;
@@ -49,7 +57,33 @@ export function ScheduleSendButton({ disabled, buildPayload, onScheduled }: Sche
   const [pickerOpen, setPickerOpen] = useState(false);
   const [date, setDate] = useState<Date | undefined>(addDays(new Date(), 1));
   const [time, setTime] = useState('09:00');
+  /**
+   * Audit item 46 — the custom time is read in THIS zone.
+   *
+   * It used to be built with `set(date, { hours })`, which is the browser's
+   * own zone, and nothing on screen said so: "9:00 AM" was an assumption
+   * rather than a statement, and there was no way to schedule around a
+   * recipient's clock. Defaulting to the reader's zone keeps the existing
+   * behaviour for anyone who does not touch it.
+   */
+  const [timeZone, setTimeZone] = useState(() => currentTimeZone());
+  const [zoneQuery, setZoneQuery] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  const [hourPart, minutePart] = time.split(':').map(Number);
+  /** The instant the typed wall clock names in the chosen zone. */
+  const customInstant = date
+    ? zonedWallClockToInstant(
+        {
+          year: date.getFullYear(),
+          month: date.getMonth() + 1,
+          day: date.getDate(),
+          hour: Number.isFinite(hourPart) ? hourPart : 9,
+          minute: Number.isFinite(minutePart) ? minutePart : 0,
+        },
+        timeZone,
+      )
+    : null;
 
   const submit = async (when: Date) => {
     if (when.getTime() < Date.now() + 30_000) {
@@ -78,10 +112,8 @@ export function ScheduleSendButton({ disabled, buildPayload, onScheduled }: Sche
   };
 
   const submitCustom = () => {
-    if (!date) return;
-    const [h, m] = time.split(':').map(Number);
-    const when = set(date, { hours: h || 9, minutes: m || 0, seconds: 0, milliseconds: 0 });
-    submit(when);
+    if (!customInstant) return;
+    submit(customInstant);
   };
 
   return (
@@ -127,6 +159,38 @@ export function ScheduleSendButton({ disabled, buildPayload, onScheduled }: Sche
                   </PopoverContent>
                 </Popover>
                 <Input type="time" value={time} onChange={(e) => setTime(e.target.value)} className="w-32" />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs" htmlFor="schedule-timezone">Timezone</Label>
+                <Input
+                  value={zoneQuery}
+                  onChange={(e) => setZoneQuery(e.target.value)}
+                  placeholder="Filter timezones…"
+                  aria-label="Filter timezones"
+                  className="h-8 text-xs"
+                />
+                <select
+                  id="schedule-timezone"
+                  value={timeZone}
+                  onChange={(e) => setTimeZone(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {availableTimeZones()
+                    .filter((zone) => !zoneQuery || zone.toLowerCase().includes(zoneQuery.toLowerCase()))
+                    .slice(0, 200)
+                    .map((zone) => (
+                      <option key={zone} value={zone}>{describeTimeZone(zone)}</option>
+                    ))}
+                </select>
+                {customInstant && (
+                  <p className="text-[11px] leading-4 text-muted-foreground">
+                    Sends {describeInstantIn(customInstant, timeZone)} in {timeZone}
+                    {timeZone !== currentTimeZone() && (
+                      <> — {describeInstantIn(customInstant, currentTimeZone())} your time</>
+                    )}
+                  </p>
+                )}
               </div>
             </div>
           </div>

@@ -25,10 +25,10 @@ const fn = 'finance-portal-deal-trackers';
 /* ─────────────────────── Finance Decisions ─────────────────────── */
 
 const DECISION_META: Record<string, { label: string; tone: string; icon: any }> = {
-  green_light:               { label: 'Green light',                tone: 'bg-success/15 text-success-foreground0 border-success/30', icon: ThumbsUp },
+  green_light:               { label: 'Green light',                tone: 'bg-success/15 text-success border-success/30', icon: ThumbsUp },
   proceed_with_caution:      { label: 'Proceed with caution',       tone: 'bg-brand-500/15 text-brand-500 border-brand-500/30',     icon: AlertTriangle },
   not_suitable:              { label: 'Not suitable',               tone: 'bg-destructive/15 text-destructive border-destructive/30', icon: ThumbsDown },
-  need_more_info:            { label: 'More information required',  tone: 'bg-info/15 text-info-foreground0 border-info/30',           icon: HelpCircle },
+  need_more_info:            { label: 'More information required',  tone: 'bg-info/15 text-info border-info/30',           icon: HelpCircle },
   subject_to_valuation:      { label: 'Subject to valuation',       tone: 'bg-muted text-muted-foreground border-border',           icon: Wallet },
   subject_to_lender_review:  { label: 'Subject to lender review',   tone: 'bg-muted text-muted-foreground border-border',           icon: ShieldCheck },
   subject_to_equity:         { label: 'Subject to equity release',  tone: 'bg-muted text-muted-foreground border-border',           icon: Coins },
@@ -262,8 +262,8 @@ function NumField({ label, value, onChange, step }: { label: string; value: any;
 const CONDITION_STATUS: Record<string, { label: string; tone: string }> = {
   pending:     { label: 'Pending',     tone: 'bg-muted text-muted-foreground' },
   in_progress: { label: 'In progress', tone: 'bg-brand-500/15 text-brand-500' },
-  uploaded:    { label: 'Uploaded',    tone: 'bg-info/15 text-info-foreground0' },
-  satisfied:   { label: 'Satisfied',   tone: 'bg-success/15 text-success-foreground0' },
+  uploaded:    { label: 'Uploaded',    tone: 'bg-info/15 text-info' },
+  satisfied:   { label: 'Satisfied',   tone: 'bg-success/15 text-success' },
   waived:      { label: 'Waived',      tone: 'bg-muted text-muted-foreground' },
 };
 const CONDITION_OWNER: Record<string, string> = {
@@ -312,7 +312,7 @@ export function ConditionsTab({ fileId }: { fileId: string }) {
           <div className="flex gap-5 text-sm">
             <Stat label="Total" value={stats.total} />
             <Stat label="Outstanding" value={stats.outstanding} tone="text-brand-500" />
-            <Stat label="Satisfied" value={stats.satisfied} tone="text-success-foreground0" />
+            <Stat label="Satisfied" value={stats.satisfied} tone="text-success" />
           </div>
           <Button size="sm" onClick={() => setOpen(true)} className="gap-1.5"><Plus className="h-4 w-4" /> Add condition</Button>
         </CardContent>
@@ -336,7 +336,7 @@ export function ConditionsTab({ fileId }: { fileId: string }) {
                     onClick={() => update(c.id, { status: done ? 'pending' : 'satisfied' })}
                     className="mt-0.5 shrink-0"
                   >
-                    {done ? <CheckCircle2 className="h-5 w-5 text-success-foreground0" /> : <CircleDot className="h-5 w-5 text-muted-foreground" />}
+                    {done ? <CheckCircle2 className="h-5 w-5 text-success" /> : <CircleDot className="h-5 w-5 text-muted-foreground" />}
                   </button>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -434,15 +434,15 @@ function AddConditionDialog({ open, onOpenChange, fileId, onAdded }: { open: boo
 const VAL_STATUS: Record<string, { label: string; tone: string }> = {
   ordered:        { label: 'Ordered',        tone: 'bg-muted text-muted-foreground' },
   access_pending: { label: 'Access pending', tone: 'bg-brand-500/15 text-brand-500' },
-  inspected:      { label: 'Inspected',      tone: 'bg-info/15 text-info-foreground0' },
-  returned:       { label: 'Returned',       tone: 'bg-success/15 text-success-foreground0' },
+  inspected:      { label: 'Inspected',      tone: 'bg-info/15 text-info' },
+  returned:       { label: 'Returned',       tone: 'bg-success/15 text-success' },
   disputed:       { label: 'Disputed',       tone: 'bg-destructive/15 text-destructive' },
   cancelled:      { label: 'Cancelled',      tone: 'bg-muted text-muted-foreground' },
 };
 const VAL_RESULT: Record<string, { label: string; tone: string }> = {
   pending:        { label: 'Pending',         tone: 'text-muted-foreground' },
-  on_contract:    { label: 'On contract',     tone: 'text-success-foreground0' },
-  above_contract: { label: 'Above contract',  tone: 'text-success-foreground0' },
+  on_contract:    { label: 'On contract',     tone: 'text-success' },
+  above_contract: { label: 'Above contract',  tone: 'text-success' },
   short:          { label: 'Short',           tone: 'text-destructive' },
 };
 
@@ -511,7 +511,7 @@ export function ValuationsTab({ fileId }: { fileId: string }) {
                     <Field label="Contract" value={v.contract_price != null ? `$${Number(v.contract_price).toLocaleString('en-AU')}` : '—'} />
                     <Field label="Valuation" value={v.valuation_amount != null ? `$${Number(v.valuation_amount).toLocaleString('en-AU')}` : '—'} />
                     <Field label="Shortfall" value={short ? `$${Number(v.shortfall).toLocaleString('en-AU')}` : '—'} tone={short ? 'text-destructive' : undefined} />
-                    <Field label="Risk" value={(v.risk_level || 'low').toUpperCase()} tone={v.risk_level === 'high' ? 'text-destructive' : v.risk_level === 'medium' ? 'text-brand-500' : 'text-success-foreground0'} />
+                    <Field label="Risk" value={(v.risk_level || 'low').toUpperCase()} tone={v.risk_level === 'high' ? 'text-destructive' : v.risk_level === 'medium' ? 'text-brand-500' : 'text-success'} />
                   </div>
                   {(v.access_required || v.agent_contact || v.next_action || v.notes) && (
                     <div className="text-xs text-muted-foreground space-y-1 border-t pt-2">

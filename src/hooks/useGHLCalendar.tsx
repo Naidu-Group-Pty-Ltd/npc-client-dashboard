@@ -292,7 +292,7 @@ export function useGHLCalendar() {
     newEndTime: string,
     originalStartTime?: string,
     originalEndTime?: string,
-    options?: { overrideAvailability?: boolean; assignedUserId?: string }
+    options?: { overrideAvailability?: boolean; assignedUserId?: string; notes?: string }
   ): Promise<{ success: boolean; undo?: () => Promise<boolean> }> => {
     setIsUpdating(true);
 
@@ -305,6 +305,10 @@ export function useGHLCalendar() {
       };
       if (options?.overrideAvailability) payload.overrideAvailability = true;
       if (options?.assignedUserId) payload.assignedUserId = options.assignedUserId;
+      // The reschedule form carries notes now (audit item 29): a moved
+      // appointment usually moves for a reason, and the form had nowhere to say
+      // it. `update` has always accepted the field.
+      if (options?.notes !== undefined) payload.notes = options.notes;
 
       const { data, error: updateError } = await invokeSecureFunction('ghl-calendar', payload);
 

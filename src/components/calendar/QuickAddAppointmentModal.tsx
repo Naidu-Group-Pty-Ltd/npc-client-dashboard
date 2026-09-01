@@ -18,6 +18,7 @@ import { useFinanceContacts, FinanceContact } from '@/hooks/useFinanceContacts';
 import { supabase } from '@/integrations/supabase/client';
 import type { GHLCalendar, GHLContact, GHLTeamMember } from '@/hooks/useGHLCalendar';
 import { TeamOutlookAvailability } from './TeamOutlookAvailability';
+import { suggestedAppointmentTitle } from '@/lib/calendar/appointmentTitle.pure';
 
 export interface BookingRecipient {
   name: string;
@@ -81,6 +82,9 @@ export function QuickAddAppointmentModal({
   const [duration, setDuration] = useState('30');
   const [notes, setNotes] = useState('');
   const [appointmentType, setAppointmentType] = useState('call');
+  // True once the operator types in the title box. A suggestion may be
+  // replaced when the type changes; their own wording never may.
+  const [titleAuthored, setTitleAuthored] = useState(false);
   const [inputTimezone, setInputTimezone] = useState<string>(() => getBookingTimezone());
   const [selectedFinanceContacts, setSelectedFinanceContacts] = useState<FinanceContact[]>([]);
   const [overrideAvailability, setOverrideAvailability] = useState(false);
@@ -115,6 +119,7 @@ export function QuickAddAppointmentModal({
       setSelectedContact(null);
       setSearchResults([]);
       setAppointmentType('call');
+      setTitleAuthored(false);
       setSelectedFinanceContacts([]);
       setOverrideAvailability(false);
       setSelectedTeamMemberId('');
@@ -138,6 +143,26 @@ export function QuickAddAppointmentModal({
     }
     wasOpenRef.current = open;
   }, [open, defaultDate, defaultHour, calendars]);
+
+  // Re-suggest the title when the appointment type changes.
+  //
+  // The title used to be written once, inside the contact picker, and nothing
+  // revisited it — so picking "Zoom Meeting" and then switching to "Phone Call"
+  // left a booking named "Zoom Meeting with <client>" and sent it out that way.
+  // A suggestion follows the type; a title the operator typed is left alone,
+  // which is what `titleAuthored` is for.
+  useEffect(() => {
+    if (!open || titleAuthored) return;
+    const typeLabel = APPOINTMENT_TYPES.find(t => t.value === appointmentType)?.label || 'Appointment';
+    const contactName = selectedContact
+      ? selectedContact.name
+        || `${selectedContact.firstName || ''} ${selectedContact.lastName || ''}`.trim()
+      : '';
+    // Before anyone is picked there is nothing to name, so the box stays empty
+    // rather than filling with a bare type the operator did not ask for.
+    if (!contactName) return;
+    setTitle(suggestedAppointmentTitle({ typeLabel, contactName }));
+  }, [open, appointmentType, selectedContact, titleAuthored]);
 
   // Calendar data can arrive after the dialog opens. Set only the missing
   // calendar value; all existing draft fields remain untouched.
@@ -223,11 +248,11 @@ export function QuickAddAppointmentModal({
     setContactSearch('');
     setShowContactDropdown(false);
     
-    // Auto-fill title if empty
-    if (!title.trim()) {
+    // Suggest a title unless the operator has written their own.
+    if (!titleAuthored) {
       const contactName = contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
       const typeLabel = APPOINTMENT_TYPES.find(t => t.value === appointmentType)?.label || 'Appointment';
-      setTitle(`${typeLabel} with ${contactName}`);
+      setTitle(suggestedAppointmentTitle({ typeLabel, contactName }));
     }
 
     // Auto-populate secondary contacts from client database
@@ -581,7 +606,10 @@ export function QuickAddAppointmentModal({
               id="title"
               placeholder="Appointment title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => {
+                setTitle(e.target.value);
+                setTitleAuthored(true);
+              }}
               required
             />
           </div>
@@ -666,7 +694,7 @@ export function QuickAddAppointmentModal({
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
                   required
-                  className="cursor-pointer pr-12 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  className="has-custom-picker cursor-pointer pr-12"
                 />
                 <Button
                   type="button"
@@ -690,7 +718,7 @@ export function QuickAddAppointmentModal({
                   value={time}
                   onChange={(e) => setTime(e.target.value)}
                   required
-                  className="cursor-pointer pr-12 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  className="has-custom-picker cursor-pointer pr-12"
                 />
                 <Button
                   type="button"

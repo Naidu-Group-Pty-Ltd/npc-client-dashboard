@@ -105,13 +105,13 @@ function urgencyClass(date: string | null | undefined, completed: boolean) {
 }
 
 function urgencyText(date: string | null | undefined, completed: boolean) {
-  if (completed) return { label: 'Completed', tone: 'text-success-foreground0' };
+  if (completed) return { label: 'Completed', tone: 'text-success' };
   if (!date) return { label: 'No date set', tone: 'text-muted-foreground' };
   const days = Math.ceil((new Date(date).getTime() - Date.now()) / 86_400_000);
   if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: 'text-destructive' };
   if (days === 0) return { label: 'Due today', tone: 'text-brand-500' };
   if (days <= 5) return { label: `Due in ${days}d`, tone: 'text-brand-500' };
-  return { label: `In ${days}d`, tone: 'text-success-foreground0' };
+  return { label: `In ${days}d`, tone: 'text-success' };
 }
 
 export default function FinancePortalPurchaseFileDetail() {
@@ -571,7 +571,7 @@ function CriticalDatesTab({
                     title={d.status === 'completed' ? 'Mark as not done' : 'Mark complete'}
                   >
                     {d.status === 'completed'
-                      ? <CheckCircle2 className="h-5 w-5 text-success-foreground0" />
+                      ? <CheckCircle2 className="h-5 w-5 text-success" />
                       : <Clock className="h-5 w-5 text-muted-foreground" />}
                   </button>
                   <div className="flex-1 min-w-0">

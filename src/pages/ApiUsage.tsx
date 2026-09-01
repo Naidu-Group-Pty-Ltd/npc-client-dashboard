@@ -649,7 +649,7 @@ export default function ApiUsage() {
             caption={`${data.summary.successRate}% success`}
           />
           <ApiUsageMetricCard
-            icon={<Phone className="h-4 w-4 text-accent-foreground0" />}
+            icon={<Phone className="h-4 w-4 text-accent" />}
             label="VAPI Calls"
             value={data.vapi?.totalCalls || 0}
             caption={`${data.vapi?.totalMinutes || 0} min`}
@@ -661,13 +661,13 @@ export default function ApiUsage() {
             caption={data.consumption ? `${data.consumption.summary.totalRequests} calls` : 'No data'}
           />
           <ApiUsageMetricCard
-            icon={<DollarSign className="h-4 w-4 text-success-foreground0" />}
+            icon={<DollarSign className="h-4 w-4 text-success" />}
             label="Total Spend"
             value={`$${totalCombinedCost.toFixed(2)}`}
             caption={data.summary.period}
           />
           <ApiUsageMetricCard
-            icon={<CalendarDays className="h-4 w-4 text-warning-foreground0" />}
+            icon={<CalendarDays className="h-4 w-4 text-warning" />}
             label="Projected /mo"
             value={`$${data.projections?.totalProjectedMonthly?.toFixed(2) || '0.00'}`}
             caption={`Based on ${data.summary.period} avg`}
@@ -1091,30 +1091,30 @@ export default function ApiUsage() {
                 description="Monitor existing voice call volume, minutes, telephony cost, and projected monthly VAPI spend for the selected date range."
               >
                 <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">{data.summary.period}</Badge>
-                <Badge variant="outline" className="border-accent/25 bg-accent/10 text-accent-foreground0">{data.vapi.totalCalls} calls</Badge>
+                <Badge variant="outline" className="border-accent/25 bg-accent/10 text-accent">{data.vapi.totalCalls} calls</Badge>
               </ApiUsageTabHeader>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <ApiUsageMetricCard
-                  icon={<Phone className="h-4 w-4 text-accent-foreground0" />}
+                  icon={<Phone className="h-4 w-4 text-accent" />}
                   label="Total Calls"
                   value={data.vapi.totalCalls}
                   caption={`${data.vapi.inbound} inbound / ${data.vapi.outbound} outbound`}
                 />
                 <ApiUsageMetricCard
-                  icon={<Clock className="h-4 w-4 text-info-foreground0" />}
+                  icon={<Clock className="h-4 w-4 text-info" />}
                   label="Total Minutes"
                   value={data.vapi.totalMinutes}
                   caption={`~${data.vapi.totalCalls > 0 ? Math.round(data.vapi.totalMinutes / data.vapi.totalCalls) : 0} min/call avg`}
                 />
                 <ApiUsageMetricCard
-                  icon={<DollarSign className="h-4 w-4 text-success-foreground0" />}
+                  icon={<DollarSign className="h-4 w-4 text-success" />}
                   label="Voice Cost"
                   value={`$${data.vapi.totalCost.toFixed(2)}`}
                   caption={`$${data.vapi.avgCostPerCall.toFixed(2)}/call`}
                 />
                 <ApiUsageMetricCard
-                  icon={<CalendarDays className="h-4 w-4 text-warning-foreground0" />}
+                  icon={<CalendarDays className="h-4 w-4 text-warning" />}
                   label="Projected /mo"
                   value={`$${data.projections?.projectedMonthlyVapi?.toFixed(2) || '0'}`}
                   caption="incl. Twilio telephony"
@@ -1127,7 +1127,7 @@ export default function ApiUsage() {
               <Card className={`${API_USAGE_PANEL_CARD} lg:col-span-2`}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-accent-foreground0" />
+                    <Phone className="h-4 w-4 text-accent" />
                     Daily VAPI Call Volume & Cost
                   </CardTitle>
                   <CardDescription className="text-xs">Calls (bars) and cost (line) over time</CardDescription>
@@ -1154,7 +1154,7 @@ export default function ApiUsage() {
               <Card className={`${API_USAGE_PANEL_CARD} lg:col-span-2`}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-info-foreground0" />
+                    <Clock className="h-4 w-4 text-info" />
                     Daily Call Minutes
                   </CardTitle>
                   <CardDescription className="text-xs">Minutes consumed per day (Twilio telephony)</CardDescription>
@@ -1212,13 +1212,13 @@ export default function ApiUsage() {
                   caption={`$${data.projections.dailyAvgCost.toFixed(4)}/day avg`}
                 />
                 <ApiUsageMetricCard
-                  icon={<Phone className="h-4 w-4 text-accent-foreground0" />}
+                  icon={<Phone className="h-4 w-4 text-accent" />}
                   label="VAPI + Twilio"
                   value={`$${data.projections.projectedMonthlyVapi.toFixed(2)}`}
                   caption="Voice & telephony"
                 />
                 <ApiUsageMetricCard
-                  icon={<CalendarDays className="h-4 w-4 text-warning-foreground0" />}
+                  icon={<CalendarDays className="h-4 w-4 text-warning" />}
                   label="Total Projected"
                   value={`$${data.projections.totalProjectedMonthly.toFixed(2)}`}
                   caption="per month"
@@ -1231,7 +1231,7 @@ export default function ApiUsage() {
               <Card className={`${API_USAGE_PANEL_CARD} lg:col-span-2`}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base font-semibold flex items-center gap-2">
-                    <DollarSign className="h-4 w-4 text-success-foreground0" />
+                    <DollarSign className="h-4 w-4 text-success" />
                     Service Budget Tracking
                   </CardTitle>
                   <CardDescription className="text-xs">Current spend vs projected monthly by service</CardDescription>
@@ -1340,13 +1340,13 @@ export default function ApiUsage() {
                   caption="Across tracked calls"
                 />
                 <ApiUsageMetricCard
-                  icon={<CheckCircle2 className="h-4 w-4 text-success-foreground0" />}
+                  icon={<CheckCircle2 className="h-4 w-4 text-success" />}
                   label="Success Rate"
                   value={`${data.summary.successRate}%`}
                   caption={`${data.summary.successCalls.toLocaleString('en-AU')} successful`}
                 />
                 <ApiUsageMetricCard
-                  icon={<XCircle className="h-4 w-4 text-destructive-foreground0" />}
+                  icon={<XCircle className="h-4 w-4 text-destructive" />}
                   label="Errors"
                   value={data.summary.errorCalls.toLocaleString('en-AU')}
                   caption="Failed health interactions"
@@ -1527,13 +1527,13 @@ export default function ApiUsage() {
                   caption="Matching current filters"
                 />
                 <ApiUsageMetricCard
-                  icon={<CheckCircle2 className="h-4 w-4 text-success-foreground0" />}
+                  icon={<CheckCircle2 className="h-4 w-4 text-success" />}
                   label="Successful"
                   value={filteredHealthLogs.filter(log => log.status === 'success').length.toLocaleString('en-AU')}
                   caption="Existing success severity"
                 />
                 <ApiUsageMetricCard
-                  icon={<XCircle className="h-4 w-4 text-destructive-foreground0" />}
+                  icon={<XCircle className="h-4 w-4 text-destructive" />}
                   label="Errors"
                   value={filteredHealthLogs.filter(log => log.status !== 'success').length.toLocaleString('en-AU')}
                   caption="Existing error severity"

@@ -115,9 +115,9 @@ function AnalyticsKPIs({ deals }: { deals: DealWithClient[] }) {
     { label: 'Pipeline Value', value: formatCurrency(kpis.totalValue), icon: DollarSign, color: 'text-brand-500', tone: 'gold' },
     { label: 'Avg Deal Value', value: formatCurrency(kpis.avgValue), icon: Target, color: 'text-brand-500', tone: 'gold' },
     { label: 'Est. Commission', value: formatCurrency(kpis.totalCommission), sub: `${formatCurrency(kpis.commissionReceived)} received`, icon: TrendingUp, color: 'text-brand-500', tone: 'gold' },
-    { label: 'Avg Deal Age', value: `${kpis.avgAge} days`, icon: Clock, color: 'text-info-foreground0', tone: 'analytical' },
-    { label: 'Conversion Rate', value: `${kpis.conversionRate}%`, sub: `${kpis.completedDeals} settled`, icon: Zap, color: 'text-accent-foreground0', tone: 'conversion' },
-    { label: 'New (30d)', value: String(kpis.recentDeals), icon: Activity, color: 'text-destructive-foreground0', tone: 'urgent' },
+    { label: 'Avg Deal Age', value: `${kpis.avgAge} days`, icon: Clock, color: 'text-info', tone: 'analytical' },
+    { label: 'Conversion Rate', value: `${kpis.conversionRate}%`, sub: `${kpis.completedDeals} settled`, icon: Zap, color: 'text-accent', tone: 'conversion' },
+    { label: 'New (30d)', value: String(kpis.recentDeals), icon: Activity, color: 'text-destructive', tone: 'urgent' },
   ];
 
   return (

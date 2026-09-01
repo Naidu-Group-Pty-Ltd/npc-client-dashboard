@@ -241,8 +241,10 @@ export default function AmlAustracReportDraft() {
     );
   }
 
+  // `pb-*` is clearance for the bar fixed to the foot of the viewport. It
+  // wraps to two lines on a phone, so the reservation is deeper there.
   return (
-    <div className="space-y-6 pb-28">
+    <div className="space-y-6 pb-40 sm:pb-28">
       <AmlPageHeader
         /* A report past the draft statuses is READ. Calling the page "Edit"
            when nothing on it can be edited is the same defect the read-only
@@ -333,14 +335,21 @@ export default function AmlAustracReportDraft() {
         working, which is exactly the thing the modal's own footer got right.
       */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border/60 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3 px-4 py-3 sm:px-6">
-          <p className="flex min-w-0 flex-1 items-start gap-2 text-xs leading-relaxed text-muted-foreground">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 sm:px-6">
+          {/* `basis-64` is what makes this bar wrap on a phone. `flex-1`
+              alone is `flex: 1 1 0%`, which contributes nothing to the
+              hypothetical size of the line — so the line never overflowed,
+              the button group kept its content width, and the summary
+              beside it was squeezed to about 26px of a 358px bar. */}
+          <p className="flex min-w-0 flex-1 basis-64 items-start gap-2 text-xs leading-relaxed text-muted-foreground">
             {outstanding
               ? <AlertTriangle aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
               : <Check aria-hidden className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />}
             <span>{draftSummary(sections)}</span>
           </p>
-          <div className="flex shrink-0 gap-2">
+          {/* Not `shrink-0`: on a narrow bar the group takes its own line
+              rather than pushing the summary out of the way. */}
+          <div className="flex flex-wrap gap-2 sm:ml-auto">
             <Button variant="ghost" onClick={() => leave(ADMIN_AML_AUSTRAC_PATH)}>
               {editable ? "Cancel" : "Back to the hub"}
             </Button>

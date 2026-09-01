@@ -183,11 +183,11 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
           <CardContent className="p-3">
             <div className="flex items-center gap-2 mb-1">
               <div className="p-1.5 rounded-lg bg-success/10">
-                <Award className="w-3.5 h-3.5 text-success-foreground0" />
+                <Award className="w-3.5 h-3.5 text-success" />
               </div>
               <span className="text-xs text-muted-foreground">Top Performers</span>
             </div>
-            <p className="text-xl font-bold text-success-foreground0">{coachingStats.topPerformers}</p>
+            <p className="text-xl font-bold text-success">{coachingStats.topPerformers}</p>
           </CardContent>
         </Card>
       </div>
@@ -245,7 +245,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                           {/* Unsuccessful Call */}
                           <div className="p-3 rounded-lg bg-destructive/5 border border-destructive/20">
                             <div className="flex items-center gap-2 mb-2">
-                              <XCircle className="w-4 h-4 text-destructive-foreground0" />
+                              <XCircle className="w-4 h-4 text-destructive" />
                               <span className="text-sm font-medium">Needs Improvement</span>
                             </div>
                             <p className="text-xs text-muted-foreground mb-1">
@@ -266,7 +266,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                           {/* Successful Call */}
                           <div className="p-3 rounded-lg bg-success/5 border border-success/20">
                             <div className="flex items-center gap-2 mb-2">
-                              <CheckCircle className="w-4 h-4 text-success-foreground0" />
+                              <CheckCircle className="w-4 h-4 text-success" />
                               <span className="text-sm font-medium">Successful Approach</span>
                             </div>
                             <p className="text-xs text-muted-foreground mb-1">
@@ -339,7 +339,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                     <div key={idx} className="p-4 rounded-lg border bg-success/5 border-success/20">
                       <div className="flex items-start gap-3">
                         <div className="p-2 rounded-full bg-success/10">
-                          <CheckCircle className="w-4 h-4 text-success-foreground0" />
+                          <CheckCircle className="w-4 h-4 text-success" />
                         </div>
                         <div className="flex-1">
                           <h4 className="font-medium mb-1">{practice.practice}</h4>
@@ -381,7 +381,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                 {/* Unsuccessful Call Detail */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <XCircle className="w-5 h-5 text-destructive-foreground0" />
+                    <XCircle className="w-5 h-5 text-destructive" />
                     <h3 className="font-semibold">Unsuccessful Call</h3>
                   </div>
                   <div className="p-4 rounded-lg bg-destructive/5 border border-destructive/20 space-y-3">
@@ -395,7 +395,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                     </div>
                     {selectedComparison.unsuccessfulCall.negative_sentiment_moment && (
                       <div className="p-3 rounded bg-muted">
-                        <p className="text-xs font-medium text-destructive-foreground0 mb-1 flex items-center gap-1">
+                        <p className="text-xs font-medium text-destructive mb-1 flex items-center gap-1">
                           <AlertTriangle className="w-3 h-3" />
                           Critical Moment:
                         </p>
@@ -423,7 +423,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                 {/* Successful Call Detail */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-success-foreground0" />
+                    <CheckCircle className="w-5 h-5 text-success" />
                     <h3 className="font-semibold">Successful Call</h3>
                   </div>
                   <div className="p-4 rounded-lg bg-success/5 border border-success/20 space-y-3">
@@ -437,7 +437,7 @@ export const ComparativeCoaching = ({ calls }: ComparativeCoachingProps) => {
                     </div>
                     {selectedComparison.successfulCall.summary && (
                       <div className="p-3 rounded bg-muted">
-                        <p className="text-xs font-medium text-success-foreground0 mb-1">Summary:</p>
+                        <p className="text-xs font-medium text-success mb-1">Summary:</p>
                         <p className="text-sm">{selectedComparison.successfulCall.summary}</p>
                       </div>
                     )}

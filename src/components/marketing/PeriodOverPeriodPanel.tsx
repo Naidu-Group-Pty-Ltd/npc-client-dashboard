@@ -223,9 +223,9 @@ export function PeriodOverPeriodPanel() {
                       {delta !== null && Math.abs(delta) > 0.1 ? (
                         <>
                           {isPositive ? (
-                            <ArrowUpRight className="h-3.5 w-3.5 text-success-foreground0" />
+                            <ArrowUpRight className="h-3.5 w-3.5 text-success" />
                           ) : isNegative ? (
-                            <ArrowDownRight className="h-3.5 w-3.5 text-destructive-foreground0" />
+                            <ArrowDownRight className="h-3.5 w-3.5 text-destructive" />
                           ) : (
                             <Minus className="h-3.5 w-3.5 text-muted-foreground" />
                           )}

@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { RegulatoryAssuranceHeader } from "@/components/aml/RegulatoryAssuranceHeader";
 import { AustracReportPathCard } from "@/components/aml/AustracReportPathCard";
@@ -26,7 +27,9 @@ import {
 } from "@/lib/aml/austracBundleRecord.pure";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { approvalConfirmation, type AustracReportFacts } from "@/lib/aml/austracReportPath.pure";
-import { AUSTRAC_KIND_LABEL as KIND_LABEL, toObligationKind } from "@/lib/aml/austracDraftGuidance.pure";
+import {
+  AUSTRAC_KIND_LABEL as KIND_LABEL, austracKindChip, austracStatusLabel, toObligationKind,
+} from "@/lib/aml/austracDraftGuidance.pure";
 import { amlAustracDraftPath } from "@/lib/aml/amlRoutes";
 import { archiveBlockReason, archiveWarning } from "@/lib/aml/austracArchive";
 import {
@@ -83,6 +86,9 @@ function fmt(d: string | null | undefined) { return d ? new Date(d).toLocaleStri
 
 export default function AmlAustracReporting() {
   const { canWrite, isMlro, hasAnyRole, loading: accessLoading } = useAmlAccess();
+  /* Under 768px the register is a list of cards rather than a six-column
+     table. See the note where it is drawn. */
+  const compact = useIsMobile();
   const { regulatoryHub } = useAmlV3Flags();
   const navigate = useNavigate();
   const { settings: brandSettings } = useBrand();
@@ -511,6 +517,90 @@ export default function AmlAustracReporting() {
     );
   }
 
+
+  /*
+    ── One definition of what can be done to a row ────────────────────
+    The register draws twice now — a table from `md` up, cards below it —
+    and the acts are the same acts. Two copies of this list is how a
+    phone comes to offer an Approve that the desktop has already taken
+    away, so it is written once and rendered in both places. `align`
+    is the only thing that differs: a table cell puts them on the right,
+    a card puts them under the title where the reading starts.
+  */
+  const rowActions = (r: AmlReport, align: "start" | "end") => (
+    <div className={cn("flex flex-wrap gap-1", align === "end" ? "justify-end" : "justify-start")}>
+      {canWrite && ["draft","in_review"].includes(r.status) && (
+        <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); editExisting(r); }}>Edit</Button>
+      )}
+      {isMlro && ["draft","in_review","awaiting_mlro"].includes(r.status) && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={approving === r.id}
+          onClick={(e) => { e.stopPropagation(); void signoff(r); }}
+        >
+          {approving === r.id
+            ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            : <ShieldCheck className="h-4 w-4 mr-1" />}
+          Approve
+        </Button>
+      )}
+      {isMlro && r.status === "approved" && (
+        <Button size="sm" onClick={(e) => { e.stopPropagation(); openSubmitFor(r); }}><Send className="h-4 w-4 mr-1" /> Submit</Button>
+      )}
+      {isMlro && ["approved","in_review","awaiting_mlro"].includes(r.status) && (
+        <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); reject(r); }}><XCircle className="h-4 w-4 mr-1" /> Reject</Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        disabled={bundling === r.id}
+        onClick={(e) => { e.stopPropagation(); void exportBundle(r); }}
+      >
+        {bundling === r.id
+          ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+          : <Download className="h-4 w-4 mr-1" />}
+        Record
+      </Button>
+      {canWrite && r.status === "draft" && (
+        <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); removeReport(r); }} className="text-destructive">Delete</Button>
+      )}
+      {/*
+        Archive is offered only where the server would
+        accept it, and the reason is rendered from the same
+        module the server enforces — a button that exists
+        to be refused teaches an operator to distrust the
+        page.
+      */}
+      {canWrite && view === "live" && !archiveBlockReason(r.status) && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={archiveBusy}
+          onClick={(e) => { e.stopPropagation(); void runArchive([r], "archive"); }}
+        >
+          {archiveBusy
+            ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            : <Archive className="h-4 w-4 mr-1" />}
+          Archive
+        </Button>
+      )}
+      {canWrite && view === "archived" && (
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={archiveBusy}
+          onClick={(e) => { e.stopPropagation(); void runArchive([r], "restore"); }}
+        >
+          {archiveBusy
+            ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            : <ArchiveRestore className="h-4 w-4 mr-1" />}
+          Restore
+        </Button>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       {regulatoryHub && <RegulatoryAssuranceHeader />}
@@ -584,7 +674,7 @@ export default function AmlAustracReporting() {
                   <SelectContent>
                     <SelectItem value="all">All statuses</SelectItem>
                     {["draft","in_review","awaiting_mlro","approved","submitted","acknowledged","rejected","withdrawn"].map(s => (
-                      <SelectItem key={s} value={s}>{s.replace(/_/g," ")}</SelectItem>
+                      <SelectItem key={s} value={s}>{austracStatusLabel(s)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -592,7 +682,7 @@ export default function AmlAustracReporting() {
                   <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All kinds</SelectItem>
-                    {Object.entries(KIND_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{k.toUpperCase()} — {l.split(" ")[0]}</SelectItem>)}
+                    {Object.entries(KIND_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{austracKindChip(k)} — {l}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -630,6 +720,18 @@ export default function AmlAustracReporting() {
                 </div>
               </div>
             )}
+            {/* From `md` up the register is a table: six columns of the
+                same shape, scanned down. Below it the same rows are cards —
+                see the note on the list underneath.
+
+                One or the other, never both. `ResponsiveTable` — this
+                repository's own mobile-table pattern — switches on the same
+                hook rather than drawing two layouts and hiding one with CSS,
+                and it is the right way round: a hidden copy still carries
+                every accessible name in the document, so assistive
+                technology meets each report's title, checkbox and action
+                twice, on whichever layout it is not looking at. */}
+            {!compact && (
             <Table aria-label="AUSTRAC reports">
               <TableHeader>
                 <TableRow>
@@ -716,7 +818,7 @@ export default function AmlAustracReporting() {
                         />
                       )}
                       <Badge variant="outline" className={cn("font-semibold", KIND_TONE[r.kind] ?? "")}>
-                        {r.kind.toUpperCase()}
+                        {austracKindChip(r.kind)}
                       </Badge>
                     </TableCell>
                     <TableCell className="font-medium">
@@ -751,82 +853,12 @@ export default function AmlAustracReporting() {
                         )}
                       </span>
                     </TableCell>
-                    <TableCell><Badge className={STATUS_TONE[r.status] ?? ""}>{r.status.replace(/_/g," ")}</Badge></TableCell>
+                    <TableCell><Badge className={STATUS_TONE[r.status] ?? ""}>{austracStatusLabel(r.status)}</Badge></TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {view === "archived" ? fmt(r.archived_at) : fmt(r.updated_at)}
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1 flex-wrap">
-                        {canWrite && ["draft","in_review"].includes(r.status) && (
-                          <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); editExisting(r); }}>Edit</Button>
-                        )}
-                        {isMlro && ["draft","in_review","awaiting_mlro"].includes(r.status) && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={approving === r.id}
-                            onClick={(e) => { e.stopPropagation(); void signoff(r); }}
-                          >
-                            {approving === r.id
-                              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              : <ShieldCheck className="h-4 w-4 mr-1" />}
-                            Approve
-                          </Button>
-                        )}
-                        {isMlro && r.status === "approved" && (
-                          <Button size="sm" onClick={(e) => { e.stopPropagation(); openSubmitFor(r); }}><Send className="h-4 w-4 mr-1" /> Submit</Button>
-                        )}
-                        {isMlro && ["approved","in_review","awaiting_mlro"].includes(r.status) && (
-                          <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); reject(r); }}><XCircle className="h-4 w-4 mr-1" /> Reject</Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={bundling === r.id}
-                          onClick={(e) => { e.stopPropagation(); void exportBundle(r); }}
-                        >
-                          {bundling === r.id
-                            ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            : <Download className="h-4 w-4 mr-1" />}
-                          Record
-                        </Button>
-                        {canWrite && r.status === "draft" && (
-                          <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); removeReport(r); }} className="text-destructive">Delete</Button>
-                        )}
-                        {/*
-                          Archive is offered only where the server would
-                          accept it, and the reason is rendered from the same
-                          module the server enforces — a button that exists
-                          to be refused teaches an operator to distrust the
-                          page.
-                        */}
-                        {canWrite && view === "live" && !archiveBlockReason(r.status) && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={archiveBusy}
-                            onClick={(e) => { e.stopPropagation(); void runArchive([r], "archive"); }}
-                          >
-                            {archiveBusy
-                              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              : <Archive className="h-4 w-4 mr-1" />}
-                            Archive
-                          </Button>
-                        )}
-                        {canWrite && view === "archived" && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            disabled={archiveBusy}
-                            onClick={(e) => { e.stopPropagation(); void runArchive([r], "restore"); }}
-                          >
-                            {archiveBusy
-                              ? <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                              : <ArchiveRestore className="h-4 w-4 mr-1" />}
-                            Restore
-                          </Button>
-                        )}
-                      </div>
+                      {rowActions(r, "end")}
                     </TableCell>
                   </TableRow>
                   );
@@ -841,6 +873,126 @@ export default function AmlAustracReporting() {
                 )}
               </TableBody>
             </Table>
+            )}
+
+            {/*
+              ── The register on a phone ────────────────────────────────
+              The table has six columns and a row of action buttons, so on a
+              390px screen it was 775px wide inside a horizontal scroller:
+              Status, Updated and every action sat off the right-hand edge,
+              the Kind chip was squeezed to 40px and set `COMPLIANCE_REPORT`
+              one letter per line, and each row stood 150px tall to hold it.
+              An operator could see that reports existed and do nothing with
+              them.
+
+              The same rows are cards below `md` — the treatment the case
+              register already uses, so the two surfaces read alike. The
+              acts come from `rowActions`, so there is one list of them; the
+              selection, the checkbox and the title's behaviour are the
+              table's own.
+            */}
+            {compact && (
+            <div className="space-y-2">
+              {reports.map((r) => {
+                const active = selectedId === r.id;
+                const selectable = view === "archived" || !archiveBlockReason(r.status);
+                return (
+                  <div
+                    key={r.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-selected={active}
+                    onClick={() => setSelectedId(r.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedId(r.id); }
+                    }}
+                    className={cn(
+                      "relative rounded-xl border p-3 pl-4 text-left shadow-sm transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      active
+                        ? "border-primary/40 bg-primary/10"
+                        : "border-border bg-card/60 hover:border-primary/30 hover:bg-muted/40",
+                    )}
+                  >
+                    {/* The same three signals the table row carries: an
+                        accent bar, a tinted ground and the word Viewing. */}
+                    {active && (
+                      <span aria-hidden className="absolute inset-y-2 left-0 w-1 rounded-r bg-primary" />
+                    )}
+                    <div className="flex items-start gap-2">
+                      {/* The slot is reserved whether or not this row can be
+                          chosen, so the titles line up: the table gets that
+                          from its column, and a card has to be told. */}
+                      {canWrite && (
+                        /* 44px, not 20: under 768px the product gives every
+                           control a 44px minimum tap target, so the checkbox
+                           IS 44px wide here. Reserving its real size is what
+                           keeps the four titles on one left edge — a slot
+                           sized for the desktop control left the one
+                           archivable row indented differently from the three
+                           beside it. */
+                        <span className="flex w-11 shrink-0 justify-center pt-0.5" onClick={(e) => e.stopPropagation()}>
+                          {selectable ? (
+                            <Checkbox
+                              aria-label={`Select ${r.title}`}
+                              checked={picked.has(r.id)}
+                              disabled={archiveBusy}
+                              onCheckedChange={() => togglePicked(r.id)}
+                            />
+                          ) : (
+                            <span className="sr-only">{archiveBlockReason(r.status) ?? ""}</span>
+                          )}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Badge variant="outline" className={cn("font-semibold", KIND_TONE[r.kind] ?? "")}>
+                            {austracKindChip(r.kind)}
+                          </Badge>
+                          <Badge className={STATUS_TONE[r.status] ?? ""}>
+                            {austracStatusLabel(r.status)}
+                          </Badge>
+                          {active && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                              <Eye aria-hidden className="h-3 w-3" /> Viewing
+                            </span>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className={cn(
+                            "mt-1.5 block w-full rounded-sm text-left text-sm font-medium underline-offset-4 hover:underline",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            active ? "text-primary" : "text-foreground",
+                          )}
+                          title="Open this report"
+                          onClick={(e) => { e.stopPropagation(); navigate(amlAustracDraftPath(r.id)); }}
+                        >
+                          {r.title}
+                        </button>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          {view === "archived" ? "Archived" : "Updated"}{" "}
+                          {view === "archived" ? fmt(r.archived_at) : fmt(r.updated_at)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2" onClick={(e) => e.stopPropagation()}>
+                      {rowActions(r, "start")}
+                    </div>
+                  </div>
+                );
+              })}
+              {!reports.length && (
+                <p className="rounded-lg border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                  {loading
+                    ? "Loading reports…"
+                    : view === "archived"
+                      ? "Nothing has been archived. A report is archived once its lodgement is behind it; it is kept in full and can be restored."
+                      : `No reports match these filters. Try clearing the status or kind filter${canWrite ? ", or start a new draft" : ""}.`}
+                </p>
+              )}
+            </div>
+            )}
           </CardContent>
         </Card>
 
@@ -856,10 +1008,10 @@ export default function AmlAustracReporting() {
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="outline" className={cn("font-semibold", KIND_TONE[selectedReport.kind] ?? "")}>
-                    {selectedReport.kind.toUpperCase()}
+                    {austracKindChip(selectedReport.kind)}
                   </Badge>
                   <Badge className={STATUS_TONE[selectedReport.status] ?? ""}>
-                    {selectedReport.status.replace(/_/g, " ")}
+                    {austracStatusLabel(selectedReport.status)}
                   </Badge>
                 </div>
                 <CardTitle className="text-base leading-snug">{selectedReport.title}</CardTitle>
@@ -880,7 +1032,7 @@ export default function AmlAustracReporting() {
           <CardContent className="space-y-4">
             {!selectedReport && (
               <div className="rounded-lg border border-dashed border-border/60 p-6 text-center text-sm text-muted-foreground">
-                Choose a report on the left to see what it still needs, when it is due, and how to
+                Choose a report from the register to see what it still needs, when it is due, and how to
                 lodge it.
               </div>
             )}
@@ -965,8 +1117,8 @@ export default function AmlAustracReporting() {
                   <TabsTrigger value="subs">Submissions</TabsTrigger>
                 </TabsList>
                 <TabsContent value="meta" className="space-y-2 text-sm">
-                  <div><span className="text-muted-foreground">Kind:</span> <Badge variant="outline">{selectedReport.kind.toUpperCase()}</Badge></div>
-                  <div><span className="text-muted-foreground">Status:</span> <Badge className={STATUS_TONE[selectedReport.status] ?? ""}>{selectedReport.status.replace(/_/g," ")}</Badge></div>
+                  <div><span className="text-muted-foreground">Kind:</span> <Badge variant="outline">{austracKindChip(selectedReport.kind)}</Badge></div>
+                  <div><span className="text-muted-foreground">Status:</span> <Badge className={STATUS_TONE[selectedReport.status] ?? ""}>{austracStatusLabel(selectedReport.status)}</Badge></div>
                   <div><span className="text-muted-foreground">Reference:</span> {selectedReport.reference_code ?? "—"}</div>
                   <div><span className="text-muted-foreground">MLRO signed:</span> {fmt(selectedReport.mlro_signed_at)}</div>
                   <div><span className="text-muted-foreground">Submitted:</span> {fmt(selectedReport.submitted_at)}</div>

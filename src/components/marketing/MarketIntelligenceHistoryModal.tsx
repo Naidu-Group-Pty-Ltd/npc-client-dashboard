@@ -93,7 +93,7 @@ export const MarketIntelligenceHistoryModal = ({ open, onOpenChange }: MarketInt
     switch (status) {
       case 'completed':
         return (
-          <Badge className="bg-success/20 text-success-foreground0 border-success/30 text-[10px]">
+          <Badge className="bg-success/20 text-success border-success/30 text-[10px]">
             <CheckCircle className="h-2.5 w-2.5 mr-0.5" />
             Completed
           </Badge>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   PLATFORM_APPLE_TOUCH_ICON,
@@ -52,6 +52,29 @@ describe('the static declaration and the runtime default agree', () => {
       expect(slot).toMatch(/^\/brand\/aurixa-/);
     }
     expect(indexHtml).not.toMatch(/rel="icon"[^>]*href="\/favicon\.ico"/);
+  });
+
+  it('the favicon is a file that exists', () => {
+    // An unresolved icon path is not a visible error anywhere: the browser
+    // asks once, gets a 404 and draws its blank-page glyph, which is exactly
+    // what having no favicon at all looks like.
+    const onDisk = join(__dirname, '..', '..', '..', 'public', PLATFORM_FAVICON);
+    expect(existsSync(onDisk)).toBe(true);
+  });
+
+  it('the favicon slot is not shared with any other job', () => {
+    // `aurixa-notification-*` serves the apple-touch tile, the desktop
+    // notification icon and the og:image card. Pointing the favicon at the
+    // same file is how replacing the tab icon silently changes a clone's push
+    // notifications and its link previews.
+    const alerts = readFileSync(
+      join(__dirname, '..', '..', 'lib', 'desktopMessageAlerts.ts'),
+      'utf8',
+    );
+    const notificationIcon = /AURIXA_NOTIFICATION_ICON\s*=\s*'([^']+)'/.exec(alerts)?.[1];
+    expect(notificationIcon).toBeTruthy();
+    expect(PLATFORM_FAVICON).not.toBe(notificationIcon);
+    expect(PLATFORM_FAVICON).not.toBe(PLATFORM_APPLE_TOUCH_ICON);
   });
 
   it('no platform slot points into the tenant icon set', () => {

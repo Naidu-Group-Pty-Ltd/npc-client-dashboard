@@ -319,8 +319,16 @@ describe('notification branding', () => {
   });
 
   it('declares an explicit favicon so the browser never guesses the stock one', () => {
+    // What this pins is that a favicon IS declared and is a platform asset —
+    // not WHICH one. `platformBrand.ts` owns that, and the two slots are
+    // deliberately different files: a notification icon must carry artwork
+    // into all four corners (see the corner-artefact suite below, which exists
+    // because a rounded-tile screenshot once put white corners on every
+    // alert), while a tab icon wants alpha so it composites onto a light or a
+    // dark tab strip. Pinning one filename here made the tab icon and the
+    // notification icon impossible to separate.
     const html = read('index.html');
-    expect(html).toContain(`href="${AURIXA_NOTIFICATION_ICON}"`);
+    expect(html).toMatch(/rel="icon"[^>]*href="\/brand\/aurixa-[^"]+\.png"/);
     expect(html).not.toContain('content="/favicon.ico"');
   });
 

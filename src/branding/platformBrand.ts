@@ -22,8 +22,22 @@
  * reload. Reverting needs something to revert TO, which is this.
  */
 
-/** The Aurixa Systems emblem. Must match the `<link rel="icon">` in `index.html`. */
-export const PLATFORM_FAVICON = '/brand/aurixa-notification-192.png';
+/**
+ * The Aurixa Systems emblem. Must match the `<link rel="icon">` in `index.html`.
+ *
+ * Its own file, and deliberately not the one beside it. `aurixa-notification-*`
+ * serves FOUR jobs — this fallback, the apple-touch tile, the desktop
+ * notification icon (`AURIXA_NOTIFICATION_ICON`) and the `og:image` social
+ * card — so replacing the artwork in place would have changed a clone's push
+ * notifications and its link previews to make its tab icon right. The favicon
+ * is the only slot this mark was given, so it is the only slot it occupies.
+ *
+ * It carries ALPHA rather than a ground, which the notification asset does not:
+ * a tab strip is light or dark by the reader's theme, and a transparent mark
+ * composites onto either, where an opaque dark tile reads as a dark square on a
+ * light strip.
+ */
+export const PLATFORM_FAVICON = '/brand/aurixa-favicon-192.png';
 
 /**
  * The same mark at tile size, for iOS home screens.

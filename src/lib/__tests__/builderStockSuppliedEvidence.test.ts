@@ -41,7 +41,7 @@ import { readFileSync } from 'node:fs';
 
 import {
   classifyBranchRecord, describeSuppliedEvidence, fallbackMayRun,
-  readSuppliedEvidence,
+  linkDiscoveryFromAvailability, readStoredRowEvidence, readSuppliedEvidence,
 } from '../../../supabase/functions/_shared/builderStock/suppliedEvidence.pure';
 import {
   branchQuestion, rowSourceBranches, writeBranchState,
@@ -59,6 +59,9 @@ import {
 import {
   settleFallbackImages,
 } from '../../../supabase/functions/_shared/builderStock/settleFallbackImages';
+import {
+  persistDiscoveredRowLinks,
+} from '../../../supabase/functions/_shared/builderStock/repairSourceImages';
 
 // The shape of a live Luxton row: the label is the visible cell, the address
 // is the hyperlink underneath it that `mergeHyperlinkColumns` put beside it.
@@ -373,6 +376,14 @@ describe('the barrier is a barrier, not a comment', () => {
    * and the two source-level assertions below. Restoring the gate turned all
    * six green again (22 passed, 0 failed).
    *
+   * THE SECOND BARRIER WAS MUTATED THE SAME WAY. With the link-discovery
+   * stamp ignored inside `readSuppliedEvidence` (`const enumerable = true`),
+   * FOUR tests failed: an unenumerable row read `no_evidence` instead of
+   * `retryable_failure`, an answered-but-unenumerable row read `exhausted`,
+   * the stored-row reader lost the stamp, and — the one that spends money —
+   * the ladder ran `enrich` for a row shaped exactly like the locked-export
+   * sheet's. Restored, all 32 pass.
+   *
    * What a source-level assertion adds is that the SHAPE cannot rot back: the
    * enforcement must sit in the module that buys the ladder, ask the shared
    * predicate, and `continue` rather than fall through.
@@ -382,7 +393,9 @@ describe('the barrier is a barrier, not a comment', () => {
 
   it('asks the one shared predicate, in the module that spends the money', () => {
     expect(source).toContain('fallbackMayRun');
-    expect(source).toContain('readSuppliedEvidence');
+    // The shared STORED-ROW reader, not a local re-derivation of branches —
+    // a local copy is how the gate and the router come to disagree.
+    expect(source).toContain('readStoredRowEvidence');
   });
 
   it('refuses BEFORE the ladder is loaded or a provider is called', () => {
@@ -399,5 +412,232 @@ describe('the barrier is a barrier, not a comment', () => {
     // The refused property is skipped, not counted as a spend and not failed.
     expect(block).not.toContain('outcome.attempted');
     expect(block).not.toContain('enrich(');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OUR FAILURE IS NOT NO EVIDENCE — the row-level link-discovery stamp
+// ---------------------------------------------------------------------------
+
+/**
+ * THE MEASURED CASE THESE PIN. The live "[VG] MASTER STOCKLIST - V002" is a
+ * public Google Sheet whose owner disabled download: every `export?format=…`
+ * answers 401 while `gviz` serves the rows, so its proven CSV reads
+ * `Brochure` with no address underneath — for FOURTEEN properties carrying
+ * FOUR document links each. Before the stamp existed, those rows held no
+ * branches, read `no_evidence`, and the external ladder was bought against a
+ * stock list whose brochures were sitting in plain sight.
+ */
+describe('a row whose link layer could not be read is never an empty row', () => {
+  const UNAVAILABLE = { state: 'unavailable' as const, reason: 'unavailable_source_export' };
+
+  it('no branches + unenumerable links = retryable_failure, ladder shut', () => {
+    const reading = readSuppliedEvidence({
+      branches: [], stored: null, provenanceVersion: PROVENANCE_VERSION,
+      sourceAnchor: null, linkDiscovery: UNAVAILABLE,
+    });
+    expect(reading.state).toBe('retryable_failure');
+    expect(reading.detail).toContain('fault on our side');
+    expect(reading.detail).toContain('unavailable_source_export');
+    expect(fallbackMayRun(reading.state)).toBe(false);
+  });
+
+  it('every known branch answered — and the row STILL is not exhausted, because there may be more', () => {
+    const stored = writeBranchState(null, BROCHURE,
+      recordNoDeterministicImage(ask(BROCHURE), 'read it', 'inspected'));
+    const reading = readSuppliedEvidence({
+      branches: branchesOf(BROCHURE), stored, provenanceVersion: PROVENANCE_VERSION,
+      sourceAnchor: null, linkDiscovery: UNAVAILABLE,
+    });
+    expect(reading.state).toBe('retryable_failure');
+    expect(fallbackMayRun(reading.state)).toBe(false);
+  });
+
+  it('the builder\'s own accepted picture still settles the row', () => {
+    const reading = readSuppliedEvidence({
+      branches: [], stored: null, provenanceVersion: PROVENANCE_VERSION,
+      sourceAnchor: null, linkDiscovery: UNAVAILABLE, builderImageAccepted: true,
+    });
+    expect(reading.state).toBe('found');
+  });
+
+  it('a row whose links WERE read and has none is genuinely no_evidence', () => {
+    const reading = readSuppliedEvidence({
+      branches: [], stored: null, provenanceVersion: PROVENANCE_VERSION,
+      sourceAnchor: null, linkDiscovery: { state: 'complete', method: 'htmlview' },
+    });
+    expect(reading.state).toBe('no_evidence');
+    expect(fallbackMayRun(reading.state)).toBe(true);
+  });
+
+  it('a row with no stamp keeps the reading it always had', () => {
+    // Rows written before the stamp existed, and rows written by adapters
+    // whose links are native to their own bytes.
+    const reading = readSuppliedEvidence({
+      branches: [], stored: null, provenanceVersion: PROVENANCE_VERSION, sourceAnchor: null,
+    });
+    expect(reading.state).toBe('no_evidence');
+  });
+
+  it('the stamp is read off the STORED row by the shared row reader', () => {
+    const reading = readStoredRowEvidence({
+      sourceRow: {
+        unmapped: {},
+        link_discovery: UNAVAILABLE,
+      },
+      stored: null,
+      provenanceVersion: PROVENANCE_VERSION,
+    });
+    expect(reading.state).toBe('retryable_failure');
+  });
+
+  it('the fetch reading maps onto the stamp, and only real readings of the sheet clear it', () => {
+    expect(linkDiscoveryFromAvailability('resolved', 'htmlview'))
+      .toEqual({ state: 'complete', method: 'htmlview' });
+    expect(linkDiscoveryFromAvailability('none_present'))
+      .toEqual({ state: 'complete', method: 'workbook_export' });
+    for (const unread of ['unavailable_source_export', 'unavailable_workbook_unreadable',
+      'unavailable_no_worksheet_match', 'unavailable_ambiguous_worksheet']) {
+      expect(linkDiscoveryFromAvailability(unread))
+        .toEqual({ state: 'unavailable', reason: unread });
+    }
+    expect(linkDiscoveryFromAvailability(null)).toBeNull();
+  });
+});
+
+describe('the ladder refuses the unenumerable row — enforcement, on the live shape', () => {
+  it('spends NOTHING on a row shaped exactly like the locked-export sheet\'s', async () => {
+    /*
+     * The row as the VG import writes it: labels survived, targets did not,
+     * and the import said so. `enrich` being called here is the defect this
+     * whole change exists to close — and the mutation run below proves this
+     * test can fail.
+     */
+    const { enrich, outcome } = await runLadder([property({
+      source_row: {
+        unmapped: { 'Brochure V002': 'Brochure', 'Siting  / Masterplan': 'Masterplan' },
+        link_discovery: { state: 'unavailable', reason: 'unavailable_source_export' },
+      },
+    })]);
+    expect(enrich).not.toHaveBeenCalled();
+    expect(outcome.withheld).toBe(1);
+    expect(outcome.problems[0].reason).toContain('could not be read');
+  });
+
+  it('RUNS for the same row once its links were read and there are none', async () => {
+    const { enrich } = await runLadder([property({
+      source_row: {
+        unmapped: { 'Brochure V002': 'Brochure' },
+        link_discovery: { state: 'complete', method: 'htmlview' },
+      },
+    })]);
+    expect(enrich).toHaveBeenCalled();
+  });
+});
+
+describe('every row the import writes carries the stamp', () => {
+  it('all three source_row writes go through stampedRow', () => {
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/importStock.ts', 'utf8');
+    const writes = source.match(/source_row: stampedRow\(record, input\.linkDiscovery\)/g) ?? [];
+    expect(writes).toHaveLength(3);
+    // And no write site bypasses it.
+    expect(source).not.toMatch(/source_row: record as unknown/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Discovery is made DURABLE — the stored row learns what the live fetch saw
+// ---------------------------------------------------------------------------
+
+describe('a live fetch\'s discoveries survive onto the stored row', () => {
+  const write = async (input: Parameters<typeof persistDiscoveredRowLinks>[1]) => {
+    const updates: Array<Record<string, unknown>> = [];
+    const db = {
+      from: () => ({
+        update: (patch: Record<string, unknown>) => {
+          updates.push(patch);
+          const chain = { eq: () => chain, then: (r: (v: unknown) => unknown) =>
+            Promise.resolve({ error: null }).then(r) } as any;
+          return chain;
+        },
+      }),
+    } as any;
+    const row = await persistDiscoveredRowLinks(db, input);
+    return { row, updates };
+  };
+
+  it('adds URL columns the stored row lacks, records them, and stamps the row', async () => {
+    const { row, updates } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/AB/view', Status: 'Available' },
+      storedRow: { unmapped: { 'Brochure V002': 'Brochure' }, source_anchor: 'r9' },
+      availability: 'resolved', method: 'htmlview',
+    });
+    expect(updates).toHaveLength(1);
+    const stored = (row!.unmapped as Record<string, string>);
+    // Add-only: the label column survives beside the new URL column.
+    expect(stored['Brochure V002']).toBe('Brochure');
+    expect(stored['Brochure V002 URL']).toContain('drive.google.com');
+    // A plain value is never persisted as a link column.
+    expect(stored.Status).toBeUndefined();
+    expect(row!.recovered_link_columns).toEqual(['Brochure V002 URL']);
+    expect(row!.link_discovery).toEqual({ state: 'complete', method: 'htmlview' });
+    // The row it returns is the row it wrote, so the run reads its own write.
+    expect((updates[0].source_row as Record<string, unknown>).link_discovery)
+      .toEqual({ state: 'complete', method: 'htmlview' });
+  });
+
+  it('writes NOTHING when the stored row already knows everything', async () => {
+    const { row, updates } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/AB/view' },
+      storedRow: {
+        unmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/AB/view' },
+        link_discovery: { state: 'complete', method: 'htmlview' },
+      },
+      availability: 'resolved', method: 'htmlview',
+    });
+    expect(row).toBeNull();
+    expect(updates).toHaveLength(0);
+  });
+
+  it('never replaces a URL a stored column already carries', async () => {
+    const { row } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002 URL': 'https://drive.google.com/file/d/NEW/view' },
+      storedRow: {
+        unmapped: { 'Brochure V002 URL': 'https://www.dropbox.com/s/old.pdf' },
+      },
+      availability: 'resolved', method: 'workbook_export',
+    });
+    // Only the stamp changed; the recovered URL column kept its value.
+    expect((row!.unmapped as Record<string, string>)['Brochure V002 URL'])
+      .toBe('https://www.dropbox.com/s/old.pdf');
+  });
+
+  it('stamps a row unavailable when the live fetch could not read the layer', async () => {
+    const { row } = await write({
+      itemId: 'i1', organisationId: 'o1',
+      freshUnmapped: { 'Brochure V002': 'Brochure' },
+      storedRow: { unmapped: { 'Brochure V002': 'Brochure' } },
+      availability: 'unavailable_source_export', method: null,
+    });
+    expect(row!.link_discovery).toEqual({
+      state: 'unavailable', reason: 'unavailable_source_export',
+    });
+  });
+});
+
+describe('the repair re-fetches a live Google Sheet, and only a Google Sheet', () => {
+  it('is pinned in the source: guarded by googleSheetsRef, falling back to storage', () => {
+    const source = readFileSync(
+      'supabase/functions/_shared/builderStock/repairSourceImages.ts', 'utf8');
+    const guard = source.indexOf('if (googleSheetsRef(sourceUrl))');
+    const fallback = source.indexOf('if (!bytes) {');
+    expect(guard).toBeGreaterThan(-1);
+    expect(fallback).toBeGreaterThan(guard);
+    // And what it learns is made durable through the one writer.
+    expect(source).toContain('persistDiscoveredRowLinks(db,');
   });
 });

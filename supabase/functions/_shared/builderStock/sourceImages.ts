@@ -108,6 +108,53 @@ import {
  * of 5334x3334 JPEGs needs in order to be read inside an edge worker at all.
  * Both live examples sat at `attempts: 2`, one tick from being retired.
  *
+ * 9 changes what the reader can SEE and what it can AFFORD. Two capabilities.
+ *
+ * A locked-export Google Sheet's links are now read at all: a document whose
+ * owner disabled download answers 401 to every `export?format=…` while
+ * serving its rows, and its link targets are recovered from the one public
+ * representation that carries them (`htmlview/sheet` — see
+ * `googleSheetsHtmlGrid.pure.ts`), merged by the same content-proven
+ * alignment as ever. And a heavy document no longer costs a full-buffer scan
+ * PER PAGE: the object index is memoised (see `scanPdfObjects`), which took
+ * the live 13.9 MB Mandalay brochure from ~5.9 s of parser CPU — a worker
+ * kill on every attempt, retired operationally at 8 — to ~0.5 s. Every
+ * operational retirement banked at 8 was decided under that cost and is
+ * stale by definition.
+ *
+ * 10 widens what a cover page may CORROBORATE ITSELF with. The cover rule's
+ * fourth test accepted only tokens of the row's display label, and that label
+ * shows the suburb and hides the estate whenever a lot is present — while a
+ * builder's own cover identifies a lot the way the estate's marketing does.
+ * Measured live, 2 September 2026: the Watsons Reach brochure for lot 102
+ * states "Lot 102 Watsons Reach Estate" beside its package price and was
+ * refused for not saying "Diggers Rest". The row's own identity names —
+ * `development_name`, `project_name` — now travel as hints for that one test
+ * (see `stockIdentityHints` and `pageStatesIdentity`), so every
+ * `not_identified` banked at 9 was judged under the narrower rule and is
+ * stale by definition.
+ *
+ * 11 reads a lot number the way the PAGE typesets it. The same list's lot 103
+ * brochure extracts its identity line as "2 1 Lot 10 3 Watsons Reach Estate"
+ * — the exporter split the digits into runs — so the strict token reading saw
+ * "Lot 10", failed the our-lot test and counted a foreign lot, and the
+ * builder's own document was refused. A run of digit tokens after Lot/Unit is
+ * now read fused as well as strictly (see `lotDesignationReadings`), so a
+ * `not_identified` banked at 10 was judged under the split-blind reading and
+ * is stale by definition.
+ *
+ * 12 reads the LIVE generation of an incrementally updated document. The
+ * compressed-object recovery kept the FIRST copy of each object number, and
+ * an incremental update appends revisions after the ones they replace — so
+ * on the same lot 102 brochure (five generations, twenty-one object streams)
+ * the walker served the STALE page dictionary, whose image map pointed at
+ * the template's sample artwork (another design's floor plan, labelled
+ * LOT 414) while the newest generation mapped the builder's real 1920x1080
+ * facade render. Recovery is last-generation-wins now, agreeing with the raw
+ * byte scan (see `recoverCompressedObjects`), so every negative banked at 11
+ * against such a document was judged on the wrong generation's pictures and
+ * is stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.

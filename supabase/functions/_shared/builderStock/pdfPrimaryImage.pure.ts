@@ -113,6 +113,53 @@ function lotDesignations(value: string): string[] {
 }
 
 /**
+ * A lot designation as a PAGE actually typesets it: the first digit token
+ * after "Lot"/"Unit", and the whole run of digit tokens fused back together.
+ *
+ * WHY THE FUSED READING EXISTS. A PDF's text layer breaks a number wherever
+ * the exporter placed its glyph runs, and the lot number itself is not
+ * exempt. Measured live, 2 September 2026, on the Watsons Reach list: the
+ * supplied brochure for lot 103 extracts as "2 1 Lot 10 3 Watsons Reach
+ * Estate" — the page a person reads says "Lot 103", the token stream says
+ * "Lot 10" then "3", and the strict reading refused the builder's own
+ * document as being about some other lot. The sibling brochure for lot 102
+ * survived only because its digits happened to land in one run. How an
+ * exporter SPLIT a number is typography, not evidence about the property.
+ *
+ * WHY BOTH READINGS TRAVEL, AND HOW THEY ARE SPENT. A run counts as OUR lot
+ * when either reading matches the label's lot, and as ANOTHER lot only when
+ * neither does — so "Lot 104" still contradicts lot 103 (strict 104, fused
+ * 1042-with-a-trailing-bath-count, neither ours), while "Lot 10 3" stops
+ * reading as a foreign lot 10 on lot 103's own document. The deliberate
+ * trade-off: a page genuinely about lot 10 whose next token is a bare "3"
+ * (say a bedroom count) would read as lot 103's too — but this test only
+ * ever CONFIRMS a document the row itself supplied, the corroboration,
+ * package-fact and single-hero tests still stand behind it, and refusing
+ * every brochure whose number the exporter split is the measured, recurring
+ * loss. The label side stays strict: labels are our own strings, and nothing
+ * splits them.
+ */
+interface LotReading { strict: string; fused: string }
+
+function lotDesignationReadings(value: string): LotReading[] {
+  const tokens = tokenise(value);
+  const found: LotReading[] = [];
+  for (let index = 0; index < tokens.length - 1; index++) {
+    if (tokens[index] !== 'lot' && tokens[index] !== 'unit') continue;
+    const first = tokens[index + 1];
+    if (!/^\d{1,5}$/.test(first)) continue;
+    let fused = first;
+    for (let next = index + 2; next < tokens.length; next++) {
+      if (!/^\d{1,5}$/.test(tokens[next])) break;
+      if (fused.length + tokens[next].length > 5) break;
+      fused += tokens[next];
+    }
+    found.push({ strict: first, fused });
+  }
+  return found;
+}
+
+/**
  * The design or product a label names in brackets — "[Miami 190]".
  *
  * The SECOND discriminator, and on the live list it is the only one that
@@ -170,12 +217,33 @@ function designTokens(label: string): string[] {
  *      estate, the suburb, the street where the document does name it — must
  *      appear, so a bare "Lot 51" on an unrelated page cannot qualify.
  *
+ *      THE CORROBORATION POOL IS THE ROW'S IDENTITY, NOT THE LABEL'S SUBSET
+ *      OF IT. The label is a short display string, and `stockRecordLabel`
+ *      includes the estate only when the row has nothing else to show — so a
+ *      label can read "Lot 102, Diggers Rest" for a row whose own
+ *      `development_name` is "Watsons Reach". Measured live, 2 September
+ *      2026: that row's supplied brochure states "Lot 102 Watsons Reach
+ *      Estate" beside its package price, which is how house-and-land
+ *      marketing writes identity — the estate, not the suburb — and this
+ *      test refused it for not saying "Diggers Rest". A builder's own
+ *      brochure, fetched and read, became a blank card. So the caller passes
+ *      the row's remaining identity names as HINTS, and a hint token counts
+ *      as corroboration exactly as a label token does. Hints are spent on
+ *      this test and nowhere else: they cannot substitute for the lot,
+ *      cannot excuse a page naming another lot, and never touch the
+ *      full-conjunction path below — every page accepted without hints is
+ *      still accepted, and no test gets weaker than it was.
+ *
  * A label with no lot or unit number keeps the OLD conjunction exactly, because
  * for those rows the tokens are all there is and there is no discriminator to
  * lean on. Nothing about this is a similarity score: every test is a statement
  * the document either makes or does not make.
  */
-function pageStatesIdentity(pageText: string, label: string): boolean {
+function pageStatesIdentity(
+  pageText: string,
+  label: string,
+  identityHints: readonly string[] = [],
+): boolean {
   const labelTokens = tokenise(label);
   if (labelTokens.length < MIN_IDENTITY_TOKENS) return false;
 
@@ -188,12 +256,16 @@ function pageStatesIdentity(pageText: string, label: string): boolean {
     return labelTokens.slice(0, MAX_IDENTITY_TOKENS).every(states);
   }
 
-  // 1 — the lot is stated, as a lot.
-  const pageLots = lotDesignations(pageText);
-  if (!pageLots.some((lot) => labelLots.includes(lot))) return false;
+  // 1 — the lot is stated, as a lot. A number the exporter split into runs
+  // is read whole as well as strictly — see `lotDesignationReadings`.
+  const pageLotReadings = lotDesignationReadings(pageText);
+  const readsAsOurs = (reading: LotReading) =>
+    labelLots.includes(reading.strict) || labelLots.includes(reading.fused);
+  if (!pageLotReadings.some(readsAsOurs)) return false;
 
-  // 2 — and no other lot is.
-  if (pageLots.some((lot) => !labelLots.includes(lot))) return false;
+  // 2 — and no other lot is: a run is another lot only when NEITHER of its
+  // readings is ours.
+  if (pageLotReadings.some((reading) => !readsAsOurs(reading))) return false;
 
   // 3 — the design, when the label names one.
   const design = designTokens(label);
@@ -213,7 +285,15 @@ function pageStatesIdentity(pageText: string, label: string): boolean {
     token !== 'lot' && token !== 'unit' && !labelLots.includes(token)
     && !design.includes(token));
   if (!corroborating.length) return true;
-  return corroborating.some(states);
+  if (corroborating.some(states)) return true;
+  // The row's other identity names — the estate, the project — filtered the
+  // same way, so a hint can never be the lot wearing a different hat.
+  return identityHints
+    .flatMap((hint) => tokenise(hint))
+    .filter((token) =>
+      token !== 'lot' && token !== 'unit' && !labelLots.includes(token)
+      && !design.includes(token))
+    .some(states);
 }
 
 /** The package facts a page states, in the order they are defined above. */
@@ -239,13 +319,14 @@ const MIN_PACKAGE_FACTS = 2;
 export function findPropertyCoverPages(
   pageTexts: string[],
   label: string | null | undefined,
+  identityHints: readonly string[] = [],
 ): PropertyCoverEvidence[] {
   const identity = String(label ?? '').trim();
   if (!identity) return [];
 
   const covers: PropertyCoverEvidence[] = [];
   (pageTexts ?? []).forEach((text, index) => {
-    if (!pageStatesIdentity(text ?? '', identity)) return;
+    if (!pageStatesIdentity(text ?? '', identity, identityHints)) return;
     const packageFacts = packageFactsOn(text ?? '');
     if (packageFacts.length < MIN_PACKAGE_FACTS) return;
     covers.push({ page: index + 1, identity, packageFacts });
@@ -515,9 +596,13 @@ export function coverSearchPages(input: {
   pageTexts: string[];
   design?: string | null;
   structuralCoverPage?: number | null;
+  /** The row's other identity names. See `pageStatesIdentity`, test 4. */
+  identityHints?: readonly string[] | null;
 }): number[] {
   const pages = new Set<number>();
-  for (const cover of findPropertyCoverPages(input.pageTexts ?? [], input.label)) {
+  for (const cover of findPropertyCoverPages(
+    input.pageTexts ?? [], input.label, input.identityHints ?? [],
+  )) {
     pages.add(cover.page);
   }
   for (const cover of findDesignCoverPages(input.pageTexts ?? [], input.design ?? null)) {
@@ -575,10 +660,12 @@ export function assignPdfMediaRoles(input: {
    * never displace one. Absent or indistinct, and the design path never runs.
    */
   design?: string | null;
+  /** The row's other identity names. See `pageStatesIdentity`, test 4. */
+  identityHints?: readonly string[] | null;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const covers = input.pageOrderAuthoritative
-    ? findPropertyCoverPages(input.pageTexts ?? [], input.label)
+    ? findPropertyCoverPages(input.pageTexts ?? [], input.label, input.identityHints ?? [])
     : [];
   const structural = input.pageOrderAuthoritative
     && Number.isInteger(input.structuralCoverPage)
@@ -691,6 +778,8 @@ export function assignPdfMediaRolesPerProperty(input: {
   /** The property each picture reached, index-aligned. Null is unattributed. */
   stockItemIds: Array<string | null>;
   labelByItemId: Map<string, string>;
+  /** Each property's other identity names. See `pageStatesIdentity`, test 4. */
+  identityHintsByItemId?: Map<string, readonly string[]>;
   pageTexts: string[];
   pageOrderAuthoritative: boolean;
 }): SourceImageRoleAssignment[] {
@@ -711,6 +800,7 @@ export function assignPdfMediaRolesPerProperty(input: {
   for (const [itemId, indexes] of byProperty) {
     const assignments = assignPdfMediaRoles({
       label: input.labelByItemId.get(itemId) ?? null,
+      identityHints: input.identityHintsByItemId?.get(itemId) ?? [],
       pageTexts: input.pageTexts,
       pageOrderAuthoritative: input.pageOrderAuthoritative,
       media: indexes.map((index) => media[index].placement ?? {

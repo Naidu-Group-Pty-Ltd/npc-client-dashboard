@@ -35,6 +35,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ANNOTATED_VERDICT, CLEAN_VERDICT } from './fixtures/builderStockPictures';
+import { recoverCompressedObjects } from '../../../supabase/functions/_shared/builderStock/pdfSourcePhoto';
 
 import {
   assignPdfMediaRoles, findPropertyCoverPages, packageFactsOn, selectCoverHero,
@@ -1084,5 +1085,44 @@ describe('W — choosing between two proven primaries for one property', () => {
     });
     expect(chooseDisplayableImage([notPrimary])).toBeNull();
     expect(chooseDisplayableImage([notPrimary, cleanCover])!.id).toBe('cover-clean');
+  });
+});
+
+/**
+ * THE LAST GENERATION OF A COMPRESSED OBJECT IS THE LIVE ONE.
+ *
+ * An incrementally updated PDF appends each revision after the one it
+ * replaces, so when two object streams both carry object N, the later text is
+ * what the document's xref would serve and the earlier is history. The merge
+ * used to keep the FIRST — measured live, 2 September 2026, on the Watsons
+ * Reach lot 102 brochure (five generations, twenty-one object streams): the
+ * stale generation of the page dictionary mapped its images to the template's
+ * sample artwork — another design's floor plan, labelled LOT 414 — while the
+ * newest generation, never read, mapped the builder's real 1920x1080 facade
+ * render. The raw byte scan already lets the last occurrence win; the
+ * recovered path has to agree, or which generation a page gets depends on
+ * where the writer happened to put it.
+ */
+describe('the last generation of a compressed object wins', () => {
+  const twoGenerations = [
+    '%PDF-1.5',
+    '1 0 obj',
+    '<</Type /ObjStm /N 1 /First 4 /Length 24>>',
+    'stream',
+    '5 0 <</Generation /Old>>',
+    'endstream',
+    'endobj',
+    '2 0 obj',
+    '<</Type /ObjStm /N 1 /First 4 /Length 24>>',
+    'stream',
+    '5 0 <</Generation /New>>',
+    'endstream',
+    'endobj',
+  ].join('\n');
+
+  it('recovers the newest object-stream copy, not the first written', async () => {
+    const recovered = await recoverCompressedObjects(new TextEncoder().encode(twoGenerations));
+    expect(recovered.get(5)).toContain('/New');
+    expect(recovered.get(5)).not.toContain('/Old');
   });
 });

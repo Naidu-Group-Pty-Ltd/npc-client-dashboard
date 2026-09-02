@@ -84,7 +84,7 @@ describe("refusal codes map to the category that names the right remedy", () => 
 
 describe("no caller re-collapses the refusal codes by hand", () => {
   const callers = [
-    "supabase/functions/cross-portal-outbox-worker/screeningConsumer.ts",
+    "supabase/functions/_shared/aml/screeningConsumer.ts",
     "supabase/functions/cross-portal-outbox-worker/verificationConsumer.ts",
     "supabase/functions/_shared/aml/standaloneVerification.ts",
   ];

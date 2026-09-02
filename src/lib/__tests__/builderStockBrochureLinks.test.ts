@@ -201,10 +201,16 @@ describe('17/18 — inaccessible is not the same as absent', () => {
       const message = sourceAccessNoticeFor(unread)!.message;
       expect(seen.has(message)).toBe(false);
       seen.add(message);
-      // All three obligatory statements, on every one of them.
+      // All three obligatory statements, on every one of them: what could
+      // not be reached, that the rows imported anyway, and what happens to
+      // the affected pictures — they WAIT, rather than being substituted.
+      // (The third used to promise processing was "continuing with the other
+      // sources", which described the old fall-through-to-web policy; the
+      // fallback gate now holds those cards, and the sentence says so.)
       expect(message).toMatch(/could not be accessed/i);
       expect(message).toMatch(/imported successfully/i);
-      expect(message).toMatch(/continuing/i);
+      expect(message).toMatch(/until the links can be read/i);
+      expect(message).toMatch(/substitute image is never used/i);
     }
   });
 

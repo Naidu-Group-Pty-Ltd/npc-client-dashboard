@@ -73,14 +73,23 @@ export function normaliseCell(value: unknown): string {
  *
  * Empty CSV cells agree with everything, so they measure nothing.
  */
-function rowAgreement(csvRow: string[], sheetRow: (string | null)[] | undefined): number {
+function rowAgreement(
+  csvRow: string[],
+  sheetRow: (string | null)[] | undefined,
+  map?: ColumnMap,
+): number {
   let compared = 0;
   let agreed = 0;
   for (let c = 0; c < csvRow.length; c += 1) {
     const want = normaliseCell(csvRow[c]);
     if (!want) continue;
+    const sheetColumn = map ? map.sheetColumnFor[c] : c;
+    // A column the two representations do not share measures nothing — see
+    // `mapColumnsByHeader`: a hidden column is absent from one rendering and
+    // present in the other, and counting it as disagreement failed real rows.
+    if (sheetColumn === null || sheetColumn === undefined) continue;
     compared += 1;
-    if (normaliseCell(sheetRow?.[c]) === want) agreed += 1;
+    if (normaliseCell(sheetRow?.[sheetColumn]) === want) agreed += 1;
   }
   return compared === 0 ? 0 : agreed / compared;
 }
@@ -106,14 +115,19 @@ export const ROW_MATCH_FLOOR = 0.9;
  * comparisons inside an edge function.
  */
 function cellIndex(
-  sheet: WorkbookSheet, headerRow: number, width: number,
+  sheet: WorkbookSheet, headerRow: number, width: number, map?: ColumnMap,
 ): Map<string, number[]> {
   const index = new Map<string, number[]>();
   for (let r = headerRow + 1; r < sheet.values.length; r += 1) {
     const row = sheet.values[r];
     if (!row) continue;
     for (let c = 0; c < width; c += 1) {
-      const value = normaliseCell(row[c]);
+      // Keyed by the CSV's column, read from the sheet's — the map is what
+      // lets a representation that omits hidden columns still answer for the
+      // columns it does carry.
+      const sheetColumn = map ? map.sheetColumnFor[c] : c;
+      if (sheetColumn === null || sheetColumn === undefined) continue;
+      const value = normaliseCell(row[sheetColumn]);
       if (!value) continue;
       const key = `${c}\u0000${value}`;
       const at = index.get(key);
@@ -125,11 +139,12 @@ function cellIndex(
 
 /** The worksheet rows that best reproduce this CSV row, and how well. */
 function candidatesFor(
-  csvRow: string[], index: Map<string, number[]>, width: number,
+  csvRow: string[], index: Map<string, number[]>, width: number, map?: ColumnMap,
 ): { best: number; compared: number; winners: number[] } {
   let compared = 0;
   const tally = new Map<number, number>();
   for (let c = 0; c < width; c += 1) {
+    if (map && (map.sheetColumnFor[c] === null || map.sheetColumnFor[c] === undefined)) continue;
     const value = normaliseCell(csvRow[c]);
     if (!value) continue;
     compared += 1;
@@ -146,6 +161,89 @@ function candidatesFor(
 
 /** A worksheet row must reproduce this much of the CSV header to BE the header. */
 export const HEADER_MATCH_FLOOR = 0.7;
+
+/**
+ * WHICH SHEET COLUMN ANSWERS FOR WHICH CSV COLUMN.
+ *
+ * WHY POSITION IS NOT ENOUGH. The proven CSV and the link-bearing rendering
+ * are two independent drawings of one tab, and they do not agree about
+ * COLUMNS any more than they agree about rows: the htmlview grid renders only
+ * VISIBLE columns, and the live VG stock list hides three (Rental Appraisal,
+ * Rental Income, Rental Yield — CSV columns 18-20), so from `Status` onward
+ * every htmlview cell sits three places left of its CSV twin. Compared
+ * position-for-position, real rows lost 3-4 cells each, three of sixteen fell
+ * under `ROW_MATCH_FLOOR`, the tab scored 0.8 against `MATCH_FLOOR` 0.95, and
+ * the whole document refused to recognise itself — links and all.
+ *
+ * THE ANSWER IS NOT A LOWER FLOOR. The floors are what stop a brochure being
+ * borrowed by the wrong row, and they stand. The answer is that COLUMNS ARE
+ * IDENTIFIED BY THEIR HEADINGS the same way rows are identified by their
+ * content: `Brochure V002` is `Brochure V002` in both renderings, wherever
+ * each happens to draw it.
+ *
+ * THE MAP IS DETERMINISTIC AND FAILS CLOSED, column by column:
+ *
+ *   - a heading that appears EXACTLY ONCE on each side maps to its twin;
+ *   - a heading duplicated on either side maps NOWHERE — two columns a
+ *     heading cannot tell apart must not swap answers;
+ *   - an empty CSV heading keeps its own index only while the sheet's heading
+ *     there is empty too, because values under anonymous columns still have
+ *     to be compared against SOMETHING and same-index is the only honest
+ *     candidate;
+ *   - anything else maps nowhere, and an unmapped column MEASURES NOTHING —
+ *     it is excluded from row scoring entirely rather than counted against
+ *     it, which is the whole correction.
+ *
+ * Where no header row can be found the map is identity, so every document
+ * that matched before this existed matches identically after it.
+ */
+export interface ColumnMap {
+  /** For each CSV column index, the sheet column that answers for it, or null. */
+  sheetColumnFor: (number | null)[];
+  /** How many CSV columns found a sheet column. */
+  mapped: number;
+}
+
+export function mapColumnsByHeader(csv: string[][], sheet: WorkbookSheet): ColumnMap {
+  const width = (csv[0] ?? []).length;
+  const identity: ColumnMap = {
+    sheetColumnFor: Array.from({ length: width }, (_, c) => c),
+    mapped: width,
+  };
+
+  const headerRow = locateHeaderRow(csv, sheet);
+  if (headerRow < 0) return identity;
+  const sheetHeader = sheet.values[headerRow] ?? [];
+
+  const csvNames = (csv[0] ?? []).map((cell) => normaliseCell(cell));
+  const sheetNames = sheetHeader.map((cell) => normaliseCell(cell));
+  const countIn = (names: string[]) => {
+    const counts = new Map<string, number>();
+    for (const name of names) if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+    return counts;
+  };
+  const csvCounts = countIn(csvNames);
+  const sheetCounts = countIn(sheetNames);
+
+  const sheetColumnFor: (number | null)[] = [];
+  let mapped = 0;
+  for (let c = 0; c < width; c += 1) {
+    const name = csvNames[c];
+    if (!name) {
+      const sameIndexEmpty = !sheetNames[c];
+      sheetColumnFor.push(sameIndexEmpty ? c : null);
+      if (sameIndexEmpty) mapped += 1;
+      continue;
+    }
+    if (csvCounts.get(name) === 1 && sheetCounts.get(name) === 1) {
+      sheetColumnFor.push(sheetNames.indexOf(name));
+      mapped += 1;
+      continue;
+    }
+    sheetColumnFor.push(null);
+  }
+  return { sheetColumnFor, mapped };
+}
 
 /**
  * WHERE THE HEADINGS ACTUALLY ARE — asked of content, never assumed.
@@ -171,10 +269,40 @@ export function locateHeaderRow(csv: string[][], sheet: WorkbookSheet): number {
   const header = csv[0] ?? [];
   if (!header.length) return -1;
 
+  /*
+   * TWO READINGS OF "REPRODUCES THE HEADER", AND THE BETTER ONE WINS PER ROW.
+   *
+   * Positional agreement is the original test and still the sharpest where
+   * the two representations lay their columns out identically. But a
+   * rendering that OMITS HIDDEN COLUMNS shifts everything after the gap, and
+   * a heading two places left of where the CSV drew it is still the same
+   * heading — so each row is also scored by CONTAINMENT: how many of the
+   * CSV's uniquely-named headings appear anywhere in it. On the live VG list
+   * the header row scores 0.727 positionally (three hidden columns and a
+   * banner-merged first cell against it) and 0.818 by containment; a document
+   * with one more hidden column would fall under the floor positionally while
+   * containment barely moves. Both tests demand the same floor, and a row
+   * that clears neither is still no header at all.
+   */
+  const names = header.map((cell) => normaliseCell(cell));
+  const uniqueNames = names.filter((name, index) => name && names.indexOf(name) === index
+    && names.lastIndexOf(name) === index);
+
+  const containment = (row: (string | null)[] | undefined): number => {
+    if (!uniqueNames.length || !row) return 0;
+    const present = new Set(row.map((cell) => normaliseCell(cell)).filter(Boolean));
+    let found = 0;
+    for (const name of uniqueNames) if (present.has(name)) found += 1;
+    return found / uniqueNames.length;
+  };
+
   let bestRow = -1;
   let bestScore = 0;
   for (let r = 0; r < sheet.values.length; r += 1) {
-    const score = rowAgreement(header, sheet.values[r]);
+    const score = Math.max(
+      rowAgreement(header, sheet.values[r]),
+      containment(sheet.values[r]),
+    );
     if (score > bestScore) { bestScore = score; bestRow = r; }
   }
   return bestScore >= HEADER_MATCH_FLOOR ? bestRow : -1;
@@ -203,9 +331,12 @@ export function alignWorksheetRows(csv: string[][], sheet: WorkbookSheet): numbe
   if (headerRow < 0) return aligned;
   aligned[0] = headerRow;
 
-  const index = cellIndex(sheet, headerRow, width);
+  // Columns are identified by their headings before rows are identified by
+  // their content — see `mapColumnsByHeader` for the measured reason.
+  const map = mapColumnsByHeader(csv, sheet);
+  const index = cellIndex(sheet, headerRow, width, map);
   for (let r = 1; r < csv.length; r += 1) {
-    const { best, compared, winners } = candidatesFor(csv[r] ?? [], index, width);
+    const { best, compared, winners } = candidatesFor(csv[r] ?? [], index, width, map);
     if (!compared) continue;
     /*
      * ONE ROW, BEATING EVERY OTHER. Alike-enough is not sufficient: on a list
@@ -239,18 +370,19 @@ export function worksheetScore(csv: string[][], sheet: WorkbookSheet): number {
   const headerRow = locateHeaderRow(csv, sheet);
   if (headerRow < 0) return 0;
 
-  const index = cellIndex(sheet, headerRow, width);
+  const map = mapColumnsByHeader(csv, sheet);
+  const index = cellIndex(sheet, headerRow, width, map);
   let compared = 0;
   let agreed = 0;
   for (let r = 1; r < csv.length; r += 1) {
-    const found = candidatesFor(csv[r] ?? [], index, width);
+    const found = candidatesFor(csv[r] ?? [], index, width, map);
     if (!found.compared) continue;
     compared += 1;
     if (found.best >= Math.ceil(found.compared * ROW_MATCH_FLOOR)) agreed += 1;
   }
   // A tab that reproduces the header and has no data rows to check is not
   // evidence of anything; it scores on its header alone.
-  if (compared === 0) return rowAgreement(csv[0] ?? [], sheet.values[headerRow]);
+  if (compared === 0) return rowAgreement(csv[0] ?? [], sheet.values[headerRow], map);
   return agreed / compared;
 }
 
@@ -330,10 +462,13 @@ export function mergeHyperlinkColumns(
    * would otherwise be handed the NEXT one's document.
    */
   const aligned = alignWorksheetRows(csv, sheet);
+  const map = mapColumnsByHeader(csv, sheet);
   const linkAt = (csvRow: number, column: number): string => {
     const worksheetRow = aligned[csvRow] ?? -1;
     if (worksheetRow < 0) return '';
-    return sheet.links[worksheetRow]?.[column] ?? '';
+    const sheetColumn = map.sheetColumnFor[column];
+    if (sheetColumn === null || sheetColumn === undefined) return '';
+    return sheet.links[worksheetRow]?.[sheetColumn] ?? '';
   };
 
   const linkColumns: number[] = [];

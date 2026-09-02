@@ -5,7 +5,7 @@
  * what the history row is labelled with, and whether the link is a Notion one.
  *
  * WHERE THE REAL SSRF CONTROL LIVES: not here. Host resolution and the
- * private/reserved-address test are `import-from-url/ssrfGuard.ts`, which is
+ * private/reserved-address test are `_shared/ssrfGuard.ts`, which is
  * already unit-tested and used by the existing link importer — this module
  * refuses the schemes that never reach a fetch at all, and `fetchSource.ts`
  * applies the guard to the original URL and to every redirect hop.

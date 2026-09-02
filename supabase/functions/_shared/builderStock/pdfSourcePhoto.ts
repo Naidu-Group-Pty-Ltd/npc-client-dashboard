@@ -180,8 +180,22 @@ export async function recoverCompressedObjects(
     } catch {
       continue;
     }
+    /*
+     * THE LAST GENERATION OF AN OBJECT IS THE LIVE ONE. An incrementally
+     * updated PDF appends each revision after the one it replaces, so when
+     * two object streams both carry object N, the LATER text is what the
+     * document's xref would serve and the earlier is history. This used to
+     * keep the FIRST — measured live, 2 September 2026, on the Watsons Reach
+     * lot 102 brochure (five generations, twenty-one object streams): the
+     * stale generation of the page dictionary mapped its images to the
+     * TEMPLATE's sample artwork — another design's floor plan, labelled
+     * LOT 414 — while the newest generation, never read, mapped the real
+     * 1920x1080 facade render. The raw byte scan already lets the last
+     * occurrence win; the recovered path has to agree, or which generation a
+     * page gets depends on where the writer happened to put it.
+     */
     for (const [number, header] of parseObjectStream(text, slice)) {
-      if (!recovered.has(number)) recovered.set(number, header);
+      recovered.set(number, header);
     }
   }
   return recovered;
@@ -580,6 +594,11 @@ export async function selectPdfPropertyPrimary(
      * field. Used only where no page named the property itself.
      */
     design?: string | null;
+    /**
+     * The row's other identity names — the estate, the project — for the
+     * cover rule's corroboration test alone. See `pageStatesIdentity`.
+     */
+    identityHints?: readonly string[] | null;
   } = {},
 ): Promise<{
   assets: PdfSourceAsset[];
@@ -602,6 +621,7 @@ export async function selectPdfPropertyPrimary(
     pageTexts: options.pageTexts ?? [],
     design: options.design ?? null,
     structuralCoverPage: options.structuralCoverPage ?? null,
+    identityHints: options.identityHints ?? [],
   });
   const found = await discoverPdfSourceAssets(bytes, {
     maxPages: options.maxPages,
@@ -612,6 +632,7 @@ export async function selectPdfPropertyPrimary(
   const roles = assignPdfMediaRoles({
     label: options.label ?? null,
     design: options.design ?? null,
+    identityHints: options.identityHints ?? [],
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),

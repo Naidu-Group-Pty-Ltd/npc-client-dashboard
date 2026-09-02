@@ -155,6 +155,14 @@ export async function recoverPackageImage(
      * document that names the house was refused for not naming the lot.
      */
     design?: string | null;
+    /**
+     * The row's other identity names — its estate (`development_name`), its
+     * project — for the cover rule's corroboration test alone. The display
+     * label omits the estate whenever the row has a lot and a suburb, and the
+     * builder's own cover corroborates by the estate at least as often as by
+     * the suburb. See `pageStatesIdentity`, test 4.
+     */
+    identityHints?: string[] | null;
   },
   deps: {
     fetchPackage?: PackageFetcher;
@@ -222,7 +230,8 @@ export async function recoverPackageImage(
     if (classifyBranch(input.packageUrl) === 'document') {
       return await extractFromDocument(
         fetchPackage, readPageTexts, sharedLinkFileUrl(input.packageUrl),
-        documentNameFromUrl(input.packageUrl), input.label, 'direct_link', design);
+        documentNameFromUrl(input.packageUrl), input.label, 'direct_link', design,
+        input.identityHints);
     }
     return { status: 'not_identified', detail: 'That package is not on a source we can read.' };
   }
@@ -232,7 +241,7 @@ export async function recoverPackageImage(
   if (directFileId) {
     return await extractFromDocument(
       fetchPackage, readPageTexts, driveDownloadUrl(directFileId), 'the linked document',
-      input.label, 'direct_link', design);
+      input.label, 'direct_link', design, input.identityHints);
   }
 
   const rootId = driveFolderId(input.packageUrl);
@@ -315,7 +324,7 @@ export async function recoverPackageImage(
 
   return await extractFromDocument(
     fetchPackage, readPageTexts, driveDownloadUrl(document.id), document.name, input.label,
-    'folder_structure', design);
+    'folder_structure', design, input.identityHints);
 }
 
 /**
@@ -541,6 +550,9 @@ async function extractFromDocument(
   /** The row's stated house design, for the design fallback. See
    * `findDesignCoverPages`. */
   design?: string | null,
+  /** The row's other identity names, for the cover rule's corroboration
+   * test alone. See `pageStatesIdentity`. */
+  identityHints?: readonly string[] | null,
 ): Promise<PackageOutcome> {
   let bytes: Uint8Array;
   try {
@@ -670,6 +682,7 @@ async function extractFromDocument(
   const selection = await selectPdfPropertyPrimary(bytes, {
     label,
     design,
+    identityHints: identityHints ?? [],
     pageTexts,
     // Supplied ONLY when the builder's folder already named this document for
     // this one property and the document itself can say nothing. See

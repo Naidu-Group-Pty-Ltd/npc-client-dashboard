@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { assertPublicUrl, isPrivateOrReservedAddress } from './ssrfGuard';
+import { assertPublicUrl, isPrivateOrReservedAddress } from './ssrfGuard.ts';
 
 describe('import-from-url SSRF guard', () => {
   it.each([

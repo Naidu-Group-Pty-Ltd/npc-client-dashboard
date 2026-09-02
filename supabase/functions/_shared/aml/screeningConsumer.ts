@@ -10,6 +10,19 @@
  * dead-lettered by the platform outbox machinery. A technical failure can
  * NEVER project to 'completed': stale lists and outages are our problem, not
  * a cleared customer.
+ *
+ * ## Why it lives in `_shared/aml/` rather than beside the worker
+ *
+ * TWO functions import it — `cross-portal-outbox-worker` runs it from the
+ * queue, and `aml-cases` runs it inline — which is what makes it shared. It
+ * used to sit in the worker's own directory, and a function bundle carries
+ * its own directory plus `_shared`, never another function's: so `aml-cases`
+ * imported a file its bundle did not contain. Nothing could prune that graph,
+ * the bundle went out carrying the whole 6.4 MB shared tree, and the deploy
+ * API refused it — `aml-cases` could not be deployed to a clone at all.
+ *
+ * Anything a second function imports belongs here for that reason, not as a
+ * matter of taste.
  */
 import {
   getScreeningProvider,
@@ -18,7 +31,7 @@ import {
   ProviderResolutionError,
   technicalCategoryForRefusal,
   type ScreeningScope,
-} from '../_shared/aml/providers/index.ts';
+} from './providers/index.ts';
 import {
   checkReuseDecision,
   computeRefreshDueAt,
@@ -26,7 +39,7 @@ import {
   projectPartyScreeningState,
   resumableFromDurableState,
   screeningClaimDecision,
-} from '../_shared/aml/partyScreening.pure.ts';
+} from './partyScreening.pure.ts';
 
 /** Party screening asks the local lists exactly what they can answer. */
 const PARTY_SCREENING_SCOPE: ScreeningScope[] = ['sanctions'];

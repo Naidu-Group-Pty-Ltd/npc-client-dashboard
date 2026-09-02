@@ -1,3 +1,23 @@
+/**
+ * SSRF guard — refuse a URL that resolves to a private or reserved address.
+ *
+ * `assertPublicUrl` is called on EVERY redirect hop, not just the first, so a
+ * public host that 302s to 169.254.169.254 is still refused.
+ *
+ * ## One copy, here
+ *
+ * There were two: this file and a byte-identical `import-from-url/ssrfGuard.ts`.
+ * Three functions imported this one and `_shared/builderStock/fetchSource.ts`
+ * imported the other — across a function directory, which no bundle contains,
+ * so the three builder-stock functions could not be deployed to a clone at
+ * all. Two copies of a security check is also how one gets hardened and the
+ * other does not, with no way to tell from a call site which you got.
+ *
+ * `import-from-url` — the function the duplicate was named for — CALLED
+ * `assertPublicUrl` while importing it from nowhere, so its guard threw
+ * ReferenceError on every hop rather than checking anything. That is why the
+ * identifier sat in `functions-registry/edge-missing-names.txt`.
+ */
 export type DnsRecordType = 'A' | 'AAAA';
 export type DnsResolver = (hostname: string, recordType: DnsRecordType) => Promise<string[]>;
 

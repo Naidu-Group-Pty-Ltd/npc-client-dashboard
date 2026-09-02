@@ -19,7 +19,7 @@
  *   to `unknown`.
  */
 import {
-  normaliseStockRow, stockMatchKeys, stockRecordLabel,
+  normaliseStockRow, stockIdentityHints, stockMatchKeys, stockRecordLabel,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -30,6 +30,7 @@ import {
   lifecycleForMatchedProperty, lifecycleForNewProperty,
 } from './stockLifecycle.pure.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
+import type { RowLinkDiscovery } from './suppliedEvidence.pure.ts';
 import type { ExtractedMedia } from './extract.ts';
 import {
   attributeDocumentMedia, settleContainerMediaRoles, settleRowAssetRoles,
@@ -370,6 +371,23 @@ const IMAGE_BUDGET_MS = 8_000;
  */
 const MAX_IMAGES_PER_IMPORT = 20;
 
+/**
+ * One record as `source_row` stores it, carrying the link-discovery stamp.
+ *
+ * The stamp rides INSIDE the row rather than on the item or the upload
+ * because the row is the one thing every later reading holds: the settler
+ * reads `source_row` to find a property's branches, and the fallback gate
+ * reads the same column to decide whether those branches are the whole story.
+ * A stamp kept anywhere else is a stamp a reader can fail to join.
+ */
+function stampedRow(
+  record: unknown,
+  discovery?: RowLinkDiscovery | null,
+): Record<string, unknown> {
+  const row = record as Record<string, unknown>;
+  return discovery ? { ...row, link_discovery: discovery } : { ...row };
+}
+
 export async function importStockRecords(
   db: any,
   input: {
@@ -402,6 +420,13 @@ export async function importStockRecords(
     pageOrderAuthoritative?: boolean;
     /** The uploaded document's own name, recorded on every image it yielded. */
     filename?: string | null;
+    /**
+     * What the import managed to see of each row's link layer — stamped onto
+     * every `source_row` it writes, because the reading has to survive on the
+     * ROW: the gate that decides whether the online fallback may run reads
+     * stored rows, long after this run and its upload metadata are gone.
+     */
+    linkDiscovery?: RowLinkDiscovery | null;
   },
   /**
    * Injected for the same reason the repair injects it: the production fetcher
@@ -448,6 +473,7 @@ export async function importStockRecords(
    */
   const itemIdByAnchor = new Map<string, string | null>();
   const labelByItemId = new Map<string, string>();
+  const identityHintsByItemId = new Map<string, readonly string[]>();
   const claimAnchor = (anchor: string | null, itemId: string) => {
     if (!anchor) return;
     if (!itemIdByAnchor.has(anchor)) { itemIdByAnchor.set(anchor, itemId); return; }
@@ -730,11 +756,11 @@ export async function importStockRecords(
              */
             pending_upload_id: input.uploadId,
             pending_patch: patch,
-            source_row: record as unknown as Record<string, unknown>,
+            source_row: stampedRow(record, input.linkDiscovery),
           } : {
             ...patch,
             upload_id: input.uploadId,
-            source_row: record as unknown as Record<string, unknown>,
+            source_row: stampedRow(record, input.linkDiscovery),
             /*
              * REVIVES AN ARCHIVED ROW; NEVER PUBLISHES A STAGED ONE. This used
              * to be a flat `'active'`, which was right when there were two
@@ -762,7 +788,7 @@ export async function importStockRecords(
             upload_id: input.uploadId,
             first_upload_id: input.uploadId,
             created_by_builder_user_id: input.builderUserId,
-            source_row: record as unknown as Record<string, unknown>,
+            source_row: stampedRow(record, input.linkDiscovery),
             availability_status: patch.availability_status ?? 'unknown',
             lifecycle_status: newPropertyLifecycle,
             last_seen_at: now,
@@ -836,8 +862,10 @@ export async function importStockRecords(
 
       outcome.itemIds.push(itemId);
       // The label the property was matched on, kept so a paginated source can
-      // ask which page states THIS property's identity.
+      // ask which page states THIS property's identity — and the identity
+      // names the label leaves out, for the corroboration test alone.
       labelByItemId.set(itemId, label);
+      identityHintsByItemId.set(itemId, stockIdentityHints(record));
       claimAnchor(record.source_anchor, itemId);
 
       /**
@@ -912,6 +940,7 @@ export async function importStockRecords(
     input.pageTexts?.length
       ? {
         labelByItemId,
+        identityHintsByItemId,
         pageTexts: input.pageTexts,
         pageOrderAuthoritative: input.pageOrderAuthoritative !== false,
       }
@@ -1077,6 +1106,8 @@ export async function attachDocumentMedia(
    */
   paginated?: {
     labelByItemId: Map<string, string>;
+    /** Each property's other identity names. See `pageStatesIdentity`. */
+    identityHintsByItemId?: Map<string, readonly string[]>;
     pageTexts: string[];
     pageOrderAuthoritative: boolean;
   } | null,

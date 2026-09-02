@@ -259,7 +259,7 @@ list that works.
 
 ## AML screening execution
 Read [`docs/aml/SCREENING_EXECUTION.md`](./docs/aml/SCREENING_EXECUTION.md)
-before touching `cross-portal-outbox-worker/screeningConsumer.ts`, the inline
+before touching `_shared/aml/screeningConsumer.ts`, the inline
 path in `aml-cases`, or anything that decides whether a party has been
 screened. "Screening never starts" was reported as a UI defect and was in fact
 **four stacked faults**, each of which explained the symptom on its own and

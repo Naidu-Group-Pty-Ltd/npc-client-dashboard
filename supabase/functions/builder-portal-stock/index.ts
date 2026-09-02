@@ -40,7 +40,9 @@ import {
 import {
   runStockImport, type RunImportResult,
 } from '../_shared/builderStock/runImport.ts';
-import { sourceAccessNoticeFor } from '../_shared/builderStock/sourceAccessNotice.pure.ts';
+import {
+  SOURCE_LINKS_UNAVAILABLE, sourceAccessNoticeFor,
+} from '../_shared/builderStock/sourceAccessNotice.pure.ts';
 import {
   linkRecoveryWebhookConfigured, requestLinkRecovery,
 } from '../_shared/builderStock/requestLinkRecovery.ts';
@@ -66,6 +68,9 @@ import { sha256Hex } from '../_shared/builderStock/rasterPng.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
 import type { HyperlinkAvailability } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
+import {
+  linkDiscoveryFromAvailability,
+} from '../_shared/builderStock/suppliedEvidence.pure.ts';
 import {
   NOTION_NOT_PUBLIC_MESSAGE, normaliseStockSourceUrl, snapshotFileName,
   stockSourceDisplayName,
@@ -734,6 +739,21 @@ Deno.serve(async (req) => {
             'The stored file could not be read, so it cannot be re-read.', downloadError?.message);
         }
 
+        /*
+         * A RE-READ RUNS ON THE STORED BYTES, so what it can see of a Google
+         * Sheet's links is exactly what the ORIGINAL fetch saw: a stored CSV
+         * from a resolved fetch carries the merged URL columns in its own
+         * text, and one from a refused fetch carries labels with no targets
+         * anywhere. The refusal was recorded on the upload row when it
+         * happened (`sourceAccessNoticeFor` → `error_detail.reason`), so it is
+         * read back here and stamped onto the re-written rows — a re-read
+         * must not launder "we could not see the links" into "there are no
+         * links".
+         */
+        const storedAvailability = upload.error_code === SOURCE_LINKS_UNAVAILABLE
+          ? String((upload.error_detail as { reason?: string } | null)?.reason
+            ?? 'unavailable_source_export')
+          : null;
         const result = await runStockImport({
           supabase,
           organisationId: activeOrganisationId,
@@ -742,6 +762,7 @@ Deno.serve(async (req) => {
           upload: { id: upload.id, original_filename: upload.original_filename },
           bytes: new Uint8Array(await blob.arrayBuffer()),
           sourceKind: 'file',
+          linkDiscovery: linkDiscoveryFromAvailability(storedAvailability),
         });
         return await finishImport(upload.id, result, { reprocessed: true });
       } catch (error) {
@@ -1030,6 +1051,15 @@ Deno.serve(async (req) => {
           isNotionSource: normalised.isNotion,
           baseUrl: fetched.finalUrl,
           rowAssets: sourceRowAssets,
+          /*
+           * A Google Sheet's link targets travel SEPARATELY from its proven
+           * CSV, so the fetch's own reading of how that went is stamped onto
+           * every row this import writes. `null` for every other kind of URL —
+           * their links are native to the fetched bytes, and `runStockImport`
+           * stamps them from the strategy that read them.
+           */
+          linkDiscovery: linkDiscoveryFromAvailability(
+            fetched.hyperlinks, fetched.hyperlinkMethod),
         });
 
         /**

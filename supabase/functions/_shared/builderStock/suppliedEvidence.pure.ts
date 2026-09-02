@@ -74,7 +74,8 @@ import {
   MAX_PACKAGE_ATTEMPTS, PACKAGE_RECOVERY_ATTEMPT,
 } from './packageAttempt.pure.ts';
 import {
-  branchQuestion, branchRecord, isTraversableBranch, type RowSourceBranch,
+  branchQuestion, branchRecord, isTraversableBranch, rowSourceBranches,
+  unmappedWithRecoveredLinks, type RowSourceBranch,
 } from './sourceBranches.pure.ts';
 
 /**
@@ -126,6 +127,72 @@ export interface SuppliedEvidenceReading {
   detail: string;
 }
 
+/**
+ * WHAT THE IMPORT MANAGED TO SEE OF THIS ROW'S LINKS — stamped on the row.
+ *
+ * THE HOLE THIS CLOSES. A branch is a URL found ON the row, so "no branches"
+ * used to mean `no_evidence` — the builder supplied nothing, run the ladder.
+ * But there is a second way a row ends up with no URLs: the SPREADSHEET
+ * carries them and we could not get them out. The live VG master list is the
+ * measured case — every `export?format=…` answers 401, `gviz` serves values
+ * only, and before the htmlview reader existed all fifty-six of its document
+ * links vanished at the door. Every one of its fourteen properties then read
+ * as a builder who supplied nothing, and the external ladder was bought
+ * against a stock list whose brochures were sitting in plain sight.
+ *
+ * OUR FAILURE IS NOT NO EVIDENCE. So the import now writes down, per row,
+ * whether the row's link layer was actually enumerable — and a row whose
+ * links could not be enumerated can never read as `exhausted` or
+ * `no_evidence`, however empty it looks. It reads `retryable_failure`: the
+ * ladder stays shut, the card stays blank, and the way in is fixing our
+ * reader (a new import stamps the rows afresh) rather than papering the card
+ * with somebody else's photograph.
+ *
+ * A ROW WITH NO STAMP IS A ROW WRITTEN BEFORE THE STAMP EXISTED — or by an
+ * adapter whose links are native to its own bytes (an uploaded workbook, a
+ * literal CSV, a PDF, a Notion record map, all of which carry their links IN
+ * the parsed content). Those rows keep the reading they always had.
+ */
+export interface RowLinkDiscovery {
+  /** `complete`: the row's link layer was read (or genuinely has none). */
+  state: 'complete' | 'unavailable';
+  /** How the links were (or would have been) read. Provenance, not behaviour. */
+  method?: string;
+  /** The availability word, when unavailable. Safe to store and to log. */
+  reason?: string;
+}
+
+/**
+ * The stamp for rows imported from a SPREADSHEET SOURCE, from what the fetch
+ * managed. `resolved` and `none_present` are readings of the spreadsheet —
+ * the links are on the rows, or the tab genuinely has none — and everything
+ * else is a reading of our access to it, which no row may mistake for an
+ * empty source.
+ */
+export function linkDiscoveryFromAvailability(
+  availability: string | null | undefined,
+  method?: string | null,
+): RowLinkDiscovery | null {
+  if (!availability) return null;
+  if (availability === 'resolved' || availability === 'none_present') {
+    return { state: 'complete', method: method ?? 'workbook_export' };
+  }
+  return { state: 'unavailable', reason: availability };
+}
+
+/** The stamp as the stored row carries it, however old the row. */
+export function readLinkDiscovery(sourceRow: unknown): RowLinkDiscovery | null {
+  const row = (sourceRow ?? null) as Record<string, unknown> | null;
+  const stamp = row?.link_discovery as Record<string, unknown> | undefined;
+  if (!stamp || typeof stamp !== 'object') return null;
+  const state = stamp.state === 'unavailable' ? 'unavailable' : 'complete';
+  return {
+    state,
+    method: typeof stamp.method === 'string' ? stamp.method : undefined,
+    reason: typeof stamp.reason === 'string' ? stamp.reason : undefined,
+  };
+}
+
 export interface SuppliedEvidenceInput {
   /** Every traversable source the row names, from `rowSourceBranches`. */
   branches: readonly RowSourceBranch[];
@@ -139,6 +206,8 @@ export interface SuppliedEvidenceInput {
    * question about `builder_stock_item_images` and this module reads no rows.
    */
   builderImageAccepted?: boolean;
+  /** What the import managed to see of this row's link layer. */
+  linkDiscovery?: RowLinkDiscovery | null;
 }
 
 /**
@@ -223,7 +292,29 @@ export function readSuppliedEvidence(
   }
 
   const branches = input.branches ?? [];
+  /*
+   * THE ROW'S LINK LAYER COMES BEFORE THE ROW'S LINKS. A row whose links
+   * could not be enumerated has an unknown number of sources, and an unknown
+   * number is never zero: whatever the branch arithmetic below would have
+   * said, `exhausted` and `no_evidence` are both claims to have SEEN
+   * everything, and this row's import is on record saying it did not.
+   * `found` still wins above — a picture the builder's own source yielded
+   * answers the question however it was found — and open branches (a URL that
+   * did survive, or one recovered later) are still worked; they simply can
+   * never finish the row while the layer they came from is unread.
+   */
+  const discovery = input.linkDiscovery ?? null;
+  const enumerable = discovery?.state !== 'unavailable';
+
   if (!branches.length) {
+    if (!enumerable) {
+      return {
+        state: 'retryable_failure', total: 0, inspected: 0, operational: 0, open: 0,
+        detail: 'the source carries link cells whose targets could not be read'
+          + `${discovery?.reason ? ` (${discovery.reason})` : ''}; `
+          + 'this is a fault on our side, not a row that supplied nothing',
+      };
+    }
     return {
       state: 'no_evidence', total: 0, inspected: 0, operational: 0, open: 0,
       detail: 'this row names no source this pipeline can open',
@@ -266,6 +357,17 @@ export function readSuppliedEvidence(
         + 'not a document that names no image',
     };
   }
+  if (!enumerable) {
+    // Every branch that DID survive was read and names nothing — but the
+    // layer they came from was never fully read, so there may be more.
+    return {
+      state: 'retryable_failure', total: branches.length, inspected, operational, open,
+      detail: `${inspected} known builder sources were read and name nothing, but the `
+        + 'source\'s link targets could not be fully enumerated'
+        + `${discovery?.reason ? ` (${discovery.reason})` : ''}; `
+        + 'this is a fault on our side, not an exhausted row',
+    };
+  }
   return {
     state: 'exhausted', total: branches.length, inspected, operational, open,
     detail: `all ${branches.length} builder sources were read and none names an image `
@@ -304,4 +406,36 @@ export function fallbackMayRun(state: SuppliedEvidenceState): boolean {
  */
 export function describeSuppliedEvidence(reading: SuppliedEvidenceReading): string {
   return `supplied evidence ${reading.state}: ${reading.detail}`;
+}
+
+/**
+ * The reading, straight off a STORED property row.
+ *
+ * ONE PLACE THAT KNOWS THE ROW'S SHAPE. The branches come from the row's own
+ * link columns overlaid with the separately recovered ones (`unmapped` +
+ * `recovered_link_columns` — passing null as the base drops every link that
+ * never needed recovery, which is how a gate becomes decorative); the anchor
+ * is the one the import stamped; the link-discovery stamp rides beside them.
+ * `settleFallbackImages` enforces with this and `settleItemImages` routes with
+ * it, and because both call THIS function over the same stored row they
+ * cannot disagree about a property.
+ */
+export function readStoredRowEvidence(input: {
+  sourceRow: unknown;
+  stored: unknown;
+  provenanceVersion: number;
+  builderImageAccepted?: boolean;
+}): SuppliedEvidenceReading {
+  const row = (input.sourceRow ?? null) as Record<string, unknown> | null;
+  const unmapped = (row?.unmapped ?? null) as Record<string, string> | null;
+  const anchor = typeof row?.source_anchor === 'string' && row.source_anchor
+    ? row.source_anchor : null;
+  return readSuppliedEvidence({
+    branches: rowSourceBranches(unmappedWithRecoveredLinks(unmapped, row)),
+    stored: input.stored,
+    provenanceVersion: input.provenanceVersion,
+    sourceAnchor: anchor,
+    builderImageAccepted: input.builderImageAccepted,
+    linkDiscovery: readLinkDiscovery(row),
+  });
 }

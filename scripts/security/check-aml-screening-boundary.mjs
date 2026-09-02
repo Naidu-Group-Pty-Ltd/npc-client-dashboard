@@ -15,7 +15,7 @@ const cases = readFileSync("supabase/functions/aml-cases/index.ts", "utf8");
 const risk = readFileSync("supabase/functions/aml-risk/index.ts", "utf8");
 const verification = readFileSync("supabase/functions/aml-verification/index.ts", "utf8");
 const consumer = readFileSync(
-  "supabase/functions/cross-portal-outbox-worker/screeningConsumer.ts", "utf8");
+  "supabase/functions/_shared/aml/screeningConsumer.ts", "utf8");
 const migration = readFileSync(
   "supabase/migrations/20260807120000_aml_screening_repair.sql", "utf8");
 

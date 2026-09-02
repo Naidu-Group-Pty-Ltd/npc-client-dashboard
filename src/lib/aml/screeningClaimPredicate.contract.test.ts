@@ -39,7 +39,7 @@ const stripComments = (src: string) =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 
 const consumer = stripComments(read(
-  "supabase/functions/cross-portal-outbox-worker/screeningConsumer.ts",
+  "supabase/functions/_shared/aml/screeningConsumer.ts",
 ));
 
 describe("the screening claim is composed of typed filters, never a string", () => {

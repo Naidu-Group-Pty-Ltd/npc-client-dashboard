@@ -173,7 +173,7 @@ describe("every failure category explains itself", () => {
 
 describe("the execution paths cannot silently swallow again", () => {
   const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
-  const consumer = read("supabase/functions/cross-portal-outbox-worker/screeningConsumer.ts");
+  const consumer = read("supabase/functions/_shared/aml/screeningConsumer.ts");
   const cases = read("supabase/functions/aml-cases/index.ts");
 
   it("the claim captures its database error", () => {

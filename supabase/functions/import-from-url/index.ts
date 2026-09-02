@@ -9,6 +9,11 @@
 // and returns the bytes as base64 (or guidance when the link isn't a file).
 // Figma links are exported via the Figma API when FIGMA_TOKEN is configured.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+// The SSRF guard this function's header promises. It was CALLED and never
+// imported: `assertPublicUrl` and `DnsRecordType` sat in
+// `functions-registry/edge-missing-names.txt` as known-absent identifiers,
+// so every redirect hop threw ReferenceError instead of being checked.
+import { assertPublicUrl, type DnsRecordType } from '../_shared/ssrfGuard.ts';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 import { sanitizeFigmaFrame, type SanitizedFigmaNode } from '../_shared/figma.ts';

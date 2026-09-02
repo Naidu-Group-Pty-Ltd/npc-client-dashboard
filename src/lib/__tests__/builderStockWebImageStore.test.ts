@@ -271,22 +271,51 @@ describe('the settler runs the store on its own enumeration', () => {
     'utf8',
   );
 
-  it('does not hide inside the per-candidate enforcement, which an empty queue never runs', () => {
+  it('enumerates its own work, not the settlement queue\'s', () => {
     // The first wiring sat inside `enforce`, which is only invoked for
     // organisations with settlement candidates — and once the marketplace had
     // settled, it measurably never ran. The pass enumerates the hotlinked
     // displayable images itself, so the steady state is exactly when it works.
     const text = source();
-    expect(text).toContain("        .eq('source_stage', 'internet_search')");
+    expect(text).toContain(".eq('source_stage', 'internet_search')");
     expect(text).toContain('storeVerifiedWebImages(supabase, organisationId)');
   });
 
-  it('a retirement re-decides the card in the SAME tick, past the once-per-tick guard', () => {
+  it('runs on BOTH normal tick exits — the fallback path returns early too', () => {
+    /*
+     * The second wiring sat only after the settlement work, and the tick has
+     * TWO normal exits: an empty settlement queue runs the fallback phase and
+     * returns there. On a deployment whose fallback work is withheld by the
+     * evidence gate, `remaining` never reaches zero, so EVERY tick took that
+     * exit — and three retired-pending hotlinks stood as card primaries for
+     * hours while the pass sat unreachable behind the return. A predecessor
+     * of this test pinned that the code existed; this one pins that every
+     * normal exit passes through it.
+     */
     const text = source();
-    const retired = text.indexOf('if (webOutcome.retired > 0)');
-    expect(retired).toBeGreaterThan(-1);
-    const after = text.slice(retired, retired + 400);
-    expect(after).toContain('enforced.delete(organisationId)');
-    expect(after).toContain('await enforce(organisationId)');
+    const calls = text.match(/await runWebImageStorePass\(supabase,/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+
+    const fallbackLog = text.indexOf("'[builder-stock-image-settler] fallback tick'");
+    const fallbackReturn = text.indexOf('fallbackAttempted: fallback.attempted');
+    const passOnFallbackPath = text.indexOf('await runWebImageStorePass(supabase,', fallbackLog);
+    expect(fallbackLog).toBeGreaterThan(-1);
+    expect(passOnFallbackPath).toBeGreaterThan(fallbackLog);
+    expect(passOnFallbackPath).toBeLessThan(fallbackReturn);
+  });
+
+  it('a retirement re-decides the card in the SAME tick, on either exit', () => {
+    const text = source();
+    // Inside the pass: a retirement always reaches the caller's enforcement.
+    expect(text).toContain('if (webOutcome.retired > 0) await enforceAfterRetirement(organisationId);');
+    // Settlement exit: past the once-per-tick guard, because evidence changed.
+    const settlementCallback = text.indexOf('enforced.delete(organisationId)');
+    expect(settlementCallback).toBeGreaterThan(-1);
+    expect(text.slice(settlementCallback, settlementCallback + 200))
+      .toContain('await enforce(organisationId)');
+    // Fallback exit: enforcement built in place, since the closure is not in scope.
+    const fallbackLog = text.indexOf("'[builder-stock-image-settler] fallback tick'");
+    const fallbackSlice = text.slice(fallbackLog, text.indexOf('fallbackAttempted: fallback.attempted'));
+    expect(fallbackSlice).toContain('enforceStrictPrimaryImages(supabase, organisationId)');
   });
 });

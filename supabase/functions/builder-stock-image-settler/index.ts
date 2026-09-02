@@ -104,6 +104,48 @@ import { settleClaimedItem } from '../_shared/builderStock/settleItemImages.ts';
  */
 const corsHeaders = createCorsHeaders();
 
+/**
+ * THE WEB-IMAGE PASS, callable from EVERY normal tick exit.
+ *
+ * It enumerates its own work — verified, ready, storage-less web images —
+ * because the steady state is exactly when it matters, and a retirement hands
+ * the organisation to the caller's enforcement so the card is re-decided
+ * before the tick returns. One function, two exits: it first lived only after
+ * the settlement work, and a deployment whose every tick ended on the
+ * fallback path (withheld fallbacks keep `remaining` above zero for ever)
+ * measurably never ran it again. It never throws: the drip must not fail the
+ * tick it rides in.
+ */
+async function runWebImageStorePass(
+  supabase: any,
+  enforceAfterRetirement: (organisationId: string) => Promise<void>,
+): Promise<void> {
+  try {
+    const { data: webRows } = await supabase
+      .from('builder_stock_item_images')
+      .select('organisation_id')
+      .eq('source_stage', 'internet_search')
+      .eq('verification_status', 'property_identity_verified')
+      .eq('processing_status', 'ready')
+      .is('storage_path', null)
+      .limit(200);
+    const webOrganisations = [...new Set(
+      ((webRows ?? []) as Array<{ organisation_id: string }>)
+        .map((row) => String(row.organisation_id)),
+    )];
+    for (const organisationId of webOrganisations) {
+      const webOutcome = await storeVerifiedWebImages(supabase, organisationId);
+      if (webOutcome.retired > 0) await enforceAfterRetirement(organisationId);
+    }
+  } catch (storeError) {
+    console.warn('[builder-stock-image-settler] web images not stored', {
+      phase: 'web_image_store',
+      message: String((storeError as { message?: string })?.message ?? storeError)
+        .slice(0, 200),
+    });
+  }
+}
+
 /** Wall clock for one tick, well inside the edge ceiling. */
 const BUDGET_MS = 100_000;
 /** Sources one tick may read. Resumable, so small is safe and slow is not. */
@@ -643,6 +685,29 @@ Deno.serve(async (req: Request) => {
       });
 
       /*
+       * THE WEB-IMAGE PASS RUNS ON THIS EXIT TOO. It was placed only after
+       * the settlement work below, and this path returns before reaching it —
+       * so on a deployment whose ticks all ended here (fallback work withheld
+       * by the evidence gate never resolves, so `remaining` never hits zero),
+       * the pass measurably never ran again: three retired-pending hotlinks
+       * sat as card primaries for hours while every tick answered
+       * `phase: "fallback_enrichment"` around them. Both normal exits run the
+       * pass now. Retirement enforcement is built here because the settlement
+       * path's once-per-tick `enforce` closure does not exist on this one.
+       */
+      await runWebImageStorePass(supabase, async (organisationId) => {
+        try {
+          await enforceStrictPrimaryImages(supabase, organisationId);
+        } catch (enforceError) {
+          console.warn('[builder-stock-image-settler] primaries not enforced', {
+            organisation_id: organisationId, phase: 'primary_enforcement',
+            message: String((enforceError as { message?: string })?.message ?? enforceError)
+              .slice(0, 200),
+          });
+        }
+      });
+
+      /*
        * THE COMPLETION RULE. Quiet requires BOTH queues empty. A settlement
        * queue at zero with fallback work outstanding keeps the cron alive.
        */
@@ -792,40 +857,19 @@ Deno.serve(async (req: Request) => {
      * needs no settlement work to be fragile, and the first wiring of this —
      * inside `enforce`, which only runs for organisations with candidates —
      * measurably never ran once the marketplace had settled. It sits after
-     * all settlement work so the drip can never delay the queue; a retirement
-     * hands the organisation to `enforce` (idempotent within the tick), so a
-     * card whose picture is GONE is re-decided before this tick returns and
-     * the badge goes with the photograph. See `webImageStore.ts`.
+     * the settlement work so the drip can never delay the queue, and the
+     * fallback path above runs the same pass before ITS return, because a
+     * tick has two normal exits and the second wiring covered only this one.
+     * A retirement hands the organisation to `enforce` (idempotent within the
+     * tick), so a card whose picture is GONE is re-decided before this tick
+     * returns and the badge goes with the photograph. See `webImageStore.ts`.
      */
-    try {
-      const { data: webRows } = await supabase
-        .from('builder_stock_item_images')
-        .select('organisation_id')
-        .eq('source_stage', 'internet_search')
-        .eq('verification_status', 'property_identity_verified')
-        .eq('processing_status', 'ready')
-        .is('storage_path', null)
-        .limit(200);
-      const webOrganisations = [...new Set(
-        ((webRows ?? []) as Array<{ organisation_id: string }>)
-          .map((row) => String(row.organisation_id)),
-      )];
-      for (const organisationId of webOrganisations) {
-        const webOutcome = await storeVerifiedWebImages(supabase, organisationId);
-        if (webOutcome.retired > 0) {
-          // Even where enforcement already ran this tick: the evidence just
-          // changed, so the once-per-tick guard steps aside for the re-read.
-          enforced.delete(organisationId);
-          await enforce(organisationId);
-        }
-      }
-    } catch (storeError) {
-      console.warn('[builder-stock-image-settler] web images not stored', {
-        phase: 'web_image_store',
-        message: String((storeError as { message?: string })?.message ?? storeError)
-          .slice(0, 200),
-      });
-    }
+    await runWebImageStorePass(supabase, async (organisationId) => {
+      // Even where enforcement already ran this tick: the evidence just
+      // changed, so the once-per-tick guard steps aside for the re-read.
+      enforced.delete(organisationId);
+      await enforce(organisationId);
+    });
 
     const remaining = Math.max(0, outstanding.length - settled);
     console.log('[builder-stock-image-settler] tick', {

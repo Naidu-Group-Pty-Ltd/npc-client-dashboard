@@ -313,9 +313,14 @@ Deno.serve(async (req) => {
 
     // Fetch deals with stages and build progress payments
     if (include.deals) {
+      // Client-safe projection only. `select('*')` shipped commission
+      // estimates, clawback terms, risk status and internal notes to the
+      // client's browser — fields no portal surface renders and no client
+      // should receive. What the client may read is decided here, at the
+      // projection, not by which fields the page happens to display.
       const { data: deals } = await supabase
         .from('client_deals')
-        .select('*')
+        .select('id, deal_type, property_address, current_stage, current_stage_number, total_contract_price, land_price, build_price, loan_amount, existing_loan_amount, new_loan_amount, equity_released, finance_clause_expiry, settlement_date, land_settlement_date, expected_build_start, estimated_completion, created_at')
         .eq('client_id', clientId)
         .order('created_at', { ascending: false });
 
@@ -328,7 +333,11 @@ Deno.serve(async (req) => {
         const [stagesResult, buildPaymentsResult] = await Promise.all([
           supabase
             .from('deal_stages')
-            .select('id, deal_id, stage_number, stage_name, stage_category, status, completed_at, display_order')
+            // client_action is the one field written in the client's own
+            // language ("Sign contract", "Pay 5%") — it is what the portal
+            // shows as "what we need from you". Internal actions, the
+            // responsible role and key dates stay staff-side.
+            .select('id, deal_id, stage_number, stage_name, stage_category, status, client_action, completed_at, display_order')
             .in('deal_id', dealIds)
             .order('display_order', { ascending: true }),
           supabase

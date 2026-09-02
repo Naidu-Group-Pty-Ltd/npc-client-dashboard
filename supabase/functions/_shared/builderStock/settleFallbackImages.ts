@@ -33,6 +33,13 @@
 // defers `fetchSource.ts`.
 import type { enrichStockItem, EnrichableStockItem } from './images.ts';
 import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
+import {
+  rowSourceBranches, unmappedWithRecoveredLinks,
+} from './sourceBranches.pure.ts';
+import {
+  describeSuppliedEvidence, fallbackMayRun, readSuppliedEvidence,
+} from './suppliedEvidence.pure.ts';
+import { PROVENANCE_VERSION } from './provenanceVersion.pure.ts';
 
 /**
  * How many properties one tick may put through the paid ladder.
@@ -67,9 +74,20 @@ export const MAX_FALLBACK_ITEMS_PER_TICK = 1;
  */
 const MAX_STAGES_PER_ITEM = 2;
 
-/** The columns `enrichStockItem` reads. Nothing wider is selected. */
+/**
+ * The columns `enrichStockItem` reads, PLUS the two the supplied-evidence gate
+ * needs.
+ *
+ * `source_row` carries the builder's own link columns (including the ones only
+ * hyperlink recovery could see) and `source_provenance_result` carries what
+ * each of those links has answered. Both are read here rather than in a second
+ * query per row, because the gate has to be asked for every candidate and an
+ * N+1 against the fallback queue is how a cheap guard becomes an expensive
+ * one.
+ */
 const CANDIDATE_COLUMNS = 'id, organisation_id, address_line, suburb, state, '
-  + 'postcode, development_name, project_name, lot_number, unit_number, primary_image_id';
+  + 'postcode, development_name, project_name, lot_number, unit_number, primary_image_id, '
+  + 'source_row, source_provenance_result';
 
 export interface FallbackOutcome {
   /** Properties this tick took off the queue and put through the ladder. */
@@ -80,7 +98,67 @@ export interface FallbackOutcome {
   remaining: number;
   /** True when the queue could not be read — never confused with an empty one. */
   unavailable?: boolean;
+  /**
+   * Properties the gate refused because the builder's own sources are not
+   * finished with. Reported separately from `attempted` because it is not a
+   * failure and not a spend: it is the ladder correctly declining to run.
+   */
+  withheld: number;
   problems: Array<{ item: string; reason: string }>;
+}
+
+/**
+ * The link columns a stored row carries, from the row itself.
+ *
+ * BOTH HALVES, AND THE FIRST ONE IS EASY TO LOSE. `source_row.unmapped` is
+ * what the import parsed — for a Google Sheet that is the hyperlink targets
+ * `mergeHyperlinkColumns` appended beside the labels — and
+ * `unmappedWithRecoveredLinks` lays the separately RECOVERED columns over it.
+ * Passing `null` as the base returns the recovered columns ALONE, which for a
+ * row that never needed recovery is the empty object: no branches, no
+ * evidence, and a gate that opens for every property it was meant to hold.
+ */
+function storedRowBranches(sourceRow: Record<string, unknown> | null) {
+  const unmapped = (sourceRow?.unmapped ?? null) as Record<string, string> | null;
+  return rowSourceBranches(unmappedWithRecoveredLinks(unmapped, sourceRow));
+}
+
+/**
+ * Has a builder-supplied picture been accepted for this property?
+ *
+ * One indexed read. A read that FAILS answers false, which is the withholding
+ * direction: the gate then treats the property by its branch records alone,
+ * and the worst outcome is a tick's delay — never a spend and never a wrong
+ * image.
+ */
+async function hasBuilderSuppliedImage(db: any, itemId: string): Promise<boolean> {
+  try {
+    const { data, error } = await db
+      .from('builder_stock_item_images')
+      .select('id')
+      .eq('stock_item_id', itemId)
+      .eq('source_stage', 'uploaded_document')
+      .eq('processing_status', 'ready')
+      .limit(1);
+    if (error) return false;
+    return Array.isArray(data) && data.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The source row's own anchor, which keys every provenance record on it.
+ *
+ * Read from the stored row rather than recomputed: the anchor a verdict was
+ * written under is the one the import put there, and deriving a second opinion
+ * here would make every stored answer look like it belongs to a different
+ * question.
+ */
+function anchorOf(sourceRow: unknown): string | null {
+  const row = (sourceRow ?? {}) as Record<string, unknown>;
+  const anchor = row.source_anchor;
+  return typeof anchor === 'string' && anchor ? anchor : null;
 }
 
 /**
@@ -183,7 +261,7 @@ export async function settleFallbackImages(
   deps: { enrich?: typeof enrichStockItem } = {},
 ): Promise<FallbackOutcome> {
   const outcome: FallbackOutcome = {
-    attempted: 0, resolved: 0, remaining: 0, problems: [],
+    attempted: 0, resolved: 0, remaining: 0, withheld: 0, problems: [],
   };
   const batchLimit = Math.max(1, input.limit ?? MAX_FALLBACK_ITEMS_PER_TICK);
 
@@ -217,6 +295,63 @@ export async function settleFallbackImages(
     const itemId = String(row.id ?? '');
     const organisationId = String(row.organisation_id ?? '');
     if (!itemId || !organisationId) continue;
+
+    /*
+     * ==================================================================
+     * THE GATE. NOTHING BELOW THIS RUNS UNTIL THE BUILDER'S OWN SOURCES
+     * ARE FINISHED WITH.
+     * ==================================================================
+     *
+     * The stock list is the source of truth, and the ladder below goes
+     * looking on the open internet. It may only be bought once every
+     * source the builder supplied for THIS property has actually been
+     * opened and read — and `exhausted` is the only reading that means
+     * that. `pending` and `processing` mean we have not finished;
+     * `retryable_failure` means we FAILED, which is a fact about us and
+     * never a fact about the property.
+     *
+     * WHY IT IS HERE AND NOT IN THE SETTLER. This is the one place in
+     * the product where the external ladder is entered, so it is the one
+     * place the guard can be complete. `settleClaimedItem` calls this
+     * with a single `stockItemId`; the old organisation-wide path calls
+     * it without one; a future caller will do something else again. A
+     * gate at the stage machine would protect only the first.
+     *
+     * A REFUSAL IS NOT A FAILURE AND NOT AN ATTEMPT. Nothing is written,
+     * nothing is spent, `attempted` does not rise, and the property is
+     * simply not offered the ladder this tick. It becomes eligible the
+     * moment its sources answer, and a provenance bump re-opens sources
+     * that were retired operationally.
+     */
+    const evidence = readSuppliedEvidence({
+      branches: storedRowBranches(row.source_row as Record<string, unknown> | null),
+      stored: row.source_provenance_result,
+      provenanceVersion: PROVENANCE_VERSION,
+      sourceAnchor: anchorOf(row.source_row),
+      /*
+       * A SUCCESS CLEARS ITS BRANCH RECORD, so without this a property whose
+       * brochure just yielded its picture reads `pending` — the branch looks
+       * unopened — and is withheld from the very bookkeeping that would mark
+       * it complete. The accepted picture is the fact that settles the
+       * question, and it lives in the images table, not the provenance
+       * column.
+       */
+      builderImageAccepted: await hasBuilderSuppliedImage(db, itemId),
+    });
+    if (!fallbackMayRun(evidence.state)) {
+      outcome.withheld += 1;
+      outcome.problems.push({
+        item: itemId,
+        reason: describeSuppliedEvidence(evidence),
+      });
+      console.info('[builderStock] fallback withheld', {
+        phase: 'fallback_gate', stock_item_id: itemId,
+        supplied_evidence: evidence.state,
+        sources_total: evidence.total, sources_open: evidence.open,
+        sources_inspected: evidence.inspected, sources_operational: evidence.operational,
+      });
+      continue;
+    }
 
     const builderName = await builderNameFor(db, organisationId, names);
     const item = { ...row, sourceSettlementComplete: true } as unknown as EnrichableStockItem;

@@ -1,4 +1,5 @@
 import { usePortalAuth } from '@/hooks/usePortalAuth';
+import { stageDisplayOf } from '@/lib/deals/dealJourney.pure';
 import { usePortalDashboardData } from '@/hooks/usePortalData';
 import { smartCapitalize } from '@/lib/nameUtils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -156,7 +157,7 @@ export default function PortalDashboard() {
                           )}
                         </div>
                       </div>
-                      {getDealStageBadge(deal.current_stage)}
+                      {getDealStageBadge(stageDisplayOf(deal))}
                     </div>
                   ))}
                 </div>

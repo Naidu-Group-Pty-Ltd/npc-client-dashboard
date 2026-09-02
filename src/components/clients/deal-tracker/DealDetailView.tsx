@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import {
   ArrowLeft,
@@ -15,6 +16,7 @@ import {
   MessageSquareText,
   Sparkles,
   MapPin,
+  Route,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,6 +47,8 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { Deal, RiskStatus, RISK_STATUS_CONFIG, DEAL_TYPE_LABELS } from './types';
+import { deriveDealJourney } from '@/lib/deals/dealJourney.pure';
+import { DealJourneyStrip } from '@/components/deals/journey/DealJourneyStrip';
 import { DealStageTimeline } from './DealStageTimeline';
 import { BuildPaymentTracker } from './BuildPaymentTracker';
 import { DealFinancialControls } from './DealFinancialControls';
@@ -168,8 +172,11 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
   const isRefinance = deal.deal_type === 'refinance';
   const riskConfig = RISK_STATUS_CONFIG[deal.risk_status];
 
-  const completedStages = (deal.stages || []).filter(s => s.status === 'complete').length;
-  const totalStages = (deal.stages || []).length;
+  // One derivation of "where is this deal" — the same rule the pipeline
+  // board and the client portal read, so the three surfaces tell one story.
+  const journey = useMemo(() => deriveDealJourney(deal), [deal]);
+  const completedStages = journey.completedStages;
+  const totalStages = journey.totalStages;
 
   const getDealIcon = () => {
     if (isRefinance) return <RefreshCw className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />;
@@ -209,7 +216,7 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
                   </h3>
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <Badge variant="outline" className="max-w-full gap-1.5 break-words border-brand-200/25 bg-brand-400/10 text-[10px] text-brand-100 sm:text-xs">
-                      S{deal.current_stage_number}: {deal.current_stage}
+                      {journey.stageNumber ? `S${journey.stageNumber}: ` : ''}{journey.stageLabel}
                     </Badge>
                     <Badge variant="outline" className="max-w-full gap-1.5 break-words text-[10px] sm:text-xs">
                       <MapPin className="h-3 w-3 shrink-0" /> {deal.property_address || 'Address not recorded'}
@@ -266,6 +273,68 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
           </div>
         </div>
 
+        <DetailSection
+          title="Where this deal is"
+          description="The journey at a glance — the full stage controls stay below."
+          icon={<Route className="h-4 w-4" />}
+        >
+          <div className="space-y-3">
+            <DealJourneyStrip phases={journey.phases} />
+            {journey.isSettled ? (
+              <p className="rounded-xl border border-success/25 bg-success/10 p-3 text-sm text-success">
+                Settled — every stage of this deal is complete.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <FieldTile
+                  label="Now"
+                  value={
+                    <span>
+                      {journey.stageLabel}
+                      {journey.stageNumber != null && totalStages > 0 && (
+                        <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                          S{journey.stageNumber} of {totalStages}
+                        </span>
+                      )}
+                    </span>
+                  }
+                />
+                {journey.currentStage ? (
+                  <>
+                    <FieldTile
+                      label="Our next step"
+                      value={
+                        <span>
+                          {journey.currentStage.internal_action || '—'}
+                          {journey.currentStage.responsible && (
+                            <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                              {journey.currentStage.responsible}
+                            </span>
+                          )}
+                        </span>
+                      }
+                    />
+                    <FieldTile label="What the client does" value={journey.currentStage.client_action || '—'} />
+                    <FieldTile
+                      label="Key date"
+                      value={journey.currentStage.key_date ? format(new Date(journey.currentStage.key_date), 'dd MMM yyyy') : '—'}
+                    />
+                  </>
+                ) : (
+                  journey.build && (
+                    <FieldTile label="Build progress" value={`${journey.build.paid}/${journey.build.total} payments made`} />
+                  )
+                )}
+              </div>
+            )}
+            {journey.nextStage && (
+              <p className="text-xs text-muted-foreground">
+                Then: <span className="font-medium text-foreground">{journey.nextStage.stage_name}</span>
+              </p>
+            )}
+          </div>
+        </DetailSection>
+
         <DetailSection title="Deal overview" description="Client/deal identity, address and lifecycle progress." icon={<Building2 className="h-4 w-4" />}>
           <div className="grid gap-3 lg:grid-cols-[1.3fr_0.7fr]">
             <div className="space-y-2">
@@ -295,7 +364,7 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <FieldTile label="Deal type" value={DEAL_TYPE_LABELS[deal.deal_type]} />
-                <FieldTile label="Current stage" value={`S${deal.current_stage_number}`} />
+                <FieldTile label="Current stage" value={journey.stageNumber != null ? `S${journey.stageNumber}` : journey.phase.label} />
               </div>
             </div>
           </div>
@@ -314,12 +383,19 @@ export function DealDetailView({ deal, clientId, onBack }: DealDetailViewProps) 
                 stages={deal.stages || []}
                 onUpdateStage={(stageId, data) => {
                   updateStage.mutate({ stageId, data });
-                  if (data.status === 'complete' || data.status === 'in_progress') {
-                    const stage = deal.stages?.find(s => s.id === stageId);
-                    if (stage && data.status === 'in_progress') {
+                  // Heal the stored stage after EVERY status change — it used
+                  // to move only when a stage was set in-progress, so a deal
+                  // whose operator only ever ticked "Completed" wore a stale
+                  // badge on every surface that read the stored copy.
+                  if (data.status) {
+                    const nextStages = (deal.stages || []).map(s => (s.id === stageId ? { ...s, ...data } : s));
+                    const healed = deriveDealJourney({ ...deal, stages: nextStages });
+                    const target = healed.currentStage
+                      ?? (healed.stagesComplete ? nextStages.filter(s => s.status === 'complete').sort((a, b) => a.display_order - b.display_order).at(-1) : null);
+                    if (target && (deal.current_stage !== target.stage_name || deal.current_stage_number !== target.stage_number)) {
                       handleDealUpdate({
-                        current_stage: stage.stage_name,
-                        current_stage_number: stage.stage_number,
+                        current_stage: target.stage_name,
+                        current_stage_number: target.stage_number,
                       });
                     }
                   }

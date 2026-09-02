@@ -205,7 +205,10 @@ export function WeeklyBriefPanel({
 
       {/* View Past Brief Modal */}
       <Dialog open={!!viewingBrief} onOpenChange={(open) => !open && setViewingBrief(null)}>
-        <DialogContent className="max-w-3xl w-[calc(100vw-32px)] max-h-[85vh] overflow-y-auto rounded-3xl border-primary/20 bg-card/95">
+        {/* sm:overflow-y-auto is load-bearing: the dialog base sets
+            sm:overflow-visible at ≥640px, which clipped the brief at the
+            bottom with no scrollbar at all. */}
+        <DialogContent className="max-w-3xl w-[calc(100vw-32px)] max-h-[85vh] overflow-y-auto rounded-3xl border-primary/20 bg-card/95 sm:max-w-3xl sm:max-h-[85dvh] sm:overflow-y-auto">
           {viewingBrief && (
             <>
               <DialogHeader>

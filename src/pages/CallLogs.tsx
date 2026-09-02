@@ -536,7 +536,10 @@ const CallLogs = () => {
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-300/50 to-transparent" />
       <div className="mx-auto max-w-[1800px] space-y-5 md:space-y-7 pb-20 md:pb-0">
       {/* Header */}
-      <DashboardThemeFrame as="header" variant="hero" className="flex flex-col gap-4 border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.84)_52%,hsl(var(--primary)/0.12))] p-4 shadow-2xl shadow-sm dark:shadow-black/20 sm:p-5 lg:flex-row lg:items-center lg:justify-between lg:p-6">
+      {/* Side-by-side only from xl: at laptop widths (lg) the action toolbar
+          needs its own full-width row or it wraps into the title and the
+          layout shifts with every zoom step. */}
+      <DashboardThemeFrame as="header" variant="hero" className="flex flex-col gap-4 border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.84)_52%,hsl(var(--primary)/0.12))] p-4 shadow-2xl shadow-sm dark:shadow-black/20 sm:p-5 lg:p-6 xl:flex-row xl:items-center xl:justify-between">
         <div className="min-w-0 overflow-visible">
           <div className="mb-2 inline-flex items-center rounded-full border border-brand-300/25 bg-brand-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-brand-100 shadow-sm shadow-brand-500/10">Voice Intelligence</div>
           <h1 className="overflow-visible pb-1 text-3xl font-bold leading-[1.12] tracking-tight bg-gradient-to-r from-brand-100 via-foreground to-brand-300 bg-clip-text text-transparent md:text-5xl">
@@ -550,8 +553,8 @@ const CallLogs = () => {
           </div>
         </div>
 
-        <DashboardThemeFrame variant="toolbar" className="w-full border-primary/10 bg-background/45 shadow-inner shadow-sm dark:shadow-black/10 lg:w-auto lg:justify-end">
-          <div className="flex flex-1 flex-wrap items-center gap-2 lg:flex-none lg:justify-end">
+        <DashboardThemeFrame variant="toolbar" className="w-full border-primary/10 bg-background/45 shadow-inner shadow-sm dark:shadow-black/10 xl:w-auto xl:justify-end">
+          <div className="flex flex-1 flex-wrap items-center gap-2 xl:flex-none xl:justify-end">
           {!isMobile && <WeeklyReportConfig triggerClassName={premiumReportAction} />}
           {!isMobile && showInternalCallTools && <CleanupTestCalls onComplete={fetchCalls} testNumbersButtonClassName={premiumUtilityAction} flushButtonClassName={premiumDangerAction} />}
           {!isMobile && showInternalCallTools && <CleanupContactNames onComplete={fetchCalls} triggerClassName={premiumQualityAction} />}

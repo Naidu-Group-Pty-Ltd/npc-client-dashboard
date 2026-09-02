@@ -258,13 +258,32 @@ export function publishVerdict(
     };
   }
 
-  // No stored file, but publishing renders one. The only source that does this.
+  // No stored file, but publishing renders one.
   if (!report.fileUrl) {
     if (report.source === 'borrowing_assessment') {
       return {
         ...base,
         readiness: 'on_publish',
         reason: 'The PDF is produced when you publish it.',
+        storagePath: null,
+        bucket: null,
+      };
+    }
+    // Audit item 6. Half the stored portfolio analyses have no file — every
+    // browser upload failed 403 until `secure-storage` learned this bucket's
+    // binding, so the analysis was stored and its PDF was not (13 of 26 rows,
+    // measured in production, every one with `report_data` intact). Declaring
+    // them unavailable is what produced "No PDF available to send. Generate
+    // the report PDF first" — a dead end asking the operator to re-run a
+    // whole analysis this table already holds. The typeset review renders
+    // from `report_data` on the server (`portfolioReviewBlob`), so publishing
+    // renders one, exactly as the borrowing capacity row above has always
+    // done. A row still generating or failed keeps refusing below.
+    if (report.source === 'portfolio_report' && report.status === 'completed') {
+      return {
+        ...base,
+        readiness: 'on_publish',
+        reason: 'The typeset review is produced when you publish it.',
         storagePath: null,
         bucket: null,
       };

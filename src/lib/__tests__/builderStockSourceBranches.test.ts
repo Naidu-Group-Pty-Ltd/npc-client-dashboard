@@ -97,7 +97,7 @@ describe('B — one branch answering ends stage 1; a failing one does not', () =
 
   it('a branch that failed leaves every sibling open', () => {
     let state: unknown = writeBranchState(null, branches[0].url,
-      recordNoDeterministicImage(q(0), 'read it; nothing for this property'));
+      recordNoDeterministicImage(q(0), 'read it; nothing for this property', 'inspected'));
     expect(branchTerminal(state, branches[0], q(0))).toBe(true);
     // And the other four are untouched.
     expect(openBranches(state, branches, V, ANCHOR)).toHaveLength(4);
@@ -108,7 +108,7 @@ describe('B — one branch answering ends stage 1; a failing one does not', () =
     let state: unknown = null;
     for (const branch of branches.slice(0, 4)) {
       state = writeBranchState(state, branch.url,
-        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing'));
+        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing', 'inspected'));
     }
     expect(allBranchesTerminal(state, branches, V, ANCHOR)).toBe(false);
     expect(urls(openBranches(state, branches, V, ANCHOR))).toEqual([branches[4].url]);
@@ -122,13 +122,13 @@ describe('C — only when ALL branches are terminal may stage 1 answer', () => {
     let state: unknown = null;
     // Read, and named nothing.
     state = writeBranchState(state, branches[0].url,
-      recordNoDeterministicImage(branchQuestion(branches[0], V, ANCHOR), 'nothing'));
+      recordNoDeterministicImage(branchQuestion(branches[0], V, ANCHOR), 'nothing', 'inspected'));
     // Retired after exhausting its attempts.
     state = writeBranchState(state, branches[1].url,
       recordPackageUnprocessable(branchQuestion(branches[1], V, ANCHOR)));
     for (const branch of branches.slice(2)) {
       state = writeBranchState(state, branch.url,
-        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing'));
+        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing', 'inspected'));
     }
     expect(allBranchesTerminal(state, branches, V, ANCHOR)).toBe(true);
   });
@@ -142,7 +142,7 @@ describe('C — only when ALL branches are terminal may stage 1 answer', () => {
     let state: unknown = null;
     for (const branch of branches) {
       state = writeBranchState(state, branch.url,
-        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing'));
+        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing', 'inspected'));
     }
     expect(allBranchesTerminal(state, branches, V, ANCHOR)).toBe(true);
     expect(allBranchesTerminal(state, branches, V + 1, ANCHOR)).toBe(false);
@@ -152,7 +152,7 @@ describe('C — only when ALL branches are terminal may stage 1 answer', () => {
     let state: unknown = null;
     for (const branch of branches) {
       state = writeBranchState(state, branch.url,
-        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing'));
+        recordNoDeterministicImage(branchQuestion(branch, V, ANCHOR), 'nothing', 'inspected'));
     }
     expect(allBranchesTerminal(state, branches, V, 'src:somebody-else')).toBe(false);
   });
@@ -209,7 +209,7 @@ describe('E and H — a link belongs to its row and to no other', () => {
     let smallState: unknown = null;
     for (const branch of smallBranches) {
       smallState = writeBranchState(smallState, branch.url,
-        recordNoDeterministicImage(branchQuestion(branch, V, 'src:small'), 'nothing'));
+        recordNoDeterministicImage(branchQuestion(branch, V, 'src:small'), 'nothing', 'inspected'));
     }
     expect(allBranchesTerminal(smallState, smallBranches, V, 'src:small')).toBe(true);
 
@@ -240,7 +240,7 @@ describe('F — a document with no photograph exhausts a branch, not a property'
   it('an honest "read it, nothing here" is terminal for that branch only', () => {
     const q = branchQuestion(branches[2], V, ANCHOR);
     const state = writeBranchState(null, branches[2].url,
-      recordNoDeterministicImage(q, 'a location map; no photograph of this property'));
+      recordNoDeterministicImage(q, 'a location map; no photograph of this property', 'inspected'));
     expect(branchTerminal(state, branches[2], q)).toBe(true);
     expect(openBranches(state, branches, V, ANCHOR)).toHaveLength(4);
   });

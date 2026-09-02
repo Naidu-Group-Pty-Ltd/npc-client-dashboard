@@ -160,9 +160,11 @@ interface UploadProgressItemProps {
   progress: number;
   status: 'uploading' | 'processing' | 'complete' | 'error';
   error?: string;
+  /** Removes the entry from the upload list — errors otherwise stay forever. */
+  onDismiss?: () => void;
 }
 
-export function UploadProgressItem({ fileName, progress, status, error }: UploadProgressItemProps) {
+export function UploadProgressItem({ fileName, progress, status, error, onDismiss }: UploadProgressItemProps) {
   const isPending = status === 'uploading' || status === 'processing';
   const statusLabel =
     status === 'error' ? 'Error' :
@@ -224,18 +226,31 @@ export function UploadProgressItem({ fileName, progress, status, error }: Upload
               {helperCopy}
             </p>
           </div>
-          <span
-            className={cn(
-              "shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em]",
-              status === 'error'
-                ? "border-destructive/25 bg-destructive/10 text-destructive"
-                : status === 'complete'
-                  ? "border-success/25 bg-success/10 text-success dark:text-success"
-                  : "border-brand-500/25 bg-brand-500/10 text-brand-600 dark:text-brand-300"
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span
+              className={cn(
+                "rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.14em]",
+                status === 'error'
+                  ? "border-destructive/25 bg-destructive/10 text-destructive"
+                  : status === 'complete'
+                    ? "border-success/25 bg-success/10 text-success dark:text-success"
+                    : "border-brand-500/25 bg-brand-500/10 text-brand-600 dark:text-brand-300"
+              )}
+            >
+              {statusLabel}
+            </span>
+            {onDismiss && !isPending && (
+              <button
+                type="button"
+                onClick={onDismiss}
+                aria-label={`Dismiss ${fileName} from the upload list`}
+                title="Remove from upload list"
+                className="flex h-6 w-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/30"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             )}
-          >
-            {statusLabel}
-          </span>
+          </div>
         </div>
         <div className="flex items-center gap-2 mt-1">
           <div className="flex-1 h-2 overflow-hidden rounded-full bg-background/70 shadow-inner">

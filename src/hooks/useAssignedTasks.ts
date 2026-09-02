@@ -25,11 +25,23 @@ async function invoke(body: Record<string, any>) {
 export function useAssignedTasks() {
   const { user } = useAuth();
   const userId = user?.id;
+  const username = (user as { username?: string } | null)?.username;
+  const email = (user as { email?: string } | null)?.email;
 
   return useQuery({
-    queryKey: ['assigned-tasks', userId],
+    queryKey: ['assigned-tasks', userId, username, email],
     queryFn: async (): Promise<AssignedTask[]> => {
       if (!userId) return [];
+
+      // Game plan assignment stores the USERNAME (UserSelectField's value is
+      // user.username) while this hook used to demand the user id — so a
+      // task assigned to "Arvin" never matched Arvin's UUID and the tab
+      // stayed empty for everyone. Accept any identity the row could carry.
+      const myIdentities = [userId, username, email]
+        .filter((v): v is string => typeof v === 'string' && v.length > 0)
+        .map((v) => v.trim().toLowerCase());
+      const isMine = (assignedTo: unknown): boolean =>
+        typeof assignedTo === 'string' && myIdentities.includes(assignedTo.trim().toLowerCase());
 
       const now = new Date();
       const tasks: AssignedTask[] = [];
@@ -70,7 +82,7 @@ export function useAssignedTasks() {
       // Process game plan actions
       const actions = (actionsResult?.records || []) as any[];
       actions
-        .filter((a: any) => a.assigned_to === userId)
+        .filter((a: any) => isMine(a.assigned_to))
         .forEach((a: any) => {
           const phase = phasesMap.get(a.phase_id);
           const planName = phase ? plansMap.get(phase.plan_id) : undefined;
@@ -94,7 +106,7 @@ export function useAssignedTasks() {
       // Process reminders (assigned_to is an array)
       const reminders = (remindersResult?.records || []) as any[];
       reminders
-        .filter((r: any) => Array.isArray(r.assigned_to) && r.assigned_to.includes(userId))
+        .filter((r: any) => Array.isArray(r.assigned_to) && r.assigned_to.some(isMine))
         .forEach((r: any) => {
           const isOverdue =
             r.status !== 'completed' && r.due_date && new Date(r.due_date) < now;

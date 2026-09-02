@@ -178,11 +178,11 @@ export function ComparisonPanel({
                         className="w-2 h-2 rounded-full shrink-0"
                         style={{ backgroundColor: COMPARISON_COLORS[idx % COMPARISON_COLORS.length] }}
                       />
-                      <span className="truncate max-w-[100px]">{item._name}</span>
+                      <span className="truncate max-w-[140px]" title={item._name}>{item._name}</span>
                     </div>
                   </TableHead>
                 ))}
-                <TableHead className="text-center w-[80px]">Winner</TableHead>
+                <TableHead className="text-center w-[150px]">Winner</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -203,9 +203,17 @@ export function ComparisonPanel({
                     })}
                     <TableCell className="text-center">
                       {winnerId ? (
-                        <span className="text-xs text-primary font-medium truncate max-w-[60px] inline-block">
-                          {enriched.find(e => e._id === winnerId)?._name?.slice(0, 12)}
-                        </span>
+                        (() => {
+                          const winnerName = enriched.find(e => e._id === winnerId)?._name || '';
+                          // Full name with a hover fallback — the old cell
+                          // hard-sliced to 12 chars inside a 60px box, so
+                          // every winner printed as an unreadable stub.
+                          return (
+                            <span className="inline-block max-w-[140px] truncate text-xs font-medium text-primary" title={winnerName}>
+                              {winnerName}
+                            </span>
+                          );
+                        })()
                       ) : (
                         <Minus className="h-3.5 w-3.5 text-muted-foreground mx-auto" />
                       )}

@@ -67,7 +67,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { ChevronDown, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
 
 // Feature components
 import { useReportQAKeyboardShortcuts } from '@/hooks/useReportQAKeyboardShortcuts';
@@ -303,6 +303,9 @@ export default function ReportQA() {
   const [editingConversationId, setEditingConversationId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [isEditingMainTitle, setIsEditingMainTitle] = useState(false);
+  // The model selector + live chips + chat tools row is tall; letting the
+  // operator fold it away hands that height straight to the conversation.
+  const [chatToolsExpanded, setChatToolsExpanded] = useState(true);
   const [mainTitleEdit, setMainTitleEdit] = useState('');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [isLoadingConversations, setIsLoadingConversations] = useState(false);
@@ -848,12 +851,40 @@ export default function ReportQA() {
         imagesProcessed: 0,
       }));
     if (additions.length === 0) return;
-    setUploadedReports((prev) => [...prev, ...additions]);
+    const nextReports = [...uploadedReports, ...additions];
+    setUploadedReports(nextReports);
     setSelectedReportNames((prev) => [
       ...prev,
       ...additions.map((report) => report.name).filter((name) => !prev.includes(name)),
     ]);
-  }, [uploadedReports]);
+    // Persist library picks onto the saved conversation the same way
+    // removeReport does — otherwise they exist only in local state and
+    // silently vanish when the conversation is reopened.
+    if (conversationId) {
+      setSavedConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.id === conversationId
+            ? {
+                ...conversation,
+                report_names: nextReports.map((report) => report.name),
+                report_contents: nextReports.map((report) => report.content),
+                updated_at: new Date().toISOString(),
+              }
+            : conversation,
+        ),
+      );
+      void invokeSecureFunction('report-qa', {
+        action: 'update-conversation',
+        conversationId,
+        reportNames: nextReports.map((report) => report.name),
+        reportContents: nextReports.map((report) => report.content),
+      }).then(({ data, error }) => {
+        if (error || !data?.success) {
+          console.error('Failed to save library reports to conversation:', error || data?.error);
+        }
+      });
+    }
+  }, [uploadedReports, conversationId]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -2402,7 +2433,10 @@ export default function ReportQA() {
               </p>
             </div>
           </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4 lg:overflow-hidden">
+          {/* overflow-y-auto at every width: with lg:overflow-hidden the
+              reports section could be flex-squeezed below its content and its
+              text painted over the Loaded Reports section below it. */}
+          <CardContent className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 sm:px-4 sm:pb-4">
             <div className="report-qa-panel-section space-y-2">
               <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                 <span>Document intake</span>
@@ -2517,16 +2551,19 @@ export default function ReportQA() {
                     progress={item.progress}
                     status={item.status}
                     error={item.error}
+                    onDismiss={() => setUploadProgress((prev) => prev.filter((p) => p.fileName !== item.fileName))}
                   />
                 ))}
               </div>
             )}
 
-            {/* Reports in this chat — primary flexible list */}
-            <div className="report-qa-loaded-reports flex min-h-0 shrink-0 flex-col gap-2 lg:flex-1 lg:basis-0 lg:shrink">
+            {/* Reports in this chat — primary flexible list. The min-height
+                guarantees roughly three report rows stay visible, so a
+                multi-report chat is not reduced to a one-row peephole. */}
+            <div className="report-qa-loaded-reports flex min-h-0 shrink-0 flex-col gap-2 lg:min-h-[13rem] lg:flex-1 lg:basis-0 lg:shrink">
                 <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                   <span>Reports in this chat</span>
-                  <span className="normal-case tracking-normal text-primary">{selectedReports.length > 1 ? `Comparing ${selectedReports.length}` : selectedReports.length === 1 ? '1 selected' : 'Select reports'}</span>
+                  <span className="normal-case tracking-normal text-primary">{selectedReports.length > 1 ? `${selectedReports.length} in context` : selectedReports.length === 1 ? '1 selected' : 'Select reports'}</span>
                 </div>
                 {uploadedReports.length > 0 ? (
                   <ScrollArea className="report-qa-report-list -mx-1 min-h-0 flex-1 px-1" aria-label="Reports in this chat">
@@ -2578,7 +2615,7 @@ export default function ReportQA() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 shrink-0 gap-1.5 px-2 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+                          className="h-8 shrink-0 gap-1.5 rounded-lg border border-border/60 bg-background/60 px-2 text-[11px] text-muted-foreground transition-colors hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
                           aria-label={`Remove ${report.name} from this chat`}
                           title="Remove report from this chat"
                           onClick={(e) => {
@@ -2605,7 +2642,7 @@ export default function ReportQA() {
             {selectedReports.length > 1 && (
               <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 rounded-xl border border-primary/20">
                 <GitCompare className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs text-primary font-medium">Comparison mode: {selectedReports.length} selected reports</span>
+                <span className="text-xs text-primary font-medium">{selectedReports.length} reports in context — answers can draw on any of them, comparisons included</span>
               </div>
             )}
 
@@ -2717,6 +2754,7 @@ export default function ReportQA() {
                       <AutoSummarize
                         messages={messages.map(m => ({ role: m.role, content: m.content }))}
                         reportNames={uploadedReports.map(r => r.name)}
+                        conversationId={conversationId}
                         disabled={messages.length < 2}
                       />
                     </div>
@@ -2773,10 +2811,23 @@ export default function ReportQA() {
                     {isSavingTitle && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="Saving title" />}
                   </div>
                 )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 gap-1 rounded-lg border border-border/50 bg-background/40 px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground"
+                  onClick={() => setChatToolsExpanded((v) => !v)}
+                  aria-expanded={chatToolsExpanded}
+                  aria-controls="report-qa-chat-tools"
+                  title={chatToolsExpanded ? 'Hide the model and chat tools to give the conversation more room' : 'Show the model and chat tools'}
+                >
+                  {chatToolsExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  Model &amp; tools
+                </Button>
               </div>
 
               {titleSaveError && <p className="pl-11 text-xs text-destructive" role="alert">{titleSaveError}</p>}
-              <div className="report-qa-toolbar flex min-w-0 flex-wrap items-center justify-start gap-1 rounded-xl border border-border/50 bg-background/40 px-2 py-1 sm:justify-start">
+              {chatToolsExpanded && (
+              <div id="report-qa-chat-tools" className="report-qa-toolbar flex min-w-0 flex-wrap items-center justify-start gap-1 rounded-xl border border-border/50 bg-background/40 px-2 py-1 sm:justify-start">
                 <ReportQAModelSlotSelector selectedAgentKey={selectedAgentKey} onAgentKeyChange={setSelectedAgentKey} disabled={isProcessing} />
                 <Separator orientation="vertical" className="mx-1 hidden h-7 bg-primary/20 md:block" />
                 <div className="hidden min-w-0 items-center gap-2 md:flex" aria-label="Live model assignments for Aurixa Intelligence Hub">
@@ -2797,13 +2848,14 @@ export default function ReportQA() {
                   </>
                 )}
                 <ConversationExport messages={messages} title={getCurrentTitle()} reportNames={uploadedReports.map(r => r.name)} conversationId={conversationId} />
-                <AutoSummarize messages={messages.map(m => ({ role: m.role, content: m.content }))} reportNames={uploadedReports.map(r => r.name)} disabled={messages.length < 2} />
+                <AutoSummarize messages={messages.map(m => ({ role: m.role, content: m.content }))} reportNames={uploadedReports.map(r => r.name)} conversationId={conversationId} disabled={messages.length < 2} />
                 {conversationId && <Badge variant="outline" className="ml-1 whitespace-nowrap border-primary/25 bg-primary/10 px-2.5 py-1 text-[11px] text-primary">Auto-saving</Badge>}
               </div>
+              )}
             </div>
             <CardDescription className="report-qa-chat-subtitle hidden pl-11 text-xs sm:block">
               {selectedReports.length > 1
-                ? `Comparing ${selectedReports.length} selected reports`
+                ? `Answering across ${selectedReports.length} selected reports — ask about any of them, or ask for a comparison`
                 : selectedReports.length === 1
                   ? `Ask questions about ${selectedReports[0].name.replace(/\.pdf$/i, '')}`
                   : 'Select at least one report to ask grounded questions'}
@@ -2862,7 +2914,7 @@ export default function ReportQA() {
                       <p className="report-qa-empty-title">
                         {uploadedReports.length > 0
                           ? selectedReports.length > 1
-                            ? 'Ask a question to compare the selected reports'
+                            ? 'Ask across the selected reports — anything from one of them, or a comparison'
                             : selectedReports.length === 1
                               ? 'Ask a question about the selected report'
                               : 'Select at least one report to start asking questions'
@@ -3170,7 +3222,7 @@ export default function ReportQA() {
                     uploadedReports.length === 0
                       ? 'Ask anything or upload a report for context...'
                       : selectedReportCount > 1
-                        ? 'Ask a comparison question about selected reports...'
+                        ? 'Ask about any of the selected reports, or ask for a comparison...'
                         : selectedReportCount === 1
                           ? 'Ask a question about the selected report...'
                           : 'Select at least one report to ask a grounded question...'

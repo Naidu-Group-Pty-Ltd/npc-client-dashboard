@@ -87,8 +87,24 @@ Deno.serve(async (req) => {
       const accountId = adAccountId.startsWith('act_') ? adAccountId : `act_${adAccountId}`;
       const limit = Math.min(body.limit || 20, 50);
 
+      // The insights window: a custom range travels as timeRange, and the
+      // preset is validated — the picker sets datePreset to the literal
+      // string 'custom', which interpolated into date_preset(...) made the
+      // Graph API answer 400 for every creatives request on a custom range.
+      const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+      const VALID_PRESETS = new Set([
+        'today', 'yesterday', 'this_month', 'last_month', 'this_quarter',
+        'maximum', 'data_maximum', 'last_3d', 'last_7d', 'last_14d',
+        'last_28d', 'last_30d', 'last_90d', 'last_week_mon_sun',
+        'last_week_sun_sat', 'last_quarter', 'last_year', 'this_week_mon_today',
+        'this_week_sun_today', 'this_year',
+      ]);
+      const insightsClause = body.timeRange && DATE_RE.test(body.timeRange.since || '') && DATE_RE.test(body.timeRange.until || '')
+        ? `insights.time_range(${encodeURIComponent(JSON.stringify({ since: body.timeRange.since, until: body.timeRange.until }))})`
+        : `insights.date_preset(${VALID_PRESETS.has(body.datePreset || '') ? body.datePreset : 'last_30d'})`;
+
       // Fetch ads with creative fields including video and image dimensions
-      const adsUrl = `${META_BASE_URL}/${accountId}/ads?access_token=${accessToken}&fields=id,name,status,creative{id,thumbnail_url,image_url,image_hash,title,body,call_to_action_type,object_story_spec,asset_feed_spec,effective_object_story_id,object_type},insights.date_preset(${body.datePreset || 'last_30d'}){spend,impressions,clicks,ctr,cpc,actions,cost_per_action_type,reach}&limit=${limit}`;
+      const adsUrl = `${META_BASE_URL}/${accountId}/ads?access_token=${accessToken}&fields=id,name,status,creative{id,thumbnail_url,image_url,image_hash,title,body,call_to_action_type,object_story_spec,asset_feed_spec,effective_object_story_id,object_type},${insightsClause}{spend,impressions,clicks,ctr,cpc,actions,cost_per_action_type,reach}&limit=${limit}`;
 
       console.log(`[meta-ads-phase5] Fetching creatives for ${accountId}`);
 

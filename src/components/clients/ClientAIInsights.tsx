@@ -59,10 +59,16 @@ export function ClientAIInsights({ clientId }: ClientAIInsightsProps) {
      * this component happened to have loaded.
      */
     mutationFn: async () => {
+      // 120s, not the 60s default. The assignment behind this is a REASONING
+      // model whose thinking is billed as completion tokens: the ledger shows
+      // its 8,000-token full answers at 72-78s and a 5,072-token comparison at
+      // 48s, so a 4,000-token insights answer can plausibly cross 60s — and an
+      // answer the browser stopped waiting for is an answer nobody receives,
+      // billed anyway.
       const { data, error } = await invokeSecureFunction('generate-portfolio-analysis', {
         clientId,
         mode: 'insights',
-      });
+      }, { timeoutMs: 120000 });
 
       if (error) throw new Error(error.message);
       if (!data?.success || !data.insights) {

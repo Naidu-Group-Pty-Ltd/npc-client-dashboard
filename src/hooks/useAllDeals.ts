@@ -27,6 +27,8 @@ export interface DealWithClient {
   new_loan_amount: number | null;
   clawback_expiry_date: string | null;
   clawback_period_months: number | null;
+  /** Completion stamps for critical date columns ({ settlement_date: ISO }). */
+  critical_date_completions?: Record<string, string> | null;
   created_at: string;
   updated_at: string;
   // Joined from client

@@ -40,6 +40,11 @@ import { ConflictDetection } from '@/components/calendar/ConflictDetection';
 import { ResourceOptimization } from '@/components/calendar/ResourceOptimization';
 import { QuickAddAppointmentModal } from '@/components/calendar/QuickAddAppointmentModal';
 import { MultiCalendarOverlay } from '@/components/calendar/MultiCalendarOverlay';
+import {
+  allVisibleCalendarIds,
+  isEventVisible,
+  knownCalendarIds,
+} from '@/lib/calendar/calendarVisibility.pure';
 import { RecurringPatterns } from '@/components/calendar/RecurringPatterns';
 import { SmartReminders } from '@/components/calendar/SmartReminders';
 import { CalendarPeriodPicker } from '@/components/calendar/CalendarPeriodPicker';
@@ -430,10 +435,18 @@ export default function Calendar() {
     handleRefresh();
   }, [fetchCalendarData, view, currentMonth, currentWeek]);
 
-  // Initialize visible calendars when calendars load
+  // Initialize visible calendars once, when calendars first load.
+  //
+  // Guarded by a ref rather than by `size === 0`: the old guard re-ran
+  // whenever a background refresh replaced the calendar list, so "Hide all"
+  // (an empty set) was undone by the next sync tick — one more way audit item
+  // 26's toggles appeared to do nothing. The set includes the Other row, so
+  // appointments on no listed calendar start visible like everything else.
+  const overlayInitialisedRef = useRef(false);
   useEffect(() => {
-    if (calendars.length > 0 && visibleCalendars.size === 0) {
-      setVisibleCalendars(new Set(calendars.map(c => c.id)));
+    if (calendars.length > 0 && !overlayInitialisedRef.current) {
+      overlayInitialisedRef.current = true;
+      setVisibleCalendars(allVisibleCalendarIds(calendars));
     }
   }, [calendars]);
 
@@ -451,7 +464,7 @@ export default function Calendar() {
   }, []);
 
   const handleShowAllCalendars = useCallback(() => {
-    setVisibleCalendars(new Set(calendars.map(c => c.id)));
+    setVisibleCalendars(allVisibleCalendarIds(calendars));
   }, [calendars]);
 
   const handleHideAllCalendars = useCallback(() => {
@@ -574,9 +587,19 @@ export default function Calendar() {
   const filteredEvents = useMemo(() => {
     let filtered = events;
 
-    // Filter by visible calendars (multi-calendar overlay)
-    if (visibleCalendars.size > 0 && visibleCalendars.size < calendars.length) {
-      filtered = filtered.filter((event) => visibleCalendars.has(event.calendarId || ''));
+    // Filter by visible calendars (multi-calendar overlay).
+    //
+    // Membership, always, once the overlay has initialised — through the same
+    // rule the panel counts by (`calendarVisibility.pure.ts`). The old guard
+    // only filtered between the extremes (`0 < visible < all`), which meant
+    // "Hide all" bypassed the filter and showed EVERYTHING; and it tested raw
+    // membership, so an appointment on no listed calendar — which is most of
+    // this tenant's real bookings — vanished the moment any single unrelated
+    // calendar was switched off. Those appointments belong to the panel's
+    // "Other appointments" row now, and follow its toggle.
+    if (overlayInitialisedRef.current) {
+      const knownIds = knownCalendarIds(calendars);
+      filtered = filtered.filter((event) => isEventVisible(event.calendarId, visibleCalendars, knownIds));
     }
 
     if (selectedCalendarId !== 'all') {

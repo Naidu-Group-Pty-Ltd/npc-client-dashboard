@@ -45,13 +45,16 @@ export function TrueROIPanel({ insights, datePreset }: TrueROIPanelProps) {
   const campaigns = data?.campaigns || [];
   const totals = data?.totals;
 
-  // Chart data — top 6 campaigns by spend
+  // Chart data — top 6 campaigns by spend. Full names stay in the data so
+  // the tooltip can show them; only the axis tick truncates.
   const chartData = campaigns.slice(0, 6).map((c: any) => ({
-    name: c.campaign_name?.length > 18 ? c.campaign_name.slice(0, 18) + '…' : c.campaign_name,
+    name: c.campaign_name || '—',
     'Meta CPL': c.meta_cpl,
     'True CPL': c.true_cpl,
     'Cost/Deal': c.cost_per_deal,
   }));
+  const truncateTick = (value: string) =>
+    value.length > 16 ? `${value.slice(0, 15)}…` : value;
 
   return (
     <Card className="overflow-hidden border-primary/25 bg-[linear-gradient(135deg,hsl(var(--card)/0.96),hsl(var(--background)/0.82)_58%,hsl(var(--primary)/0.08))] shadow-xl shadow-sm dark:shadow-black/5 dark:shadow-black/25">
@@ -108,17 +111,31 @@ export function TrueROIPanel({ insights, datePreset }: TrueROIPanelProps) {
 
             {/* Chart */}
             {chartData.length > 0 && (
-              <div className="h-[260px] w-full rounded-2xl border border-border/60 bg-background/40 p-3">
+              <div className="h-[320px] w-full rounded-2xl border border-border/60 bg-background/40 p-3">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ left: 10, right: 10, bottom: 40 }}>
+                  {/* Legend on top + a reserved 56px axis band: the rotated
+                      campaign labels used to run into the bottom legend and
+                      clip mid-name. */}
+                  <BarChart data={chartData} margin={{ left: 10, right: 10, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border/50" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-20} textAnchor="end" className="text-muted-foreground" />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 10 }}
+                      angle={-20}
+                      textAnchor="end"
+                      height={56}
+                      interval={0}
+                      tickFormatter={truncateTick}
+                      className="text-muted-foreground"
+                    />
                     <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrencyShort(v)} className="text-muted-foreground" />
                     <RechartsTooltip
-                      contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '8px', fontSize: 12 }}
+                      contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '8px', fontSize: 12, maxWidth: 320 }}
+                      wrapperStyle={{ zIndex: 50 }}
                       formatter={(value: number) => formatCurrency(value)}
+                      labelFormatter={(label: string) => label}
                     />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11, paddingBottom: 8 }} />
                     <Bar dataKey="Meta CPL" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="True CPL" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="Cost/Deal" fill="hsl(160, 60%, 45%)" radius={[4, 4, 0, 0]} />

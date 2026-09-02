@@ -316,6 +316,36 @@ export function roleFromDesignCover(input: {
  * of a property's table row. The container is the source SAYING which image
  * belongs to which property and which of them leads.
  */
+/**
+ * The builder handed us this picture FOR THIS PROPERTY.
+ *
+ * LEVEL 1, the same rung as a column that names the row's image, because it is
+ * the same claim made more directly: the builder said "this is that
+ * property's picture". Nothing was read, inferred or matched, so there is
+ * nothing weaker about it than a spreadsheet field — and it must outrank
+ * anything taken out of a document, or an override would not override.
+ *
+ * It is deliberately NOT a new level. A level is how strongly the SOURCE
+ * stated the hero, and the builder is the source.
+ */
+export function roleFromBuilderProperty(input: {
+  /** Who supplied it, in the terms the record already uses. */
+  suppliedBy: 'builder' | 'staff';
+  /** The property, as the operator saw it named. */
+  property: string;
+}): SourceImageRoleAssignment {
+  const who = input.suppliedBy === 'staff'
+    ? 'supplied on the builder\'s behalf'
+    : 'supplied by the builder';
+  return {
+    role: PRIMARY_ROLE,
+    evidenceLevel: 1,
+    evidence: `${who} for ${input.property}`,
+    reason: 'the builder attached this picture to this property directly, so it is '
+      + 'this property\'s image without anything having to be read',
+  };
+}
+
 export function roleFromStructuralContainer(input: {
   container: string;
   designation: string;

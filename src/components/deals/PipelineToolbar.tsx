@@ -310,7 +310,7 @@ export function PipelineToolbar({
                       aria-pressed={isActive}
                       aria-label={`Filter deal type: ${opt.label} (${count})`}
                       className={cn(
-                        "inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all",
+                        "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-all",
                         isActive
                           ? "border-brand-300 bg-gradient-to-r from-brand-300 to-brand-500 text-brand-950 shadow-[0_10px_24px_rgba(245,158,11,0.22)]"
                           : "border-border dark:border-white/10 bg-background dark:bg-black/35 text-muted-foreground hover:border-brand-300/25 hover:bg-brand-300/10 hover:text-brand-100",
@@ -322,7 +322,7 @@ export function PipelineToolbar({
                       <Badge
                         variant="secondary"
                         className={cn(
-                          "h-4 px-1 text-[10px] min-w-[16px] flex items-center justify-center",
+                          "h-5 px-1.5 text-[11px] min-w-[20px] flex items-center justify-center",
                           isActive &&
                             "bg-primary-foreground/20 text-primary-foreground",
                         )}
@@ -353,7 +353,7 @@ export function PipelineToolbar({
                       aria-pressed={isActive}
                       aria-label={`Filter risk status: ${opt.label} (${count})`}
                       className={cn(
-                        "inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-all",
+                        "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition-all",
                         isActive
                           ? opt.activeClass + " shadow-sm"
                           : "border-border dark:border-white/10 bg-background dark:bg-black/35 text-muted-foreground hover:border-brand-300/25 hover:bg-brand-300/10 hover:text-brand-100",
@@ -364,7 +364,7 @@ export function PipelineToolbar({
                       <Badge
                         variant="secondary"
                         className={cn(
-                          "h-4 px-1 text-[10px] min-w-[16px] flex items-center justify-center",
+                          "h-5 px-1.5 text-[11px] min-w-[20px] flex items-center justify-center",
                           isActive && "bg-transparent border border-current/20",
                         )}
                       >

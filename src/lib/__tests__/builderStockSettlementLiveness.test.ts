@@ -84,7 +84,7 @@ describe('B,C,D — a package answered once is never bought twice', () => {
   const noImageDetail = 'package named no deterministic image';
 
   it('C — a package that named no image is remembered, so the next tick moves on', () => {
-    const answered = recordNoDeterministicImage(question('pkg-a', 'row-a'), noImageDetail);
+    const answered = recordNoDeterministicImage(question('pkg-a', 'row-a'), noImageDetail, 'inspected');
     // Asked again at the same version, about the same package and row: settled.
     expect(negativeProvenanceStillStands(answered, question('pkg-a', 'row-a'))).toBe(true);
     // A DIFFERENT property is not answered by it, so the sweep advances.
@@ -92,7 +92,7 @@ describe('B,C,D — a package answered once is never bought twice', () => {
   });
 
   it('a changed package or a version bump re-opens the question', () => {
-    const answered = recordNoDeterministicImage(question('pkg-a', 'row-a'), noImageDetail);
+    const answered = recordNoDeterministicImage(question('pkg-a', 'row-a'), noImageDetail, 'inspected');
     expect(negativeProvenanceStillStands(answered, question('pkg-new', 'row-a'))).toBe(false);
     expect(negativeProvenanceStillStands(answered, {
       ...question('pkg-a', 'row-a'), provenanceVersion: PROVENANCE_VERSION + 1,
@@ -113,7 +113,7 @@ describe('B,C,D — a package answered once is never bought twice', () => {
         !negativeProvenanceStillStands(answers.get(row.anchor), question(row.pkg, row.anchor)));
       if (!next) break;
       bought.push(next.anchor);                       // one recovery this tick
-      answers.set(next.anchor, recordNoDeterministicImage(question(next.pkg, next.anchor), noImageDetail));
+      answers.set(next.anchor, recordNoDeterministicImage(question(next.pkg, next.anchor), noImageDetail, 'inspected'));
     }
 
     expect(answers.size).toBe(14);

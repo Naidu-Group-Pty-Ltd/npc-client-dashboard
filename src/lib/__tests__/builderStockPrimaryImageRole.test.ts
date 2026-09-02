@@ -55,7 +55,9 @@ import {
   indexPdfObjects, objectStreamSlices, pageOrderIsAuthoritative, parseObjectStream,
   qualifyingPhotographsFrom, readPdfPage,
 } from '../../../supabase/functions/_shared/builderStock/pdfPageImages.pure';
-import { selectPdfPropertyPrimary } from '../../../supabase/functions/_shared/builderStock/pdfSourcePhoto';
+import {
+  discoverPdfSourceAssets, selectPdfPropertyPrimary,
+} from '../../../supabase/functions/_shared/builderStock/pdfSourcePhoto';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -309,10 +311,31 @@ describe('F — the Lot 537 regression, in the shape the live contract has', () 
     expect(selection.primary!.page).toBe(1);
     expect(selection.primary!.provenance.page).toBe(1);
 
-    const interior = selection.assets.find((asset) => asset.provenance.objectNumber === 28);
-    expect(interior).toBeDefined();
-    expect(interior!.role.role).toBe('unknown');
-    expect(interior!.page).toBe(2);
+    /*
+     * AND THE INTERIOR ON PAGE 2 IS NEVER DECODED AT ALL.
+     *
+     * `selectPdfPropertyPrimary` now scopes materialisation to the pages the
+     * TEXT says could be this property's cover — see `coverSearchPages`. Page
+     * 2 is not one of them, so its raster is not decoded, not transcoded and
+     * not returned. That is the point rather than a side effect: decoding
+     * every page of a 13.2 MB brochure before deciding anything is what was
+     * killing the worker on the two heaviest packages in the live stock list.
+     *
+     * The guarantee this replaces is strictly stronger. The interior used to
+     * be present and refused; now it cannot be reached to be refused.
+     */
+    expect(selection.assets.some((asset) => asset.page === 2)).toBe(false);
+    expect(selection.assets.map((asset) => asset.provenance.objectNumber)).toEqual([1136]);
+  });
+
+  it('still finds every picture when nothing has said which page could be the cover', async () => {
+    // The scoping is an OPINION, and an absent opinion changes nothing:
+    // unscoped discovery is what `extract.ts` uses to read a whole stock list
+    // out of one PDF, and it still sees both pages.
+    const bytes = await buildLiveShapedPdf();
+    const found = await discoverPdfSourceAssets(bytes);
+    expect(found.assets.map((asset) => asset.provenance.objectNumber).sort((a, b) => a - b))
+      .toEqual([28, 1136]);
   });
 
   it('attributes a one-property document to its COVER page, not to its first photograph', () => {

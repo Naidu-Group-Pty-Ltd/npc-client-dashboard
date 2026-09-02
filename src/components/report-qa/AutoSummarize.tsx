@@ -21,10 +21,16 @@ interface Message {
 interface AutoSummarizeProps {
   messages: Message[];
   reportNames: string[];
+  /**
+   * The saved conversation this chat belongs to. The report-qa gateway
+   * refuses any action without one (it answers 404), which is exactly how
+   * every Summarize click used to fail — the id was simply never sent.
+   */
+  conversationId: string | null;
   disabled?: boolean;
 }
 
-export function AutoSummarize({ messages, reportNames, disabled }: AutoSummarizeProps) {
+export function AutoSummarize({ messages, reportNames, conversationId, disabled }: AutoSummarizeProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,12 +47,22 @@ export function AutoSummarize({ messages, reportNames, disabled }: AutoSummarize
       return;
     }
 
+    if (!conversationId) {
+      toast({
+        title: 'No saved conversation yet',
+        description: 'Send a message first so the conversation exists, then summarize it.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setIsLoading(true);
     setSummary(null);
 
     try {
       const { data, error } = await invokeSecureFunction('report-qa', {
         action: 'chat',
+        conversationId,
         reportContents: [],
         reportNames,
         question: `Please provide a concise executive summary of our entire conversation so far. Include:
@@ -67,7 +83,7 @@ Keep it brief but comprehensive.`,
       console.error('Summary error:', error);
       toast({
         title: 'Failed to generate summary',
-        description: 'Please try again',
+        description: error instanceof Error && error.message ? error.message : 'Please try again',
         variant: 'destructive',
       });
     } finally {

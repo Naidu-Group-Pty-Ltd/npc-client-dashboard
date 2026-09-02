@@ -2952,6 +2952,12 @@
     overflow: visible;
   }
 
+  /* The empty state deliberately lets its viewport overflow (glow bleed), so
+     the Radix scrollbar it would draw can never scroll anything — hide it. */
+  .report-qa-message-area-empty [data-radix-scroll-area-scrollbar] {
+    display: none;
+  }
+
   .report-qa-toolbar {
     max-width: 100%;
     gap: 0.3rem;

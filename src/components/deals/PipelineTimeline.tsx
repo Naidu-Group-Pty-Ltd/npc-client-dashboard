@@ -132,7 +132,7 @@ function getDealMilestones(deal: DealWithClient): MilestoneMarker[] {
       date: new Date(deal.land_settlement_date),
       label: `Land Settlement: ${format(new Date(deal.land_settlement_date), 'dd MMM')}`,
       type: 'land',
-      color: 'bg-chart-1',
+      color: 'bg-info',
       icon: <Milestone className="h-2.5 w-2.5" />,
     });
   }
@@ -142,7 +142,7 @@ function getDealMilestones(deal: DealWithClient): MilestoneMarker[] {
       date: new Date(deal.expected_build_start),
       label: `Build Start: ${format(new Date(deal.expected_build_start), 'dd MMM')}`,
       type: 'build',
-      color: 'bg-chart-6',
+      color: 'bg-chart-5',
       icon: <ArrowRight className="h-2.5 w-2.5" />,
     });
   }
@@ -392,8 +392,8 @@ function TimelineLegend() {
   const markers = [
     { label: 'Settlement', className: 'bg-success', icon: <CheckCircle2 className="h-2.5 w-2.5" /> },
     { label: 'Finance expiry', className: 'bg-warning', icon: <AlertTriangle className="h-2.5 w-2.5" /> },
-    { label: 'Land settlement', className: 'bg-chart-1', icon: <Milestone className="h-2.5 w-2.5" /> },
-    { label: 'Build start', className: 'bg-chart-6', icon: <ArrowRight className="h-2.5 w-2.5" /> },
+    { label: 'Land settlement', className: 'bg-info', icon: <Milestone className="h-2.5 w-2.5" /> },
+    { label: 'Build start', className: 'bg-chart-5', icon: <ArrowRight className="h-2.5 w-2.5" /> },
   ];
 
   return (

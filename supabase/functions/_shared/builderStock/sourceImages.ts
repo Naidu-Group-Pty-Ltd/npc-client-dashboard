@@ -79,11 +79,41 @@ import {
  * Every negative banked at 5 was therefore decided by a reader that could not
  * see a two-page package at all, and is stale by definition.
  *
+ * 7 changes which HOSTS the package reader can open at all. Every link that
+ * was not Google Drive was refused at the front door — "That package is not
+ * on a source we can read" — before anything was fetched, and the refusal was
+ * banked as a finished `no_deterministic_image`. On the live stock list that
+ * was every one of its thirteen brochures: Dropbox shared links, each serving
+ * the actual PDF (measured: 5–8 MB, `%PDF-`) once asked for the FILE rather
+ * than the viewer via the `dl=1` parameter Dropbox itself publishes. A direct
+ * document link on an ordinary host now goes through the same guarded fetch
+ * and the same cover-identification path a Drive direct link does. Every
+ * negative banked at 6 for a non-Drive branch was therefore decided by a
+ * reader that never fetched anything, and is stale by definition.
+ *
+ * 8 changes what a negative MEANS, and what the reader can get out of a heavy
+ * document. Two capabilities moved at once.
+ *
+ * A negative now says WHY it is negative. `no_deterministic_image` was written
+ * by three different things — a document we read that names nothing, a package
+ * that destroyed the worker twice, and a link that answered six times with
+ * nothing readable — and only the first is knowledge about the property. Every
+ * record banked at 7 or below is unclassified, so it cannot be trusted to
+ * admit or withhold the online fallback and is stale by definition. See
+ * `EvidenceExhaustion` and `suppliedEvidence.pure.ts`.
+ *
+ * And a heavy document is no longer decoded page by page before anything is
+ * decided. Rasters are materialised for the pages the TEXT already implicates
+ * — see `discoverPdfSourceAssets` — which is what a 13.2 MB, 23-page brochure
+ * of 5334x3334 JPEGs needs in order to be read inside an edge worker at all.
+ * Both live examples sat at `attempts: 2`, one tick from being retired.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
  */
-export const PROVENANCE_VERSION = 6;
+export { PROVENANCE_VERSION } from './provenanceVersion.pure.ts';
+import { PROVENANCE_VERSION } from './provenanceVersion.pure.ts';
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {

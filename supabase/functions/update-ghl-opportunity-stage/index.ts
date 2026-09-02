@@ -315,6 +315,30 @@ Deno.serve(async (req) => {
       console.error('Failed to update local client:', updateError);
     }
 
+    // Also move the cached opportunity row: the tracker's kanban places cards
+    // from ghl_client_opportunities.stage_id, and sync-ghl-pipelines only
+    // rewrites it every 5 minutes — without this the board shows the old
+    // column until the next sweep. After a repair the stored row still
+    // carries the stale opportunity id, so match by client alone there.
+    let oppUpdate = supabase
+      .from('ghl_client_opportunities')
+      .update({
+        stage_id: newStageId,
+        stage_name: stage.name,
+        pipeline_id: stage.pipeline_id,
+        pipeline_name: pipeline.name,
+        synced_at: new Date().toISOString(),
+      })
+      .eq('client_id', clientId);
+    if (!opportunityWasRepaired) {
+      oppUpdate = oppUpdate.eq('ghl_opportunity_id', opportunityId);
+    }
+    const { error: oppUpdateError } = await oppUpdate;
+
+    if (oppUpdateError) {
+      console.error('Failed to update cached opportunity row:', oppUpdateError);
+    }
+
     console.log(`Successfully moved opportunity to stage: ${stage.name}${opportunityWasRepaired ? ' (opportunity ID was repaired)' : ''}`);
 
     return new Response(JSON.stringify({

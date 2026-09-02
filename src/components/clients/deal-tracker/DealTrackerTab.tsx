@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Deal, DealType, RISK_STATUS_CONFIG, DEAL_TYPE_LABELS } from './types';
+import { deriveDealJourney } from '@/lib/deals/dealJourney.pure';
 import { DealDetailView } from './DealDetailView';
 import { useDealActions } from './useDealActions';
 import { TeamUserSelect } from '@/components/ui/TeamUserSelect';
@@ -125,9 +126,12 @@ export function DealTrackerTab({ clientId, deals, properties, initialDealId }: D
         <div className="grid gap-3">
           {deals.map((deal) => {
             const riskConfig = RISK_STATUS_CONFIG[deal.risk_status];
-            const completedStages = (deal.stages || []).filter(s => s.status === 'complete').length;
-            const totalStages = (deal.stages || []).length;
-            const progressPercent = totalStages > 0 ? (completedStages / totalStages) * 100 : 0;
+            // Same derivation as the pipeline board and the portal — the
+            // list can no longer disagree with the board about a deal.
+            const journey = deriveDealJourney(deal);
+            const completedStages = journey.completedStages;
+            const totalStages = journey.totalStages;
+            const progressPercent = journey.progressPct;
 
             return (
               <Card
@@ -142,9 +146,11 @@ export function DealTrackerTab({ clientId, deals, properties, initialDealId }: D
                       <span className="font-medium text-xs sm:text-sm truncate">
                         {deal.property_address || DEAL_TYPE_LABELS[deal.deal_type]}
                       </span>
-                      <Badge variant="outline" className="text-[10px] shrink-0">
-                        S{deal.current_stage_number}
-                      </Badge>
+                      {journey.stageNumber != null && (
+                        <Badge variant="outline" className="text-[10px] shrink-0">
+                          S{journey.stageNumber}
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {deal.purchase_file_id && (
@@ -159,7 +165,13 @@ export function DealTrackerTab({ clientId, deals, properties, initialDealId }: D
 
                   </div>
 
-                  <p className="text-xs sm:text-sm text-muted-foreground mb-2 truncate">{deal.current_stage}</p>
+                  <div className="mb-2 flex min-w-0 items-center gap-1.5">
+                    <p className="min-w-0 truncate text-xs text-muted-foreground sm:text-sm">{journey.stageLabel}</p>
+                    <Badge variant="outline" className="h-5 shrink-0 gap-1 text-[10px] font-normal text-muted-foreground">
+                      <span aria-hidden>{journey.phase.icon}</span>
+                      {journey.phase.label}
+                    </Badge>
+                  </div>
 
                   <div className="flex items-center gap-3 mb-2">
                     <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">

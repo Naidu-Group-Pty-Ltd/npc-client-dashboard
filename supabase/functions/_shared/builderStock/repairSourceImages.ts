@@ -1198,7 +1198,33 @@ export async function repairSourceImagesForUpload(
      * `linked_package_photo` so the row says which of the two it was.
      */
     if (recovered.status === 'recovered_photograph') {
-      await clearAttempt();
+    /*
+     * THE CLAIM IS HELD UNTIL THE PICTURE IS DURABLE, not until the recovery
+     * returns.
+     *
+     * WHY. `clearAttempt()` used to run here, before the store — and storing
+     * is the most expensive step left: it transcodes, hashes and sanitises a
+     * 3000x1875 raster inside the same uninterruptible invocation. A kill
+     * there therefore lands AFTER the claim has been released, so the column
+     * holds `{"branches": {}}` — no attempt, no verdict, no image — and the
+     * next tick sees an untouched branch, does the same work and dies in the
+     * same place. `packageAttemptsExhausted` can never fire, because the
+     * counter it reads was erased on the way in.
+     *
+     * PRODUCTION, 2 SEPTEMBER 2026. Lot 824 Sorrel Way, `image_work_attempts`
+     * 8, stage `source`, `source_provenance_result` exactly `{"branches": {}}`
+     * and no `linked_package` image row. Claimed 04:00:02; `CPU Time exceeded`
+     * 04:00:12. Its brochure reads fine — 7.2 MB, 15 pages, a 3000x1875 render
+     * on page 2, selected in 4.4 s — so nothing was wrong with the document
+     * and nothing was wrong with the reader. The property had been cycling on
+     * a one-hour backoff since the list was imported.
+     *
+     * So the claim is released only once the row is written. A store that
+     * FAILS leaves it standing too, which is correct for the same reason: the
+     * question is unanswered, the next attempt counts, and two of them retire
+     * the branch as `operational` — a blank card with a legible reason, never
+     * an exhaustion the online fallback could be bought with.
+     */
       const photo = recovered.photograph;
       if (!all.length) {
         outcome.rowsWithImagery += 1;
@@ -1229,6 +1255,7 @@ export async function repairSourceImagesForUpload(
         },
       });
       if (storedPhoto) {
+        await clearAttempt();
         outcome.imagesStored += 1;
         outcome.fromPackage += 1;
         prove(itemId, photo.reference);
@@ -1248,6 +1275,9 @@ export async function repairSourceImagesForUpload(
             writeBranchState(negativeBefore.get(itemId), packageUrl, null));
         }
       } else {
+        // The claim STANDS: nothing durable happened, so this question is
+        // still unanswered and the next attempt must count towards retiring it.
+        outcome.incomplete = true;
         outcome.problems.push({
           reference: photo.reference,
           reason: 'The recovered photograph could not be stored.',
@@ -1258,11 +1288,20 @@ export async function repairSourceImagesForUpload(
 
     if (recovered.status !== 'recovered') {
       outcome.packageNotIdentified += 1;
+      /*
+       * `INSPECTED`, AND ONLY HERE. This path is reached when
+       * `recoverPackageImage` OPENED the document, read it, and found nothing
+       * that names this property — the one negative that is knowledge about
+       * the document rather than about us, and therefore the one that may
+       * admit the online fallback. Every other retirement in this file goes
+       * through `recordPackageUnreachable` or `recordPackageUnprocessable`,
+       * which say `operational`. See `suppliedEvidence.pure.ts`.
+       */
       const { error: writeError } = await db
         .from('builder_stock_items')
         .update({ source_provenance_result: writeBranchState(
           negativeBefore.get(itemId), packageUrl,
-          recordNoDeterministicImage(question, recovered.detail)) })
+          recordNoDeterministicImage(question, recovered.detail, 'inspected')) })
         .eq('id', itemId)
         .eq('organisation_id', input.organisationId);
       if (writeError) {
@@ -1275,11 +1314,8 @@ export async function repairSourceImagesForUpload(
       continue;
     }
 
-    // RECOVERED. The step returned, so the claim is spent: clear it, or a
-    // future question about this property would inherit a failure that never
-    // happened.
-    await clearAttempt();
-
+    // RECOVERED. See the note on the photograph path above: the claim is held
+    // until the row is written, because storing is where the worker dies.
     // A row that fell through with convicted assets was already counted once.
     if (!all.length) {
       outcome.rowsWithImagery += 1;
@@ -1322,6 +1358,7 @@ export async function repairSourceImagesForUpload(
       },
     });
     if (written) {
+      await clearAttempt();
       outcome.imagesStored += 1;
       outcome.fromPackage += 1;
       prove(itemId, recovered.image.reference);
@@ -1341,6 +1378,8 @@ export async function repairSourceImagesForUpload(
         negativeBefore.delete(itemId);
       }
     } else {
+      // The claim STANDS — see above.
+      outcome.incomplete = true;
       outcome.problems.push({
         reference: recovered.image.reference,
         reason: 'The recovered image could not be stored.',

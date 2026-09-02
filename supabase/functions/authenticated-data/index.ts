@@ -183,6 +183,17 @@ const TABLES: Record<string, TableRule> = {
    * here — widening later is safe, narrowing after release is not.
    */
   agency_agreements:       { module: 'agreements', ownerColumn: 'created_by' },
+
+  /*
+   * Agreement blueprint catalogue for the Gamma send flow. RLS-W2 scoped every
+   * verb to `authenticated` — but this app's browser client is anon (custom
+   * HttpOnly cookie identity), so both the Agreements page's template manager
+   * and the Send Agreement dialog's template picker read zero rows and the
+   * picker never rendered. Reads reproduce the open-to-any-verified-session
+   * policy; writes additionally require the agreements module, which is the
+   * page the manager lives on.
+   */
+  gamma_agreement_templates: { module: 'agreements', openRead: true },
 };
 
 const READ_METHODS = new Set(['GET', 'HEAD']);

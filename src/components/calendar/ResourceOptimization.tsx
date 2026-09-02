@@ -106,6 +106,14 @@ export function ResourceOptimization({
           {patterns.total} appointment{patterns.total !== 1 ? 's' : ''} in view
         </span>
       </div>
+      {/* Audit item 20, the determination: the numbers say where they come
+          from. These are counts of the appointments currently drawn on the
+          calendar — the Overlay's and the search's filters included — never a
+          score. */}
+      <p className="text-xs text-muted-foreground">
+        Counted from the appointments shown on the calendar — booked, confirmed
+        and no-shows. Nothing here is a score or a prediction.
+      </p>
 
       {/* Times this business actually books. Clicking one opens the booking
           form on the next occurrence of that slot, never one already past. */}

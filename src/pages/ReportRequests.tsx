@@ -1,5 +1,5 @@
 import { useState, useEffect, type KeyboardEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
@@ -19,7 +19,7 @@ import {
 import {
   Search, Loader2, Clock, ArrowRight, CheckCircle2, XCircle,
   BarChart3, PiggyBank, Building2, User, Send, Calendar,
-  MessageSquare, Filter, Inbox, Mail, Phone, MapPin
+  MessageSquare, Filter, Inbox, Mail, Phone, MapPin, ExternalLink
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
@@ -116,6 +116,7 @@ interface ReportRequest {
 
 export default function ReportRequests() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { canEdit: canEditRequests } = useModulePermissions('reports');
   const [search, setSearch] = useState('');
@@ -476,7 +477,25 @@ export default function ReportRequests() {
                   </div>
 
                   <div className="grid gap-2.5 text-sm">
-                    <div className="flex items-start gap-3 rounded-2xl border border-border dark:border-white/5 bg-background/15 dark:bg-black/15 px-3 py-2"><User className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-200/70" /><span className="w-20 shrink-0 text-muted-foreground dark:text-muted-foreground">Client:</span><span className="min-w-0 font-semibold capitalize text-foreground dark:text-white">{selectedRequest.client_name}</span></div>
+                    <div className="flex items-start gap-3 rounded-2xl border border-border dark:border-white/5 bg-background/15 dark:bg-black/15 px-3 py-2">
+                      <User className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-200/70" />
+                      <span className="w-20 shrink-0 text-muted-foreground dark:text-muted-foreground">Client:</span>
+                      <span className="min-w-0 flex-1 font-semibold capitalize text-foreground dark:text-white">{selectedRequest.client_name}</span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 shrink-0 gap-1.5 rounded-full border-brand-300/30 bg-background/50 px-3 text-xs font-semibold text-brand-100 transition-all hover:border-brand-300/55 hover:bg-brand-300/10 focus-visible:ring-2 focus-visible:ring-brand-300/35"
+                        aria-label={`Open the client card for ${selectedRequest.client_name}`}
+                        onClick={() => {
+                          const targetClientId = selectedRequest.client_id;
+                          setSelectedRequest(null);
+                          navigate(`/clients?clientId=${targetClientId}`);
+                        }}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open client card
+                      </Button>
+                    </div>
                     {selectedRequest.client_email && <div className="flex items-start gap-3 rounded-2xl border border-border dark:border-white/5 bg-background/15 dark:bg-black/15 px-3 py-2"><Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-muted-foreground" /><span className="w-20 shrink-0 text-muted-foreground dark:text-muted-foreground">Email:</span><span className="min-w-0 break-all font-medium text-foreground dark:text-white">{selectedRequest.client_email}</span></div>}
                     {selectedRequest.client_phone && <div className="flex items-start gap-3 rounded-2xl border border-border dark:border-white/5 bg-background/15 dark:bg-black/15 px-3 py-2"><Phone className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-muted-foreground" /><span className="w-20 shrink-0 text-muted-foreground dark:text-muted-foreground">Phone:</span><span className="min-w-0 font-medium text-foreground dark:text-white">{selectedRequest.client_phone}</span></div>}
                     {selectedRequest.client_address && <div className="flex items-start gap-3 rounded-2xl border border-border dark:border-white/5 bg-background/15 dark:bg-black/15 px-3 py-2"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground dark:text-muted-foreground" /><span className="w-20 shrink-0 text-muted-foreground dark:text-muted-foreground">Address:</span><span className="min-w-0 break-words font-medium text-foreground dark:text-white">{selectedRequest.client_address}</span></div>}

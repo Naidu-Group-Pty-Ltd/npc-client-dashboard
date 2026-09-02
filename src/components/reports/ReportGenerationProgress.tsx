@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { invokeSecureFunction, isAuthExhausted } from '@/lib/secureInvoke';
+import { nextPollDelayMs } from '@/lib/reports/progressPollCadence.pure';
 import { useAuth } from '@/hooks/useAuth';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -460,10 +461,21 @@ function ReportGenerationProgressInner() {
   const transientFailCountRef = useRef(0);
   const transientBackoffUntilRef = useRef(0);
   const visibleRef = useRef(typeof document !== 'undefined' ? !document.hidden : true);
+  /* Adaptive cadence (see progressPollCadence.pure.ts): the 3s interval below
+     is only the scheduler's tick; whether a tick actually asks the server is
+     decided here. Two idle dashboards asked 13,679 times in a day, every
+     answer empty, at ~1.2s of database time each. */
+  const emptyPollsRef = useRef(0);
+  const nextDueAtRef = useRef(0);
 
   useEffect(() => {
     const onVis = () => {
       visibleRef.current = !document.hidden;
+      if (!document.hidden) {
+        // The person just looked: answer now, whatever the idle backoff says.
+        emptyPollsRef.current = 0;
+        nextDueAtRef.current = 0;
+      }
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
@@ -472,6 +484,7 @@ function ReportGenerationProgressInner() {
   const fetchActiveReports = useCallback(async () => {
     if (pausedRef.current) return;
     if (!visibleRef.current) return;
+    if (Date.now() < nextDueAtRef.current) return;
     // NOTE: deliberately NOT gated on hasActiveSession(). The staff session lives
     // in an HttpOnly cookie that JS cannot read; the tab-scoped access token it
     // checks is absent in any tab that did not perform the login itself (a new
@@ -552,6 +565,11 @@ function ReportGenerationProgressInner() {
 
     const records: ProgressRow[] = data?.reports || [];
     const now = Date.now();
+
+    // Pace the next ask by what this one found. Failure paths return above and
+    // are paced by their own backoff refs; this paces success.
+    emptyPollsRef.current = records.length > 0 ? 0 : emptyPollsRef.current + 1;
+    nextDueAtRef.current = now + nextPollDelayMs(emptyPollsRef.current);
 
     // The 24h window is applied server-side now (`createdAfter`), so this only
     // has to drop what the user hid locally.

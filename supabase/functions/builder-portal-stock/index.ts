@@ -16,6 +16,7 @@
  *
  * Operations
  *   create_upload | process_upload | reprocess_upload | enrich_images
+ *   create_builder_image | attach_builder_image
  *   list_uploads | get_upload
  *   list_stock | get_stock_item | set_availability | archive_stock_item
  *   image_url
@@ -50,6 +51,18 @@ import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure
 import {
   isTraversableBranch, rowSourceBranches,
 } from '../_shared/builderStock/sourceBranches.pure.ts';
+import {
+  designOfStoredRow, isBuilderSuppliedPath, propertyImageStoragePath,
+} from '../_shared/builderStock/builderSuppliedImage.pure.ts';
+import {
+  attachBuilderImage, builderImageReference,
+} from '../_shared/builderStock/attachBuilderImage.ts';
+import {
+  roleFromBuilderProperty,
+} from '../_shared/builderStock/sourceImageRole.pure.ts';
+import { validateSourceImageBytes } from '../_shared/builderStock/sourceAssets.pure.ts';
+import { PROCESSED_LIFECYCLE } from '../_shared/builderStock/stockLifecycle.pure.ts';
+import { sha256Hex } from '../_shared/builderStock/rasterPng.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { fetchStockSource, SourceFetchError } from '../_shared/builderStock/fetchSource.ts';
 import type { HyperlinkAvailability } from '../_shared/builderStock/sheetHyperlinks.pure.ts';
@@ -504,6 +517,145 @@ Deno.serve(async (req) => {
         return await failUpload(upload.id, 'processing_failed',
           'That file could not be processed. Please check the format and try again.',
           (error as { message?: string })?.message);
+      }
+    }
+
+    /*
+     * =====================================================================
+     * The picture a builder hands over directly
+     * =====================================================================
+     *
+     * Every image this product serves is READ out of something — a column
+     * naming a URL, a brochure page naming a lot, a page cover. That works
+     * until there is nothing to read, and on the one live source thirteen of
+     * twenty-six published properties attach no document at all. The
+     * pipeline's fallbacks then offered a Simonds display home, an ABC Homes
+     * display home and the land developer's estate marketing for those rows,
+     * and refused all three, correctly. The cards were blank because there was
+     * nothing to read, and no reader fixes that.
+     *
+     * So the builder can hand the picture over. Two routes, one act: a render
+     * FOR A DESIGN, which serves every row of theirs stating it — three
+     * uploads cover those thirteen properties and every future one — or a
+     * picture FOR ONE PROPERTY, which is the exception and the guarantee.
+     *
+     * Uploaded exactly as a stock list is: a signed URL, the browser PUTs to
+     * it, and a second call confirms. The bytes are validated SERVER-SIDE on
+     * that second call, out of storage, so what is registered is what was
+     * actually stored rather than what the browser said it sent.
+     */
+    if (operation === 'create_builder_image') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to add images', code: 'permission_denied' }, 403);
+      }
+
+      const filename = cleanText(body.filename, 200) || 'image';
+      const stockItemId = cleanText(body.stock_item_id, 64);
+      if (!stockItemId) {
+        return json({ error: 'Say which property this picture is for.' }, 400);
+      }
+
+      const item = await loadItem(stockItemId);
+      if (!item) return json({ error: 'Property not found' }, 404);
+      const storagePath = propertyImageStoragePath({
+        organisationId: activeOrganisationId,
+        stockItemId,
+        filename: safeObjectName(filename),
+      });
+      const { data: signed, error: signError } = await supabase.storage
+        .from(STOCK_IMAGE_BUCKET)
+        .createSignedUploadUrl(storagePath);
+      if (signError || !signed?.signedUrl) {
+        console.error('[builder-portal-stock] builder image signed url failed', {
+          bucket: STOCK_IMAGE_BUCKET,
+          storage_path: storagePath,
+          message: signError?.message ?? 'no signed url returned',
+        });
+        return json({ error: 'Storage could not accept the image.' }, 502);
+      }
+      const raw = signed.signedUrl;
+      return json({
+        success: true,
+        storage_path: storagePath,
+        upload_url: raw.startsWith('http')
+          ? raw
+          : `${Deno.env.get('SUPABASE_URL')}/storage/v1${raw.startsWith('/') ? '' : '/'}${raw}`,
+        token: signed.token,
+      });
+    }
+
+    if (operation === 'attach_builder_image') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to add images', code: 'permission_denied' }, 403);
+      }
+
+      const storagePath = cleanText(body.storage_path, 400);
+      /*
+       * The path arrives in the body and is therefore a LOOKUP KEY, never
+       * authority — the same rule every other write in this function keeps.
+       * It must be one this product wrote, under this organisation's own
+       * prefix, or a caller could register somebody else's object.
+       */
+      if (!isBuilderSuppliedPath(storagePath) || !storagePath.includes(`/${activeOrganisationId}/`)) {
+        return json({ error: 'That image location is not allowed' }, 400);
+      }
+
+      const { data: blob, error: downloadError } = await supabase.storage
+        .from(STOCK_IMAGE_BUCKET).download(storagePath);
+      if (downloadError || !blob) {
+        return json({ error: 'That image was not uploaded. Please try again.' }, 400);
+      }
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      /*
+       * VALIDATED OUT OF STORAGE, not off the request. What is registered is
+       * what was actually stored, so a browser cannot declare a PNG and put a
+       * PDF there — and the size, format and minimum-dimension rules are the
+       * ones every other source image already passes.
+       */
+      const checked = validateSourceImageBytes(bytes);
+      if (checked.ok !== true) {
+        await supabase.storage.from(STOCK_IMAGE_BUCKET).remove([storagePath]);
+        return json({ error: checked.reason }, 400);
+      }
+      const sha256 = await sha256Hex(bytes);
+
+      const stockItemId = cleanText(body.stock_item_id, 64);
+      const suppliedBy = 'builder' as const;
+
+      /*
+       * ONE PROPERTY, ALWAYS. A builder-supplied picture names the property it
+       * is of, and nothing here fans one picture across several — see the
+       * module header for why that capability was withdrawn.
+       */
+      if (!stockItemId) {
+        return json({ error: 'Say which property this picture is for.' }, 400);
+      }
+      {
+        const item = await loadItem(stockItemId);
+        if (!item) return json({ error: 'Property not found' }, 404);
+        const attached = await attachBuilderImage(supabase, {
+          organisationId: activeOrganisationId,
+          stockItemId,
+          uploadId: item.upload_id ?? null,
+          storageBucket: STOCK_IMAGE_BUCKET,
+          storagePath,
+          contentType: checked.contentType,
+          byteSize: bytes.length,
+          sha256,
+          role: roleFromBuilderProperty({
+            suppliedBy,
+            property: stockPropertyLabel(item),
+          }),
+        });
+        if ('error' in attached) return json({ error: 'The image could not be stored.' }, 500);
+        // `attachBuilderImage` requeues the property itself — see its header.
+        await logBuilderProjectActivity(supabase, req, {
+          builderUserId: me.id, organisationId: activeOrganisationId,
+          action: 'builder_stock_image_supplied',
+          entityType: 'stock_item', entityId: stockItemId,
+          metadata: { storage_path: storagePath, scope: 'property' },
+        });
+        return json({ success: true, scope: 'property', properties: 1 });
       }
     }
 
@@ -1643,6 +1795,41 @@ Deno.serve(async (req) => {
  * One query per collection rather than per row: a 100-row stock page must not
  * become 201 round trips.
  */
+
+/** How a property is named to a person, for the record a role assignment writes. */
+function stockPropertyLabel(item: Record<string, unknown>): string {
+  const parts = [
+    item.lot_number ? `Lot ${String(item.lot_number)}` : '',
+    String(item.address_line ?? ''),
+    String(item.development_name ?? ''),
+    String(item.suburb ?? ''),
+  ].map((part) => part.trim()).filter(Boolean);
+  return parts.join(', ') || 'this property';
+}
+
+/**
+ * Put properties back in front of the image ladder.
+ *
+ * The link recovery's rule, in its own words: reopened only where there is
+ * something to gain. A property already holding a picture is left alone —
+ * except that here the picture may BE the one just supplied, so the sweep is
+ * what re-decides the card, not this.
+ */
+async function reopenImageWork(
+  supabase: any,
+  organisationId: string,
+  stockItemIds: string[],
+): Promise<void> {
+  if (!stockItemIds.length) return;
+  await supabase.from('builder_stock_items').update({
+    enrichment_status: 'pending',
+    image_work_stage: 'source',
+    image_work_claim_until: null,
+    image_work_next_attempt_at: new Date().toISOString(),
+    image_work_updated_at: new Date().toISOString(),
+  }).eq('organisation_id', organisationId).in('id', stockItemIds);
+}
+
 async function decorateItems(
   supabase: any,
   items: any[],

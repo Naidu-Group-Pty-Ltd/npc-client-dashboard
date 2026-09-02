@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle, Bed, Bath, Building2, Car, CheckCircle2, ChevronLeft, ChevronRight,
   ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, Search, UserPlus,
@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
+import { useSupplyStockImageForBuilder } from '@/lib/marketplaceBuilderStock';
 import { cn } from '@/lib/utils';
 import {
   marketplaceStockImageUrl, useMarketplaceBuilderStock, useMarketplaceBuilders,
@@ -68,6 +69,9 @@ const SURFACE = 'min-w-0 rounded-[1.5rem] border border-border/60 bg-card/65 p-4
 export function BuilderStockTab() {
   const { toast } = useToast();
   const { canEdit: canEditClients } = useModulePermissions('clients');
+  // Supplying a picture is a LISTINGS write, not a client one: it changes what
+  // the marketplace shows, never who a property is offered to.
+  const { canEdit: canEditListings } = useModulePermissions('listings');
 
   const [search, setSearch] = useState('');
   const [organisationId, setOrganisationId] = useState('all');
@@ -208,6 +212,7 @@ export function BuilderStockTab() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {records.map((item) => (
               <StockCard
+                canSupplyImage={canEditListings}
                 key={item.id}
                 item={item}
                 canSelect={canEditClients}
@@ -264,12 +269,16 @@ export function BuilderStockTab() {
 }
 
 function StockCard({
-  item, canSelect, onSelect,
+  item, canSelect, onSelect, canSupplyImage,
 }: {
   item: BuilderStockItem;
   canSelect: boolean;
   onSelect: () => void;
+  canSupplyImage: boolean;
 }) {
+  const { toast } = useToast();
+  const supply = useSupplyStockImageForBuilder();
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const image = primaryStockImage(item);
   const price = stockItemPrice(item);
   const configuration = stockItemConfiguration(item);
@@ -281,7 +290,33 @@ function StockCard({
 
   return (
     <Card className="flex flex-col overflow-hidden rounded-2xl border-border/70 bg-card/90 shadow-[0_10px_30px_rgba(15,23,42,0.06)] dark:border-white/10 dark:bg-background/80">
-      <StockCardImage image={image} />
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (!file) return;
+          supply.mutate({ stockItemId: item.id, file }, {
+            onSuccess: () => toast({
+              title: 'Picture supplied',
+              description: `${stockItemTitle(item)} now shows the picture you added.`,
+            }),
+            onError: (error) => toast({
+              title: 'That picture could not be saved',
+              description: error instanceof Error ? error.message : 'Please try again shortly.',
+              variant: 'destructive',
+            }),
+          });
+        }}
+      />
+      <StockCardImage
+        image={image}
+        onSupply={canSupplyImage ? () => fileInput.current?.click() : undefined}
+        supplying={supply.isPending}
+      />
       <CardContent className="flex flex-1 flex-col gap-3 p-4">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{stockItemTitle(item)}</p>
@@ -362,7 +397,11 @@ function StockCard({
  * is a link to somebody else's server and is loaded without a referrer and
  * labelled unverified. It is never presented as a photograph OF this property.
  */
-function StockCardImage({ image }: { image: BuilderStockImage | null }) {
+function StockCardImage({ image, onSupply, supplying }: {
+  image: BuilderStockImage | null;
+  onSupply?: () => void;
+  supplying?: boolean;
+}) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [broken, setBroken] = useState(false);
 
@@ -387,6 +426,24 @@ function StockCardImage({ image }: { image: BuilderStockImage | null }) {
         <div className="text-center">
           <ImageIcon className="mx-auto h-6 w-6 text-muted-foreground/50" aria-hidden />
           <p className="mt-1 text-[11px] text-muted-foreground">No image found</p>
+          {/*
+            A blank card costs a sale today, and a builder who has not answered
+            an email is not a reason to keep showing nothing — staff routinely
+            hold the marketing pack first. The record says staff supplied it,
+            because acting for somebody is a different act from acting for
+            yourself.
+          */}
+          {onSupply ? (
+            <button
+              type="button"
+              className="mt-2 text-[11px] font-medium text-primary underline-offset-2 hover:underline
+                disabled:opacity-60"
+              disabled={supplying}
+              onClick={onSupply}
+            >
+              {supplying ? 'Adding…' : 'Add a picture'}
+            </button>
+          ) : null}
         </div>
       </div>
     );

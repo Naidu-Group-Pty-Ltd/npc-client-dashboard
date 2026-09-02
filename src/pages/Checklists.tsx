@@ -15,6 +15,7 @@ import { useChecklistTemplates, useChecklistInstances, useChecklistMutations, ty
 import { TemplateBuilder } from '@/components/checklists/TemplateBuilder';
 import { ChecklistInstanceView } from '@/components/checklists/ChecklistInstanceView';
 import { TemplateImportDialog } from '@/components/checklists/TemplateImportDialog';
+import { IconPicker } from '@/components/checklists/IconPicker';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import type { ParsedTemplate } from '@/utils/checklistTemplateParser';
 import { toast } from 'sonner';
@@ -463,7 +464,9 @@ export default function Checklists() {
                     <div className="flex flex-col gap-3 sm:flex-row">
                       <div className="w-20">
                         <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground dark:text-muted-foreground">Icon</Label>
-                        <Input value={newIcon} onChange={e => setNewIcon(e.target.value)} aria-label="Template icon" className="mt-1 border-brand-500/15 bg-background/35 dark:bg-black/35 text-center text-xl text-foreground dark:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-black" />
+                        <div className="mt-1">
+                          <IconPicker value={newIcon} onChange={setNewIcon} ariaLabel="Choose a template icon" triggerClassName="w-full border-brand-500/15 bg-background/35 dark:bg-black/35" />
+                        </div>
                       </div>
                       <div className="flex-1">
                         <Label className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground dark:text-muted-foreground">Name</Label>

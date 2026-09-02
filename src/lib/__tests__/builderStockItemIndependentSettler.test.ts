@@ -341,16 +341,31 @@ describe('a claimed property is worked ALONE', () => {
 
 describe('the package attempt stays the package\'s own', () => {
   it('is not touched by the orchestration', () => {
-    // MAX_PACKAGE_ATTEMPTS = 2 remains authoritative, is written before the
-    // download begins, and lives in `source_provenance_result`. Nothing in the
-    // per-item machinery may become a second opinion about it.
+    /*
+     * MAX_PACKAGE_ATTEMPTS = 2 remains authoritative, is written before the
+     * download begins, and lives in `source_provenance_result`. Nothing in the
+     * per-item machinery may become a second opinion about it.
+     *
+     * WHAT CHANGED, AND WHY THE RULE DID NOT. The stage machine now READS that
+     * column, because the fallback gate has to know whether the builder's own
+     * sources are finished with before it routes a property to the external
+     * ladder. Reading is not a second opinion; WRITING is, and so is owning
+     * the counter. So the rule is pinned as it was always meant: the settler
+     * may not name the budget, may not import the attempt module, and may not
+     * write the column. `readSuppliedEvidence` is the one interpreter and it
+     * is a pure function both this and `settleFallbackImages` call.
+     */
     const stageMachine = readFileSync(join(REPO_ROOT,
       'supabase/functions/_shared/builderStock/settleItemImages.ts'), 'utf8');
     const code = stageMachine.replace(/\/\*[\s\S]*?\*\//g, ' ')
       .split('\n').map((line) => line.replace(/\/\/.*$/, '')).join('\n');
     expect(code).not.toContain('MAX_PACKAGE_ATTEMPTS');
-    expect(code).not.toContain('source_provenance_result');
     expect(code).not.toContain('packageAttempt');
+    // No write, in any of the shapes a write takes.
+    expect(code).not.toMatch(/source_provenance_result\s*:/);
+    expect(code).not.toMatch(/\.update\([^)]*source_provenance_result/);
+    // And the reading it does make goes through the one shared interpreter.
+    expect(code).toContain('readSuppliedEvidence');
   });
 
   it('gives one property the whole tick, which is what lets a package be attempted at all', () => {

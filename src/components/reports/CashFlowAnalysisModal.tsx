@@ -75,6 +75,10 @@ import {
   PROJECTION_YEAR_HEAD_CLASS,
   PROJECTION_YEAR_CELL_CLASS,
   PROJECTION_YEAR_EDIT_CELL_CLASS,
+  PROJECTION_SECTION_LABEL_CELL_CLASS,
+  PROJECTION_SECTION_LABEL_INNER_CLASS,
+  PROJECTION_TOTAL_LABEL_CELL_CLASS,
+  PROJECTION_TOTAL_LABEL_INNER_CLASS,
 } from '@/lib/cashFlow/projectionTableGeometry.pure';
 import {
   get10YearLoanProjection,
@@ -6281,18 +6285,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
-                          {/* Audit item 2: the label is what sticks, not the cell.
-                              `position: sticky` never moves an element outside its
-                              containing block, and a `colSpan={12}` cell is exactly as
-                              wide as the row — so it had no room to move and every
-                              section heading scrolled away while the narrow metric
-                              cells beside it stayed put. An inline-block inside the
-                              cell has the whole row to move within. */}
-                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
-                            Statistics
-                          </span>
+                        {/* Audit item 2, second pass. The sticky inline-block held the
+                            TEXT still but left this row with no frozen CELL, so the
+                            rail every other row draws — an opaque 220px column with
+                            its shadow — broke at each section band. The heading now
+                            lives in the same kind of frozen cell as every data row:
+                            opaque base, band colour as an inner layer, and the other
+                            eleven columns as one spanned band beside it. */}
+                        <TableCell className={PROJECTION_SECTION_LABEL_CELL_CLASS}>
+                          <div className={PROJECTION_SECTION_LABEL_INNER_CLASS}>Statistics</div>
                         </TableCell>
+                        <TableCell className="bg-primary/5 p-0 sm:p-0" colSpan={11} />
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
@@ -6339,18 +6342,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
-                          {/* Audit item 2: the label is what sticks, not the cell.
-                              `position: sticky` never moves an element outside its
-                              containing block, and a `colSpan={12}` cell is exactly as
-                              wide as the row — so it had no room to move and every
-                              section heading scrolled away while the narrow metric
-                              cells beside it stayed put. An inline-block inside the
-                              cell has the whole row to move within. */}
-                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
-                            Cash Deductions
-                          </span>
+                        {/* Audit item 2, second pass. The sticky inline-block held the
+                            TEXT still but left this row with no frozen CELL, so the
+                            rail every other row draws — an opaque 220px column with
+                            its shadow — broke at each section band. The heading now
+                            lives in the same kind of frozen cell as every data row:
+                            opaque base, band colour as an inner layer, and the other
+                            eleven columns as one spanned band beside it. */}
+                        <TableCell className={PROJECTION_SECTION_LABEL_CELL_CLASS}>
+                          <div className={PROJECTION_SECTION_LABEL_INNER_CLASS}>Cash Deductions</div>
                         </TableCell>
+                        <TableCell className="bg-primary/5 p-0 sm:p-0" colSpan={11} />
                       </TableRow>
                       
                       {/* Property Expenses - Editable */}
@@ -6449,18 +6451,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
-                          {/* Audit item 2: the label is what sticks, not the cell.
-                              `position: sticky` never moves an element outside its
-                              containing block, and a `colSpan={12}` cell is exactly as
-                              wide as the row — so it had no room to move and every
-                              section heading scrolled away while the narrow metric
-                              cells beside it stayed put. An inline-block inside the
-                              cell has the whole row to move within. */}
-                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
-                            Non-Cash Deductions
-                          </span>
+                        {/* Audit item 2, second pass. The sticky inline-block held the
+                            TEXT still but left this row with no frozen CELL, so the
+                            rail every other row draws — an opaque 220px column with
+                            its shadow — broke at each section band. The heading now
+                            lives in the same kind of frozen cell as every data row:
+                            opaque base, band colour as an inner layer, and the other
+                            eleven columns as one spanned band beside it. */}
+                        <TableCell className={PROJECTION_SECTION_LABEL_CELL_CLASS}>
+                          <div className={PROJECTION_SECTION_LABEL_INNER_CLASS}>Non-Cash Deductions</div>
                         </TableCell>
+                        <TableCell className="bg-primary/5 p-0 sm:p-0" colSpan={11} />
                       </TableRow>
                       
                       {/* Depreciation - Editable */}
@@ -6479,18 +6480,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/5 hover:bg-primary/5">
-                        <TableCell className="bg-primary/5 p-0" colSpan={12}>
-                          {/* Audit item 2: the label is what sticks, not the cell.
-                              `position: sticky` never moves an element outside its
-                              containing block, and a `colSpan={12}` cell is exactly as
-                              wide as the row — so it had no room to move and every
-                              section heading scrolled away while the narrow metric
-                              cells beside it stayed put. An inline-block inside the
-                              cell has the whole row to move within. */}
-                          <span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">
-                            Summary
-                          </span>
+                        {/* Audit item 2, second pass. The sticky inline-block held the
+                            TEXT still but left this row with no frozen CELL, so the
+                            rail every other row draws — an opaque 220px column with
+                            its shadow — broke at each section band. The heading now
+                            lives in the same kind of frozen cell as every data row:
+                            opaque base, band colour as an inner layer, and the other
+                            eleven columns as one spanned band beside it. */}
+                        <TableCell className={PROJECTION_SECTION_LABEL_CELL_CLASS}>
+                          <div className={PROJECTION_SECTION_LABEL_INNER_CLASS}>Summary</div>
                         </TableCell>
+                        <TableCell className="bg-primary/5 p-0 sm:p-0" colSpan={11} />
                       </TableRow>
                       
                       <TableRow className="transition-colors hover:bg-primary/5">
@@ -6517,7 +6517,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/10">
-                        <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/a $</TableCell>
+                        {/* Audit item 2: a TRANSLUCENT sticky cell does not occlude
+                            what scrolls beneath it — the year figures slid under this
+                            label and showed through the tint, which on the dark theme
+                            reads as the highlighted row moving while the rows beside
+                            it stay frozen. Opaque base, tint inside. */}
+                        <TableCell className={PROJECTION_TOTAL_LABEL_CELL_CLASS}>
+                          <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/a $</div>
+                        </TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString('en-AU')}
@@ -6526,7 +6533,9 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       </TableRow>
                       
                       <TableRow className="bg-primary/10">
-                        <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/w $</TableCell>
+                        <TableCell className={PROJECTION_TOTAL_LABEL_CELL_CLASS}>
+                          <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/w $</div>
+                        </TableCell>
                         {projections.map(p => (
                           <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString('en-AU')}

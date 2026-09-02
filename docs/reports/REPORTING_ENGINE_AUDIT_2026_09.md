@@ -570,3 +570,74 @@ column gate; security inventory unchanged (no new call edges).
 - Backfilling the two linkage columns into one: readers resolve the union
   either way; a data migration is pure tidiness and can ride with any later
   schema work.
+
+## 12 · Phase 5 — invariant hardening (2026-09-02)
+
+Programme item E: the rules the engine lived by become rules the machine
+enforces.
+
+### F13 — the template invariant is mechanical now
+
+A template FORMATS data; it never COMPUTES it. `{{= financials.x * 1.1 }}`
+used to pass the expression evaluator's character whitelist, so an approved
+template could print a figure no engine produced. One implementation
+(`templateLibraryCore.pure.ts`), two layers:
+
+- **`expressionComputesOverData`** refuses arithmetic over ANY data
+  reference — not only the financial namespaces, because a computed figure
+  under `property.*` fabricates as readily as one under `financials.*`.
+  Selection stays legal (ternaries, comparisons, `&&` presence logic choose
+  between engine-supplied values); pure-literal arithmetic touches no data.
+  Deliberately strict: `financials.x > -1` is refused (write `>= 0`) — a
+  stricter refusal beats a parser.
+- **The publish gate** (`validateForPublish`, code
+  `library_template_computes`) refuses a computing schema with the
+  offending expressions named, so no library entry can ship one.
+- **The binding resolver** refuses at evaluation — the always-on stop for
+  schemas that never meet the gate (activated copies, user drafts,
+  imports). A computing expression resolves to nothing, like every refused
+  expression; never to an invented figure.
+
+Measured first, pinned after: zero of the 543 seeded templates use
+expression arithmetic at all — `templateComputePolicy.spec.ts` asserts it
+per template across all twelve collections, so the measured fact stays a
+fact. 24 assertions on the rule, the walker, the gate and the runtime stop.
+
+### F14 — the Branding decoy is retired
+
+Templates → Branding collected per-client logos and colours into
+`client_branding_profiles`, and no document generator ever read a row —
+an operator configuring it was being promised branding the reports never
+applied. The tab and `BrandingManager.tsx` are deleted rather than left
+dormant (the platform's own rule: a dormant component is one import away
+from returning). Untouched: the table, its rows, the `manage-templates`
+allow-list, and the `ai-dashboard-agent` listing tool that reads the table
+as data. The real brand source remains `whitelabel_settings` through the
+brand resolvers; per-client REPORT branding, if ever wanted, is a
+design-system feature on that chain and goes through Claude Design.
+
+### E's third bullet — verified already delivered
+
+"Write render events from legacy paths; include `template_render_jobs` in
+the coverage measure" shipped in Phase 0: the `report_render_coverage`
+view unions the nine `*_renders` ledgers, `template_render_jobs`, and
+engine-tagged activity events, and the legacy investment route is
+auto-tagged `legacy_server` by `secureInvoke`. Nothing further owed.
+
+### Deliberately not folded
+
+`compassSectionRegistry` / `compassPostProcessor` keep their src/edge
+mirror pairs: the duplication is deliberate (edge functions cannot import
+`src/`), drift-guarded by `compassRegistryParity.spec.ts`, and the src
+copies carry src-only content below the shared block — a fold is churn,
+not hardening. `ClientPDFGenerator`'s client-side override merge likewise
+stays: it is the browser generator's compatibility shim for historic rows
+whose stored financials predate the Phase 2 recalculation.
+
+### Verification
+
+6,709 template-suite tests green (the golden-render byte-stability guard
+included — the refusal branch changes no rendered byte of a
+non-computing template), `tsc`, eslint (0 errors), `audit:style` under
+baseline, production build, edge column gate; security inventory
+unchanged.

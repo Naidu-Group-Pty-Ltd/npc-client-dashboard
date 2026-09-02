@@ -59,9 +59,24 @@ const baseUpdate = (over: Partial<MarketUpdate>): MarketUpdate => ({
   ...over,
 } as MarketUpdate);
 
+/*
+ * The feed orders by `source_published_at` DESC, and both fixtures used to
+ * stamp it `new Date()` at module load — so which story led depended on
+ * whether evaluation crossed a millisecond boundary between the two calls,
+ * and only the stable sort's tie-break ever put the breaking story first.
+ * The ordering under test is stated explicitly instead.
+ */
 const mockUpdates: MarketUpdate[] = [
-  baseUpdate({ id: 'lead', title: 'Breaking lead story headline', freshness_tier: 'breaking', impact_level: 'critical' }),
-  baseUpdate({ id: 'second', title: 'Routine second story', source_name: 'Domain Research and News', impact_level: 'low' }),
+  baseUpdate({
+    id: 'lead', title: 'Breaking lead story headline',
+    freshness_tier: 'breaking', impact_level: 'critical',
+    source_published_at: new Date().toISOString(),
+  }),
+  baseUpdate({
+    id: 'second', title: 'Routine second story',
+    source_name: 'Domain Research and News', impact_level: 'low',
+    source_published_at: new Date(Date.now() - 60_000).toISOString(),
+  }),
 ];
 
 import MarketUpdates from '@/pages/MarketUpdates';

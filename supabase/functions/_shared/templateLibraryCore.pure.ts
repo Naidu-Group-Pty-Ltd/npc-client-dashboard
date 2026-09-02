@@ -122,6 +122,74 @@ export function requiredBindingsOf(schema: unknown): string[] {
   return [...found].sort();
 }
 
+// ── The template invariant, mechanically (audit F13) ─────────────────────────
+//
+// A template FORMATS data; it never COMPUTES it. The programme's whole
+// invariant — the template controls presentation and can never alter a
+// figure — was process-enforced only: `{{= financials.annualNet * 1.1 }}`
+// passed the expression evaluator's character whitelist, so an approved
+// template could print a number no engine produced. These helpers make the
+// rule mechanical, and they are deliberately strict:
+//
+//  * Selection stays legal: ternaries, comparisons, `&&`/`||` presence logic
+//    (`{{= financials.annualNet > 0 ? 'surplus' : 'shortfall' }}`) choose
+//    between values the engine supplied.
+//  * Arithmetic over ANY data reference is refused — not only the financial
+//    namespaces, because a computed figure under `property.*` is as much a
+//    fabrication as one under `financials.*`. Measured before writing this:
+//    zero expressions in the 543-template catalogue or the block library use
+//    arithmetic at all, so strictness costs nothing today.
+//  * Even `financials.x > -1` is refused (the `-` is arithmetic to this
+//    rule); write `>= 0`. A slightly stricter refusal beats a parser.
+//  * Pure-literal arithmetic (`{{= 1 + 1 }}`) stays legal: no data is
+//    touched, so nothing can be misstated.
+
+const ARITHMETIC_OPERATOR = /[+\-*/%]/;
+const EXPRESSION_LITERALS = new Set(['true', 'false', 'null', 'undefined']);
+
+/** True when the expression applies arithmetic to something read from data. */
+export function expressionComputesOverData(expr: unknown): boolean {
+  const withoutStrings = String(expr ?? '').replace(/'[^']*'|"[^"]*"/g, ' ');
+  if (!ARITHMETIC_OPERATOR.test(withoutStrings)) return false;
+  for (const match of withoutStrings.matchAll(/(?<![.\w$])[A-Za-z_$][\w$]*/g)) {
+    if (!EXPRESSION_LITERALS.has(match[0])) return true;
+  }
+  return false;
+}
+
+/**
+ * Every expression a schema evaluates: inline `{{= … }}` heads (filters
+ * split exactly as the resolver splits them) and `tokens.computed[].expr`.
+ */
+export function templateExpressionsOf(schema: unknown): string[] {
+  const found: string[] = [];
+  const walk = (node: unknown): void => {
+    if (typeof node === 'string') {
+      for (const m of node.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g)) {
+        const head = m[1].split('|')[0].trim();
+        if (head.startsWith('=')) found.push(head.slice(1).trim());
+      }
+      return;
+    }
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (node && typeof node === 'object') Object.values(node).forEach(walk);
+  };
+  walk(schema);
+  const computed = (schema as any)?.tokens?.computed;
+  if (Array.isArray(computed)) {
+    for (const field of computed) {
+      const expr = String(field?.expr ?? '').trim();
+      if (expr) found.push(expr);
+    }
+  }
+  return found;
+}
+
+/** The expressions in this schema that compute over data — empty when the invariant holds. */
+export function dataArithmeticIn(schema: unknown): string[] {
+  return templateExpressionsOf(schema).filter(expressionComputesOverData);
+}
+
 const COLOUR_KEY = /(colou?r|fill|stroke|bg|background|accent|shadow|border)/i;
 const COLOUR_LITERAL = /^(#[0-9a-f]{3,8}|rgba?\(|hsla?\()/i;
 
@@ -249,6 +317,14 @@ export function validateForPublish(entry: Record<string, unknown>): PublishProbl
       code: 'library_renderer_blocked',
       message: 'Template contains block types without production renderer support.',
       detail: unsupported.slice(0, 20),
+    };
+  }
+  const computing = dataArithmeticIn(schema);
+  if (computing.length > 0) {
+    return {
+      code: 'library_template_computes',
+      message: 'A template formats data; it never computes it. Remove the arithmetic from these expressions.',
+      detail: computing.slice(0, 20),
     };
   }
   if (!String(entry?.name ?? '').trim()) {

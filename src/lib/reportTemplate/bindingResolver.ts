@@ -15,6 +15,7 @@
  * of operators is supported. NEVER pass user input to this function unsanitised.
  */
 import type { Tokens, ComputedField } from './templateSchema';
+import { expressionComputesOverData } from '../../../supabase/functions/_shared/templateLibraryCore.pure';
 
 export interface ResolveContext {
   data: Record<string, any>;
@@ -282,6 +283,17 @@ function unboundNamesAreAllGuarded(expr: string, bound: string[]): boolean {
 function evalExpression(expr: string, ctx: ResolveContext): any {
   if (!SAFE_EXPR_RE.test(expr)) {
     console.warn('[binding] Rejected unsafe expression:', expr);
+    return '';
+  }
+  // The template invariant, mechanically (audit F13): a template FORMATS
+  // data, it never COMPUTES it. The publish gate refuses these at the
+  // library door (validateForPublish); this is the always-on stop for
+  // schemas that never pass through it — an activated copy, a user-authored
+  // draft, an import. Selection (ternaries, comparisons, presence logic)
+  // still evaluates; arithmetic over a data reference resolves to nothing,
+  // like every other refused expression.
+  if (expressionComputesOverData(expr)) {
+    console.warn('[binding] Rejected expression that computes over data:', expr);
     return '';
   }
   try {

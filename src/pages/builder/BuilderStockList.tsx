@@ -44,7 +44,6 @@ import {
   type StockImageStage, type StockSelectionStatus, type StockUploadStatus,
 } from '@/lib/builderStock';
 import { isNonBlockingSourceNotice } from '../../../supabase/functions/_shared/builderStock/sourceAccessNotice.pure';
-import { isRecoverableStoredAvailability } from '../../../supabase/functions/_shared/builderStock/linkRecovery.pure';
 
 /**
  * Builder Portal — Stock List.
@@ -218,12 +217,15 @@ export default function BuilderStockList() {
   /**
    * Only a Google Sheet whose workbook would not export has links to recover.
    *
-   * The same condition the server enforces, read from the upload's own
-   * recorded reason rather than from its message — so the control appears
-   * exactly where the act is possible, and the server is still the authority.
+   * The server answers that question per row (`link_recovery_available`),
+   * beside the recorded reason only it may read — this page once derived it
+   * from `error_detail` (which the list never sends) and then from
+   * `error_code` (which carries the notice, not the reason), and under both
+   * readings the control never rendered for anyone. The server is still the
+   * authority: `refresh_brochure_links` re-checks its own row before acting.
    */
   const canRefreshBrochureLinks = useCallback((upload: BuilderStockUpload) => (
-    isRecoverableStoredAvailability(upload.error_code)
+    upload.link_recovery_available === true
   ), []);
 
   const refreshBrochureLinks = useCallback((upload: BuilderStockUpload) => {

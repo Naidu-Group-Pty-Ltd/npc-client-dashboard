@@ -30,7 +30,7 @@ import {
 } from '@/components/ui/select';
 import { TemplateUploader } from '@/components/templates/TemplateUploader';
 import { TemplateList } from '@/components/templates/TemplateList';
-import { BrandingManager } from '@/components/templates/BrandingManager';
+
 import { GlobalReportSettings } from '@/components/templates/GlobalReportSettings';
 import { QATemplateUploader } from '@/components/templates/QATemplateUploader';
 import { QATemplateList } from '@/components/templates/QATemplateList';
@@ -39,7 +39,7 @@ import { CashFlowTemplateList } from '@/components/templates/CashFlowTemplateLis
 import { ReportFormatGroup } from '@/components/templates/ReportFormatGroup';
 import { CoverPageOverlayManager } from '@/components/templates/cover-editor/CoverPageOverlayManager';
 import {
-  FileText, Palette, Brain, BarChart3, TrendingUp, Building2, Settings, MessageSquare,
+  FileText, Brain, BarChart3, TrendingUp, Building2, Settings, MessageSquare,
   Calculator, MapPin, Hash, Map, Layers, Edit, Trash2, CheckCircle2, Plus, Search,
   LibraryBig,
   ArrowRight,
@@ -138,19 +138,6 @@ export default function Templates() {
     },
   });
 
-  const { data: brandingProfiles, isLoading: brandingLoading } = useQuery({
-    queryKey: ['client-branding-profiles'],
-    queryFn: async () => {
-      const { data, error } = await invokeSecureFunction('manage-templates', {
-        operation: 'list',
-        table: 'client_branding_profiles',
-        listOptions: { orderBy: 'created_at', orderAsc: false }
-      });
-      if (error) throw new Error(error.message);
-      return data?.records || [];
-    },
-  });
-
   const filterTemplatesByType = (type: string) => {
     return templates?.filter(t => t.template_type === type) || [];
   };
@@ -183,7 +170,7 @@ export default function Templates() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-          <TabsList className={`inline-flex w-auto min-w-full md:grid md:w-full ${templateLibraryEnabled ? 'md:grid-cols-9' : 'md:grid-cols-8'}`}>
+          <TabsList className={`inline-flex w-auto min-w-full md:grid md:w-full ${templateLibraryEnabled ? 'md:grid-cols-8' : 'md:grid-cols-7'}`}>
             <TabsTrigger value="report-formats" className="flex items-center gap-1.5 text-xs md:text-sm whitespace-nowrap">
               <Brain className="h-3.5 w-3.5 md:h-4 md:w-4" />
               Formats
@@ -214,10 +201,14 @@ export default function Templates() {
               <Calculator className="h-3.5 w-3.5 md:h-4 md:w-4" />
               Cash Flow
             </TabsTrigger>
-            <TabsTrigger value="branding" className="flex items-center gap-1.5 text-xs md:text-sm whitespace-nowrap">
-              <Palette className="h-3.5 w-3.5 md:h-4 md:w-4" />
-              Branding
-            </TabsTrigger>
+            {/* The Branding tab is retired (audit F14): it collected
+                per-client logos and colours into client_branding_profiles,
+                and no document generator ever read them — a decoy control
+                that promised branding the reports never applied. The table
+                and its rows are untouched; the real brand source remains
+                whitelabel_settings through the brand resolvers. If
+                per-client report branding is wanted, it is a design-system
+                feature on that chain, not a settings table. */}
             <TabsTrigger value="global-settings" className="flex items-center gap-1.5 text-xs md:text-sm whitespace-nowrap">
               <Settings className="h-3.5 w-3.5 md:h-4 md:w-4" />
               Settings
@@ -360,20 +351,6 @@ export default function Templates() {
             <CardContent className="space-y-6">
               <CashFlowTemplateUploader />
               <CashFlowTemplateList />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="branding" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Client Branding Profiles</CardTitle>
-              <CardDescription>
-                Customize report branding with client-specific logos, colors, and styling.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <BrandingManager profiles={brandingProfiles || []} isLoading={brandingLoading} />
             </CardContent>
           </Card>
         </TabsContent>

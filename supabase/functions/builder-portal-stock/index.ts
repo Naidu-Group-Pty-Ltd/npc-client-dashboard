@@ -47,7 +47,8 @@ import {
   linkRecoveryWebhookConfigured, requestLinkRecovery,
 } from '../_shared/builderStock/requestLinkRecovery.ts';
 import {
-  MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, shouldRequestLinkRecovery,
+  MANUAL_REFRESH_WINDOW_SECONDS, isRecoverableStoredAvailability, projectUploadListRow,
+  shouldRequestLinkRecovery,
 } from '../_shared/builderStock/linkRecovery.pure.ts';
 import { googleSheetsRef } from '../_shared/builderStock/googleSheetsSource.pure.ts';
 import {
@@ -1379,9 +1380,16 @@ Deno.serve(async (req) => {
 
     if (operation === 'list_uploads') {
       const { page, pageSize, from, to } = stockPagination(body);
+      /*
+       * `error_detail` is read here and never sent: `projectUploadListRow`
+       * strips it and answers `link_recovery_available` in its place, the
+       * same read `refresh_brochure_links` makes — so the page can offer the
+       * act exactly where the server would accept it, without ever seeing
+       * the diagnosis.
+       */
       const { data, count } = await supabase
         .from('builder_stock_uploads')
-        .select(STOCK_UPLOAD_SELECT, { count: 'exact' })
+        .select(`${STOCK_UPLOAD_SELECT}, error_detail`, { count: 'exact' })
         .eq('organisation_id', activeOrganisationId)
         // A deleted source leaves the builder's active history. The row stays
         // for the stock and the selections that reference it.
@@ -1390,7 +1398,7 @@ Deno.serve(async (req) => {
         .range(from, to);
       return json({
         success: true,
-        records: data ?? [],
+        records: (data ?? []).map(projectUploadListRow),
         pagination: {
           page, page_size: pageSize, total: count ?? 0,
           total_pages: Math.max(1, Math.ceil((count ?? 0) / pageSize)),
@@ -1401,10 +1409,12 @@ Deno.serve(async (req) => {
     if (operation === 'get_upload') {
       const upload = await loadUpload(cleanText(body.upload_id, 64));
       if (!upload) return json({ error: 'Upload not found' }, 404);
-      // `error_detail` is stripped: the row is selected in full above so the
-      // handler can read it, and projected here so the browser cannot.
-      const { error_detail: _internal, storage_path: _path, ...safe } = upload;
-      return json({ success: true, record: safe });
+      // The row is selected in full above so the handler can read it;
+      // `projectUploadListRow` keeps `error_detail` off the wire and answers
+      // `link_recovery_available` in its place, and `storage_path` stays
+      // internal too.
+      const { storage_path: _path, ...safe } = upload;
+      return json({ success: true, record: projectUploadListRow(safe) });
     }
 
     if (operation === 'list_stock') {

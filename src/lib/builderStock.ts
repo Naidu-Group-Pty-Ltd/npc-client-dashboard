@@ -72,6 +72,12 @@ export interface BuilderStockUpload {
   error_code: string | null;
   /** Safe to display. The internal diagnosis is never sent to the browser. */
   error_message: string | null;
+  /**
+   * Answered by the server from the reason it recorded (which never reaches
+   * the browser): brochure links are waiting to be recovered, and
+   * `refresh_brochure_links` would accept this row.
+   */
+  link_recovery_available?: boolean;
   processing_started_at: string | null;
   processing_completed_at: string | null;
   created_at: string;

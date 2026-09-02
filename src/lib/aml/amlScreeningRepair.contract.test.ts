@@ -19,7 +19,7 @@ const cases = read("supabase/functions/aml-cases/index.ts");
 const risk = read("supabase/functions/aml-risk/index.ts");
 const monitoring = read("supabase/functions/aml-monitoring/index.ts");
 const worker = read("supabase/functions/cross-portal-outbox-worker/index.ts");
-const screeningConsumer = read("supabase/functions/cross-portal-outbox-worker/screeningConsumer.ts");
+const screeningConsumer = read("supabase/functions/_shared/aml/screeningConsumer.ts");
 const providers = read("supabase/functions/_shared/aml/providers/index.ts");
 const migration = read("supabase/migrations/20260807120000_aml_screening_repair.sql");
 const refreshWorkflow = read(".github/workflows/aml-sanctions-refresh.yml");
@@ -67,7 +67,9 @@ describe("Defect C — queueing a party creates real, idempotent screening work"
   });
 
   it("the worker routes the event to the screening consumer, ahead of the aml.* catch-all", () => {
-    expect(worker).toContain("import { processScreeningEvent } from './screeningConsumer.ts'");
+    expect(worker).toContain(
+      "import { processScreeningEvent } from '../_shared/aml/screeningConsumer.ts'",
+    );
     const routing = worker.indexOf("event.event_type==='aml.screening.requested'");
     const catchAll = worker.indexOf("startsWith('aml.')");
     expect(routing).toBeGreaterThan(-1);

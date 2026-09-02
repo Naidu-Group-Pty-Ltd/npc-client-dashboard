@@ -144,7 +144,7 @@ const matchRow = (over: Row = {}): Row => ({
 
 async function consumer() {
   return await import(
-    "../../../supabase/functions/cross-portal-outbox-worker/screeningConsumer.ts");
+    "../../../supabase/functions/_shared/aml/screeningConsumer.ts");
 }
 const event = { payload: { party_screening_subject_id: SUBJECT_ID, case_id: CASE_ID } };
 

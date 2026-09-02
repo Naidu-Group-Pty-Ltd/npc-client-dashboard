@@ -33,8 +33,8 @@ import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
 import { isNotionUrl } from './urlSource.pure.ts';
 import {
-  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockMatchKeys,
-  stockRecordLabel, stockRowFingerprint,
+  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel, stockRowFingerprint,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -440,6 +440,9 @@ export async function repairSourceImagesForUpload(
   }
 
   let rows: Array<Record<string, unknown>> = [];
+  /** What the live sheet fetch could see of its link layer, when one ran. */
+  let sheetLinkAvailability: string | null = null;
+  let sheetLinkMethod: string | null = null;
   /**
    * Set only on the stored-source path: rows that are ALREADY records and must
    * not be put through `normaliseStockRow` again. See `readStoredRecord`.
@@ -527,12 +530,49 @@ export async function repairSourceImagesForUpload(
       }
       notionAssetsRead = true;
     } else {
-      const { data: blob, error: downloadError } = await db.storage
-        .from(upload.storage_bucket).download(upload.storage_path);
-      if (downloadError || !blob) {
-        return { ...outcome, error: 'The stored copy of that source could not be read.' };
+      /*
+       * A GOOGLE SHEET IS RE-FETCHED LIVE, FOR THE SAME REASON NOTION IS.
+       *
+       * The stored bytes are what the ORIGINAL fetch could see, and for a
+       * sheet whose exports were refused that is labels with no addresses —
+       * the live VG list's stored `tq.csv` carries the word `Brochure`
+       * fifty-six times and not one URL, so a repair that re-reads storage
+       * can never discover what the import could not. The live fetch runs
+       * today's reader (the workbook export, or the htmlview grid a
+       * locked-export sheet surrenders — see `fetchGoogleSheet`), and what it
+       * resolves is PERSISTED onto the rows below, so the next reading needs
+       * no fetch at all.
+       *
+       * A fetch that fails falls back to the stored copy rather than failing
+       * the run: yesterday's bytes are a worse reading than today's and a far
+       * better one than none.
+       */
+      let bytes: Uint8Array | null = null;
+      if (upload.source_type === 'url' && sourceUrl) {
+        const { googleSheetsRef } = await import('./googleSheetsSource.pure.ts');
+        if (googleSheetsRef(sourceUrl)) {
+          try {
+            const { fetchStockSource } = await import('./fetchSource.ts');
+            const fetched = await fetchStockSource(sourceUrl);
+            bytes = fetched.bytes;
+            sheetLinkAvailability = fetched.hyperlinks ?? null;
+            sheetLinkMethod = fetched.hyperlinkMethod ?? null;
+          } catch (error) {
+            console.warn('[builderStock] live sheet re-fetch failed; using stored copy', {
+              phase: 'source_refetch', upload_id: upload.id,
+              detail: String((error as { message?: string })?.message ?? error).slice(0, 160),
+            });
+          }
+        }
       }
-      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (!bytes) {
+        const { data: blob, error: downloadError } = await db.storage
+          .from(upload.storage_bucket).download(upload.storage_path);
+        if (downloadError || !blob) {
+          return { ...outcome, error: 'The stored copy of that source could not be read.' };
+        }
+        bytes = new Uint8Array(await blob.arrayBuffer());
+      }
       const detection = detectDocumentMime(bytes);
       const classification = upload.source_type === 'url'
         ? classifyFetchedSource({
@@ -780,6 +820,32 @@ export async function repairSourceImagesForUpload(
      */
     const branches = rowSourceBranches(
       unmappedWithRecoveredLinks(record.unmapped, storedRowByItem.get(itemId)));
+
+    /*
+     * WHAT THE LIVE FETCH DISCOVERED IS MADE DURABLE ON THE ROW.
+     *
+     * The supplied-evidence gate reads STORED rows, and a row imported before
+     * the link layer could be read carries neither URLs nor a stamp — so the
+     * gate is blind to it however well this run's in-memory branches fare. A
+     * live re-fetch that resolved the layer therefore writes what it learned
+     * back: the URL-bearing columns the stored row lacks (add-only — a
+     * re-read must not lose what the re-read cannot contain), the columns
+     * recorded as recovered, and the `link_discovery` stamp. One write, only
+     * when something changed, and a failed write only means the next sweep
+     * writes it instead.
+     */
+    if (sheetLinkAvailability) {
+      await persistDiscoveredRowLinks(db, {
+        itemId,
+        organisationId: input.organisationId,
+        freshUnmapped: record.unmapped,
+        storedRow: storedRowByItem.get(itemId) ?? null,
+        availability: sheetLinkAvailability,
+        method: sheetLinkMethod,
+      }).then((updated) => {
+        if (updated) storedRowByItem.set(itemId, updated);
+      });
+    }
 
     if (all.length) {
       outcome.matched += 1;
@@ -1141,6 +1207,9 @@ export async function repairSourceImagesForUpload(
         {
           packageUrl,
           label: stockRecordLabel(record),
+          // The estate and project names the display label leaves out, for
+          // the cover rule's corroboration test. See `stockIdentityHints`.
+          identityHints: stockIdentityHints(record),
           // Tells "(178 SqM)" from "(207 SqM)" where a lot has two packages.
           buildingSqm: Number((record as { building_size_sqm?: unknown })?.building_size_sqm)
             || null,
@@ -1671,3 +1740,83 @@ async function repairPdfUpload(
  * every one of them, attached to its own row and its own heading.
  */
 
+/**
+ * Write what a live source fetch discovered about one row's links back onto
+ * the stored row, add-only, and return the updated row for the run's own use.
+ *
+ * See the call site for why this exists. Three rules: nothing stored is ever
+ * removed or overwritten with a DIFFERENT value (a recovered column that
+ * already carries a URL keeps it); the write happens only when it would
+ * change something; and a failure is logged and swallowed — durability is a
+ * convenience for the NEXT reading, never a condition of this one.
+ */
+export async function persistDiscoveredRowLinks(
+  db: any,
+  input: {
+    itemId: string;
+    organisationId: string;
+    freshUnmapped: Record<string, string> | null | undefined;
+    storedRow: Record<string, unknown> | null;
+    availability: string;
+    method: string | null;
+  },
+): Promise<Record<string, unknown> | null> {
+  try {
+    const stored = input.storedRow ?? {};
+    const storedUnmapped = (stored.unmapped ?? {}) as Record<string, unknown>;
+    const storedRecovered = Array.isArray(stored.recovered_link_columns)
+      ? (stored.recovered_link_columns as unknown[]).filter(
+        (column): column is string => typeof column === 'string')
+      : [];
+
+    const additions: Record<string, string> = {};
+    for (const [column, value] of Object.entries(input.freshUnmapped ?? {})) {
+      if (typeof value !== 'string' || !/https?:\/\//i.test(value)) continue;
+      const existing = storedUnmapped[column];
+      if (typeof existing === 'string' && /https?:\/\//i.test(existing)) continue;
+      additions[column] = value;
+    }
+
+    const { linkDiscoveryFromAvailability, readLinkDiscovery } = await import(
+      './suppliedEvidence.pure.ts');
+    const stamp = linkDiscoveryFromAvailability(input.availability, input.method);
+    const storedStamp = readLinkDiscovery(stored);
+    const stampChanged = !!stamp
+      && (storedStamp?.state !== stamp.state || storedStamp?.method !== stamp.method);
+
+    if (!Object.keys(additions).length && !stampChanged) return null;
+
+    const nextRow: Record<string, unknown> = {
+      ...stored,
+      unmapped: { ...storedUnmapped, ...additions },
+      recovered_link_columns: [...new Set([...storedRecovered, ...Object.keys(additions)])],
+      ...(stamp ? { link_discovery: stamp } : {}),
+    };
+
+    const { error } = await db
+      .from('builder_stock_items')
+      .update({ source_row: nextRow })
+      .eq('id', input.itemId)
+      .eq('organisation_id', input.organisationId);
+    if (error) {
+      console.warn('[builderStock] discovered links could not be persisted', {
+        phase: 'link_persist', stock_item_id: input.itemId,
+        detail: String((error as { message?: string })?.message ?? error).slice(0, 160),
+      });
+      return null;
+    }
+    console.info('[builderStock] discovered links persisted', {
+      phase: 'link_persist', stock_item_id: input.itemId,
+      columns_added: Object.keys(additions).length,
+      link_discovery: stamp?.state ?? null,
+      method: stamp?.method ?? null,
+    });
+    return nextRow;
+  } catch (error) {
+    console.warn('[builderStock] discovered links could not be persisted', {
+      phase: 'link_persist', stock_item_id: input.itemId,
+      detail: String((error as { message?: string })?.message ?? error).slice(0, 160),
+    });
+    return null;
+  }
+}

@@ -17,6 +17,7 @@ import { classifyStockFile, MAX_STOCK_FILE_BYTES } from './fileTypes.pure.ts';
 import type { StockFileClassification } from './fileTypes.pure.ts';
 import { extractStockFile, StockExtractionError } from './extract.ts';
 import { extractStockRowsFromImages, extractStockRowsFromText } from './modelExtract.ts';
+import type { RowLinkDiscovery } from './suppliedEvidence.pure.ts';
 import { importStockRecords } from './importStock.ts';
 import { NOTION_NO_PROPERTIES_MESSAGE } from './urlSource.pure.ts';
 import type { AnchoredAssets } from './sourceAssets.pure.ts';
@@ -59,6 +60,14 @@ export interface RunImportInput {
    * than in the CSV it becomes.
    */
   rowAssets?: AnchoredAssets[];
+  /**
+   * What the FETCH managed to see of the source's link layer, for a source
+   * whose links live outside the bytes handed over — a Google Sheet, whose
+   * proven CSV carries labels while the targets travel separately. Absent for
+   * a source whose links are native to its own bytes; this module then stamps
+   * the rows from the reading strategy instead. See `RowLinkDiscovery`.
+   */
+  linkDiscovery?: RowLinkDiscovery | null;
 }
 
 export interface RunImportFailure {
@@ -205,12 +214,26 @@ export async function runStockImport(input: RunImportInput): Promise<RunImportRe
     };
   }
 
+  /*
+   * EVERY ROW SAYS WHETHER ITS LINK LAYER WAS READ. The caller's stamp wins —
+   * it is the only party that knows how a Google Sheet's separately-travelling
+   * targets fared — and a source whose links are native to the bytes just read
+   * (a workbook's relationships, a CSV's own text, a PDF's annotations, a
+   * Notion record map) is stamped `complete` from the strategy that read it.
+   * The stamp is what lets `readSuppliedEvidence` tell "this row supplied
+   * nothing" from "we could not see what this row supplied" — see
+   * `suppliedEvidence.pure.ts`, which is the one reader of it.
+   */
+  const linkDiscovery: RowLinkDiscovery = input.linkDiscovery
+    ?? { state: 'complete', method: `native:${strategy}` };
+
   const outcome = await importStockRecords(supabase, {
     organisationId,
     uploadId: upload.id,
     builderUserId: input.builderUserId,
     rows,
     media: extraction.media,
+    linkDiscovery,
     // The caller's assets first: a Notion collection knows which row owns
     // which cover, and the CSV it became cannot.
     rowAssets: [...(input.rowAssets ?? []), ...extraction.rowAssets],

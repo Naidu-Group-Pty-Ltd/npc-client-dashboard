@@ -1,6 +1,6 @@
 # How a screening request actually executes
 
-Read this before touching `cross-portal-outbox-worker/screeningConsumer.ts`,
+Read this before touching `_shared/aml/screeningConsumer.ts`,
 the inline execution path in `aml-cases`, `_shared/aml/partyScreening.pure.ts`,
 `screeningPolicy.pure.ts`, or anything that decides whether a party has been
 screened.

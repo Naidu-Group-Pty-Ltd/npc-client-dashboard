@@ -676,6 +676,31 @@ export function stockRecordLabel(record: StockLabelFields): string {
 }
 
 /**
+ * The identity-bearing names the display label leaves out.
+ *
+ * `stockRecordLabel` shows the estate only when a row has neither a lot nor an
+ * address — it is a short label for logs, and for logs that is right. But a
+ * builder's own package cover identifies a lot the way the estate's marketing
+ * does. Measured live, 2 September 2026: the Watsons Reach list's brochure for
+ * lot 102 states "Lot 102 Watsons Reach Estate" beside its package price,
+ * while the row's label reads "Lot 102, Diggers Rest" — the suburb, which the
+ * document never mentions. The cover-identity corroboration was fed only the
+ * label, refused the builder's own supplied brochure, and the card went blank.
+ *
+ * So the row's remaining identity names travel BESIDE the label, as hints for
+ * `pageStatesIdentity`'s corroboration test alone — they can never substitute
+ * for the lot, excuse a page naming another lot, or loosen the
+ * full-conjunction path a lot-less label gets.
+ */
+export function stockIdentityHints(
+  record: Pick<NormalisedStockRecord, 'development_name' | 'project_name'>,
+): string[] {
+  return [record.development_name, record.project_name]
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => value.length > 0);
+}
+
+/**
  * A single-line address for the image-enrichment stages. Returns null when
  * there is not enough to geocode — an enrichment run against "Suburb" alone
  * would return a picture of somewhere else.

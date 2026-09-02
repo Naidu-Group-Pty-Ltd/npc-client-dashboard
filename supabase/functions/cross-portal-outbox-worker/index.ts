@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { buildPartnerNotification, partnerEventDeliveryDecision } from '../_shared/aml/partnerEvents.ts';
 import { processVerificationEvent } from './verificationConsumer.ts';
-import { processScreeningEvent } from './screeningConsumer.ts';
+import { processScreeningEvent } from '../_shared/aml/screeningConsumer.ts';
 import { verifyInternal, logSecurityEvent } from '../_shared/auth_v2.ts';
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
@@ -156,7 +156,7 @@ Deno.serve(async req=>{
    * to SCHEDULE this worker, and there never has been a cron entry for it.
    *
    * That is not a theoretical gap. `aml.screening.requested` has been emitted
-   * by a trigger and consumed by `screeningConsumer.ts` for months with
+   * by a trigger and consumed by `_shared/aml/screeningConsumer.ts` for months with
    * nothing driving the loop: measured in production, a queued screening
    * request sat with attempts = 0, unclaimed, for ever. A customer watching
    * "Screening is running" was watching nothing run.

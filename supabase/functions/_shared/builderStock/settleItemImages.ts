@@ -50,10 +50,7 @@ import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { repairStoredIdentity } from './storedIdentityRepair.pure.ts';
 import { reverifyStoredWebImages } from './reverifyWebImages.ts';
 import {
-  rowSourceBranches, unmappedWithRecoveredLinks,
-} from './sourceBranches.pure.ts';
-import {
-  describeSuppliedEvidence, fallbackMayRun, readSuppliedEvidence,
+  describeSuppliedEvidence, fallbackMayRun, readStoredRowEvidence,
   type SuppliedEvidenceReading,
 } from './suppliedEvidence.pure.ts';
 import { PROVENANCE_VERSION } from './provenanceVersion.pure.ts';
@@ -482,9 +479,6 @@ async function readItemSuppliedEvidence(
       .maybeSingle();
     if (error || !data) return null;
     const row = data as Record<string, unknown>;
-    const sourceRow = (row.source_row ?? null) as Record<string, unknown> | null;
-    const anchor = sourceRow && typeof sourceRow.source_anchor === 'string'
-      ? sourceRow.source_anchor : null;
     /*
      * A SUCCESS CLEARS ITS BRANCH RECORD, so the accepted picture — not the
      * provenance column — is what says this property is finished. Without
@@ -504,16 +498,13 @@ async function readItemSuppliedEvidence(
     } catch {
       builderImageAccepted = false;
     }
-    const unmapped = (sourceRow?.unmapped ?? null) as Record<string, string> | null;
-    return readSuppliedEvidence({
-      // BOTH halves: what the import parsed onto the row, and the separately
-      // recovered link columns laid over it. See `storedRowBranches` in
-      // `settleFallbackImages.ts` — passing null as the base silently drops
-      // every link that never needed recovery.
-      branches: rowSourceBranches(unmappedWithRecoveredLinks(unmapped, sourceRow)),
+    // The one shared row reader — enforcement in `settleFallbackImages` reads
+    // the same function over the same stored row, so routing and enforcement
+    // cannot disagree about a property.
+    return readStoredRowEvidence({
+      sourceRow: row.source_row,
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
-      sourceAnchor: anchor || null,
       builderImageAccepted,
     });
   } catch {

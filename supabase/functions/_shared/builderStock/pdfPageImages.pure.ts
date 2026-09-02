@@ -136,6 +136,53 @@ const decoder = new TextDecoder('latin1');
 interface PdfObject { number: number; start: number; end: number; header: string }
 
 /**
+ * The one full-document scan, DONE ONCE PER DOCUMENT.
+ *
+ * WHY THIS IS MEMOISED, MEASURED. `indexPdfObjects` decodes the WHOLE buffer
+ * to a latin1 string and walks it with a global regex — ~450 ms of pure CPU on
+ * the live 13.9 MB Mandalay brochure — and it used to run again for every
+ * caller: once inside `recoverCompressedObjects`, once for the page-order
+ * check, and once per `readPdfPage`, of which one recovery makes up to twelve.
+ * Fourteen-odd full scans put that document at ~5.9 s of parser CPU, which is
+ * past what an edge worker is allowed: Lot 6706 died there on every attempt
+ * (`CPU Time exceeded`, `Memory limit exceeded`), was retired operationally,
+ * and sat blank while its brochure read perfectly well. The 10.6 MB brochure
+ * beside it (~5.1 s) survived only sometimes, which is what a limit looks like
+ * from just underneath.
+ *
+ * The scan depends on the BYTES ALONE — `recovered` only fills gaps in the
+ * result, and that merge is a ~300-entry loop — so the scan is keyed on the
+ * buffer identity in a WeakMap: one recovery passes one `bytes` object
+ * through its whole pipeline, every stage after the first pays the merge and
+ * nothing else, and the entry dies with the buffer. Callers with different
+ * buffers (or a re-fetched document) never share an entry, and the returned
+ * map is COPIED by `indexPdfObjects` before recovered objects are merged in,
+ * so no caller can see another's merge.
+ */
+const scannedObjects = new WeakMap<Uint8Array, ReadonlyMap<number, PdfObject>>();
+
+function scanPdfObjects(bytes: Uint8Array): ReadonlyMap<number, PdfObject> {
+  const memo = scannedObjects.get(bytes);
+  if (memo) return memo;
+
+  const text = decoder.decode(bytes);
+  const objects = new Map<number, PdfObject>();
+  const pattern = /(?:^|[^0-9])(\d{1,7})\s+(\d{1,5})\s+obj\b/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const number = Number(match[1]);
+    const start = match.index + match[0].indexOf(match[1]);
+    const endIndex = text.indexOf('endobj', start);
+    const end = endIndex < 0 ? text.length : endIndex;
+    objects.set(number, { number, start, end, header: text.slice(start, Math.min(start + 4096, end)) });
+  }
+
+  scannedObjects.set(bytes, objects);
+  return objects;
+}
+
+/**
  * Every `N 0 obj … endobj`, as offsets plus a decoded header.
  *
  * Only the first 4 KB of each object is decoded: a dictionary is small and an
@@ -152,18 +199,7 @@ export function indexPdfObjects(
   bytes: Uint8Array,
   recovered: ReadonlyMap<number, string> = new Map(),
 ): Map<number, PdfObject> {
-  const text = decoder.decode(bytes);
-  const objects = new Map<number, PdfObject>();
-  const pattern = /(?:^|[^0-9])(\d{1,7})\s+(\d{1,5})\s+obj\b/g;
-
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    const number = Number(match[1]);
-    const start = match.index + match[0].indexOf(match[1]);
-    const endIndex = text.indexOf('endobj', start);
-    const end = endIndex < 0 ? text.length : endIndex;
-    objects.set(number, { number, start, end, header: text.slice(start, Math.min(start + 4096, end)) });
-  }
+  const objects = new Map(scanPdfObjects(bytes));
 
   for (const [number, header] of recovered) {
     if (objects.has(number)) continue;

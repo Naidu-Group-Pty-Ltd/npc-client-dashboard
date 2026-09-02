@@ -47,7 +47,7 @@ import {
 } from "../_shared/aml/submissionRecord.pure.ts";
 import {
   processScreeningEvent, recordTechnicalFailure,
-} from "../cross-portal-outbox-worker/screeningConsumer.ts";
+} from "../_shared/aml/screeningConsumer.ts";
 import { readSanctionsDeclaration } from "../_shared/aml/sanctionsDeclaration.pure.ts";
 // What the customer said about political exposure. Evidence towards the
 // determination a reviewer or the MLRO records; never the determination.
@@ -337,7 +337,7 @@ async function runScreeningInline(
 
 /**
  * The re-screening interval, read from the same monitoring rule the automated
- * consumer reads (`cross-portal-outbox-worker/screeningConsumer.ts`).
+ * consumer reads (`_shared/aml/screeningConsumer.ts`).
  *
  * A manual result has to age on exactly the clock an automated one ages on,
  * or the two methods would disagree about when a party is due again — and the

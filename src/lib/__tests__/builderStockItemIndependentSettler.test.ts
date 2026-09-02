@@ -364,8 +364,10 @@ describe('the package attempt stays the package\'s own', () => {
     // No write, in any of the shapes a write takes.
     expect(code).not.toMatch(/source_provenance_result\s*:/);
     expect(code).not.toMatch(/\.update\([^)]*source_provenance_result/);
-    // And the reading it does make goes through the one shared interpreter.
-    expect(code).toContain('readSuppliedEvidence');
+    // And the reading it does make goes through the one shared row reader —
+    // the same function the enforcement in `settleFallbackImages` calls, so
+    // routing and enforcement cannot disagree about a property.
+    expect(code).toContain('readStoredRowEvidence');
   });
 
   it('gives one property the whole tick, which is what lets a package be attempted at all', () => {

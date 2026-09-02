@@ -70,8 +70,11 @@ describe('B, C and E — rows in, links out, and the builder is told', () => {
     expect(message).toMatch(/could not be accessed/i);
     // 2 — the import still succeeded.
     expect(message).toMatch(/imported successfully/i);
-    // 3 — processing is continuing by itself.
-    expect(message).toMatch(/continuing/i);
+    // 3 — what happens to the affected pictures: they WAIT for the links,
+    // never take a substitute. (This used to say "continuing", describing the
+    // old fall-through-to-web policy; the fallback gate now holds such rows —
+    // see `link_discovery` in `suppliedEvidence.pure.ts`.)
+    expect(message).toMatch(/until the links can be read/i);
   });
 
   it('and never asks anyone to change a sharing setting', () => {

@@ -17,16 +17,23 @@
  *
  * THE RULE. Rows readable is a successful import. Link targets unreadable is a
  * NON-BLOCKING SOURCE-ACCESS ERROR: recorded on the upload, shown in the
- * portal, and never a reason to stop. Image processing continues on whatever
- * sources ARE available, and the ladder falls through to verified web imagery
- * and Street View exactly as it does for a property whose builder supplied
- * nothing.
+ * portal, and never a reason to stop the import. What it is ALSO recorded on,
+ * now, is every row the import writes (`link_discovery` — see
+ * `suppliedEvidence.pure.ts`), and that stamp is what the fallback gate reads.
  *
- * AND UNAVAILABLE IS TERMINAL. "There may have been a brochure URL we could
- * not reach" is not pending work — nothing the system can do will turn it into
- * a URL — so it must never leave a property waiting. Zero recovered links is
- * zero stage 1 branches, which is the same arithmetic as a row that carries no
- * links at all.
+ * WHAT THIS PARAGRAPH USED TO SAY, AND WHY IT WAS WRONG. It said the ladder
+ * "falls through to verified web imagery and Street View exactly as it does
+ * for a property whose builder supplied nothing", and that zero recovered
+ * links "is the same arithmetic as a row that carries no links at all". It is
+ * not the same arithmetic. A row whose links we could not read has an UNKNOWN
+ * number of builder sources, and unknown is never zero: treating the two
+ * alike bought external imagery against stock lists whose brochures were
+ * sitting in plain sight — the measured case being a live builder list whose
+ * every export answers 401 while fourteen properties each carry four document
+ * links. OUR FAILURE IS NOT NO EVIDENCE. Such rows now read
+ * `retryable_failure`: the cards WAIT, blank, until the links can be read —
+ * by the htmlview grid reader, by an authorised recovery, or by a re-import
+ * once our reader improves — and the external ladder stays shut for them.
  *
  * Pure: no IO, no clock, no network.
  */
@@ -78,8 +85,9 @@ export interface SourceAccessNotice {
  * permission change is the demand this exists to prevent.
  */
 const IMPORTED_AND_CONTINUING =
-  ' Your stock list imported successfully and image processing is continuing '
-  + 'with the other sources available for each property.';
+  ' Your stock list imported successfully. Properties whose documents sit '
+  + 'behind those links will hold their pictures until the links can be read '
+  + '— a substitute image is never used in their place.';
 
 const MESSAGE_BY_REASON: Record<string, string> = {
   /*

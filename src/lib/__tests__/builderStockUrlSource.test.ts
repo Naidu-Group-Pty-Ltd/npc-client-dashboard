@@ -16,7 +16,7 @@ import {
 
 import {
   isPrivateOrReservedAddress, assertPublicUrl,
-} from '../../../supabase/functions/import-from-url/ssrfGuard';
+} from '../../../supabase/functions/_shared/ssrfGuard';
 import {
   assessNotionReadability, extractHtmlTables, extractHtmlTitle, extractNotionGridTables,
   extractReadableText, readHtmlSource, stripChrome,

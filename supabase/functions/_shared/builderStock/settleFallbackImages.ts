@@ -34,10 +34,7 @@
 import type { enrichStockItem, EnrichableStockItem } from './images.ts';
 import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 import {
-  rowSourceBranches, unmappedWithRecoveredLinks,
-} from './sourceBranches.pure.ts';
-import {
-  describeSuppliedEvidence, fallbackMayRun, readSuppliedEvidence,
+  describeSuppliedEvidence, fallbackMayRun, readStoredRowEvidence,
 } from './suppliedEvidence.pure.ts';
 import { PROVENANCE_VERSION } from './provenanceVersion.pure.ts';
 
@@ -107,21 +104,6 @@ export interface FallbackOutcome {
   problems: Array<{ item: string; reason: string }>;
 }
 
-/**
- * The link columns a stored row carries, from the row itself.
- *
- * BOTH HALVES, AND THE FIRST ONE IS EASY TO LOSE. `source_row.unmapped` is
- * what the import parsed — for a Google Sheet that is the hyperlink targets
- * `mergeHyperlinkColumns` appended beside the labels — and
- * `unmappedWithRecoveredLinks` lays the separately RECOVERED columns over it.
- * Passing `null` as the base returns the recovered columns ALONE, which for a
- * row that never needed recovery is the empty object: no branches, no
- * evidence, and a gate that opens for every property it was meant to hold.
- */
-function storedRowBranches(sourceRow: Record<string, unknown> | null) {
-  const unmapped = (sourceRow?.unmapped ?? null) as Record<string, string> | null;
-  return rowSourceBranches(unmappedWithRecoveredLinks(unmapped, sourceRow));
-}
 
 /**
  * Has a builder-supplied picture been accepted for this property?
@@ -147,19 +129,6 @@ async function hasBuilderSuppliedImage(db: any, itemId: string): Promise<boolean
   }
 }
 
-/**
- * The source row's own anchor, which keys every provenance record on it.
- *
- * Read from the stored row rather than recomputed: the anchor a verdict was
- * written under is the one the import put there, and deriving a second opinion
- * here would make every stored answer look like it belongs to a different
- * question.
- */
-function anchorOf(sourceRow: unknown): string | null {
-  const row = (sourceRow ?? {}) as Record<string, unknown>;
-  const anchor = row.source_anchor;
-  return typeof anchor === 'string' && anchor ? anchor : null;
-}
 
 /**
  * The properties still owed the fallback ladder.
@@ -323,11 +292,10 @@ export async function settleFallbackImages(
      * moment its sources answer, and a provenance bump re-opens sources
      * that were retired operationally.
      */
-    const evidence = readSuppliedEvidence({
-      branches: storedRowBranches(row.source_row as Record<string, unknown> | null),
+    const evidence = readStoredRowEvidence({
+      sourceRow: row.source_row,
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
-      sourceAnchor: anchorOf(row.source_row),
       /*
        * A SUCCESS CLEARS ITS BRANCH RECORD, so without this a property whose
        * brochure just yielded its picture reads `pending` — the branch looks

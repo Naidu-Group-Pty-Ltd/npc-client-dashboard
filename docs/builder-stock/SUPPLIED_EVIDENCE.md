@@ -25,11 +25,14 @@ UPLOAD → discover every supplied source (rowSourceBranches over the stored row
 
 ## The state, and who answers it
 
-`readSuppliedEvidence` (pure) is the one interpreter. Its inputs are the
-row's own link columns (`source_row.unmapped`, overlaid with
+`readSuppliedEvidence` (pure) is the one interpreter, and
+`readStoredRowEvidence` is the one reader of a STORED row — both settle
+modules call it, so enforcement and routing cannot disagree. Its inputs are
+the row's own link columns (`source_row.unmapped`, overlaid with
 `recovered_link_columns` — pass **both** halves; `null` as the base silently
-drops every link that never needed recovery) and the per-branch records in
-`source_provenance_result`.
+drops every link that never needed recovery), the per-branch records in
+`source_provenance_result`, and the row's **link-discovery stamp**
+(`source_row.link_discovery`, below).
 
 | state | meaning | ladder |
 |---|---|---|
@@ -47,6 +50,44 @@ indexed read of `builder_stock_item_images`) is what answers the question. A
 for "picture already here": every paid stage records itself skipped, nothing
 is fetched, and the enrichment is marked complete, which is what takes the
 property out of the queue.
+
+### The link-discovery stamp — our failure is not no evidence
+
+A branch is a URL found ON the row, so "no branches" used to mean
+`no_evidence`. But there is a second way a row ends up with no URLs: **the
+spreadsheet carries them and we could not get them out.** The measured case
+is the live VG master list — a public Google Sheet whose owner disabled
+download, so every `export?format=…` answers 401 while `gviz` serves the
+rows; its proven CSV reads `Brochure` with no address underneath for fourteen
+properties carrying four document links each.
+
+So the import stamps every row it writes (`stampedRow` in `importStock.ts`)
+with what it managed to see of that row's link layer:
+
+- `{ state: 'complete', method }` — the links were read (`workbook_export` or
+  `htmlview`), or the source's links are native to its own bytes
+  (`native:<strategy>` — an uploaded workbook, a literal CSV, a PDF, a Notion
+  record map), or the tab genuinely has none.
+- `{ state: 'unavailable', reason }` — the layer could not be read; `reason`
+  is the `HyperlinkAvailability` word.
+
+A row stamped `unavailable` can never read `exhausted` or `no_evidence`,
+however empty it looks: it reads `retryable_failure`, the ladder stays shut,
+and the card waits. `found` still wins — a picture the source yielded answers
+the question — and open branches are still worked; they just cannot finish
+the row while the layer they came from is unread. A row with no stamp keeps
+the reading it always had (rows written before the stamp existed).
+
+Reading the targets at all, for a locked-export sheet, is
+`googleSheetsHtmlGrid.pure.ts`: the `htmlview/sheet?gid=N` grid is the one
+public representation that carries them (measured survey in that module's
+header), parsed into the same `WorkbookSheet` shape and merged by the same
+content-proven alignment as the workbook export — columns identified by
+their headings (`mapColumnsByHeader`; the html grid omits HIDDEN columns, so
+position alone mis-scored real rows), rows by their content, duplicates
+failing closed. The degradation order for a Google Sheet is: workbook export
+→ htmlview grid → authorised link recovery (Make) → rows stamped
+`unavailable` and held.
 
 Enforcement is in `settleFallbackImages` — the one module that buys the
 ladder — as a skip that spends nothing, counts as `withheld`, and logs a

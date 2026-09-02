@@ -496,6 +496,11 @@ function fakeDb(seed: { items: FakeRow[]; uploads: FakeRow[]; objects: Record<st
       in(column: string, values: unknown[]) { filters.push(['in', column, values]); return builder; },
       limit() { return builder; },
       order() { return builder; },
+      // A paged read asks for one page at a time, because the API caps every
+      // response at `db-max-rows` however large a `.limit()` it is given.
+      range(from: number, to: number) {
+        return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+      },
       maybeSingle() {
         const rows = tables[table].filter((row) => matches(row, filters));
         return Promise.resolve({ data: rows[0] ?? null, error: null });

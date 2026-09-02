@@ -37,6 +37,7 @@ import {
 } from './sourceAssets.pure.ts';
 import { roleDetail, roleFromExplicitField } from './sourceImageRole.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
+import { readAllRows } from './pagedRead.ts';
 import { assignPdfMediaRolesPerProperty } from './pdfPrimaryImage.pure.ts';
 import {
   PROVENANCE_VERSION, storeSourceImages, type SourceImageFetcher,
@@ -316,12 +317,15 @@ async function buildInventoryIndex(db: any, organisationId: string): Promise<{
 
   const projectIds = Array.from(new Set(Array.from(projectByName.values())));
   if (projectIds.length) {
-    const { data: units } = await db
-      .from('builder_units')
-      .select('id, project_id, unit_number')
-      .in('project_id', projectIds)
-      .limit(5000);
-    for (const unit of units ?? []) {
+    // Paged: `.limit(5000)` is capped at 1,000 by the API, and a unit missing
+    // from this map is a unit the import cannot link. See `pagedRead.ts`.
+    const unitPage = await readAllRows<{ id: string; project_id: string; unit_number: unknown }>(
+      () => db
+        .from('builder_units')
+        .select('id, project_id, unit_number')
+        .in('project_id', projectIds)
+        .order('id', { ascending: true }));
+    for (const unit of unitPage.rows) {
       const number = String(unit.unit_number ?? '').trim().toLowerCase();
       if (number) unitByProjectAndNumber.set(`${unit.project_id}|${number}`, unit.id);
     }
@@ -480,12 +484,23 @@ export async function importStockRecords(
     });
   }
 
-  const { data: existingRows, error: existingError } = await db
-    .from('builder_stock_items')
-    .select(EXISTING_ITEM_SELECT)
-    .eq('organisation_id', input.organisationId)
-    .order('created_at', { ascending: true })
-    .limit(20000);
+  /*
+   * PAGED. `.limit(20000)` was never honoured — the API caps a response at
+   * 1,000 rows — so past a thousand properties this index silently held only
+   * the oldest thousand, and the note below applied to every property after
+   * them. `id` joins the ordering because `created_at` is not unique and
+   * offset paging needs a total order. See `pagedRead.ts`.
+   */
+  const existingPage = await readAllRows<ExistingItem>(
+    () => db
+      .from('builder_stock_items')
+      .select(EXISTING_ITEM_SELECT)
+      .eq('organisation_id', input.organisationId)
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true }));
+  const existingRows = existingPage.rows;
+  const existingError = existingPage.failed
+    ? (existingPage.error as { message?: string } | null) : null;
 
   /*
    * A FAILED READ IS NOT AN EMPTY ORGANISATION.
@@ -952,12 +967,43 @@ export async function importStockRecords(
    * price, availability, configuration, selection or linkage is written here.
    */
   if (outcome.itemIds.length) {
+    const touched = [...new Set(outcome.itemIds)];
     await db.from('builder_stock_items')
       .update({ enrichment_status: 'pending' })
       // Scoped like every other write in this module: an id in a list is a
       // lookup key, never authority.
       .eq('organisation_id', input.organisationId)
-      .in('id', [...new Set(outcome.itemIds)]);
+      .in('id', touched);
+
+    /*
+     * AND `enrichment_status` IS NOT THE ONLY LATCH. `image_work_stage` is,
+     * and a property that has been through the ladder once is left `settled`
+     * — which `settleItemImages` reads as "there is nothing further to try".
+     * So a re-import that gave a property a document it did not have before
+     * updated its price and its sizes, marked it pending, and never looked at
+     * the document: exactly the shape of the defect that left twenty-six live
+     * properties with a brochure the reader had only just learned to see.
+     *
+     * REOPENED ONLY WHERE THERE IS SOMETHING TO GAIN, in the link recovery's
+     * own words and by its own rule — a property already holding an image has
+     * its builder's picture, and re-running the source stage for it would
+     * spend a claim to reach the same answer. The ladder's own attempt counts
+     * and its banked negatives still decide what is actually re-asked; this
+     * only makes the property visible to them again.
+     *
+     * Pipeline state, never property data: no price, availability,
+     * configuration, selection or linkage is written here.
+     */
+    await db.from('builder_stock_items')
+      .update({
+        image_work_stage: 'source',
+        image_work_claim_until: null,
+        image_work_next_attempt_at: new Date().toISOString(),
+        image_work_updated_at: new Date().toISOString(),
+      })
+      .eq('organisation_id', input.organisationId)
+      .in('id', touched)
+      .is('primary_image_id', null);
   }
 
   outcome.replacesUploadIds = [...supersededUploads];

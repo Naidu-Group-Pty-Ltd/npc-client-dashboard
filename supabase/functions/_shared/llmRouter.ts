@@ -373,6 +373,28 @@ async function callPerplexityNative(model: string, messages: LLMMessage[], opts:
   return { ok: true, status: 200, data: await r.json() };
 }
 
+/**
+ * The native providers' own word for "why it stopped", in OpenAI's vocabulary.
+ *
+ * Both native paths already re-shape their answer into `choices[0].message` so
+ * a caller can read one shape. They dropped the stop reason, and that is the
+ * one field that tells a truncated answer from an answer the model chose to
+ * end — `readModelJson` needs `'length'` to say "it ran out of room" instead of
+ * "it did not answer with JSON", which is the wrong sentence to put in front of
+ * an operator and sends them to the wrong remedy.
+ *
+ * Anything unrecognised is passed through lowercased rather than guessed at: a
+ * reader compares against `'length'`, so an unknown word is simply not that.
+ */
+function openAiFinishReason(native: unknown): string | undefined {
+  if (typeof native !== 'string' || !native.trim()) return undefined;
+  const word = native.trim().toLowerCase();
+  if (word === 'max_tokens') return 'length';
+  if (word === 'end_turn' || word === 'stop_sequence') return 'stop';
+  if (word === 'tool_use') return 'tool_calls';
+  return word;
+}
+
 async function callAnthropicNative(model: string, messages: LLMMessage[], opts: any) {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) return { ok: false, error: 'ANTHROPIC_API_KEY not configured' };
@@ -411,7 +433,10 @@ async function callAnthropicNative(model: string, messages: LLMMessage[], opts: 
   return {
     ok: true,
     status: 200,
-    data: { choices: [{ message: { role: 'assistant', content } }], _native: data },
+    data: {
+      choices: [{ message: { role: 'assistant', content }, finish_reason: openAiFinishReason(data?.stop_reason) }],
+      _native: data,
+    },
   };
 }
 
@@ -441,7 +466,17 @@ async function callGeminiNative(model: string, messages: LLMMessage[], opts: any
   if (!r.ok) return { ok: false, status: r.status, error: await r.text() };
   const data = await r.json();
   const text = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).filter(Boolean).join('\n') ?? '';
-  return { ok: true, status: 200, data: { choices: [{ message: { role: 'assistant', content: text } }], _native: data } };
+  return {
+    ok: true,
+    status: 200,
+    data: {
+      choices: [{
+        message: { role: 'assistant', content: text },
+        finish_reason: openAiFinishReason(data?.candidates?.[0]?.finishReason),
+      }],
+      _native: data,
+    },
+  };
 }
 
 // ----- Public entry point -----

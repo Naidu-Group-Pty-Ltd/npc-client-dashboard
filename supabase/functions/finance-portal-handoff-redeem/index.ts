@@ -11,6 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 
 import { createCorsHeaders as __createCorsHeaders, createClientPortalSessionCookie } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { bestEffort } from '../_shared/bestEffortWrite.ts';
 import { readBoundedJson } from '../_shared/validate.ts';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
@@ -139,19 +140,29 @@ Deno.serve(async (req) => {
       .eq('id', handoff.id);
 
     // 6. Audit
+    //
+    // The same `.catch()` on a Thenable as the mint, and on the STAFF branch
+    // alone — the finance-partner branch below is written plainly and has
+    // always worked, which is why only "View as Client" was broken. It threw
+    // here, one step AFTER the token was consumed and the portal session
+    // created, so the operator saw "Handoff failed" and the one-time link was
+    // already spent: not even a retry was left.
     if (isStaffHandoff) {
-      await supabase.from('client_activity_log').insert({
-        client_id: handoff.client_id,
-        actor_user_id: handoff.staff_user_id,
-        actor_type: 'staff',
-        action: 'staff_portal_handoff_redeemed',
-        entity_type: 'client_portal_session',
-        entity_id: newSession.id,
-        metadata: {
-          readonly: handoff.is_readonly,
-          target_portal_user_id: portalUser.id,
-        },
-      }).catch(() => { /* ignore if table missing */ });
+      await bestEffort(
+        supabase.from('client_activity_log').insert({
+          client_id: handoff.client_id,
+          actor_user_id: handoff.staff_user_id,
+          actor_type: 'staff',
+          action: 'staff_portal_handoff_redeemed',
+          entity_type: 'client_portal_session',
+          entity_id: newSession.id,
+          metadata: {
+            readonly: handoff.is_readonly,
+            target_portal_user_id: portalUser.id,
+          },
+        }),
+        'staff_portal_handoff_redeemed audit',
+      );
     } else {
       await supabase.from('finance_portal_activity_log').insert({
         finance_user_id: handoff.finance_user_id,

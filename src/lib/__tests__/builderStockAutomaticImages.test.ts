@@ -88,6 +88,11 @@ function fakeDb(seed: { items?: Row[]; uploads?: Row[] } = {}) {
       or() { return builder; },
       limit() { return builder; },
       order() { return builder; },
+      // A paged read asks for one page at a time, because the API caps every
+      // response at `db-max-rows` however large a `.limit()` it is given.
+      range(from: number, to: number) {
+        return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+      },
       rows() { return (tables[table] ?? []).filter((row) => matches(row, filters)); },
       maybeSingle() { return Promise.resolve({ data: builder.rows()[0] ?? null, error: null }); },
       single() { return Promise.resolve({ data: builder.rows()[0] ?? null, error: null }); },

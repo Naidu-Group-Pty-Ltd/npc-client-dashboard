@@ -96,8 +96,8 @@ Deno.serve(async (req) => {
       const roles = (rr ?? []).map((r: any) => r.role);
       allowed = roles.includes('admin') || roles.includes('superadmin') || roles.includes('super_admin');
       if (!allowed) {
-        const { data: cu } = await sb.from('custom_users').select('role_display, is_active').eq('id', auth.userId).maybeSingle();
-        const rd = String(cu?.role_display ?? '').toLowerCase();
+        const { data: cu } = await sb.from('custom_users').select('role, is_active').eq('id', auth.userId).maybeSingle();
+        const rd = String(cu?.role ?? '').toLowerCase();
         allowed = Boolean(cu?.is_active) && (rd === 'super_admin' || rd === 'superadmin' || rd === 'admin');
       }
     }

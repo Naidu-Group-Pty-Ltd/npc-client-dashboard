@@ -1,15 +1,31 @@
-import { Building, ChevronsUpDown, GitCompare, SlidersHorizontal, X } from 'lucide-react';
+import { useState } from 'react';
+import { GitCompare, LayoutGrid, SlidersHorizontal, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CashFlowComparisonPicker } from './CashFlowComparisonPicker';
+import {
+  COMPARISON_TOTAL_REPORTS,
+  MAX_COMPARISON_PEERS,
+} from '@/lib/cashFlow/comparisonCandidates.pure';
 
+/**
+ * What the panel needs of a candidate.
+ *
+ * The two headline scalars are carried through so the picker can draw them:
+ * this used to be `{ id, property_address }`, which is exactly as much as a
+ * one-line popover could show.
+ */
 interface InvestmentReport {
   id: string;
   property_address: string;
+  created_at?: string | null;
+  cash_flow_purchase_price?: number | null;
+  cash_flow_weekly_rent?: number | null;
+  manual_overrides?: any;
+  financial_calculations?: any;
 }
 
 interface CashFlowControlPanelProps {
@@ -22,6 +38,10 @@ interface CashFlowControlPanelProps {
   selectedComparisonReportIds: string[];
   availableReports: InvestmentReport[];
   onToggleComparisonReport: (reportId: string) => void;
+  /** Drops every selected peer at once. Optional so existing callers compile. */
+  onClearComparisonReports?: () => void;
+  /** The report being compared against, pinned in the picker. */
+  primaryAddress?: string;
   loadingReports: boolean;
   investorProfile: 'growth' | 'income' | 'balanced';
   onInvestorProfileChange: (profile: 'growth' | 'income' | 'balanced') => void;
@@ -37,6 +57,8 @@ export function CashFlowControlPanel({
   selectedComparisonReportIds,
   availableReports,
   onToggleComparisonReport,
+  onClearComparisonReports,
+  primaryAddress = '',
   loadingReports,
   investorProfile,
   onInvestorProfileChange,
@@ -44,6 +66,19 @@ export function CashFlowControlPanel({
   onExcludeLandTaxChange,
   hasChanges,
 }: CashFlowControlPanelProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Removing every peer without an `onClearComparisonReports` is the same act
+  // performed one at a time, so the control is always offered rather than
+  // disappearing for a caller that has not been updated.
+  const clearAll = () => {
+    if (onClearComparisonReports) {
+      onClearComparisonReports();
+      return;
+    }
+    selectedComparisonReportIds.forEach((id) => onToggleComparisonReport(id));
+  };
+
   return (
     <Card className="overflow-hidden border-border/80 bg-gradient-to-br from-background via-muted/20 to-background shadow-sm">
       <CardContent className="space-y-4 p-4 md:p-5">
@@ -95,51 +130,26 @@ export function CashFlowControlPanel({
           <div className="space-y-3 rounded-2xl border bg-background/85 p-3 shadow-sm">
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Add comparison property</p>
-                <p className="text-xs text-muted-foreground">Select up to 4 comparison reports.</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Comparison properties</p>
+                <p className="text-xs text-muted-foreground">
+                  Compare up to {COMPARISON_TOTAL_REPORTS} completed reports, including this one.
+                </p>
               </div>
               {comparisonMode && (
-                <Popover>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      role="combobox"
-                      size="sm"
-                      className="min-h-9 w-full justify-between rounded-xl text-sm font-normal md:w-[320px]"
-                      disabled={loadingReports || selectedComparisonReportIds.length >= 4}
-                    >
-                      {loadingReports ? 'Loading...' : `Add property (${selectedComparisonReportIds.length}/4)`}
-                      <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[calc(100vw-2rem)] max-w-[380px] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Search properties..." />
-                      <CommandList>
-                        <CommandEmpty>No properties found.</CommandEmpty>
-                        <CommandGroup>
-                          {availableReports
-                            .filter((report) => !selectedComparisonReportIds.includes(report.id))
-                            .map((report) => (
-                              <CommandItem
-                                key={report.id}
-                                value={report.property_address}
-                                onSelect={() => onToggleComparisonReport(report.id)}
-                                className="cursor-pointer"
-                              >
-                                <Building className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                                <span className="truncate">
-                                  {report.property_address.length > 50
-                                    ? report.property_address.substring(0, 50) + '...'
-                                    : report.property_address}
-                                </span>
-                              </CommandItem>
-                            ))}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPickerOpen(true)}
+                  disabled={loadingReports}
+                  className="min-h-9 w-full justify-center rounded-xl text-sm md:w-auto"
+                >
+                  <LayoutGrid className="mr-2 h-3.5 w-3.5 shrink-0" />
+                  {loadingReports
+                    ? 'Loading reports...'
+                    : selectedComparisonReportIds.length > 0
+                      ? `Choose properties (${selectedComparisonReportIds.length}/${MAX_COMPARISON_PEERS})`
+                      : 'Choose properties to compare'}
+                </Button>
               )}
             </div>
 
@@ -162,6 +172,19 @@ export function CashFlowControlPanel({
               <p className="rounded-xl border border-dashed bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
                 {comparisonMode ? 'No comparison reports selected yet.' : 'Enable comparison mode to add peer reports.'}
               </p>
+            )}
+
+            {comparisonMode && (
+              <CashFlowComparisonPicker
+                open={pickerOpen}
+                onOpenChange={setPickerOpen}
+                primaryAddress={primaryAddress}
+                candidates={availableReports}
+                selectedIds={selectedComparisonReportIds}
+                onToggle={onToggleComparisonReport}
+                onClearAll={clearAll}
+                loading={loadingReports}
+              />
             )}
           </div>
 

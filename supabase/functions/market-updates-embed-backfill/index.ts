@@ -40,7 +40,7 @@ async function embedBatch(inputs: string[]): Promise<number[][]> {
 }
 
 function buildText(row: any): string {
-  return [row.title, row.summary, row.why_it_matters].filter(Boolean).join('\n\n').slice(0, 6000);
+  return [row.title, row.ai_summary, row.why_it_matters].filter(Boolean).join('\n\n').slice(0, 6000);
 }
 
 Deno.serve(async (req) => {
@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     for (let i = 0; i < MAX_BATCHES; i += 1) {
       const { data: rows, error } = await sb
         .from('market_updates')
-        .select('id, title, summary, why_it_matters')
+        .select('id, title, ai_summary, why_it_matters')
         .eq('visibility', 'public')
         .is('archived_at', null)
         .is('embedding', null)

@@ -1,8 +1,23 @@
-import type { InvestmentReport } from './types';
-
 export interface CashFlowFinancialSummary {
   purchasePrice: number | null;
   weeklyRent: number | null;
+}
+
+/**
+ * The four fields the two headline figures can come from.
+ *
+ * Declared structurally rather than as `InvestmentReport` so anything carrying
+ * these fields can be resolved by the one rule — the comparison picker offers a
+ * candidate shape narrower than a full report, and a second copy of this
+ * precedence is exactly how a list and a comparison come to disagree about
+ * which reports have figures. `InvestmentReport` satisfies it, so every
+ * existing caller is unchanged.
+ */
+export interface CashFlowFinancialSource {
+  cash_flow_purchase_price?: number | null;
+  cash_flow_weekly_rent?: number | null;
+  manual_overrides?: any;
+  financial_calculations?: any;
 }
 
 function toPositiveNumber(value: unknown): number | null {
@@ -29,7 +44,7 @@ function firstPositive(...values: unknown[]): number | null {
  * engine. List responses expose pre-resolved scalars; detail responses retain
  * the historical JSON shapes, so this also supports every persisted alias.
  */
-export function resolveCashFlowFinancialSummary(report: InvestmentReport): CashFlowFinancialSummary {
+export function resolveCashFlowFinancialSummary(report: CashFlowFinancialSource): CashFlowFinancialSummary {
   const financials = report.financial_calculations ?? {};
   const overrides = report.manual_overrides ?? {};
 

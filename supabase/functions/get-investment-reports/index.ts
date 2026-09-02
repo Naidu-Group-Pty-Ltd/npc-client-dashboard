@@ -5,7 +5,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
-type Projection = 'library' | 'cashFlowLibrary' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
+type Projection = 'library' | 'cashFlowLibrary' | 'cashFlowComparison' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
 type ErrorCode = 'UNAUTHENTICATED' | 'FORBIDDEN' | 'REPORT_SCHEMA_MISMATCH' | 'INVALID_REPORT_QUERY' |
   'REPORT_DATABASE_UNAVAILABLE' | 'REPORT_QUERY_TIMEOUT' | 'REPORT_QUERY_FAILED' | 'REPORT_NOT_FOUND' | 'INTERNAL_REPORT_ERROR';
 
@@ -40,6 +40,16 @@ interface RequestBody {
 
 export const INVESTMENT_LIBRARY_SELECT = 'id,property_address,property_listing_id,client_property_id,canonical_property_key,created_at,current_version,report_scope,report_tier,parent_report_id,status,is_archived,is_client_report,report_variant,derived_from_report_id,investment_score,generated_by';
 const INVESTMENT_LIBRARY_SOURCE_SELECT = `${INVESTMENT_LIBRARY_SELECT},manual_overrides,financial_calculations`;
+// `cashFlowComparison` reads the SAME columns as `cashFlowLibrary` and simply
+// does not collapse them. The two answer different questions: a list needs the
+// headline scalars and nothing more, while a comparison replays the ten-year
+// projection from `financial_calculations` and `manual_overrides` — council
+// rates, insurance, the interest rate, capital growth, the depreciation
+// schedule and every per-year override. Handed the collapsed row it does not
+// fail; it silently defaults to 0 / 5% / 5.5% and renders a plausible
+// projection of nothing, which is the one outcome a comparison must never
+// produce. It is deliberately not the list projection: the payload is large
+// and only the handful of reports actually selected need it.
 const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence`;
 // Live-progress projection for the floating generation widget, which polls every
 // few seconds. The library projection omits `updated_at`, `error_message` and the
@@ -184,14 +194,14 @@ Deno.serve(async (req) => {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200)
       return failure('INVALID_REPORT_QUERY', 'Page must be positive and pageSize must be between 1 and 200.', false, 400, corsHeaders, correlationId);
     const projection: Projection = body.projection || (body.reportId ? 'detail' : body.reportIds ? 'multiLookup' : options.isArchived ? 'archivedLibrary' : 'library');
-    const allowed: Projection[] = ['library', 'cashFlowLibrary', 'archivedLibrary', 'detail', 'idLookup', 'multiLookup', 'generationProgress'];
+    const allowed: Projection[] = ['library', 'cashFlowLibrary', 'cashFlowComparison', 'archivedLibrary', 'detail', 'idLookup', 'multiLookup', 'generationProgress'];
     if (!allowed.includes(projection)) return failure('INVALID_REPORT_QUERY', 'The requested projection is invalid.', false, 400, corsHeaders, correlationId);
 
     const select = table === 'investment_reports'
       ? projection === 'detail' ? INVESTMENT_DETAIL_SELECT
         : projection === 'idLookup' ? 'id'
         : projection === 'generationProgress' ? INVESTMENT_PROGRESS_SELECT
-        : projection === 'cashFlowLibrary' ? INVESTMENT_LIBRARY_SOURCE_SELECT
+        : projection === 'cashFlowLibrary' || projection === 'cashFlowComparison' ? INVESTMENT_LIBRARY_SOURCE_SELECT
         : INVESTMENT_LIBRARY_SELECT
       : TABLE_SELECTS[table as Exclude<TableName, 'investment_reports'>];
     let query = supabase.from(table).select(select, { count: 'exact' });
@@ -233,7 +243,7 @@ Deno.serve(async (req) => {
       const keys = [...new Set(responseData.map(row => row.canonical_property_key).filter((key): key is string => Boolean(key)))];
       if (keys.length) {
         let siblingsQuery = supabase.from('investment_reports')
-          .select(projection === 'cashFlowLibrary' ? INVESTMENT_LIBRARY_SOURCE_SELECT : INVESTMENT_LIBRARY_SELECT)
+          .select(projection === 'cashFlowLibrary' || projection === 'cashFlowComparison' ? INVESTMENT_LIBRARY_SOURCE_SELECT : INVESTMENT_LIBRARY_SELECT)
           .in('canonical_property_key', keys);
         siblingsQuery = (projection === 'archivedLibrary' || options.isArchived === true) ? siblingsQuery.eq('is_archived', true) : siblingsQuery.or('is_archived.is.null,is_archived.eq.false');
         siblingsQuery = options.isClientReport === true ? siblingsQuery.eq('is_client_report', true) : siblingsQuery.or('is_client_report.is.null,is_client_report.eq.false');

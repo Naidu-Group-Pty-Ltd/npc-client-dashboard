@@ -42,6 +42,22 @@ export interface NormalisedStockRecord {
   bathrooms: number | null;
   car_spaces: number | null;
   property_type: StockPropertyType | null;
+  /**
+   * The house design this lot is being sold with — "Elara 18", "Miami 190".
+   *
+   * A BUILDER SELLS FEWER DESIGNS THAN LOTS, and the document library is
+   * organised the way the business is: one brochure per design, linked from
+   * every row that sells it. The package matcher has always understood designs
+   * — `pageStatesIdentity` requires the page to state the label's design before
+   * it will call the page a property's cover — but it read them out of
+   * BRACKETED text in the display label, which a spreadsheet row never carries.
+   * So a design column arrived, went to `unmapped`, and the one document that
+   * names the house was refused for not naming the lot.
+   *
+   * Canonical and structured, alongside `building_size_sqm`, because the
+   * matcher takes discriminators as fields rather than re-parsing a label.
+   */
+  house_design: string | null;
   land_size_sqm: number | null;
   building_size_sqm: number | null;
   price: number | null;
@@ -78,14 +94,37 @@ type FieldKey =
   | 'suburb' | 'state' | 'postcode' | 'lot_number' | 'unit_number'
   | 'bedrooms' | 'bathrooms' | 'car_spaces' | 'property_type'
   | 'land_size_sqm' | 'building_size_sqm' | 'price' | 'availability_status'
-  | 'expected_completion' | 'description' | 'image_url' | 'builder_name';
+  | 'expected_completion' | 'description' | 'image_url' | 'builder_name'
+  | 'house_design';
 
 /**
  * Header text is compared with punctuation, spacing and case removed, so
  * "Land Size (m2)", "land_size_m2" and "LANDSIZEM2" are one key.
+ *
+ * A UNIT MARKER IS PART OF THE HEADING, and deleting it made two different
+ * columns one key. `LAND M2` and `LAND $` sit side by side in a stock list —
+ * one is an area and one is money — and stripping the `$` left `land` for
+ * both. `land` is an alias for `land_size_sqm`, so every property imported
+ * from such a sheet had its LAND PRICE written into its land size: 26 live
+ * properties published a 428,000 m2 block, which is 105 acres, because the
+ * land cost $428,000. The same collapse hid `HOUSE $` behind `HOUSE`, and
+ * `PACKAGE $` — the number a buyer actually sees — behind `PACKAGE`, so not
+ * one of those 26 carried a price at all.
+ *
+ * So the two markers that distinguish a MEASURE from MONEY survive as words.
+ * `$` and `%` are the only characters this treats specially, and neither
+ * appeared in any alias before this — so a heading that carries one could only
+ * ever have been judged as though it did not, and every key that changes here
+ * is a key that was wrong. A `X $` column this table does not name now lands
+ * in `unmapped`, which is visible in the audit record, instead of silently
+ * becoming `X`.
  */
 export function normaliseHeader(raw: unknown): string {
-  return String(raw ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return String(raw ?? '')
+    .toLowerCase()
+    .replace(/\$/g, ' dollars ')
+    .replace(/%/g, ' percent ')
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 /**
@@ -148,6 +187,39 @@ alias('property_type',
   'type', 'property type', 'dwelling type', 'product', 'product type',
   'house type', 'stock type');
 
+/*
+ * THE DESIGN, AND DELIBERATELY NOT THE FOUR HEADINGS ABOVE.
+ *
+ * `product`, `product type`, `house type` and `type` are already claimed by
+ * `property_type` — they answer "house or townhouse", not "which design" — so
+ * taking them here would silently change what an existing column means for
+ * every builder who already uses one. `floor plan` is likewise not this: on a
+ * stock list that column holds a LINK to a drawing, and `floor area` is
+ * `building_size_sqm`.
+ *
+ * What is left is the headings that can only mean the design itself.
+ */
+alias('house_design',
+  'design', 'house design', 'home design', 'design name', 'house design name',
+  'home design name', 'facade design', 'design type',
+  /*
+   * A stock list names the design in a column called plainly `HOUSE`, beside
+   * `HOUSE m2` and `HOUSE $`. That was unmappable while the normaliser deleted
+   * the marker — `HOUSE $` produced the same key, and whichever column came
+   * last would have written "$447,950" into the design. It is safe now because
+   * the three are three keys. The design is what `findDesignCoverPages` reads
+   * to attribute a render, so a null here is a whole rung of the evidence
+   * ladder that can never run.
+   */
+  /*
+   * `house` ALONE, and deliberately nothing near it. `Product`, `Type`,
+   * `Product Type` and `House Type` belong to `property_type` and a test
+   * asserts this table does not take them — a heading that answers "what kind
+   * of dwelling is this" is not the heading that answers "which of our designs
+   * is it".
+   */
+  'house');
+
 // The unit is written six ways — "(m2)", "m²", "sqm", "sq m" — and the header
 // normaliser strips the punctuation but not the letters, so each spelling is a
 // distinct key and has to be listed.
@@ -162,11 +234,27 @@ alias('building_size_sqm',
   'building size m2', 'house size', 'house size m2', 'floor area',
   'floor area m2', 'floor area sqm', 'internal area', 'internal area sqm',
   'living area', 'build area', 'home size', 'building area sqm',
-  'building area m2', 'house area');
+  'building area m2', 'house area',
+  // A stock list writes the house's own area as bare "HOUSE m2", beside
+  // "LAND M2". Distinct keys from `house` and `house $` only since the
+  // normaliser stopped deleting the marker — see `normaliseHeader`.
+  'house m2', 'house m²', 'house sqm', 'home m2', 'build m2', 'build m²');
 
+/**
+ * THE PRICE IS WHAT THE PROPERTY COSTS, which for a house-and-land package is
+ * the PACKAGE.
+ *
+ * A stock list states three figures — `LAND $`, `HOUSE $`, `PACKAGE $` — and
+ * only the third is the number a buyer is quoted. The other two are its
+ * breakdown, they have no field here, and they stay in `unmapped` rather than
+ * being mapped to something adjacent: a card showing the house component as
+ * the price understates a $871,450 package by $428,000.
+ */
 alias('price',
   'price', 'total price', 'list price', 'package price', 'asking price',
-  'sale price', 'price from', 'full price', 'purchase price', 'amount');
+  'sale price', 'price from', 'full price', 'purchase price', 'amount',
+  'price $', 'total $', 'package $', 'total package $', 'package price $',
+  'house and land $', 'house land $', 'total price $', 'list price $');
 
 alias('availability_status',
   'status', 'availability', 'available', 'sales status', 'stock status',
@@ -349,7 +437,7 @@ export function emptyStockRecord(): NormalisedStockRecord {
     external_reference: null, development_name: null, project_name: null,
     address_line: null, suburb: null, state: null, postcode: null,
     lot_number: null, unit_number: null, bedrooms: null, bathrooms: null,
-    car_spaces: null, property_type: null, land_size_sqm: null,
+    car_spaces: null, property_type: null, house_design: null, land_size_sqm: null,
     building_size_sqm: null, price: null, price_display: null,
     availability_status: 'unknown', expected_completion: null, description: null,
     image_urls: [], image_url_fields: {}, source_anchor: null, unmapped: {},
@@ -413,6 +501,7 @@ export function normaliseStockRow(
       case 'bathrooms': record.bathrooms = clampCount(coerceNumber(value)); break;
       case 'car_spaces': record.car_spaces = clampCount(coerceNumber(value)); break;
       case 'property_type': record.property_type = coercePropertyType(value); break;
+      case 'house_design': record.house_design = text(value, 120); break;
       case 'land_size_sqm': record.land_size_sqm = clampArea(coerceNumber(value)); break;
       case 'building_size_sqm': record.building_size_sqm = clampArea(coerceNumber(value)); break;
       case 'price': {

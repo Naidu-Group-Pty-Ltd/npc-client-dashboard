@@ -10,7 +10,7 @@
  */
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -66,6 +66,7 @@ vi.mock("@/lib/aml/useAmlV3Flags", () => ({
 import { Toaster, toast } from "sonner";
 
 import AmlAustracReporting from "../AmlAustracReporting";
+import { drainToastTimers } from "../../../test/toastTeardown";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 
@@ -98,6 +99,16 @@ const REPORT = {
   metadata: { obligation_at: nowIso() },
   created_at: nowIso(), updated_at: nowIso(),
 };
+
+/*
+  This file is the only one in the suite that mounts a `<Toaster />`, which
+  makes it the only one that can end with sonner's uncancellable unmount
+  timer still in flight. When that timer fires after Vitest has disposed this
+  file's jsdom, React reads a `window` that is no longer there and the whole
+  run fails on an unhandled error while every test in it passed. Waiting past
+  the animation window costs 400ms, once. See `src/test/toastTeardown.ts`.
+*/
+afterAll(drainToastTimers);
 
 beforeEach(() => {
   // Call history must not leak between tests: one of these asserts that a

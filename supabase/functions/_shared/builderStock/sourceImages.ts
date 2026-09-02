@@ -66,11 +66,24 @@ import {
  * extractable text is now operationally unreadable rather than a finished "this
  * names no image", because a reader that read nothing has learned nothing.
  *
+ * 6 changes what the package reader can IDENTIFY again, in the one way that
+ * mattered most. A property's cover page was resolved as "exactly one
+ * qualifying page or no image", and a builder package is a cover page AND a
+ * floor plan, both repeating the lot header and the price strip — so both
+ * qualified and the whole document was refused. Measured on the live stock
+ * list the morning this was found: 281 documents opened, 20 images taken, 94
+ * properties holding 28 photographs. `resolvePropertyCover` now reads the page
+ * stating the MOST of the package as the cover, which recovered five of ten
+ * sampled brochures with every recovered image inspected and correct.
+ *
+ * Every negative banked at 5 was therefore decided by a reader that could not
+ * see a two-page package at all, and is stale by definition.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
  */
-export const PROVENANCE_VERSION = 5;
+export const PROVENANCE_VERSION = 6;
 
 /** What a retrieval produced. Injected in tests; the default is the guard. */
 export interface FetchedImage {

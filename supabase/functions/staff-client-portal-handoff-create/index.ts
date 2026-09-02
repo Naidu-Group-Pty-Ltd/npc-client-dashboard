@@ -13,6 +13,7 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { bestEffort } from '../_shared/bestEffortWrite.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token',
@@ -126,18 +127,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }, 500);
     }
 
-    // Audit on the client side
-    await supabase.from('client_activity_log').insert({
-      client_id,
-      actor_user_id: auth.userId,
-      actor_type: 'staff',
-      action: 'staff_portal_handoff_created',
-      entity_type: 'client_portal',
-      metadata: {
-        readonly: !!readonly,
-        target_portal_user_id: targetPortalUser.id,
-      },
-    }).catch(() => { /* table optional; ignore failures */ });
+    // Audit on the client side.
+    //
+    // `.catch()` here threw `TypeError: …insert(...).catch is not a function`
+    // — a PostgREST builder is a Thenable with `then` and no `catch` — and the
+    // handler's catch turned that into a 500 AFTER the token had been minted
+    // and stored. Every "View as Client" ended in "Internal error" with a
+    // usable link orphaned in the table.
+    await bestEffort(
+      supabase.from('client_activity_log').insert({
+        client_id,
+        actor_user_id: auth.userId,
+        actor_type: 'staff',
+        action: 'staff_portal_handoff_created',
+        entity_type: 'client_portal',
+        metadata: {
+          readonly: !!readonly,
+          target_portal_user_id: targetPortalUser.id,
+        },
+      }),
+      'staff_portal_handoff_created audit',
+    );
 
     return jsonResponse({
       success: true,

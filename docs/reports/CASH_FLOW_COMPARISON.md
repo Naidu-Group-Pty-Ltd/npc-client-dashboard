@@ -267,12 +267,14 @@ Archetype `cash-flow-comparison`, `pageBudget: [15, 34]`, `contents: true`.
 **Sections 1–5 and 10 are arithmetic and always present. 6–9 exist only when the
 adviser generated an analysis, and each of the four is independently
 conditional.** That last part is load-bearing rather than defensive:
-`compare-cash-flow-reports:219` asks for eight sections with `maxTokens: 4000` —
-a third of what the sibling comparison function is given against a schema of
-comparable size, and that one truncated 94% of its five-property calls. A
-response that closed its braces early still parses, so a partial analysis is a
-normal arrival. Gating the four together would drop three present sections
-because a fourth ran out of budget.
+`compare-cash-flow-reports` used to ask for eight sections with
+`maxTokens: 4000` — a third of what the sibling comparison function is given
+against a schema of comparable size, and that one truncated 94% of its
+five-property calls. It did truncate, and § "What 'Failed to parse' actually
+was" below records what that cost. A response that closed its braces early
+still parses, so a partial analysis is a normal arrival. Gating the four
+together would drop three present sections because a fourth ran out of
+budget.
 
 **The verdict goes first**, inverting the producer's order, for the reason
 `COMPARISON.md` §5 gives. The KPI strip leads with the *gap* rather than the
@@ -282,14 +284,82 @@ and mean entirely different things.
 **A comparison with no analysis is a complete, sendable document**, and section
 10 says so rather than leaving the absence to be noticed.
 
-### There is no salvager, and there should not be
+### What "Failed to parse" actually was
+
+An adviser comparing properties pressed **Generate AI Analysis** and got
+*"Failed to parse AI analysis"*, every time. Nothing about that sentence was
+true: the model answered, and answered in JSON. Four things in the producer
+conspired, and each one alone is enough to produce it.
+
+1. **A flat 4,000 output tokens for an eight-section schema.** `max_tokens` is
+   the *whole* output allowance, and a reasoning model spends thousands of it
+   thinking before it writes a character. This is the number the paragraph above
+   and `normalise.pure.ts` both flagged as the one to worry about.
+2. **Nothing asked for JSON except a sentence of prose.** No `response_format`
+   was sent at all, so the shape was a request rather than a constraint — and
+   the prompt asked for seven numbered sections *and then* for JSON, which
+   invites a model to write the sections in prose first and spend the budget
+   before the object starts.
+3. **The fence regex required a CLOSING fence.**
+   `/```(?:json)?\s*\n([\s\S]*?)\n```/` cannot match a response that was cut
+   off, so a truncated answer fell through to `JSON.parse` *with the opening
+   fence still attached* and threw a `SyntaxError` about a backtick. The same
+   defect `generate-portfolio-analysis` carried, and the reason `readModelJson`
+   exists.
+4. **`finish_reason` was never read**, so the one field that says "cut off"
+   reached nobody, and a model that had run out of room was reported as one that
+   could not write JSON — which sends an operator to the wrong remedy.
+
+A fifth sat behind them: `invokeSecureFunction` defaults to **60 seconds** and
+the modal passed no override, so raising the budget on its own would have
+swapped a parse failure for an abort. `CASH_FLOW_ANALYSIS_CLIENT_MS` is the
+producer's number, imported by the modal, so the two ends cannot drift.
+
+`analysisRequest.pure.ts` holds all of it: the token sizing (base plus a slope
+per property, because three sections carry a row each), the schema — whose
+top-level keys are asserted to be `ANALYSIS_SECTIONS`, so what is asked for and
+what `toAnalysis` reads cannot drift — the `json_schema → json_object → prose`
+ladder, and the reading. The producer also **orders the fetched reports by the
+ids it was sent**: `propertyNumber` is the only handle the model has on a
+property in five of the eight sections, and it was the position of a row in an
+`.in()` result, an order the server never promises.
+
+### There is still no salvager
 
 The natural reading of `COMPARISON.md` is "model output → build a salvage
-module". Not here. When `compare-cash-flow-reports` overruns its budget the parse
-at `:257` throws, `:261` returns a 500 with the raw text, nothing is stored, and
-`setAiAnalysis` (`:1494`) only runs on `data.success && data.analysis`. The
-failure is loud and total, so there is nothing damaged to read back. A salvager
-would be dead code.
+module". The original argument against one here was that truncation "fails
+loudly and totally, so there is nothing damaged to read back" — and half of that
+reasoning *was* the bug. The conclusion survives it for a better reason: the fix
+removes the cause rather than reading back the damage, and the partial answer
+that actually reaches the reader is the one that **parses** — a model that
+closed its braces early — which every block is already independently conditional
+on. What is new is that a partial answer is now **kept** rather than refused:
+`classifyCashFlowAnalysis` names which of the eight arrived, `missing` travels
+with the analysis to the screen and into the document, and the panel leads with
+"This analysis is incomplete" rather than quietly drawing four blocks of eight.
+
+### The screen draws what the document draws
+
+Six of the eight blocks had never been read by anyone before the migration, and
+after it the *document* drew all eight while the *panel that generated it* drew
+four — so an adviser downloading the PDF got more than the page they were
+reading. `CashFlowAnalysisFindings` is the other four. Two rules hold it.
+
+**A property number is resolved through the model's own rankings, never through
+our position in a list.** Every block but the rankings names a property by the
+1-based index the producer sent. The obvious resolution — index into `[the open
+report, ...the ones being compared]` — is wrong for a *saved* analysis:
+`cash_flow_analyses` stores its comparison ids sorted while the panel holds them
+in selection order, so re-opening one can put the numbers against different
+houses. `finalRankings` carries both the number and the address, it is the only
+part of the answer that does, and it travels through the save. A number that
+resolves to nothing drops its row rather than being labelled with a guess.
+
+**`shrink-0` protects a cluster's width, not its contents.** At 390px
+"Break-even: Beyond year 10 · Safety margin: -$310/week" is 345px of content in
+a 232px row; as a `shrink-0` cluster it hung off the card and was clipped by its
+own rounded edge — the figure a reader most needs, cut in half. Measured in a
+real Chromium, at 390, 430 and 768.
 
 ### Model prose is attributed to the model, and to no property
 

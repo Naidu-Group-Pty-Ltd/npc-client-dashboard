@@ -190,7 +190,7 @@ Deno.serve(async (req) => {
     // ─── build_manifest (default) ───
     const { data: client } = await supabase
       .from('clients')
-      .select('first_name, surname, email, phone_number')
+      .select('primary_first_name, primary_surname, primary_email, primary_mobile')
       .eq('id', file.client_id)
       .maybeSingle();
 
@@ -263,9 +263,9 @@ Deno.serve(async (req) => {
         finance_status: file.finance_status,
       },
       client: client ? {
-        name: `${client.first_name || ''} ${client.surname || ''}`.trim(),
-        email: client.email,
-        phone: client.phone_number,
+        name: `${client.primary_first_name || ''} ${client.primary_surname || ''}`.trim(),
+        email: client.primary_email,
+        phone: client.primary_mobile,
       } : null,
       decision: decision || null,
       conditions: conditions || [],

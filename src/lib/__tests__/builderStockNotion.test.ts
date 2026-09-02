@@ -209,6 +209,11 @@ function fakeStockDb() {
       is: () => api,
       neq: () => api,
       order: () => api,
+      // A paged read asks for one page at a time, because the API caps every
+      // response at `db-max-rows` however large a `.limit()` it is given.
+      range(from: number, to: number) {
+        return Promise.resolve(api as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+      },
       limit: () => Promise.resolve({ data: [], error: null }),
       upsert: (row: Record<string, unknown>) => {
         writes.push({ table, row });

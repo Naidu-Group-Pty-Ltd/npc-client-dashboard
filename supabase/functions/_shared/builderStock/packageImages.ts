@@ -144,6 +144,16 @@ export async function recoverPackageImage(
     label: string;
     /** The row's own building size, for telling two variants of one lot apart. */
     buildingSqm?: number | null;
+    /**
+     * The row's own house design, from the canonical `house_design` field.
+     *
+     * STRUCTURED, not parsed back out of `label`, for the reason `buildingSqm`
+     * is: a discriminator the row states is a fact, and re-deriving it from a
+     * display string is how the two come to disagree. A spreadsheet row carries
+     * no bracketed design for `lotAndDesignFrom` to find, which is why the one
+     * document that names the house was refused for not naming the lot.
+     */
+    design?: string | null;
   },
   deps: {
     fetchPackage?: PackageFetcher;
@@ -179,14 +189,21 @@ export async function recoverPackageImage(
     return { status: 'not_identified', detail: 'That package is not on a source we can read.' };
   }
 
-  const { lot, design } = lotAndDesignFrom(input.label);
+  const labelParts = lotAndDesignFrom(input.label);
+  const lot = labelParts.lot;
+  /*
+   * The label's bracketed design where the label carries one, and the row's own
+   * canonical `house_design` otherwise. A spreadsheet row has no brackets, so
+   * before this the design was simply absent for every such row.
+   */
+  const design = labelParts.design ?? (String(input.design ?? '').trim() || null);
 
   // A link straight to one document: the row named the file itself.
   const directFileId = driveFileId(input.packageUrl);
   if (directFileId) {
     return await extractFromDocument(
       fetchPackage, readPageTexts, directFileId, 'the linked document', input.label,
-      'direct_link');
+      'direct_link', design);
   }
 
   const rootId = driveFolderId(input.packageUrl);
@@ -269,7 +286,7 @@ export async function recoverPackageImage(
 
   return await extractFromDocument(
     fetchPackage, readPageTexts, document.id, document.name, input.label,
-    'folder_structure');
+    'folder_structure', design);
 }
 
 /**
@@ -475,6 +492,9 @@ async function extractFromDocument(
    * their property in text like everything else.
    */
   identifiedBy: 'folder_structure' | 'direct_link',
+  /** The row's stated house design, for the design fallback. See
+   * `findDesignCoverPages`. */
+  design?: string | null,
 ): Promise<PackageOutcome> {
   const url = driveDownloadUrl(fileId);
   let bytes: Uint8Array;
@@ -604,6 +624,7 @@ async function extractFromDocument(
   const pageTexts = textResult.pages;
   const selection = await selectPdfPropertyPrimary(bytes, {
     label,
+    design,
     pageTexts,
     // Supplied ONLY when the builder's folder already named this document for
     // this one property and the document itself can say nothing. See

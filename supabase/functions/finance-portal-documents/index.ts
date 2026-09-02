@@ -271,10 +271,12 @@ Deno.serve(async (req) => {
 
       const { data: clientRow } = await supabase
         .from('clients')
-        .select('first_name, surname')
+        .select('primary_first_name, primary_surname')
         .eq('id', client_id)
         .maybeSingle();
-      const clientName = clientRow ? `${clientRow.first_name} ${clientRow.surname}`.trim() : 'a client';
+      const clientName = clientRow
+        ? [clientRow.primary_first_name, clientRow.primary_surname].filter(Boolean).join(' ').trim() || 'a client'
+        : 'a client';
 
       const notifyResult = await notifyFinancePortalAssignees({
         client_id,

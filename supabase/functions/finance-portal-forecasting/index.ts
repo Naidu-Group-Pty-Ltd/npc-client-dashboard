@@ -111,7 +111,7 @@ Deno.serve(async (req) => {
       // 2) Purchase files settling within horizon that don't already have a settlement-trigger commission row.
       const { data: settlements } = await supabase
         .from('purchase_files')
-        .select('id, client_id, title, lender, loan_amount, purchase_price, settlement_date, finance_status, risk_level')
+        .select('id, client_id, title, lender, max_approved_budget, purchase_price, settlement_date, finance_status, risk_level')
         .eq('assigned_finance_user_id', portalUser.id)
         .gte('settlement_date', todayIso)
         .lte('settlement_date', horizonEndIso)
@@ -161,7 +161,7 @@ Deno.serve(async (req) => {
       for (const pf of settlements || []) {
         if (!pf.settlement_date) continue;
         if (existingSettlementPFs.has(pf.id)) continue;
-        const loan = Number(pf.loan_amount || pf.purchase_price || 0);
+        const loan = Number(pf.max_approved_budget || pf.purchase_price || 0);
         if (loan <= 0) continue;
         const netEst = estimateNetFromLoan(loan);
         const grossEst = Math.round(loan * DEFAULT_UPFRONT_RATE);
@@ -211,15 +211,24 @@ Deno.serve(async (req) => {
 
       const { data: deals } = await supabase
         .from('client_deals')
-        .select('id, client_id, loan_amount, commission_estimate, clawback_period_months, clawback_expiry_date, clawback_risk_active, settlement_date, lender, risk_status')
+        .select('id, client_id, purchase_file_id, loan_amount, commission_estimate, clawback_period_months, clawback_expiry_date, clawback_risk_active, settlement_date, risk_status')
         .in('client_id', clientIds)
         .eq('clawback_risk_active', true);
 
+      // `client_deals` has no lender column — the lender is recorded on the
+      // purchase file the deal finances. Naming it in the select failed the
+      // whole query, so the clawback register was permanently empty.
+      const dealFileIds = [...new Set((deals || []).map((d: any) => d.purchase_file_id).filter(Boolean))];
+      const { data: dealFiles } = dealFileIds.length
+        ? await supabase.from('purchase_files').select('id, lender').in('id', dealFileIds)
+        : { data: [] as any[] };
+      const lenderByFile = new Map((dealFiles || []).map((f: any) => [f.id, f.lender]));
+
       const { data: clients } = await supabase
         .from('clients')
-        .select('id, first_name, last_name')
+        .select('id, primary_first_name, primary_surname')
         .in('id', clientIds);
-      const clientMap = new Map((clients || []).map((c: any) => [c.id, `${c.first_name || ''} ${c.last_name || ''}`.trim()]));
+      const clientMap = new Map((clients || []).map((c: any) => [c.id, `${c.primary_first_name || ''} ${c.primary_surname || ''}`.trim()]));
 
       const today = new Date();
       const enriched = (deals || []).map((d: any) => {
@@ -239,7 +248,7 @@ Deno.serve(async (req) => {
           deal_id: d.id,
           client_id: d.client_id,
           client_name: clientMap.get(d.client_id) || 'Client',
-          lender: d.lender,
+          lender: lenderByFile.get(d.purchase_file_id) || null,
           loan_amount: d.loan_amount,
           amount_at_risk: amountAtRisk,
           clawback_expiry_date: d.clawback_expiry_date,
@@ -285,14 +294,14 @@ Deno.serve(async (req) => {
       // Actuals — settlements this month
       const { data: settled } = await supabase
         .from('purchase_files')
-        .select('id, loan_amount, purchase_price, settlement_date, finance_status')
+        .select('id, max_approved_budget, purchase_price, settlement_date, finance_status')
         .eq('assigned_finance_user_id', portalUser.id)
         .gte('settlement_date', ms)
         .lt('settlement_date', monthStart(nextMonth));
 
       const actualCount = (settled || []).length;
       const actualAmount = (settled || []).reduce(
-        (s: number, p: any) => s + Number(p.loan_amount || p.purchase_price || 0),
+        (s: number, p: any) => s + Number(p.max_approved_budget || p.purchase_price || 0),
         0,
       );
 

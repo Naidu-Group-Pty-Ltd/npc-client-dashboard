@@ -37,6 +37,7 @@ import {
   servableClearanceFor, servableDerivativeFor, type SanitizedDerivative,
 } from './sanitizedDerivative.pure.ts';
 import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
+import { readAllRows } from './pagedRead.ts';
 
 /** The stage whose provenance is the builder's own document. */
 export const SOURCE_SUPPLIED_STAGE = 'uploaded_document';
@@ -408,19 +409,55 @@ export async function enforceStrictPrimaryImages(
 ): Promise<{ inspected: number; cleared: number; corrected: number; skipped: number }> {
   const outcome = { inspected: 0, cleared: 0, corrected: 0, skipped: 0 };
 
-  const { data: items } = await db
-    .from('builder_stock_items')
-    .select('id, primary_image_id')
-    .eq('organisation_id', organisationId)
-    .in('lifecycle_status', PROCESSED_LIFECYCLE)
-    .limit(20000);
-  if (!items?.length) return outcome;
+  /*
+   * BOTH READS ARE PAGED, AND A SHORT ANSWER STOPS THE SWEEP DEAD.
+   *
+   * `.limit(20000)` and `.limit(200000)` were never honoured: PostgREST caps a
+   * response at `db-max-rows` — 1,000 on this deployment — and says so only in
+   * a header nothing here reads. The organisation held 1,926 images, the sweep
+   * saw 1,000, and every property whose photograph sat in the missing 926
+   * reached `chooseCardImage([])` and had its pointer CLEARED as "nothing to
+   * show". Eleven properties holding an eligible builder photograph, all of it
+   * past the cut, all of them blank. See `pagedRead.ts`.
+   *
+   * And an incomplete read now RETURNS rather than proceeding. This function's
+   * entire output is deletions and corrections computed from the images it can
+   * see, so reading fewer than all of them is not a smaller sweep — it is a
+   * sweep that blanks every card whose evidence it failed to load. The old code
+   * discarded `error` outright, which made a database fault indistinguishable
+   * from an organisation that owns no images at all.
+   */
+  const itemPage = await readAllRows<{ id: string; primary_image_id: string | null }>(
+    () => db
+      .from('builder_stock_items')
+      .select('id, primary_image_id')
+      .eq('organisation_id', organisationId)
+      .in('lifecycle_status', PROCESSED_LIFECYCLE)
+      .order('id', { ascending: true }));
+  if (itemPage.failed) {
+    console.error('[builderStock] primary-image sweep skipped: items could not be read', {
+      phase: 'enforce_primary_images', organisation_id: organisationId,
+      detail: String((itemPage.error as { message?: string })?.message ?? itemPage.error),
+    });
+    return outcome;
+  }
+  const items = itemPage.rows;
+  if (!items.length) return outcome;
 
-  const { data: images } = await db
-    .from('builder_stock_item_images')
-    .select('id, stock_item_id, source_stage, verification_status, processing_status, position, storage_path, external_url, source_detail')
-    .eq('organisation_id', organisationId)
-    .limit(200000);
+  const imagePage = await readAllRows<DisplayableImage & { stock_item_id: string }>(
+    () => db
+      .from('builder_stock_item_images')
+      .select('id, stock_item_id, source_stage, verification_status, processing_status, position, storage_path, external_url, source_detail')
+      .eq('organisation_id', organisationId)
+      .order('id', { ascending: true }));
+  if (imagePage.failed) {
+    console.error('[builderStock] primary-image sweep skipped: images could not be read', {
+      phase: 'enforce_primary_images', organisation_id: organisationId,
+      detail: String((imagePage.error as { message?: string })?.message ?? imagePage.error),
+    });
+    return outcome;
+  }
+  const images = imagePage.rows;
 
   /*
    * Lazily, for the reason `chooseAndStorePrimaryImage` gives above: this
@@ -429,13 +466,13 @@ export async function enforceStrictPrimaryImages(
   const { chooseCardImage } = await import('./imagePriority.pure.ts');
 
   const byItem = new Map<string, DisplayableImage[]>();
-  for (const image of (images ?? []) as Array<DisplayableImage & { stock_item_id: string }>) {
+  for (const image of images) {
     const bucket = byItem.get(image.stock_item_id) ?? [];
     bucket.push(image);
     byItem.set(image.stock_item_id, bucket);
   }
 
-  for (const item of items as Array<{ id: string; primary_image_id: string | null }>) {
+  for (const item of items) {
     outcome.inspected += 1;
     const candidates = byItem.get(item.id) ?? [];
 

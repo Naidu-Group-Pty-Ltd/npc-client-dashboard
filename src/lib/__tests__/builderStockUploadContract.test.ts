@@ -183,6 +183,11 @@ function stockDb() {
         (op === 'in' ? (v as unknown[]).includes(row[c]) : row[c] === v));
       const b: Record<string, unknown> = {
         select: () => b, order: () => b, limit: () => b, or: () => b,
+        // A paged read asks for one page at a time, because the API caps every
+        // response at `db-max-rows` however large a `.limit()` it is given.
+        range(from: number, to: number) {
+          return Promise.resolve(b as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
+        },
         not: () => b, neq: () => b, is: () => b, upsert: () => b, delete: () => b,
         eq(c: string, v: unknown) { filters.push(['eq', c, v]); return b; },
         in(c: string, v: unknown) { filters.push(['in', c, v]); return b; },

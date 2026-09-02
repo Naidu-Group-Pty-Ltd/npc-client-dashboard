@@ -19,6 +19,7 @@
  * real failure mode.
  */
 import { keyRowsByHeader, parseDelimited } from './table.pure.ts';
+import { attachRowHyperlinks, hyperlinkTargetOf } from './sheetHyperlinks.pure.ts';
 import { readHtmlSource } from './htmlSource.pure.ts';
 import { readOpenDocument, readPresentation, readRichText, readStructured } from './otherFormats.pure.ts';
 import type { StockFileClassification } from './fileTypes.pure.ts';
@@ -419,17 +420,70 @@ export async function extractStockFile(
         header: 1, raw: false, defval: null, blankrows: true,
       }) as unknown[][];
       if (!matrix.length) continue;
-      const origin = (() => {
+      const range = (() => {
         try {
-          return XLSX.utils.decode_range(String(sheet['!ref'] ?? 'A1')).s.r;
+          return XLSX.utils.decode_range(String(sheet['!ref'] ?? 'A1'));
         } catch {
-          return 0;
+          return null;
         }
       })();
+      const origin = range?.s.r ?? 0;
+
+      /*
+       * AND WHERE THE CELLS POINT, read in the same pass and indexed the same
+       * way as `matrix` above.
+       *
+       * `sheet_to_json` returns what a cell DISPLAYS. A stock list's brochure
+       * column displays the word "Brochure" and carries its address as a link
+       * — so an uploaded workbook arrived with every document it names
+       * discarded, and thirteen of the twenty-six live properties reached the
+       * image pipeline with no source at all. The reader that does see targets
+       * has existed here all along (`readWorkbookSheets`), and ran only for a
+       * Google Sheets URL, which fetches `…/export?format=xlsx` to obtain a
+       * workbook this branch was already holding.
+       *
+       * Both ways a builder can write a link are read, because both occur:
+       * `cell.l.Target` is what Insert > Link writes, and a cell that IS
+       * `=HYPERLINK("…","Brochure")` carries no link record at all. See
+       * `hyperlinkTargetOf`.
+       */
+      const links: (string | null)[][] = [];
+      if (range) {
+        for (let r = range.s.r; r <= range.e.r; r += 1) {
+          const linkRow: (string | null)[] = [];
+          for (let c = range.s.c; c <= range.e.c; c += 1) {
+            const cell = sheet[XLSX.utils.encode_cell({ r, c })];
+            linkRow.push(hyperlinkTargetOf({
+              link: cell?.l?.Target ?? null,
+              formula: cell?.f ?? null,
+            }));
+          }
+          links.push(linkRow);
+        }
+      }
 
       // A wider scan than the default: the blank rows now count towards it.
       const keyed = keyRowsByHeader(matrix, { maxScan: 25 });
       if (keyed) {
+        /*
+         * The targets become ORDINARY COLUMNS on the row — `DOWNLOAD URL`
+         * beside `DOWNLOAD` — under the same `LINK_COLUMN_SUFFIX` the Google
+         * Sheets path uses, so a builder's brochure reaches the same place
+         * whether they pasted a link to their sheet or dragged in the file.
+         * Nothing downstream is taught anything new: an unrecognised heading
+         * lands in `unmapped`, and `rowSourceBranches` already reads every
+         * address out of there.
+         */
+        const attached = attachRowHyperlinks({
+          rows: keyed.rows,
+          rowIndexes: keyed.rowIndexes,
+          headers: keyed.headers,
+          links,
+        });
+        if (attached.linksResolved) {
+          result.warnings.push(
+            `Read ${attached.linksResolved} link target(s) from ${sheetName}.`);
+        }
         anchorRows(keyed.rows, keyed.rowIndexes,
           (sourceIndex) => sheetRowAnchor(sheetName, origin + sourceIndex));
         result.rows.push(...keyed.rows.slice(0, MAX_ROWS - result.rows.length));

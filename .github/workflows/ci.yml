@@ -239,6 +239,13 @@ jobs:
             src/lib/__tests__/builderStock \
             src/lib/__tests__/builderPortal
 
+      # These specs existed and no step named them, which is the same failure
+      # `check-gates-wired.mjs` was written for: a guard nobody runs still reads
+      # as coverage. The cash-flow projection geometry, the comparison picker's
+      # query contract and the candidate rules were all in that position.
+      - name: Unit tests (Cash Flow analysis)
+        run: npx vitest run src/lib/cashFlow src/components/cash-flow
+
       # The Cloudflare worker ships OUTSIDE supabase/functions and src, so no
       # scanner, lint run or typecheck ever reached it — its test file sat
       # beside the step above without being named by it, and every proof in it
@@ -484,6 +491,14 @@ jobs:
       # Ratcheted: the existing backlog is frozen, new sites fail.
       - name: No new mass assignment (WP-20)
         run: node scripts/security/check-mass-assignment.mjs
+
+      # A column the table does not have is INVISIBLE: PostgREST answers 42703
+      # and the discarded error leaves `data` null, which reads as "no rows".
+      # Fifty-eight of these were live at once — a storage upload refused 403,
+      # a marketing dispatch with no recipients, an embedding backfill that had
+      # never run, and three authorisation fallbacks that could never grant.
+      - name: Edge Functions name columns their tables have
+        run: node scripts/security/check-edge-column-names.mjs
 
       # WP-24: items 6, 8, 9 and 13 of the 20-item review were already in good
       # shape and gated by nothing — true because of how somebody wrote the code

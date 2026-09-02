@@ -139,6 +139,19 @@ export interface BuilderStockItem {
   last_seen_at: string;
   /** Attached by the server. */
   images?: BuilderStockImage[];
+  /**
+   * How many builder documents this property's own row attaches — a brochure,
+   * a siting plan, a plan of subdivision.
+   *
+   * Counted by the server with the same rule the image pipeline uses to decide
+   * what it will try, so this cannot claim a document the pipeline would not
+   * read. It is a COUNT and never a list: saying a row attaches nothing needs
+   * no address.
+   *
+   * Zero is the one reason for a missing picture that a builder can act on. No
+   * reader conjures a document nobody attached.
+   */
+  source_documents?: number;
   builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
   selection_count?: number;
   latest_selection?: {

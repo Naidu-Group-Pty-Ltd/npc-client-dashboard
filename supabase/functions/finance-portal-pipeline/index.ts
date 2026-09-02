@@ -370,9 +370,17 @@ Deno.serve(async (req) => {
 
       const { data: deals } = await supabase
         .from('client_deals')
-        .select('id, client_id, loan_amount, commission_estimate, clawback_period_months, clawback_expiry_date, clawback_risk_active, settlement_date, lender, risk_status')
+        .select('id, client_id, purchase_file_id, loan_amount, commission_estimate, clawback_period_months, clawback_expiry_date, clawback_risk_active, settlement_date, risk_status')
         .in('client_id', clientIds)
         .eq('clawback_risk_active', true);
+
+      // `client_deals` has no lender column — it is on the purchase file the
+      // deal finances. See `finance-portal-forecasting` for the same fix.
+      const dealFileIds = [...new Set((deals || []).map((d: any) => d.purchase_file_id).filter(Boolean))];
+      const { data: dealFiles } = dealFileIds.length
+        ? await supabase.from('purchase_files').select('id, lender').in('id', dealFileIds)
+        : { data: [] as any[] };
+      const lenderByFile = new Map((dealFiles || []).map((f: any) => [f.id, f.lender]));
 
       const { data: clients } = await supabase
         .from('clients')
@@ -399,7 +407,7 @@ Deno.serve(async (req) => {
           client_name: c ? `${c.primary_first_name || ''} ${c.primary_surname || ''}`.trim() : 'Client',
           client_email: c?.primary_email,
           client_phone: c?.primary_mobile,
-          lender: d.lender,
+          lender: lenderByFile.get(d.purchase_file_id) || null,
           loan_amount: Number(d.loan_amount || 0),
           amount_at_risk: Number(d.commission_estimate || 0),
           clawback_expiry_date: d.clawback_expiry_date,

@@ -310,8 +310,8 @@ Deno.serve(async (req) => {
 
       let clientName: string | null = null;
       if (body.client_id) {
-        const { data: c } = await supabase.from('clients').select('first_name,last_name').eq('id', body.client_id).maybeSingle();
-        clientName = c ? [c.first_name, c.last_name].filter(Boolean).join(' ') : null;
+        const { data: c } = await supabase.from('clients').select('primary_first_name,primary_surname').eq('id', body.client_id).maybeSingle();
+        clientName = c ? [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ') : null;
       }
 
       const dueDate = terms?.payment_business_days
@@ -1119,14 +1119,14 @@ Deno.serve(async (req) => {
         throw new Error('verification_contact_number required for a callback verification');
       }
       const { data: actor } = adminUserId
-        ? await supabase.from('custom_users').select('full_name, email').eq('id', adminUserId).maybeSingle()
+        ? await supabase.from('custom_users').select('first_name, last_name, email').eq('id', adminUserId).maybeSingle()
         : { data: null } as any;
 
       const { data, error } = await supabase.from('finance_partner_bank_details').update({
         status: 'verified',
         independent_verification_date: body.verification_date || new Date().toISOString().slice(0, 10),
         verified_by: adminUserId,
-        verified_by_name: actor?.full_name || actor?.email || null,
+        verified_by_name: [actor?.first_name, actor?.last_name].filter(Boolean).join(' ') || actor?.email || null,
         verification_method,
         verification_contact_number: verification_contact_number || null,
         verification_notes: verification_notes || null,

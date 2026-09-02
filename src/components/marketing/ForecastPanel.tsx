@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, TrendingUp, TrendingDown, Minus, Brain, AlertTriangle, DollarSign, Target, BarChart3 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 
@@ -32,7 +33,12 @@ interface ForecastPanelProps {
   aiError?: string;
   loading: boolean;
   horizonDays: number;
+  /** Lets the reader change how far ahead the model projects. */
+  onHorizonChange?: (days: number) => void;
 }
+
+/** Projection horizons the panel offers. */
+const HORIZON_OPTIONS = [7, 14, 30, 60, 90];
 
 function TrendIcon({ trend }: { trend: string }) {
   if (trend === 'increasing' || trend === 'improving') return <TrendingUp className="h-3.5 w-3.5 text-success" />;
@@ -40,17 +46,27 @@ function TrendIcon({ trend }: { trend: string }) {
   return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
-function TrendBadge({ label, trend }: { label: string; trend: string }) {
+function TrendBadge({ label, trend }: { label: string; trend?: string }) {
+  // No detected trend => no badge. A dash beside a bare label read as a
+  // broken reading, not as "steady".
+  if (!trend) return null;
+
   const colorClass = (trend === 'improving' || (trend === 'increasing' && (label === 'Leads')))
     ? 'border-success/30 text-success dark:text-success bg-success/5'
     : (trend === 'worsening' || (trend === 'decreasing' && label === 'Leads') || (trend === 'increasing' && label === 'Spend'))
       ? 'border-destructive/30 text-destructive dark:text-destructive bg-destructive/5'
       : 'border-muted-foreground/30 text-muted-foreground bg-muted/30';
 
+  const trendLabel = trend === 'stable' ? 'steady' : trend;
+
   return (
-    <Badge variant="outline" className={`gap-1 rounded-full px-2 py-0.5 text-[10px] ${colorClass}`}>
+    <Badge
+      variant="outline"
+      className={`gap-1 rounded-full px-2 py-0.5 text-[10px] ${colorClass}`}
+      title={`Detected ${label.toLowerCase()} trend over the history window: ${trendLabel}`}
+    >
       <TrendIcon trend={trend} />
-      {label}: {trend}
+      {label}: {trendLabel}
     </Badge>
   );
 }
@@ -75,7 +91,7 @@ function formatShortDate(dateStr: string) {
   return d.toLocaleDateString('en-AU', { month: 'short', day: 'numeric' });
 }
 
-export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiError, loading, horizonDays }: ForecastPanelProps) {
+export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiError, loading, horizonDays, onHorizonChange }: ForecastPanelProps) {
   if (loading) {
     return (
       <Card className="overflow-hidden border-border/70 bg-card/95 shadow-xl shadow-sm dark:shadow-black/5 dark:border-white/10 dark:shadow-black/25">
@@ -123,12 +139,28 @@ export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiErr
                 <TrendingUp className="h-5 w-5 text-primary" />
               </span>
               <span className="truncate">Performance Forecast</span>
-              <Badge variant="secondary" className="shrink-0 rounded-full text-[10px] font-mono">
-                {horizonDays}d horizon
-              </Badge>
+              {onHorizonChange ? (
+                <Select value={String(horizonDays)} onValueChange={(v) => onHorizonChange(Number(v))}>
+                  <SelectTrigger
+                    aria-label="Projection horizon"
+                    className="h-7 w-[7.5rem] shrink-0 rounded-full border-border/70 bg-background/60 px-2.5 text-[11px] font-mono"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {HORIZON_OPTIONS.map((d) => (
+                      <SelectItem key={d} value={String(d)}>{d}d horizon</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Badge variant="secondary" className="shrink-0 rounded-full text-[10px] font-mono">
+                  {horizonDays}d horizon
+                </Badge>
+              )}
             </CardTitle>
             <CardDescription className="mt-1">
-              Time-series projections based on historical trends
+              Projects the NEXT {horizonDays} days forward from historical trends — separate from the analytics date range above, which selects the history it learns from
             </CardDescription>
           </div>
           {trends && (

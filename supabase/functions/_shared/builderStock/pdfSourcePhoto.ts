@@ -41,7 +41,9 @@ import {
   IDENTITY,
   type DrawnImage, type Matrix, type PdfScope, type PdfWidget,
 } from './pdfPageImages.pure.ts';
-import { assignPdfMediaRoles, type PdfMediaPlacement } from './pdfPrimaryImage.pure.ts';
+import {
+  assignPdfMediaRoles, coverSearchPages, type PdfMediaPlacement,
+} from './pdfPrimaryImage.pure.ts';
 import { isolatePhotographBand } from './pdfFlattenedPhoto.pure.ts';
 import { cropRows, encodePng, inflate, sha256Hex } from './rasterPng.ts';
 import { validateSourceImageBytes } from './sourceAssets.pure.ts';
@@ -584,7 +586,27 @@ export async function selectPdfPropertyPrimary(
   primary: PdfSourceAsset | null;
   pageOrderAuthoritative: boolean;
 }> {
-  const found = await discoverPdfSourceAssets(bytes, { maxPages: options.maxPages });
+  /*
+   * THE EXPENSIVE STEP IS TOLD WHERE TO LOOK.
+   *
+   * Which page can be this property's cover is decidable from the text, which
+   * is already in hand and costs nothing; decoding a page's rasters is what
+   * kills the worker on a heavy brochure. So the pages are chosen first and
+   * only those are materialised. `coverSearchPages` returns a SUPERSET of what
+   * `assignPdfMediaRoles` could choose (see its header), so this cannot remove
+   * a page the decision would have used — and an empty answer means "no
+   * opinion", which leaves the unscoped walk exactly as it was.
+   */
+  const searchPages = coverSearchPages({
+    label: options.label ?? null,
+    pageTexts: options.pageTexts ?? [],
+    design: options.design ?? null,
+    structuralCoverPage: options.structuralCoverPage ?? null,
+  });
+  const found = await discoverPdfSourceAssets(bytes, {
+    maxPages: options.maxPages,
+    pages: searchPages,
+  });
 
   // The SAME decision an upload and a repair make, over the same inputs.
   const roles = assignPdfMediaRoles({
@@ -617,15 +639,31 @@ export async function selectPdfPropertyPrimary(
  */
 export async function discoverPdfSourceAssets(
   bytes: Uint8Array,
-  options: { maxPages?: number } = {},
+  options: {
+    maxPages?: number;
+    /**
+     * The pages worth DECODING, from `coverSearchPages`.
+     *
+     * Candidate discovery still walks the document — it reads drawing
+     * instructions and is cheap — so `placementsOnPage` is counted over the
+     * whole page exactly as before. What is scoped is `materialise`, which
+     * decodes pixels, and the flattened-page crop, which rasterises one.
+     *
+     * EMPTY OR ABSENT MEANS EVERY PAGE. A caller with no opinion gets the walk
+     * it has always had.
+     */
+    pages?: readonly number[];
+  } = {},
 ): Promise<{ assets: PdfSourceAsset[]; pageOrderAuthoritative: boolean }> {
   const recovered = await recoverCompressedObjects(bytes);
   const authoritative = pageOrderIsAuthoritative(bytes, recovered);
   const limit = Math.max(1, Math.min(options.maxPages ?? MAX_PAGES_SEARCHED, MAX_PAGES_SEARCHED));
   const { kept } = await discoverCandidates(bytes, recovered, limit);
+  const only = options.pages?.length ? new Set(options.pages) : null;
 
   const assets: PdfSourceAsset[] = [];
   for (const candidate of kept) {
+    if (only && !only.has(candidate.page)) continue;
     const made = await materialise(bytes, candidate);
     if (!made) continue;
     assets.push({
@@ -663,6 +701,7 @@ export async function discoverPdfSourceAssets(
   const pagesWithAssets = new Set(assets.map((asset) => asset.page));
   for (let index = 0; index < limit; index++) {
     const page = index + 1;
+    if (only && !only.has(page)) continue;
     if (pagesWithAssets.has(page)) continue;
     const cut = await extractPdfPagePhoto(bytes, index, recovered);
     if (!cut || cut.provenance.method !== 'page_crop') continue;

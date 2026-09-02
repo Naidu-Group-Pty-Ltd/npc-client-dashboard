@@ -196,12 +196,25 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
     );
   });
 
-  // Summary stats
+  // Summary stats. Combined figures count each CLIENT once, at their most
+  // recent analysis — summing every report row counted the same portfolio
+  // once per report generated (five runs for one client inflated the
+  // combined value fivefold).
   const totalReports = reports.length;
-  const avgHealthScore = reports.length > 0
-    ? Math.round(reports.reduce((acc, r) => acc + (r.health_score || 0), 0) / reports.length)
+  const latestReportPerClient = (() => {
+    const byClient = new Map<string, PortfolioAnalysisReport>();
+    for (const report of reports) {
+      const existing = byClient.get(report.client_id);
+      if (!existing || new Date(report.created_at) > new Date(existing.created_at)) {
+        byClient.set(report.client_id, report);
+      }
+    }
+    return [...byClient.values()];
+  })();
+  const avgHealthScore = latestReportPerClient.length > 0
+    ? Math.round(latestReportPerClient.reduce((acc, r) => acc + (r.health_score || 0), 0) / latestReportPerClient.length)
     : 0;
-  const totalPortfolioValue = reports.reduce((acc, r) => acc + (Number(r.portfolio_value) || 0), 0);
+  const totalPortfolioValue = latestReportPerClient.reduce((acc, r) => acc + (Number(r.portfolio_value) || 0), 0);
   // Visual-only cue using the existing scorecard ranges; does not alter the average score calculation.
   const avgHealthAccent = avgHealthScore >= 80
     ? 'from-success to-success shadow-success/20'
@@ -397,6 +410,9 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
               </CardHeader>
               <CardContent className="px-5 pb-5 pt-0">
                 <div className="min-w-0 whitespace-nowrap text-[clamp(1.875rem,2.6vw,2.625rem)] font-bold leading-none tracking-[-0.045em] text-brand-50">{formatCurrency(totalPortfolioValue)}</div>
+                <p className="mt-2 text-[11px] leading-4 text-brand-100/70">
+                  Latest analysis per client — earlier runs are not double-counted.
+                </p>
                 <div className="mt-4 h-px bg-gradient-to-r from-brand-200/80 via-brand-100/30 to-transparent" />
               </CardContent>
             </Card>

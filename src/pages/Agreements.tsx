@@ -103,8 +103,11 @@ const STATUS_CONFIG: Record<
     label: "Generated · Ready",
     variant: "outline",
     icon: FileCheck2,
+    // dark:text-info, never dark:text-info-foreground: --info-foreground is
+    // near-black in dark mode (it is the ink for a SOLID bg-info), so on this
+    // 10% tint it rendered as an unreadable dark-on-dark capsule.
     toneClassName:
-      "border-info/70 bg-info/10 text-info shadow-info/5 dark:border-info/30 dark:bg-info/10 dark:text-info-foreground",
+      "border-info/70 bg-info/10 text-info shadow-info/5 dark:border-info/40 dark:bg-info/15 dark:text-info",
   },
   draft: {
     label: "Draft",

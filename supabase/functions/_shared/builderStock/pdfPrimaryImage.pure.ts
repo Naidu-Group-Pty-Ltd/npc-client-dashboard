@@ -479,6 +479,57 @@ export interface PdfMediaPlacement {
  * At most ONE assignment comes back as `primary_property`, and only when the
  * document said so.
  */
+/**
+ * THE PAGES WORTH DECODING, decided from the text alone.
+ *
+ * WHY THIS EXISTS. `discoverPdfSourceAssets` materialises every raster it finds
+ * on up to twelve pages, and materialising means decoding — a 13.2 MB brochure
+ * of 5334x3334 JPEGs is twelve pages of that before anything has been decided.
+ * The edge worker does not survive it: `CPU Time exceeded`, `Memory limit
+ * exceeded`, no throw, no `finally`, no response. Measured in production on 2
+ * September 2026, the live Luxton list: Lot 516 (10.6 MB, 19 pages) and Lot
+ * 6706 (13.2 MB, 23 pages) both sat at `attempts: 2`, one tick from being
+ * retired as documents that name no image — while their cover pages hold a
+ * 2000x1250 render that reads in under six seconds once it is the only thing
+ * decoded.
+ *
+ * WHICH IS THE POINT: which page can be this property's cover is decided by
+ * TEXT, and text costs nothing. So the expensive step is told where to look
+ * instead of looking everywhere and being killed before it can be asked.
+ *
+ * IT IS A SUPERSET, AND THAT IS THE SAFETY PROPERTY. It returns every page
+ * `assignPdfMediaRoles` could possibly choose — every qualifying property
+ * cover, the structural tie, and every design cover — rather than the one it
+ * WILL choose, because narrowing to the winner would make this a second
+ * implementation of the choice and the two would drift. Scoping can therefore
+ * never remove a page the role assignment would have used; it can only remove
+ * pages that could never have won.
+ *
+ * AN EMPTY ANSWER MEANS "NO OPINION", never "no pages". A document whose text
+ * names no cover at all gets the unscoped walk it has always had, so its
+ * diagnostics — and the flattened-page path that reads a brochure exported as
+ * images — are untouched.
+ */
+export function coverSearchPages(input: {
+  label: string | null | undefined;
+  pageTexts: string[];
+  design?: string | null;
+  structuralCoverPage?: number | null;
+}): number[] {
+  const pages = new Set<number>();
+  for (const cover of findPropertyCoverPages(input.pageTexts ?? [], input.label)) {
+    pages.add(cover.page);
+  }
+  for (const cover of findDesignCoverPages(input.pageTexts ?? [], input.design ?? null)) {
+    pages.add(cover.page);
+  }
+  if (Number.isInteger(input.structuralCoverPage)
+    && (input.structuralCoverPage as number) > 0) {
+    pages.add(input.structuralCoverPage as number);
+  }
+  return [...pages].sort((a, b) => a - b);
+}
+
 export function assignPdfMediaRoles(input: {
   label: string | null | undefined;
   pageTexts: string[];

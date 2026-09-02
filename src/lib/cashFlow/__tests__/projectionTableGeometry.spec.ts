@@ -12,6 +12,10 @@ import {
   PROJECTION_YEAR_COL_MIN_WIDTH,
   PROJECTION_YEAR_EDIT_CELL_CLASS,
   PROJECTION_YEAR_HEAD_CLASS,
+  PROJECTION_SECTION_LABEL_CELL_CLASS,
+  PROJECTION_SECTION_LABEL_INNER_CLASS,
+  PROJECTION_TOTAL_LABEL_CELL_CLASS,
+  PROJECTION_TOTAL_LABEL_INNER_CLASS,
 } from '../projectionTableGeometry.pure';
 
 // The primitives these classes are merged onto. Copied from
@@ -129,5 +133,77 @@ describe('10-Year Projection Overview column geometry', () => {
     const src = readFileSync(resolve(__dirname, '../../../components/ui/table.tsx'), 'utf8');
     expect(src).toContain(TABLE_CELL_BASE);
     expect(src).toContain(TABLE_HEAD_BASE);
+  });
+});
+
+/**
+ * Audit item 2, second pass: "the entire left section should be frozen".
+ *
+ * The first pass pinned each section heading as a sticky inline-block inside a
+ * `colSpan={12}` cell, which holds the TEXT still but leaves the row with no
+ * frozen CELL — and it left the two highlighted total rows untouched, whose
+ * sticky cells were `bg-primary/10`. A translucent sticky cell does not
+ * occlude what scrolls beneath it: the year figures slid under "After-Tax
+ * Cash Flow p/a $" and showed through the tint, which on the dark theme is
+ * exactly the reported "the sections highlighted in dark blue move while the
+ * rows beside them are frozen".
+ *
+ * The rule these tests hold: a frozen cell is OPAQUE, and the tint is an
+ * inner layer. Measured in Chromium against the built stylesheet: with the
+ * scroller at +500px, the section cell, the total cell and an ordinary data
+ * cell all hold the same left edge, and both new cells compute an opaque
+ * background.
+ */
+describe('the frozen rail runs through the banded rows', () => {
+  const modal = () =>
+    readFileSync(resolve(__dirname, '../../../components/reports/CashFlowAnalysisModal.tsx'), 'utf8');
+
+  it('a banded row\'s frozen cell is sticky, opaque, and unpadded', () => {
+    for (const cell of [PROJECTION_SECTION_LABEL_CELL_CLASS, PROJECTION_TOTAL_LABEL_CELL_CLASS]) {
+      const merged = classesOf(twMerge(TABLE_CELL_BASE, cell));
+      expect(merged).toContain('sticky');
+      expect(merged).toContain('left-0');
+      // Opaque base — the whole defect was a translucent one.
+      expect(merged).toContain('bg-background');
+      expect(cell).not.toMatch(/bg-\w+\/\d/);
+      // BOTH paddings must be displaced: `p-0` alone loses to the primitive's
+      // `sm:p-4` from 640px up — the tailwind-merge lesson this module's own
+      // header records. The tint layer inside carries the real padding.
+      expect(merged).toContain('p-0');
+      expect(merged).toContain('sm:p-0');
+      expect(merged).not.toContain('sm:p-4');
+    }
+  });
+
+  it('the tint lives on the inner layer, at the padding the cell gave up', () => {
+    expect(PROJECTION_SECTION_LABEL_INNER_CLASS).toContain('bg-primary/5');
+    expect(PROJECTION_SECTION_LABEL_INNER_CLASS).toContain('px-4 py-3');
+    expect(PROJECTION_TOTAL_LABEL_INNER_CLASS).toContain('bg-primary/10');
+    // The total row's neighbours keep the primitive's own padding, so its
+    // inner layer mirrors it and the row height cannot change.
+    expect(PROJECTION_TOTAL_LABEL_INNER_CLASS).toContain('px-3 py-2.5 sm:p-4');
+  });
+
+  it('every banded row in the modal goes through these classes', () => {
+    const src = modal();
+    const sections = src.match(/PROJECTION_SECTION_LABEL_CELL_CLASS/g) ?? [];
+    const totals = src.match(/PROJECTION_TOTAL_LABEL_CELL_CLASS/g) ?? [];
+    // The import line plus four section rows; the import line plus two totals.
+    expect(sections.length).toBe(5);
+    expect(totals.length).toBe(3);
+    // The first pass's mechanism is gone rather than dormant.
+    expect(src).not.toContain('sticky left-0 inline-block');
+    expect(src).not.toContain('colSpan={12}');
+  });
+
+  it('no sticky cell in the projection table paints a translucent background', () => {
+    const src = modal();
+    const start = src.indexOf('PROJECTION_TABLE_CLASS}>');
+    const table = src.slice(start, src.indexOf('</Table>', start));
+    // Every hand-written sticky cell must declare the opaque base beside it.
+    for (const sticky of table.match(/className="[^"]*sticky left-0[^"]*"/g) ?? []) {
+      expect(sticky, `translucent frozen cell: ${sticky}`).toContain('bg-background');
+      expect(sticky).not.toMatch(/sticky[^"]*bg-\w+\/\d/);
+    }
   });
 });

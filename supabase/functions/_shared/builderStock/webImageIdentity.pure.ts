@@ -19,6 +19,7 @@
  * goes wrong on new estates are refused BY NAME:
  *
  *   - another lot in the same estate (the estate matches; the lot does not)
+ *   - a page about several lots, which has identified no single property
  *   - a different house design at the same address
  *   - the estate's own marketing photography, which matches everything
  *   - a floorplan, masterplan, site plan or location map
@@ -112,6 +113,29 @@ export function verifyWebImageIdentity(
   ].filter(Boolean).join(' '));
   if (!haystack) return { ok: false, matched: [], reason: 'nothing_to_match' };
 
+  /*
+   * THE LOT IS READ FROM THE PAGE, NEVER FROM THE IMAGE'S FILE NAME.
+   *
+   * The lot number is the ONE discriminator here — everything else about a new
+   * estate matches every house in it — so where it is read from decides
+   * whether this rule works at all. The image URL is a statement by whoever
+   * hosts the picture about what they called a file; the page is what the
+   * search actually found and the only thing that says which property is being
+   * described.
+   *
+   * PRODUCTION, 2 SEPTEMBER 2026. Luxton's Lot 818 at Verve Estate carried
+   * `cdn.homesales.com.au/images/verve-estate-clyde-north-lot-818-render.jpg`,
+   * verified `[suburb, development, lot]`, taken from the page
+   * `openlot.com.au/verve-estate-clyde-north/house-land/lot-118-by-simonds-homes-52221`.
+   * That page is Lot 118, by Simonds Homes. Because the combined haystack
+   * carried both `lot 118` and `lot 818`, the "names a different lot" veto saw
+   * 818 in the list and passed it — and a client's card showed another
+   * builder's house under a badge saying where it came from.
+   */
+  const pageHaystack = norm([
+    candidate.pageUrl, candidate.title, candidate.snippet,
+  ].filter(Boolean).join(' '));
+
   for (const banned of NOT_A_FACADE) {
     if (haystack.includes(norm(banned))) {
       return { ok: false, matched: [], reason: `subject_not_a_facade:${banned}` };
@@ -155,10 +179,20 @@ export function verifyWebImageIdentity(
    */
   const lot = norm(identity.lotNumber ?? identity.unitNumber)
     || (norm(identity.addressLine).match(/^lot\s+(\d{1,5})\b/)?.[1] ?? '');
-  const named = lotsNamedIn(haystack);
+  /*
+   * AND A PAGE THAT NAMES MORE THAN ONE LOT HAS NAMED NONE OF THEM.
+   *
+   * The old rule refused a page whose lots did not INCLUDE ours, which is not
+   * the same test: a page naming lot 118 and lot 818 passed it, because ours
+   * was in the list. What has to hold is that every lot the page designates is
+   * this property's — one page, one property — so a comparison table, an
+   * estate's listing index and the Simonds case above are all refused on the
+   * same rule rather than three.
+   */
+  const named = [...new Set(lotsNamedIn(pageHaystack))];
   let lotMatched = false;
   if (lot) {
-    if (named.length && !named.includes(lot)) {
+    if (named.some((other) => other !== lot)) {
       return { ok: false, matched, reason: 'names_a_different_lot' };
     }
     if (named.includes(lot)) { matched.push('lot'); lotMatched = true; }

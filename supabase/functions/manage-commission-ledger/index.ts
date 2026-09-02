@@ -83,7 +83,10 @@ Deno.serve(async (req) => {
 
       case 'create': {
         const payload = pickAllowed(body.data, LEDGER_CREATE_ALLOWED, LEDGER_SERVICE_ONLY_FIELDS);
-        const insertRow = { ...payload, created_by: auth.userId, status: 'expected' };
+        // 'forecast' is the commission_status enum's opening state; the old
+        // 'expected' is not in the enum, so every create was refused by
+        // Postgres before a single row ever landed.
+        const insertRow = { ...payload, created_by: auth.userId, status: 'forecast' };
         const { data, error } = await supabase.from('commission_ledger').insert(insertRow).select().single();
         if (error) return j({ success: false, error: error.message }, 500);
         return j({ success: true, data });
@@ -98,10 +101,12 @@ Deno.serve(async (req) => {
       }
 
       case 'mark_received': {
-        // State transition: expected → received (server-controlled)
+        // State transition: forecast/invoiced → received (server-controlled).
+        // The old guard demanded 'expected', a value the commission_status
+        // enum does not contain, so no real row could ever be marked received.
         const { data: existing } = await supabase.from('commission_ledger').select('status').eq('id', body.id!).maybeSingle();
         if (!existing) return j({ success: false, error: 'Not found' }, 404);
-        if (existing.status !== 'expected') return j({ success: false, error: `Invalid transition from ${existing.status}` }, 409);
+        if (!['forecast', 'invoiced'].includes(existing.status)) return j({ success: false, error: `Invalid transition from ${existing.status}` }, 409);
         const updates = {
           status: 'received',
           received_date: (typeof body.data?.received_date === 'string' && body.data.received_date) || new Date().toISOString().slice(0, 10),

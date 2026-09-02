@@ -36,6 +36,7 @@ import {
 import {
   selectPdfPropertyPrimary, type PdfPhotoProvenance,
 } from './pdfSourcePhoto.ts';
+import { classifyBranch, sharedLinkFileUrl } from './sourceBranches.pure.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
 import { MAX_SOURCE_IMAGE_BYTES, sniffImageContentType } from './sourceAssets.pure.ts';
 import { PRIMARY_ROLE, type SourceImageRoleAssignment } from './sourceImageRole.pure.ts';
@@ -185,9 +186,6 @@ export async function recoverPackageImage(
   } catch {
     return { status: 'not_identified', detail: 'The package link is not a web address.' };
   }
-  if (!isGoogleDriveHost(host)) {
-    return { status: 'not_identified', detail: 'That package is not on a source we can read.' };
-  }
 
   const labelParts = lotAndDesignFrom(input.label);
   const lot = labelParts.lot;
@@ -198,12 +196,43 @@ export async function recoverPackageImage(
    */
   const design = labelParts.design ?? (String(input.design ?? '').trim() || null);
 
+  if (!isGoogleDriveHost(host)) {
+    /*
+     * NOT DRIVE IS NOT UNREADABLE, and refusing here was banked as knowledge.
+     *
+     * PRODUCTION, 1 SEPTEMBER 2026. All thirteen brochures on the live stock
+     * list are Dropbox shared links — `…/Lot-709-Verve.pdf?rlkey=…&dl=0` —
+     * and every one was answered "That package is not on a source we can
+     * read" before anything was fetched, then recorded as a finished
+     * `no_deterministic_image`. Thirteen properties whose builder filed a
+     * correct brochure were told their package named no image, and the
+     * fallback ladder offered other companies' houses instead. Measured the
+     * same day: each of those links serves the actual PDF (5–8 MB, `%PDF-`)
+     * once asked for the file rather than the viewer, via the `dl=1`
+     * parameter Dropbox itself publishes (`sharedLinkFileUrl`).
+     *
+     * So a link whose URL names a DOCUMENT is fetched and read exactly as a
+     * Drive direct link is — same guarded fetcher, same PDF gate, same
+     * cover-identification rules, and `direct_link` evidence, because a row
+     * pointing at a file is not the file naming the property. Everything
+     * else keeps the refusal: a bare page, a portal, a folder on a host with
+     * no listing this pipeline can parse is still not a source we can read,
+     * and saying so remains a finding rather than an error.
+     */
+    if (classifyBranch(input.packageUrl) === 'document') {
+      return await extractFromDocument(
+        fetchPackage, readPageTexts, sharedLinkFileUrl(input.packageUrl),
+        documentNameFromUrl(input.packageUrl), input.label, 'direct_link', design);
+    }
+    return { status: 'not_identified', detail: 'That package is not on a source we can read.' };
+  }
+
   // A link straight to one document: the row named the file itself.
   const directFileId = driveFileId(input.packageUrl);
   if (directFileId) {
     return await extractFromDocument(
-      fetchPackage, readPageTexts, directFileId, 'the linked document', input.label,
-      'direct_link', design);
+      fetchPackage, readPageTexts, driveDownloadUrl(directFileId), 'the linked document',
+      input.label, 'direct_link', design);
   }
 
   const rootId = driveFolderId(input.packageUrl);
@@ -285,7 +314,7 @@ export async function recoverPackageImage(
   }
 
   return await extractFromDocument(
-    fetchPackage, readPageTexts, document.id, document.name, input.label,
+    fetchPackage, readPageTexts, driveDownloadUrl(document.id), document.name, input.label,
     'folder_structure', design);
 }
 
@@ -468,11 +497,28 @@ async function takePhotographAsFiled(
   };
 }
 
+/** What the builder named the file, read from the link's own path. */
+function documentNameFromUrl(rawUrl: string): string {
+  try {
+    const last = new URL(rawUrl).pathname.split('/').filter(Boolean).pop() ?? '';
+    const name = decodeURIComponent(last).trim();
+    return name || 'the linked document';
+  } catch {
+    return 'the linked document';
+  }
+}
+
 async function extractFromDocument(
   fetchPackage: PackageFetcher,
   readPageTexts: (bytes: Uint8Array) => Promise<
     { ok: true; pages: string[] } | { ok: false; reason: string }>,
-  fileId: string,
+  /**
+   * The document's own address — a Drive download URL, or the FILE form of a
+   * shared link on an ordinary host. Built by the caller, because which host
+   * publishes which download parameter is the caller's knowledge, not this
+   * function's.
+   */
+  url: string,
   documentName: string,
   /** The property this package is supposed to be about. */
   label: string,
@@ -496,7 +542,6 @@ async function extractFromDocument(
    * `findDesignCoverPages`. */
   design?: string | null,
 ): Promise<PackageOutcome> {
-  const url = driveDownloadUrl(fileId);
   let bytes: Uint8Array;
   try {
     ({ bytes } = await fetchPackage(url));

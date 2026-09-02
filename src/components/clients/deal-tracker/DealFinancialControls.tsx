@@ -191,18 +191,20 @@ export function DealFinancialControls({ deal, onUpdate }: DealFinancialControlsP
         </Card>
       )}
 
-      {/* Refinance Commission & Clawback */}
-      {isRefinance && (
+      {/* Commission & Clawback — refinance AND existing property. An
+          existing-property purchase earns an agent fee too; H&L stays out
+          because its commissions are tracked per build progress payment. */}
+      {(isRefinance || deal.deal_type === 'existing_property') && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Shield className="h-4 w-4 text-primary" />
-              Commission & Clawback
+              {isRefinance ? 'Commission & Clawback' : 'Agent Fee / Commission'}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
-              <Label className="text-xs">Commission Estimate (Upfront)</Label>
+              <Label className="text-xs">{isRefinance ? 'Commission Estimate (Upfront)' : 'Agent Fee / Commission Estimate'}</Label>
               <Input
                 key={deal.id + '-ce'}
                 type="number"
@@ -212,28 +214,32 @@ export function DealFinancialControls({ deal, onUpdate }: DealFinancialControlsP
                 className="h-8 text-sm"
               />
             </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Trail Commission (Annual)</Label>
-              <Input
-                key={deal.id + '-tc'}
-                type="number"
-                defaultValue={deal.trail_commission ?? ''}
-                onBlur={(e) => handleNumericBlur('trail_commission', e.target.value)}
-                placeholder="$0"
-                className="h-8 text-sm"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Clawback Period (Months)</Label>
-              <Input
-                key={deal.id + '-cp'}
-                type="number"
-                defaultValue={deal.clawback_period_months ?? 24}
-                onBlur={(e) => handleNumericBlur('clawback_period_months', e.target.value)}
-                placeholder="24"
-                className="h-8 text-sm"
-              />
-            </div>
+            {isRefinance && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Trail Commission (Annual)</Label>
+                  <Input
+                    key={deal.id + '-tc'}
+                    type="number"
+                    defaultValue={deal.trail_commission ?? ''}
+                    onBlur={(e) => handleNumericBlur('trail_commission', e.target.value)}
+                    placeholder="$0"
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Clawback Period (Months)</Label>
+                  <Input
+                    key={deal.id + '-cp'}
+                    type="number"
+                    defaultValue={deal.clawback_period_months ?? 24}
+                    onBlur={(e) => handleNumericBlur('clawback_period_months', e.target.value)}
+                    placeholder="24"
+                    className="h-8 text-sm"
+                  />
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}

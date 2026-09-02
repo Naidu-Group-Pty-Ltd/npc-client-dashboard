@@ -414,6 +414,50 @@ export function useRecoverStockSourceImages() {
 }
 
 /**
+ * Hand over a picture for ONE property.
+ *
+ * Uploaded exactly as a stock list is — a signed URL, the browser PUTs to it,
+ * and a second call confirms. The bytes are validated SERVER-SIDE out of
+ * storage on that second call, so what is registered is what was actually
+ * stored rather than what this browser said it sent.
+ *
+ * IT NAMES ONE PROPERTY AND REACHES NO OTHER. There was briefly a second
+ * scope — a render supplied against a house DESIGN and fanned out to every
+ * lot stating it — and it is withdrawn: a matching design string is not
+ * evidence that a photograph is of a particular house.
+ *
+ * NOTHING HERE DECIDES WHICH PICTURE A CARD DRAWS. The supplied image is
+ * stored at evidence level 1 and the settler re-decides each card from the
+ * roles, as it always has.
+ */
+export function useSupplyBuilderStockImage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { file: File; stockItemId: string }) => {
+      const created = await invoke<{ storage_path: string; upload_url: string }>({
+        operation: 'create_builder_image',
+        filename: input.file.name,
+        stock_item_id: input.stockItemId,
+      });
+
+      const put = await fetch(created.upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': input.file.type || 'application/octet-stream' },
+        body: input.file,
+      });
+      if (!put.ok) throw new Error('The image could not be uploaded. Please try again.');
+
+      return await invoke<{ scope: 'property'; properties: number }>({
+        operation: 'attach_builder_image',
+        storage_path: created.storage_path,
+        stock_item_id: input.stockItemId,
+      });
+    },
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
+
+/**
  * Read a source this organisation already imported, again, with today's parsers.
  *
  * A stock list is read once at upload and never again, so every correction to

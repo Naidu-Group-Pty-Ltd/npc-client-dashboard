@@ -262,13 +262,15 @@ function ClawbackKPIs({ items }: { items: ClawbackDealInfo[] }) {
         <Card key={c.label} className={cn('relative overflow-hidden border transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg', c.bgColor)}>
           <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/20 to-transparent" />
           <CardContent className="p-3 sm:p-4">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <p className="text-[10px] sm:text-xs text-muted-foreground truncate uppercase tracking-[0.16em]">{c.label}</p>
-              <span className={cn('rounded-full border bg-background/70 p-1 shadow-sm', c.color)}>
+            <div className="flex items-start justify-between gap-2 mb-2">
+              {/* Wrap instead of truncate: "Commission at Risk" and "Trail
+                  Commission" were printing as "COMMISSION AT …". */}
+              <p className="min-w-0 break-words text-[11px] sm:text-xs leading-4 text-muted-foreground uppercase tracking-[0.12em]">{c.label}</p>
+              <span className={cn('shrink-0 rounded-full border bg-background/70 p-1 shadow-sm', c.color)}>
                 <c.icon className="h-3.5 w-3.5" />
               </span>
             </div>
-            <p className={cn('text-lg sm:text-xl font-bold leading-tight tabular-nums', (c as any).valueClass)}>{c.value}</p>
+            <p className={cn('text-lg sm:text-xl font-bold leading-tight tabular-nums', (c as any).valueClass)} title={String(c.value)}>{c.value}</p>
             {c.sub && <p className="text-[10px] text-muted-foreground mt-1">{c.sub}</p>}
           </CardContent>
         </Card>

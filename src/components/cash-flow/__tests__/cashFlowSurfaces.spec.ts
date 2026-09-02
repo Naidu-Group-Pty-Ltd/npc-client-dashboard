@@ -25,28 +25,39 @@ const exportMenu = readFileSync(
 
 describe('item 2 — the frozen column stays frozen', () => {
   /**
-   * The section bands ("Cash Deductions", "Summary") scrolled away while the
-   * metric cells beside them stayed put. They carried `sticky left-0` and were
-   * `colSpan={12}`, and `position: sticky` never moves an element outside its
-   * containing block — a cell as wide as the row has nowhere to go. Measured
-   * in Chromium: at `scrollLeft: 400` the label sat at -383px; with the label
-   * in an inline-block inside the cell it sits at +17px, unmoved.
+   * Two passes, and this pins the second. The first pinned each section
+   * heading as a sticky inline-block inside a `colSpan={12}` cell — which
+   * held the TEXT still, but left those rows with no frozen CELL, and left
+   * the two highlighted total rows' sticky cells TRANSLUCENT, so the year
+   * figures slid under "After-Tax Cash Flow p/a $" and showed through the
+   * tint. The heading now lives in the same kind of frozen cell as every
+   * data row — opaque base, band colour as an inner layer — with the other
+   * eleven columns as one spanned band beside it. The class contents are
+   * `projectionTableGeometry.spec.ts`'s to pin; this file pins that the
+   * modal's rows go through them.
    */
   it('no longer puts sticky on a full-width cell', () => {
     expect(modal).not.toMatch(/<TableCell className="sticky left-0[^"]*" colSpan=\{12\}>/);
   });
 
-  it('sticks the label instead, inside the cell that spans', () => {
-    const labels = modal.match(
-      /<span className="sticky left-0 inline-block px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary">/g,
-    ) ?? [];
+  it('gives every section heading a real frozen cell', () => {
+    const cells = modal.match(/PROJECTION_SECTION_LABEL_CELL_CLASS\}>/g) ?? [];
     // Statistics, Cash Deductions, Non-Cash Deductions, Summary.
-    expect(labels).toHaveLength(4);
+    expect(cells).toHaveLength(4);
+    // The first pass's mechanism is gone rather than dormant.
+    expect(modal).not.toContain('sticky left-0 inline-block');
   });
 
-  it('keeps the band spanning the row, so the heading still reads as a band', () => {
-    const bands = modal.match(/<TableCell className="bg-primary\/5 p-0" colSpan=\{12\}>/g) ?? [];
+  it('keeps the band beside it, spanning the eleven year columns', () => {
+    const bands = modal.match(/<TableCell className="bg-primary\/5 p-0 sm:p-0" colSpan=\{11\} \/>/g) ?? [];
     expect(bands).toHaveLength(4);
+    expect(modal).not.toContain('colSpan={12}');
+  });
+
+  it('freezes the highlighted total rows opaquely too', () => {
+    const cells = modal.match(/PROJECTION_TOTAL_LABEL_CELL_CLASS\}>/g) ?? [];
+    // After-Tax Cash Flow p/a $ and p/w $.
+    expect(cells).toHaveLength(2);
   });
 });
 

@@ -3,7 +3,9 @@ import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { DollarSign, Bell, CheckCircle, Clock, Circle, ReceiptText, Send, Banknote } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -78,8 +80,11 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
     const pendingSlabs = pending.filter(r => r.stageName === 'Slab/Base');
     const pendingFrames = pending.filter(r => r.stageName === 'Frame');
     const totalReceived = received.reduce((s, r) => s + (r.commissionAmount || 0), 0);
+    // Only stages with a set commission amount count — a missing amount is
+    // "not recorded", never a guessed figure.
+    const totalExpected = pending.reduce((s, r) => s + (r.commissionAmount || 0), 0);
     const totalPending = pending.length;
-    return { pending, received, pendingSlabs, pendingFrames, totalReceived, totalPending };
+    return { pending, received, pendingSlabs, pendingFrames, totalReceived, totalExpected, totalPending };
   }, [commissionRows]);
 
   const formatCurrency = (val: number) =>
@@ -146,6 +151,9 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
             <Clock className="mx-auto mb-2 h-5 w-5 text-brand-600" />
             <p className="text-2xl font-black tabular-nums text-brand-700 sm:text-3xl">{stats.totalPending}</p>
             <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-brand-800/75 dark:text-brand-200/80">Pending</p>
+            {stats.totalExpected > 0 && (
+              <p className="mt-0.5 text-[10px] font-semibold tabular-nums text-brand-700/80 dark:text-brand-200/70">{formatCurrency(stats.totalExpected)} expected</p>
+            )}
           </CardContent>
         </Card>
         <Card className={cn(kpiCardBase, 'border-brand-300/35 bg-gradient-to-br from-card via-brand-50/70 to-card dark:via-brand-950/20')}>
@@ -185,6 +193,9 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
             <Clock className="h-4 w-4 text-brand-500" />
             Pending Commission Triggers
           </CardTitle>
+          <p className="text-[11px] leading-4 text-muted-foreground">
+            Draw % and Draw amount are the bank's progress payment for the stage. Commission is what the agency is owed when that stage pays — set per stage because it varies builder to builder (configure stages on the client's deal, amounts here or there).
+          </p>
         </CardHeader>
         <CardContent className="p-0">
           <div className={cn(tableShellClass, 'max-w-full overflow-auto rounded-none border-0 shadow-none')}>
@@ -193,8 +204,9 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                 <TableRow>
                   <TableHead className="whitespace-nowrap">Client</TableHead>
                   <TableHead className="whitespace-nowrap">Stage</TableHead>
-                  <TableHead className="text-right whitespace-nowrap hidden sm:table-cell">%</TableHead>
-                  <TableHead className="text-right whitespace-nowrap hidden sm:table-cell">Amount</TableHead>
+                  <TableHead className="text-right whitespace-nowrap hidden sm:table-cell">Draw %</TableHead>
+                  <TableHead className="text-right whitespace-nowrap hidden sm:table-cell">Draw amount</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Commission</TableHead>
                   <TableHead className="text-center whitespace-nowrap">Invoice</TableHead>
                   <TableHead className="text-center whitespace-nowrap hidden sm:table-cell">Submitted</TableHead>
                   <TableHead className="text-center whitespace-nowrap">Funds</TableHead>
@@ -204,7 +216,7 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
               <TableBody>
                 {stats.pending.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="p-4">
+                    <TableCell colSpan={9} className="p-4">
                       <NoResultsState title="No pending commission triggers" description="There are no commission events waiting in this view. Received and zero-value states remain visible where recorded." />
                     </TableCell>
                   </TableRow>
@@ -220,6 +232,33 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                       </TableCell>
                       <TableCell className="hidden text-right font-mono text-xs font-semibold text-muted-foreground sm:table-cell">{row.percentage}%</TableCell>
                       <TableCell className="hidden text-right text-xs font-bold text-brand-700 tabular-nums sm:table-cell sm:text-sm">{row.amount ? formatCurrency(row.amount) : <span className={emptyDashClass}>—</span>}</TableCell>
+                      <TableCell className="text-right">
+                        {onUpdatePayment ? (
+                          <Input
+                            key={`${row.paymentId}-comm-${row.commissionAmount ?? 'unset'}`}
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            defaultValue={row.commissionAmount ?? ''}
+                            placeholder="$"
+                            aria-label={`Commission amount for ${row.clientName} — ${row.stageName}`}
+                            title="Commission the agency is owed at this stage (varies builder to builder)"
+                            className="ml-auto h-8 w-24 text-right font-mono text-xs"
+                            onBlur={(e) => {
+                              const raw = e.target.value.trim();
+                              const parsed = raw === '' ? null : Number(raw);
+                              const next = parsed !== null && Number.isFinite(parsed) ? parsed : null;
+                              if ((next ?? null) !== (row.commissionAmount ?? null)) {
+                                onUpdatePayment(row.paymentId, row.clientId, { commission_amount: next });
+                              }
+                            }}
+                          />
+                        ) : (
+                          <span className="text-xs font-bold tabular-nums text-brand-700">
+                            {row.commissionAmount ? formatCurrency(row.commissionAmount) : <span className={emptyDashClass}>—</span>}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-center">
                         <ToggleCheck value={row.builderInvoiceReceived} field="builder_invoice_received" row={row} />
                       </TableCell>
@@ -230,16 +269,13 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                         <ToggleCheck value={row.fundsReleased} field="funds_released" row={row} />
                       </TableCell>
                       <TableCell>
-                        <button
-                          onClick={() => onUpdatePayment?.(row.paymentId, row.clientId, {
-                            commission_received: true,
-                            commission_received_date: new Date().toISOString().split('T')[0],
-                          })}
-                          className="rounded-full transition-transform hover:-translate-y-0.5 hover:shadow-md"
-                          title="Mark commission as received"
-                        >
+                        {/* The status pill is a reading, not a control: it
+                            used to BE the button, so clicking "Awaiting" to
+                            see what it meant silently marked the commission
+                            received. The act now has its own labelled button. */}
+                        <div className="flex items-center gap-1.5 whitespace-nowrap">
                           {row.fundsReleased ? (
-                            <Badge className={pipelineBadgeClass('warning', false, 'whitespace-nowrap transition-colors hover:bg-brand-500/20')}><Banknote className="mr-1 h-3 w-3" />Awaiting</Badge>
+                            <Badge className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><Banknote className="mr-1 h-3 w-3" />Awaiting</Badge>
                           ) : row.submittedToLender ? (
                             <Badge variant="outline" className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><Send className="mr-1 h-3 w-3" />Submitted</Badge>
                           ) : row.builderInvoiceReceived ? (
@@ -247,7 +283,21 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                           ) : (
                             <span className={emptyDashClass}>—</span>
                           )}
-                        </button>
+                          {onUpdatePayment && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 shrink-0 rounded-full border-success/35 bg-success/5 px-2.5 text-[11px] font-semibold text-success hover:bg-success/10"
+                              title="Record that this commission payment has been received"
+                              onClick={() => onUpdatePayment(row.paymentId, row.clientId, {
+                                commission_received: true,
+                                commission_received_date: new Date().toISOString().split('T')[0],
+                              })}
+                            >
+                              Mark received
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

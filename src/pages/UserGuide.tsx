@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { LiveModelBadge, ModelUpgradeButton } from '@/components/agentModels';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -86,21 +86,19 @@ import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 export default function UserGuide() {
   const { planSlug, addonSlugs, loading: planLoading } = usePlanEntitlements();
   const { isSuperadmin } = usePermissions();
-  const accordionRef = useRef<string[]>([]);
-  
+  // Controlled accordion state: quick navigation must be able to open a
+  // section, and only real state can do that — clicking DOM nodes cannot.
+  const [openSections, setOpenSections] = useState<string[]>([]);
+
   const handleNavigateToSection = useCallback((sectionId: string) => {
-    // Find and scroll to the section
     const element = document.getElementById(`section-${sectionId}`);
-    if (element) {
+    if (!element) return;
+    setOpenSections((prev) => (prev.includes(sectionId) ? prev : [...prev, sectionId]));
+    // Scroll on the next frame so the newly opened section participates in
+    // layout; scroll-mt on the target keeps it clear of the sticky topbar.
+    requestAnimationFrame(() => {
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      // Open the accordion
-      accordionRef.current = [sectionId];
-      // Trigger a click on the accordion trigger to open it
-      const trigger = element.querySelector('[data-state]');
-      if (trigger && trigger.getAttribute('data-state') === 'closed') {
-        (trigger as HTMLElement).click();
-      }
-    }
+    });
   }, []);
 
   // Deep links: /user-guide#section-<id> scrolls to that section and opens its
@@ -329,7 +327,7 @@ export default function UserGuide() {
       </DashboardThemeFrame>
 
       {/* Quick Tips */}
-      <Card id="quick-tips" className="min-w-0 scroll-mt-6 overflow-hidden rounded-[1.5rem] border-primary/15 bg-card/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/75 dark:shadow-black/25">
+      <Card id="quick-tips" className="min-w-0 scroll-mt-24 overflow-hidden rounded-[1.5rem] border-primary/15 bg-card/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/75 dark:shadow-black/25">
         <CardHeader className="space-y-2 border-b border-border/50 bg-[linear-gradient(135deg,hsl(var(--primary)/0.08),hsl(var(--muted)/0.18))]">
           <CardTitle className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 shadow-inner shadow-primary/10">
@@ -370,7 +368,7 @@ export default function UserGuide() {
       </Card>
 
       {/* Property Status Guide */}
-      <Card id="property-status-guide" className="min-w-0 scroll-mt-6 overflow-hidden rounded-[1.5rem] border-primary/15 bg-card/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/75 dark:shadow-black/25">
+      <Card id="property-status-guide" className="min-w-0 scroll-mt-24 overflow-hidden rounded-[1.5rem] border-primary/15 bg-card/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/75 dark:shadow-black/25">
         <CardHeader className="space-y-2 border-b border-border/50 bg-[linear-gradient(135deg,hsl(var(--primary)/0.06),hsl(var(--muted)/0.16))]">
           <CardTitle className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-info/20 bg-info/10 shadow-inner shadow-info/10">
@@ -410,7 +408,7 @@ export default function UserGuide() {
       </Card>
 
       {/* Main Sections with Accordion */}
-      <Card id="feature-documentation" className="min-w-0 scroll-mt-6 overflow-hidden rounded-[1.5rem] border-primary/15 bg-card/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/75 dark:shadow-black/25">
+      <Card id="feature-documentation" className="min-w-0 scroll-mt-24 overflow-hidden rounded-[1.5rem] border-primary/15 bg-card/95 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/75 dark:shadow-black/25">
         <CardHeader className="space-y-4 border-b border-border/50 bg-[linear-gradient(135deg,hsl(var(--primary)/0.08),hsl(var(--muted)/0.16))]">
           <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 space-y-2">
@@ -516,9 +514,14 @@ export default function UserGuide() {
               <p className="mt-3 text-sm leading-6 text-muted-foreground">No documentation sections are available.</p>
             </div>
           ) : (
-          <Accordion type="multiple" className="grid min-w-0 w-full gap-3">
+          <Accordion
+            type="multiple"
+            value={openSections}
+            onValueChange={setOpenSections}
+            className="grid min-w-0 w-full gap-3"
+          >
             {sections.map((section) => (
-              <AccordionItem id={`section-${section.id}`} key={section.id} value={section.id} className="group/section scroll-mt-6 overflow-hidden rounded-2xl border border-border/65 bg-card/90 px-0 shadow-sm transition-all duration-200 hover:border-primary/25 hover:shadow-[0_12px_32px_rgba(15,23,42,0.08)] data-[state=open]:border-primary/35 data-[state=open]:shadow-[0_18px_48px_rgba(15,23,42,0.10),0_0_0_1px_hsl(var(--primary)/0.08)] dark:bg-background/60 dark:hover:shadow-black/20 dark:data-[state=open]:shadow-black/30">
+              <AccordionItem id={`section-${section.id}`} key={section.id} value={section.id} className="group/section scroll-mt-24 overflow-hidden rounded-2xl border border-border/65 bg-card/90 px-0 shadow-sm transition-all duration-200 hover:border-primary/25 hover:shadow-[0_12px_32px_rgba(15,23,42,0.08)] data-[state=open]:border-primary/35 data-[state=open]:shadow-[0_18px_48px_rgba(15,23,42,0.10),0_0_0_1px_hsl(var(--primary)/0.08)] dark:bg-background/60 dark:hover:shadow-black/20 dark:data-[state=open]:shadow-black/30">
                 <AccordionTrigger className="min-w-0 px-4 py-4 text-left transition-colors hover:bg-primary/5 hover:no-underline focus-visible:ring-2 focus-visible:ring-primary/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:bg-primary/10 sm:min-h-16 sm:px-5 [&>svg]:ml-3 [&>svg]:flex-shrink-0 [&>svg]:text-primary [&>svg]:transition-transform [&>svg]:duration-200">
                   <div className="flex min-w-0 items-center gap-3 pr-2">
                     <div className="flex-shrink-0 rounded-xl border border-primary/15 bg-primary/10 p-2 transition-colors group-data-[state=open]/section:border-primary/30 group-data-[state=open]/section:bg-primary/15">
@@ -690,7 +693,7 @@ export default function UserGuide() {
       </Card>
 
       {/* Support Section */}
-      <Card id="need-help" className="min-w-0 scroll-mt-6 overflow-hidden rounded-[1.5rem] border-primary/20 bg-card/90 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-primary/15 dark:bg-background/75 dark:shadow-black/25">
+      <Card id="need-help" className="min-w-0 scroll-mt-24 overflow-hidden rounded-[1.5rem] border-primary/20 bg-card/90 shadow-[0_18px_55px_rgba(15,23,42,0.08)] dark:border-primary/15 dark:bg-background/75 dark:shadow-black/25">
         <CardHeader className="space-y-2 border-b border-border/50 bg-[linear-gradient(135deg,hsl(var(--primary)/0.10),hsl(var(--muted)/0.16))]">
           <CardTitle className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-2xl border border-primary/25 bg-primary/10 shadow-inner shadow-primary/10">

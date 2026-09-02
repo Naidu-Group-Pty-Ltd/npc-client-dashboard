@@ -70,8 +70,11 @@ export function useAllReminders() {
 
       const unified: UnifiedReminder[] = [];
 
-      // 1) Client Reminders
+      // 1) Client Reminders. Team-scoped rows live in the same table but
+      // belong to the Team tab — without this guard a team reminder was
+      // listed here too, tagged "Client Reminder".
       for (const r of reminders) {
+        if (r.reminder_scope === 'team') continue;
         unified.push({
           id: `cr-${r.id}`,
           title: r.title,

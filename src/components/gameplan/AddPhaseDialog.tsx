@@ -51,7 +51,10 @@ export function AddPhaseDialog({ open, onOpenChange, planId, nextOrder, onCreate
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-primary/20 bg-[linear-gradient(145deg,hsl(var(--card)),hsl(var(--background)/0.94)_55%,hsl(var(--primary)/0.08))] p-0 shadow-2xl shadow-sm dark:shadow-black/20 sm:max-w-md dark:border-white/10 dark:bg-background dark:shadow-black/40">
+      {/* sm:overflow-y-auto is load-bearing: the dialog base sets
+          sm:overflow-visible, which let the form spill past the frame and
+          re-anchored the sticky footer mid-dialog instead of at its foot. */}
+      <DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-primary/20 bg-[linear-gradient(145deg,hsl(var(--card)),hsl(var(--background)/0.94)_55%,hsl(var(--primary)/0.08))] p-0 shadow-2xl shadow-sm dark:shadow-black/20 sm:max-h-[88dvh] sm:max-w-md sm:overflow-y-auto sm:p-0 dark:border-white/10 dark:bg-background dark:shadow-black/40">
         <DialogHeader className="border-b border-border/60 px-5 py-4 dark:border-white/10">
           <DialogTitle className="text-xl font-bold tracking-tight text-foreground">Add Phase</DialogTitle>
           <p className="text-sm text-muted-foreground">Create the next step in this strategic playbook.</p>

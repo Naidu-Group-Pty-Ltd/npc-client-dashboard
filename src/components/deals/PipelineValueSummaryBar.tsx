@@ -99,7 +99,7 @@ function MetricCard({ label, value, icon: Icon, variant }: MetricCardProps) {
     >
       <CardContent className="relative z-10 flex min-h-[118px] flex-col justify-between p-5">
         <div className="flex items-start justify-between gap-3">
-          <p className="max-w-[8.5rem] text-[0.72rem] font-medium uppercase leading-snug tracking-[0.14em] text-muted-foreground">
+          <p className="min-w-0 text-[0.72rem] font-medium uppercase leading-snug tracking-[0.14em] text-muted-foreground">
             {label}
           </p>
           <span
@@ -111,7 +111,12 @@ function MetricCard({ label, value, icon: Icon, variant }: MetricCardProps) {
             <Icon className={cn("h-[18px] w-[18px]", styles.icon)} aria-hidden="true" />
           </span>
         </div>
-        <p className="mt-6 truncate text-[2rem] font-semibold leading-none tracking-[-0.045em] text-foreground sm:text-[2.15rem] xl:text-[2.35rem]">
+        {/* Fluid size instead of three fixed steps: a seven-figure pipeline
+            total must shrink to fit its tile, never print as "$3,300…". */}
+        <p
+          className="mt-6 whitespace-nowrap text-[clamp(1.3rem,0.9vw+0.9rem,2.35rem)] font-semibold leading-none tracking-[-0.045em] text-foreground"
+          title={typeof value === 'string' ? value : undefined}
+        >
           {value}
         </p>
       </CardContent>

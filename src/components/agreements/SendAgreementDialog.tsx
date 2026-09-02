@@ -217,7 +217,10 @@ export function SendAgreementDialog({ open, onOpenChange, client, dealId }: Send
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      {/* sm:overflow-y-auto is load-bearing: the dialog base sets
+          sm:overflow-visible, which silently wins over the unprefixed
+          overflow-y-auto at ≥640px and let the form spill past the frame. */}
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto sm:max-w-2xl sm:max-h-[85dvh] sm:overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileSignature className="h-5 w-5 text-primary" />

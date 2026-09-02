@@ -53,6 +53,7 @@ import { RISK_STATUS_CONFIG } from '@/components/clients/deal-tracker/types';
 import { smartCapitalize } from '@/utils/nameFormatting';
 import { useTeamUsers, type TeamUser } from '@/hooks/useTeamUsers';
 import type { DealWithClient } from '@/hooks/useAllDeals';
+import { deriveDealJourney } from '@/lib/deals/dealJourney.pure';
 
 const UNASSIGNED_SENTINEL = '__unassigned__';
 
@@ -253,7 +254,7 @@ function DealExpandedRow({
                   </div>
                   <div className="flex flex-wrap items-center gap-2 shrink-0">
                     {stage.completed_at && (
-                      <span className="text-[9px] text-muted-foreground">{format(new Date(stage.completed_at), 'dd MMM')}</span>
+                      <span className="text-[10px] text-muted-foreground">{format(new Date(stage.completed_at), 'dd MMM')}</span>
                     )}
                     <StageActions stage={stage} clientId={deal.client_id} dealId={deal.id} allStages={stages} onUpdateStage={onUpdateStage} />
                   </div>
@@ -354,14 +355,23 @@ function DealManageRow({
             <span className="text-muted-foreground">{getDealTypeIcon(deal.deal_type)}</span>
             <span className="break-words text-xs font-semibold leading-5 text-foreground">{displayName}</span>
           </div>
-          <span className="mt-0.5 block break-all text-[9px] text-muted-foreground">{getDealTypeLabel(deal.deal_type)} · {ageInDays}d old</span>
+          <span className="mt-0.5 block break-all text-[11px] text-muted-foreground">{getDealTypeLabel(deal.deal_type)} · {ageInDays}d old</span>
         </TableCell>
 
         {/* Current Stage */}
         <TableCell>
           <div className="flex max-w-[190px] items-start gap-1.5">
-            <Badge variant="outline" className="h-5 shrink-0 border-brand-200/25 bg-brand-400/10 px-1.5 text-[9px] text-brand-100">S{deal.current_stage_number}</Badge>
-            <span className="break-words text-[10px] leading-4 text-muted-foreground">{deal.current_stage}</span>
+            {(() => {
+              const journey = deriveDealJourney(deal);
+              return (
+                <>
+                  {journey.stageNumber != null && (
+                    <Badge variant="outline" className="h-5 shrink-0 border-brand-200/25 bg-brand-400/10 px-1.5 text-[10px] text-brand-100">S{journey.stageNumber}</Badge>
+                  )}
+                  <span className="break-words text-xs leading-4 text-muted-foreground">{journey.stageLabel}</span>
+                </>
+              );
+            })()}
           </div>
         </TableCell>
 
@@ -369,7 +379,7 @@ function DealManageRow({
         <TableCell className="hidden sm:table-cell w-[100px]">
           <div className="space-y-0.5">
             <Progress value={progressPct} className="h-1.5" />
-            <span className="text-[9px] text-muted-foreground">{completedStages}/{totalStages} · {progressPct}%</span>
+            <span className="text-[11px] text-muted-foreground">{completedStages}/{totalStages} · {progressPct}%</span>
           </div>
         </TableCell>
 
@@ -380,7 +390,7 @@ function DealManageRow({
             defaultValue={deal.responsible_person || UNASSIGNED_SENTINEL}
             onValueChange={(v) => handleUpdateField('responsible_person', v === UNASSIGNED_SENTINEL ? null : v)}
           >
-            <SelectTrigger className="h-8 w-full rounded-xl border-brand-200/15 bg-background/60 dark:bg-background/60 text-[10px] shadow-inner focus:ring-brand-300/40">
+            <SelectTrigger className="h-8 w-full rounded-xl border-brand-200/15 bg-background/60 dark:bg-background/60 text-xs shadow-inner focus:ring-brand-300/40">
               <SelectValue placeholder="Assign..." />
             </SelectTrigger>
             <SelectContent className="border-brand-200/15 bg-background dark:bg-background">
@@ -406,7 +416,7 @@ function DealManageRow({
             defaultValue={deal.risk_status}
             onValueChange={(v) => handleUpdateField('risk_status', v)}
           >
-            <SelectTrigger className={cn('h-8 w-full min-w-[140px] rounded-xl border bg-background/60 dark:bg-background/60 text-[10px] shadow-inner focus:ring-brand-300/40', riskCfg?.color)}>
+            <SelectTrigger className={cn('h-8 w-full min-w-[140px] rounded-xl border bg-background/60 dark:bg-background/60 text-xs shadow-inner focus:ring-brand-300/40', riskCfg?.color)}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="border-brand-200/15 bg-background dark:bg-background">
@@ -424,12 +434,12 @@ function DealManageRow({
           {nextStage ? (
             <div className="flex max-w-[220px] items-start gap-1.5">
               <ArrowRight className="mt-0.5 h-3 w-3 shrink-0 text-brand-300" />
-              <span className="break-words text-[10px] leading-4 text-muted-foreground">
+              <span className="break-words text-xs leading-4 text-muted-foreground">
                 {nextStage.internal_action || nextStage.stage_name}
               </span>
             </div>
           ) : (
-            <span className="text-[10px] text-success font-medium">All complete</span>
+            <span className="text-xs text-success font-medium">All complete</span>
           )}
         </TableCell>
 

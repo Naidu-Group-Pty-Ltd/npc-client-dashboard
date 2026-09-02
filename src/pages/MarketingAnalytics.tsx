@@ -85,7 +85,7 @@ export default function MarketingAnalytics() {
   const [generatingBrief, setGeneratingBrief] = useState(false);
   const [currentBrief, setCurrentBrief] = useState('');
   const [currentBriefError, setCurrentBriefError] = useState('');
-  const [forecastHorizon] = useState(14);
+  const [forecastHorizon, setForecastHorizon] = useState(14);
   const queryClient = useQueryClient();
 
   // Drill-down breadcrumb state
@@ -640,7 +640,7 @@ export default function MarketingAnalytics() {
       <LeadAttributionPanel />
 
       {/* Creative Performance Gallery */}
-      <CreativeGalleryPanel datePreset={datePreset} />
+      <CreativeGalleryPanel datePreset={datePreset} timeRange={customRange || undefined} />
 
       {/* Full-Funnel Visualization */}
       <FullFunnelPanel />
@@ -670,6 +670,7 @@ export default function MarketingAnalytics() {
         aiError={forecastData?.aiError}
         loading={forecastLoading}
         horizonDays={forecastHorizon}
+        onHorizonChange={setForecastHorizon}
       />
 
       {/* Weekly AI Brief */}

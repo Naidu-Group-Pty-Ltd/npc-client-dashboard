@@ -5,6 +5,7 @@ import { CalendarIcon, Bell } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import {
@@ -77,8 +78,8 @@ export function BuildPaymentTracker({ payments, buildPrice, onUpdatePayment }: B
         <span className="text-xs text-muted-foreground font-medium">{completedCount}/{sorted.length} stages</span>
       </div>
 
-      <div className="overflow-auto max-w-full">
-        <Table>
+      <div className="overflow-x-auto max-w-full">
+        <Table className="min-w-[960px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[30px]">#</TableHead>
@@ -198,27 +199,67 @@ export function BuildPaymentTracker({ payments, buildPrice, onUpdatePayment }: B
                     </div>
                   </TableCell>
 
-                  {/* Commission */}
+                  {/* Commission — which stages pay one, and how much, varies
+                      builder to builder, so both are set here per stage. */}
                   <TableCell className="text-center">
-
-                    {p.is_commission_trigger ? (
-                      <div className="flex flex-col items-center gap-0.5">
+                    <div className="flex flex-col items-center gap-1">
+                      <label
+                        className="flex cursor-pointer items-center gap-1.5 text-[10px] font-medium text-muted-foreground"
+                        title={p.is_commission_trigger
+                          ? 'This stage pays a commission — untick if this builder does not pay one here'
+                          : 'Tick if this builder pays a commission at this stage'}
+                      >
                         <Checkbox
-                          checked={p.commission_received}
+                          className="h-3.5 w-3.5"
+                          checked={p.is_commission_trigger}
+                          aria-label={`${p.stage_name} pays a commission`}
                           onCheckedChange={(checked) => onUpdatePayment(p.id, {
-                            commission_received: !!checked,
-                            commission_received_date: checked ? (p.commission_received_date || format(new Date(), 'yyyy-MM-dd')) : null,
+                            is_commission_trigger: !!checked,
+                            // A stage that stops being a trigger cannot stay "received".
+                            ...(checked ? {} : { commission_received: false, commission_received_date: null }),
                           })}
                         />
-                        {p.commission_received ? (
-                          <Badge variant="outline" className="text-[10px] text-success border-success/30">Paid</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[10px] text-brand-600 border-brand-500/30">Due</Badge>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground text-xs">—</span>
-                    )}
+                        Pays commission
+                      </label>
+                      {p.is_commission_trigger && (
+                        <>
+                          <Input
+                            key={`${p.id}-comm-${p.commission_amount ?? 'unset'}`}
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            defaultValue={p.commission_amount ?? ''}
+                            placeholder="Amount $"
+                            aria-label={`Commission amount for ${p.stage_name}`}
+                            title="Commission owed to the agency at this stage"
+                            className="h-7 w-24 text-right font-mono text-xs"
+                            onBlur={(e) => {
+                              const raw = e.target.value.trim();
+                              const parsed = raw === '' ? null : Number(raw);
+                              const next = parsed !== null && Number.isFinite(parsed) ? parsed : null;
+                              if ((next ?? null) !== (p.commission_amount ?? null)) {
+                                onUpdatePayment(p.id, { commission_amount: next });
+                              }
+                            }}
+                          />
+                          <div className="flex items-center gap-1.5">
+                            <Checkbox
+                              checked={p.commission_received}
+                              aria-label={`Commission received for ${p.stage_name}`}
+                              onCheckedChange={(checked) => onUpdatePayment(p.id, {
+                                commission_received: !!checked,
+                                commission_received_date: checked ? (p.commission_received_date || format(new Date(), 'yyyy-MM-dd')) : null,
+                              })}
+                            />
+                            {p.commission_received ? (
+                              <Badge variant="outline" className="text-[10px] text-success border-success/30">Paid</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] text-brand-600 border-brand-500/30">Due</Badge>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               );

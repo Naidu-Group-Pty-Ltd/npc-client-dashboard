@@ -100,3 +100,47 @@ export const PROJECTION_YEAR_CELL_CLASS = 'px-2 py-2.5 sm:p-2 sm:py-3 text-cente
 
 /** A year cell holding the editable control. `sm:p-1` is the half of `p-1` that was missing. */
 export const PROJECTION_YEAR_EDIT_CELL_CLASS = 'p-1 sm:p-1 text-center align-middle';
+
+/**
+ * The frozen rail, in the rows the audit said still moved.
+ *
+ * "The entire left section should be frozen and not move" (audit item 2) had a
+ * first fix and a survivor. The first fix pinned each section heading as a
+ * sticky inline-block inside a `colSpan={12}` cell — which does hold the TEXT
+ * still, but leaves those rows with no frozen CELL at all, and it left the two
+ * highlighted total rows untouched. Their sticky cells were `bg-primary/10`,
+ * and a TRANSLUCENT sticky cell does not occlude what scrolls beneath it: the
+ * year figures slid under "After-Tax Cash Flow p/a $" and showed through the
+ * tint, which on the dark theme is exactly "the sections highlighted in dark
+ * blue move while the rows beside them are frozen".
+ *
+ * So the rule these classes carry: **a sticky cell is opaque, and the tint is
+ * an inner layer.** The cell paints `bg-background` (what every ordinary data
+ * row's frozen cell already paints, proven in the production screenshot) and
+ * zeroes its own padding; a full-bleed inner div carries the band colour and
+ * the padding, so the rail is a continuous, opaque 220px column from the
+ * header to the last row and the banded rows read as banded without leaking.
+ *
+ * The inner paddings mirror what each row's neighbours produce: the section
+ * heading keeps its original `px-4 py-3 text-xs`, and the total label mirrors
+ * the `TableCell` primitive's own `px-3 py-2.5 sm:p-4` so the row stays the
+ * height it always was.
+ */
+export const PROJECTION_STICKY_CELL_SHADOW =
+  'shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]';
+
+/** A section-heading row's frozen cell: opaque base, zero padding, rail shadow. */
+export const PROJECTION_SECTION_LABEL_CELL_CLASS =
+  `sticky left-0 z-10 w-[220px] min-w-[220px] bg-background p-0 sm:p-0 ${PROJECTION_STICKY_CELL_SHADOW}`;
+
+/** The band layer inside it — colour, padding and type live here, not on the cell. */
+export const PROJECTION_SECTION_LABEL_INNER_CLASS =
+  'bg-primary/5 px-4 py-3 text-xs font-bold uppercase tracking-wide text-primary';
+
+/** A highlighted total row's frozen cell: same opaque base and rail. */
+export const PROJECTION_TOTAL_LABEL_CELL_CLASS =
+  `sticky left-0 z-10 bg-background p-0 sm:p-0 font-bold ${PROJECTION_STICKY_CELL_SHADOW}`;
+
+/** Its band layer, at the `TableCell` primitive's own padding so row height holds. */
+export const PROJECTION_TOTAL_LABEL_INNER_CLASS =
+  'bg-primary/10 px-3 py-2.5 sm:p-4';

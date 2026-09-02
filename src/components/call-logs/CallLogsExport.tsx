@@ -180,27 +180,48 @@ export const CallLogsExport = ({ calls, stats, triggerClassName }: CallLogsExpor
     yPos += 8;
 
     const headers = ['Customer', 'Phone', 'Agent', 'Direction', 'Outcome', 'Duration', 'Cost'];
-    const colWidths = [35, 30, 30, 22, 25, 20, 18];
+    // 2mm gutter is reserved inside each column by truncateToWidth below.
+    const colWidths = [32, 27, 26, 18, 34, 15, 15];
 
-    pdf.setFillColor(240, 240, 240);
-    pdf.rect(14, yPos - 4, pageWidth - 28, 8, 'F');
+    // Every cell is measured and truncated to its own column, so a long
+    // outcome ("customer-did-not-answer") can never run into Duration/Cost.
+    const truncateToWidth = (text: string, maxWidth: number) => {
+      if (pdf.getTextWidth(text) <= maxWidth) return text;
+      let truncated = text;
+      while (truncated.length > 1 && pdf.getTextWidth(`${truncated}…`) > maxWidth) {
+        truncated = truncated.slice(0, -1);
+      }
+      return `${truncated}…`;
+    };
 
-    pdf.setFontSize(8);
-    pdf.setTextColor(60, 60, 60);
-    let xPos = 14;
-    headers.forEach((header, i) => {
-      pdf.text(header, xPos, yPos);
-      xPos += colWidths[i];
-    });
-    yPos += 8;
+    const drawTableHeader = () => {
+      pdf.setFillColor(240, 240, 240);
+      pdf.rect(14, yPos - 4, pageWidth - 28, 8, 'F');
+      pdf.setFontSize(8);
+      pdf.setTextColor(60, 60, 60);
+      let headerX = 14;
+      headers.forEach((header, i) => {
+        pdf.text(header, headerX, yPos);
+        headerX += colWidths[i];
+      });
+      yPos += 8;
+      pdf.setTextColor(0, 0, 0);
+    };
 
-    pdf.setTextColor(0, 0, 0);
-    calls.slice(0, 40).forEach((call, index) => {
-      if (yPos > 270) { pdf.addPage(); yPos = 20; }
+    drawTableHeader();
+
+    // Export every filtered call — the reader asked for the register, not a
+    // sample — repeating the column header at the top of each page.
+    calls.forEach((call, index) => {
+      if (yPos > 270) {
+        pdf.addPage();
+        yPos = 20;
+        drawTableHeader();
+      }
       const row = [
-        (call.customer_name || 'Unknown').substring(0, 15),
-        (call.phone_number || '-').substring(0, 12),
-        (call.agent_name || '-').substring(0, 12),
+        call.customer_name || 'Unknown',
+        call.phone_number || '-',
+        call.agent_name || '-',
         call.call_direction || '-',
         call.call_outcome || '-',
         formatDuration(call.duration_seconds),
@@ -211,20 +232,13 @@ export const CallLogsExport = ({ calls, stats, triggerClassName }: CallLogsExpor
         pdf.rect(14, yPos - 4, pageWidth - 28, 7, 'F');
       }
       pdf.setFontSize(7);
-      xPos = 14;
+      let xPos = 14;
       row.forEach((cell, i) => {
-        pdf.text(cell, xPos, yPos);
+        pdf.text(truncateToWidth(cell, colWidths[i] - 2), xPos, yPos);
         xPos += colWidths[i];
       });
       yPos += 7;
     });
-
-    if (calls.length > 40) {
-      yPos += 5;
-      pdf.setFontSize(8);
-      pdf.setTextColor(100, 100, 100);
-      pdf.text(`... and ${calls.length - 40} more calls`, 14, yPos);
-    }
 
     return pdf;
   };

@@ -10,6 +10,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Clock, Pencil, Check, X, PlayCircle } from 'lucide-react';
 import { useChecklistTemplates, useChecklistTemplateSections, useChecklistTemplateItems, useChecklistMutations, type ChecklistTemplate, type ChecklistSection } from '@/hooks/useChecklists';
+import { IconPicker } from '@/components/checklists/IconPicker';
 
 interface TemplateBuilderProps {
   template: ChecklistTemplate;
@@ -39,6 +40,7 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
   const [newItemLabels, setNewItemLabels] = useState<Record<string, string>>({});
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [editSectionTitle, setEditSectionTitle] = useState('');
+  const [editSectionIcon, setEditSectionIcon] = useState('📋');
   const [openSections, setOpenSections] = useState<Set<string>>(new Set());
   const [cronExpression, setCronExpression] = useState(template.cron_expression || '');
   const [cronDesc, setCronDesc] = useState(template.cron_description || '');
@@ -57,7 +59,11 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
 
   const toggleSection = (id: string) => {
     const next = new Set(openSections);
-    next.has(id) ? next.delete(id) : next.add(id);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
     setOpenSections(next);
   };
 
@@ -114,7 +120,12 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
           <Button variant="ghost" size="sm" onClick={onBack}>← Back</Button>
           <div>
             <h2 className="text-2xl font-bold flex items-center gap-2">
-              <span className="text-2xl">{template.icon}</span>
+              <IconPicker
+                value={template.icon || '📋'}
+                onChange={(icon) => mutations.updateTemplate.mutate({ id: template.id, icon })}
+                ariaLabel={`Change the icon for ${template.name}`}
+                triggerClassName="h-10 w-12 text-2xl"
+              />
               {template.name}
             </h2>
             {template.description && (
@@ -211,9 +222,15 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
                         <div className="flex items-center gap-2">
                           <GripVertical className="h-4 w-4 text-muted-foreground/50" />
                           {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                          <span className="text-base">{section.icon}</span>
+                          {!isEditing && <span className="text-base">{section.icon}</span>}
                           {isEditing ? (
                             <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                              <IconPicker
+                                value={editSectionIcon}
+                                onChange={setEditSectionIcon}
+                                ariaLabel={`Choose an icon for ${section.title}`}
+                                triggerClassName="h-7 w-9 text-base"
+                              />
                               <Input
                                 value={editSectionTitle}
                                 onChange={e => setEditSectionTitle(e.target.value)}
@@ -221,7 +238,7 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
                                 autoFocus
                               />
                               <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => {
-                                mutations.updateSection.mutate({ id: section.id, title: editSectionTitle });
+                                mutations.updateSection.mutate({ id: section.id, title: editSectionTitle, icon: editSectionIcon });
                                 setEditingSection(null);
                               }}>
                                 <Check className="h-3 w-3" />
@@ -236,7 +253,7 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
                           <Badge variant="secondary" className="text-xs">{sectionItems.length} items</Badge>
                         </div>
                         <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditingSection(section.id); setEditSectionTitle(section.title); }}>
+                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditingSection(section.id); setEditSectionTitle(section.title); setEditSectionIcon(section.icon || '📋'); }}>
                             <Pencil className="h-3 w-3" />
                           </Button>
                           <AlertDialog>
@@ -310,11 +327,10 @@ export function TemplateBuilder({ template: initialTemplate, onBack }: TemplateB
 
           {/* Add new section */}
           <div className="flex items-center gap-2 pt-3 border-t">
-            <Input
-              placeholder="Section icon"
+            <IconPicker
               value={newSectionIcon}
-              onChange={e => setNewSectionIcon(e.target.value)}
-              className="w-16 text-center"
+              onChange={setNewSectionIcon}
+              ariaLabel="Choose a section icon"
             />
             <Input
               placeholder="New section title..."

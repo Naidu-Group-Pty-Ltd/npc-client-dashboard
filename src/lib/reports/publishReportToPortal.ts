@@ -77,7 +77,43 @@ export async function publishReportToPortal(req: PublishRequest): Promise<Publis
     return { ok: false, error: verdict.reason };
   }
 
-  if (verdict.readiness === 'on_publish') {
+  if (verdict.readiness === 'on_publish' && report.source === 'portfolio_report') {
+    // Audit item 6: a stored analysis whose PDF upload failed in the 403 era
+    // has `report_data` and no file. `portfolioReviewBlob` was left waiting
+    // for exactly this caller — the typeset review as bytes, rendered
+    // server-side from the stored analysis, with no download side effect.
+    // Rendered on each publish rather than stamped back onto the analysis
+    // row: its file column is the LEGACY generator's, and
+    // `deliverPortfolioReview`'s own rule is that a renderer the person did
+    // not choose is never substituted under another one's name.
+    onProgress?.('Producing the typeset review…');
+    try {
+      const { portfolioReviewBlob } = await import('./portfolio/deliverPortfolioReview');
+      const review = await portfolioReviewBlob({
+        variant: 'server',
+        request: { reportId: report.id },
+      });
+
+      const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
+      const dateStr = format(new Date(), 'yyyy-MM-dd_HHmmss');
+      const uploadPath = `portal-reports/${clientId}/Portfolio_Analysis_${safeName}_${dateStr}.pdf`;
+
+      onProgress?.('Uploading…');
+      const uploadResult = await secureStorageUpload('client-files', uploadPath, review.blob, {
+        contentType: 'application/pdf',
+        upsert: true,
+        resourceId: clientId,
+      });
+      if (!uploadResult.success) {
+        return { ok: false, error: 'Failed to upload PDF: ' + (uploadResult.error ?? 'unknown error') };
+      }
+
+      storagePath = uploadResult.path || uploadPath;
+      generated = true;
+    } catch (err: any) {
+      return { ok: false, error: 'Failed to produce the review: ' + (err?.message || 'Unknown error') };
+    }
+  } else if (verdict.readiness === 'on_publish') {
     onProgress?.('Generating the PDF…');
     try {
       const { latestAssessment, incomeSources, liabilities, expenses, properties, client } =

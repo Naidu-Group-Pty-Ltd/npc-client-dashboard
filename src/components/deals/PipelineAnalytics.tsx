@@ -56,6 +56,9 @@ const chartTooltipContentStyle = {
   fontSize: 12,
 } as const;
 const chartTooltipLabelStyle = { fontWeight: 700, fontSize: 12, marginBottom: 4, color: 'hsl(var(--foreground))' } as const;
+// Lifts tooltips above the blurred, overflow-hidden panels they hover over —
+// without it the hover card slid underneath neighbouring chart surfaces.
+const chartTooltipWrapperStyle = { zIndex: 50 } as const;
 const chartAxisTick = { fontSize: 11, fill: 'hsl(var(--muted-foreground))', fontWeight: 600 } as const;
 const chartGridStroke = 'hsl(var(--border) / 0.28)';
 const emptyStateClass = 'flex h-40 items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/20 px-6 text-center text-xs font-medium text-muted-foreground';
@@ -293,6 +296,7 @@ function RevenueForecast({ deals }: { deals: DealWithClient[] }) {
               <YAxis tick={chartAxisTick} tickLine={false} axisLine={false} tickFormatter={formatCurrencyShort} width={56} domain={[0, 'auto']} allowDataOverflow={false} />
               <Tooltip
                 contentStyle={chartTooltipContentStyle}
+                wrapperStyle={chartTooltipWrapperStyle}
                 cursor={{ stroke: 'hsl(var(--primary) / 0.28)', strokeWidth: 1 }}
                 formatter={(value: number, name: string) => [formatCurrency(value), name === 'settled' ? 'Settled' : name === 'projected' ? 'Projected' : 'Commission']}
                 labelStyle={chartTooltipLabelStyle}
@@ -328,16 +332,31 @@ function StageVelocity({ deals }: { deals: DealWithClient[] }) {
     const stageMap: Record<string, { totalDays: number; count: number }> = {};
 
     for (const deal of deals) {
-      const stages = deal.stages || [];
+      const stages = [...(deal.stages || [])].sort(
+        (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
+      );
+      // deal_stages has no started_at column (the old guard demanded one, so
+      // this panel was empty for every deal ever completed). A stage starts
+      // when its predecessor finishes — or at deal creation for the first —
+      // which is derivable from the data that does exist.
+      let previousCompletedAt: string | null = deal.created_at ?? null;
       for (const stage of stages) {
-        if (stage.status === 'complete' && stage.completed_at && stage.started_at) {
-          const days = differenceInDays(new Date(stage.completed_at), new Date(stage.started_at));
-          if (days >= 0) {
-            const name = stage.stage_name || `Stage ${stage.stage_number}`;
-            if (!stageMap[name]) stageMap[name] = { totalDays: 0, count: 0 };
-            stageMap[name].totalDays += days;
-            stageMap[name].count += 1;
+        if (stage.status === 'complete' && stage.completed_at) {
+          const startedAt = previousCompletedAt;
+          if (startedAt) {
+            const days = differenceInDays(new Date(stage.completed_at), new Date(startedAt));
+            if (days >= 0) {
+              const name = stage.stage_name || `Stage ${stage.stage_number}`;
+              if (!stageMap[name]) stageMap[name] = { totalDays: 0, count: 0 };
+              stageMap[name].totalDays += days;
+              stageMap[name].count += 1;
+            }
           }
+          previousCompletedAt = stage.completed_at;
+        } else if (stage.status !== 'skipped') {
+          // An open stage breaks the chain: later completions have no honest
+          // start point, so they are not counted rather than guessed.
+          previousCompletedAt = null;
         }
       }
     }
@@ -389,6 +408,7 @@ function StageVelocity({ deals }: { deals: DealWithClient[] }) {
               <YAxis dataKey="name" type="category" tick={chartAxisTick} tickLine={false} axisLine={false} width={118} interval={0} />
               <Tooltip
                 contentStyle={chartTooltipContentStyle}
+                wrapperStyle={chartTooltipWrapperStyle}
                 cursor={{ fill: 'hsl(var(--muted) / 0.35)' }}
                 formatter={(value: number) => [`${value} days avg`, 'Duration']}
               />
@@ -447,6 +467,7 @@ function DealTypeBreakdown({ deals }: { deals: DealWithClient[] }) {
               </Pie>
               <Tooltip
                 contentStyle={chartTooltipContentStyle}
+                wrapperStyle={chartTooltipWrapperStyle}
                 formatter={(value: number, name: string, props: any) => [
                   `${value} deals · ${formatCurrency(props.payload.value)}`,
                   props.payload.name,
@@ -560,6 +581,7 @@ function MonthlyDealFlow({ deals }: { deals: DealWithClient[] }) {
               <YAxis tick={chartAxisTick} tickLine={false} axisLine={false} allowDecimals={false} width={36} />
               <Tooltip
                 contentStyle={chartTooltipContentStyle}
+                wrapperStyle={chartTooltipWrapperStyle}
                 cursor={{ fill: 'hsl(var(--muted) / 0.35)' }}
                 labelStyle={chartTooltipLabelStyle}
               />

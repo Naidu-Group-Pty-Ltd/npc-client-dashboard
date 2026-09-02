@@ -42,8 +42,9 @@ function StageDatePicker({ stage, onUpdateStage }: { stage: DealStage; onUpdateS
     <div className="mt-1.5 flex items-center gap-3 text-xs flex-wrap">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-6 text-xs px-2">
+          <Button variant="ghost" size="sm" className="h-6 text-xs px-2" title="Internal target date for this stage">
             <CalendarIcon className="h-3 w-3 mr-1" />
+            <span className="mr-1 text-muted-foreground">Key date:</span>
             {stage.key_date ? format(new Date(stage.key_date), 'dd MMM yyyy') : 'Set date'}
           </Button>
         </PopoverTrigger>
@@ -59,10 +60,49 @@ function StageDatePicker({ stage, onUpdateStage }: { stage: DealStage; onUpdateS
           />
         </PopoverContent>
       </Popover>
-      {stage.completed_at && (
-        <span className="text-success">✓ {format(new Date(stage.completed_at), 'dd MMM yyyy')}</span>
-      )}
     </div>
+  );
+}
+
+/**
+ * The recorded date beside "Completed" / "Invoice Received". A checkbox can
+ * only stamp *today*, so the date itself opens a calendar — backfilling a
+ * stage that actually completed last week is an edit, not a re-toggle.
+ */
+function EditableStageDate({
+  value,
+  onSelect,
+  ariaLabel,
+}: {
+  value: string;
+  onSelect: (iso: string) => void;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={ariaLabel}
+          title={ariaLabel}
+          className="ml-1 inline-flex items-center rounded text-success underline decoration-dotted underline-offset-2 transition-colors hover:text-success/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-success/50"
+        >
+          ({format(new Date(value), 'dd MMM yyyy')})
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          selected={new Date(value)}
+          onSelect={(date) => {
+            if (date) onSelect(date.toISOString());
+            setOpen(false);
+          }}
+          className="p-3 pointer-events-auto"
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -176,12 +216,16 @@ export function DealStageTimeline({ stages, onUpdateStage }: DealStageTimelinePr
                   <label htmlFor={`completed-${stage.id}`} className="text-xs text-muted-foreground cursor-pointer flex items-center gap-1">
                     <Check className="h-3 w-3" />
                     Completed
-                    {stage.status === 'complete' && stage.completed_at && (
-                      <span className="text-success ml-1">
-                        ({format(new Date(stage.completed_at), 'dd MMM yyyy')})
-                      </span>
-                    )}
                   </label>
+                  {stage.status === 'complete' && stage.completed_at && (
+                    <span className="text-xs">
+                      <EditableStageDate
+                        value={stage.completed_at}
+                        onSelect={(iso) => onUpdateStage(stage.id, { completed_at: iso })}
+                        ariaLabel={`Edit the completed date for ${stage.stage_name}`}
+                      />
+                    </span>
+                  )}
                 </div>
 
                 {/* Invoice received checkbox */}
@@ -200,12 +244,16 @@ export function DealStageTimeline({ stages, onUpdateStage }: DealStageTimelinePr
                   <label htmlFor={`invoice-${stage.id}`} className="text-xs text-muted-foreground cursor-pointer flex items-center gap-1">
                     <FileCheck className="h-3 w-3" />
                     Invoice Received
-                    {stage.invoice_received && stage.invoice_received_date && (
-                      <span className="text-success ml-1">
-                        ({format(new Date(stage.invoice_received_date), 'dd MMM yyyy')})
-                      </span>
-                    )}
                   </label>
+                  {stage.invoice_received && stage.invoice_received_date && (
+                    <span className="text-xs">
+                      <EditableStageDate
+                        value={stage.invoice_received_date}
+                        onSelect={(iso) => onUpdateStage(stage.id, { invoice_received_date: iso })}
+                        ariaLabel={`Edit the invoice received date for ${stage.stage_name}`}
+                      />
+                    </span>
+                  )}
                 </div>
               </div>
 

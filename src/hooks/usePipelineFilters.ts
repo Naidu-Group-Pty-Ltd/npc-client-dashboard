@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { stageDisplayOf } from '@/lib/deals/dealJourney.pure';
 import type { DealWithClient } from '@/hooks/useAllDeals';
 import type { PipelineFilters } from '@/components/deals/PipelineToolbar';
 
@@ -27,6 +28,9 @@ export function usePipelineFilters(
         const searchable = [
           d.client_name,
           d.current_stage,
+          // What the cards actually print — derived from the stages array,
+          // so a search finds a deal by the stage its badge shows.
+          stageDisplayOf(d),
           d.responsible_person,
           d.notes,
           d.deal_type,

@@ -67,6 +67,40 @@ describe('whether a report can go to the portal', () => {
     expect(v.reason).toMatch(/when you publish/i);
   });
 
+  it('a portfolio analysis with no file renders on publish (audit item 6)', () => {
+    // Half the stored analyses have no PDF — every browser upload failed 403
+    // until secure-storage learned the binding — and declaring them
+    // unavailable was the "No PDF available to send" dead end. The typeset
+    // review renders from `report_data` server-side, so publishing renders
+    // one, the same shape the borrowing row above has always had.
+    const v = publishVerdict(report({ fileUrl: null }), new Map());
+    expect(v.readiness).toBe('on_publish');
+    expect(v.reason).toMatch(/when you publish/i);
+  });
+
+  it('a portfolio row that is not completed still refuses', () => {
+    expect(publishVerdict(report({ fileUrl: null, status: 'pending' }), new Map()).readiness)
+      .toBe('unavailable');
+    expect(publishVerdict(report({ fileUrl: null, status: 'failed' }), new Map()).readiness)
+      .toBe('unavailable');
+  });
+
+  it('the publish act renders the portfolio review through the waiting contract', () => {
+    // `portfolioReviewBlob` was left in `deliverPortfolioReview.ts` for
+    // exactly this caller; the act must go through it rather than grow a
+    // second renderer, and must never write `pdf_file_path` — that column is
+    // the legacy generator's file, and substituting a document from a
+    // renderer the person did not choose is that module's own never.
+    const src = readFileSync(
+      resolve(__dirname, '../publishReportToPortal.ts'),
+      'utf8',
+    );
+    // The CALL, not the word — a comment naming the contract must not satisfy
+    // a guard about using it.
+    expect(src).toMatch(/portfolioReviewBlob\(/);
+    expect(src).not.toContain('pdf_file_path');
+  });
+
   it('a report still generating is not offered', () => {
     expect(publishVerdict(report({ source: 'investment_report', fileUrl: null, status: 'pending' }), new Map()).readiness)
       .toBe('unavailable');

@@ -110,6 +110,12 @@ export const CLIENT_DATA_WRITABLE: Record<string, Set<string>> = {
     'trail_commission', 'clawback_period_months', 'clawback_expiry_date',
     'clawback_risk_active', 'property_address', 'finance_contact_id',
     'purchase_file_id',
+    // Consolidated Builder Invoice Log's selected payment. It was missing
+    // here, so pickAllowed silently dropped it and the stage advance the
+    // invoice toggle performs never persisted across a refresh.
+    'builder_invoice_current_payment_id',
+    // Per-date critical-date completion stamps ({ column: ISO date }).
+    'critical_date_completions',
   ]),
   client_employment: new Set([
     'client_id', 'contact_type', 'employer_name', 'employment_type',

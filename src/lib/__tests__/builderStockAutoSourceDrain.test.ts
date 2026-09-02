@@ -194,3 +194,69 @@ describe('the lease and the re-arm are not reachable by a browser', () => {
     expect(sql).toContain('REVOKE ALL ON TABLE public.builder_stock_settlement_lease FROM PUBLIC, anon, authenticated');
   });
 });
+
+/*
+ * ── A PROPERTY DOES NOT ONLY ARRIVE ─────────────────────────────────────────
+ *
+ * PRODUCTION, 2 SEPTEMBER 2026. The job drained and unscheduled itself at 15:10
+ * the day before, correctly. At 01:55 a builder clicked "Read again": the import
+ * rewrote twenty-six rows and requeued twenty-four of them — every one an UPDATE
+ * of a property that already existed — and nothing happened, because the trigger
+ * above fires on INSERT alone. Twenty-six properties sat at `pending`, `cron.job`
+ * held no settler, and the engine was re-armed by hand. The migration below is
+ * what makes the hand unnecessary.
+ */
+const REQUEUE_MIGRATION =
+  'supabase/migrations/20261103000000_builder_stock_rearm_on_requeue.sql';
+const requeue = readFileSync(join(REPO_ROOT, REQUEUE_MIGRATION), 'utf8');
+
+describe('a requeue re-arms the engine exactly as an insert does', () => {
+  it('the trigger fires on the update that means "work was queued"', () => {
+    expect(requeue).toContain(
+      'AFTER INSERT OR UPDATE OF enrichment_status, image_work_stage');
+    expect(requeue).toContain('ON public.builder_stock_items');
+    expect(requeue).toContain('FOR EACH STATEMENT');
+    expect(requeue).toContain('EXECUTE FUNCTION public.builder_stock_items_rearm_settlement()');
+  });
+
+  it('replaces the trigger rather than adding a second one', () => {
+    const drop = requeue.indexOf(
+      'DROP TRIGGER IF EXISTS builder_stock_items_rearm_settlement ON public.builder_stock_items');
+    const create = requeue.indexOf('CREATE TRIGGER builder_stock_items_rearm_settlement');
+    expect(drop).toBeGreaterThan(-1);
+    expect(drop).toBeLessThan(create);
+  });
+
+  it('changes the event and nothing else', () => {
+    // The function, the schedule and the idempotent re-arm are the earlier
+    // migration's. A second definition of any of them is how two would drift.
+    expect(requeue).not.toContain('CREATE OR REPLACE FUNCTION');
+    expect(requeue).not.toContain('cron.schedule');
+    expect(requeue).not.toContain('cron.unschedule');
+  });
+
+  it('is not fired by an edit that queues nothing', () => {
+    // A price change, an availability change or a `last_seen_at` touch is an
+    // UPDATE too. Naming the columns is what keeps those from probing cron.job.
+    expect(requeue).not.toMatch(/AFTER INSERT OR UPDATE\s+ON/);
+  });
+
+  it('every path that requeues a property writes a column the trigger watches', () => {
+    // A requeue that set some OTHER column would be as silent as the update was
+    // before this — so the writers and the trigger are pinned to each other
+    // rather than trusted to agree.
+    const watched = (requeue.match(/UPDATE OF ([^\n]+)/)?.[1] ?? '')
+      .split(',').map((column) => column.trim());
+    expect(watched).toContain('image_work_stage');
+    expect(watched).toContain('enrichment_status');
+    for (const file of [
+      'supabase/functions/builder-portal-stock/index.ts',
+      'supabase/functions/builder-stock-link-callback/index.ts',
+      'supabase/functions/_shared/builderStock/importStock.ts',
+      'supabase/functions/_shared/builderStock/attachBuilderImage.ts',
+    ]) {
+      const source = readFileSync(join(REPO_ROOT, file), 'utf8');
+      expect(source, file).toContain("image_work_stage: 'source'");
+    }
+  });
+});

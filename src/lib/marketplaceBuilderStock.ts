@@ -116,6 +116,51 @@ export function useMarketplaceStockSelections(clientId: string, enabled: boolean
  * server-side from the property's own row — the two-way link is a set of
  * foreign keys the browser never gets to choose.
  */
+/**
+ * Supply a picture for a property on the builder's behalf.
+ *
+ * The same act as the Builder Portal's, performed by NPC staff, through the
+ * same three shared modules — so the two surfaces cannot come to disagree
+ * about what a builder-supplied image is. The record says which of them
+ * supplied it, because acting for somebody is a different act from acting for
+ * yourself.
+ *
+ * WHY STAFF NEED IT. A blank card costs a sale today, and a builder who has
+ * not answered an email is not a reason to keep showing nothing: staff
+ * routinely hold the marketing pack before the builder gets round to
+ * uploading it.
+ *
+ * It writes no pointer. The picture is stored with level 1 evidence — "this
+ * is that property's picture", said directly — and the settler re-decides the
+ * card from the roles, as it always has.
+ */
+export function useSupplyStockImageForBuilder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { stockItemId: string; file: File }) => {
+      const created = await invoke<{ storage_path: string; upload_url: string }>({
+        operation: 'create_builder_image_upload',
+        stock_item_id: input.stockItemId,
+        filename: input.file.name,
+      });
+      const put = await fetch(created.upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': input.file.type || 'application/octet-stream' },
+        body: input.file,
+      });
+      if (!put.ok) throw new Error('The image could not be uploaded. Please try again.');
+      return await invoke<{ properties: number }>({
+        operation: 'supply_builder_image',
+        stock_item_id: input.stockItemId,
+        storage_path: created.storage_path,
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: marketplaceStockKeys.root() });
+    },
+  });
+}
+
 export function useSelectBuilderStockForClient() {
   const queryClient = useQueryClient();
   return useMutation({

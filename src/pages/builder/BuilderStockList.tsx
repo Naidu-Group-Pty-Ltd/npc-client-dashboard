@@ -25,6 +25,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
+import {
+  BuilderPropertyImageButton,
+} from '@/components/builder-portal/BuilderPropertyImage';
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
@@ -1252,6 +1255,18 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
             : noDocument ? 'No brochure on this row' : 'No image yet'}
         </span>
       </Badge>
+
+      {/*
+        Whatever else went wrong, somebody can fix this one card. The picture a
+        builder attaches here carries level 1 — they said "this is that
+        property's picture", and nothing was read or inferred to arrive at it —
+        so it outranks anything taken out of a document.
+      */}
+      <BuilderPropertyImageButton
+        stockItemId={item.id}
+        propertyLabel={stockItemTitle(item)}
+        hasImage={!!image}
+      />
 
       <ul className="flex flex-wrap items-center gap-1">
         {stages.map((stage) => {

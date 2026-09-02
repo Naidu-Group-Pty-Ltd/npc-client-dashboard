@@ -1,4 +1,7 @@
+import { useMemo } from 'react';
 import { usePortalDealProgressData } from '@/hooks/usePortalData';
+import { deriveDealJourney } from '@/lib/deals/dealJourney.pure';
+import { DealJourneyStrip } from '@/components/deals/journey/DealJourneyStrip';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
@@ -21,6 +24,8 @@ interface PortalDealStage {
   stage_name: string;
   stage_category: string | null;
   status: 'pending' | 'in_progress' | 'complete' | 'skipped';
+  /** The one stage field written in the client's language ("Sign contract"). */
+  client_action?: string | null;
   completed_at: string | null;
   display_order: number;
 }
@@ -134,7 +139,10 @@ function PortalStageTimeline({ stages }: { stages: PortalDealStage[] }) {
                 )}
               </div>
               {isCurrent && (
-                <p className="text-xs text-primary mt-0.5 font-medium">Current Stage</p>
+                <p className="text-xs text-primary mt-0.5 font-medium">
+                  Current stage
+                  {stage.client_action ? ` — we need you to: ${stage.client_action}` : ''}
+                </p>
               )}
               {isCompleted && stage.completed_at && (
                   <p className="mt-0.5 text-xs text-primary">
@@ -304,9 +312,12 @@ function DealProgressCard({ deal }: { deal: PortalDeal }) {
   const buildPayments = (deal.buildPayments || []).sort((a, b) => a.display_order - b.display_order);
   const hasBuildProgress = deal.deal_type === 'house_and_land' && buildPayments.length > 0;
 
-  const completedStages = stages.filter(s => s.status === 'complete').length;
-  const totalStages = stages.length;
-  const stageProgress = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
+  // The same derivation the team's board and deal view read — the client
+  // sees the deal in the same place staff do, in their own language.
+  const journey = useMemo(() => deriveDealJourney(deal), [deal]);
+  const completedStages = journey.completedStages;
+  const totalStages = journey.totalStages;
+  const stageProgress = journey.progressPct;
 
   const config = DEAL_TYPE_CONFIG[deal.deal_type] || DEAL_TYPE_CONFIG.existing_property;
   const DealIcon = config.icon;
@@ -328,7 +339,7 @@ function DealProgressCard({ deal }: { deal: PortalDeal }) {
             </div>
           </div>
           <Badge variant="secondary" className="border-primary/20 bg-primary/10 text-xs text-primary">
-            {deal.current_stage || 'New'}
+            {journey.stageLabel}
           </Badge>
         </div>
 
@@ -344,6 +355,33 @@ function DealProgressCard({ deal }: { deal: PortalDeal }) {
       </CardHeader>
 
       <CardContent className="pt-6 space-y-5">
+        {/* The journey, and what is happening right now */}
+        <div className="space-y-3">
+          <DealJourneyStrip phases={journey.phases} />
+          {journey.isSettled ? (
+            <div className="rounded-xl border border-success/25 bg-success/10 p-3.5">
+              <p className="text-sm font-semibold text-success">This deal is complete — every stage has settled.</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-1.5">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Right now</p>
+              <p className="text-sm font-semibold text-foreground">{journey.stageLabel}</p>
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">What we need from you:</span>{' '}
+                {journey.currentStage?.client_action
+                  || (journey.phaseId === 'construction'
+                    ? 'Nothing right now — the build team progresses this and we track each payment stage for you.'
+                    : "Nothing right now — we'll let you know when something needs your attention.")}
+              </p>
+              {journey.nextStage && (
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Up next:</span> {journey.nextStage.stage_name}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
         {/* Stages & Build in tabs for H&L, or just stages otherwise */}
         {hasBuildProgress ? (
           <Tabs defaultValue="stages" className="space-y-4">

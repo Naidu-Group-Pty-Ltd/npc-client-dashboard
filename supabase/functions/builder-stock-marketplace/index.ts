@@ -31,6 +31,14 @@ import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
 import { rankImage } from '../_shared/builderStock/imagePriority.pure.ts';
 import { readAllRows } from '../_shared/builderStock/pagedRead.ts';
 import {
+  isBuilderSuppliedPath, propertyImageStoragePath,
+} from '../_shared/builderStock/builderSuppliedImage.pure.ts';
+import { attachBuilderImage } from '../_shared/builderStock/attachBuilderImage.ts';
+import { roleFromBuilderProperty } from '../_shared/builderStock/sourceImageRole.pure.ts';
+import { validateSourceImageBytes } from '../_shared/builderStock/sourceAssets.pure.ts';
+import { sha256Hex } from '../_shared/builderStock/rasterPng.ts';
+import { safeObjectName } from '../_shared/builderStock/fileTypes.pure.ts';
+import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
@@ -380,6 +388,115 @@ Deno.serve(async (req) => {
           page, page_size: pageSize, total: count ?? 0,
           total_pages: Math.max(1, Math.ceil((count ?? 0) / pageSize)),
         },
+      });
+    }
+
+    /*
+     * =====================================================================
+     * Supplying a picture on the builder's behalf
+     * =====================================================================
+     *
+     * The same act as the Builder Portal's, performed by NPC staff, and the
+     * same three modules do the work — so the two surfaces cannot come to
+     * disagree about what a builder-supplied image is.
+     *
+     * WHY THE COMMAND CENTRE NEEDS IT AT ALL. A blank card costs NPC a sale
+     * today, and a builder who has not answered an email is not a reason to
+     * keep showing nothing: staff routinely hold the marketing pack before the
+     * builder gets round to uploading it. The record says which of them
+     * supplied it, because acting for somebody is a different act from acting
+     * for yourself.
+     *
+     * `listings` edit, deny by default, like every other write here.
+     */
+    if (operation === 'supply_builder_image') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(
+          listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+
+      const stockItemId = cleanText(body.stock_item_id, 64);
+      const item = await loadItem(stockItemId);
+      if (!item) return json({ error: 'Property not found' }, 404);
+
+      const storagePath = cleanText(body.storage_path, 400);
+      /*
+       * The path is a LOOKUP KEY and never authority — the organisation it
+       * names must be the one that owns the property, or staff could register
+       * one builder's object against another's card.
+       */
+      if (!isBuilderSuppliedPath(storagePath)
+        || !storagePath.includes(`/${item.organisation_id}/`)) {
+        return json({ error: 'That image location is not allowed' }, 400);
+      }
+
+      const { data: blob, error: downloadError } = await supabase.storage
+        .from(STOCK_IMAGE_BUCKET).download(storagePath);
+      if (downloadError || !blob) {
+        return json({ error: 'That image was not uploaded. Please try again.' }, 400);
+      }
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      // Validated out of storage, so what is registered is what was stored.
+      const checked = validateSourceImageBytes(bytes);
+      if (checked.ok !== true) {
+        await supabase.storage.from(STOCK_IMAGE_BUCKET).remove([storagePath]);
+        return json({ error: checked.reason }, 400);
+      }
+
+      const attached = await attachBuilderImage(supabase, {
+        organisationId: String(item.organisation_id),
+        stockItemId,
+        uploadId: (item.upload_id as string | null) ?? null,
+        storageBucket: STOCK_IMAGE_BUCKET,
+        storagePath,
+        contentType: checked.contentType,
+        byteSize: bytes.length,
+        sha256: await sha256Hex(bytes),
+        role: roleFromBuilderProperty({
+          suppliedBy: 'staff',
+          property: [item.lot_number ? `Lot ${item.lot_number}` : '', item.address_line]
+            .filter(Boolean).join(', ') || 'this property',
+        }),
+      });
+      if ('error' in attached) return json({ error: 'The image could not be stored.' }, 500);
+
+      /*
+       * `attachBuilderImage` puts the property back in front of the ladder
+       * itself — see its header. Nothing here writes `primary_image_id` or
+       * touches the image pipeline's own columns: this function SERVES the
+       * marketplace, and what it serves is decided by lifecycle alone.
+       */
+      return json({ success: true, properties: 1 });
+    }
+
+    if (operation === 'create_builder_image_upload') {
+      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
+      if (!listingsEdit.ok) {
+        return createForbiddenResponse(
+          listingsEdit.error || 'Listing edit access required', corsHeaders);
+      }
+      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      if (!item) return json({ error: 'Property not found' }, 404);
+
+      const storagePath = propertyImageStoragePath({
+        organisationId: String(item.organisation_id),
+        stockItemId: String(item.id),
+        filename: safeObjectName(cleanText(body.filename, 200) || 'image'),
+      });
+      const { data: signed, error: signError } = await supabase.storage
+        .from(STOCK_IMAGE_BUCKET)
+        .createSignedUploadUrl(storagePath);
+      if (signError || !signed?.signedUrl) {
+        return json({ error: 'Storage could not accept the image.' }, 502);
+      }
+      const raw = signed.signedUrl;
+      return json({
+        success: true,
+        storage_path: storagePath,
+        upload_url: raw.startsWith('http')
+          ? raw
+          : `${Deno.env.get('SUPABASE_URL')}/storage/v1${raw.startsWith('/') ? '' : '/'}${raw}`,
       });
     }
 

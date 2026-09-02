@@ -10,6 +10,8 @@ import { cn } from '@/lib/utils';
 
 interface CreativeGalleryProps {
   datePreset: string;
+  /** Custom analytics range; when set it wins over the preset server-side. */
+  timeRange?: { since: string; until: string };
 }
 
 function formatCurrency(val: number) {
@@ -52,15 +54,16 @@ function getAspectStyle(creative: Creative): React.CSSProperties {
   return {};
 }
 
-export function CreativeGalleryPanel({ datePreset }: CreativeGalleryProps) {
+export function CreativeGalleryPanel({ datePreset, timeRange }: CreativeGalleryProps) {
   const [previewCreative, setPreviewCreative] = useState<Creative | null>(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['meta-ads-creatives', datePreset],
+    queryKey: ['meta-ads-creatives', datePreset, timeRange],
     queryFn: async () => {
       const { data, error } = await invokeSecureFunction('analyze-meta-ads-phase5', {
         action: 'creatives',
         datePreset,
+        ...(timeRange ? { timeRange } : {}),
         limit: 20,
       });
       if (error) throw new Error(error.message);

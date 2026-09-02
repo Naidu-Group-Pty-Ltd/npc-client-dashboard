@@ -67,7 +67,7 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
     setIsGenerating(true);
     setProgress('Fetching live market data...');
     const toastId = toast.loading('Generating Market Intelligence Report...', {
-      description: 'Pulling live data from 6 sources — this may take 30-60 seconds.',
+      description: 'Pulling live data from 6 sources — this can take up to 2-3 minutes.',
     });
 
     try {
@@ -97,6 +97,11 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
         // report from the History modal has always silently dropped that whole
         // section. Zero of the six stored reports carry one.
         correlation_data: correlationData,
+      }, {
+        // Six live sources plus an AI narrative regularly outlive the 60s
+        // default; the client aborting at 60s is what "Request timed out"
+        // reported while the function was still working.
+        timeoutMs: 180_000,
       });
 
       if (error) throw new Error(error.message || 'Failed to generate report data');

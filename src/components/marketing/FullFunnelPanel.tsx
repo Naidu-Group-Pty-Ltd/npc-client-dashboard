@@ -68,10 +68,14 @@ export function FullFunnelPanel() {
                 return (
                   <div key={stage.name} className="flex flex-col items-center">
                     {idx > 0 && (
-                      <div className="flex items-center gap-2 py-1">
+                      /* The arrow is centred on its own; the conversion pill
+                         hangs off it absolutely. Centring the pair shoved
+                         the arrow off the funnel's centre line wherever a
+                         pill existed, so only the first arrow looked wrong. */
+                      <div className="relative flex w-full items-center justify-center py-1">
                         <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
                         {conversionFromPrev && (
-                          <span className="rounded-full border border-border/50 bg-background/60 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
+                          <span className="absolute left-1/2 ml-4 whitespace-nowrap rounded-full border border-border/50 bg-background/60 px-2 py-0.5 text-[10px] font-mono text-muted-foreground">
                             {conversionFromPrev}% conversion
                           </span>
                         )}
@@ -81,7 +85,7 @@ export function FullFunnelPanel() {
                       className="relative mx-auto overflow-hidden rounded-2xl shadow-lg shadow-sm dark:shadow-black/10 transition-all duration-500"
                       style={{
                         width: `${widthPct}%`,
-                        minWidth: '120px',
+                        minWidth: '180px',
                         backgroundColor: stage.color,
                       }}
                     >

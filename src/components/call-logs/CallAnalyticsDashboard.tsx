@@ -290,7 +290,7 @@ export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) =
                       cy="50%"
                       labelLine={false}
                       label={renderCustomizedLabel}
-                      outerRadius={100}
+                      outerRadius="72%"
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -299,7 +299,7 @@ export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) =
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipContentStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                    <Legend wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
+                    <Legend verticalAlign="bottom" height={48} wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -335,7 +335,7 @@ export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) =
                       cy="50%"
                       labelLine={false}
                       label={renderCustomizedLabel}
-                      outerRadius={100}
+                      outerRadius="72%"
                       fill="#8884d8"
                       dataKey="value"
                     >
@@ -344,7 +344,7 @@ export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) =
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipContentStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                    <Legend wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
+                    <Legend verticalAlign="bottom" height={48} wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

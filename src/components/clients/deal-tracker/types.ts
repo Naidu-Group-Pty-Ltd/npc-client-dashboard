@@ -53,6 +53,13 @@ export interface Deal {
   formal_approval_date: string | null;
   loan_docs_signed_date: string | null;
 
+  /**
+   * Completion stamps for the critical dates above, keyed by column name
+   * ({ settlement_date: '2026-09-02' }). A passed date with a stamp is a
+   * finished obligation, not an overdue one.
+   */
+  critical_date_completions?: Record<string, string> | null;
+
   notes: string | null;
   created_by: string | null;
   created_at: string;

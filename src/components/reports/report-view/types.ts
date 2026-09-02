@@ -24,6 +24,10 @@ export interface InvestmentReport {
   derived_from_report_id?: string | null;
   parent_report_id?: string | null;
   pdf_url?: string | null;
+  /** Per-source provenance the generation recorded — null means attempted, nothing returned. */
+  data_sources?: Record<string, unknown> | null;
+  /** Quality/schema/fact findings recorded at generation; `type: 'fact'` are prose-vs-record contradictions. */
+  validation_flags?: unknown[] | null;
 }
 
 export interface ClientInfo {

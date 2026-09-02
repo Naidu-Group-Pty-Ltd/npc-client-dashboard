@@ -49,6 +49,7 @@ function itemAt(id: string, stage = 'source'): ClaimedItem {
   return {
     id, organisation_id: ORG, upload_id: 'upload-1',
     image_work_stage: stage, image_work_attempts: 0, lifecycle_status: 'active',
+    pending_upload_id: null,
   };
 }
 

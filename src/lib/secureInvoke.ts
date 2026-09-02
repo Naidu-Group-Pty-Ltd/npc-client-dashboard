@@ -271,6 +271,48 @@ export async function resolveAuthBearer(
 /**
  * Invoke an edge function with HttpOnly cookie support
  */
+const RENDER_ROUTE_RE = /^render-([a-z-]+)-pdf$/;
+const RENDER_ROUTE_FORMAT: Record<string, string> = {
+  'borrowing-capacity': 'borrowing_capacity',
+  'cash-flow': 'cashflow',
+  'cash-flow-comparison': 'cash_flow_comparison',
+  'client-details': 'client_details',
+  'commercial-capacity': 'commercial_capacity',
+  'market-intelligence': 'market_intelligence',
+  'portfolio-review': 'portfolio',
+  'property-comparison': 'comparison',
+  'report-qa': 'qa',
+  'investment-report': 'investment',
+};
+
+function maybeLogRenderCoverage(functionName: string, body: Record<string, any> | undefined, data: unknown): void {
+  try {
+    let engine: 'template' | 'design_composer' | 'legacy_server' | null = null;
+    let format = '';
+    if (functionName === 'render-template-pdf') {
+      engine = 'template';
+      format = String(body?.reportType ?? body?.format ?? '');
+    } else {
+      const m = RENDER_ROUTE_RE.exec(functionName);
+      if (!m || !(m[1] in RENDER_ROUTE_FORMAT)) return;
+      format = RENDER_ROUTE_FORMAT[m[1]];
+      engine = functionName === 'render-investment-report-pdf' ? 'legacy_server' : 'design_composer';
+    }
+    // A route that answered but reported failure is not a produced document.
+    if (data && typeof data === 'object' && (data as any).success === false) return;
+    const reportId = [body?.reportId, body?.assessmentId, body?.comparisonId, body?.conversationId, body?.clientId]
+      .find((v) => typeof v === 'string' && v);
+    void import('@/lib/reports/renderEvent').then(({ logReportRenderEvent }) => {
+      logReportRenderEvent({
+        format: format || 'unknown',
+        engine: engine!,
+        source: 'engine_auto',
+        reportId: (reportId as string | undefined) ?? null,
+      });
+    }).catch(() => {});
+  } catch { /* coverage must never affect the call it observed */ }
+}
+
 export async function invokeSecureFunction<T = any>(
   functionName: string,
   body?: Record<string, any>,
@@ -475,6 +517,15 @@ export async function invokeSecureFunction<T = any>(
         });
       }
     }
+
+    // ── Render-coverage telemetry (fire-and-forget) ──────────────────────
+    // Every server render route answered here successfully is one produced
+    // document, and docs/reports/COVERAGE.md exists because most pathways
+    // recorded nothing. Logging at the one place every render invocation
+    // already passes through is the meteredFetch pattern: coverage that
+    // cannot be forgotten by a new call site. Browser-only generators (no
+    // server call) log themselves via `reports/renderEvent.ts`.
+    maybeLogRenderCoverage(functionName, body, data);
 
     return { data: data as T, error: null };
   } catch (error: any) {

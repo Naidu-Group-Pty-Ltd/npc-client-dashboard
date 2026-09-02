@@ -4,6 +4,7 @@ import { FlattenPdfIconButton } from '@/components/common/FlattenPdfIconButton';
 import { fetchPdfBlob } from '@/lib/pdf/downloadPdf';
 import { FileText, Loader2, History, Settings2, CheckCircle2, AlertCircle, Download } from 'lucide-react';
 import { toast } from 'sonner';
+import { logReportRenderEvent } from '@/lib/reports/renderEvent';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { generateMarketIntelligencePDF, type MarketIntelligenceReportData } from './MarketIntelligencePDFGenerator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -133,6 +134,7 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
         audienceSegment: 'general',
       });
 
+      logReportRenderEvent({ format: 'market_intelligence', engine: 'browser', source: 'market_intelligence_jspdf', reportId: data?.reportId ?? undefined });
       toast.success('Market Intelligence Report generated!', {
         id: toastId,
         description: `${reportData.reportPeriod} — download ready below.`,

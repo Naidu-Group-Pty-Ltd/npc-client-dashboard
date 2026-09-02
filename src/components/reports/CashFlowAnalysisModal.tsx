@@ -34,6 +34,7 @@ import {
   formatMetricMultiple,
   formatMetricPercent,
   type InvestmentMetrics,
+  type MetricsUnavailable,
 } from '@/lib/cashFlow/investmentMetrics.pure';
 import { toWireComparison, type WireComparison } from '@/lib/reports/cashFlowComparison/toWireComparison';
 import {
@@ -1512,10 +1513,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     return allComparisonProjections.map(({ report: compReport, projections: compProjs }) => {
       const compBase = readBaseFinancials(compReport, new Date().getFullYear());
       const read = deriveInvestmentMetrics(compProjs, compBase);
+      let metrics: InvestmentMetrics | null = null;
+      let unavailable: MetricsUnavailable | null = null;
+      if (read.ok === true) {
+        metrics = read.metrics;
+      } else {
+        unavailable = read.reason;
+      }
       return {
         report: compReport,
-        metrics: read.ok ? read.metrics : null,
-        unavailable: read.ok ? null : read.reason,
+        metrics,
+        unavailable,
         projections: compProjs,
       };
     });

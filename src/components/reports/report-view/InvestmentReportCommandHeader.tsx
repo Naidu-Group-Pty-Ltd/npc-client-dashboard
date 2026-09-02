@@ -1,4 +1,4 @@
-import { ArrowLeft, Calculator, Download, Edit, FolderOpen, History, Images, MoreHorizontal, Send, Settings } from 'lucide-react';
+import { ArrowLeft, Calculator, Download, Edit, FolderOpen, History, Images, Loader2, MoreHorizontal, Send, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -37,6 +37,10 @@ interface Props {
   onManageHeroImages: () => void;
   onOpenVersionHistory: () => void;
   onDownload: () => void;
+  /** True while the document render is in flight — a multi-second wait with no feedback reads as broken. */
+  downloadBusy?: boolean;
+  /** The raw-markdown export, for the menu item that says exactly that. */
+  onExportText?: () => void;
 }
 
 export function InvestmentReportCommandHeader({
@@ -55,6 +59,8 @@ export function InvestmentReportCommandHeader({
   onManageHeroImages,
   onOpenVersionHistory,
   onDownload,
+  downloadBusy = false,
+  onExportText,
 }: Props) {
   const reportType = resolveInvestmentReportType(report);
 
@@ -101,9 +107,11 @@ export function InvestmentReportCommandHeader({
         </div>
 
         <div className="order-2 ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2 lg:order-3">
-          <Button variant="default" size="sm" onClick={onDownload} className="shrink-0 shadow-sm">
-            <Download className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">Download</span>
+          <Button variant="default" size="sm" onClick={onDownload} disabled={downloadBusy} className="shrink-0 shadow-sm">
+            {downloadBusy
+              ? <Loader2 className="h-4 w-4 animate-spin sm:mr-1" />
+              : <Download className="h-4 w-4 sm:mr-1" />}
+            <span className="hidden sm:inline">{downloadBusy ? 'Preparing…' : 'Download PDF'}</span>
           </Button>
 
           <Button variant="outline" size="sm" onClick={onSendToClient} className="hidden shrink-0 bg-background/80 shadow-sm md:inline-flex">
@@ -144,11 +152,15 @@ export function InvestmentReportCommandHeader({
                 <History className="h-4 w-4 mr-2" />
                 Version History
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={onDownload}>
-                <Download className="h-4 w-4 mr-2" />
-                Raw text download
-              </DropdownMenuItem>
+              {onExportText && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={onExportText}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Raw text download
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

@@ -5,8 +5,9 @@ import {
 } from './_shared.html';
 import { renderMarkdown } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import {
-  packMarkdownPages, DEFAULT_LINES_PER_PAGE,
+  packMarkdownPages, packNarrativePages, resolveNarrativeProfile, DEFAULT_LINES_PER_PAGE,
 } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
+import { stripBakedCover } from '../../../../supabase/functions/_shared/reports/investment/narrativeClean.pure';
 
 export { packMarkdownPages, DEFAULT_LINES_PER_PAGE };
 
@@ -94,8 +95,20 @@ export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): st
   const headingColor = resolveBindableColor(p.headingColor ?? 'token:primary', ctx, '#BF9B50');
   const ruleColor = resolveBindableColor(p.ruleColor ?? 'token:border', ctx, '#E4E4E7');
 
-  const result = renderMarkdown(String(source));
-  const pages = packMarkdownPages(result.blocks, linesPerPage);
+  // The calibrated narrative profile, resolved EXACTLY as the projection
+  // resolves it (`resolveNarrativeProfile` is the single authority), so the
+  // page count a master's conditionals read and the buckets this block draws
+  // are the same arithmetic. The profile also carries the baked-cover strip:
+  // the projection publishes the stripped source, but a master bound straight
+  // at raw content must not disagree with one bound at `narrative.source`.
+  const reportType = String((ctx.data as Record<string, any> | undefined)?.report?.type ?? '');
+  const profile = resolveNarrativeProfile(reportType);
+  const cleanSource = profile ? stripBakedCover(String(source)).text : String(source);
+
+  const result = renderMarkdown(cleanSource, { charging: profile?.charging });
+  const pages = profile
+    ? packNarrativePages(result.blocks, profile, linesPerPage)
+    : packMarkdownPages(result.blocks, linesPerPage);
   const page = pages[pageIndex];
   if (!page || !page.length) return '';
 

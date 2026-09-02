@@ -1,4 +1,5 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { logReportRenderEvent } from '@/lib/reports/renderEvent';
 
 export interface ClientPdfReport {
   id: string;
@@ -80,5 +81,9 @@ export async function downloadClientPdf(
   const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
   if (!bytes.length) throw new Error('The saved client PDF is empty.');
   triggerDownload(new Blob([bytes], { type: contentType }), clientPdfFilename(report));
+  logReportRenderEvent({
+    format: 'investment', engine: 'stored', source: 'client_pdf_stored',
+    reportId, entityName: report.property_address ?? undefined,
+  });
   return options.renderMissingPdf ? 'rendered' : 'downloaded';
 }

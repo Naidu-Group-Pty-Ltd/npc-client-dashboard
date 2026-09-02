@@ -27,6 +27,7 @@
  */
 import { markdownToPlainText, sanitiseGlyphs } from '../markdown.pure.ts';
 import { neutraliseUrls } from '../text.pure.ts';
+import { reconcileStoredFinancials } from './financialEngine.pure.ts';
 import {
   type Demographics,
   type EconomicContext,
@@ -745,7 +746,15 @@ const uuidLike = (v: unknown): string => {
  * before noticing.
  */
 export function buildInvestmentReport(input: BuildInput): BuildResult {
-  const row = input.row ?? {};
+  const rawRow = input.row ?? {};
+  // Stored financials are reconciled before anything reads them — historic
+  // rows carry the pre-fix fold's inflated series (see
+  // reconcileStoredFinancials); the healed object feeds the typed model AND
+  // the scenario fan, which reads `projections` off this same row.
+  const row = {
+    ...rawRow,
+    financial_calculations: reconcileStoredFinancials(rawRow.financial_calculations).fin,
+  };
   const reportId = uuidLike(row.id);
   if (!reportId) return { ok: false, error: 'report id missing' };
 

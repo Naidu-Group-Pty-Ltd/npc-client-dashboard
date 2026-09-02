@@ -1,4 +1,4 @@
-import { Calculator, Download, Edit, Images, MoreHorizontal, Send, Settings } from 'lucide-react';
+import { Calculator, Download, Edit, Images, Loader2, MoreHorizontal, Send, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -11,6 +11,8 @@ import {
 
 interface Props {
   onDownload: () => void;
+  /** True while the document render is in flight. */
+  downloadBusy?: boolean;
   onSendToClient: () => void;
   onCashFlow: () => void;
   onEdit: () => void;
@@ -20,6 +22,7 @@ interface Props {
 
 export function InvestmentReportMobileActionBar({
   onDownload,
+  downloadBusy = false,
   onSendToClient,
   onCashFlow,
   onEdit,
@@ -29,9 +32,9 @@ export function InvestmentReportMobileActionBar({
   return (
     <div className="sticky bottom-0 z-30 border-t bg-background/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur supports-[backdrop-filter]:bg-background/85 lg:hidden">
       <div className="mx-auto flex max-w-7xl items-center gap-2">
-        <Button className="min-w-0 flex-1" size="sm" onClick={onDownload}>
-          <Download className="h-4 w-4 mr-1.5" />
-          Download
+        <Button className="min-w-0 flex-1" size="sm" onClick={onDownload} disabled={downloadBusy}>
+          {downloadBusy ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}
+          {downloadBusy ? 'Preparing…' : 'Download PDF'}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

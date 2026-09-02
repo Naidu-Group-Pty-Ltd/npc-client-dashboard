@@ -171,7 +171,7 @@ async function fetchGoogleSheet(
       ref, attempt, body: decodeUtf8(body.bytes), sentinelBody,
     });
 
-    if (!resolved.ok) {
+    if (resolved.ok === false) {
       if (resolved.reason === 'gid_unresolved') {
         throw new SourceFetchError(
           'sheet_tab_not_found',
@@ -297,7 +297,7 @@ async function enrichWithHyperlinks(
   }
 
   const match = matchWorksheet(matrix, sheets);
-  if (!match.ok) {
+  if (match.ok === false) {
     return {
       csv,
       availability: match.reason === 'ambiguous'

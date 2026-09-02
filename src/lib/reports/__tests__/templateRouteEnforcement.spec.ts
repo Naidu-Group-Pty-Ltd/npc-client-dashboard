@@ -39,7 +39,11 @@ const stripComments = (source: string) => source
  * being wrong about it is the failure this file exists to catch.
  */
 const DELIVERY_PATHS: Record<string, string[]> = {
-  investment: ['src/components/reports/PremiumPdfButton.tsx'],
+  // Phase 3 delivery unification: the chain that lived in PremiumPdfButton
+  // (template-first, legacy route fallback) moved into investment's own
+  // deliver module, and every surface — the primary download, Send to
+  // Client, the premium button, the flatten copy — asks it.
+  investment: ['src/lib/reports/investment/deliverInvestmentPdf.ts'],
   borrowing_capacity: ['src/lib/reports/borrowingCapacity/deliverSnapshot.ts'],
   portfolio: ['src/lib/reports/portfolio/deliverPortfolioReview.ts'],
   comparison: ['src/lib/reports/propertyComparison/deliverComparisonPdf.ts'],
@@ -134,9 +138,16 @@ describe("the person's chosen template reaches the document", () => {
     expect(code).toMatch(/templateId:\s*selectedId/);
   });
 
-  it('the Compass pilot still forwards its own', () => {
+  it('the Compass pilot goes through the shared delivery, which resolves the choice', () => {
+    // The pilot used to forward the selection itself because the shared path
+    // could not accept one. The shared question resolves it for every surface
+    // now (asserted above), so the pilot's job is to USE the shared delivery
+    // rather than keep a private copy of the chain — a second copy is how the
+    // two drift.
     const code = stripComments(read('src/components/reports/PremiumPdfButton.tsx'));
-    expect(code).toMatch(/tryRouteThroughTemplateBuilder\(\s*reportId\s*,\s*\w+/);
+    expect(code).toMatch(/produceInvestmentDocument\(/);
+    expect(code).not.toMatch(/tryRouteThroughTemplateBuilder\(/);
+    expect(code).not.toMatch(/render-investment-report-pdf/);
   });
 });
 

@@ -11,6 +11,9 @@ import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
+import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
+import { applyDisplayOverrides, buildAnnualCostOverrides, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -2677,77 +2680,42 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               state: state,
               propertyType: propertyDetails?.propertyType || 'house',
               isFirstHomeBuyer: effectiveIsFirstHomeBuyer,
-              isNewBuild: effectiveIsNewBuild
+              isNewBuild: effectiveIsNewBuild,
+              // Reviewed figures go INTO the engine so the totals, series,
+              // sensitivity and metrics all describe them; splatting them
+              // over the response afterwards (the old way) left every
+              // downstream figure describing the formula estimates.
+              // (toFiniteNumber, not the local toNumberOr — that const is
+              // declared later in this handler and would be TDZ here.)
+              ...((toFiniteNumber(mergedOverrides.capitalGrowth) ?? 0) > 0
+                ? { capitalGrowthRate: toFiniteNumber(mergedOverrides.capitalGrowth) } : {}),
+              ...((toFiniteNumber(mergedOverrides.cpiGrowthRate) ?? 0) > 0
+                ? { cpiGrowthRate: toFiniteNumber(mergedOverrides.cpiGrowthRate) } : {}),
+              ...(buildAnnualCostOverrides(mergedOverrides)
+                ? { annualCostOverrides: buildAnnualCostOverrides(mergedOverrides) } : {}),
+              ...(toFiniteNumber(mergedOverrides.stampDuty) !== undefined
+                ? { stampDutyOverride: toFiniteNumber(mergedOverrides.stampDuty) } : {}),
+              ...(toFiniteNumber(mergedOverrides.solicitorFees) !== undefined
+                ? { legalFeesOverride: toFiniteNumber(mergedOverrides.solicitorFees) } : {})
             })
           });
           
           if (financialResponse.ok) {
             const financialData = await financialResponse.json();
             
-            // Merge manual overrides with fresh financial calculations
+            // The modelled overrides already went INTO the calculator call
+            // above; only the fields the engine does not model (tax
+            // treatment, occupancy display, build splits, loan labels) are
+            // merged onto the result. The old splat loop wrote every
+            // override over the response's leaves, which is how stored rows
+            // came to carry overridden line items beside totals, series and
+            // metrics computed from the formula estimates.
             if (hasOverrides) {
-              console.log('🔀 Merging manual overrides with fresh financial calculations');
-              
-              // Create a deep copy of financial data
-              const mergedFinancials = JSON.parse(JSON.stringify(financialData.data));
-              
-              // Map flat override keys to nested structure
-              const overrideMapping: Record<string, string> = {
-                'purchasePrice': 'initialCosts.propertyValue',
-                'stampDuty': 'initialCosts.stampDuty',
-                'depositValue': 'initialCosts.deposit',
-                'loanToValueRatio': 'keyMetrics.lvr',
-                'interestRate': 'loanDetails.interestRate',
-                'weeklyRent': 'income.weeklyRent',
-                'councilRates': 'annualCosts.councilRates',
-                'waterRates': 'annualCosts.waterRates',
-                'bodyCorporateFees': 'annualCosts.strataFees',
-                'buildingLandlordInsurance': 'annualCosts.landlordInsurance',
-                'propertyManagementFees': 'annualCosts.propertyManagementPercent',
-                'solicitorFees': 'initialCosts.legalFees',
-                'repairsMaintenance': 'annualCosts.maintenance',
-                'lettingFees': 'annualCosts.lettingFees',
-                'capitalGrowth': 'assumptions.capitalGrowth',
-                'buildPrice': 'initialCosts.buildPrice',
-                'landPrice': 'initialCosts.landPrice',
-                'landSizeSqm': 'propertySpecs.landSizeSqm',
-                'buildSizeSqm': 'propertySpecs.buildSizeSqm',
-                'landTax': 'annualCosts.landTax',
-                'depreciation': 'taxBenefits.depreciation',
-                'taxRate': 'taxBenefits.marginalTaxRate',
-                'occupancyRate': 'assumptions.occupancyWeeks',
-                'cpiGrowthRate': 'assumptions.cpiGrowth',
-                'loanType': 'loanDetails.loanType',
-                'loanAmount': 'loanDetails.loanAmount',
-                'interestOnlyPeriodYears': 'loanDetails.interestOnlyPeriod'
+              console.log('🔀 Applying display-only overrides to fresh financial calculations');
+              enhancedData = {
+                ...enhancedData,
+                financials: applyDisplayOverrides(financialData.data, mergedOverrides)
               };
-              
-              // Apply overrides to the nested structure
-              for (const [flatKey, overrideValue] of Object.entries(mergedOverrides)) {
-                const nestedPath = overrideMapping[flatKey];
-                if (nestedPath) {
-                  const keys = nestedPath.split('.');
-                  let current = mergedFinancials;
-                  
-                  // Navigate to the nested location
-                  for (let i = 0; i < keys.length - 1; i++) {
-                    if (!current[keys[i]]) {
-                      current[keys[i]] = {};
-                    }
-                    current = current[keys[i]];
-                  }
-                  
-                  // Set the overridden value
-                  current[keys[keys.length - 1]] = overrideValue;
-                  console.log(`  ✓ Override applied: ${flatKey} → ${nestedPath} = ${overrideValue}`);
-                }
-              }
-              
-              enhancedData = { 
-                ...enhancedData, 
-                financials: mergedFinancials
-              };
-              console.log('✓ Manual overrides applied to financial calculations');
             } else {
               enhancedData = { ...enhancedData, financials: financialData.data };
             }
@@ -3597,6 +3565,23 @@ Produce a comprehensive statewide investment analysis following the structure ab
     console.log(`📊 Annual Costs Breakdown: Council=$${effectiveCouncilRates}, Water=$${effectiveWaterRates}, Strata=$${effectiveStrataFees}, Insurance=$${effectiveLandlordInsurance}, Maintenance=$${effectiveMaintenance}, PM=$${effectivePmDollar}`);
     console.log(`📅 Occupancy: ${effectiveOccupancyRate} weeks/year (${((effectiveOccupancyRate/52)*100).toFixed(0)}%)`);
     console.log(`📊 Land Tax Override: $${effectiveLandTax} (will be injected into prompt)`);
+
+    // Cash-flow narrative figures are derived FROM the projections series so
+    // the prose can never disagree with the table it introduces — the table
+    // below transcribes the series verbatim. The helpers live in
+    // financialEngine.pure.ts beside the arithmetic that writes the series.
+    const annualLoanPayments = Math.round((enhancedData.financials?.loanDetails?.monthlyPayment || 0) * 12);
+    const moderateSeries: any[] = Array.isArray(enhancedData.financials?.projections?.moderate)
+      ? enhancedData.financials.projections.moderate
+      : [];
+    const opexYear1 = impliedOpexFromSeries(moderateSeries[0], annualLoanPayments)
+      ?? toNumberOr(enhancedData.financials?.annualCosts?.totalAnnual, totalAnnualCostsForNetYield + effectiveLandTax);
+    const opexYear10 = impliedOpexFromSeries(moderateSeries[9], annualLoanPayments) ?? opexYear1;
+    const cumConservative = cumulativeCashFlow(enhancedData.financials?.projections?.conservative);
+    const cumModerate = cumulativeCashFlow(enhancedData.financials?.projections?.moderate);
+    const cumOptimistic = cumulativeCashFlow(enhancedData.financials?.projections?.optimistic);
+    const allScenariosCashNegative = cumConservative < 0 && cumModerate < 0 && cumOptimistic < 0;
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -4192,8 +4177,8 @@ The rental analysis below is based on suburb-level median rental data and the sp
 | Metric | Calculation | Value |
 |--------|-------------|-------|
 | Annual Income | $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'} × ${effectiveOccupancyRate} weeks | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
-| Annual Expenses | Property Mgmt + Maintenance + Rates + Insurance | $${enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax?.toLocaleString() || 'X,XXX'} |
-| Net Annual Return | Income - Expenses | $${(annualRentIncome - (enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax || 0)).toLocaleString() || 'XX,XXX'} |
+| Annual Expenses | Mgmt + Maintenance + Rates + Insurance${effectiveStrataFees ? ' + Strata' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
+| Net Annual Return | Income - Expenses | $${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()} |
 | **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${preCalculatedNetYield}%** |
 
 **Yield Comparison to Benchmarks:**
@@ -4352,26 +4337,26 @@ ${enhancedData.financials?.projections?.conservative ? enhancedData.financials.p
 
 Cashflow = Annual Rental Income - Annual Operating Costs - Annual Loan Repayments
 
-**Annual Operating Costs (excluding loan repayment):** $${enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax?.toLocaleString() || 'X,XXX'} Year 1, escalating to $${Math.round(((effectiveCouncilRates || 0) + (effectiveWaterRates || 0) + (effectiveLandlordInsurance || 0) + (effectiveMaintenance || 0)) * 1.249 + (effectiveLandTax || 0) + (effectivePmDollar || 0) * 1.18).toLocaleString()} Year 10 (as detailed in table above)
+**Annual Operating Costs (excluding loan repayments, including land tax where applicable):** $${opexYear1.toLocaleString()} in Year 1, escalating with CPI to approximately $${opexYear10.toLocaleString()} by Year 10
 
-**Annual P&I Repayment:** $${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} Year 1 (declining to $${Math.round((enhancedData.financials?.loanDetails?.monthlyPayment || 0) * 12 * 0.95).toLocaleString()} Year 10 as interest component decreases and principal portion increases through amortization)
+**Annual P&I Repayment:** $${annualLoanPayments.toLocaleString()} (constant across the loan term — the interest portion falls and the principal portion rises as the loan amortises, but the repayment itself does not change)
 
 | Year | Conservative (2%) | Base Case (3%) | Optimistic (4%) |
 |------|-------------------|----------------|-----------------|
-${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) => 
-`| ${i + 1} | ($${Math.abs(p.cashFlow || 0).toLocaleString()}) | ($${Math.abs(enhancedData.financials?.projections?.moderate?.[i]?.cashFlow || 0).toLocaleString()}) | ($${Math.abs(enhancedData.financials?.projections?.optimistic?.[i]?.cashFlow || 0).toLocaleString()}) |`
+${enhancedData.financials?.projections?.conservative ? enhancedData.financials.projections.conservative.slice(0, 10).map((p: any, i: number) =>
+`| ${i + 1} | ${fmtCashFlow(p.cashFlow)} | ${fmtCashFlow(enhancedData.financials?.projections?.moderate?.[i]?.cashFlow)} | ${fmtCashFlow(enhancedData.financials?.projections?.optimistic?.[i]?.cashFlow)} |`
 ).join('\n') : '| 1-10 | [Calculate] | [Calculate] | [Calculate] |'}
-| **10-Year Total** | **($${Math.abs(enhancedData.financials?.projections?.conservative?.reduce((sum: number, p: any) => sum + (p.cashFlow || 0), 0) || 0).toLocaleString() || 'XXX,XXX'})** | **($${Math.abs(enhancedData.financials?.projections?.moderate?.reduce((sum: number, p: any) => sum + (p.cashFlow || 0), 0) || 0).toLocaleString() || 'XXX,XXX'})** | **($${Math.abs(enhancedData.financials?.projections?.optimistic?.reduce((sum: number, p: any) => sum + (p.cashFlow || 0), 0) || 0).toLocaleString() || 'XXX,XXX'})** |
+| **10-Year Total** | **${fmtCashFlow(cumConservative)}** | **${fmtCashFlow(cumModerate)}** | **${fmtCashFlow(cumOptimistic)}** |
 
 **Projected Loan-to-Value Ratio (LVR) - Year 10:**
 
-Loan Balance at Year 10: Approximately $[XXX,XXX] (declining from initial $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'})
+Loan Balance at Year 10: $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || '[XXX,XXX]'} (declining from initial $${enhancedData.financials?.initialCosts?.loanAmount?.toLocaleString() || 'X,XXX,XXX'})
 
 | Scenario | Year 10 Property Value | Loan Balance | LVR |
 |----------|------------------------|--------------|-----|
-| Conservative (2%) | $${enhancedData.financials?.projections?.conservative?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.conservative?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${enhancedData.financials?.projections?.conservative?.[9]?.lvr || 'XX'}% |
-| Base Case (4%) | $${enhancedData.financials?.projections?.moderate?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${enhancedData.financials?.projections?.moderate?.[9]?.lvr || 'XX'}% |
-| Optimistic (6%) | $${enhancedData.financials?.projections?.optimistic?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${enhancedData.financials?.projections?.optimistic?.[9]?.lvr || 'XX'}% |
+| Conservative (2%) | $${enhancedData.financials?.projections?.conservative?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.conservative?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.conservative?.[9])}% |
+| Base Case (4%) | $${enhancedData.financials?.projections?.moderate?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.moderate?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.moderate?.[9])}% |
+| Optimistic (6%) | $${enhancedData.financials?.projections?.optimistic?.[9]?.propertyValue?.toLocaleString() || 'X,XXX,XXX'} | $${enhancedData.financials?.projections?.optimistic?.[9]?.loanBalance?.toLocaleString() || 'XXX,XXX'} | ${seriesLvrPercent(enhancedData.financials?.projections?.optimistic?.[9])}% |
 
 **10-Year Projection Commentary (200+ words required):**
 
@@ -4381,9 +4366,13 @@ The base case scenario (4% growth) delivers Year 10 value of $[X,XXX,XXX], produ
 
 The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with capital gains of $[X,XXX,XXX] ([XX.X]%). LVR declines to [XX]%, indicating strong equity position and reduced leverage.
 
-**Cumulative Cashflow:** All scenarios produce negative cumulative cashflow over the 10-year period, ranging from ($[XXX,XXX]) in the conservative case to ($[XXX,XXX]) in the optimistic case. This negative cashflow is offset by capital appreciation, making the investment viable only for investors capable of sustaining annual shortfalls and targeting long-term wealth accumulation through capital growth rather than rental income.
+**Cumulative Cashflow:** ${allScenariosCashNegative
+  ? `All scenarios produce negative cumulative cashflow over the 10-year period: Conservative ${fmtCashFlow(cumConservative)}, Base Case ${fmtCashFlow(cumModerate)}, Optimistic ${fmtCashFlow(cumOptimistic)}. This shortfall is weighed against capital appreciation — the investment suits buyers able to fund the annual gap while targeting long-term growth.`
+  : `The 10-year cumulative cashflow is Conservative ${fmtCashFlow(cumConservative)}, Base Case ${fmtCashFlow(cumModerate)}, Optimistic ${fmtCashFlow(cumOptimistic)}. Describe the actual position using these exact figures: state which scenarios are self-funding and which require the investor to contribute each year. Do not describe the cashflow as negative in a scenario where the figure above is positive.`}
 
-**Critical Insight:** This property is fundamentally structured as a Capital Growth investment, with [X]% annual property appreciation expectations, with rental income insufficient to cover debt servicing costs.
+**Critical Insight:** ${(typeof moderateSeries[0]?.cashFlow === 'number' ? moderateSeries[0].cashFlow : -1) < 0
+  ? `This property is fundamentally structured as a Capital Growth investment, with rental income insufficient to cover debt servicing and holding costs in the early years.`
+  : `In the base case, rental income covers the property's debt servicing and holding costs, so returns combine income and capital growth. Characterise the balance between the two using the projections above — do not describe the rental income as insufficient.`}
 
 ---
 
@@ -6094,34 +6083,67 @@ YOUR DEDICATED PROPERTY PARTNER
         council_area: propertyDetails?.councilArea || null
       };
       
-      // Prepare data sources tracking
+      // Prepare data sources tracking. Every source the generation ATTEMPTED
+      // is recorded — present with its provenance, or null — so the viewer's
+      // coverage disclosure can say "9 of 11 sources" instead of the four
+      // this block used to name. A null is a fact ("we asked and got
+      // nothing"), never an error.
+      const sourceStamp = (source: string, confidence: number) => ({
+        source,
+        confidence,
+        timestamp: new Date().toISOString()
+      });
       const dataSources = {
         demographics: enhancedData.demographics ? {
           source: 'abs',
           confidence: enhancedData.demographics.data_quality === 'live' ? 1.0 : 0.6,
           timestamp: new Date().toISOString()
         } : null,
-        financials: enhancedData.financials ? {
-          source: 'calculated',
-          confidence: 1.0,
-          timestamp: new Date().toISOString()
-        } : null,
-        marketData: enhancedData.domainData ? {
-          source: 'domain',
-          confidence: 0.9,
-          timestamp: new Date().toISOString()
-        } : null,
-        locationIntelligence: enhancedData.locationIntelligence ? {
-          source: 'google_maps',
-          confidence: 0.95,
-          timestamp: new Date().toISOString()
-        } : null
+        financials: enhancedData.financials ? sourceStamp('calculated', 1.0) : null,
+        marketData: enhancedData.domainData ? sourceStamp('domain', 0.9) : null,
+        locationIntelligence: enhancedData.locationIntelligence ? sourceStamp('google_maps', 0.95) : null,
+        economics: enhancedData.economics ? sourceStamp('rba', 0.9) : null,
+        seifa: enhancedData.seifaData ? sourceStamp('abs_seifa', 0.9) : null,
+        crimeStatistics: enhancedData.crimeStatistics ? sourceStamp('state_crime_data', 0.8) : null,
+        employment: enhancedData.employmentData ? sourceStamp('abs_employment', 0.9) : null,
+        climate: enhancedData.climateData ? sourceStamp('climate_service', 0.8) : null,
+        riskAssessment: enhancedData.riskAssessment ? sourceStamp('risk_assessment', 0.85) : null,
+        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null
       };
+
+      // Fact reconciliation: does the written analysis agree with the record
+      // it rides on? Findings DISCLOSE (validation_flags → the viewer's
+      // coverage note); they never gate completion — a report that never
+      // finishes is worse than one carrying a named warning. Report-level
+      // rule, so comparative prose about other properties cannot trip it.
+      let factFlags: Array<ReturnType<typeof factFindingToFlag>> = [];
+      try {
+        const factNum = (v: unknown): number | undefined => {
+          const n = toFiniteNumber(v);
+          return n !== undefined && n > 0 ? n : undefined;
+        };
+        const factFindings = reconcileFacts(reportContent, {
+          bedrooms: factNum(mergedOverrides.bedrooms) ?? factNum(propertyDetails?.beds),
+          bathrooms: factNum(mergedOverrides.bathrooms) ?? factNum(propertyDetails?.baths),
+          carSpaces: factNum(mergedOverrides.carSpaces) ?? factNum(propertyDetails?.carSpaces),
+          purchasePrice: factNum(mergedOverrides.purchasePrice) ?? factNum(propertyDetails?.price),
+          weeklyRent: factNum(mergedOverrides.weeklyRent) ?? factNum(propertyDetails?.weeklyRent),
+          landSizeSqm: factNum(mergedOverrides.landSizeSqm) ?? factNum(propertyDetails?.landSize),
+        });
+        factFlags = factFindings.map(factFindingToFlag);
+        if (factFlags.length) {
+          console.warn(`⚠️ Fact reconciliation: ${factFlags.length} contradiction(s) — ${factFlags.map((f) => f.field).join(', ')}`);
+        }
+      } catch (factError) {
+        console.warn('Fact reconciliation skipped:', factError instanceof Error ? factError.message : factError);
+      }
       
       // Combine financial validation flags with schema validation flags
       const allValidationFlags = [
         ...(enhancedData.validation?.flags || []),
         ...schemaValidationFlags,
+        // Prose-vs-record contradictions, from the reconciliation above.
+        ...factFlags,
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',

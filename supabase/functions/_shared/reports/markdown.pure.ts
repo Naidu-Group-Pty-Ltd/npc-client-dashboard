@@ -155,6 +155,30 @@ export const MAX_INLINE_MARKERS = 400;
 export const CHARS_PER_LINE = 65;
 
 /**
+ * The measured measure, for the calibrated charge model.
+ *
+ * `scripts/reports/markdownCalibration.mts` rendered a 390-character paragraph
+ * through the real seeded Compass master on the pinned engine: it wraps at
+ * ~98 characters per line, not 65. 95 keeps 3% in hand for a family that sets
+ * a slightly larger body face. Only `charging: 'measured'` reads this; the
+ * legacy model keeps 65 so every uncalibrated caller stays byte-identical.
+ */
+export const MEASURED_CHARS_PER_LINE = 95;
+
+/**
+ * How block line-costs are estimated.
+ *
+ * `legacy` is the pre-calibration arithmetic, unchanged to the byte — it is
+ * what every deployed master not yet on a narrative profile expects. `measured`
+ * is the 2026-09 calibration: real characters-per-line, half-line rounding,
+ * a measured paragraph margin (~0.36 rendered lines → charged 0.4), a measured
+ * heading cost (~1.67 → charged 1.5), and per-row table charges that account
+ * for cell wrapping — the miss that let a tall table be charged one line per
+ * row, packed onto a page it could not fit, and clipped mid-row.
+ */
+export type ChargeModel = 'legacy' | 'measured';
+
+/**
  * Body lines that fit one page.
  *
  * The other half of the same measurement, and it lives beside it for that
@@ -346,6 +370,23 @@ export function sanitiseGlyphs(
 export interface MarkdownOptions {
   /** The h-level this run's *shallowest* heading maps to. Default 2. */
   baseHeadingLevel?: 2 | 3 | 4;
+  /**
+   * Line-cost model for `MarkdownBlock.lines`. Default `legacy` — the
+   * pre-calibration arithmetic, byte-identical, which every deployed master
+   * not on a narrative profile expects. A calibrated caller passes `measured`
+   * and MUST pair it with the same profile on the paging side; see
+   * `markdownPaging.pure.ts`.
+   */
+  charging?: ChargeModel;
+  /**
+   * Drop a heading that has no content before the next heading of the same or
+   * shallower level (or the end of the document). Default true: a heading
+   * whose body is missing promises analysis the page does not deliver, and a
+   * run of them — measured on a real report, five in a stack over 480px of
+   * white — reads as a broken page. The drop is counted in
+   * `notices.headingsDroppedEmpty`. Pass false to keep skeletons.
+   */
+  dropEmptyHeadings?: boolean;
   /** Namespaces heading ids so two answers on one page cannot collide. */
   idPrefix?: string;
   /** Label on the callout a `>` blockquote becomes. */
@@ -443,11 +484,32 @@ export type MarkdownBlockKind =
   | 'paragraph' | 'heading' | 'list' | 'table' | 'landscape-table'
   | 'blockquote' | 'code' | 'notice' | 'figure';
 
+/**
+ * The structured half of a table block, kept so the pager can split a
+ * taller-than-a-page table by rows with its header repeated. Splitting the
+ * HTML string would mean parsing our own output; carrying the rows costs a
+ * reference and buys a correct split.
+ */
+export interface MarkdownTableMeta {
+  cols: TableColumn[];
+  rows: TableRow[];
+  signedKeys: string[];
+  caption?: string;
+  /** The "Columns not shown" sidenote; first chunk only on a split. */
+  note?: string;
+  /** Per-row line charge, in the charge model this block was built under. */
+  rowLines: number[];
+  /** Head + frame charge the row charges sit on. */
+  headLines: number;
+}
+
 export interface MarkdownBlock {
   kind: MarkdownBlockKind;
   html: string;
   /** Estimated rendered lines across the 174mm measure. See `estimateLines`. */
   lines: number;
+  /** Present on `table` blocks only; see `MarkdownTableMeta`. */
+  table?: MarkdownTableMeta;
 }
 
 /** Every departure from the source, counted. Zero on a clean answer. */
@@ -481,6 +543,14 @@ export interface MarkdownNotices {
    * in it, or a caller who declined the kind. Counted rather than printed.
    */
   figuresDropped: number;
+  /** Headings dropped because nothing followed them. See `dropEmptyHeadings`. */
+  headingsDroppedEmpty: number;
+  /** `[^id]` references rendered as superscript notes. */
+  footnotesRendered: number;
+  /** `[^id]` references whose definition never appeared; the marker is dropped. */
+  footnoteRefsDropped: number;
+  /** Loose list runs (items separated by blank lines) merged into one list. */
+  listRunsMerged: number;
 }
 
 export interface MarkdownResult {
@@ -523,6 +593,10 @@ const emptyNotices = (): MarkdownNotices => ({
   inlineSkipped: 0,
   figuresDrawn: 0,
   figuresDropped: 0,
+  headingsDroppedEmpty: 0,
+  footnotesRendered: 0,
+  footnoteRefsDropped: 0,
+  listRunsMerged: 0,
 });
 
 // ── Inline ──────────────────────────────────────────────────────────────────
@@ -555,6 +629,43 @@ const emptyNotices = (): MarkdownNotices => ({
  *  - every length cap is applied to the **raw** text, because a run of `&` grows
  *    fivefold under escaping.
  */
+/**
+ * The footnote registry for the render in flight.
+ *
+ * `[^id]` references can appear anywhere inline text does — paragraphs, list
+ * items, table cells — and every one of those paths already funnels through
+ * `renderInlineMarkdown`, so the reference substitution lives there. The
+ * definitions are document-level state, and threading a map through a dozen
+ * call sites would change every signature for one feature; a module-ambient
+ * registry set for the duration of one `renderMarkdown` call (this module is
+ * synchronous and single-threaded in both runtimes) is the smaller surface.
+ * Null outside a render: a bare `renderInlineMarkdown` caller sees `[^id]`
+ * dropped only when a render established definitions for it.
+ */
+let activeFootnotes: {
+  defs: Map<string, string>;
+  order: string[];
+  notices: MarkdownNotices;
+} | null = null;
+
+function applyFootnoteRefs(html: string): string {
+  const reg = activeFootnotes;
+  if (!reg) return html;
+  return html.replace(/\[\^([A-Za-z0-9_-]{1,40})\]/g, (m, id: string) => {
+    if (!reg.defs.has(id)) {
+      // Only a citation-shaped id strips (letter-led, two-plus characters, no
+      // dash). `a[^2]` and `[^a-z]` are prose and stay exactly as written.
+      if (!/^[A-Za-z][A-Za-z0-9_]{1,39}$/.test(id)) return m;
+      reg.notices.footnoteRefsDropped++;
+      return '';
+    }
+    let n = reg.order.indexOf(id);
+    if (n === -1) { reg.order.push(id); n = reg.order.length - 1; }
+    reg.notices.footnotesRendered++;
+    return `<sup class="fn-ref">${n + 1}</sup>`;
+  });
+}
+
 export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): string {
   const raw = value ?? '';
   if (!raw) return '';
@@ -562,7 +673,7 @@ export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): 
   const markers = (raw.match(/[*_`]/g) ?? []).length;
   if (raw.length > MAX_INLINE_CHARS || markers > MAX_INLINE_MARKERS) {
     if (notices) notices.inlineSkipped++;
-    return escapeHtml(stripMarkers(raw));
+    return applyFootnoteRefs(escapeHtml(stripMarkers(raw)));
   }
 
   // Links first, on the *raw* string: the target has to be recognised as a unit
@@ -582,7 +693,7 @@ export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): 
   s = s.replace(/`+([^`]+?)`+/g, (_m, inner: string) => `<code>${inner}</code>`);
   return s
     .split(/(<code>[\s\S]*?<\/code>)/)
-    .map((part, idx) => (idx % 2 === 1 ? part : emphasise(part, notices)))
+    .map((part, idx) => (idx % 2 === 1 ? part : applyFootnoteRefs(emphasise(part, notices))))
     .join('');
 }
 
@@ -770,6 +881,30 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     text = neutraliseUrls(text);
   }
 
+  // Footnote definitions come out before the block scan sees them: a
+  // `[^id]: text` line is an instruction to the renderer, and the source
+  // syntax printing as body copy ("…violent crime.[^bocsar]") was measured on
+  // a real client document. Single-line definitions only — that is the only
+  // form the record contains.
+  const footnoteDefs = new Map<string, string>();
+  text = text.split('\n').filter((line) => {
+    const def = /^\[\^([A-Za-z0-9_-]{1,40})\]:\s?(.*)$/.exec(line.trim());
+    if (def && def[2].trim()) { footnoteDefs.set(def[1], def[2].trim()); return false; }
+    return true;
+  }).join('\n');
+  const footnoteOrder: string[] = [];
+  // A model cites with `[^abs]`-style refs and, often, never writes the
+  // definitions (they live in a sources column this render does not see).
+  // Printing the raw marker is the worst outcome — nothing reads more like a
+  // machine's output — so citation-shaped refs arm the registry even with no
+  // definitions, and simply strip. Citation-shaped means a letter-led id of
+  // two or more characters with no dash: `[^2]` (an array slice) and
+  // `[^a-z]` (a character class) stay prose.
+  const hasCitationRefs = /\[\^[A-Za-z][A-Za-z0-9_]{1,39}\]/.test(text);
+  activeFootnotes = (footnoteDefs.size || hasCitationRefs)
+    ? { defs: footnoteDefs, order: footnoteOrder, notices }
+    : null;
+
   const lines = text.split('\n');
   const blocks: MarkdownBlock[] = [];
   const headings: MarkdownHeading[] = [];
@@ -783,14 +918,30 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   }
   if (minLevel === 7) minLevel = 1;
 
-  const push = (kind: MarkdownBlockKind, html: string, lineCount: number): boolean => {
+  // The charge model. `legacy` keeps every number byte-identical for callers
+  // not yet on a calibrated narrative profile; `measured` is the 2026-09
+  // calibration (see `ChargeModel`). Half-line rounding matters at `measured`:
+  // integer rounding inflated a heading-dense page by up to one line per block.
+  const measured = options.charging === 'measured';
+  const cpl = measured ? MEASURED_CHARS_PER_LINE : CHARS_PER_LINE;
+  const paraMargin = measured ? 0.4 : 0.5;
+  const headingCost = measured ? 1.5 : 2;
+  const roundCharge = (n: number) => (measured
+    ? Math.max(0.5, Math.round(n * 2) / 2)
+    : Math.max(1, Math.round(n)));
+
+  const push = (kind: MarkdownBlockKind, html: string, lineCount: number, table?: MarkdownTableMeta): boolean => {
     if (!html) return true;
     if (blocks.length >= MAX_BLOCKS) { notices.truncatedAtBlocks = true; return false; }
-    blocks.push({ kind, html, lines: Math.max(1, Math.round(lineCount)) });
+    const entry: MarkdownBlock = { kind, html, lines: roundCharge(lineCount) };
+    if (table) entry.table = table;
+    blocks.push(entry);
     return true;
   };
 
-  const textLines = (s: string) => Math.ceil(Math.max(1, s.length) / CHARS_PER_LINE);
+  const textLines = (s: string) => (measured
+    ? Math.max(1, s.length / cpl)
+    : Math.ceil(Math.max(1, s.length) / cpl));
 
   /**
    * How many lines a list actually sets.
@@ -806,9 +957,12 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
    * The `+ 1` that follows the sum is the block's own separation, unchanged.
    */
   const listLines = (items: readonly ListItem[]) => items.reduce(
-    (n, it) => n + Math.ceil(
-      Math.max(1, it.text.length) / Math.max(20, CHARS_PER_LINE - it.depth * 4),
-    ),
+    (n, it) => {
+      const width = Math.max(20, cpl - it.depth * 4);
+      return n + (measured
+        ? Math.max(1, it.text.length / width)
+        : Math.ceil(Math.max(1, it.text.length) / width));
+    },
     0,
   );
 
@@ -988,7 +1142,9 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     if (listMark) {
       if (!flushParagraph()) break scan;
       const ordered = /\d/.test(listMark[2]);
+      const startNum = ordered ? parseInt(listMark[2], 10) : 1;
       const items: ListItem[] = [];
+      let mergedRuns = 0;
       while (i < lines.length) {
         const m = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(lines[i]);
         if (!m) {
@@ -997,6 +1153,21 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
             items[items.length - 1].text += ` ${lines[i].trim()}`;
             i++;
             continue;
+          }
+          // A blank line inside a list is CommonMark's *loose* list, not the
+          // end of it. Breaking here is what turned a fifteen-item checklist
+          // into fifteen one-item lists, every one numbered "1." — measured on
+          // a real due-diligence page. Peek past the blanks: if the next
+          // non-blank line is an item of the same kind, the run continues.
+          if (items.length && !lines[i].trim()) {
+            let j = i;
+            while (j < lines.length && !lines[j].trim()) j++;
+            const next = j < lines.length ? /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(lines[j]) : null;
+            if (next && /\d/.test(next[2]) === ordered) {
+              mergedRuns++;
+              i = j;
+              continue;
+            }
           }
           break;
         }
@@ -1009,7 +1180,8 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       }
       const kept = items.slice(0, MAX_LIST_ITEMS);
       notices.listItemsDropped += items.length - kept.length;
-      if (!push('list', listHtml(kept, ordered, notices), listLines(kept) + 1)) break scan;
+      if (mergedRuns) notices.listRunsMerged += mergedRuns;
+      if (!push('list', listHtml(kept, ordered, notices, startNum), listLines(kept) + 1)) break scan;
       continue;
     }
 
@@ -1033,6 +1205,44 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     i++;
   }
   flushParagraph();
+
+  // The notes the references point at, in first-use order, after everything
+  // that could use one has been rendered. Only defined-and-referenced notes
+  // print; an unreferenced definition is the author talking to themselves.
+  if (activeFootnotes && footnoteOrder.length) {
+    const items = footnoteOrder
+      .map((id) => footnoteDefs.get(id) ?? '')
+      .filter(Boolean)
+      .map((def, idx) => `<li value="${idx + 1}">${renderInlineMarkdown(def, notices)}</li>`);
+    if (items.length) {
+      const html = `<h4>Notes</h4><ol class="fn-notes">${items.join('')}</ol>`;
+      push('list', html, items.length + 2);
+    }
+  }
+  activeFootnotes = null;
+
+  // A heading with nothing under it promises analysis the page does not
+  // deliver — five in a stack over white space was measured on a real report
+  // after the word-cap truncation kept structure while dropping its prose.
+  // Dropped bottom-up so a run of empty headings collapses in one pass.
+  if (options.dropEmptyHeadings !== false) {
+    const levelOf = (b: MarkdownBlock) => Number(/^<h(\d)/.exec(b.html)?.[1] ?? 9);
+    for (let k = blocks.length - 1; k >= 0; k--) {
+      if (blocks[k].kind !== 'heading') continue;
+      const next = blocks[k + 1];
+      const empty = !next
+        || (next.kind === 'heading' && levelOf(next) <= levelOf(blocks[k]))
+        || (next.kind === 'notice');
+      if (empty) {
+        const removed = blocks.splice(k, 1)[0];
+        const hIdx = headings.findIndex((h) => h.blockIndex === k);
+        if (hIdx >= 0) headings.splice(hIdx, 1);
+        for (const h of headings) if (h.blockIndex > k) h.blockIndex--;
+        notices.headingsDroppedEmpty++;
+        void removed;
+      }
+    }
+  }
 
   const total = blocks.reduce((n, b) => n + b.lines, 0);
 
@@ -1099,7 +1309,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
 
     const html = `<h${level} id="${id}">${renderInlineMarkdown(raw, notices)}</h${level}>`;
     const index = blocks.length;
-    if (!push('heading', html, 2)) return false;
+    if (!push('heading', html, headingCost)) return false;
     headings.push({ level, sourceLevel, text: plain, id, blockIndex: index });
     return true;
   }
@@ -1205,11 +1415,38 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       )
       : '';
 
+    // Per-row charge. Legacy charged one line per row whatever the cells held,
+    // which is how a risk register whose cells wrap to four lines was packed
+    // onto a page it could not fit and clipped mid-row. Measured charges each
+    // row by its tallest cell at the column's share of the measure, plus the
+    // cell padding the stylesheet adds.
+    // Auto table layout gives a prose column its share by content, so a
+    // per-column split of the measure overcharges wide cells about 2× (five
+    // consecutive half-empty register pages, measured). The row's TOTAL
+    // characters against the full measure tracks what auto layout actually
+    // sets, with a floor for padding-dominated narrow rows and a small cost
+    // per extra column for cell padding.
+    const rowLines = rows.map((row) => {
+      const totalChars = Object.values(row)
+        .filter((v): v is string => typeof v === 'string')
+        .reduce((n, v) => n + v.length, 0);
+      return measured
+        ? Math.max(1.35, totalChars / cpl + 0.35 + Math.max(0, width - 1) * 0.08)
+        : 1;
+    });
+    const headLines = 3;
+    const bodyCharge = measured ? rowLines.reduce((a, b) => a + b, 0) : rows.length;
+    const meta: MarkdownTableMeta = {
+      cols, rows, signedKeys: cols.filter((c) => c.align === 'right').map((c) => c.key),
+      caption: wantsCaption ? headlessCaption : undefined,
+      note: note || undefined,
+      rowLines, headLines,
+    };
     if (wide && landscape) {
       notices.tablesLandscaped++;
-      return push('landscape-table', renderPage('landscape-table', table + note), rows.length + 4 + LANDSCAPE_BREAK_LINES);
+      return push('landscape-table', renderPage('landscape-table', table + note), bodyCharge + 4 + LANDSCAPE_BREAK_LINES);
     }
-    return push('table', table + note, rows.length + 3);
+    return push('table', table + note, bodyCharge + headLines, meta);
   }
 }
 
@@ -1242,13 +1479,18 @@ function inlineWithBreaks(paragraph: string, notices: MarkdownNotices): string {
  * nesting the author wrote is simply not on the page. Caught by looking at the
  * output rather than by the type checker, which is happy either way.
  */
-function listHtml(items: readonly ListItem[], ordered: boolean, notices: MarkdownNotices): string {
+function listHtml(items: readonly ListItem[], ordered: boolean, notices: MarkdownNotices, start = 1): string {
   if (!items.length) return '';
   const tag = ordered ? 'ol' : 'ul';
+  // `start` carries the source's own first ordinal, so a numbered run the
+  // author opened at 4 (after prose interrupted it) keeps counting from 4.
+  const openTag = ordered && start > 1 && Number.isFinite(start)
+    ? `<ol start="${Math.min(9999, Math.max(2, Math.floor(start)))}">`
+    : `<${tag}>`;
   // A list that opens indented still starts at depth zero; the author's absolute
   // indentation is not the document's.
   const floor = Math.min(...items.map((it) => it.depth));
-  let out = `<${tag}>`;
+  let out = openTag;
   let depth = 0;
   let itemOpen = false;
   for (const item of items) {
@@ -1280,4 +1522,58 @@ function listHtml(items: readonly ListItem[], ordered: boolean, notices: Markdow
 /** Sum of block lines. The caller divides by its own lines-per-page. */
 export function estimateLines(blocks: readonly MarkdownBlock[]): number {
   return blocks.reduce((n, b) => n + b.lines, 0);
+}
+
+/**
+ * Split a taller-than-a-page table into page-sized chunks, head repeated.
+ *
+ * Only a block carrying `MarkdownTableMeta` can split — the rows are re-set
+ * through `renderDataTable`, never by cutting HTML. The caption and the
+ * columns-not-shown note stay with the first chunk (a repeated caption reads
+ * as a second table); the header row repeats on every chunk, which is what a
+ * paper ledger does and what the clipped alternative destroyed — a real risk
+ * register lost the tail of its last row mid-word.
+ *
+ * `firstBudget` is the room left on the page the table starts on; `contBudget`
+ * sizes every later chunk. A chunk always carries at least two rows so a
+ * lone orphan row never opens a page, except when only one row remains.
+ */
+export function splitTableBlock(
+  block: MarkdownBlock,
+  firstBudget: number,
+  contBudget: number,
+): MarkdownBlock[] {
+  const t = block.table;
+  if (!t || t.rows.length <= 2) return [block];
+
+  const out: MarkdownBlock[] = [];
+  let index = 0;
+  while (index < t.rows.length) {
+    const first = out.length === 0;
+    const budget = Math.max(t.headLines + 2, (first ? firstBudget : contBudget));
+    let charge = t.headLines;
+    let take = 0;
+    while (index + take < t.rows.length) {
+      const rowCost = t.rowLines[index + take] ?? 1;
+      if (take >= 2 && charge + rowCost > budget) break;
+      charge += rowCost;
+      take++;
+    }
+    // Never strand a single row in the final chunk: pull one back.
+    if (index + take === t.rows.length - 1 && take > 2) { take--; charge -= t.rowLines[index + take] ?? 1; }
+    const rows = t.rows.slice(index, index + take);
+    const rowLines = t.rowLines.slice(index, index + take);
+    const html = renderDataTable(t.cols, rows, {
+      signedKeys: t.signedKeys,
+      caption: first ? t.caption : undefined,
+    }) + (first ? (t.note ?? '') : '');
+    out.push({
+      kind: 'table',
+      html,
+      lines: Math.max(1, Math.round(charge * 2) / 2),
+      table: { ...t, rows, rowLines, caption: first ? t.caption : undefined, note: first ? t.note : undefined },
+    });
+    index += take;
+  }
+  return out;
 }

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Loader2, Calculator, Compass, FileText, Zap } from 'lucide-react';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import {
   CLIENT_REPORT_VARIANTS,
@@ -9,6 +8,7 @@ import {
   normalizeReportVariant,
   type ClientReportVariant,
 } from '@/lib/reports/reportVariants';
+import { generateSubReport } from '@/lib/reports/subReports';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface Props {
@@ -27,16 +27,10 @@ export function ReportVariantControls({ compositeReportId, reportVariant, onNavi
   const handleFork = async (pathway: ClientReportVariant) => {
     setForking(pathway);
     try {
-      const isFork = pathway === 'financial' || pathway === 'strategic';
-      const { data, error } = await invokeSecureFunction<any>(isFork ? 'fork-investment-report' : 'condense-investment-report', isFork
-        ? { composite_report_id: compositeReportId, variants: [pathway] }
-        : { parentReportId: compositeReportId, targetTier: pathway });
-      if (error) throw new Error(error.message);
-      const reportId = isFork ? data?.[pathway]?.id : data?.reportId;
-      const succeeded = isFork ? data?.ok === true : data?.success === true;
-      if (!succeeded || !reportId) {
-        throw new Error(data?.error || 'The generated report could not be retrieved.');
-      }
+      // Which engine answers to each variant name is the ONE shared mapping
+      // (engineForVariant, via generateSubReport) — an inline choice here is
+      // how two switchers came to produce different "Financial" documents.
+      const { reportId } = await generateSubReport(compositeReportId, pathway);
       toast({
         title: `${getReportVariantLabel(pathway)} report generated`,
         description: 'The report is saved to this property package and is ready to view.',

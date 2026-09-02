@@ -1,14 +1,11 @@
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2 } from "lucide-react";
-import { invokeSecureFunction } from "@/lib/secureInvoke";
 import { useToast } from "@/hooks/use-toast";
 import { logActivityDirect } from "@/hooks/useActivityLogger";
-import { tryRouteThroughTemplateBuilder } from "@/lib/reportTemplate/compassRoute";
 import { FlattenPdfIconButton } from "@/components/common/FlattenPdfIconButton";
-import { fetchPdfBlob } from "@/lib/pdf/downloadPdf";
-import { useReportTemplateSelection } from "@/hooks/useReportTemplateSelection";
-import { INVESTMENT_REPORT_FORMAT } from "@/lib/reportTemplate/reportFormats";
+import { saveTemplateDocument } from "@/lib/reportTemplate/templateDocument";
+import { produceInvestmentDocument } from "@/lib/reports/investment/deliverInvestmentPdf";
 import type { PdfDesignOptions } from "./premiumPdfDesign";
 
 interface PremiumPdfButtonProps {
@@ -21,10 +18,14 @@ interface PremiumPdfButtonProps {
 }
 
 /**
- * Premium PDF — HTML+CSS rendered through WeasyPrint first, with Api2PDF as fallback.
+ * Premium PDF — the standard delivery chain, from the panel.
  *
- * Design controls are passed through as explicit renderer inputs so the final
- * PDF changes even when the report markdown has no editorial shortcodes.
+ * This button used to carry the chain itself (chosen template →
+ * `render-investment-report-pdf`), and it was the only surface in the product
+ * that had it; the page's primary Download shipped a `.txt` and Send-to-Client
+ * shipped whatever `pdf_url` held. The chain lives in
+ * `deliverInvestmentPdf.ts` now and every surface asks it — this button is one
+ * caller among equals, keeping its design controls and the flatten companion.
  */
 export function PremiumPdfButton({
   reportId,
@@ -36,39 +37,17 @@ export function PremiumPdfButton({
 }: PremiumPdfButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
-  /**
-   * The template this person chose for Investment reports, if they chose one.
-   *
-   * Only a selection that still applies is passed on: `status` is `selected`
-   * exactly when the chosen row is still active and still this format. A stale
-   * one resolves to null here and the ranking decides, which is what the picker
-   * has already said is happening.
-   */
-  const { state: templateState } = useReportTemplateSelection(INVESTMENT_REPORT_FORMAT.reportType);
-  const selectedTemplateId = templateState?.status === 'selected'
-    ? templateState.selectedTemplateId
-    : null;
 
   const handleClick = async () => {
     if (loading) return;
     setLoading(true);
     try {
-      // Phase 5 pilot: route Compass reports through the Template Builder /
-      // WeasyPrint pipeline when an active template exists for this report
-      // type. Falls through to the legacy renderer on any mismatch / error.
-      const routed = await tryRouteThroughTemplateBuilder(reportId, selectedTemplateId);
-      const result = routed
-        ? { data: { fileUrl: routed.fileUrl, fileName: routed.fileName, renderer: routed.renderer }, error: null as any }
-        : await invokeSecureFunction<{ fileUrl: string; fileName: string; renderer?: string }>(
-            "render-investment-report-pdf",
-            { reportId, includeCharts, includeHeroImages, includeSparklines, designOptions },
-            { timeoutMs: 240_000 },
-          );
-      const { data, error } = result;
-
-      if (error || !data?.fileUrl) {
-        throw new Error(error?.message || "PDF generation failed");
-      }
+      const doc = await produceInvestmentDocument(reportId, {
+        includeCharts,
+        includeHeroImages,
+        includeSparklines,
+        designOptions,
+      });
 
       logActivityDirect({
         actionType: "report_pdf_downloaded",
@@ -78,26 +57,13 @@ export function PremiumPdfButton({
         metadata: { format: "pdf", source: "premium_weasyprint", designOptions },
       });
 
-      try {
-        const res = await fetch(data.fileUrl);
-        if (!res.ok) throw new Error(`Download failed (${res.status})`);
-        const blob = await res.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = data.fileName || `investment-report-${reportId}.pdf`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      } catch (dlErr) {
-        console.warn("[PremiumPdfButton] blob download failed, falling back to window.open", dlErr);
-        window.open(data.fileUrl, "_blank", "noopener,noreferrer");
-      }
+      saveTemplateDocument({ blob: doc.blob, fileName: doc.fileName, templateId: doc.templateId ?? "" });
 
       toast({
         title: "Premium PDF ready",
-        description: `Rendered with ${data.renderer === "weasyprint" ? "WeasyPrint" : "PDF fallback"}. Your download should begin shortly.`,
+        description: doc.engine === "template"
+          ? "Rendered with your report template. Your download should begin shortly."
+          : "Rendered with the standard layout. Your download should begin shortly.",
       });
     } catch (err: any) {
       console.error("[PremiumPdfButton]", err);
@@ -112,17 +78,12 @@ export function PremiumPdfButton({
   };
 
   const renderForFlatten = useCallback(async (): Promise<{ blob: Blob; fileName: string }> => {
-    const routed = await tryRouteThroughTemplateBuilder(reportId);
-    const result = routed
-      ? { data: { fileUrl: routed.fileUrl, fileName: routed.fileName }, error: null as any }
-      : await invokeSecureFunction<{ fileUrl: string; fileName: string }>(
-          "render-investment-report-pdf",
-          { reportId, includeCharts, includeHeroImages, includeSparklines, designOptions },
-          { timeoutMs: 240_000 },
-        );
-    const { data, error } = result;
-    if (error || !data?.fileUrl) throw new Error(error?.message || "PDF generation failed");
-    const blob = await fetchPdfBlob(data.fileUrl);
+    const doc = await produceInvestmentDocument(reportId, {
+      includeCharts,
+      includeHeroImages,
+      includeSparklines,
+      designOptions,
+    });
     await logActivityDirect({
       actionType: "report_pdf_downloaded",
       entityType: "investment_report",
@@ -130,8 +91,8 @@ export function PremiumPdfButton({
       entityName: propertyAddress,
       metadata: { format: "pdf", source: "premium_weasyprint", flattened: true, designOptions },
     });
-    return { blob, fileName: data.fileName || `investment-report-${reportId}.pdf` };
-  }, [reportId, propertyAddress, includeCharts, includeHeroImages, includeSparklines, designOptions, selectedTemplateId]);
+    return { blob: doc.blob, fileName: doc.fileName };
+  }, [reportId, propertyAddress, includeCharts, includeHeroImages, includeSparklines, designOptions]);
 
   return (
     <div className="inline-flex items-center gap-1">

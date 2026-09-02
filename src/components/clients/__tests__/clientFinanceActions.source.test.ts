@@ -14,7 +14,11 @@ describe('client finance action regression guards', () => {
     expect(generator).toContain('actionLock.current');
     expect(generator).not.toContain('Export Client Details as PDF');
     expect(generator).not.toContain('FlattenPdfMenuItem');
-    expect(workspace).toContain('Download Client Details PDF');
+    // Since the legacy consolidation the typeset control is the toolbar's
+    // primary download and the raster button follows it with its layout
+    // named — both still dedicated, still capability-guarded actions.
+    expect(workspace).toContain('<ClientDetailsDownloadButton');
+    expect(workspace).toContain("'Download (legacy layout)'");
   });
 
   it('keeps finance delivery actions in the finance menu and moves portfolio analysis from Reports', () => {

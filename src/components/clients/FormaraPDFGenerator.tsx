@@ -865,7 +865,7 @@ export function FormaraPDFGenerator({
 
   if (action === 'download') {
     return (
-      <Button type="button" variant="outline" size={size} onClick={handleDownload} disabled={isDisabled} title="Download the current client details as a PDF">
+      <Button type="button" variant={variant === 'default' ? 'outline' : variant} size={size} onClick={handleDownload} disabled={isDisabled} title="Download the current client details as a PDF (legacy raster layout)">
         {isGenerating ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}
         {isGenerating ? 'Downloading…' : buttonLabel}
       </Button>

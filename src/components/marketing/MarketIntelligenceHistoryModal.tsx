@@ -186,10 +186,25 @@ export const MarketIntelligenceHistoryModal = ({ open, onOpenChange }: MarketInt
 
                   {report.status === 'completed' && report.report_data && (
                     <div className="flex items-center gap-1 ml-2 shrink-0">
+                      {/* The typeset document leads — it reads the row
+                          server-side, which is why it can print the
+                          correlation block the browser path cannot reach from
+                          here. The jsPDF layout stays as the named legacy
+                          choice beside it, never a silent substitute. */}
+                      <MarketIntelligenceDownloadButton
+                        reportId={report.id}
+                        audienceSegment={report.audience_segment}
+                        size="icon"
+                        variant="outline"
+                        className="h-8 w-8"
+                        disabled={downloadingId === report.id}
+                      />
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
+                        className="h-8 w-8 text-muted-foreground"
+                        title="Download (legacy layout)"
+                        aria-label="Download (legacy layout)"
                         onClick={() => handleRedownload(report)}
                         disabled={downloadingId === report.id}
                       >
@@ -204,18 +219,6 @@ export const MarketIntelligenceHistoryModal = ({ open, onOpenChange }: MarketInt
                         filename={`Market_Intelligence_Report_${(report.report_period || 'Report').replace(/\s+/g, '_')}.pdf`}
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
-                        disabled={downloadingId === report.id}
-                      />
-                      {/* Beside the legacy re-download, never instead of it.
-                          This one reads the row server-side, which is why it can
-                          print the correlation block the browser path cannot
-                          reach from here. */}
-                      <MarketIntelligenceDownloadButton
-                        reportId={report.id}
-                        audienceSegment={report.audience_segment}
-                        size="icon"
-                        variant="ghost"
                         className="h-8 w-8"
                         disabled={downloadingId === report.id}
                       />

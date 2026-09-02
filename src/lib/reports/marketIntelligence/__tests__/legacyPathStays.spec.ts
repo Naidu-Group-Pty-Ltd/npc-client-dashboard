@@ -1,10 +1,13 @@
 /**
- * The legacy generator stays reachable, and the new one is genuinely new.
+ * The legacy generator stays reachable — as the named choice, not the default.
  *
- * The programme's standing rule: a migration adds a path, it does not remove
- * one. `MarketIntelligencePDFGenerator.ts` is a shipping browser-side jsPDF
- * class driven from two call sites, and somebody's workflow depends on the exact
- * document it produces.
+ * The migration added the typeset path beside the jsPDF one; the
+ * legacy-consolidation phase then made the typeset document the primary road
+ * on both call sites and demoted the jsPDF layout to an explicit
+ * "legacy layout" choice, drawn only when picked. Both halves are pinned:
+ * `MarketIntelligencePDFGenerator.ts` is still a shipping browser-side jsPDF
+ * class reachable from both call sites (somebody's workflow depends on the
+ * exact document it produces), and nothing draws it silently any more.
  *
  * Every assertion here was checked by breaking what it guards — an assertion
  * that has never failed is a claim, not a test. Two Client Details assertions
@@ -40,10 +43,20 @@ describe('the legacy generator', () => {
     }
   });
 
-  it('still has its own download on both call sites', () => {
-    // Not merely imported — actually invoked to produce a blob.
-    expect(code(EXPORT_BUTTON)).toMatch(/await generateMarketIntelligencePDF\(/);
-    expect(code(HISTORY_MODAL)).toMatch(/await generateMarketIntelligencePDF\(/);
+  it('is a named choice on both call sites, drawn only when picked', () => {
+    // The export panel labels it; the history modal titles its icon.
+    expect(read(EXPORT_BUTTON)).toContain('Download (legacy layout)');
+    expect(read(HISTORY_MODAL)).toContain('Download (legacy layout)');
+  });
+
+  it('is never drawn as a side effect of generating', () => {
+    // Generating used to build and auto-save the legacy PDF, which made the
+    // browser engine the default road nobody picked. The generate handler now
+    // stops at the row; the legacy draw lives in its own handler.
+    const source = code(EXPORT_BUTTON);
+    const handler = /const handleGenerate = async \([\s\S]*?\n {2}\};/.exec(source)?.[0] ?? '';
+    expect(handler, 'handleGenerate not found').not.toBe('');
+    expect(handler).not.toContain('generateMarketIntelligencePDF(');
   });
 
   it('still drives the History modal\'s re-download itself', () => {

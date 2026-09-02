@@ -132,9 +132,9 @@ export function InvestmentReportExportPanel({
               formatLabel={INVESTMENT_REPORT_FORMAT.label}
             />
             <div className="grid gap-2">
-              <ErrorBoundary fallback={<div className="text-sm text-muted-foreground">PDF tools are unavailable.</div>}>
-                <ClientPDFGenerator ref={pdfGeneratorRef} report={report} includeSources={includeSources} includeScoring={includeScoring} />
-              </ErrorBoundary>
+              {/* The unified template-first delivery leads; the browser
+                  generator stays mounted beneath it as the named legacy
+                  layout, and its ref keeps serving the send fallback. */}
               <PremiumPdfButton
                 reportId={report.id}
                 propertyAddress={report.property_address}
@@ -143,6 +143,9 @@ export function InvestmentReportExportPanel({
                 includeSparklines={includeSparklines}
                 designOptions={pdfDesignOptions}
               />
+              <ErrorBoundary fallback={<div className="text-sm text-muted-foreground">PDF tools are unavailable.</div>}>
+                <ClientPDFGenerator ref={pdfGeneratorRef} report={report} includeSources={includeSources} includeScoring={includeScoring} appearance="legacy" />
+              </ErrorBoundary>
               <RegenerateWithPerplexityButton
                 reportId={report.id}
                 propertyAddress={report.property_address}

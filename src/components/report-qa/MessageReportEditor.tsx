@@ -124,7 +124,7 @@ export function MessageReportEditor({
     setHasEdited(originalContent !== initialContent.current);
   };
 
-  // ========== PDF EXPORT (mirrors QAPDFGenerator template) ==========
+  // ========== PDF EXPORT (mirrors the deleted QAPDFGenerator template) ==========
   const sanitizeForPDF = (text: string): string => {
     let clean = text.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
     clean = clean.replace(/%æ\s*/g, '- ');

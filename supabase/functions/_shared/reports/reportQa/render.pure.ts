@@ -7,8 +7,9 @@
  * and two unrelated hardcoded palettes:
  *
  *  - `QAPDFGenerator.tsx` (jsPDF, 467 lines) — the best-maintained copy, and
- *    **unreachable**. Nothing imports it; the only reference in the repo is a
- *    comment at `MessageReportEditor.tsx:122` saying another file mirrors it.
+ *    **unreachable**. Nothing imported it; the only reference in the repo was
+ *    a comment in `MessageReportEditor.tsx` saying another file mirrors it.
+ *    Deleted in the legacy consolidation once that fact had stood recorded.
  *  - `ConversationReportEditor.tsx:135` (jsPDF) — the live structured-report
  *    export, and an older revision of the same code. Its `drawTable` uses a
  *    fixed `rowHeight = 8` where `QAPDFGenerator` uses `calcRowHeight`, so

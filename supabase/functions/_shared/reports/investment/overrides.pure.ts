@@ -228,9 +228,49 @@ export function applyDisplayOverrides(
   overrides: Record<string, any>,
 ): Record<string, any> {
   const ov = isRecord(overrides) ? overrides : {};
+  return splatByPaths(fin, ov, DISPLAY_OVERRIDE_PATHS);
+}
+
+/**
+ * Historic-row overlay: the full flat-key → stored-path vocabulary, modelled
+ * fields included, exactly as the browser generator has always splatted it.
+ *
+ * A row written before the recompute-on-update era stores financials that
+ * ignore its own `manual_overrides`, so a reader that wants the overridden
+ * figures has no choice but to overlay them — knowing the derived fields
+ * (a stamp duty computed from the old price, a total footed without the
+ * override) stay stale. That is a display compromise for old rows only;
+ * current rows are override-coherent at rest and the overlay is a no-op on
+ * them. This lived as a fourth hand-written copy in `ClientPDFGenerator`;
+ * one copy, named for what it is, is the fix.
+ */
+const HISTORIC_ROW_OVERLAY_PATHS: Record<string, string> = {
+  purchasePrice: 'initialCosts.propertyValue',
+  stampDuty: 'initialCosts.stampDuty',
+  depositValue: 'initialCosts.deposit',
+  interestRate: 'loanDetails.interestRate',
+  weeklyRent: 'income.weeklyRent',
+  councilRates: 'annualCosts.councilRates',
+  waterRates: 'annualCosts.waterRates',
+  bodyCorporateFees: 'annualCosts.strataFees',
+  buildingLandlordInsurance: 'annualCosts.landlordInsurance',
+  propertyManagementFees: 'annualCosts.propertyManagementPercent',
+  solicitorFees: 'initialCosts.legalFees',
+  repairsMaintenance: 'annualCosts.maintenance',
+  lettingFees: 'annualCosts.lettingFees',
+  landTax: 'annualCosts.landTax',
+  marketValueNow: 'cashFlow.marketValueNow',
+  cpiGrowthRate: 'cashFlow.cpiGrowthRate',
+};
+
+function splatByPaths(
+  fin: Record<string, any>,
+  overrides: Record<string, any>,
+  paths: Record<string, string>,
+): Record<string, any> {
   const out: Record<string, any> = { ...fin };
-  for (const [flatKey, path] of Object.entries(DISPLAY_OVERRIDE_PATHS)) {
-    const value = ov[flatKey];
+  for (const [flatKey, path] of Object.entries(paths)) {
+    const value = overrides[flatKey];
     if (value === undefined || value === null || value === '') continue;
     const keys = path.split('.');
     let current: Record<string, any> = out;
@@ -242,6 +282,20 @@ export function applyDisplayOverrides(
     current[keys[keys.length - 1]] = value;
   }
   return out;
+}
+
+/**
+ * What a display surface should hand a legacy renderer for a row that may
+ * predate the recompute-on-update era: the modelled overlay above, then the
+ * ordinary display paths. Never used on a write path — a writer recomputes.
+ */
+export function overlayOverridesForHistoricRow(
+  fin: Record<string, any>,
+  overrides: unknown,
+): Record<string, any> {
+  const ov = isRecord(overrides) ? overrides : {};
+  if (!Object.keys(ov).length) return fin;
+  return splatByPaths(splatByPaths(fin, ov, HISTORIC_ROW_OVERLAY_PATHS), ov, DISPLAY_OVERRIDE_PATHS);
 }
 
 /**

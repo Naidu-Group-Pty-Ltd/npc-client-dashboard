@@ -641,3 +641,134 @@ included — the refusal branch changes no rendered byte of a
 non-computing template), `tsc`, eslint (0 errors), `audit:style` under
 baseline, production build, edge column gate; security inventory
 unchanged.
+
+## 13 · Phase F — legacy incorporation and hiding (2026-09-02, upon authorisation)
+
+The owner's standing instruction was that the legacy system be "incorporated
+and hidden at a later stage once authorization is provided"; the
+authorisation arrived after Phase 5 merged, and this phase is that step. The
+model for what "incorporated and hidden" means was already in the tree: the
+Borrowing Capacity Snapshot's one control offering the server render as the
+primary act and the in-browser generator as an explicitly named
+"legacy layout" choice — a decision its own spec records was taken so the
+generator's retirement from reachability would never happen by accident.
+Phase F generalises that arrangement to every format that still had
+competing exits, deletes what nothing could reach, and folds the duplicate
+logic copies the earlier phases had deferred here.
+
+### Dead code deleted, not left dormant
+
+Seven files with zero reachable callers went: `EnhancedInvestmentReportModal`,
+`QAPDFGenerator` (whose unreachability the Q&A contract had recorded for two
+migrations — the spec now pins the *deletion* so nobody restores it from
+history), `HybridPDFTemplate`, `StrictPDFTemplate`, `ClientPDFTemplate`,
+`reportTemplate/pdfRenderer.ts`, and the orphaned
+`_shared/buildTemplateBindingContext.ts` (three documented defects, zero
+callers). The style ratchet was re-measured downward in the same edit —
+hexLiterals 636→611, fontHardcoded 53→51 — because the deleted print
+components carried much of the recorded backlog. The orphaned investment
+design-composer (`buildInvestmentReport`) turned out NOT to be dead — its
+modules feed `reportBindingProjection` and `compassSectionRegistry`, i.e.
+the template path itself — so it stays, and the §10 note that called it
+orphaned is superseded by that measurement.
+
+### The folds
+
+**The read-boundary heal now covers the browser.** `get-investment-reports`
+reconciles `financial_calculations` through `reconcileStoredFinancials`
+before any row leaves the service — the same heal the two PDF routes and
+the binding projection have applied since Phase 2 — so browser charts, the
+library summaries and the legacy browser generator read one set of figures.
+This closes the Phase 2 deferral ("the viewer's own charts join in the
+delivery-unification phase") at a single server-side point instead of
+per-component.
+
+**The fourth override-splat copy is folded and named.**
+`ClientPDFGenerator`'s hand-written flat-key→path merge is now
+`overlayOverridesForHistoricRow` in `overrides.pure.ts` — the modelled
+overlay a pre-recompute-era row needs, then the ordinary display paths —
+documented as a display compromise for historic rows, never a recompute,
+and a no-op on current rows. `applyDisplayOverrides` shares the same splat
+mechanics (`splatByPaths`), so the path-walking exists once. The modal's
+`OVERRIDE_FIELD_PATHS` deliberately stays: it is the override editor's own
+field metadata (broader vocabulary, read-back concern), not a competing
+money path.
+
+**The browser/server mirror pairs were measured and left.**
+`lenderLvrCaps`, `capitalAllocationLedger` and `scenarioDeltaEngine` are
+deliberate structural twins with parity tests
+(`scenario_parity_test.ts`, `lender_shading_parity_test.ts`, in place since
+2026-08-30): the lenderLvrCaps constants are byte-identical, the ledger's
+numeric content identical modulo comment counting, and the size difference
+is inlined types on the Deno side. The §5 "measurably drifted" note is
+superseded by that measurement; folding them would repeat the
+`compassSectionRegistry` churn §12 already declined.
+
+### One road per format, with the legacy named behind it
+
+- **Investment** — all six exits now converge. The listings modal's
+  "Download PDF" delivers through `deliverInvestmentPdf` (template-first,
+  legacy server route behind it); its raw-text jsPDF dump survives only for
+  an unsaved generation, where no row exists to deliver. The three
+  `ClientPDFGenerator` mounts (export panel, Generated Reports viewer, the
+  client tab's download sheet) sit after the unified control as
+  "Download (legacy layout)" — the browser pdf-lib generator keeps its ref
+  because the send fallback still reaches it. The client tab's sheet gains
+  the unified download it never had.
+- **Market Intelligence** — generating no longer draws and auto-saves the
+  legacy jsPDF (the browser engine was the default road nobody picked). The
+  typeset control leads the success strip and the History modal rows; the
+  legacy layout is drawn only when chosen, and the choice is labelled. The
+  spec's "never a silent substitute" reasoning survives: nothing falls back
+  across engines.
+- **Client Details** — the typeset control is the toolbar's one primary
+  document control; the two Formara raster buttons moved to the end of the
+  toolbar, demoted and named ("Send to Finance (legacy layout)",
+  "Download (legacy layout)"). They stay because the raster document
+  carries capabilities the typeset one does not (owner-occupied toggle,
+  borrowing-capacity appendix) and a broker's workflow may depend on the
+  exact document.
+- **Property Comparison** — `ComparisonPDFGenerator` used to spend a
+  metered model call (`format-comparison-report`) on every viewer MOUNT,
+  download or not. It now formats only when "Download (legacy layout)" is
+  actually chosen — once per stored row, and the click that paid for the
+  formatting gets its download (the generator handle gained a programmatic
+  `download()` for exactly this). The deterministic typeset control was
+  already first at both mounts.
+- **Cash Flow / Cash Flow Comparison** — the 10 Year menu already carried
+  the converged shape ("Generate PDF" server-first, legacy named beneath);
+  the comparison modal's two jsPDF exports are now demoted ghosts labelled
+  "(legacy layout)" beside the typeset controls that already led.
+- **Report Q&A** — the toolbar's ambiguous "Export PDF" is now
+  "Transcript (legacy layout)": it posts a pdf-lib *transcript* into the
+  chat, a different document from the typeset structured report, which is
+  why it remains a choice rather than being folded. The editors' own jsPDF
+  exports stay untouched — they export user-EDITED content the server
+  routes cannot see.
+- **Borrowing Capacity, Portfolio, Commercial Capacity** — already
+  conformant; nothing changed.
+
+Out of scope, recorded: the quantitative-analysis viewer
+(`pages/ReportViewer`), `PropertyReportGenerator`, `OverviewSnapshotPDF`,
+the Strategy Rationale Brief, call-log and lender-packet exports are
+standalone documents with no typeset twin — there is no unified delivery to
+hide them behind, and inventing one is new-format work, not consolidation.
+
+### Contracts renegotiated, not broken
+
+Each affected `legacyPathStays` spec records the new decision in place of
+the old one: Q&A pins the deletion; Market Intelligence pins "named choice,
+drawn only when picked, never a side effect of generating"; Client Details
+pins the order (unified first) and the naming. The specs that pinned
+handlers, field names, destinations and server contracts pass unchanged —
+demotion touched chrome, not machinery.
+
+### Verification
+
+2,360 report-suite tests green across 108 files (every legacyPathStays
+contract included), `tsc` clean, eslint at exact error parity with `main`
+(zero introduced), `audit:style` ratcheted down and holding, production
+build, edge column-name gate, the security gate chain (registry, static,
+authz, CORS, mass-assignment, public-validation et al.), and esbuild parse
+checks for the touched Deno modules; security inventory unchanged (no new
+internal call edge).

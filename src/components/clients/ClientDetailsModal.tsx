@@ -337,43 +337,19 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
       )}>
 
         {/*
-          First in the toolbar, beside the two buttons that already produce this
-          document rather than instead of them. It offers the same three
-          destinations — save, attach to an email, send through the Finance
-          Portal — and what arrives is selectable text rather than a stack of
-          page images. The server reads the record itself, so this needs only
-          the id.
+          First in the toolbar, and the document's one primary control since
+          the legacy consolidation. It offers the same three destinations —
+          save, attach to an email, send through the Finance Portal — and what
+          arrives is selectable text rather than a stack of page images. The
+          server reads the record itself, so this needs only the id. The two
+          legacy raster buttons survive at the end of the toolbar with their
+          layout named.
         */}
         {can(CLIENT_ACTION_CAPABILITIES.downloadPdf) && (
           <ClientDetailsDownloadButton
             clientId={client.id}
             clientName={`${client.primary_first_name} ${client.primary_surname}`}
             onAttachToEmail={handlePdfEmailClick}
-          />
-        )}
-
-        {can(CLIENT_ACTION_CAPABILITIES.sendToFinance) && (
-          <FormaraPDFGenerator
-            data={{
-              client: (fullClient || {
-                id: client.id,
-                primary_first_name: client.primary_first_name,
-                primary_surname: client.primary_surname,
-                primary_email: client.primary_email,
-                primary_mobile: client.primary_mobile,
-              }) as any,
-              properties: properties as any[],
-              employment: employment as any[],
-              income: income as any[],
-              incomeSources: incomeSources as any[],
-              assets: assets as any[],
-              liabilities: liabilities as any[],
-              expenses: expenses as any[],
-            }}
-            clientName={`${client.primary_first_name} ${client.primary_surname}`}
-            onEmailClick={handlePdfEmailClick}
-            buttonLabel={isMobile ? "Finance" : "Send to Finance"}
-            variant="default"
           />
         )}
 
@@ -395,19 +371,6 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
             clientId={client.id}
             clientName={`${client.primary_first_name} ${client.primary_surname}`}
             onComplete={() => queryClient.invalidateQueries({ queryKey: ['portfolio-analysis-reports', client.id] })}
-          />
-        )}
-
-        {can(CLIENT_ACTION_CAPABILITIES.downloadPdf) && (
-          <FormaraPDFGenerator
-            data={{
-              client: (fullClient || client) as any,
-              properties: properties as any[], employment: employment as any[], income: income as any[], incomeSources: incomeSources as any[],
-              assets: assets as any[], liabilities: liabilities as any[], expenses: expenses as any[],
-            }}
-            clientName={`${client.primary_first_name} ${client.primary_surname}`}
-            buttonLabel={isMobile ? 'Download PDF' : 'Download Client Details PDF'}
-            action="download"
           />
         )}
 
@@ -451,6 +414,54 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
             clientId={client.id}
             isActive={clientIsActive}
             compact={isMobile}
+          />
+        )}
+
+        {/*
+          The legacy raster generator, demoted to the end of the toolbar with
+          its layout named. The typeset control above owns all three
+          destinations now; these stay because the raster document has
+          capabilities the typeset one does not carry (the owner-occupied
+          summary toggle, the borrowing-capacity appendix) and because a
+          partner's workflow may depend on the exact document. Hidden behind
+          the unified delivery, never deleted — the legacy-consolidation rule.
+        */}
+        {can(CLIENT_ACTION_CAPABILITIES.sendToFinance) && (
+          <FormaraPDFGenerator
+            data={{
+              client: (fullClient || {
+                id: client.id,
+                primary_first_name: client.primary_first_name,
+                primary_surname: client.primary_surname,
+                primary_email: client.primary_email,
+                primary_mobile: client.primary_mobile,
+              }) as any,
+              properties: properties as any[],
+              employment: employment as any[],
+              income: income as any[],
+              incomeSources: incomeSources as any[],
+              assets: assets as any[],
+              liabilities: liabilities as any[],
+              expenses: expenses as any[],
+            }}
+            clientName={`${client.primary_first_name} ${client.primary_surname}`}
+            onEmailClick={handlePdfEmailClick}
+            buttonLabel={isMobile ? "Finance (legacy)" : "Send to Finance (legacy layout)"}
+            variant="ghost"
+          />
+        )}
+
+        {can(CLIENT_ACTION_CAPABILITIES.downloadPdf) && (
+          <FormaraPDFGenerator
+            data={{
+              client: (fullClient || client) as any,
+              properties: properties as any[], employment: employment as any[], income: income as any[], incomeSources: incomeSources as any[],
+              assets: assets as any[], liabilities: liabilities as any[], expenses: expenses as any[],
+            }}
+            clientName={`${client.primary_first_name} ${client.primary_surname}`}
+            buttonLabel={isMobile ? 'Download (legacy)' : 'Download (legacy layout)'}
+            action="download"
+            variant="ghost"
           />
         )}
 

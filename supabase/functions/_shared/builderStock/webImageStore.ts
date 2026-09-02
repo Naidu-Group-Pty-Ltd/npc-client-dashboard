@@ -32,12 +32,32 @@
  *     `source_not_found`, HTTP 404/410. `isVerifiedWebImage` requires
  *     `ready`, so the same tick's `enforceStrictPrimaryImages` re-decides the
  *     card and the badge disappears with the picture, instead of outliving it.
- *   - HOLDS everything else. A 401/403 is the hotlink-protection shape — a
- *     browser with a referer may render what our server is refused — and a
- *     timeout or 5xx is somebody's bad minute. Neither is evidence the
- *     picture is gone, so neither may blank a card: the attempt is counted,
- *     and after the budget the sweep stops trying and leaves the row exactly
- *     as it found it (`store_exhausted`, still `ready`, still hotlinked).
+ *   - HOLDS everything else, while the budget lasts. A 401/403 is the
+ *     hotlink-protection shape — a browser with a referer may render what our
+ *     server is refused — and a timeout or 5xx is somebody's bad minute.
+ *     Neither is evidence the picture is gone, so neither may blank a card on
+ *     its own: the attempt is counted and the row keeps serving.
+ *
+ * WHAT THE BUDGET'S END MEANS was corrected by measurement. The first
+ * version left an exhausted row exactly as it found it (`store_exhausted`,
+ * still `ready`, still hotlinked) — "stop trying, never stop showing" — on
+ * the hope that a browser could draw what our server was refused. MEASURED,
+ * 2 SEPTEMBER 2026, same day it shipped: all three rows that exhausted the
+ * budget (lot 2030 Seventh Bend, lot 310 Watsons Reach, lot 318 Palomino)
+ * were their card's PRIMARY, and every one drew "Web sourced" over "Image
+ * unavailable" in the browser too — lot 310's host answers our egress 403
+ * and a browser 404, so the hold was preserving a claim, not a picture.
+ * Across the marketplace's entire hotlinked backlog (13 rows), the
+ * browser-renders-what-we-cannot case occurred zero times.
+ *
+ * So exhaustion now RETIRES the serving, exactly as a 404 does, under its
+ * own reason — `store_exhausted`, because "the source says it is gone" and
+ * "we could never obtain it" are different facts and the record keeps the
+ * distinction. A card may only claim a picture it can actually serve: the
+ * same tick's enforcement takes the badge with it, and the card falls to the
+ * next displayable image or to the honest blank. A row stamped exhausted by
+ * the earlier rule while still `ready` is retired budget-free on the next
+ * sweep, so the marketplace converges itself with nothing edited by hand.
  *
  * The sweep never touches `primary_image_id` — pointers belong to
  * `enforceStrictPrimaryImages` — and never fails the tick it runs inside.
@@ -121,6 +141,33 @@ export async function storeVerifiedWebImages(
   const outcome: WebImageStoreOutcome = { attempted: 0, stored: 0, retired: 0, held: 0 };
   const fetchImage = deps.fetchImage ?? guardedWebImageFetch;
 
+  /** Stop serving this row, with the reason on the record. */
+  const retire = async (
+    row: StoredWebImageRow,
+    reason: string,
+    message: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    await db
+      .from('builder_stock_item_images')
+      .update({
+        processing_status: 'unavailable',
+        error_message: message.slice(0, 300),
+        source_detail: withStoreState(row, {
+          ...storeState(row),
+          ...extra,
+          retired_at: new Date().toISOString(),
+          reason,
+        }),
+      })
+      .eq('id', row.id)
+      .eq('organisation_id', organisationId);
+    outcome.retired += 1;
+    console.info('[builderStock] web image retired', {
+      phase: 'web_image_store', image_id: row.id, stock_item_id: row.stock_item_id, reason,
+    });
+  };
+
   try {
     const { data: rows, error } = await db
       .from('builder_stock_item_images')
@@ -133,8 +180,23 @@ export async function storeVerifiedWebImages(
       .order('id', { ascending: true })
       .limit(200);
     if (error || !rows?.length) return outcome;
+    const rowList = rows as StoredWebImageRow[];
 
-    const candidates = (rows as StoredWebImageRow[]).filter((row) => {
+    /*
+     * A row the earlier rule left exhausted-but-still-ready is retired here,
+     * budget-free: its verdict was already paid for, and while it stays
+     * `ready` it is some card's standing claim to a picture nobody can see.
+     */
+    for (const row of rowList) {
+      const state = storeState(row);
+      if (state.retired_at) continue;
+      if (state.store_exhausted === true || Number(state.attempts ?? 0) >= MAX_STORE_ATTEMPTS) {
+        await retire(row, 'store_exhausted',
+          'This image could not be stored for display after repeated attempts.');
+      }
+    }
+
+    const candidates = rowList.filter((row) => {
       if (!row.external_url) return false;
       const state = storeState(row);
       if (state.retired_at) return false;
@@ -166,46 +228,36 @@ export async function storeVerifiedWebImages(
       outcome.attempted += 1;
       const fetched = await fetchImage(String(row.external_url));
 
-      // GONE is the one answer that may take the badge with it.
+      // GONE is one answer that takes the badge with it.
       if (!fetched.bytes && fetched.code === 'source_not_found') {
-        await db
-          .from('builder_stock_item_images')
-          .update({
-            processing_status: 'unavailable',
-            error_message: `The source site no longer serves this image (${fetched.detail || 'not found'}).`
-              .slice(0, 300),
-            source_detail: withStoreState(row, {
-              ...storeState(row),
-              retired_at: new Date().toISOString(),
-              reason: 'source_not_found',
-            }),
-          })
-          .eq('id', row.id)
-          .eq('organisation_id', organisationId);
-        outcome.retired += 1;
-        console.info('[builderStock] web image retired: source gone', {
-          phase: 'web_image_store', image_id: row.id, stock_item_id: row.stock_item_id,
-        });
+        await retire(row, 'source_not_found',
+          `The source site no longer serves this image (${fetched.detail || 'not found'}).`);
         continue;
       }
 
-      // A refusal or a bad minute is never evidence the picture is gone.
+      // A refusal or a bad minute is never, on its own, evidence the picture
+      // is gone — the attempt is counted and the row keeps serving. But the
+      // SIXTH failure is a verdict: a picture we could not obtain six times
+      // over is not one a card may keep claiming, so the budget's end
+      // retires the serving under its own reason.
       const check = fetched.bytes ? validateSourceImageBytes(fetched.bytes) : null;
       if (!fetched.bytes || !check?.ok) {
         const state = storeState(row);
         const attempts = Number(state.attempts ?? 0) + 1;
+        const lastError = (fetched.code
+          ? `${fetched.code}: ${fetched.detail}`
+          : `not an image: ${(check as { reason?: string } | null)?.reason ?? 'unreadable'}`)
+          .slice(0, 200);
+        if (attempts >= MAX_STORE_ATTEMPTS) {
+          await retire(row, 'store_exhausted',
+            'This image could not be stored for display after repeated attempts.',
+            { attempts, last_error: lastError });
+          continue;
+        }
         await db
           .from('builder_stock_item_images')
           .update({
-            source_detail: withStoreState(row, {
-              ...state,
-              attempts,
-              ...(attempts >= MAX_STORE_ATTEMPTS ? { store_exhausted: true } : {}),
-              last_error: (fetched.code
-                ? `${fetched.code}: ${fetched.detail}`
-                : `not an image: ${(check as { reason?: string } | null)?.reason ?? 'unreadable'}`)
-                .slice(0, 200),
-            }),
+            source_detail: withStoreState(row, { ...state, attempts, last_error: lastError }),
           })
           .eq('id', row.id)
           .eq('organisation_id', organisationId);
@@ -220,16 +272,18 @@ export async function storeVerifiedWebImages(
       if (uploadError) {
         const state = storeState(row);
         const attempts = Number(state.attempts ?? 0) + 1;
+        const lastError = `store failed: ${String((uploadError as { message?: string })?.message ?? uploadError)}`
+          .slice(0, 200);
+        if (attempts >= MAX_STORE_ATTEMPTS) {
+          await retire(row, 'store_exhausted',
+            'This image could not be stored for display after repeated attempts.',
+            { attempts, last_error: lastError });
+          continue;
+        }
         await db
           .from('builder_stock_item_images')
           .update({
-            source_detail: withStoreState(row, {
-              ...state,
-              attempts,
-              ...(attempts >= MAX_STORE_ATTEMPTS ? { store_exhausted: true } : {}),
-              last_error: `store failed: ${String((uploadError as { message?: string })?.message ?? uploadError)}`
-                .slice(0, 200),
-            }),
+            source_detail: withStoreState(row, { ...state, attempts, last_error: lastError }),
           })
           .eq('id', row.id)
           .eq('organisation_id', organisationId);

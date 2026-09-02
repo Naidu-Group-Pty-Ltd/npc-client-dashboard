@@ -1,4 +1,4 @@
-import { PixelPerfectPDFGenerator } from './PixelPerfectPDFGenerator';
+import { PixelPerfectPDFGenerator, type PixelPerfectPDFGeneratorHandle } from './PixelPerfectPDFGenerator';
 import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Download, Loader2 } from 'lucide-react';
@@ -28,23 +28,41 @@ interface ComparisonPDFGeneratorProps {
 
 export function ComparisonPDFGenerator({ comparison }: ComparisonPDFGeneratorProps) {
   const [formattedContent, setFormattedContent] = useState<string | null>(null);
-  const [isFormatting, setIsFormatting] = useState(true);
+  const [isFormatting, setIsFormatting] = useState(false);
   const formattedForId = useRef<string | null>(null);
+  const pdfRef = useRef<PixelPerfectPDFGeneratorHandle>(null);
+  const [fireOnReady, setFireOnReady] = useState(false);
 
-  // Formatted once per ROW, never per render. This effect used to key on the
-  // `comparison` object itself, and both mount sites hand this component a
-  // rebuilt object whenever their parent re-renders — so every re-render
-  // re-entered the formatting state, which (a) replaced the download button
-  // with a spinner for the length of the call ("the Download button appears
-  // and then disappears"), and (b) fired ANOTHER metered model call each time.
-  // A stored row's id names its content; the same id never formats twice in
-  // one mount, and a genuinely different comparison (a re-run stores a new
-  // row) formats exactly once.
+  // Formatted once per ROW — and only when the legacy layout is actually
+  // chosen. This used to format on MOUNT, which spent a metered model call
+  // for every viewer opened whether or not anyone downloaded the legacy
+  // document (an earlier defect had it formatting on every re-render). The
+  // deterministic typeset control beside this one is the primary road now;
+  // this button pays for its model formatting at the moment somebody picks
+  // the legacy layout, once per stored row.
   useEffect(() => {
-    if (formattedForId.current === comparison.id) return;
-    formattedForId.current = comparison.id;
-    formatComparisonReport();
+    if (formattedForId.current !== comparison.id) {
+      formattedForId.current = null;
+      setFormattedContent(null);
+      setFireOnReady(false);
+    }
   }, [comparison.id]);
+
+  // The click that paid for formatting also gets its download: fire the
+  // generator once the formatted content is mounted.
+  useEffect(() => {
+    if (fireOnReady && formattedContent && pdfRef.current) {
+      setFireOnReady(false);
+      void pdfRef.current.download();
+    }
+  }, [fireOnReady, formattedContent]);
+
+  const handleLegacyChosen = async () => {
+    if (isFormatting) return;
+    formattedForId.current = comparison.id;
+    setFireOnReady(true);
+    await formatComparisonReport();
+  };
 
   const formatComparisonReport = async () => {
     try {
@@ -137,15 +155,22 @@ export function ComparisonPDFGenerator({ comparison }: ComparisonPDFGeneratorPro
     return content;
   };
 
-  // While the report is being formatted the CONTROL stays where it is: the
-  // same button, disabled, saying what it is doing. The old full-width spinner
-  // block replaced the button entirely, so in a toolbar this control read as a
-  // download that appeared and then vanished — and the layout jumped around it.
+  // Until the legacy layout is chosen, this control is a quiet named choice
+  // beside the primary typeset download — nothing is formatted and nothing is
+  // spent. While formatting runs, the SAME button stays in place and says
+  // what it is doing (the old full-width spinner block replaced the button
+  // entirely, so the control read as a download that appeared and vanished).
   if (isFormatting || !formattedContent) {
     return (
-      <Button disabled className="gap-2">
-        <Loader2 className="h-4 w-4 animate-spin" />
-        Preparing Client PDF…
+      <Button
+        variant="ghost"
+        size="sm"
+        className="gap-2 text-muted-foreground"
+        disabled={isFormatting}
+        onClick={handleLegacyChosen}
+      >
+        {isFormatting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+        {isFormatting ? 'Preparing legacy layout…' : 'Download (legacy layout)'}
       </Button>
     );
   }
@@ -166,5 +191,5 @@ export function ComparisonPDFGenerator({ comparison }: ComparisonPDFGeneratorPro
     }
   };
 
-  return <PixelPerfectPDFGenerator report={transformedReport} skipDatabaseUpdate />;
+  return <PixelPerfectPDFGenerator ref={pdfRef} report={transformedReport} skipDatabaseUpdate appearance="legacy" />;
 }

@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
-import { Loader2, ChevronDown, Compass, FileText, Zap, Check, Calculator } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { Loader2, ChevronDown, Check } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { TIER_INFO, type ReportTier } from './TierBadge';
+import { REPORT_VARIANT_ORDER } from '@/lib/reports/reportVariants';
+import { fetchReportFamily, generateSubReport, type ReportFamily, type SubReportVariant } from '@/lib/reports/subReports';
 
 interface TierSwitcherProps {
   reportId: string;
@@ -15,75 +15,66 @@ interface TierSwitcherProps {
   disabled?: boolean;
 }
 
-interface SiblingReport {
-  id: string;
-  report_tier: ReportTier;
-}
-
-export function TierSwitcher({ 
-  reportId, 
-  currentTier, 
-  parentReportId,
+/**
+ * Switch between the reports of one Compass family, generating the missing
+ * ones through the engine that owns each variant.
+ *
+ * Two defects lived here (audit F9). The sibling lookup read
+ * `investment_reports` from the BROWSER, where the service-role-only
+ * policies filter every row — so siblings always read as absent, switching
+ * to an existing child was impossible, and every click regenerated one. And
+ * every missing tier was generated via condense-investment-report — a model
+ * — including "Financial", which the page header produces deterministically
+ * by forking; two engines answered to one name and could not see each
+ * other's children. The family reads through the server now, and the engine
+ * per variant is the one shared mapping (`generateSubReport`).
+ */
+export function TierSwitcher({
+  reportId,
+  currentTier,
+  parentReportId: _parentReportId,
   onTierSwitch,
-  disabled = false 
+  disabled = false,
 }: TierSwitcherProps) {
-  const [isLoading, setIsLoading] = useState(false);
   const [loadingTier, setLoadingTier] = useState<ReportTier | null>(null);
-  const [siblingReports, setSiblingReports] = useState<SiblingReport[]>([]);
+  const [family, setFamily] = useState<ReportFamily | null>(null);
   const { toast } = useToast();
 
-  // Determine the compass report ID (parent for derived, self for compass)
-  const compassReportId = currentTier === 'compass' ? reportId : parentReportId;
+  const loadFamily = async () => {
+    const loaded = await fetchReportFamily(reportId);
+    if (loaded) setFamily(loaded);
+  };
 
-  const fetchSiblingReports = async () => {
-    if (!compassReportId) return;
-
-    try {
-      // Fetch all reports that share the same parent (or are the parent)
-      const { data, error } = await supabase
-        .from('investment_reports')
-        .select('id, report_tier')
-        .or(`id.eq.${compassReportId},parent_report_id.eq.${compassReportId}`)
-        .eq('status', 'completed');
-
-      if (error) {
-        console.error('Error fetching sibling reports:', error);
-        return;
-      }
-
-      setSiblingReports((data || []) as SiblingReport[]);
-    } catch (error) {
-      console.error('Error:', error);
+  const rowFor = (tier: ReportTier) => {
+    if (!family) return null;
+    if (tier === 'compass') {
+      return family.parentId ? { id: family.parentId, stale: false } : null;
     }
+    const child = family.children.find((c) => c.variant === tier && c.status === 'completed');
+    return child ? { id: child.id, stale: child.stale } : null;
   };
 
   const handleTierSelect = async (targetTier: ReportTier) => {
-    if (targetTier === currentTier) return;
-    
-    // Check if this tier already exists
-    const existingReport = siblingReports.find(r => r.report_tier === targetTier);
-    
-    if (existingReport) {
-      // Switch to existing report
-      onTierSwitch?.(existingReport.id, targetTier);
+    if (targetTier === currentTier || loadingTier) return;
+
+    const existing = rowFor(targetTier);
+    if (existing) {
+      onTierSwitch?.(existing.id, targetTier);
+      toast({ title: 'Report Switched', description: `Viewing ${TIER_INFO[targetTier].name}` });
+      return;
+    }
+
+    if (targetTier === 'compass') {
       toast({
-        title: 'Report Switched',
-        description: `Viewing ${TIER_INFO[targetTier].name}`,
+        title: 'Cannot Open',
+        description: 'No parent Compass report found for this report.',
+        variant: 'destructive',
       });
       return;
     }
 
-    // Need to generate the tier
-    if (targetTier === 'compass') {
-      // Can't generate compass from derived - just switch to parent
-      if (compassReportId) {
-        onTierSwitch?.(compassReportId, 'compass');
-      }
-      return;
-    }
-
-    // Generate new condensed report
-    if (!compassReportId) {
+    const parentId = family?.parentId;
+    if (!parentId) {
       toast({
         title: 'Cannot Generate',
         description: 'No parent Compass report found',
@@ -92,30 +83,12 @@ export function TierSwitcher({
       return;
     }
 
-    setIsLoading(true);
     setLoadingTier(targetTier);
-
     try {
-      const { data, error } = await invokeSecureFunction('condense-investment-report', {
-        parentReportId: compassReportId,
-        targetTier,
-      });
-
-      if (error) throw error;
-
-      if (data?.success && data?.reportId) {
-        toast({
-          title: 'Report Generated',
-          description: `${TIER_INFO[targetTier].name} is ready`,
-        });
-        
-        onTierSwitch?.(data.reportId, targetTier);
-        
-        // Refresh siblings
-        fetchSiblingReports();
-      } else {
-        throw new Error(data?.error || 'Failed to generate report');
-      }
+      const generated = await generateSubReport(parentId, targetTier as SubReportVariant);
+      toast({ title: 'Report Generated', description: `${TIER_INFO[targetTier].name} is ready` });
+      onTierSwitch?.(generated.reportId, targetTier);
+      void loadFamily();
     } catch (error) {
       console.error('Error generating tier:', error);
       toast({
@@ -124,29 +97,19 @@ export function TierSwitcher({
         variant: 'destructive',
       });
     } finally {
-      setIsLoading(false);
       setLoadingTier(null);
     }
   };
 
-  const getTierIcon = (tier: ReportTier) => {
-    switch (tier) {
-      case 'compass': return Compass;
-      case 'briefing': return FileText;
-      case 'snapshot': return Zap;
-      case 'financial': return Calculator;
-      default: return Compass;
-    }
-  };
-
-  const CurrentIcon = getTierIcon(currentTier);
+  const CurrentIcon = TIER_INFO[currentTier]?.icon ?? TIER_INFO.compass.icon;
+  const isLoading = loadingTier !== null;
 
   return (
-    <DropdownMenu onOpenChange={(open) => open && fetchSiblingReports()}>
+    <DropdownMenu onOpenChange={(open) => open && void loadFamily()}>
       <DropdownMenuTrigger asChild>
-        <Button 
-          variant="outline" 
-          size="sm" 
+        <Button
+          variant="outline"
+          size="sm"
           disabled={disabled || isLoading}
           className="gap-2"
         >
@@ -162,12 +125,12 @@ export function TierSwitcher({
       <DropdownMenuContent align="end" className="w-64">
         <DropdownMenuLabel>Report Versions</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        
-        {(['compass', 'financial', 'briefing', 'snapshot'] as ReportTier[]).map((tier) => {
+
+        {REPORT_VARIANT_ORDER.map((tier) => {
           const info = TIER_INFO[tier];
-          const Icon = getTierIcon(tier);
+          const Icon = info.icon;
           const isCurrentTier = tier === currentTier;
-          const existingReport = siblingReports.find(r => r.report_tier === tier);
+          const existing = rowFor(tier);
           const isGenerating = loadingTier === tier;
 
           return (
@@ -189,7 +152,15 @@ export function TierSwitcher({
                   {info.description}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {existingReport ? '✓ Available' : isGenerating ? 'Generating...' : 'Click to generate'}
+                  {isGenerating
+                    ? 'Generating...'
+                    : existing?.stale
+                      ? 'Available — parent has changed since'
+                      : existing
+                        ? '✓ Available'
+                        : tier === 'compass'
+                          ? 'Base report'
+                          : 'Click to generate'}
                 </p>
               </div>
             </DropdownMenuItem>

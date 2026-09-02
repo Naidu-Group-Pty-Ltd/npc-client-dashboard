@@ -107,6 +107,34 @@ So the real coverage is *lower* than the figure above, not higher. Closing that
 gap needs a `report_render_events` row written by the legacy paths too, which is
 the one schema change worth making here.
 
+## 2026-09 update — the measure is now a view
+
+Phase 0 of the consolidation programme closed both gaps this file names:
+
+- **The numerator missed the template route.** The coverage query above counts
+  the `*_renders` ledgers, and the white-label path writes
+  `template_render_jobs` instead — so a templated investment render was
+  invisible to the very measure built to see it. The view counts both.
+- **The denominator was a proxy.** The browser generators recorded nothing.
+  Every pathway now logs one engine-tagged event: the server render routes are
+  auto-tagged at the one client chokepoint they all pass through
+  (`src/lib/secureInvoke.ts`), and the ledgerless pathways — browser
+  generators, print views, re-served stored PDFs, the legacy investment route
+  — log through `src/lib/reports/renderEvent.ts`.
+
+One query now answers the weekly question, in the SQL editor:
+
+```sql
+select date_trunc('week', occurred_at) wk, format, engine, count(*)
+from public.report_render_coverage
+group by 1, 2, 3 order by 1 desc, 4 desc;
+```
+
+(`supabase/migrations/20260915100000_report_render_coverage.sql`; the view is
+`security_invoker`, so it opens only to roles that can read the tables under
+it.) Events from before this shipped are still best read with the original
+queries below.
+
 ## Why this file exists
 
 Every other measurement in this programme — the ink floor, the critique rubric,

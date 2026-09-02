@@ -109,6 +109,8 @@ const RENDERED = (() => {
     '```js\nconst x = 1;\n```',
     '![alt](x.png)',
     '[text](x)',
+    'A cited claim.[^n]',
+    '[^n]: The note the citation points at.',
   ].join('\n\n');
   const html = renderMarkdown(source, { idPrefix: 't' }).html
     + renderMarkdown('x'.repeat(200_000)).html; // the truncation callout
@@ -122,10 +124,10 @@ describe('the markdown renderer emits only elements the sheet dresses', () => {
     // `<${tag}>` a list opens with — are asserted below against a document that
     // was actually rendered, which is a stronger check than reading a template
     // literal anyway.
-    expect(OWN_TAGS).toEqual(['br', 'code', 'em', 'h4', 'li', 'p', 'strong']);
+    expect(OWN_TAGS).toEqual(['br', 'code', 'em', 'h4', 'li', 'ol', 'p', 'strong', 'sup']);
   });
 
-  it.each(['ul', 'ol', 'li', 'p', 'strong', 'em', 'code'])(
+  it.each(['ul', 'ol', 'li', 'p', 'strong', 'em', 'code', 'sup'])(
     'reaches the page with a styled <%s>',
     (tag) => {
       expect(RENDERED, `<${tag}> never reached the page`).toContain(tag);
@@ -151,7 +153,7 @@ describe('the markdown renderer emits only elements the sheet dresses', () => {
   });
 
   it('never reaches for an element the sheet does not dress at all', () => {
-    for (const tag of ['hr', 'pre', 'img', 'a', 'blockquote', 'del', 'sup']) {
+    for (const tag of ['hr', 'pre', 'img', 'a', 'blockquote', 'del']) {
       expect(RENDERED, `<${tag}> reached the page`).not.toContain(tag);
       expect(OWN_TAGS, `<${tag}> is written by the module`).not.toContain(tag);
     }

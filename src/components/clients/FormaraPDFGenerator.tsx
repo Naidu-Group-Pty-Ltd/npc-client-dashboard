@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Download, FileText, Home, Loader2, Mail, Send, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
+import { logReportRenderEvent } from '@/lib/reports/renderEvent';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import html2canvas from 'html2canvas';
@@ -770,6 +771,7 @@ export function FormaraPDFGenerator({
         window.setTimeout(() => URL.revokeObjectURL(url), 0);
         persistFormaraPdf(pdfBlob, fileName, data.client.id);
         toast.success('Formara PDF downloaded & saved to Reports');
+        logReportRenderEvent({ format: 'client_details', engine: 'browser', source: 'formara_generator', reportId: data.client?.id ?? undefined, entityName: clientName });
         return null;
       }
     } catch (error) {

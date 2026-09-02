@@ -82,6 +82,7 @@ import {
 import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
+import { storeVerifiedWebImages } from '../_shared/builderStock/webImageStore.ts';
 import {
   claimOneImageWorkItem, completeItemWork, isMissingCapability, publishUploadIfReady,
   readItemWorkPending,
@@ -784,6 +785,47 @@ Deno.serve(async (req: Request) => {
      * the pointer of a property whose picture is about to be approved.
      */
     for (const organisationId of organisations) await enforce(organisationId);
+
+    /*
+     * THE WEB-IMAGE STORE RUNS ON ITS OWN ENUMERATION, because an empty queue
+     * is the steady state this pass exists in: a hotlinked "Web sourced" card
+     * needs no settlement work to be fragile, and the first wiring of this —
+     * inside `enforce`, which only runs for organisations with candidates —
+     * measurably never ran once the marketplace had settled. It sits after
+     * all settlement work so the drip can never delay the queue; a retirement
+     * hands the organisation to `enforce` (idempotent within the tick), so a
+     * card whose picture is GONE is re-decided before this tick returns and
+     * the badge goes with the photograph. See `webImageStore.ts`.
+     */
+    try {
+      const { data: webRows } = await supabase
+        .from('builder_stock_item_images')
+        .select('organisation_id')
+        .eq('source_stage', 'internet_search')
+        .eq('verification_status', 'property_identity_verified')
+        .eq('processing_status', 'ready')
+        .is('storage_path', null)
+        .limit(200);
+      const webOrganisations = [...new Set(
+        ((webRows ?? []) as Array<{ organisation_id: string }>)
+          .map((row) => String(row.organisation_id)),
+      )];
+      for (const organisationId of webOrganisations) {
+        const webOutcome = await storeVerifiedWebImages(supabase, organisationId);
+        if (webOutcome.retired > 0) {
+          // Even where enforcement already ran this tick: the evidence just
+          // changed, so the once-per-tick guard steps aside for the re-read.
+          enforced.delete(organisationId);
+          await enforce(organisationId);
+        }
+      }
+    } catch (storeError) {
+      console.warn('[builder-stock-image-settler] web images not stored', {
+        phase: 'web_image_store',
+        message: String((storeError as { message?: string })?.message ?? storeError)
+          .slice(0, 200),
+      });
+    }
 
     const remaining = Math.max(0, outstanding.length - settled);
     console.log('[builder-stock-image-settler] tick', {

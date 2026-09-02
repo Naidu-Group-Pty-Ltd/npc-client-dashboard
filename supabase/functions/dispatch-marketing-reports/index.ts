@@ -349,8 +349,24 @@ async function processScheduleDispatch(
   const report = await getOrGenerateReport(supabase, supabaseUrl, serviceKey, anonKey, reportType, audienceSegment);
   if (!report) throw new Error('Failed to get/generate market intelligence report');
 
-  // Step 2: Download the PDF from storage
-  const pdfBase64 = await downloadPdfAsBase64(supabase, report.pdf_storage_path);
+  // Step 2: Make sure the report HAS a PDF, then download it.
+  //
+  // The generator writes content and never a PDF, so a dispatch that had to
+  // generate always reached this point with pdf_storage_path null and threw
+  // "Failed to download report PDF" — every scheduled send that could not
+  // reuse a manually-exported PDF failed (audit F16; pdf_storage_path was
+  // 0/7 in production). The scheduled path now renders through the same
+  // design-composer route the download button uses, acting for the
+  // schedule's creator, whose marketing permission the route checks.
+  let storagePath: string | null = typeof report.pdf_storage_path === 'string' && report.pdf_storage_path
+    ? report.pdf_storage_path
+    : null;
+  if (!storagePath) {
+    console.log(`[dispatch] Report ${report.id} has no stored PDF; rendering one...`);
+    storagePath = await renderReportPdf(supabaseUrl, anonKey, report.id, schedule.created_by);
+    if (!storagePath) throw new Error('Report PDF could not be rendered for attachment');
+  }
+  const pdfBase64 = await downloadPdfAsBase64(supabase, storagePath);
   if (!pdfBase64) throw new Error('Failed to download report PDF');
 
   // Step 3: Resolve recipients from GHL pipeline contacts
@@ -459,8 +475,11 @@ async function getOrGenerateReport(supabase: any, supabaseUrl: string, serviceKe
     .limit(1)
     .maybeSingle();
 
-  if (recentReport?.pdf_storage_path) {
-    console.log('[dispatch] Using existing report:', recentReport.id);
+  // A recent completed report is reused even when it carries no PDF yet —
+  // rendering a PDF for existing content (the caller's next step) is
+  // strictly cheaper than regenerating the content from scratch.
+  if (recentReport) {
+    console.log(`[dispatch] Using existing report: ${recentReport.id}${recentReport.pdf_storage_path ? '' : ' (no PDF yet)'}`);
     return recentReport;
   }
 
@@ -511,6 +530,48 @@ async function getOrGenerateReport(supabase: any, supabaseUrl: string, serviceKe
     .single();
 
   return newReport;
+}
+
+/**
+ * Render (and persist) the report's PDF through the same design-composer
+ * route the download button uses — `render-market-intelligence-pdf` with
+ * `persist` on, which writes `pdf_storage_path` and hands the path back.
+ *
+ * The route refuses an anonymous internal credential, so the dispatch names
+ * the schedule's creator and the route checks THAT user's marketing
+ * permission — the scheduled send renders exactly what (and only what) its
+ * owner could render by hand.
+ */
+async function renderReportPdf(
+  supabaseUrl: string,
+  anonKey: string,
+  reportId: string,
+  onBehalfOfUserId: string | null | undefined,
+): Promise<string | null> {
+  if (!onBehalfOfUserId) {
+    console.error('[dispatch] Cannot render report PDF: schedule has no creator to act for');
+    return null;
+  }
+  const _internalSecret = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
+  const response = await fetch(`${supabaseUrl.trim()}/functions/v1/render-market-intelligence-pdf`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // AUTH-002: internal secret, not the service-role key.
+      'Authorization': `Bearer ${anonKey.trim()}`,
+      'apikey': anonKey.trim(),
+      ...(_internalSecret ? { 'x-internal-edge-secret': _internalSecret } : {}),
+    },
+    body: JSON.stringify({ reportId, persist: true, onBehalfOfUserId }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result) {
+    console.error(`[dispatch] PDF render failed: HTTP ${response.status} ${result?.error ?? ''}`);
+    return null;
+  }
+  return result.persisted && typeof result.storagePath === 'string' && result.storagePath
+    ? result.storagePath
+    : null;
 }
 
 async function downloadPdfAsBase64(supabase: any, storagePath: string | null): Promise<string | null> {

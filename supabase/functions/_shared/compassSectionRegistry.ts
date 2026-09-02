@@ -147,12 +147,20 @@ export const EDITORIAL_LABELS: readonly string[] = [
 
 export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
   {
+    // Excluded from Compass assembly (2026-09): every surface that draws this
+    // narrative draws its own cover, and the model-written one rendered as a
+    // SECOND cover inside the body — the firm's masthead, the words "Cover
+    // Page" as a visible heading, and "Prepared for: Premium client of …" as
+    // body copy, measured on a real client document. Same treatment the prose
+    // contents section got, for the same reason. Stored reports that already
+    // carry it are cleaned at read time by
+    // `reports/investment/narrativeClean.pure.ts`.
     id: 'compass.cover',
     ordinal: 1,
     name: 'Cover Page',
     sourceHeadings: ['Cover'],
     pageBudget: 1,
-    includeInCompass: true,
+    includeInCompass: false,
     includeInFinancialReport: false,
     includeInAppendix: false,
     isInternalOnly: false,

@@ -724,9 +724,16 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   const firstNarrativeHeight = remainingAfter([narrativeHeading], contentTop());
   const contNarrativeHeight = remainingAfter([], contentTop());
 
+  // One part number for the whole report body. Each continuation page used to
+  // mint its own — running heads marched "Part 08 · Report" through
+  // "Part 33 · Report" and the Sources page introduced itself as Part 49 with
+  // a two-inch numeral. A continuation is the same part, so it carries the
+  // opener's label verbatim, and everything after the body numbers on from
+  // the opener rather than from the page count.
+  const reportPart = nextPart('Report');
   pages.push({
     ...withFurniture(page('The report', [
-      ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
+      ...furniture(DOCUMENT_LABEL, reportPart, 'The report'),
       ...flow([
         narrativeHeading,
         markdown('{{narrative.source}}', 0, firstNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
@@ -740,7 +747,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   for (let i = 1; i < NARRATIVE_PAGES; i += 1) {
     pages.push({
       ...withFurniture(page(`The report (${i + 1})`, [
-        ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'The report'),
+        ...furniture(DOCUMENT_LABEL, reportPart, 'The report'),
         ...flow([
           markdown('{{narrative.source}}', i, contNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
         ], contentTop()),
@@ -764,7 +771,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // would print over the text.
   pages.push({
     ...withFurniture(page('Not the whole report', [
-      ...furniture(DOCUMENT_LABEL, nextPart('Report'), 'Not the whole report'),
+      ...furniture(DOCUMENT_LABEL, reportPart, 'Not the whole report'),
       ...flow([
         sectionHeading({ eyebrow: 'Continued elsewhere', heading: 'Not the whole report' }),
         callout(

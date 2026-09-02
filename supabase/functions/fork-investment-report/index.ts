@@ -279,6 +279,11 @@ async function upsertFork(
       generated_by: parent.generated_by,
       report_variant: persistedVariant,
       derived_from_report_id: parent.id,
+      // Both linkage columns — history split the family across
+      // derived_from_report_id (fork) and parent_report_id (condense), so
+      // the two engines could not see each other's children. New rows carry
+      // both; readers resolve the union either way (subReportFamily.pure.ts).
+      parent_report_id: parent.id,
       ...sharedFields,
     })
     .select('id, report_variant, derived_from_report_id, variant_generated_at')
@@ -366,16 +371,30 @@ Deno.serve(async (req) => {
     const financialMd = renderVariantMarkdown(registry, 'financial', parent.property_address, financialSections);
     const dueDiligenceMd = renderVariantMarkdown(registry, 'due_diligence', parent.property_address, dueDiligenceSections);
 
-    // Build the scoring input raw from parent's stored JSON
+    // Build the scoring input raw from parent's stored JSON. The price and
+    // rent live where the calculator writes them — initialCosts.propertyValue
+    // and income.weeklyRent — with the operator's override winning; the old
+    // top-level reads (`financial_calculations.purchasePrice`) named paths
+    // the record never had, so every fork was scored against $0.
+    const fin = parent.financial_calculations || {};
+    const overrides = parent.manual_overrides || {};
     const scoreInputRaw = {
       property: {
-        price: parent.financial_calculations?.purchasePrice || parent.property_specs?.price || 0,
-        weeklyRent: parent.financial_calculations?.weeklyRent || parent.property_specs?.weeklyRent || 0,
-        propertyType: parent.property_specs?.propertyType || 'house',
+        price: Number(overrides.purchasePrice)
+          || Number(fin.initialCosts?.propertyValue)
+          || Number(fin.purchasePrice)
+          || Number(parent.property_specs?.price)
+          || 0,
+        weeklyRent: Number(overrides.weeklyRent)
+          || Number(fin.income?.weeklyRent)
+          || Number(fin.weeklyRent)
+          || Number(parent.property_specs?.weeklyRent)
+          || 0,
+        propertyType: parent.property_specs?.propertyType || parent.property_specs?.property_type || 'house',
       },
       demographics: parent.demographics_data || {},
       locationIntelligence: parent.location_intelligence || {},
-      financials: parent.financial_calculations || {},
+      financials: fin,
       state: parent.property_specs?.state || parent.demographics_data?.state,
     };
 

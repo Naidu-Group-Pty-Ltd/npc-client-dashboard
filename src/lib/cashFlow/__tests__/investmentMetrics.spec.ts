@@ -111,7 +111,7 @@ describe('the $2,000 cost base', () => {
       COLLAPSED,
     );
     expect(read.ok).toBe(false);
-    if (read.ok) return;
+    if (read.ok === true) return;
     expect(read.reason).toBe('capital_unknown');
   });
 
@@ -254,7 +254,7 @@ describe('an incomplete projection', () => {
       BUDGEREE_BASE,
     );
     expect(read.ok).toBe(false);
-    if (read.ok) return;
+    if (read.ok === true) return;
     expect(read.reason).toBe('projection_incomplete');
   });
 

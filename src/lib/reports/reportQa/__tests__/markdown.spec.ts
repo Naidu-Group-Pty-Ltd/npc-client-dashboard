@@ -252,7 +252,7 @@ describe('headings', () => {
 
   it('treats seven hashes as prose and six as a heading', () => {
     expect(html('####### seven')).not.toContain('<h');
-    expect(html('###### six')).toContain('<h2');
+    expect(html('###### six', { dropEmptyHeadings: false })).toContain('<h2');
   });
 
   it('treats a hash with no space as prose', () => {
@@ -280,12 +280,12 @@ describe('headings', () => {
   });
 
   it('clamps everything past h4 onto h4', () => {
-    const levels = renderMarkdown('# a\n\n## b\n\n### c\n\n#### d\n\n##### e').headings.map((h) => h.level);
+    const levels = renderMarkdown('# a\n\n## b\n\n### c\n\n#### d\n\n##### e', { dropEmptyHeadings: false }).headings.map((h) => h.level);
     expect(levels).toEqual([2, 3, 4, 4, 4]);
   });
 
   it('strips a closing hash sequence', () => {
-    expect(renderMarkdown('## Title ##').headings[0].text).toBe('Title');
+    expect(renderMarkdown('## Title ##', { dropEmptyHeadings: false }).headings[0].text).toBe('Title');
   });
 
   it('gives every heading a unique id over a safe charset', () => {
@@ -299,7 +299,7 @@ describe('headings', () => {
   });
 
   it('reads a setext heading and drops a thematic break', () => {
-    expect(renderMarkdown('Title\n===').headings[0]?.text).toBe('Title');
+    expect(renderMarkdown('Title\n===', { dropEmptyHeadings: false }).headings[0]?.text).toBe('Title');
     const r = renderMarkdown('Text\n\n---\n\nmore');
     expect(r.notices.thematicBreaks).toBe(1);
     expect(r.headings).toHaveLength(0);
@@ -314,7 +314,7 @@ describe('headings', () => {
   });
 
   it('carries plain text, not markup, on the heading record', () => {
-    expect(renderMarkdown('## A **bold** title').headings[0].text).toBe('A bold title');
+    expect(renderMarkdown('## A **bold** title', { dropEmptyHeadings: false }).headings[0].text).toBe('A bold title');
   });
 });
 

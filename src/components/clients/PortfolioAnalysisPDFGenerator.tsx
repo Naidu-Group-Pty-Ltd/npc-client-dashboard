@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { FileText, Loader2, Download, TrendingUp, AlertTriangle, CheckCircle, Landmark, Shield, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { logReportRenderEvent } from '@/lib/reports/renderEvent';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
@@ -3171,6 +3172,7 @@ export function PortfolioAnalysisPDFGenerator({
 
       console.log('✅ PDF generation complete!');
       toast.success(reportPersisted ? 'PDF downloaded and report saved' : 'PDF downloaded locally');
+      logReportRenderEvent({ format: 'portfolio', engine: 'browser', source: 'portfolio_pdf_lib', reportId: clientId ?? undefined, entityName: clientName ?? undefined });
       logActivityDirect({
         actionType: 'portfolio_report_generated',
         entityType: 'portfolio_report',

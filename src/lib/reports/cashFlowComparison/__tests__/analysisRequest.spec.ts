@@ -240,7 +240,7 @@ describe('the fence regex this replaced', () => {
     const cut = '```json\n' + JSON.stringify(whole(), null, 2).slice(0, 320);
     const read = readModelJson(cut, 'length');
     expect(read.ok).toBe(false);
-    if (read.ok) return;
+    if (read.ok === true) return;
     expect(read.reason).toBe('truncated');
     expect(read.message).toMatch(/cut off|token budget/i);
   });

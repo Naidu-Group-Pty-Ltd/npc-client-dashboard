@@ -1,6 +1,6 @@
 import type { Block } from '../templateSchema';
-import { resolveBindable } from '../bindingResolver';
-import { esc, type HtmlBlockContext } from './_shared.html';
+import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { esc, fontFamilyDecl, type HtmlBlockContext } from './_shared.html';
 
 function sanitise(text: string): string {
   if (!text) return '';
@@ -39,19 +39,41 @@ export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): strin
   const sizeToken = resolveBindable(p.fontSize ?? '', ctx)
     || resolveBindable(p.fontSizeFallback ?? '', ctx);
   const fontSize = sizeToken === 'medium' ? 10 : sizeToken === 'large' ? 12 : 8.5;
+  /*
+   * The page dresses in the FAMILY's tokens, not its own.
+   *
+   * This block used to hardcode a near-black ground (#141414), one of the
+   * audit's eight stray golds (#BF9B50) and a Helvetica fallback — so the
+   * closing page of every templated document arrived from a different design
+   * system than the thirty-odd pages before it, whatever family the operator
+   * chose. It reads the colourway now: the family's field for the ground, its
+   * on-field accent for labels, its on-field inks for text — with the old
+   * literals kept as fallbacks so a template with no such tokens (the voice
+   * catalogue, hand-built rows) renders exactly as it always did.
+   */
+  const ground = resolveBindableColor('token:bg', ctx, '#141414');
+  const accent = resolveBindableColor('token:accentOnField', ctx, '#BF9B50');
+  const inkOnField = resolveBindableColor('token:text', ctx, '#F3EFE6');
+  const mutedOnField = resolveBindableColor('token:mutedOnField', ctx, '#B9B3A6');
+  const headingFont = fontFamilyDecl('token:heading', '--font-heading');
+
   const row = (label: string, raw: unknown) => {
     const v = resolveBindable(raw, ctx);
     if (!v) return '';
     return `<div style="display:flex;font-size:9pt;margin-bottom:6pt;">
-      <div style="color:#BF9B50;font-weight:700;width:80pt;">${esc(label).toUpperCase()}:</div>
-      <div style="color:#F3EFE6;">${esc(v)}</div>
+      <div style="color:${accent};font-weight:700;width:80pt;">${esc(label).toUpperCase()}:</div>
+      <div style="color:${inkOnField};">${esc(v)}</div>
     </div>`;
   };
-  const parts = companyName.split(' ');
-  const heading = parts.length >= 2
-    ? `<div style="font-size:28pt;font-weight:700;line-height:1;">${esc(parts.slice(0, -1).join(' '))}</div>
-       <div style="font-size:16pt;font-weight:400;margin-top:2pt;">${esc(parts[parts.length - 1])}</div>`
-    : `<div style="font-size:28pt;font-weight:700;">${esc(parts[0])}</div>`;
+  /*
+   * One wordmark, one size. The old split set every word but the last at 28pt
+   * and the last at 16pt beneath it — which turned "Naidu Property Consulting
+   * Services" into a large name with "SERVICES" reading as a subtitle. A name
+   * is one object: a single line in the family's heading face, wrapping if it
+   * must, never re-weighted by word position.
+   */
+  const heading = `<div style="${headingFont}font-size:24pt;font-weight:600;line-height:1.15;`
+    + `letter-spacing:0.02em;max-width:420pt;">${esc(companyName)}</div>`;
 
   /*
    * The mark above the contact block.
@@ -72,10 +94,10 @@ export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): strin
       + `object-fit:contain;display:block;margin:0 0 22pt;"/>`
     : '';
 
-  return `<div style="position:absolute;inset:0;background:#141414;color:#BF9B50;padding:40pt 20pt;font-family:var(--font-body, Helvetica);">
+  return `<div style="position:absolute;inset:0;background:${ground};color:${accent};padding:40pt 20pt;font-family:var(--font-body, Helvetica);">
     ${markBlock}
     ${heading}
-    <div style="margin-top:30pt;font-size:14pt;font-weight:700;color:#BF9B50;">CONTACT US</div>
+    <div style="${headingFont}margin-top:30pt;font-size:12pt;font-weight:700;letter-spacing:0.08em;color:${accent};">CONTACT US</div>
     <div style="margin-top:18pt;">
       ${row('Website', p.website)}
       ${row('Email', p.email)}
@@ -83,6 +105,6 @@ export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): strin
       ${row('Address', p.address)}
       ${row('ABN', p.abn)}
     </div>
-    ${text ? `<div style="margin-top:28pt;color:#B9B3A6;font-size:${fontSize}pt;line-height:1.5;white-space:pre-wrap;">${esc(text)}</div>` : ''}
+    ${text ? `<div style="margin-top:28pt;color:${mutedOnField};font-size:${fontSize}pt;line-height:1.5;white-space:pre-wrap;">${esc(text)}</div>` : ''}
   </div>`;
 }

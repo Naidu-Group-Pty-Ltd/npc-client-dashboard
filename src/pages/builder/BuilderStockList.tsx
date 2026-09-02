@@ -223,7 +223,7 @@ export default function BuilderStockList() {
    * exactly where the act is possible, and the server is still the authority.
    */
   const canRefreshBrochureLinks = useCallback((upload: BuilderStockUpload) => (
-    isRecoverableStoredAvailability((upload.error_detail as { reason?: string } | null)?.reason)
+    isRecoverableStoredAvailability(upload.error_code)
   ), []);
 
   const refreshBrochureLinks = useCallback((upload: BuilderStockUpload) => {
@@ -259,8 +259,7 @@ export default function BuilderStockList() {
    * always has and updates in place.
    */
   const canReprocess = useCallback((upload: BuilderStockUpload) => (
-    !upload.deleted_at
-    && !['uploaded', 'failed', 'parsing'].includes(String(upload.status ?? ''))
+    !['uploaded', 'failed', 'parsing'].includes(String(upload.status ?? ''))
   ), []);
 
   const reprocessStockSource = useCallback((upload: BuilderStockUpload) => {

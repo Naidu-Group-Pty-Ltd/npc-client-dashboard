@@ -1185,7 +1185,7 @@ describe('the production layout: banners above the header, blanks between proper
     expect(worksheetScore(provenCsv, headerless[0])).toBe(0);
     const match = matchWorksheet(provenCsv, headerless);
     expect(match.ok).toBe(false);
-    if (!match.ok) expect(match.reason).toBe('no_match');
+    if (match.ok === false) expect(match.reason).toBe('no_match');
   });
 
   it('applies zero links when two tabs are equally like the proven CSV', () => {
@@ -1193,7 +1193,7 @@ describe('the production layout: banners above the header, blanks between proper
     twinTabs[1] = { ...twinTabs[1], name: 'STOCKLIST V002 (copy)' };
     const match = matchWorksheet(provenCsv, twinTabs);
     expect(match.ok).toBe(false);
-    if (!match.ok) expect(match.reason).toBe('ambiguous');
+    if (match.ok === false) expect(match.reason).toBe('ambiguous');
     // Nothing decisive means nothing applied — the caller gets no worksheet.
     expect(recoveredRowsFromWorksheet(match.ok ? match.sheet : null)).toEqual([]);
   });

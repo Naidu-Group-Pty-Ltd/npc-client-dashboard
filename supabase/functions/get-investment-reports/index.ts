@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
+import { familyParentId, isBaseReport, shapeFamily } from '../_shared/reports/investment/subReportFamily.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
 type Projection = 'library' | 'cashFlowLibrary' | 'cashFlowComparison' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
@@ -14,6 +15,8 @@ interface RequestBody {
   projection?: Projection;
   reportId?: string;
   reportIds?: string[];
+  /** Resolve the Compass family (parent + sub-reports + staleness) of this report id. */
+  familyOf?: string;
   listMode?: boolean;
   listOptions?: {
     status?: string | string[]; isArchived?: boolean; isClientReport?: boolean | null;
@@ -50,7 +53,10 @@ const INVESTMENT_LIBRARY_SOURCE_SELECT = `${INVESTMENT_LIBRARY_SELECT},manual_ov
 // projection of nothing, which is the one outcome a comparison must never
 // produce. It is deliberately not the list projection: the payload is large
 // and only the handful of reports actually selected need it.
-const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence`;
+// `data_sources` and `validation_flags` ride along for the viewer's
+// data-coverage disclosure: which sources informed the report, which
+// returned nothing, and any prose-vs-record fact contradictions.
+const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence,data_sources,validation_flags`;
 // Live-progress projection for the floating generation widget, which polls every
 // few seconds. The library projection omits `updated_at`, `error_message` and the
 // section counters, so the widget was rendering `new Date(undefined)` and a
@@ -186,6 +192,55 @@ Deno.serve(async (req) => {
     // Single report fetch / Multiple reports fetch by IDs / List mode - fetch reports with filters
     const permission = await requireModulePermission(supabase, { userId: auth.userId, authMethod: auth.authMethod }, table === 'generated_reports' ? 'generated_reports' : 'reports', 'can_view');
     if (!permission.ok) return failure('FORBIDDEN', 'Report library access is required.', false, 403, corsHeaders, correlationId);
+
+    // ── The Compass family, resolved server-side ──────────────────────────────
+    //
+    // `familyOf` answers "who belongs to this report's package, and is each
+    // child still true to its parent". It exists because the tier switcher
+    // used to read `investment_reports` from the BROWSER, where the
+    // service-role-only policies filter every row: siblings always read as
+    // absent, so switching to an existing child was impossible and every
+    // click regenerated one — the fourth surface to hit the read-through-the-
+    // server trap. History wrote the parent link in two columns (fork wrote
+    // `derived_from_report_id`, condense wrote `parent_report_id`), so
+    // children are the union over both — two indexed lookups, never a
+    // composed `.or()` string. Staleness is derived here, never stored.
+    if (body.familyOf) {
+      if (typeof body.familyOf !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.familyOf)) {
+        return failure('INVALID_REPORT_QUERY', 'familyOf must be a report id.', false, 400, corsHeaders, correlationId);
+      }
+      const FAMILY_SELECT = 'id, property_address, status, report_tier, report_variant, parent_report_id, derived_from_report_id, variant_generated_at, updated_at, created_at, is_archived';
+      const anchorRes = await supabase.from('investment_reports').select(FAMILY_SELECT).eq('id', body.familyOf).maybeSingle();
+      if (anchorRes.error) {
+        const mapped = classifyDatabaseError(anchorRes.error);
+        return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
+      }
+      if (!anchorRes.data) return failure('REPORT_NOT_FOUND', 'No report exists for that ID.', false, 404, corsHeaders, correlationId);
+      const anchor = anchorRes.data as Record<string, unknown>;
+      const parentId = isBaseReport(anchor) ? String(anchor.id) : familyParentId(anchor);
+
+      const rows: Record<string, unknown>[] = [anchor];
+      if (parentId) {
+        const [parentRes, byDerived, byParent] = await Promise.all([
+          parentId === anchor.id
+            ? Promise.resolve({ data: null, error: null })
+            : supabase.from('investment_reports').select(FAMILY_SELECT).eq('id', parentId).maybeSingle(),
+          supabase.from('investment_reports').select(FAMILY_SELECT).eq('derived_from_report_id', parentId),
+          supabase.from('investment_reports').select(FAMILY_SELECT).eq('parent_report_id', parentId),
+        ]);
+        const firstError = parentRes.error || byDerived.error || byParent.error;
+        if (firstError) {
+          const mapped = classifyDatabaseError(firstError);
+          return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
+        }
+        if (parentRes.data) rows.push(parentRes.data as Record<string, unknown>);
+        for (const row of [...(byDerived.data || []), ...(byParent.data || [])]) rows.push(row as Record<string, unknown>);
+      }
+
+      const family = shapeFamily(String(anchor.id), rows.filter((r) => r.is_archived !== true));
+      console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection: 'familyOf', childCount: family.children.length, staleCount: family.staleChildren.length, durationMs: Math.round(performance.now() - started), functionVersion: FUNCTION_VERSION });
+      return json({ success: true, family, correlationId }, 200, corsHeaders, correlationId);
+    }
 
     const options = body.listOptions || {};
     if (!validIso(options.createdAfter) || !validIso(options.createdBefore) || (options.createdAfter && options.createdBefore && Date.parse(options.createdAfter) > Date.parse(options.createdBefore)))

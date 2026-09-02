@@ -5,6 +5,7 @@ import { releaseInvestmentReportRunTokens } from '../_shared/reportMetering.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { applyDisplayOverrides, buildCalculatorInput, overridesAffectModel } from '../_shared/reports/investment/overrides.pure.ts';
 // Dynamic CORS headers for credential-based requests
 function createCorsHeaders(origin: string | null): Record<string, string> {
   // Support Lovable preview + published domains for credentialed requests
@@ -119,6 +120,61 @@ Deno.serve(async (req) => {
           );
         }
 
+        // A save that carries manual overrides recomputes the financials
+        // server-side BEFORE the write, through the same calculator every
+        // generation uses — overrides that change modelled inputs (price,
+        // rent, rate, reviewed costs, duty) go INTO the engine so the
+        // totals, projections, sensitivity and metrics all describe them.
+        // Three writers used to splat override values over stored leaves
+        // instead, which is how production rows came to carry overridden
+        // line items beside totals, series and metrics computed from the
+        // formula estimates. The recompute never blocks the save: any
+        // failure falls back to persisting exactly what the client sent,
+        // and the response says which happened.
+        let financialsRecalculated = false;
+        let financialsRecalcSkipped: string | null = null;
+        if (data.manual_overrides !== undefined) {
+          try {
+            if (!overridesAffectModel(data.manual_overrides)) {
+              financialsRecalcSkipped = 'display_only_overrides';
+            } else {
+              const { data: existing, error: readError } = await supabase
+                .from('investment_reports')
+                .select('property_address, property_specs, financial_calculations')
+                .eq('id', reportId)
+                .single();
+              if (readError || !existing) {
+                throw new Error(readError?.message || 'report row not found');
+              }
+              const build = buildCalculatorInput(data.manual_overrides, existing);
+              if (!build.ok) {
+                financialsRecalcSkipped = `inputs_unresolved:${build.missing.join(',')}`;
+              } else {
+                const internalSecret = Deno.env.get('INTERNAL_EDGE_SECRET')?.trim();
+                const anonKey = Deno.env.get('SUPABASE_ANON_KEY')?.trim();
+                if (!internalSecret) throw new Error('INTERNAL_EDGE_SECRET not configured');
+                const calcResponse = await fetch(`${supabaseUrl}/functions/v1/financial-calculator-service`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${internalSecret}`,
+                    ...(anonKey ? { 'apikey': anonKey } : {}),
+                  },
+                  body: JSON.stringify(build.input),
+                });
+                if (!calcResponse.ok) throw new Error(`calculator answered ${calcResponse.status}`);
+                const calc = await calcResponse.json();
+                if (!calc?.success || !calc?.data) throw new Error(calc?.error || 'calculator returned no data');
+                data.financial_calculations = applyDisplayOverrides(calc.data, data.manual_overrides);
+                financialsRecalculated = true;
+              }
+            }
+          } catch (recalcError) {
+            financialsRecalcSkipped = `recalc_failed:${(recalcError instanceof Error ? recalcError.message : String(recalcError)).slice(0, 160)}`;
+            console.error('[manage-investment-reports] financials recompute failed (save proceeds with client data):', financialsRecalcSkipped);
+          }
+        }
+
         // Slim return payload — never re-select the huge `report_content`
         // column on update. Re-selecting the full row was contributing to
         // statement-timeouts (Postgres 57014) when combined with the
@@ -157,7 +213,14 @@ Deno.serve(async (req) => {
         }
 
         return new Response(
-          JSON.stringify({ success: true, report, ...(tokenRelease ? { tokenRelease } : {}) }),
+          JSON.stringify({
+            success: true,
+            report,
+            ...(tokenRelease ? { tokenRelease } : {}),
+            ...(data.manual_overrides !== undefined
+              ? { financialsRecalculated, ...(financialsRecalcSkipped ? { financialsRecalcSkipped } : {}) }
+              : {}),
+          }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }

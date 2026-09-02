@@ -1165,7 +1165,9 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
 
       toast({
         title: "Overrides saved",
-        description: "Your manual overrides have been applied. Use the 'Regenerate with Perplexity' button to update the qualitative analysis.",
+        description: updateResult?.financialsRecalculated
+          ? "Financials were recalculated from your overrides — totals, projections and key metrics now match the reviewed figures. Use 'Regenerate with Perplexity' to update the written analysis."
+          : "Your manual overrides have been applied. Use the 'Regenerate with Perplexity' button to update the qualitative analysis.",
       });
 
       setHasChanges(false);

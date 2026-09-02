@@ -665,8 +665,15 @@ export async function enrichFromInternetSearch(
         source_reference: candidate.imageUrl.slice(0, 400),
         source_provider: 'perplexity',
         source_page_url: candidate.pageUrl,
-        // NOT stored. An internet image is kept as a link with its provenance;
-        // copying it into our bucket would make it look like ours.
+        // Recorded as a link HERE, and stored by the settler's own sweep once
+        // it verifies. This used to say "copying it into our bucket would
+        // make it look like ours", which confused serving with provenance:
+        // origin is these columns, and what the link actually bought was a
+        // dependency on the publisher's server — measured on lot 310 Watsons
+        // Reach, whose card said "Web sourced" over an image the source site
+        // had deleted (HTTP 404). `webImageStore.ts` takes the bytes for
+        // every VERIFIED web image and retires one only when its address
+        // answers that the picture is gone.
         external_url: candidate.imageUrl,
         verification_status: verdict.ok ? WEB_VERIFIED_VERIFICATION : 'unverified',
         confidence: verdict.ok ? 0.6 : 0.3,

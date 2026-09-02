@@ -151,8 +151,29 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       req,
       body as { session_token?: string; command_centre_session_token?: string },
     );
-    if (auth.error || !auth.userId || auth.userId === 'service_role') {
+    if (auth.error || !auth.userId) {
       return json({ error: auth.error || 'Authentication required' }, 401);
+    }
+
+    // An anonymous internal credential may not render on its own authority —
+    // a bare auth.userId === 'service_role' is refused exactly as before. The
+    // one internal caller with business here is the scheduled dispatch, and
+    // it acts FOR a person: it names the schedule's creator, and the
+    // marketing permission below is checked against that user, exactly as if
+    // they had pressed the button themselves. The delegated authMethod is
+    // deliberately not 'service_role', so requireModulePermission cannot
+    // short-circuit past the real check.
+    let actorId = auth.userId;
+    let actorAuthMethod: string | null | undefined = auth.authMethod;
+    if (auth.userId === 'service_role') {
+      const onBehalfOf = typeof (body as Record<string, unknown>)?.onBehalfOfUserId === 'string'
+        ? String((body as Record<string, unknown>).onBehalfOfUserId).trim()
+        : '';
+      if (!onBehalfOf) {
+        return json({ error: auth.error || 'Authentication required' }, 401);
+      }
+      actorId = onBehalfOf;
+      actorAuthMethod = 'delegated_internal';
     }
 
     const parsed = parseRenderRequest(body);
@@ -161,7 +182,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const permission = await requireModulePermission(
       supabase,
-      { userId: auth.userId, authMethod: auth.authMethod },
+      { userId: actorId, authMethod: actorAuthMethod },
       'marketing_analytics',
       'can_view',
     );

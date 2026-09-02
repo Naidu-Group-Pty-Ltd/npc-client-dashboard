@@ -7,12 +7,16 @@
  * marketplace card kept the "Web sourced" badge over "Image unavailable" — a
  * claim with nothing behind it. The sweep under test stores the bytes for
  * every VERIFIED web image (serving moves into our bucket; the provenance
- * columns stay exactly as recorded) and retires a record only when its
- * address answers that the picture is GONE — so the same tick's
+ * columns stay exactly as recorded) and retires a record when its address
+ * answers that the picture is GONE — so the same tick's
  * `enforceStrictPrimaryImages` takes the badge with the picture. A refusal
- * (403, the hotlink-protection shape) or a bad minute never blanks a card:
- * the attempt is counted, and the budget runs out to "stop trying", never to
- * "stop showing".
+ * (403, the hotlink-protection shape) or a bad minute never blanks a card on
+ * its own: the attempt is counted and the row keeps serving. But the
+ * budget's END is a verdict, not a shrug — measured the day the first
+ * version shipped, all three rows that exhausted it were their card's
+ * primary and drew "Web sourced" over "Image unavailable" in every browser
+ * — so the sixth failure retires the serving under its own reason,
+ * `store_exhausted`, distinct from the source saying gone.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -175,23 +179,52 @@ describe('storeVerifiedWebImages', () => {
     expect(String(patch.source_detail[WEB_STORE_DETAIL_KEY].last_error)).toContain('source_forbidden');
   });
 
-  it('exhausts the attempt budget into "stop trying", never "stop showing"', async () => {
+  it('the sixth failure retires the serving — a claim we cannot back is not shown', async () => {
     const row = verifiedRow('img-flaky', {
       source_detail: { [WEB_STORE_DETAIL_KEY]: { attempts: 5 } },
     });
     const { db, updates } = fakeDb([row]);
     const fetchImage: WebImageFetcher = async () => ({ bytes: null, code: 'source_timeout', detail: 'slow' });
 
-    await storeVerifiedWebImages(db, 'org-1', { fetchImage });
-    const patch = updates[0].patch as Record<string, any>;
-    expect(patch.source_detail[WEB_STORE_DETAIL_KEY].store_exhausted).toBe(true);
-    expect(patch.processing_status).toBeUndefined();
+    const outcome = await storeVerifiedWebImages(db, 'org-1', { fetchImage });
 
-    // And an exhausted row is never fetched again.
+    expect(outcome).toMatchObject({ retired: 1, held: 0 });
+    const patch = updates[0].patch as Record<string, any>;
+    expect(patch.processing_status).toBe('unavailable');
+    // Its own reason: "we could never obtain it" is not "the source says gone".
+    expect(patch.source_detail[WEB_STORE_DETAIL_KEY].reason).toBe('store_exhausted');
+    expect(patch.source_detail[WEB_STORE_DETAIL_KEY].attempts).toBe(6);
+
+    // And a retired row leaves the sweep entirely: no further fetches.
     let fetches = 0;
     const counting: WebImageFetcher = async () => { fetches += 1; return { bytes: null, code: 'x', detail: '' }; };
     await storeVerifiedWebImages(db, 'org-1', { fetchImage: counting });
     expect(fetches).toBe(0);
+  });
+
+  it('a row the earlier rule left exhausted-but-ready is retired budget-free', async () => {
+    // MEASURED, 2 SEPTEMBER 2026: lots 2030 (Seventh Bend), 310 (Watsons
+    // Reach) and 318 (Palomino) each held this exact state — store_exhausted
+    // stamped, still ready, still their card's primary, "Web sourced" over
+    // "Image unavailable" in every browser. The sweep converges them itself;
+    // nobody edits a pointer or a status by hand.
+    const row = verifiedRow('img-legacy', {
+      source_detail: { [WEB_STORE_DETAIL_KEY]: { attempts: 6, store_exhausted: true } },
+    });
+    const { db, updates } = fakeDb([row]);
+    let fetches = 0;
+    const counting: WebImageFetcher = async () => {
+      fetches += 1;
+      return { bytes: jpegBytes(), code: null, detail: '' };
+    };
+
+    const outcome = await storeVerifiedWebImages(db, 'org-1', { fetchImage: counting });
+
+    expect(fetches).toBe(0); // the verdict was already paid for
+    expect(outcome.retired).toBe(1);
+    const patch = updates[0].patch as Record<string, any>;
+    expect(patch.processing_status).toBe('unavailable');
+    expect(patch.source_detail[WEB_STORE_DETAIL_KEY].reason).toBe('store_exhausted');
   });
 
   it('spends the budget on the pictures cards actually point at, first', async () => {

@@ -1,5 +1,7 @@
 import { forwardRef } from 'react';
 import { PixelPerfectPDFGenerator, type PixelPerfectPDFGeneratorHandle } from './PixelPerfectPDFGenerator';
+import { reconcileStoredFinancials } from '@/lib/reports/investment/financialEngine.pure';
+import { overlayOverridesForHistoricRow } from '@/lib/reports/investment/overrides.pure';
 
 type ReportTier = 'compass' | 'briefing' | 'snapshot' | 'financial';
 
@@ -22,67 +24,18 @@ interface ClientPDFGeneratorProps {
   report: InvestmentReportData;
   includeSources?: boolean;
   includeScoring?: boolean;
+  /** 'legacy' renders the quiet "Download (legacy layout)" presentation. */
+  appearance?: 'primary' | 'legacy';
 }
 
-export const ClientPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandle, ClientPDFGeneratorProps>(({ report, includeSources = true, includeScoring = true }, ref) => {
-  // Merge manual_overrides with financial_calculations for PDF generation
-  const mergedFinancialData = (() => {
-    if (!report.manual_overrides || Object.keys(report.manual_overrides).length === 0) {
-      return report.financial_calculations;
-    }
-
-    console.log('📊 PDF Generator: Merging manual overrides into financial data');
-    console.log('  Override fields:', Object.keys(report.manual_overrides));
-
-    // Create deep copy of financial calculations
-    const merged = JSON.parse(JSON.stringify(report.financial_calculations || {}));
-    
-    // Map flat override keys to nested structure
-    const overrideMapping: Record<string, string> = {
-      'purchasePrice': 'initialCosts.propertyValue',
-      'stampDuty': 'initialCosts.stampDuty',
-      'depositValue': 'initialCosts.deposit',
-      'loanToValueRatio': 'keyMetrics.lvr',
-      'interestRate': 'loanDetails.interestRate',
-      'weeklyRent': 'income.weeklyRent',
-      'councilRates': 'annualCosts.councilRates',
-      'waterRates': 'annualCosts.waterRates',
-      'bodyCorporateFees': 'annualCosts.strataFees',
-      'buildingLandlordInsurance': 'annualCosts.landlordInsurance',
-      'propertyManagementFees': 'annualCosts.propertyManagementPercent',
-      'solicitorFees': 'initialCosts.legalFees',
-      'repairsMaintenance': 'annualCosts.maintenance',
-      'lettingFees': 'annualCosts.lettingFees',
-      'landTax': 'annualCosts.landTax',
-      'capitalGrowth': 'assumptions.capitalGrowth',
-      'buildPrice': 'initialCosts.buildPrice',
-      'landPrice': 'initialCosts.landPrice',
-      // Cash flow specific fields
-      'marketValueNow': 'cashFlow.marketValueNow',
-      'cpiGrowthRate': 'cashFlow.cpiGrowthRate',
-    };
-    
-    // Apply overrides to the nested structure
-    for (const [flatKey, overrideValue] of Object.entries(report.manual_overrides)) {
-      const nestedPath = overrideMapping[flatKey];
-      if (nestedPath) {
-        const keys = nestedPath.split('.');
-        let current = merged;
-        
-        for (let i = 0; i < keys.length - 1; i++) {
-          if (!current[keys[i]]) {
-            current[keys[i]] = {};
-          }
-          current = current[keys[i]];
-        }
-        
-        current[keys[keys.length - 1]] = overrideValue;
-        console.log(`  ✓ Applied override: ${flatKey} -> ${nestedPath} = ${overrideValue}`);
-      }
-    }
-    
-    return merged;
-  })();
+export const ClientPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandle, ClientPDFGeneratorProps>(({ report, includeSources = true, includeScoring = true, appearance = 'primary' }, ref) => {
+  // Heal the stored projections, then overlay the overrides the way a legacy
+  // renderer needs them for rows that predate recompute-on-update. Both rules
+  // live with the engine — this component decides nothing about money.
+  const mergedFinancialData = overlayOverridesForHistoricRow(
+    reconcileStoredFinancials(report.financial_calculations || {}).fin || {},
+    report.manual_overrides,
+  );
 
   // Transform the report data to match PixelPerfectPDFGenerator expectations
   // Ensure address has a fallback to prevent .trim() errors in PDF generation
@@ -105,7 +58,7 @@ export const ClientPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandle, Cli
   // Pass report tier to the PDF generator (defaults to 'compass' for backward compatibility)
   const reportTier = (report.report_variant || report.report_tier || 'compass') as ReportTier;
 
-  return <PixelPerfectPDFGenerator ref={ref} report={transformedReport} includeSources={includeSources} includeScoring={includeScoring} reportTier={reportTier} />;
+  return <PixelPerfectPDFGenerator ref={ref} report={transformedReport} includeSources={includeSources} includeScoring={includeScoring} reportTier={reportTier} appearance={appearance} />;
 });
 
 ClientPDFGenerator.displayName = 'ClientPDFGenerator';

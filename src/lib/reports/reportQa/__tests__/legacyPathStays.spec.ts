@@ -12,14 +12,13 @@
  * guarded is that the code still exists and is still wired up — which no unit
  * test of the new modules can see.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO = resolve(__dirname, '../../../../..');
 const read = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
 
-const QA_PDF_GENERATOR = 'src/components/reports/QAPDFGenerator.tsx';
 const CONVERSATION_EDITOR = 'src/components/report-qa/ConversationReportEditor.tsx';
 const MESSAGE_EDITOR = 'src/components/report-qa/MessageReportEditor.tsx';
 const CONVERSATION_EXPORT = 'src/components/report-qa/ConversationExport.tsx';
@@ -30,7 +29,6 @@ describe('the jsPDF generators stay', () => {
   it.each([
     ['the conversation editor', CONVERSATION_EDITOR],
     ['the message editor', MESSAGE_EDITOR],
-    ['the orphaned template', QA_PDF_GENERATOR],
   ])('%s still draws with jsPDF', (_label, path) => {
     const source = read(path);
     expect(source).toContain('jspdf');
@@ -39,16 +37,16 @@ describe('the jsPDF generators stay', () => {
   });
 
   /**
-   * `QAPDFGenerator` is dead code — nothing imports it, and the only reference
-   * in the repo is a comment at `MessageReportEditor.tsx:122` saying that file
-   * mirrors it. It stays because removing it is outside this migration's scope,
-   * and this assertion is here so that fact is recorded rather than rediscovered
-   * by someone porting a fix into a file no one can reach.
+   * `QAPDFGenerator` was dead code — nothing imported it, and this spec
+   * recorded that fact for two migrations so that its removal would be a
+   * decision rather than an accident. The legacy-consolidation phase made the
+   * decision: the file is deleted, and this assertion now records the deletion
+   * so nobody restores it from history to "fix" an import that never existed.
+   * The two editors above export a *different* document (their user-edited
+   * content), which is why they stay while the orphan went.
    */
-  it('records that the orphaned template is still unreachable', () => {
-    const importers = [CONVERSATION_EDITOR, MESSAGE_EDITOR, CONVERSATION_EXPORT, REPORT_QA_PAGE]
-      .filter((p) => /import[^;]*QAPDFGenerator/.test(read(p)));
-    expect(importers).toEqual([]);
+  it('records that the orphaned template was deleted, not merely unreferenced', () => {
+    expect(existsSync(resolve(REPO, 'src/components/reports/QAPDFGenerator.tsx'))).toBe(false);
   });
 });
 

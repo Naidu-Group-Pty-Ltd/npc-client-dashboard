@@ -40,6 +40,7 @@ import { RegenerateReportButton } from '@/components/reports/RegenerateReportBut
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
 import { ComparisonViewer } from '@/components/reports/ComparisonViewer';
 import { ClientPDFGenerator } from '@/components/reports/ClientPDFGenerator';
+import { deliverInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useNotifications } from '@/contexts/NotificationsContext';
@@ -76,6 +77,7 @@ interface InvestmentReportData {
   investment_score?: any;
   location_intelligence?: any;
   current_version?: number;
+  report_variant?: string | null;
 }
 
 interface ClientPropertyInvestmentReportProps {
@@ -124,6 +126,7 @@ export function ClientPropertyInvestmentReport({
   const [selectedReportForOverride, setSelectedReportForOverride] = useState<InvestmentReportData | null>(null);
   const [selectedReportForCashFlow, setSelectedReportForCashFlow] = useState<InvestmentReportData | null>(null);
   const [selectedReportForPDF, setSelectedReportForPDF] = useState<InvestmentReportData | null>(null);
+  const [isDownloadingUnifiedPdf, setIsDownloadingUnifiedPdf] = useState(false);
   const [selectedReportForHistory, setSelectedReportForHistory] = useState<InvestmentReportData | null>(null);
   const [reportToDelete, setReportToDelete] = useState<InvestmentReportData | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -653,6 +656,31 @@ export function ClientPropertyInvestmentReport({
               </SheetDescription>
             </SheetHeader>
             <div className="mt-6 space-y-4">
+              {/* The unified template-first delivery leads; the browser
+                  generator is the named legacy layout under it. */}
+              <Button
+                className="gap-2"
+                disabled={isDownloadingUnifiedPdf}
+                onClick={async () => {
+                  setIsDownloadingUnifiedPdf(true);
+                  try {
+                    await deliverInvestmentPdf(selectedReportForPDF.id, {
+                      variant: selectedReportForPDF.report_variant ?? null,
+                    });
+                  } catch (error) {
+                    toast({
+                      title: 'Download failed',
+                      description: error instanceof Error ? error.message : 'The report PDF could not be produced.',
+                      variant: 'destructive',
+                    });
+                  } finally {
+                    setIsDownloadingUnifiedPdf(false);
+                  }
+                }}
+              >
+                <Download className="h-4 w-4" />
+                {isDownloadingUnifiedPdf ? 'Preparing…' : 'Download PDF'}
+              </Button>
               <ClientPDFGenerator
                 report={{
                   id: selectedReportForPDF.id,
@@ -667,6 +695,7 @@ export function ClientPropertyInvestmentReport({
                 }}
                 includeSources={true}
                 includeScoring={true}
+                appearance="legacy"
               />
             </div>
           </SheetContent>

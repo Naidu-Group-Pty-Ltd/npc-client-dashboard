@@ -5231,13 +5231,13 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           unavailableReason={comparisonUnavailableReason}
                         />
                         <Button
-                          variant="outline"
+                          variant="ghost"
                           size="sm"
                           onClick={() => exportComparisonPDF()}
-                          className="gap-2"
+                          className="gap-2 text-muted-foreground"
                         >
                           <FileText className="h-4 w-4" />
-                          Export PDF
+                          Export PDF (legacy layout)
                         </Button>
                         <FlattenPdfIconButton
                           getPdfBlob={async () => {
@@ -5562,12 +5562,12 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             />
                             <Button
                               size="sm"
-                              variant="outline"
+                              variant="ghost"
                               onClick={() => exportAiAnalysisPDF()}
-                              className="gap-1"
+                              className="gap-1 text-muted-foreground"
                             >
                               <Download className="h-3 w-3" />
-                              Export PDF
+                              Export PDF (legacy layout)
                             </Button>
                             <FlattenPdfIconButton
                               getPdfBlob={async () => {

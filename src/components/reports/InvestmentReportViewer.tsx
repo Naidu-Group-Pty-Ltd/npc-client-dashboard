@@ -580,6 +580,12 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
               <Separator className="flex-shrink-0" />
               <CardContent className="p-0 flex-1 flex flex-col overflow-hidden min-h-0">
                 <div className="p-4 border-b bg-muted/50 flex-shrink-0 flex flex-wrap items-center gap-2 sm:gap-4">
+                  {/* Unified delivery first; the browser generator is the
+                      named legacy layout beside it. */}
+                  <PremiumPdfButton
+                    reportId={report.id}
+                    propertyAddress={report.property_address}
+                  />
                   <ErrorBoundary
                     fallback={
                       <div className="text-sm text-muted-foreground">
@@ -587,12 +593,8 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                       </div>
                     }
                   >
-                    <ClientPDFGenerator report={report} includeSources={includeSources} includeScoring={includeScoring} />
+                    <ClientPDFGenerator report={report} includeSources={includeSources} includeScoring={includeScoring} appearance="legacy" />
                   </ErrorBoundary>
-                  <PremiumPdfButton
-                    reportId={report.id}
-                    propertyAddress={report.property_address}
-                  />
                   <RegenerateWithPerplexityButton
                     reportId={report.id}
                     propertyAddress={report.property_address}

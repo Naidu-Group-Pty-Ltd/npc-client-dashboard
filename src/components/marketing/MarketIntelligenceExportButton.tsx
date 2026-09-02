@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { FlattenPdfIconButton } from '@/components/common/FlattenPdfIconButton';
-import { fetchPdfBlob } from '@/lib/pdf/downloadPdf';
 import { FileText, Loader2, History, Settings2, CheckCircle2, AlertCircle, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { logReportRenderEvent } from '@/lib/reports/renderEvent';
@@ -31,7 +30,13 @@ type GenerationState =
   | {
     status: 'success';
     fileName: string;
-    downloadUrl: string;
+    /**
+     * The generated payload, kept so the legacy layout can be drawn on
+     * demand. Generating no longer draws it automatically: the typeset
+     * document is the primary road and the jsPDF layout is a named choice
+     * behind it, per the legacy-consolidation phase.
+     */
+    reportData: MarketIntelligenceReportData;
     /**
      * The row the generator wrote, so the typeset render can be offered here.
      *
@@ -50,20 +55,9 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
   const [includeAdvisoryStrategy, setIncludeAdvisoryStrategy] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [generationState, setGenerationState] = useState<GenerationState>({ status: 'idle' });
-
-  useEffect(() => {
-    return () => {
-      if (generationState.status === 'success') {
-        URL.revokeObjectURL(generationState.downloadUrl);
-      }
-    };
-  }, [generationState]);
+  const [isDrawingLegacy, setIsDrawingLegacy] = useState(false);
 
   const handleGenerate = async () => {
-    if (generationState.status === 'success') {
-      URL.revokeObjectURL(generationState.downloadUrl);
-    }
-
     setGenerationState({ status: 'idle' });
     setIsGenerating(true);
     setProgress('Fetching live market data...');
@@ -110,34 +104,22 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
 
       const reportData: MarketIntelligenceReportData = data.reportData;
 
-      setProgress('Building premium PDF report...');
-      const pdfBlob = await generateMarketIntelligencePDF({
-        ...reportData,
-        reportContext,
-        correlationData,
-      });
-
-      const url = URL.createObjectURL(pdfBlob);
+      // Generation stops here. The typeset document is the primary download
+      // and the legacy jsPDF layout is drawn only when chosen — generating
+      // used to build and auto-save the legacy PDF, which made the browser
+      // engine the default road nobody picked.
       const fileName = `Market_Intelligence_Report_${reportData.reportPeriod.replace(/\s+/g, '_')}.pdf`;
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
       setGenerationState({
         status: 'success',
         fileName,
-        downloadUrl: url,
+        reportData,
         reportId: typeof data.reportId === 'string' ? data.reportId : null,
         audienceSegment: 'general',
       });
 
-      logReportRenderEvent({ format: 'market_intelligence', engine: 'browser', source: 'market_intelligence_jspdf', reportId: data?.reportId ?? undefined });
       toast.success('Market Intelligence Report generated!', {
         id: toastId,
-        description: `${reportData.reportPeriod} — download ready below.`,
+        description: `${reportData.reportPeriod} — choose a download below.`,
       });
     } catch (err) {
       console.error('Market Intelligence Report generation failed:', err);
@@ -150,6 +132,36 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
     } finally {
       setIsGenerating(false);
       setProgress('');
+    }
+  };
+
+  /** The legacy jsPDF document, drawn from the payload kept at generation. */
+  const buildLegacyBlob = (state: Extract<GenerationState, { status: 'success' }>) =>
+    generateMarketIntelligencePDF({
+      ...state.reportData,
+      reportContext,
+      correlationData,
+    });
+
+  const downloadLegacyLayout = async (state: Extract<GenerationState, { status: 'success' }>) => {
+    setIsDrawingLegacy(true);
+    try {
+      const pdfBlob = await buildLegacyBlob(state);
+      const url = URL.createObjectURL(pdfBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = state.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      logReportRenderEvent({ format: 'market_intelligence', engine: 'browser', source: 'market_intelligence_jspdf', reportId: state.reportId ?? undefined });
+    } catch (err) {
+      toast.error('Legacy layout failed', {
+        description: err instanceof Error ? err.message : 'Could not draw the legacy PDF.',
+      });
+    } finally {
+      setIsDrawingLegacy(false);
     }
   };
 
@@ -229,26 +241,34 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
             </div>
           </div>
           <div className="flex items-center gap-1">
-            <Button asChild variant="outline" size="sm" className="gap-2">
-              <a href={generationState.downloadUrl} download={generationState.fileName}>
-                <Download className="h-3.5 w-3.5" />
-                Download PDF
-              </a>
-            </Button>
-            <FlattenPdfIconButton
-              getPdfBlob={() => fetchPdfBlob(generationState.downloadUrl)}
-              filename={generationState.fileName}
-              size="sm"
-            />
-            {/* Beside the legacy download, never instead of it. The two produce
-                different documents, so substituting would send somebody
-                something nobody chose. */}
+            {/* The typeset document leads; the jsPDF layout is a named choice
+                behind it, never a silent substitute — the two produce
+                different documents, so which one somebody gets stays chosen. */}
             {generationState.reportId && (
               <MarketIntelligenceDownloadButton
                 reportId={generationState.reportId}
                 audienceSegment={generationState.audienceSegment}
+                variant="default"
+                label="Download PDF"
               />
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground"
+              disabled={isDrawingLegacy}
+              onClick={() => downloadLegacyLayout(generationState)}
+            >
+              {isDrawingLegacy
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Download className="h-3.5 w-3.5" />}
+              Download (legacy layout)
+            </Button>
+            <FlattenPdfIconButton
+              getPdfBlob={() => buildLegacyBlob(generationState)}
+              filename={generationState.fileName}
+              size="sm"
+            />
           </div>
         </div>
       )}

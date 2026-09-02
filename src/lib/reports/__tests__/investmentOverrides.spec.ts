@@ -15,6 +15,7 @@ import {
   buildCalculatorInput,
   DISPLAY_OVERRIDE_PATHS,
   MODELLED_OVERRIDE_KEYS,
+  overlayOverridesForHistoricRow,
   overridesAffectModel,
   stateFromAddress,
 } from '../../../../supabase/functions/_shared/reports/investment/overrides.pure';
@@ -167,6 +168,49 @@ describe('applyDisplayOverrides', () => {
 
   it('skips empty values', () => {
     const out = applyDisplayOverrides({}, { taxRate: '', loanType: null, depreciation: undefined });
+    expect(out).toEqual({});
+  });
+});
+
+describe('overlayOverridesForHistoricRow', () => {
+  it('splats the modelled leaves a pre-recompute row needs, then the display leaves', () => {
+    const fin = {
+      initialCosts: { propertyValue: 700_000, stampDuty: 27_000 },
+      income: { weeklyRent: 650 },
+      annualCosts: { councilRates: 2_000, totalAnnual: 18_000 },
+    };
+    const snapshot = JSON.parse(JSON.stringify(fin));
+    const out = overlayOverridesForHistoricRow(fin, {
+      purchasePrice: 750_000,
+      weeklyRent: 700,
+      councilRates: 3_150,
+      taxRate: 37,
+      cpiGrowthRate: 2.5,
+    });
+    expect(fin).toEqual(snapshot);
+    expect(out.initialCosts.propertyValue).toBe(750_000);
+    expect(out.income.weeklyRent).toBe(700);
+    expect(out.annualCosts.councilRates).toBe(3_150);
+    // Display vocabulary applies on top — both spellings of the CPI override
+    // land, because the browser generator and the assumptions block read
+    // different paths and a historic row must satisfy them both.
+    expect(out.taxBenefits.marginalTaxRate).toBe(37);
+    expect(out.cashFlow.cpiGrowthRate).toBe(2.5);
+    expect(out.assumptions.cpiGrowth).toBe(2.5);
+    // Derived figures deliberately stay as stored: the overlay is a display
+    // compromise for historic rows, never a recompute.
+    expect(out.annualCosts.totalAnnual).toBe(18_000);
+    expect(out.initialCosts.stampDuty).toBe(27_000);
+  });
+
+  it('is the identity on a row with no overrides — which is every current row', () => {
+    const fin = { keyMetrics: { lvr: 80 } };
+    expect(overlayOverridesForHistoricRow(fin, undefined)).toBe(fin);
+    expect(overlayOverridesForHistoricRow(fin, {})).toBe(fin);
+  });
+
+  it('skips empty values like the display splat does', () => {
+    const out = overlayOverridesForHistoricRow({}, { purchasePrice: '', weeklyRent: null });
     expect(out).toEqual({});
   });
 });

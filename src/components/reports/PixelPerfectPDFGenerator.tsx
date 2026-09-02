@@ -36,13 +36,22 @@ interface PixelPerfectPDFGeneratorProps {
   reportTier?: ReportTier;
   pdf_url?: string | null;
   skipDatabaseUpdate?: boolean;
+  /**
+   * How the control presents. The unified template-first delivery is every
+   * surface's primary road now, so this generator is offered as the named
+   * legacy layout beside it — same document, quieter chrome. The ref handle
+   * is unaffected either way; the send fallback still reaches it.
+   */
+  appearance?: 'primary' | 'legacy';
 }
 
 export interface PixelPerfectPDFGeneratorHandle {
   generateAndUpload: () => Promise<string | null>;
+  /** The button's own download action, for callers that trigger it programmatically. */
+  download: () => Promise<void>;
 }
 
-export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandle, PixelPerfectPDFGeneratorProps>(({ report, includeSources = true, includeScoring = true, reportTier = 'compass', skipDatabaseUpdate = false }, ref) => {
+export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandle, PixelPerfectPDFGeneratorProps>(({ report, includeSources = true, includeScoring = true, reportTier = 'compass', skipDatabaseUpdate = false, appearance = 'primary' }, ref) => {
   const [isGenerating, setIsGenerating] = React.useState(false);
 
   const extractSuburbState = (address: string | undefined | null): { suburb: string; state: string } => {
@@ -3602,6 +3611,7 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
   // Expose generateAndUpload for external use (e.g., Send to Client)
   useImperativeHandle(ref, () => ({
     generateAndUpload: handleGenerateAndUpload,
+    download: generatePixelPerfectPDF,
   }));
 
   return (
@@ -3609,10 +3619,14 @@ export const PixelPerfectPDFGenerator = forwardRef<PixelPerfectPDFGeneratorHandl
       <Button
         onClick={generatePixelPerfectPDF}
         disabled={isGenerating}
-        className="gap-2"
+        variant={appearance === 'legacy' ? 'ghost' : 'default'}
+        size={appearance === 'legacy' ? 'sm' : 'default'}
+        className={appearance === 'legacy' ? 'gap-2 text-muted-foreground' : 'gap-2'}
       >
         <Download className="h-4 w-4" />
-        {isGenerating ? 'Generating PDF...' : 'Download Client PDF'}
+        {isGenerating
+          ? 'Generating PDF...'
+          : appearance === 'legacy' ? 'Download (legacy layout)' : 'Download Client PDF'}
       </Button>
       <FlattenPdfIconButton
         getPdfBlob={async () => (await generateCore()).blob}

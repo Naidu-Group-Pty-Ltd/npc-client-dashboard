@@ -2361,26 +2361,29 @@ export default function ReportQA() {
           </Button>
           {messages.length > 0 && conversationId && (
             <Button
-              variant="outline"
+              variant="ghost"
               onClick={handleGeneratePDFAttachment}
-              className="gap-1.5 h-8 text-xs sm:h-9 sm:text-sm"
+              className="gap-1.5 h-8 text-xs text-muted-foreground sm:h-9 sm:text-sm"
               disabled={isGeneratingPDF}
               size="sm"
+              title="Generate the pdf-lib transcript and post it into this chat (legacy layout)"
             >
               {isGeneratingPDF ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
                 <FileText className="h-3.5 w-3.5" />
               )}
-              <span className="hidden sm:inline">Export PDF</span>
+              <span className="hidden sm:inline">Transcript (legacy layout)</span>
             </Button>
           )}
           {/*
-            Beside the raster export, not in place of it. The button above still
-            calls `generate-qa-pdf` and still posts its pdf-lib document into the
-            chat; this one produces the typeset document through WeasyPrint and
-            can post the same attachment shape, so the in-place email composer
-            reaches either.
+            The typeset document leads; the transcript button above is the
+            named legacy choice. It still calls `generate-qa-pdf` and still
+            posts its pdf-lib document into the chat — a different document
+            from the structured report, which is why it stays a choice rather
+            than being folded — while this one produces the typeset document
+            through WeasyPrint and can post the same attachment shape, so the
+            in-place email composer reaches either.
           */}
           {messages.length > 0 && conversationId && (
             <ReportQaDownloadButton

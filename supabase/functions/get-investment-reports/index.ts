@@ -4,6 +4,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { hasCompleteAustralianAddress, resolveCompleteReportAddress } from './report-address.pure.ts';
 import { familyParentId, isBaseReport, shapeFamily } from '../_shared/reports/investment/subReportFamily.pure.ts';
+import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
 type Projection = 'library' | 'cashFlowLibrary' | 'cashFlowComparison' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup' | 'generationProgress';
@@ -317,6 +318,19 @@ Deno.serve(async (req) => {
         const mapped = classifyDatabaseError(hydrated.error); return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
       }
       responseData = hydrated.rows as typeof responseData;
+    }
+    // Read-boundary heal (audit F26): a row whose stored projections were
+    // folded against triple-charged operating costs is reconciled before it
+    // leaves the service — the same heal the two PDF routes and the binding
+    // projection apply — so browser charts, the library summaries and the
+    // legacy browser generator all read one set of figures. Idempotent on
+    // healthy rows, and it never writes anything back.
+    if (table === 'investment_reports' && responseData.length) {
+      const healed = (responseData as unknown as ReportRow[]).map((r) => {
+        if (!r || typeof r !== 'object' || !r.financial_calculations) return r;
+        return { ...r, financial_calculations: reconcileStoredFinancials(r.financial_calculations).fin };
+      });
+      responseData = healed as unknown as typeof responseData;
     }
     if (table === 'investment_reports' && projection === 'cashFlowLibrary') {
       responseData = responseData.map(row => toLibraryFinancialSummary(row as ReportRow)) as typeof responseData;

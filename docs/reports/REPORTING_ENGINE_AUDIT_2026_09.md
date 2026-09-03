@@ -772,3 +772,163 @@ build, edge column-name gate, the security gate chain (registry, static,
 authz, CORS, mass-assignment, public-validation et al.), and esbuild parse
 checks for the touched Deno modules; security inventory unchanged (no new
 internal call edge).
+
+## 14 · Closing pass — every open finding and deferred item, measured and closed (2026-09-02)
+
+The owner asked for whatever remained — "remaining phases and stray
+patterns" — to be executed and the loops closed once and for all. The named
+phases were complete, so this pass took the register's open findings and
+every "deferred, with reasons" note in §9–§13, measured each against the
+live system, and acted where the measurement supported action. What follows
+is the whole list, including the items closed by *decision* rather than by
+code, because a loop closed by "we looked, here is why not" is closed.
+
+### Closed by code
+
+**F17 at its source — the generator fabricated a bedroom count.**
+`effectiveBeds` was `mergedOverrides.bedrooms || propertyDetails?.beds || 3`
+(bathrooms `|| 2`), and the prompt's specification table read it, so a
+property whose count was never captured was asserted to the model as "3
+bedrooms" — which is exactly how a real report said "3 bedrooms" three
+times about a four-bedroom subject. Measured the same day: **0 of the last
+43 reports carry a bedroom count in `property_specs`** while 651 older ones
+do, because the callers spell the facts four ways (`beds`/`bedrooms`,
+`landSizeSqm`/`landSize`/`land_size_sqm`, `carSpaces`/`parking`) and every
+site read exactly one; the specs write read `.landSize`, `.buildingSize`
+and `.parking` while every caller sent `landSizeSqm`, `buildSizeSqm` and
+`carSpaces`, so three of nine specs were null on every row whatever the
+caller knew. Now: one normalisation, once, before anything reads a fact;
+the FACT is null when unknown and the prose says "Not specified"; the
+MODELLING DEFAULT (`modelledBeds`) exists separately and feeds only the
+scorer and the rent lookup, which need a number to model with and never
+reach a page. Pinned by `closingPass.spec.ts`.
+
+**F17's detector, measured on production prose.** The regeneration-retry
+deferral said "detector mileage first"; the detector had had none (0 rows
+touched since Phase 2 merged), so it was run offline over 18 production
+reports — 10 recent, 8 with bedroom counts. Result: **one true positive**
+(a lot priced at $693,100 whose entire money section anchored on the suburb
+median, $625,000, six times — the class disclosure exists for) and **one
+false positive**: a spec list, "Bedrooms: 3 - Bathrooms: 2", whose " - "
+separator the `[\s-]*` bridge read as the hyphen of "3-bathroom", while
+the true label-first "Bathrooms: 2" never counted as the recorded value
+appearing. Counted mentions now allow one separator character, label-first
+forms are collected, and both production cases are pinned as tests.
+**The retry itself is deliberately not wired**: one positive in eighteen is
+not the volume that validates a section-scoped correction loop inside the
+highest-volume generator's resume bookkeeping, and the fabrication fix
+above removes the mechanism that produced the reported contradiction.
+Disclosure stays the remedy; this measurement is recorded so the next
+decision starts from evidence.
+
+**F26's remaining readers.** `reconcileStoredFinancials` now runs where
+the two comparison producers read rows (`compare-investment-reports`,
+`compare-cash-flow-reports` — both were handing a model triple-charged
+figures for historic rows) and inside `projectCashFlow` itself, so the 10
+Year Cash Flow heals whatever path a row arrives by (browser adapters,
+sample data, the live-projection carrier). The cash-flow render routes
+turned out not to read the column at all — they render the snapshot the
+adviser reviewed — so nothing was owed there.
+
+**F28's class, five more instances.** `investment_reports`' SELECT policy
+is `generated_by = auth.uid()` (plus the client-owner branch) — measured
+from `pg_policies` — so a browser read answers with the current user's own
+reports and calls it the whole: the Overview's "reports this month" was one
+person's count, the Q&A library picker offered a user only their own
+reports, a client's portfolio actions listed nothing for a colleague, the
+auto-generated badge marked only your own rows, and the error-log retry's
+status reset matched zero rows for anyone else's report and said nothing.
+All five read through `get-investment-reports` (whose `listOptions`
+already carried every filter needed) or write through
+`manage-investment-reports`; the picker now fetches a body per pick rather
+than 200 documents to draw a list. `closingPass.spec.ts` pins all six
+files (the Phase 4 one included) against a table read.
+
+**A sixth instance, found by the gate rather than by the sweep.** Removing
+the browser client from the Q&A picker left one call behind, and CI's
+undefined-identifier gate caught it — `check-src-missing-names.mjs`, the
+one gate this repo keeps precisely because the app is never fully
+type-checked (`tsconfig.json` declares `"files": []` and delegates to
+project references, so a bare `tsc --noEmit` verifies **nothing**; that is
+why a local run said clean). Looking at the line it named turned up a
+defect older than this pass: the call read `client_properties`, whose only
+SELECT policies are **service-role**, so it answered `[]` with HTTP 200 for
+every user — and an empty property list short-circuits the picker to "no
+reports" whenever it is opened for a client. It now reads through
+`get-client-data`, which brokers that table behind the
+`client_management` permission and a client filter. The lesson is the
+gate's, not the sweep's: an import removed is an audit of every use of it.
+
+**F15.** `manage-branding` trims string columns at the write boundary, and
+the migration brings the stored `company_name` — trailing space, measured
+— to what every reader was already trimming it to.
+
+**Linkage columns.** 48 rows carried only `parent_report_id`, 20 only
+`derived_from_report_id`, 0 disagreed where both were set; the migration
+backfills each from the other, idempotently. Readers already resolved the
+union, so no reading changes — the record is coherent now. All three
+statements were planned against the live schema with `EXPLAIN` before being
+committed (45, 17 and 4 estimated rows, matching the counts above); nothing
+was executed against production.
+
+**A test that failed for its own weight, not for a defect.**
+`printFontPolicy.spec.ts` reads and regex-scans every
+`seed_template_library` migration — **199 MB across nine files**, the
+catalogue written out as SQL — under vitest's default **5-second**
+allowance. Alone it takes about a second; in a loaded parallel run it took
+**7.3 s** and failed the file, which is what "flaky" looked like from the
+outside. The assertion is untouched and the scan is unchanged; only the
+clock now reflects the work, so the gate fails when a face is missing
+rather than when the machine is busy.
+
+**A silent skip made visible.** The Q&A library picker now reads a body per
+pick, and a completed report carrying no body cannot be asked questions
+about. It names the ones it could not read rather than dropping them from
+the selection without a word — a pick that vanishes with no reason reads as
+a broken button.
+
+### Closed by decision, with the measurement
+
+- **F6 (content parity: hero photography, exec summary, editor's note).**
+  The binding projection publishes no hero image and no master binds one;
+  adding a cover photograph is a change to all fifty generated investment
+  masters, which by the catalogue's own rule goes to Claude Design and
+  comes back through the generator — recorded as the design-catalogue
+  decision it is. The legacy route's render-time executive summary and
+  editor's note were model calls made at RENDER; the templated document is
+  the stored report, and a renderer that invents content is the invariant
+  this programme exists to enforce. Not ported, deliberately.
+- **F7 (legacy renderer's eleven private chart drawers vs `vizFigures`).**
+  The legacy route is now the hidden fallback behind every unified
+  delivery; rewriting its charts onto the shared primitives would be
+  effort spent on a road nobody is offered. Left, named.
+- **F8 (reports unlinked from clients).** 2 of 1,193 carry
+  `client_property_id`; both came from the client tab, which links
+  correctly. The other 1,191 were generated from listings or the report
+  form, where no client exists to link — a post-hoc "link to client"
+  affordance is a product feature, not a stray pattern.
+- **Template resolver ×3.** The browser resolver calls the authoritative
+  `resolve_report_template` SQL function first and falls back to a JS
+  ranking parity-locked to the edge copy — one authority, two guarded
+  mirrors. Report-type normaliser ×2: the browser re-exports the shared
+  pure module. Both already folded; the register's note is superseded.
+- **Minor unnumbered items.** Table rows keep together
+  (`table.data tr { page-break-inside: avoid }`); contents labels derive
+  from the spine; the scoring band strings are the engine's own one-line
+  reasons carried for the wheel. "andother" and the mixed minus glyphs
+  were prose defects in one generation, remedied by regeneration.
+
+### Verification
+
+Full vitest suite green end to end in one run — **1,071 files, 20,503
+tests, 0 failures** (the two that failed the first pass were the font-policy
+timeout above and one load-sensitive market-updates fixture, both green
+now); `tsc` clean; eslint **0 errors** on every changed file; style ratchet
+holding; production build; all seven touched Deno modules parsed with
+esbuild and the edge type-check ratchet run locally with Deno installed —
+**no file this changeset touches sits above its baseline**; the security
+gate chain (registry, static, authz, CORS, mass-assignment,
+error-disclosure, public-validation, migrations, portal boundaries);
+security inventory regenerated and unchanged. Production measurements were
+taken read-only through the project's SQL interface and are quoted above;
+the migration was validated with `EXPLAIN` and never executed.

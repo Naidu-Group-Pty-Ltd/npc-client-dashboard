@@ -221,7 +221,16 @@ describe('the seeded catalogue', () => {
     return [...out].sort();
   };
 
-  it('names no face the container lacks and this module cannot stand in for', () => {
+  /**
+   * Timed, not guessed: `seededFamilies()` reads and regex-scans every
+   * `seed_template_library` migration — **199 MB** across nine files, the
+   * catalogue's 543 templates written out as SQL. That is real work, and
+   * under vitest's default 5 s allowance it fails the whole file whenever
+   * the machine is busy (measured: 7.3 s in a loaded parallel run, ~1 s
+   * alone). The assertion is unchanged; only the clock is honest about what
+   * the test does.
+   */
+  it('names no face the container lacks and this module cannot stand in for', { timeout: 120_000 }, () => {
     // The assertion that would have caught Fraunces the day the catalogue was
     // generated. The Dockerfile's own note records dropping it from the report
     // type stacks — no Debian binary package exists — and the catalogue was

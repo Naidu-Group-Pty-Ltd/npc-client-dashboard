@@ -123,6 +123,8 @@
  * characters, on all 162.
  */
 
+import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
+
 export interface CashFlowRowLike {
   id?: string;
   financial_calculations?: unknown;
@@ -236,7 +238,11 @@ export function projectCashFlow(
   row: CashFlowRowLike,
   scenario: ScenarioName = DEFAULT_SCENARIO,
 ): ProjectedCashFlow {
-  const fin = obj(row.financial_calculations);
+  // Read-boundary heal (audit F26): a stored series folded against
+  // triple-charged operating costs is reconciled here, so the 10 Year Cash
+  // Flow prints the same figures as the investment routes whatever path the
+  // row arrived by. Idempotent on healthy rows; never written back.
+  const fin = obj(reconcileStoredFinancials(row.financial_calculations).fin);
   const projections = obj(fin.projections);
   const initial = obj(fin.initialCosts);
   const loan = obj(fin.loanDetails);

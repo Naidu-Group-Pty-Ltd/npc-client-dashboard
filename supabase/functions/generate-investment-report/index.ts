@@ -2250,6 +2250,27 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     console.log(`  Parsed value: ${parsedDepositValue}`);
     console.log(`  Effective deposit: $${effectiveDepositValue?.toLocaleString()}`);
     
+    // Callers spell the physical facts differently — the listing carries
+    // `beds`/`baths`/`carSpaces`, the report form `landSizeSqm`, the intake
+    // projection `bedrooms`, the specs column `parking`/`land_size_sqm` — and
+    // every site below read exactly one spelling. Measured: 0 of the last 43
+    // reports persisted a bedroom count while 651 older ones did. One
+    // normalisation, once, before anything reads a fact.
+    if (propertyDetails) {
+      const firstFinite = (...values: unknown[]) => {
+        for (const v of values) {
+          const n = typeof v === 'string' ? Number(v) : v;
+          if (typeof n === 'number' && Number.isFinite(n) && n > 0) return n;
+        }
+        return undefined;
+      };
+      propertyDetails.beds = firstFinite(propertyDetails.beds, propertyDetails.bedrooms);
+      propertyDetails.baths = firstFinite(propertyDetails.baths, propertyDetails.bathrooms);
+      propertyDetails.carSpaces = firstFinite(propertyDetails.carSpaces, propertyDetails.parking, propertyDetails.car_spaces);
+      propertyDetails.landSizeSqm = firstFinite(propertyDetails.landSizeSqm, propertyDetails.landSize, propertyDetails.land_size_sqm);
+      propertyDetails.buildSizeSqm = firstFinite(propertyDetails.buildSizeSqm, propertyDetails.buildingSize, propertyDetails.building_size_sqm);
+    }
+
     const effectiveInterestRate = mergedOverrides.interestRate || propertyDetails?.interestRate || 6.5;
     const effectiveLoanTerm = mergedOverrides.loanTermYears || propertyDetails?.loanTermYears || 30;
     const effectiveIsFirstHomeBuyer = mergedOverrides.isFirstHomeBuyer || false;
@@ -2258,8 +2279,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const effectiveIsLandOnly = effectiveBuildType === 'land_only';
     const effectiveLandSizeSqm = mergedOverrides.landSizeSqm || propertyDetails?.landSizeSqm || null;
     const effectiveBuildSizeSqm = effectiveIsLandOnly ? null : (mergedOverrides.buildSizeSqm || propertyDetails?.buildSizeSqm || null);
-    const effectiveBeds = effectiveIsLandOnly ? 0 : (mergedOverrides.bedrooms || propertyDetails?.beds || 3);
-    const effectiveBaths = effectiveIsLandOnly ? 0 : (mergedOverrides.bathrooms || propertyDetails?.baths || 2);
+    // A FACT and a MODELLING DEFAULT are different things. `effectiveBeds`
+    // used to be `… || 3`, so a property whose bedroom count was never
+    // captured was asserted as "3 bedrooms" in the prompt's specification
+    // table — which is how a real report stated "3 bedrooms" three times
+    // about a four-bedroom subject (audit F17). The fact is now null when
+    // unknown and the prose says so; the scorer and the rent lookup, which
+    // need a number to model with, take the default separately and nothing
+    // that reaches a page reads it.
+    const effectiveBeds = effectiveIsLandOnly ? 0 : (mergedOverrides.bedrooms || propertyDetails?.beds || null);
+    const effectiveBaths = effectiveIsLandOnly ? 0 : (mergedOverrides.bathrooms || propertyDetails?.baths || null);
+    const modelledBeds = effectiveIsLandOnly ? 0 : (effectiveBeds ?? 3);
+    const modelledBaths = effectiveIsLandOnly ? 0 : (effectiveBaths ?? 2);
     
     // Zoning effective values
     const effectiveZoningCode = mergedOverrides.zoningCode || null;
@@ -2628,7 +2659,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               state: state,
               postcode: postcode || '',
               propertyType: propertyDetails?.propertyType?.toLowerCase() || 'house',
-              bedrooms: propertyDetails?.bedrooms || 3
+              bedrooms: modelledBeds
             })
           });
           
@@ -2825,8 +2856,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                 price: effectivePurchasePrice,
                 weeklyRent: effectiveWeeklyRent || 0,
                 propertyType: propertyDetails?.propertyType || 'house',
-                bedrooms: effectiveBeds,
-                bathrooms: effectiveBaths
+                bedrooms: modelledBeds,
+                bathrooms: modelledBaths
               },
               demographics: enhancedData.demographics,
               locationIntelligence: enhancedData.locationIntelligence,
@@ -6071,12 +6102,16 @@ YOUR DEDICATED PROPERTY PARTNER
       console.log('Updating report in database with ID:', reportId);
       
       // Prepare property specs from property details
+      // The normalised spellings (see the fact normalisation above): this used
+      // to read `.landSize` / `.buildingSize` / `.parking` while every caller
+      // sent `landSizeSqm` / `buildSizeSqm` / `carSpaces`, so three of the
+      // nine specs were null on every row whatever the caller knew.
       const propertySpecs = {
-        land_size_sqm: propertyDetails?.landSize || null,
-        building_size_sqm: propertyDetails?.buildingSize || null,
+        land_size_sqm: propertyDetails?.landSizeSqm || null,
+        building_size_sqm: propertyDetails?.buildSizeSqm || null,
         bedrooms: propertyDetails?.beds || null,
         bathrooms: propertyDetails?.baths || null,
-        parking: propertyDetails?.parking || null,
+        parking: propertyDetails?.carSpaces || null,
         year_built: propertyDetails?.yearBuilt || null,
         property_type: standardizedPropertyType || propertyDetails?.propertyType || 'Residential Property',
         zoning: propertyDetails?.zoning || null,

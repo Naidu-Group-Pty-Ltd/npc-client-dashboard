@@ -4,6 +4,7 @@ import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_share
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 import { readModelJson } from '../_shared/llmJson.pure.ts';
 import {
   CASH_FLOW_ANALYSIS_SCHEMA,
@@ -104,7 +105,10 @@ Deno.serve(async (req) => {
 
     // Structure data for AI analysis
     const propertiesData = orderedReports.map((report, index) => {
-      const fc = report.financial_calculations || {};
+      // Read-boundary heal (audit F26): the model compares the figures the
+      // rows store, and a historic row's projections were folded against
+      // triple-charged operating costs. Reconcile before anything reads them.
+      const fc = reconcileStoredFinancials(report.financial_calculations).fin || {};
       const mo = report.manual_overrides || {};
       const score = report.investment_score || {};
       const projection = projectionData?.[report.id] || {};

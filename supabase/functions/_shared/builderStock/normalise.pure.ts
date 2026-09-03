@@ -664,11 +664,57 @@ export type StockLabelFields = Pick<NormalisedStockRecord,
   | 'development_name' | 'external_reference'>;
 
 /** A short human label for a record, for logs and the import summary. */
+/**
+ * THE ADDRESS WITHOUT THE DESIGNATION THE LABEL IS ABOUT TO PUT IN FRONT OF IT.
+ *
+ * A builder's own document often writes the address WITH the lot in it — "Lot
+ * 1731 Hornsea Street" — and the importer also captures the lot as its own
+ * field, correctly. Both are right, and putting them together reads
+ * "Lot 1731, Lot 1731 Hornsea Street", which is what a card showed on a
+ * single-property brochure uploaded on 3 September 2026.
+ *
+ * The designation is dropped from the FRONT of the address only, and only
+ * when it is the SAME one: a row whose lot is 1731 beside an address reading
+ * "Lot 5 Smith Street" keeps both, because there the disagreement is the
+ * information. Nothing is stripped from the middle of an address, so
+ * "3/12 Smith Street" and "Factory 2, 15 Kent Road" are untouched.
+ */
+export function addressWithoutLeadingDesignation(
+  addressLine: string | null | undefined,
+  designation: 'Lot' | 'Unit',
+  number: string | null | undefined,
+): string {
+  const address = String(addressLine ?? '').trim();
+  const value = String(number ?? '').trim();
+  if (!address || !value) return address;
+  const pattern = new RegExp(
+    `^${designation}\\s*\\.?\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[\\s,\\-]*`,
+    'i',
+  );
+  const stripped = address.replace(pattern, '').trim();
+  // Never answer an empty address: an address that was ONLY the designation
+  // still says where the property is once the label restores it.
+  return stripped || address;
+}
+
+/** The designation a record leads with, and the number it carries. */
+function labelDesignation(
+  record: StockLabelFields,
+): { word: 'Lot' | 'Unit'; value: string } | null {
+  if (record.unit_number) return { word: 'Unit', value: String(record.unit_number) };
+  if (record.lot_number) return { word: 'Lot', value: String(record.lot_number) };
+  return null;
+}
+
 export function stockRecordLabel(record: StockLabelFields): string {
   const parts: string[] = [];
-  if (record.unit_number) parts.push(`Unit ${record.unit_number}`);
-  else if (record.lot_number) parts.push(`Lot ${record.lot_number}`);
-  if (record.address_line) parts.push(record.address_line);
+  const designation = labelDesignation(record);
+  if (designation) parts.push(`${designation.word} ${designation.value}`);
+  const address = designation
+    ? addressWithoutLeadingDesignation(
+      record.address_line, designation.word, designation.value)
+    : String(record.address_line ?? '');
+  if (address) parts.push(address);
   if (record.suburb) parts.push(record.suburb);
   if (!parts.length && record.development_name) parts.push(record.development_name);
   if (!parts.length && record.external_reference) parts.push(record.external_reference);

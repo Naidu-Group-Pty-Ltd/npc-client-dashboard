@@ -155,6 +155,21 @@ import {
  * against such a document was judged on the wrong generation's pictures and
  * is stale by definition.
  *
+ * 13 lets a COVER STATE ITS HERO BY SIZE. `selectCoverHero` refused every
+ * page presenting more than one unrepeated photograph, on the reasoning that
+ * a page presenting a choice has not said which picture is the property's.
+ * That is right where ownership is the question, and wrong where the page has
+ * already answered by how it drew them. Measured, 3 September 2026, on a
+ * builder's own single-property brochure uploaded as a stock list (LOT 1731,
+ * Austin Estate, Lara): both photographs on page 1 were found, attributed and
+ * stored — the facade render covering 47.5% of the page and the only other
+ * 14.2% — and the property was told its own brochure presents no cover image.
+ * A photograph the cover draws at least twice the page of any other is now
+ * taken as the hero, in the document's own terms and with the geometry named
+ * in the reason; comparable sizes still answer no image. Every negative
+ * banked at 12 against such a document was judged before the page's own
+ * emphasis was read.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.

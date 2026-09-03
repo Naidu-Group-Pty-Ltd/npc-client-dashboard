@@ -10,6 +10,7 @@
  * where one already exists, so the browser cannot offer a value the server
  * would reject.
  */
+import { addressWithoutLeadingDesignation } from '../../supabase/functions/_shared/builderStock/normalise.pure';
 import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
@@ -288,11 +289,21 @@ export const STOCK_SELECTION_STATUS_LABELS: Record<StockSelectionStatus, string>
 export function stockItemTitle(item: Pick<BuilderStockItem,
   'unit_number' | 'lot_number' | 'address_line' | 'development_name'
   | 'project_name' | 'external_reference'>): string {
-  const prefix = item.unit_number
-    ? `Unit ${item.unit_number}`
-    : item.lot_number ? `Lot ${item.lot_number}` : '';
-  const body = item.address_line
-    ?? item.development_name ?? item.project_name ?? item.external_reference ?? '';
+  const designation: { word: 'Lot' | 'Unit'; value: string } | null = item.unit_number
+    ? { word: 'Unit', value: String(item.unit_number) }
+    : item.lot_number ? { word: 'Lot', value: String(item.lot_number) } : null;
+  const prefix = designation ? `${designation.word} ${designation.value}` : '';
+  /*
+   * The address without the designation the prefix is about to repeat — the
+   * SAME rule the server's own label applies, imported rather than restated,
+   * because a card reading "Lot 1731, Lot 1731 Hornsea Street" and a log
+   * reading "Lot 1731, Hornsea Street" are two answers to one question.
+   */
+  const address = designation
+    ? addressWithoutLeadingDesignation(item.address_line, designation.word, designation.value)
+    : (item.address_line ?? '');
+  const body = address
+    || item.development_name || item.project_name || item.external_reference || '';
   if (prefix && body) return `${prefix}, ${body}`;
   return prefix || body || 'Unnamed property';
 }

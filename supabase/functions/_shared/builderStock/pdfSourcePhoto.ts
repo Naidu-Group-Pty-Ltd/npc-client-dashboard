@@ -696,6 +696,8 @@ export async function discoverPdfSourceAssets(
         name: candidate.resourceName,
         placementsOnPage: candidate.placementsOnPage,
         pagesDrawnOn: 1,
+        // The cover's own statement of emphasis, carried to the role decision.
+        pageAreaShare: candidate.pageAreaShare,
       },
       role: noPrimaryEvidence('the role of this image has not been settled yet'),
     });

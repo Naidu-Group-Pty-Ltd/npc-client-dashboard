@@ -479,7 +479,20 @@ export interface CoverCandidate {
   placementsOnPage: number;
   /** How many pages of the document draw it at all. */
   pagesDrawnOn: number;
+  /**
+   * How much of its page the document gives it, 0..1, or null where the
+   * reader could not measure it. This is the cover's own statement of
+   * emphasis — see `selectCoverHero`.
+   */
+  pageAreaShare?: number | null;
 }
+
+/**
+ * How much larger than the next photograph a cover's hero has to be drawn
+ * before the page counts as having named it. Twice: a difference a reader
+ * sees at a glance, and one no incidental inset reaches.
+ */
+export const DOMINANT_COVER_RATIO = 2;
 
 export type CoverHeroOutcome =
   | { kind: 'hero'; key: string; reason: string }
@@ -525,10 +538,44 @@ export function selectCoverHero(candidates: CoverCandidate[]): CoverHeroOutcome 
         + 'so none of them is this property\'s own image',
     };
   }
+  /*
+   * A COVER STATES ITS HERO BY HOW LARGE IT DRAWS IT.
+   *
+   * Refusing every multi-photograph cover was right while the only question
+   * was ownership — a page presenting a choice has not said which picture is
+   * the property's. But a cover that gives one photograph several times the
+   * page of any other HAS said, in the one language a page has. Measured on a
+   * builder's own single-property brochure uploaded as a stock list (LOT 1731,
+   * Austin Estate): the facade render covers 47.5% of page 1 and the only
+   * other photograph 14.2%, and the property was told its own brochure
+   * presents no cover image.
+   *
+   * The test is the DOCUMENT'S, not the picture's: twice the page of the next
+   * largest, measured from the same placement geometry the size floors
+   * already use. Two photographs of comparable size are still a choice, and
+   * still answer no image. Where the reader could not measure a candidate,
+   * nothing is inferred — the refusal stands.
+   */
+  const measured = unique
+    .map((candidate) => ({ candidate, area: Number(candidate.pageAreaShare ?? NaN) }))
+    .filter((entry) => Number.isFinite(entry.area) && entry.area > 0)
+    .sort((a, b) => b.area - a.area);
+
+  if (measured.length === unique.length && measured.length > 1
+    && measured[0].area >= measured[1].area * DOMINANT_COVER_RATIO) {
+    return {
+      kind: 'hero',
+      key: measured[0].candidate.key,
+      reason: `the photograph the property cover draws largest, at `
+        + `${Math.round(measured[0].area * 100)}% of the page against `
+        + `${Math.round(measured[1].area * 100)}% for the next`,
+    };
+  }
+
   return {
     kind: 'none',
-    reason: `the property cover presents ${unique.length} photographs and does not say `
-      + 'which is the property\'s, so none is used',
+    reason: `the property cover presents ${unique.length} photographs at comparable size `
+      + 'and does not say which is the property\'s, so none is used',
   };
 }
 
@@ -546,6 +593,8 @@ export interface PdfMediaPlacement {
   placementsOnPage: number;
   /** How many pages of the document draw it. */
   pagesDrawnOn: number;
+  /** How much of its page the document gives it, 0..1, where measurable. */
+  pageAreaShare?: number | null;
 }
 
 /**
@@ -708,6 +757,7 @@ export function assignPdfMediaRoles(input: {
       key: String(index),
       placementsOnPage: entry.placementsOnPage,
       pagesDrawnOn: entry.pagesDrawnOn,
+      pageAreaShare: entry.pageAreaShare ?? null,
     })))
     : null;
 

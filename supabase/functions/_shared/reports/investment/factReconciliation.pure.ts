@@ -129,15 +129,28 @@ export function reconcileFacts(markdown: string, facts: CanonicalFacts): FactFin
   if (!text.trim()) return [];
   const findings: FactFinding[] = [];
 
-  const counted: Array<[keyof CanonicalFacts, RegExp]> = [
-    ['bedrooms', /\b(\d{1,2})[\s-]*bed(?:room)?s?\b/gi],
-    ['bathrooms', /\b(\d{1,2})[\s-]*bath(?:room)?s?\b/gi],
-    ['carSpaces', /\b(\d{1,2})[\s-]*(?:car[\s-]*(?:space|park|port)s?|garage(?:\s+space)?s?)\b/gi],
+  // Two forms of a counted mention, and the separator matters. "3-bedroom" and
+  // "3 bedroom" are the count; "Bedrooms: 3 - Bathrooms: 2" is a LIST, and a
+  // `[\s-]*` bridge read its " - " as a hyphen — so the bedroom count leaked
+  // into the bathroom match and a report whose specs were correct was flagged
+  // (measured: 1 false positive in 18 production reports, this shape exactly).
+  // One optional separator character is what a compound noun allows. The
+  // label-first form ("Bathrooms: 2") is how every generated spec table
+  // states the fact, and it has to count as the recorded value appearing.
+  const counted: Array<[keyof CanonicalFacts, RegExp, RegExp]> = [
+    ['bedrooms', /\b(\d{1,2})(?:\s|-)?bed(?:room)?s?\b/gi, /\bbed(?:room)?s?\s*[:=]\s*\**\s*(\d{1,2})\b/gi],
+    ['bathrooms', /\b(\d{1,2})(?:\s|-)?bath(?:room)?s?\b/gi, /\bbath(?:room)?s?\s*[:=]\s*\**\s*(\d{1,2})\b/gi],
+    [
+      'carSpaces',
+      /\b(\d{1,2})(?:\s|-)?(?:car[\s-]*(?:space|park|port)s?|garage(?:\s+space)?s?)\b/gi,
+      /\b(?:car[\s-]*(?:space|park|port)s?|garage(?:\s+space)?s?|parking)\s*[:=]\s*\**\s*(\d{1,2})\b/gi,
+    ],
   ];
-  for (const [fact, re] of counted) {
+  for (const [fact, countFirst, labelFirst] of counted) {
     const expected = toCount(facts[fact]);
     if (expected === undefined) continue;
-    const finding = judge(fact, expected, collect(text, re), text, 0, 2);
+    const mentions = [...collect(text, countFirst), ...collect(text, labelFirst)];
+    const finding = judge(fact, expected, mentions, text, 0, 2);
     if (finding) findings.push(finding);
   }
 

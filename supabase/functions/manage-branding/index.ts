@@ -116,7 +116,11 @@ Deno.serve(async (req) => {
     const update: Record<string, unknown> = {};
     for (const column of WRITABLE_COLUMNS) {
       if (Object.prototype.hasOwnProperty.call(incoming, column)) {
-        update[column] = incoming[column];
+        // Trimmed at the write boundary: the production company name carried
+        // a trailing space for months (audit F15). Every reader trimmed it
+        // defensively, which is how nobody noticed the record was wrong.
+        const value = incoming[column];
+        update[column] = typeof value === 'string' ? value.trim() : value;
       }
     }
 

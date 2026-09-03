@@ -99,6 +99,51 @@ describe('land size (context-anchored)', () => {
   });
 });
 
+describe('measured against production prose (closing pass)', () => {
+  /**
+   * The one false positive in 18 production reports: a spec list whose
+   * " - " separator was read as the hyphen of "3-bathroom", so the bedroom
+   * count leaked into the bathroom match while the true "Bathrooms: 2" —
+   * label-first, as every generated spec table writes it — never counted as
+   * the recorded value appearing.
+   */
+  it('a "Bedrooms: 3 - Bathrooms: 2" list is not a bathroom contradiction', () => {
+    const text = [
+      '- Property Type: Not specified - Bedrooms: 3 - Bathrooms: 2 - **Location: Unknown**',
+      'The plan offers 3 bedrooms with 2 bathrooms.',
+      'Bedrooms: 3 - Bathrooms: 2 again in the summary.',
+    ].join('\n');
+    expect(reconcileFacts(text, { bedrooms: 3, bathrooms: 2 })).toHaveLength(0);
+  });
+
+  it('label-first mentions count as the recorded value appearing', () => {
+    const text = '| Bedrooms | 4 |\n| Bathrooms | 2 |\n| Parking | 2 |\nA family home.';
+    expect(reconcileFacts(text, { bedrooms: 4, bathrooms: 2, carSpaces: 2 })).toHaveLength(0);
+    expect(reconcileFacts('Bedrooms: 3\nBathrooms: **2**\nParking: 2', { bedrooms: 3, bathrooms: 2, carSpaces: 2 })).toHaveLength(0);
+  });
+
+  it('a genuine repeated contradiction still surfaces', () => {
+    const text = 'Bedrooms: 3\nThe 3-bedroom layout suits families. Three bedrooms and a 3 bedroom plan.';
+    const [finding] = reconcileFacts(text, { bedrooms: 4 });
+    expect(finding).toMatchObject({ fact: 'bedrooms', expected: 4, found: 3 });
+  });
+
+  /**
+   * The one true positive in the same 18: the record priced the lot at
+   * $693,100 and the prose anchored its whole money section on the suburb
+   * median, $625,000, six times. That is the class disclosure exists for.
+   */
+  it('a purchase price replaced by the suburb median is caught', () => {
+    const text = [
+      'Purchase price benchmark $625,000 for houses in the suburb.',
+      '| Purchase Price | $625,000 | Median house price |',
+      'Total upfront costs assume a purchase price of $625,000.',
+    ].join('\n');
+    const [finding] = reconcileFacts(text, { purchasePrice: 693_100 });
+    expect(finding).toMatchObject({ fact: 'purchasePrice', expected: 693_100, found: 625_000 });
+  });
+});
+
 describe('edges', () => {
   it('empty prose and absent facts produce nothing', () => {
     expect(reconcileFacts('', { bedrooms: 3 })).toHaveLength(0);

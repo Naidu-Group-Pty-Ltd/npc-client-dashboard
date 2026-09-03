@@ -83,6 +83,7 @@ import { previewSanitization } from '../_shared/builderStock/previewSanitization
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import { storeVerifiedWebImages } from '../_shared/builderStock/webImageStore.ts';
+import { settleCompletedUploads } from '../_shared/builderStock/uploadCompletion.ts';
 import {
   claimOneImageWorkItem, completeItemWork, isMissingCapability, publishUploadIfReady,
   readItemWorkPending,
@@ -144,6 +145,34 @@ async function runWebImageStorePass(
         .slice(0, 200),
     });
   }
+}
+
+/**
+ * EVERY HOUSEKEEPING PASS THE TICK OWES, ON EVERY NORMAL EXIT.
+ *
+ * The tick has TWO normal exits — the fallback phase returns when the
+ * settlement queue is empty, and the settlement path returns after its work —
+ * and a pass wired to only one of them does not run at all on a deployment
+ * that always leaves by the other. That has now happened twice: the
+ * web-image store was first wired inside per-candidate enforcement (dead once
+ * the marketplace settled), then after the settlement work alone (dead
+ * because withheld fallbacks keep that queue non-empty for ever).
+ *
+ * So the exits call ONE function and the passes are listed here. A pass added
+ * to this body reaches both exits by construction rather than by remembering,
+ * which is the only version of this that stops being re-learned.
+ *
+ * Order is deliberate: imagery first, because retiring a picture changes what
+ * a card draws, and an upload's status is a record ABOUT work already done.
+ */
+async function runTickHousekeeping(
+  supabase: any,
+  enforceAfterRetirement: (organisationId: string) => Promise<void>,
+): Promise<void> {
+  await runWebImageStorePass(supabase, enforceAfterRetirement);
+  // An import that finished with nobody watching still has to be recorded as
+  // finished. See `uploadCompletion.ts`.
+  await settleCompletedUploads(supabase);
 }
 
 /** Wall clock for one tick, well inside the edge ceiling. */
@@ -695,7 +724,7 @@ Deno.serve(async (req: Request) => {
        * pass now. Retirement enforcement is built here because the settlement
        * path's once-per-tick `enforce` closure does not exist on this one.
        */
-      await runWebImageStorePass(supabase, async (organisationId) => {
+      await runTickHousekeeping(supabase, async (organisationId) => {
         try {
           await enforceStrictPrimaryImages(supabase, organisationId);
         } catch (enforceError) {
@@ -864,7 +893,7 @@ Deno.serve(async (req: Request) => {
      * tick), so a card whose picture is GONE is re-decided before this tick
      * returns and the badge goes with the photograph. See `webImageStore.ts`.
      */
-    await runWebImageStorePass(supabase, async (organisationId) => {
+    await runTickHousekeeping(supabase, async (organisationId) => {
       // Even where enforcement already ran this tick: the evidence just
       // changed, so the once-per-tick guard steps aside for the re-read.
       enforced.delete(organisationId);

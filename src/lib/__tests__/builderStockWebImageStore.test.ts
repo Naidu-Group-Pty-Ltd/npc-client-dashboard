@@ -265,13 +265,13 @@ describe('storeVerifiedWebImages', () => {
   });
 });
 
-describe('the settler runs the store on its own enumeration', () => {
+describe('the settler runs its housekeeping on every normal exit', () => {
   const source = () => readFileSync(
     resolve(__dirname, '../../../supabase/functions/builder-stock-image-settler/index.ts'),
     'utf8',
   );
 
-  it('enumerates its own work, not the settlement queue\'s', () => {
+  it('the web-image pass enumerates its own work, not the settlement queue\'s', () => {
     // The first wiring sat inside `enforce`, which is only invoked for
     // organisations with settlement candidates — and once the marketplace had
     // settled, it measurably never ran. The pass enumerates the hotlinked
@@ -281,27 +281,47 @@ describe('the settler runs the store on its own enumeration', () => {
     expect(text).toContain('storeVerifiedWebImages(supabase, organisationId)');
   });
 
-  it('runs on BOTH normal tick exits — the fallback path returns early too', () => {
+  it('BOTH normal exits run the housekeeping — the fallback path returns early', () => {
     /*
      * The second wiring sat only after the settlement work, and the tick has
      * TWO normal exits: an empty settlement queue runs the fallback phase and
      * returns there. On a deployment whose fallback work is withheld by the
      * evidence gate, `remaining` never reaches zero, so EVERY tick took that
      * exit — and three retired-pending hotlinks stood as card primaries for
-     * hours while the pass sat unreachable behind the return. A predecessor
-     * of this test pinned that the code existed; this one pins that every
-     * normal exit passes through it.
+     * hours while the pass sat unreachable behind the return.
+     *
+     * The exits now call ONE housekeeping function, so a pass added to its
+     * body reaches both by construction. This pins that: every normal exit
+     * calls it, and the fallback path's call precedes the fallback return.
      */
     const text = source();
-    const calls = text.match(/await runWebImageStorePass\(supabase,/g) ?? [];
+    const calls = text.match(/await runTickHousekeeping\(supabase,/g) ?? [];
     expect(calls.length).toBeGreaterThanOrEqual(2);
 
     const fallbackLog = text.indexOf("'[builder-stock-image-settler] fallback tick'");
     const fallbackReturn = text.indexOf('fallbackAttempted: fallback.attempted');
-    const passOnFallbackPath = text.indexOf('await runWebImageStorePass(supabase,', fallbackLog);
+    const passOnFallbackPath = text.indexOf('await runTickHousekeeping(supabase,', fallbackLog);
     expect(fallbackLog).toBeGreaterThan(-1);
     expect(passOnFallbackPath).toBeGreaterThan(fallbackLog);
     expect(passOnFallbackPath).toBeLessThan(fallbackReturn);
+  });
+
+  it('the housekeeping runs the image pass AND settles finished uploads', () => {
+    /*
+     * An import that completed with nobody watching still has to be RECORDED
+     * as finished — measured: `tq.csv` sat at `enriching` with an empty
+     * image_stage_summary while all eleven of its properties were settled,
+     * because the completion write lived only in the browser's loop. Both
+     * passes are listed in one body precisely so neither can be wired to one
+     * exit again.
+     */
+    const text = source();
+    const body = text.slice(
+      text.indexOf('async function runTickHousekeeping('),
+      text.indexOf('/** Wall clock for one tick'),
+    );
+    expect(body).toContain('await runWebImageStorePass(supabase, enforceAfterRetirement)');
+    expect(body).toContain('await settleCompletedUploads(supabase)');
   });
 
   it('a retirement re-decides the card in the SAME tick, on either exit', () => {

@@ -296,11 +296,15 @@ export default function ErrorLogs() {
 
   const handleRetryReport = async (reportId: string, address: string) => {
     try {
-      // First, reset the report status to pending
-      await supabase
-        .from('investment_reports')
-        .update({ status: 'pending', error_message: null })
-        .eq('id', reportId);
+      // First, reset the report status to pending — through the broker every
+      // client write uses. A browser UPDATE is author-scoped by RLS, so for a
+      // colleague's report it matched zero rows and reported nothing.
+      const reset = await invokeSecureFunction('manage-investment-reports', {
+        action: 'update',
+        reportId,
+        data: { status: 'pending', error_message: null },
+      });
+      if (reset.error) throw reset.error;
 
       // Call the edge function to regenerate
       const { error } = await invokeSecureFunction('generate-investment-report', {

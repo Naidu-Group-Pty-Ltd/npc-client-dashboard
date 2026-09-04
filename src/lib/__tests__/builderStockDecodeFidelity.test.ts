@@ -21,6 +21,8 @@
  * The lossy-WebP ALPH plane remains deliberately unread, and `webp.ts` now
  * says so instead of claiming a compositing that never happened.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -228,5 +230,44 @@ describe('alpha composites onto white, whatever the container', () => {
     if (!raster) return;
     expect(px(raster, 0, 0)).toEqual([255, 255, 255]);
     expect(px(raster, 1, 0)).toEqual([0, 0, 255]);
+  });
+});
+
+/**
+ * And the repair reads the picture ONCE.
+ *
+ * A pure-TypeScript JPEG decode of a 1819x1223 render is the most expensive
+ * thing in the repair, and the sanitizer used to do it twice on the same bytes
+ * — once for the 400px measurement, once for the full-size pixels it hands
+ * back. Production found the cost on 4 September 2026: every repair attempt on
+ * Lot 1731 Hornsea Street died `CPU Time exceeded` (02:17, 02:25, 02:31,
+ * 02:42) where the same picture had repaired in 13.4s the day before.
+ *
+ * Pinned as a source check because the property is otherwise invisible: two
+ * decodes and one decode produce identical pixels, identical verdicts and
+ * identical output, and differ only in whether the invocation survives.
+ */
+describe('the sanitizer decodes its input once', () => {
+  const source = readFileSync(
+    join(process.cwd(), 'supabase', 'functions', '_shared', 'builderStock', 'sanitizeImage.ts'),
+    'utf8');
+
+  it('takes both readings from one decode', () => {
+    expect(source).toContain('decodeRasterBoth(bytes)');
+    expect(source).toContain('thumbnail.full()');
+  });
+
+  it('never decodes the input a second time at full size', () => {
+    expect(source).not.toContain('decodeFullRaster');
+  });
+
+  /*
+   * The one read-back that stays. It reads the artefact that will be STORED,
+   * which is a check of the encoder rather than a second reading of the input,
+   * and removing it would take a control away rather than a cost.
+   */
+  it('still reads back the picture it encoded', () => {
+    expect(source).toContain('decodeThumbnailResult(bytes)');
+    expect(source).toContain('the repaired picture could not be read back');
   });
 });

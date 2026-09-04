@@ -932,3 +932,127 @@ error-disclosure, public-validation, migrations, portal boundaries);
 security inventory regenerated and unchanged. Production measurements were
 taken read-only through the project's SQL interface and are quoted above;
 the migration was validated with `EXPLAIN` and never executed.
+
+---
+
+## 15 · The generation engine — a control that could never take effect (2026-09-04)
+
+The owner sent a screenshot of the Investment Analysis page's **GENERATION
+ENGINE** drop-down and asked a fair question: how is an operator meant to
+know whether "the trimmed version" is the one to pick — and if it is now the
+primary engine, name it Primary.
+
+The answer is worse than the question assumed. **There was nothing to pick.**
+
+### What the drop-down did
+
+Nothing. `InvestmentReportGenerator.tsx` sends no `reportTier`, so the
+generator's `rawTier` falls to its default:
+
+```ts
+const rawTier = propertyDetails?.reportTier || 'compass';
+const isCompassTier = rawTier === 'compass' || rawTier === 'compass-40';
+const generationEngine = isCompassTier || requestedEngine === 'compass-40'
+  ? 'compass-40' : 'legacy';
+```
+
+`isCompassTier` is therefore **always true from that page**, and the engine
+resolves to Compass whatever the operator selected. That is not a bug in the
+resolution — the tier is the data-minimisation boundary, and an engine
+preference must never be able to pull financial content into a non-financial
+report — but it makes the control inert.
+
+The drop-down opened on the option that never ran, and described it as the
+safe one: *"Legacy Compass — Stable · Full DB template, ~12 chunks,
+battle-tested."* Every quality gate this programme built runs under the
+other one — the canonical section registry, `postProcessReportMarkdown`,
+`runQAValidation` — all inside `if (compass40OverlayActive)`. So the default
+was labelled *stable* and was in fact the ungated path, and it made no
+difference either way.
+
+**A dead control is worse than no control**, the rule this repository
+already applies to the AUSTRAC path card. This one was worse than dead.
+
+### What the column recorded
+
+`generation_engine` was written **only by the browser**, at request time.
+So the row recorded the *selection*, not the run. Measured on 2026-09-04:
+
+| `report_tier` | `generation_engine` | rows |
+| --- | --- | --- |
+| compass | legacy | **1,124** |
+| snapshot | legacy | 25 |
+| briefing | legacy | 21 |
+| strategic | legacy | 10 |
+| financial | legacy | 10 |
+| compass | compass-40 | 2 |
+| briefing | compass-40 | 1 |
+
+Every one of those 1,124 rows says "legacy" about a document the Compass
+engine produced. **A record of what was requested is not a record of what
+happened.** `generate-investment-report` now writes the column on the
+completion update, from `compass40OverlayActive` — the flag that actually
+governed the run.
+
+The historic rows are **deliberately not backfilled**. The rows predating
+the tier promotion genuinely did run on the legacy engine, and the honest
+discriminator is `total_sections` (the Compass registry persists 17, the
+legacy section list 12) rather than a date nobody can pin to a deployment.
+Replacing one guess with another is not a repair; a regeneration now stamps
+the truth on the rows it touches.
+
+### What changed on screen
+
+The page **states** the engine instead of offering it: *Compass — Primary*,
+with what it produces and what it deliberately omits (purchase price, yield,
+LVR, loan and ten-year cash flow belong to the Financial Analysis Report).
+The name lives in `ENGINE_LABEL` in one module, because two literals is how
+two screens come to disagree.
+
+The Regenerate dialog carried the same two options, and there the choice was
+not merely dead but **harmful**: on a Compass report the server overrides it,
+and on a Financial Analysis report picking Compass would strip the financials
+the report exists for. It is a statement now too, resolved from the report's
+own record.
+
+### The rule, in one place
+
+`src/lib/reports/generationEngine.pure.ts` mirrors the server's expression —
+tier first, caller preference only where the tier leaves the question open.
+It is deliberately neither trimmed nor lower-cased, because the server
+compares with `===`: a module whose whole job is to say what will happen
+must not be kinder than the rule it reports. `generationEngineTruth.spec.ts`
+reads the edge function's own source and fails when the two drift, the guard
+`llmUsageBinding.pure.ts` already carries against the router.
+
+### One defect found on the way
+
+`useChunkedRegeneration` sent `reportTier: normaliseReportTier(...)`, and
+that helper collapses **everything except `financial*` into `compass-40`**.
+It is right for counting chunks and wrong for the tier, which is the
+boundary the server resolves the engine from — so regenerating any of the
+**56 production `snapshot` / `briefing` / `strategic` reports** would have
+sent `compass-40`, and returned a Compass document in place of the report
+that was there. It now sends the report's own stored tier and resolves the
+engine through the shared rule.
+
+Two smaller things fixed in passing: the dialog read the `detail` projection
+(~95KB of report prose plus every JSON blob on the row) to read one string,
+and passed `listOptions.select`, which that function documents as
+"deprecated and deliberately ignored" — it takes `generationProgress` now.
+
+### Verification
+
+Full vitest suite green in one run — **1,075 files, 20,556 tests, 0
+failures**; `check-src-missing-names` clean; the edge column-name gate and
+the style-token ratchet both holding; eslint **0 errors on every changed
+file** and the repo total down one (44, from 45 — a
+pre-existing `prefer-as-const` in a file this touches); production build;
+the edited edge function parsed with esbuild; the edge type-check ratchet run
+under the Deno version CI resolves (`v2.x` → 2.9.6) with **no file above its
+baseline**. A local Deno 2.1.4 reports four unrelated `builderStock` /
+`immutableDocuments` files as regressed: they use `Uint8Array<ArrayBuffer>`,
+which needs TypeScript 5.7, and they are clean under the CI toolchain — the
+gate is only meaningful on the version CI pins. Production counts were taken
+read-only through the project's SQL interface and are quoted above; nothing
+was written to the database.

@@ -34,6 +34,7 @@ import {
 import {
   roleDetail, type SourceImageRoleAssignment,
 } from './sourceImageRole.pure.ts';
+import { carriedSanitizationFor } from './sourceImages.ts';
 
 /** What a caller must give us, and nothing it can decide for itself. */
 export interface AttachBuilderImageInput {
@@ -79,6 +80,20 @@ export async function attachBuilderImage(
 ): Promise<{ id: string } | { error: string }> {
   const reference = builderImageReference({ storagePath: input.storagePath });
 
+  /*
+   * The same rule every other store path follows: replacing a row must not
+   * take the sanitization stage's record with it where the bytes are the ones
+   * that record is about. Handing back the identical file is the case — an
+   * operator re-attaching what is already there — and it is the only one,
+   * because a corrected photograph hashes differently and carries nothing.
+   */
+  const carried = await carriedSanitizationFor(db, {
+    stockItemId: input.stockItemId,
+    sourceStage: SOURCE_SUPPLIED_STAGE,
+    reference,
+    storedSha256: input.sha256 ?? null,
+  });
+
   const { data, error } = await db.from('builder_stock_item_images').upsert({
     stock_item_id: input.stockItemId,
     organisation_id: input.organisationId,
@@ -103,6 +118,9 @@ export async function attachBuilderImage(
       ...roleDetail(input.role),
       supplied_directly: true,
       ...(input.sha256 ? { stored_sha256: input.sha256 } : {}),
+      // Last, so a replacement cannot lose what another stage established
+      // about these exact bytes — and only ever the keys that stage owns.
+      ...carried,
     },
     /*
      * The table's own uniqueness, `(stock_item_id, source_stage,

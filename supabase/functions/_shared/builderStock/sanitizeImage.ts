@@ -36,7 +36,13 @@
  * image, another property, a search, a map, a render or a generator, and the
  * refusal deliberately carries no candidate for a caller to fall back to.
  */
-import { decodeFullRaster, decodeThumbnailResult } from './sourceImageRaster.ts';
+/*
+ * `decodeThumbnailResult` is still needed in `finish`, and deliberately: that
+ * one reads back the artefact that will be STORED, which is a check of the
+ * encoder and not a second reading of the input. Only the input's double decode
+ * is gone.
+ */
+import { decodeRasterBoth, decodeThumbnailResult } from './sourceImageRaster.ts';
 import {
   measureFaintOverlayText, measureFlatColourRegions, overlayTextBoxes, readMarketingOverlay,
 } from './marketingOverlay.pure.ts';
@@ -206,7 +212,12 @@ export async function sanitizeSourceImage(
   options: SanitizeImageOptions = {},
 ): Promise<SanitizeImageResult> {
   try {
-    const thumbnail = await decodeThumbnailResult(bytes);
+    /*
+     * ONE DECODE, BOTH READINGS. The full-size pixels are a thunk: the paths
+     * that return before a repair is attempted never allocate them, exactly as
+     * when this was two calls. See `decodeRasterBoth`.
+     */
+    const thumbnail = await decodeRasterBoth(bytes);
     if (thumbnail.ok === false) {
       // A picture nothing could decode is not a picture anything was learned
       // about. Operational, so the caller retries rather than recording it.
@@ -333,7 +344,7 @@ export async function sanitizeSourceImage(
       };
     }
 
-    const raster = await decodeFullRaster(bytes);
+    const raster = thumbnail.full();
     if (!raster) {
       return {
         ok: false, reason: 'unusable_input', transformation: null, model: null,

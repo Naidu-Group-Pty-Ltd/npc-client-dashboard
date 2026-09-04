@@ -155,6 +155,55 @@ export async function decodeThumbnail(bytes: Uint8Array): Promise<Thumbnail | nu
   return result.ok ? result.thumbnail : null;
 }
 
+/** Both readings of one picture, from ONE decode. */
+export type DecodedBoth =
+  | { ok: true; thumbnail: Thumbnail; full: () => FullRaster | null }
+  | { ok: false; reason: 'unsupported' | 'failed' };
+
+/**
+ * Decode once, and hand back both the measurement thumbnail and the full-size
+ * pixels.
+ *
+ * WHY THIS EXISTS. The repair needs both: the classifier and the mask builder
+ * work on a 400px reduction, and the repair itself has to hand back a
+ * photograph at the size the builder supplied. It got them by calling
+ * `decodeThumbnailResult` and then `decodeFullRaster` on the SAME bytes — two
+ * full decodes of one picture, and a pure-TypeScript JPEG decode of a
+ * 1819x1223 render is the most expensive thing in the whole path.
+ *
+ * Measured in production on 4 September 2026: every repair attempt on Lot 1731
+ * Hornsea Street died `CPU Time exceeded` — 02:17, 02:25, 02:31 and 02:42, four
+ * for four — where the same picture had repaired in 13.4s the day before. The
+ * work was over the invocation's allowance by a margin the second decode
+ * accounts for on its own.
+ *
+ * NOTHING ABOUT THE PICTURE CHANGES. It is the same decoder through the same
+ * dispatch, the same `box` reduction and the same `materialise`, so the pixels
+ * a verdict is formed about and the pixels that get repaired are what they were
+ * — they are simply not read out of the container twice.
+ *
+ * The full raster is a THUNK because the cheap paths never need it: a picture
+ * the classifier clears, or one with no plate to remove, returns before any
+ * full-size buffer is allocated, exactly as it did before.
+ */
+export async function decodeRasterBoth(bytes: Uint8Array): Promise<DecodedBoth> {
+  if (!bytes?.length) return { ok: false, reason: 'failed' };
+  if (bytes.length > MAX_DECODE_BYTES) return { ok: false, reason: 'failed' };
+  if (!(isPng(bytes) || isJpeg(bytes) || isGif(bytes) || isWebp(bytes))) {
+    return { ok: false, reason: 'unsupported' };
+  }
+
+  try {
+    const raster = await decodeRaster(bytes);
+    if (!raster) return { ok: false, reason: 'failed' };
+    const thumbnail = box(raster.width, raster.height, raster.read);
+    if (!thumbnail) return { ok: false, reason: 'failed' };
+    return { ok: true, thumbnail, full: () => materialise(raster) };
+  } catch {
+    return { ok: false, reason: 'failed' };
+  }
+}
+
 const isPng = (b: Uint8Array) =>
   b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
 const isJpeg = (b: Uint8Array) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8;

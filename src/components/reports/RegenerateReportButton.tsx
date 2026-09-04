@@ -10,13 +10,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { RefreshCw, Loader2, ShieldCheck, Sparkles } from 'lucide-react';
 import { useActivityLogger } from '@/hooks/useActivityLogger';
 import { useNotifications } from '@/contexts/NotificationsContext';
-import { useChunkedRegeneration, type GenerationEngine } from '@/hooks/useChunkedRegeneration';
+import { useChunkedRegeneration } from '@/hooks/useChunkedRegeneration';
+import {
+  ENGINE_LABEL,
+  engineIsFixedByTier,
+  resolveGenerationEngine,
+  type GenerationEngine,
+} from '@/lib/reports/generationEngine.pure';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 interface RegenerateReportButtonProps {
@@ -28,6 +32,9 @@ interface RegenerateReportButtonProps {
   className?: string;
 }
 
+/** What the dialog knows about which engine will run. `null` while it is still reading, or when the read failed. */
+type ResolvedEngine = { engine: GenerationEngine; fixedByTier: boolean } | null;
+
 export function RegenerateReportButton({
   reportId,
   propertyAddress,
@@ -37,8 +44,13 @@ export function RegenerateReportButton({
   className = ''
 }: RegenerateReportButtonProps) {
   const [showConfirm, setShowConfirm] = useState(false);
-  const [engine, setEngine] = useState<GenerationEngine>('legacy');
-  const [currentEngine, setCurrentEngine] = useState<GenerationEngine | null>(null);
+  // The engine is STATED, never chosen. This dialog carried a two-option radio
+  // group defaulting to whatever the row said, and neither option was a real
+  // decision: on a Compass report the server resolves the engine from the tier
+  // whatever is sent, and on a Financial Analysis report choosing Compass would
+  // strip the financials the report exists for. So the dialog reports what will
+  // run and the hook resolves it from the record — one rule, one place.
+  const [resolved, setResolved] = useState<ResolvedEngine>(null);
   const { logActivity } = useActivityLogger();
   const { addNotification } = useNotifications();
 
@@ -49,19 +61,28 @@ export function RegenerateReportButton({
     regenerate
   } = useChunkedRegeneration();
 
-  // Load the report's current engine when opening the dialog
+  // Read the report's tier when the dialog opens. `generationProgress` is the
+  // cheap projection that carries `report_tier` and `generation_engine`; the
+  // detail projection this used to take also ships ~95KB of report prose and
+  // every JSON blob on the row, to read one string.
   useEffect(() => {
     if (!showConfirm) return;
     let cancelled = false;
     (async () => {
       const { data } = await invokeSecureFunction('get-investment-reports', {
         reportId,
-        listOptions: { select: 'generation_engine' },
+        projection: 'generationProgress',
       });
       if (cancelled) return;
-      const stored = data?.report?.generation_engine === 'compass-40' ? 'compass-40' : 'legacy';
-      setCurrentEngine(stored);
-      setEngine(stored);
+      const row = data?.report;
+      if (!row) return;
+      setResolved({
+        engine: resolveGenerationEngine({
+          reportTier: row.report_tier,
+          storedEngine: row.generation_engine,
+        }),
+        fixedByTier: engineIsFixedByTier(row.report_tier),
+      });
     })();
     return () => { cancelled = true; };
   }, [showConfirm, reportId]);
@@ -72,14 +93,17 @@ export function RegenerateReportButton({
     addNotification({
       type: 'report_regeneration_started',
       title: 'Report Regeneration Started',
-      message: `Regenerating report for ${propertyAddress} using ${engine === 'compass-40' ? 'Compass-40 (Trimmed Legacy)' : 'Legacy Compass (Stable)'} engine...`,
+      message: resolved
+        ? `Regenerating report for ${propertyAddress} using the ${resolved.engine === 'compass-40' ? 'Compass primary' : 'legacy'} engine...`
+        : `Regenerating report for ${propertyAddress}...`,
       entityId: reportId
     });
 
+    // Deliberately no `generationEngine`: the hook resolves it from the report's
+    // own tier and recorded engine, through the same rule the server applies.
     await regenerate({
       reportId,
       propertyAddress,
-      generationEngine: engine,
       onProgress: (section, total) => {
         console.log(`[RegenerateReportButton] Progress: ${section}/${total}`);
       },
@@ -89,7 +113,7 @@ export function RegenerateReportButton({
           entityType: 'investment_report',
           entityId: reportId,
           entityName: propertyAddress,
-          metadata: { regenerationType: 'chunked', generationEngine: engine }
+          metadata: { regenerationType: 'chunked', generationEngine: resolved?.engine ?? null }
         });
         onRegenerated?.();
       },
@@ -105,7 +129,7 @@ export function RegenerateReportButton({
         variant={variant}
         size={size}
         className={className}
-        onClick={() => setShowConfirm(true)}
+        onClick={() => { setResolved(null); setShowConfirm(true); }}
         disabled={isRegenerating}
       >
         {isRegenerating ? (
@@ -128,59 +152,50 @@ export function RegenerateReportButton({
             <AlertDialogDescription asChild>
               <div className="space-y-4 text-sm">
                 <p className="text-muted-foreground">
-                  Choose which generation engine to use. Your manual overrides and financial calculations are always injected as context.
+                  Your manual overrides and financial calculations are always injected as context.
                 </p>
 
-                <RadioGroup
-                  value={engine}
-                  onValueChange={(v) => setEngine(v as GenerationEngine)}
-                  className="space-y-2"
-                >
-                  <Label
-                    htmlFor="engine-legacy"
-                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
-                      engine === 'legacy' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40'
-                    }`}
-                  >
-                    <RadioGroupItem id="engine-legacy" value="legacy" className="mt-0.5" />
-                    <div className="flex-1 space-y-1">
+                <div className="rounded-lg border p-3">
+                  {resolved === null ? (
+                    <>
                       <div className="flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4 text-success" />
-                        <span className="font-medium text-foreground">Legacy Compass</span>
-                        <Badge variant="secondary" className="text-[10px]">Stable</Badge>
-                        {currentEngine === 'legacy' && (
-                          <Badge variant="outline" className="text-[10px]">Current</Badge>
-                        )}
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        <span className="font-medium text-foreground">Generation engine</span>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Original engine using the database-managed structure template. Battle-tested output, predictable formatting, ~12 chunks.
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Resolved from this report&rsquo;s tier when the regeneration starts.
                       </p>
-                    </div>
-                  </Label>
-
-                  <Label
-                    htmlFor="engine-compass40"
-                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
-                      engine === 'compass-40' ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40'
-                    }`}
-                  >
-                    <RadioGroupItem id="engine-compass40" value="compass-40" className="mt-0.5" />
-                    <div className="flex-1 space-y-1">
+                    </>
+                  ) : resolved.engine === 'compass-40' ? (
+                    <>
                       <div className="flex items-center gap-2">
                         <Sparkles className="h-4 w-4 text-primary" />
-                        <span className="font-medium text-foreground">Compass-40 (Trimmed Legacy)</span>
-                        <Badge className="text-[10px]">New</Badge>
-                        {currentEngine === 'compass-40' && (
-                          <Badge variant="outline" className="text-[10px]">Current</Badge>
-                        )}
+                        <span className="font-medium text-foreground">{ENGINE_LABEL['compass-40']}</span>
+                        <Badge className="text-[10px]">Primary</Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Same legacy structure, trimmed to ~38–42 pages. Keeps location, demand, risk and recommendation in full; compresses education / transport / amenity sections; removes all purchase price, yield, LVR, loan and 10-year cashflow content. Financial modelling lives in the separate Financial Analysis Report.
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        ~38&ndash;42 pages: location, demand, risk and recommendation in full, education /
+                        transport / amenity compressed, and the editorial, page-budget and QA gates enforced
+                        on the finished document. Purchase price, yield, LVR, loan and ten-year cash flow are
+                        deliberately absent &mdash; the separate Financial Analysis Report covers them.
+                        {resolved.fixedByTier && ' This is a Compass report, so this is the engine it is regenerated by.'}
                       </p>
-
-                    </div>
-                  </Label>
-                </RadioGroup>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                        <span className="font-medium text-foreground">{ENGINE_LABEL.legacy}</span>
+                        <Badge variant="secondary" className="text-[10px]">Superseded</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        The original database-template engine. This report&rsquo;s tier is not Compass, so the
+                        content it carries is the tier&rsquo;s rather than the primary engine&rsquo;s, and it is
+                        regenerated the way it was produced.
+                      </p>
+                    </>
+                  )}
+                </div>
 
                 <p className="text-xs text-muted-foreground">
                   The previous version will be archived for comparison.

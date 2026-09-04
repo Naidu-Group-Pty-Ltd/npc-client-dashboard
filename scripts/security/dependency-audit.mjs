@@ -15,6 +15,15 @@
  *    allowlist counts toward the gate.
  *  - `npm audit` exits non-zero when it finds anything; we capture output and
  *    make our own pass/fail decision, so a clean-but-nonzero exit is fine.
+ *  - The audit call is BOUNDED AND RETRIED, because it is a network request to
+ *    the npm registry and the gate used to have no notion of time: a registry
+ *    that hung for seven minutes and then answered with something unusable was
+ *    indistinguishable from a malformed report, and two builds on 4 September
+ *    2026 went red on exactly that — including main's own — while the re-run
+ *    passed in nine seconds. Each attempt is killed at a fixed bound, a fresh
+ *    attempt gets a fresh connection, and after the attempts are spent the
+ *    gate STILL FAILS CLOSED, exactly as before. The retries change when a
+ *    build goes red, never what may pass one.
  *
  * This is intentionally advisory-database driven (npm's registry mirrors the
  * GitHub Advisory / OSV data), so it needs no extra service. SBOM generation
@@ -23,7 +32,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const ALLOWLIST_PATH = join(root, 'scripts', 'security', 'dependency-audit-allowlist.json');
@@ -42,25 +51,95 @@ const accepted = new Set(
   (allow.advisories || []).map((a) => String(a.id || a.url || '').trim()).filter(Boolean)
 );
 
-function runAudit() {
+/**
+ * How long ONE `npm audit` call may take before it is killed.
+ *
+ * The call ordinarily answers in seconds — the very re-run that followed the
+ * seven-minute hang took nine — so two minutes is generous headroom for a slow
+ * registry while still bounding the job. SIGKILL rather than the default
+ * SIGTERM, so the bound is the bound whatever npm is doing.
+ *
+ * Env-overridable for the tests, which prove the kill actually happens without
+ * waiting two minutes to do it.
+ */
+const AUDIT_TIMEOUT_MS = Number(process.env.SECURITY_AUDIT_TIMEOUT_MS || 120_000);
+
+/**
+ * Attempts before the gate fails closed.
+ *
+ * Three, because the failure this absorbs is a registry that is briefly
+ * unavailable — each retry opens a fresh connection — while a report that is
+ * genuinely malformed is malformed three times and still exits 2. Fixed
+ * rather than configurable: a knob here is a knob on how long a security gate
+ * argues with itself.
+ */
+const AUDIT_ATTEMPTS = 3;
+
+/** The pause between attempts. Zeroed by the tests; a moment in CI. */
+const AUDIT_RETRY_DELAY_MS = Number(process.env.SECURITY_AUDIT_RETRY_DELAY_MS ?? 5_000);
+
+/** Synchronous pause, because everything in this gate is synchronous. */
+function pause(ms) {
+  if (!(ms > 0)) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** One bounded call to `npm audit --json`: a valid report, or why not. */
+function attemptAudit() {
+  let raw;
+  try {
+    /*
+     * `execFileSync` rather than the shell variant: `sh -c` in between meant
+     * the timeout's SIGKILL landed on the shell and npm itself survived as an
+     * orphan — the CI runner's post-job cleanup found two of them
+     * ("Terminate orphan process: npm audit") after the first bounded run.
+     * With no shell in the way, the process the bound kills is the process
+     * doing the work.
+     */
+    raw = execFileSync('npm', ['audit', '--json'], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: AUDIT_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
+  } catch (e) {
+    // Killed at the bound: there is no report and the reason is TIME, which is
+    // worth saying — "invalid report" sent the last reader of this failure
+    // hunting for a parsing bug in a network outage.
+    if (e.signal || e.code === 'ETIMEDOUT') {
+      return { error: new Error(`\`npm audit --json\` did not answer within ${AUDIT_TIMEOUT_MS}ms.`) };
+    }
+    // npm audit exits 1 when vulnerabilities exist; the JSON is still on stdout.
+    if (e.stdout) raw = e.stdout;
+    else return { error: e };
+  }
+
   let report;
   try {
-    const out = execSync('npm audit --json', { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    report = JSON.parse(out);
+    report = JSON.parse(raw);
   } catch (e) {
-    // npm audit exits 1 when vulnerabilities exist; the JSON is still on stdout.
-    if (e.stdout) {
-      try { report = JSON.parse(e.stdout); } catch { /* fall through */ }
-    }
-    if (!report) failAudit(e);
+    return { error: e };
   }
 
   // Operational failures can also produce parseable JSON. Only accept the
   // documented npm v7+ report shape so registry/audit errors fail closed.
   if (!isRecord(report?.vulnerabilities) || !isRecord(report?.metadata?.vulnerabilities)) {
-    failAudit(new Error('`npm audit --json` returned an invalid audit report.'));
+    return { error: new Error('`npm audit --json` returned an invalid audit report.') };
   }
-  return report;
+  return { report };
+}
+
+function runAudit() {
+  let lastError;
+  for (let attempt = 1; attempt <= AUDIT_ATTEMPTS; attempt++) {
+    if (attempt > 1) pause(AUDIT_RETRY_DELAY_MS);
+    const outcome = attemptAudit();
+    if (outcome.report) return outcome.report;
+    lastError = outcome.error;
+    console.error(`dependency-audit: attempt ${attempt} of ${AUDIT_ATTEMPTS} failed: ${lastError.message}`);
+  }
+  failAudit(new Error(`${lastError.message} (${AUDIT_ATTEMPTS} attempts)`));
 }
 
 function isRecord(value) {

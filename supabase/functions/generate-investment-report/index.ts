@@ -6225,6 +6225,13 @@ YOUR DEDICATED PROPERTY PARTNER
           _generationQuality: qualityMetadata
         },
         report_scope: reportScope,
+        // The engine that RAN, not the one that was asked for. This column was
+        // written only by the browser, recording the caller's preference, while
+        // the resolution above overrides that preference for every compass-tier
+        // report — so 1,124 rows say "legacy" about documents this engine
+        // produced. A record of what was requested is not a record of what
+        // happened, and every reader of this column wanted the latter.
+        generation_engine: compass40OverlayActive ? 'compass-40' : 'legacy',
         status: 'completed'
       };
       

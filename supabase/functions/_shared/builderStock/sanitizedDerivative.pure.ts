@@ -69,6 +69,20 @@ export const FAILURE_KEY = 'sanitization_failure';
 export const CLEARANCE_KEY = 'sanitization_clearance';
 
 /**
+ * The `source_detail` keys the SANITIZATION stage owns, and no other stage may
+ * write or destroy.
+ *
+ * Named as a set because the destroying is what happens by accident. Every
+ * path that stores a source image composes `source_detail` as a fresh object
+ * and upserts the row on `(stock_item_id, source_stage, source_reference)`, so
+ * a re-import silently takes these three with it — see
+ * `sanitizationCarryForward`, which is the repair and the explanation.
+ */
+export const SANITIZATION_KEYS: readonly string[] = [
+  DERIVATIVE_KEY, FAILURE_KEY, CLEARANCE_KEY,
+];
+
+/**
  * How the overlay was taken off.
  *
  * Two routes and no third. The first is arithmetic — it has no model, no
@@ -399,6 +413,57 @@ export function sanitizationSettled(
     return true;
   }
   return false;
+}
+
+/**
+ * What a RE-STORE of the same image must put back.
+ *
+ * THE DEFECT THIS EXISTS FOR. Every path that stores a source image builds
+ * `source_detail` as a fresh object and upserts it on
+ * `(stock_item_id, source_stage, source_reference)`. The sanitization record is
+ * written by a different stage, later, onto the same column — so re-importing a
+ * stock list DESTROYED it. Measured on 4 September 2026: the same brochure
+ * uploaded a second time took a repaired cover render off the card, although
+ * the bytes were byte-identical (`3f37fb4d…`), the repair was still exactly a
+ * repair OF those bytes, and its PNG was still in the bucket. The card blanked
+ * until a fresh repair landed, and the model call was paid for again.
+ *
+ * THE RULE IS THE ONE THE READERS ALREADY APPLY, not a new one: a sanitization
+ * record belongs to the bytes named by its `original_sha256`. Identical bytes
+ * keep it — the row comes out of a re-store in exactly the state it went in.
+ * Different bytes drop it, which is what `readServableDerivative` and
+ * `sanitizationSettled` would decide about it anyway; carrying it would only
+ * leave a record for somebody to read as current.
+ *
+ * WHAT IS DELIBERATELY NOT CARRIED is `sanitization_attempt`. That is a
+ * cooldown, not a finding — the settler's note that a repair was tried a moment
+ * ago — and a freshly imported row is entitled to be looked at now.
+ *
+ * NO VERSION TEST EITHER, on purpose. Carrying a record forward grants nothing:
+ * whether it may be SERVED is decided by the readers, on the same terms as
+ * before the re-store. Adding a floor here would make a re-import quietly
+ * stricter than leaving the row alone, which is the asymmetry that produced
+ * this defect in the first place.
+ *
+ * Pure: no IO. The caller supplies the hash of the bytes it is about to store.
+ */
+export function sanitizationCarryForward(
+  existingDetail: Record<string, unknown> | null | undefined,
+  storedSha256: string | null | undefined,
+): Record<string, unknown> {
+  const detail = existingDetail ?? {};
+  const carried: Record<string, unknown> = {};
+  if (!storedSha256) return carried;
+
+  for (const key of SANITIZATION_KEYS) {
+    const raw = detail[key];
+    if (!raw || typeof raw !== 'object') continue;
+    const record = raw as { original_sha256?: unknown };
+    if (typeof record.original_sha256 !== 'string') continue;
+    if (record.original_sha256 !== storedSha256) continue;
+    carried[key] = raw;
+  }
+  return carried;
 }
 
 /** The `source_detail` keys a successful repair contributes. */

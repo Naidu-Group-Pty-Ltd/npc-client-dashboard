@@ -2,10 +2,12 @@ import { useState, useCallback, useRef } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { sectionCountForTier, normaliseReportTier } from '@/lib/reports/compassSectionRegistry';
+import { resolveGenerationEngine, type GenerationEngine } from '@/lib/reports/generationEngine.pure';
 
 export type RegenerationPhase = 'idle' | 'generate' | 'condense' | 'qa' | 'done';
 
-export type GenerationEngine = 'legacy' | 'compass-40';
+/** Re-exported so the existing importers keep their import path; the rule lives in the pure module. */
+export type { GenerationEngine };
 
 interface ChunkedRegenerationOptions {
   reportId: string;
@@ -29,7 +31,7 @@ interface RegenerationState {
 }
 
 const MAX_RETRIES_PER_SECTION = 2;
-const DEFAULT_TIER: 'compass-40' = 'compass-40';
+const DEFAULT_TIER = 'compass-40' as const;
 
 export function useChunkedRegeneration() {
   const [state, setState] = useState<RegenerationState>({
@@ -102,9 +104,17 @@ export function useChunkedRegeneration() {
       // Mark processing without destroying resume state. Reset to section 0 only
       // when there is no usable partial progress; otherwise continue from the
       // last successfully saved section.
-      // Resolve effective engine: explicit option wins; else stored value; else default 'legacy'.
+      // Resolve the effective engine through the one rule that mirrors the
+      // server's. It reads the report's OWN tier, not `tier` above:
+      // `normaliseReportTier` collapses snapshot / briefing / strategic into
+      // Compass for the section count, which is right for counting chunks and
+      // wrong for choosing an engine — it would have regenerated 56 production
+      // reports as Compass documents.
       const effectiveEngine: GenerationEngine =
-        generationEngine ?? (tier === 'compass-40' ? 'compass-40' : (report?.generation_engine === 'compass-40' ? 'compass-40' : 'legacy'));
+        generationEngine ?? resolveGenerationEngine({
+          reportTier: report?.report_tier,
+          storedEngine: report?.generation_engine,
+        });
 
       const startPayload: Record<string, any> = {
         status: 'processing',
@@ -173,7 +183,10 @@ export function useChunkedRegeneration() {
             propertyAddress: effectivePropertyAddress,
             propertyDetails: {
               queryType: report?.report_scope || 'address',
-              reportTier: tier,
+              // The report's own tier, never the normalised one: the tier is the
+              // data-minimisation boundary the server resolves the engine from,
+              // so normalising it here rewrites a snapshot into a Compass report.
+              reportTier: report?.report_tier ?? undefined,
               generationEngine: effectiveEngine,
               manualOverrides: manualOverrides || report?.manual_overrides || {},
               ...financialCalculations,

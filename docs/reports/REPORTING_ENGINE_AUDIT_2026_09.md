@@ -210,3 +210,849 @@ copies onto their canonical modules.
 - Live counts: the SQL in `COVERAGE.md`, plus `template_render_jobs`,
   `report_template_selections`, `report_templates` grouped by
   engine/scope/active.
+
+## 8 · Phase 0 + Phase 1A — implemented (2026-09-02)
+
+The first two phases of §6's programme shipped together, and every number
+below was re-measured on the same two production rows §5 measured, so the
+before and after are the same instrument.
+
+### Phase 0 — the measure
+
+`public.report_render_coverage` (migration `20260915100000`) unions the nine
+`*_renders` ledgers, `template_render_jobs`, and engine-tagged
+`activity_logs` events into one engine × format × week matrix. The write side
+is two pieces: `src/lib/secureInvoke.ts` auto-tags every successful
+`render-*-pdf` / `render-template-pdf` invocation (the meteredFetch pattern —
+coverage a new call site cannot forget), and `src/lib/reports/renderEvent.ts`
+is the explicit helper for the ledgerless pathways, wired into the stored-PDF
+chokepoint (`clientPdfDownload`), Formara, the Market Intelligence jsPDF
+buttons and the portfolio pdf-lib generator. Remaining minor surfaces (print
+views, flatten buttons, the QA editors, the commercial/industrial utils, the
+listings modal) are listed for the same one-line treatment in the follow-up.
+
+### Phase 1A — the narrative channel, calibrated and cleaned
+
+`scripts/reports/markdownCalibration.mts` is the new measuring instrument: it
+rendered probes through the real seeded Chancery master twice — pager in
+charge, then bucket cap lifted — and found the pager sending every narrative
+page at **40–47% of its measured capacity** (~54.5 rendered line-units per
+continuation page, ~42.5 on the first; prose wraps at ~98 chars, the charge
+model said 65). That under-fill was every "large sectional gap".
+
+What changed (all charge-model changes are opt-in per format via
+`resolveNarrativeProfile`; every uncalibrated caller is byte-identical):
+
+- **Measured charges + calibrated budgets** for the investment narrative
+  (`markdownPaging.pure.ts`, `markdown.pure.ts:charging`), resolved
+  identically by the markdown block and the projection so the conditional
+  page count and the drawn buckets cannot disagree. The deployed schemas'
+  baked `linesPerPage: 34` is read as the legacy sentinel.
+- **Keep-with-next**: a page never ends on a heading or a lead-in line
+  ending in a colon.
+- **Tables split by rows with the head repeated** when taller than a page
+  (`splitTableBlock`), charged by real cell wrap — the clipped risk-register
+  row (F21) is structurally impossible now.
+- **Loose lists merge** (fifteen "1." items are one list again) and ordered
+  runs keep their opening number (F20).
+- **Footnotes render**: `[^id]` becomes a superscript with a Notes list;
+  a citation-shaped ref with no definition strips instead of printing (F24).
+  `sup.fn-ref`/`ol.fn-notes` joined the print stylesheet's vocabulary.
+- **Skeleton headings drop** (`dropEmptyHeadings`, default on) and the
+  word-cap truncation now cuts cleanly: no heading survives its deleted
+  prose, no literal "…", while figures and tables still always survive
+  (F18, and the standing figures-and-tables rule).
+- **The baked cover is gone twice over**: `compass.cover` is excluded from
+  generation (the contents-section precedent), and
+  `reports/investment/narrativeClean.pure.ts` strips the masthead and
+  "Cover Page" section out of the 1,100+ stored narratives at read time, on
+  both sides of the contract (F4).
+- **Scorecard band jargon is cleaned at the projection** — "Good walkability
+  (50-69)" publishes as "Good walkability" (the F-series readability item).
+
+Measured on the same rows as §5: 48 Budgeree via the user's selected
+Dictionary master went **36pp → 22pp, median body ink 0.055 → 0.111**, with
+every narrative page inside the native 0.10–0.13 band, zero cover/masthead
+artefacts, zero footnote syntax; the 6 Acer Court financial fork via Chancery
+went **21pp → 15pp, median 0.097**, risk register split with repeated heads
+and no severed row. The remaining sparse pages are the typed fixed-geometry
+pages (contents, dashboard, property, sources) — Phase 1B's schema-side
+economy work, alongside the part-numbering and back-page theming that also
+live in the seeded schemas.
+
+### Phase 1B — the schema-side pass (2026-09-02, same day)
+
+- **One part number for the whole report body.** Every narrative continuation
+  page minted its own — running heads marched "Part 08 · Report" through
+  "Part 33", and Sources introduced itself as Part 49 with a two-inch numeral.
+  The opener mints the label once and every continuation (and the cut page)
+  carries it verbatim; a Compass now runs Part 01–09. The labels are baked
+  into schema furniture, so the fix ships as the v9 catalogue seed
+  (`20260916100000`) plus a reactivation migration (`20260916110000`) that
+  refreshes every active row from its published entry — the same mechanism,
+  guards and colourway-exclusion as `20260816150000`, with a probe that no
+  active investment schema still carries "Part 15 · Report".
+- **The closing page dresses in the family's tokens.** `disclaimer.html.ts`
+  hardcoded a foreign ground (#141414), one of the audit's eight stray golds
+  (#BF9B50) and a Helvetica fallback — the critic's "back cover from a
+  different design system". It now reads the colourway (`bg`,
+  `accentOnField`, `text`, `mutedOnField`, the heading face), with the old
+  literals as fallbacks so token-less templates render unchanged. The
+  split wordmark (every word large, the last small beneath — "SERVICES" as a
+  subtitle) is one name at one size in the family's heading face.
+- **Deliberately not done here, and why:** the typed front-matter pages
+  (contents, dashboard) measure sparse and are left so — front matter in a
+  premium document is airy by intent, and densifying it is a family-design
+  decision for the Claude Design catalogue, not a defect fix. The data-sparse
+  typed pages on financially-empty rows are queued with Phase 2's
+  completeness work, where the row-level `when:` guards already carry most of
+  it.
+
+## 9 · Phase 2 — accuracy gates (2026-09-02)
+
+Phase 2 set out to make the Investment report's figures one truth end to end.
+Reconnaissance for it found something larger than the divergence the audit
+had measured: **every stored 10-year projection series was charging the
+property's operating costs roughly three times over.**
+
+### F26 — the projection fold triple-charged operating costs
+
+`generateProjections` (financial-calculator-service) folded
+`Object.values(annualCosts)` into its cost base, and that object carries its
+own totals (`totalAnnual`, `totalAnnualExcludingLandTax`) and a percentage
+beside the line items — so the opex base was
+`2·totalAnnual + totalAnnualExcludingLandTax + percent`. Proven to the
+dollar on the captured production row ($1.19M NSW house, rent $739/wk):
+
+|                                   | stored | honest |
+|-----------------------------------|--------|--------|
+| Year-1 operating costs charged    | **$59,931** | $22,232 (totalAnnual × 1.038 CPI) |
+| Year-1 cash flow (moderate)       | **−$92,557** | −$54,858 |
+| Year-1 ROI                        | **−18.89%** | −3.05% |
+| 10-year cumulative position       | overstated by ~**$370k** | — |
+
+The buggy base reconstructs exactly: 2×21,418 + 14,893 + 7 = $57,736, and
+×1.038 (that day's cached year-1 CPI) = $59,930 ≈ the stored charge. The
+headline `keyMetrics` used a third base (un-escalated, land tax out), so one
+page contradicted itself by $43,885/yr — and the generator's prompt injected
+the poisoned series verbatim as the cash-flow table the model transcribes,
+directly under a stated formula ("rent − operating costs − repayments")
+whose quoted operating costs were the sane ones. The sensitivity analysis
+carried the same fold twice more. Nobody could reconcile these numbers
+because they were not reconcilable.
+
+### F27 — adjacent accuracy defects, same commit series
+
+- `totalUpfront` = deposit + duty + hardcoded $2,000 — ignoring the row's
+  own `legalFees`/`inspectionFees` lines (historic rows off by $500+); the
+  cash-on-cash denominator was a second hardcoded derivation.
+- The prompt forced **accounting-negative notation onto positive cash
+  flows** (`($X)` via `Math.abs`), taught that P&I repayments decline ~5% by
+  year 10 (they are constant; the split changes), bound `p.lvr` — a field
+  the series never had — printing the literal "XX%", and asserted "all
+  scenarios produce negative cumulative cashflow" unconditionally.
+- Manual overrides reached `financial_calculations` by three writers, all
+  splatting values over computed leaves: the captured row carries overridden
+  line items summing $13,578 beside `totalAnnual` $21,418, with projections
+  and metrics describing neither (C5's defect, proven on the same row).
+
+### What shipped
+
+- **C1 — one engine, one cost base**
+  (`_shared/reports/investment/financialEngine.pure.ts`). All calculator
+  arithmetic extracted pure and pinned by `financialEngine.spec.ts` against
+  the captured row; the service keeps orchestration only. Projections,
+  sensitivity and headline cash flow share `operatingExpensesFrom` (the
+  footed total, never a fold); the year-0→year-1 gap is exactly the declared
+  escalation. The one deliberate asymmetry: net rental **yield** keeps the
+  land-tax-excluded base (land tax follows the owner's aggregated holdings,
+  not the property) and the report states the exclusion. Cash-on-cash
+  divides by the same `totalUpfront` the report prints. The prompt's
+  narrative figures are now derived FROM the series (`impliedOpexFromSeries`,
+  `fmtCashFlow`, `seriesLvrPercent`, `cumulativeCashFlow`), so prose and
+  table cannot disagree; the sign convention keeps the sign, and the
+  cumulative-cashflow teaching is conditional on the data.
+- **C2 — historic rows healed at every read boundary**
+  (`reconcileStoredFinancials`). ~1,170 stored rows carry the fold; nothing
+  rewrites them until regeneration, so readers heal them exactly: the fold
+  base reconstructs from the row's own aggregates (original even where line
+  items were overridden — nothing ever rewrote the aggregates), each year's
+  CPI factor recovers as impliedOpex ÷ base, and cash flow, cumulative and
+  ROI follow. Detection cannot misfire (buggy year-1 charge ≥ 2× totalAnnual;
+  healthy ≤ ~1.1×). Totals are derived from the row's own lines; headline
+  metrics recompute from components. Wired at the template binding
+  projection, the legacy `render-investment-report-pdf` route (its 10-year
+  and cash-flow charts drew the inflated series on every historic re-render),
+  and the design-composer normaliser. Idempotent, never mutates the stored
+  row, no-op on post-fix rows. Historic **prose** is beyond render-time
+  repair — regeneration is the remedy, and regeneration now writes correct
+  figures.
+- **C5 — overrides go INTO the engine, on every writer**
+  (`overrides.pure.ts`). An override that changes a modelled input (price,
+  rent, rate, reviewed costs, duty, conveyancing) becomes calculator INPUT —
+  `calculateAnnualCosts` takes the reviewed figures, an explicit $0 replaces
+  the estimate, letting fees join the totals, and the totals foot against
+  the final lines whoever supplied them. Only non-modelled fields (tax
+  treatment, occupancy display, build splits, loan labels) merge afterwards,
+  through one shared `applyDisplayOverrides`. `manage-investment-reports`
+  recomputes server-side before the write (never blocking the save; the
+  response and the modal's toast say which happened), and the generator's
+  30-line splat loop is gone.
+- **C3 — fact reconciliation** (`factReconciliation.pure.ts`). The prose is
+  compared with the record at completion — bedrooms, bathrooms, car spaces,
+  purchase price, weekly rent, land size. Report-level rule (recorded value
+  never appears + a different value repeats) so comparative prose cannot
+  trip it; money facts are context-anchored. Findings disclose as
+  `validation_flags` `type:'fact'` entries in lay wording and never gate
+  completion. Feeding findings into regeneration retries is deliberately
+  deferred until the detector has production mileage.
+- **C4 — completeness recorded and disclosed, no schema change.**
+  `data_sources` now records all eleven attempted sources (was four) —
+  present with provenance, or null as a recorded fact. The viewer's new
+  `InvestmentReportCoverageNote` renders ONLY when a source is missing or a
+  fact check flagged ("9 of 11 sources", the gaps named, each contradiction
+  in a sentence); a complete, clean report shows nothing, because a badge
+  must mean something is unmet. Carried on the detail projection of
+  `get-investment-reports`.
+
+### Verification
+
+63 new spec assertions across `financialEngine.spec.ts`,
+`investmentOverrides.spec.ts`, `factReconciliation.spec.ts` — the engine
+pinned against the captured production row (its reconstruction reproduces
+the stored totals and monthly payment exactly, and the heal reproduces the
+stored corruption before repairing it). Full affected surface green: 2,330
+tests, tsc, eslint, `audit:style` under baseline, production build.
+
+### Deferred, with reasons
+
+- Regeneration-retry wiring for fact findings (detector mileage first).
+- Browser viewer chart components reading `financial_calculations` directly
+  (the two live PDF routes and the composer are healed; the viewer's own
+  charts join in the delivery-unification phase).
+- Historic prose corrections (regeneration is the remedy; C1 makes every
+  regeneration correct).
+
+## 10 · Phase 3 — delivery unification (2026-09-02)
+
+Programme item C: every pathway that puts an Investment document in front of
+a person produces THE document — template-first, one implementation — and
+the scheduled Market Intelligence email can finally attach one.
+
+### What shipped
+
+- **`deliverInvestmentPdf.ts` — investment's own `deliver*` module.** The
+  correct chain (the person's chosen template → the legacy WeasyPrint
+  route) existed once, inside `PremiumPdfButton`. It is the module now, in
+  the same shape every other migrated format has, and every surface asks
+  it. `templateRouteEnforcement`'s investment pins moved onto the module,
+  which makes them stronger: they now guard the path every surface uses
+  rather than one button.
+- **F11 — the primary Download produces the document.** The page's main
+  action (header, mobile bar) had saved the markdown as a `.txt` for the
+  life of the page while the real PDF sat lower in a collapsible panel. It
+  now delivers template-first with a busy state, and says "Download PDF".
+  The raw-text export survives everywhere its label already said "raw
+  text": the panel button, the header menu item, the document card.
+- **F12 — Send to Client publishes what the operator reviewed.** The send
+  produced nothing before: it shipped whatever `pdf_url` held (legacy
+  route or browser raster, whichever wrote last) or minted a fresh raster.
+  It now produces fresh through the same chain, uploads template renders,
+  reuses the path the legacy route just persisted rather than re-uploading
+  the same bytes, and falls back to the raster only when both engines fail
+  — reachability kept, primacy corrected. The portal needed no change: it
+  serves the snapshot it was sent, and the snapshot is now the document.
+- **`pdf_url` has one meaning**: the storage path of the most recent
+  standard-delivery document, recorded through the one
+  `manage-investment-reports` broker (the module and the browser
+  generator's bookkeeping both go through it; the legacy route's internal
+  write is the same delivery's server half).
+- **F16 — the scheduled Market Intelligence email renders its own
+  attachment.** The dispatcher's generate step writes content, never a
+  PDF, so every dispatch that had to generate failed before sending
+  (`pdf_storage_path` 0/7 in production). It now reuses a recent report
+  even when that report carries no PDF yet, renders through the same
+  design-composer route the download button uses (`persist` on), and
+  attaches the path handed back. The route still refuses anonymous
+  service_role exactly as pinned; the dispatch acts FOR the schedule's
+  creator, whose `marketing_analytics` permission the route checks under a
+  delegated authMethod that cannot hit the permission short-circuit.
+
+### Verification
+
+18 behavioural assertions on the delivery module (chain order, option
+forwarding, publish reuse-vs-upload, bookkeeping-never-fails-a-document)
+plus the `investmentDeliveryUnified` source pins (F11/F12/F16 wiring by
+name). Full affected surface green: 6,243 tests, `tsc`, eslint,
+`audit:style` under baseline, production build; MI's `legacyPathStays`
+route pins all hold; security inventory regenerated with the new
+dispatcher→render edge.
+
+### Deliberately not done here
+
+- The orphaned investment design-composer (`buildInvestmentReport` /
+  `render.pure.ts`) stays orphaned: it is the legacy monolith's eventual
+  replacement and belongs to the separately-authorised legacy phase (F),
+  not to delivery unification.
+- `ClientPDFGenerator`'s client-side override splat (a fourth copy) is
+  harmless now that stored financials are override-coherent (Phase 2 C5)
+  and folds with the duplicate-copy work.
+
+## 11 · Phase 4 — sub-report cascade (2026-09-02)
+
+Programme item D: the Compass family behaves as one family — one engine per
+variant name, one linkage, and staleness that shows itself.
+
+### What the phase found live (beyond the register)
+
+- **F9 was structural, not just a mis-routed button.** The two engines used
+  DIFFERENT linkage columns (fork → `derived_from_report_id`, condense →
+  `parent_report_id`) with different idempotency keys, so neither could see
+  the other's child: one Compass could hold two contradictory "Financial"
+  documents, one deterministic and one model-written.
+- **F28 — the tier switcher read `investment_reports` from the browser.**
+  The table's policies are service-role-only, so the sibling lookup always
+  answered `[]` with HTTP 200: switching to an existing child was
+  impossible and every click regenerated one (model spend included). The
+  fourth surface to hit the read-through-the-server trap.
+- **A regenerated condense child kept its first-creation data copies.**
+  Regeneration rewrote the prose and left `financial_calculations`,
+  demographics, specs et al. as copied on day one — fresh words over stale
+  figures.
+- **Every fork was scored against $0.** The fork's score inputs read
+  `financial_calculations.purchasePrice` / `.weeklyRent` — paths the record
+  never had (the figures live at `initialCosts.propertyValue` and
+  `income.weeklyRent`).
+
+### What shipped
+
+- **`subReportFamily.pure.ts`** — one mapping (`engineForVariant`:
+  financial/strategic → fork, briefing/snapshot → condense), family
+  resolution across BOTH historical linkage columns, and derived staleness
+  (`variant_generated_at` vs the parent's `updated_at`; missing stamps never
+  cry wolf). Bridged to src; both switchers route through the shared
+  `generateSubReport`, and `condense-investment-report` refuses
+  `financial` at the server, naming the right engine.
+- **`familyOf` on `get-investment-reports`** — the family read, server-side,
+  under the reports module gate: two indexed lookups (never a composed
+  `.or()` string), per-child staleness in the answer. `TierSwitcher` uses it
+  (its direct browser query is gone), lists all five variants including
+  Strategic, and shows "parent has changed since" on stale rows.
+- **Staleness stamps and honest refreshes.** Condense stamps
+  `variant_generated_at` on completion and refreshes the structured copies
+  from the parent on regeneration; both engines write both linkage columns
+  on new rows.
+- **`InvestmentReportFamilyNotice`** on the report page: renders nothing
+  when the family is clean; on a stale child, one "Refresh from latest
+  data"; on a parent, which sub-reports lag and one click that refreshes
+  exactly the children that already exist — a refresh never mints documents
+  nobody asked for. Fork refreshes are free (deterministic); condense
+  refreshes cost a generation and the button counts what it touches.
+- **Fork scores read the record** (override → initialCosts/income), not
+  absent top-level paths.
+
+### Verification
+
+31 assertions across the pure-module spec (engine mapping, dual-column
+family resolution from any anchor, the staleness truth table, orphan and
+incomplete-child handling) and the source pins (server refusal, no inline
+engine choice on any surface, no browser table read, stamps and structured
+refresh present, page wiring). Full affected surface green: 2,356 report
+tests, `tsc`, eslint, `audit:style` under baseline, production build, edge
+column gate; security inventory unchanged (no new call edges).
+
+### Deliberately not done here
+
+- Auto-regenerating children when a parent regenerates: a condense refresh
+  spends a model generation, so the family refresh stays an explicit,
+  counted click on the page rather than a silent side effect of every
+  parent save.
+- Backfilling the two linkage columns into one: readers resolve the union
+  either way; a data migration is pure tidiness and can ride with any later
+  schema work.
+
+## 12 · Phase 5 — invariant hardening (2026-09-02)
+
+Programme item E: the rules the engine lived by become rules the machine
+enforces.
+
+### F13 — the template invariant is mechanical now
+
+A template FORMATS data; it never COMPUTES it. `{{= financials.x * 1.1 }}`
+used to pass the expression evaluator's character whitelist, so an approved
+template could print a figure no engine produced. One implementation
+(`templateLibraryCore.pure.ts`), two layers:
+
+- **`expressionComputesOverData`** refuses arithmetic over ANY data
+  reference — not only the financial namespaces, because a computed figure
+  under `property.*` fabricates as readily as one under `financials.*`.
+  Selection stays legal (ternaries, comparisons, `&&` presence logic choose
+  between engine-supplied values); pure-literal arithmetic touches no data.
+  Deliberately strict: `financials.x > -1` is refused (write `>= 0`) — a
+  stricter refusal beats a parser.
+- **The publish gate** (`validateForPublish`, code
+  `library_template_computes`) refuses a computing schema with the
+  offending expressions named, so no library entry can ship one.
+- **The binding resolver** refuses at evaluation — the always-on stop for
+  schemas that never meet the gate (activated copies, user drafts,
+  imports). A computing expression resolves to nothing, like every refused
+  expression; never to an invented figure.
+
+Measured first, pinned after: zero of the 543 seeded templates use
+expression arithmetic at all — `templateComputePolicy.spec.ts` asserts it
+per template across all twelve collections, so the measured fact stays a
+fact. 24 assertions on the rule, the walker, the gate and the runtime stop.
+
+### F14 — the Branding decoy is retired
+
+Templates → Branding collected per-client logos and colours into
+`client_branding_profiles`, and no document generator ever read a row —
+an operator configuring it was being promised branding the reports never
+applied. The tab and `BrandingManager.tsx` are deleted rather than left
+dormant (the platform's own rule: a dormant component is one import away
+from returning). Untouched: the table, its rows, the `manage-templates`
+allow-list, and the `ai-dashboard-agent` listing tool that reads the table
+as data. The real brand source remains `whitelabel_settings` through the
+brand resolvers; per-client REPORT branding, if ever wanted, is a
+design-system feature on that chain and goes through Claude Design.
+
+### E's third bullet — verified already delivered
+
+"Write render events from legacy paths; include `template_render_jobs` in
+the coverage measure" shipped in Phase 0: the `report_render_coverage`
+view unions the nine `*_renders` ledgers, `template_render_jobs`, and
+engine-tagged activity events, and the legacy investment route is
+auto-tagged `legacy_server` by `secureInvoke`. Nothing further owed.
+
+### Deliberately not folded
+
+`compassSectionRegistry` / `compassPostProcessor` keep their src/edge
+mirror pairs: the duplication is deliberate (edge functions cannot import
+`src/`), drift-guarded by `compassRegistryParity.spec.ts`, and the src
+copies carry src-only content below the shared block — a fold is churn,
+not hardening. `ClientPDFGenerator`'s client-side override merge likewise
+stays: it is the browser generator's compatibility shim for historic rows
+whose stored financials predate the Phase 2 recalculation.
+
+### Verification
+
+6,709 template-suite tests green (the golden-render byte-stability guard
+included — the refusal branch changes no rendered byte of a
+non-computing template), `tsc`, eslint (0 errors), `audit:style` under
+baseline, production build, edge column gate; security inventory
+unchanged.
+
+## 13 · Phase F — legacy incorporation and hiding (2026-09-02, upon authorisation)
+
+The owner's standing instruction was that the legacy system be "incorporated
+and hidden at a later stage once authorization is provided"; the
+authorisation arrived after Phase 5 merged, and this phase is that step. The
+model for what "incorporated and hidden" means was already in the tree: the
+Borrowing Capacity Snapshot's one control offering the server render as the
+primary act and the in-browser generator as an explicitly named
+"legacy layout" choice — a decision its own spec records was taken so the
+generator's retirement from reachability would never happen by accident.
+Phase F generalises that arrangement to every format that still had
+competing exits, deletes what nothing could reach, and folds the duplicate
+logic copies the earlier phases had deferred here.
+
+### Dead code deleted, not left dormant
+
+Seven files with zero reachable callers went: `EnhancedInvestmentReportModal`,
+`QAPDFGenerator` (whose unreachability the Q&A contract had recorded for two
+migrations — the spec now pins the *deletion* so nobody restores it from
+history), `HybridPDFTemplate`, `StrictPDFTemplate`, `ClientPDFTemplate`,
+`reportTemplate/pdfRenderer.ts`, and the orphaned
+`_shared/buildTemplateBindingContext.ts` (three documented defects, zero
+callers). The style ratchet was re-measured downward in the same edit —
+hexLiterals 636→611, fontHardcoded 53→51 — because the deleted print
+components carried much of the recorded backlog. The orphaned investment
+design-composer (`buildInvestmentReport`) turned out NOT to be dead — its
+modules feed `reportBindingProjection` and `compassSectionRegistry`, i.e.
+the template path itself — so it stays, and the §10 note that called it
+orphaned is superseded by that measurement.
+
+### The folds
+
+**The read-boundary heal now covers the browser.** `get-investment-reports`
+reconciles `financial_calculations` through `reconcileStoredFinancials`
+before any row leaves the service — the same heal the two PDF routes and
+the binding projection have applied since Phase 2 — so browser charts, the
+library summaries and the legacy browser generator read one set of figures.
+This closes the Phase 2 deferral ("the viewer's own charts join in the
+delivery-unification phase") at a single server-side point instead of
+per-component.
+
+**The fourth override-splat copy is folded and named.**
+`ClientPDFGenerator`'s hand-written flat-key→path merge is now
+`overlayOverridesForHistoricRow` in `overrides.pure.ts` — the modelled
+overlay a pre-recompute-era row needs, then the ordinary display paths —
+documented as a display compromise for historic rows, never a recompute,
+and a no-op on current rows. `applyDisplayOverrides` shares the same splat
+mechanics (`splatByPaths`), so the path-walking exists once. The modal's
+`OVERRIDE_FIELD_PATHS` deliberately stays: it is the override editor's own
+field metadata (broader vocabulary, read-back concern), not a competing
+money path.
+
+**The browser/server mirror pairs were measured and left.**
+`lenderLvrCaps`, `capitalAllocationLedger` and `scenarioDeltaEngine` are
+deliberate structural twins with parity tests
+(`scenario_parity_test.ts`, `lender_shading_parity_test.ts`, in place since
+2026-08-30): the lenderLvrCaps constants are byte-identical, the ledger's
+numeric content identical modulo comment counting, and the size difference
+is inlined types on the Deno side. The §5 "measurably drifted" note is
+superseded by that measurement; folding them would repeat the
+`compassSectionRegistry` churn §12 already declined.
+
+### One road per format, with the legacy named behind it
+
+- **Investment** — all six exits now converge. The listings modal's
+  "Download PDF" delivers through `deliverInvestmentPdf` (template-first,
+  legacy server route behind it); its raw-text jsPDF dump survives only for
+  an unsaved generation, where no row exists to deliver. The three
+  `ClientPDFGenerator` mounts (export panel, Generated Reports viewer, the
+  client tab's download sheet) sit after the unified control as
+  "Download (legacy layout)" — the browser pdf-lib generator keeps its ref
+  because the send fallback still reaches it. The client tab's sheet gains
+  the unified download it never had.
+- **Market Intelligence** — generating no longer draws and auto-saves the
+  legacy jsPDF (the browser engine was the default road nobody picked). The
+  typeset control leads the success strip and the History modal rows; the
+  legacy layout is drawn only when chosen, and the choice is labelled. The
+  spec's "never a silent substitute" reasoning survives: nothing falls back
+  across engines.
+- **Client Details** — the typeset control is the toolbar's one primary
+  document control; the two Formara raster buttons moved to the end of the
+  toolbar, demoted and named ("Send to Finance (legacy layout)",
+  "Download (legacy layout)"). They stay because the raster document
+  carries capabilities the typeset one does not (owner-occupied toggle,
+  borrowing-capacity appendix) and a broker's workflow may depend on the
+  exact document.
+- **Property Comparison** — `ComparisonPDFGenerator` used to spend a
+  metered model call (`format-comparison-report`) on every viewer MOUNT,
+  download or not. It now formats only when "Download (legacy layout)" is
+  actually chosen — once per stored row, and the click that paid for the
+  formatting gets its download (the generator handle gained a programmatic
+  `download()` for exactly this). The deterministic typeset control was
+  already first at both mounts.
+- **Cash Flow / Cash Flow Comparison** — the 10 Year menu already carried
+  the converged shape ("Generate PDF" server-first, legacy named beneath);
+  the comparison modal's two jsPDF exports are now demoted ghosts labelled
+  "(legacy layout)" beside the typeset controls that already led.
+- **Report Q&A** — the toolbar's ambiguous "Export PDF" is now
+  "Transcript (legacy layout)": it posts a pdf-lib *transcript* into the
+  chat, a different document from the typeset structured report, which is
+  why it remains a choice rather than being folded. The editors' own jsPDF
+  exports stay untouched — they export user-EDITED content the server
+  routes cannot see.
+- **Borrowing Capacity, Portfolio, Commercial Capacity** — already
+  conformant; nothing changed.
+
+Out of scope, recorded: the quantitative-analysis viewer
+(`pages/ReportViewer`), `PropertyReportGenerator`, `OverviewSnapshotPDF`,
+the Strategy Rationale Brief, call-log and lender-packet exports are
+standalone documents with no typeset twin — there is no unified delivery to
+hide them behind, and inventing one is new-format work, not consolidation.
+
+### Contracts renegotiated, not broken
+
+Each affected `legacyPathStays` spec records the new decision in place of
+the old one: Q&A pins the deletion; Market Intelligence pins "named choice,
+drawn only when picked, never a side effect of generating"; Client Details
+pins the order (unified first) and the naming. The specs that pinned
+handlers, field names, destinations and server contracts pass unchanged —
+demotion touched chrome, not machinery.
+
+### Verification
+
+2,360 report-suite tests green across 108 files (every legacyPathStays
+contract included), `tsc` clean, eslint at exact error parity with `main`
+(zero introduced), `audit:style` ratcheted down and holding, production
+build, edge column-name gate, the security gate chain (registry, static,
+authz, CORS, mass-assignment, public-validation et al.), and esbuild parse
+checks for the touched Deno modules; security inventory unchanged (no new
+internal call edge).
+
+## 14 · Closing pass — every open finding and deferred item, measured and closed (2026-09-02)
+
+The owner asked for whatever remained — "remaining phases and stray
+patterns" — to be executed and the loops closed once and for all. The named
+phases were complete, so this pass took the register's open findings and
+every "deferred, with reasons" note in §9–§13, measured each against the
+live system, and acted where the measurement supported action. What follows
+is the whole list, including the items closed by *decision* rather than by
+code, because a loop closed by "we looked, here is why not" is closed.
+
+### Closed by code
+
+**F17 at its source — the generator fabricated a bedroom count.**
+`effectiveBeds` was `mergedOverrides.bedrooms || propertyDetails?.beds || 3`
+(bathrooms `|| 2`), and the prompt's specification table read it, so a
+property whose count was never captured was asserted to the model as "3
+bedrooms" — which is exactly how a real report said "3 bedrooms" three
+times about a four-bedroom subject. Measured the same day: **0 of the last
+43 reports carry a bedroom count in `property_specs`** while 651 older ones
+do, because the callers spell the facts four ways (`beds`/`bedrooms`,
+`landSizeSqm`/`landSize`/`land_size_sqm`, `carSpaces`/`parking`) and every
+site read exactly one; the specs write read `.landSize`, `.buildingSize`
+and `.parking` while every caller sent `landSizeSqm`, `buildSizeSqm` and
+`carSpaces`, so three of nine specs were null on every row whatever the
+caller knew. Now: one normalisation, once, before anything reads a fact;
+the FACT is null when unknown and the prose says "Not specified"; the
+MODELLING DEFAULT (`modelledBeds`) exists separately and feeds only the
+scorer and the rent lookup, which need a number to model with and never
+reach a page. Pinned by `closingPass.spec.ts`.
+
+**F17's detector, measured on production prose.** The regeneration-retry
+deferral said "detector mileage first"; the detector had had none (0 rows
+touched since Phase 2 merged), so it was run offline over 18 production
+reports — 10 recent, 8 with bedroom counts. Result: **one true positive**
+(a lot priced at $693,100 whose entire money section anchored on the suburb
+median, $625,000, six times — the class disclosure exists for) and **one
+false positive**: a spec list, "Bedrooms: 3 - Bathrooms: 2", whose " - "
+separator the `[\s-]*` bridge read as the hyphen of "3-bathroom", while
+the true label-first "Bathrooms: 2" never counted as the recorded value
+appearing. Counted mentions now allow one separator character, label-first
+forms are collected, and both production cases are pinned as tests.
+**The retry itself is deliberately not wired**: one positive in eighteen is
+not the volume that validates a section-scoped correction loop inside the
+highest-volume generator's resume bookkeeping, and the fabrication fix
+above removes the mechanism that produced the reported contradiction.
+Disclosure stays the remedy; this measurement is recorded so the next
+decision starts from evidence.
+
+**F26's remaining readers.** `reconcileStoredFinancials` now runs where
+the two comparison producers read rows (`compare-investment-reports`,
+`compare-cash-flow-reports` — both were handing a model triple-charged
+figures for historic rows) and inside `projectCashFlow` itself, so the 10
+Year Cash Flow heals whatever path a row arrives by (browser adapters,
+sample data, the live-projection carrier). The cash-flow render routes
+turned out not to read the column at all — they render the snapshot the
+adviser reviewed — so nothing was owed there.
+
+**F28's class, five more instances.** `investment_reports`' SELECT policy
+is `generated_by = auth.uid()` (plus the client-owner branch) — measured
+from `pg_policies` — so a browser read answers with the current user's own
+reports and calls it the whole: the Overview's "reports this month" was one
+person's count, the Q&A library picker offered a user only their own
+reports, a client's portfolio actions listed nothing for a colleague, the
+auto-generated badge marked only your own rows, and the error-log retry's
+status reset matched zero rows for anyone else's report and said nothing.
+All five read through `get-investment-reports` (whose `listOptions`
+already carried every filter needed) or write through
+`manage-investment-reports`; the picker now fetches a body per pick rather
+than 200 documents to draw a list. `closingPass.spec.ts` pins all six
+files (the Phase 4 one included) against a table read.
+
+**A sixth instance, found by the gate rather than by the sweep.** Removing
+the browser client from the Q&A picker left one call behind, and CI's
+undefined-identifier gate caught it — `check-src-missing-names.mjs`, the
+one gate this repo keeps precisely because the app is never fully
+type-checked (`tsconfig.json` declares `"files": []` and delegates to
+project references, so a bare `tsc --noEmit` verifies **nothing**; that is
+why a local run said clean). Looking at the line it named turned up a
+defect older than this pass: the call read `client_properties`, whose only
+SELECT policies are **service-role**, so it answered `[]` with HTTP 200 for
+every user — and an empty property list short-circuits the picker to "no
+reports" whenever it is opened for a client. It now reads through
+`get-client-data`, which brokers that table behind the
+`client_management` permission and a client filter. The lesson is the
+gate's, not the sweep's: an import removed is an audit of every use of it.
+
+**F15.** `manage-branding` trims string columns at the write boundary, and
+the migration brings the stored `company_name` — trailing space, measured
+— to what every reader was already trimming it to.
+
+**Linkage columns.** 48 rows carried only `parent_report_id`, 20 only
+`derived_from_report_id`, 0 disagreed where both were set; the migration
+backfills each from the other, idempotently. Readers already resolved the
+union, so no reading changes — the record is coherent now. All three
+statements were planned against the live schema with `EXPLAIN` before being
+committed (45, 17 and 4 estimated rows, matching the counts above); nothing
+was executed against production.
+
+**A test that failed for its own weight, not for a defect.**
+`printFontPolicy.spec.ts` reads and regex-scans every
+`seed_template_library` migration — **199 MB across nine files**, the
+catalogue written out as SQL — under vitest's default **5-second**
+allowance. Alone it takes about a second; in a loaded parallel run it took
+**7.3 s** and failed the file, which is what "flaky" looked like from the
+outside. The assertion is untouched and the scan is unchanged; only the
+clock now reflects the work, so the gate fails when a face is missing
+rather than when the machine is busy.
+
+**A silent skip made visible.** The Q&A library picker now reads a body per
+pick, and a completed report carrying no body cannot be asked questions
+about. It names the ones it could not read rather than dropping them from
+the selection without a word — a pick that vanishes with no reason reads as
+a broken button.
+
+### Closed by decision, with the measurement
+
+- **F6 (content parity: hero photography, exec summary, editor's note).**
+  The binding projection publishes no hero image and no master binds one;
+  adding a cover photograph is a change to all fifty generated investment
+  masters, which by the catalogue's own rule goes to Claude Design and
+  comes back through the generator — recorded as the design-catalogue
+  decision it is. The legacy route's render-time executive summary and
+  editor's note were model calls made at RENDER; the templated document is
+  the stored report, and a renderer that invents content is the invariant
+  this programme exists to enforce. Not ported, deliberately.
+- **F7 (legacy renderer's eleven private chart drawers vs `vizFigures`).**
+  The legacy route is now the hidden fallback behind every unified
+  delivery; rewriting its charts onto the shared primitives would be
+  effort spent on a road nobody is offered. Left, named.
+- **F8 (reports unlinked from clients).** 2 of 1,193 carry
+  `client_property_id`; both came from the client tab, which links
+  correctly. The other 1,191 were generated from listings or the report
+  form, where no client exists to link — a post-hoc "link to client"
+  affordance is a product feature, not a stray pattern.
+- **Template resolver ×3.** The browser resolver calls the authoritative
+  `resolve_report_template` SQL function first and falls back to a JS
+  ranking parity-locked to the edge copy — one authority, two guarded
+  mirrors. Report-type normaliser ×2: the browser re-exports the shared
+  pure module. Both already folded; the register's note is superseded.
+- **Minor unnumbered items.** Table rows keep together
+  (`table.data tr { page-break-inside: avoid }`); contents labels derive
+  from the spine; the scoring band strings are the engine's own one-line
+  reasons carried for the wheel. "andother" and the mixed minus glyphs
+  were prose defects in one generation, remedied by regeneration.
+
+### Verification
+
+Full vitest suite green end to end in one run — **1,071 files, 20,503
+tests, 0 failures** (the two that failed the first pass were the font-policy
+timeout above and one load-sensitive market-updates fixture, both green
+now); `tsc` clean; eslint **0 errors** on every changed file; style ratchet
+holding; production build; all seven touched Deno modules parsed with
+esbuild and the edge type-check ratchet run locally with Deno installed —
+**no file this changeset touches sits above its baseline**; the security
+gate chain (registry, static, authz, CORS, mass-assignment,
+error-disclosure, public-validation, migrations, portal boundaries);
+security inventory regenerated and unchanged. Production measurements were
+taken read-only through the project's SQL interface and are quoted above;
+the migration was validated with `EXPLAIN` and never executed.
+
+---
+
+## 15 · The generation engine — a control that could never take effect (2026-09-04)
+
+The owner sent a screenshot of the Investment Analysis page's **GENERATION
+ENGINE** drop-down and asked a fair question: how is an operator meant to
+know whether "the trimmed version" is the one to pick — and if it is now the
+primary engine, name it Primary.
+
+The answer is worse than the question assumed. **There was nothing to pick.**
+
+### What the drop-down did
+
+Nothing. `InvestmentReportGenerator.tsx` sends no `reportTier`, so the
+generator's `rawTier` falls to its default:
+
+```ts
+const rawTier = propertyDetails?.reportTier || 'compass';
+const isCompassTier = rawTier === 'compass' || rawTier === 'compass-40';
+const generationEngine = isCompassTier || requestedEngine === 'compass-40'
+  ? 'compass-40' : 'legacy';
+```
+
+`isCompassTier` is therefore **always true from that page**, and the engine
+resolves to Compass whatever the operator selected. That is not a bug in the
+resolution — the tier is the data-minimisation boundary, and an engine
+preference must never be able to pull financial content into a non-financial
+report — but it makes the control inert.
+
+The drop-down opened on the option that never ran, and described it as the
+safe one: *"Legacy Compass — Stable · Full DB template, ~12 chunks,
+battle-tested."* Every quality gate this programme built runs under the
+other one — the canonical section registry, `postProcessReportMarkdown`,
+`runQAValidation` — all inside `if (compass40OverlayActive)`. So the default
+was labelled *stable* and was in fact the ungated path, and it made no
+difference either way.
+
+**A dead control is worse than no control**, the rule this repository
+already applies to the AUSTRAC path card. This one was worse than dead.
+
+### What the column recorded
+
+`generation_engine` was written **only by the browser**, at request time.
+So the row recorded the *selection*, not the run. Measured on 2026-09-04:
+
+| `report_tier` | `generation_engine` | rows |
+| --- | --- | --- |
+| compass | legacy | **1,124** |
+| snapshot | legacy | 25 |
+| briefing | legacy | 21 |
+| strategic | legacy | 10 |
+| financial | legacy | 10 |
+| compass | compass-40 | 2 |
+| briefing | compass-40 | 1 |
+
+Every one of those 1,124 rows says "legacy" about a document the Compass
+engine produced. **A record of what was requested is not a record of what
+happened.** `generate-investment-report` now writes the column on the
+completion update, from `compass40OverlayActive` — the flag that actually
+governed the run.
+
+The historic rows are **deliberately not backfilled**. The rows predating
+the tier promotion genuinely did run on the legacy engine, and the honest
+discriminator is `total_sections` (the Compass registry persists 17, the
+legacy section list 12) rather than a date nobody can pin to a deployment.
+Replacing one guess with another is not a repair; a regeneration now stamps
+the truth on the rows it touches.
+
+### What changed on screen
+
+The page **states** the engine instead of offering it: *Compass — Primary*,
+with what it produces and what it deliberately omits (purchase price, yield,
+LVR, loan and ten-year cash flow belong to the Financial Analysis Report).
+The name lives in `ENGINE_LABEL` in one module, because two literals is how
+two screens come to disagree.
+
+The Regenerate dialog carried the same two options, and there the choice was
+not merely dead but **harmful**: on a Compass report the server overrides it,
+and on a Financial Analysis report picking Compass would strip the financials
+the report exists for. It is a statement now too, resolved from the report's
+own record.
+
+### The rule, in one place
+
+`src/lib/reports/generationEngine.pure.ts` mirrors the server's expression —
+tier first, caller preference only where the tier leaves the question open.
+It is deliberately neither trimmed nor lower-cased, because the server
+compares with `===`: a module whose whole job is to say what will happen
+must not be kinder than the rule it reports. `generationEngineTruth.spec.ts`
+reads the edge function's own source and fails when the two drift, the guard
+`llmUsageBinding.pure.ts` already carries against the router.
+
+### One defect found on the way
+
+`useChunkedRegeneration` sent `reportTier: normaliseReportTier(...)`, and
+that helper collapses **everything except `financial*` into `compass-40`**.
+It is right for counting chunks and wrong for the tier, which is the
+boundary the server resolves the engine from — so regenerating any of the
+**56 production `snapshot` / `briefing` / `strategic` reports** would have
+sent `compass-40`, and returned a Compass document in place of the report
+that was there. It now sends the report's own stored tier and resolves the
+engine through the shared rule.
+
+Two smaller things fixed in passing: the dialog read the `detail` projection
+(~95KB of report prose plus every JSON blob on the row) to read one string,
+and passed `listOptions.select`, which that function documents as
+"deprecated and deliberately ignored" — it takes `generationProgress` now.
+
+### Verification
+
+Full vitest suite green in one run — **1,075 files, 20,556 tests, 0
+failures**; `check-src-missing-names` clean; the edge column-name gate and
+the style-token ratchet both holding; eslint **0 errors on every changed
+file** and the repo total down one (44, from 45 — a
+pre-existing `prefer-as-const` in a file this touches); production build;
+the edited edge function parsed with esbuild; the edge type-check ratchet run
+under the Deno version CI resolves (`v2.x` → 2.9.6) with **no file above its
+baseline**. A local Deno 2.1.4 reports four unrelated `builderStock` /
+`immutableDocuments` files as regressed: they use `Uint8Array<ArrayBuffer>`,
+which needs TypeScript 5.7, and they are clean under the CI toolchain — the
+gate is only meaningful on the version CI pins. Production counts were taken
+read-only through the project's SQL interface and are quoted above; nothing
+was written to the database.

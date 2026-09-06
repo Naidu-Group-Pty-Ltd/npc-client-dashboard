@@ -32,7 +32,8 @@ import {
   MAX_WORKBOOK_BYTES, RECOVERABLE_AVAILABILITY, RECOVERABLE_AVAILABILITY_LEGACY,
   RECOVERY_REQUEST_TTL_MINUTES, callbackRefusal, constantTimeEquals, decodeWorkbook,
   isRecoverableStoredAvailability, mergeRecoveredLink,
-  outboundRecoveryPayload, recoveredRowsFromWorksheet, shouldRequestLinkRecovery,
+  outboundRecoveryPayload, projectUploadListRow, recoveredRowsFromWorksheet,
+  shouldRequestLinkRecovery,
 } from '../../../supabase/functions/_shared/builderStock/linkRecovery.pure';
 import {
   alignWorksheetRows, hyperlinkTargetOf, locateHeaderRow, matchWorksheet,
@@ -788,14 +789,76 @@ describe('a stored row may carry either spelling of the same reading', () => {
     })).toBe(false);
   });
 
-  it('the portal control and the server ask the same question', () => {
+  it('the portal control renders the server\'s answer, not its own reading', () => {
+    /*
+     * The predecessor of this test asserted only that both files NAMED the
+     * rule — and under it the control never rendered for anyone, twice over:
+     * the page fed the rule `upload.error_detail.reason` (a field the list
+     * deliberately never sends), and an automated type-fix then fed it
+     * `upload.error_code` (the notice code, never an availability reason).
+     * Both were always false. So this pins what the rule is FED, on both
+     * sides: the server derives the answer beside the data only it may read,
+     * and the page renders that answer.
+     */
     const page = readFileSync('src/pages/builder/BuilderStockList.tsx', 'utf8');
     const server = readFileSync(
       'supabase/functions/builder-portal-stock/index.ts', 'utf8');
-    expect(page).toContain('isRecoverableStoredAvailability');
-    expect(server).toContain('isRecoverableStoredAvailability');
-    // And the server is still the authority: it re-checks rather than trusting.
+    expect(page).toContain('upload.link_recovery_available === true');
+    // The page never re-derives from fields the wire does not carry.
+    expect(page).not.toContain('upload.error_detail');
+    expect(page).not.toContain('isRecoverableStoredAvailability');
+    // The list read selects the reason for itself and sends only the answer…
+    expect(server).toMatch(/\$\{STOCK_UPLOAD_SELECT\}, error_detail/);
+    expect(server).toMatch(/\.map\(projectUploadListRow\)/);
+    // …and the server is still the authority: the act re-checks its own row.
     expect(server).toMatch(/if \(!isRecoverableStoredAvailability\(availability\)\)/);
+  });
+});
+
+/*
+ * The projection that carries that answer. `error_detail` holds the internal
+ * diagnosis and must stay behind the server; the browser gets the one fact it
+ * can act on.
+ */
+describe('the browser is handed the answer, never the diagnosis', () => {
+  const upload = (error_detail: unknown) => ({
+    id: 'upload-1', status: 'completed', error_code: 'source_links_unavailable',
+    error_message: 'Links were not readable from this export.', error_detail,
+  });
+
+  it('a recoverable reason — either spelling — answers true', () => {
+    for (const reason of [RECOVERABLE_AVAILABILITY, RECOVERABLE_AVAILABILITY_LEGACY]) {
+      const row = projectUploadListRow(upload({ reason }));
+      expect(row.link_recovery_available).toBe(true);
+      expect('error_detail' in row).toBe(false);
+    }
+  });
+
+  it('anything else answers false — including the rows that had the workbook', () => {
+    for (const detail of [
+      { reason: 'resolved' }, { reason: 'none_present' },
+      { reason: 'unavailable_workbook_unreadable' },
+      { reason: 'unavailable_no_worksheet_match' },
+      { detail: 'internal diagnosis with no reason at all' },
+      null, undefined,
+    ]) {
+      expect(projectUploadListRow(upload(detail)).link_recovery_available).toBe(false);
+    }
+  });
+
+  it('carries every other field through untouched', () => {
+    const row = projectUploadListRow(upload({ reason: RECOVERABLE_AVAILABILITY }));
+    expect(row).toMatchObject({
+      id: 'upload-1', status: 'completed', error_code: 'source_links_unavailable',
+      error_message: 'Links were not readable from this export.',
+    });
+  });
+
+  it('asks exactly the question the refresh operation asks of the same row', () => {
+    // One rule, imported by both: the projection may not drift from the act.
+    const reason = RECOVERABLE_AVAILABILITY_LEGACY;
+    expect(projectUploadListRow(upload({ reason })).link_recovery_available)
+      .toBe(isRecoverableStoredAvailability(reason));
   });
 });
 
@@ -1185,7 +1248,7 @@ describe('the production layout: banners above the header, blanks between proper
     expect(worksheetScore(provenCsv, headerless[0])).toBe(0);
     const match = matchWorksheet(provenCsv, headerless);
     expect(match.ok).toBe(false);
-    if (!match.ok) expect(match.reason).toBe('no_match');
+    if (match.ok === false) expect(match.reason).toBe('no_match');
   });
 
   it('applies zero links when two tabs are equally like the proven CSV', () => {
@@ -1193,7 +1256,7 @@ describe('the production layout: banners above the header, blanks between proper
     twinTabs[1] = { ...twinTabs[1], name: 'STOCKLIST V002 (copy)' };
     const match = matchWorksheet(provenCsv, twinTabs);
     expect(match.ok).toBe(false);
-    if (!match.ok) expect(match.reason).toBe('ambiguous');
+    if (match.ok === false) expect(match.reason).toBe('ambiguous');
     // Nothing decisive means nothing applied — the caller gets no worksheet.
     expect(recoveredRowsFromWorksheet(match.ok ? match.sheet : null)).toEqual([]);
   });

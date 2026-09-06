@@ -33,6 +33,9 @@ import {
 import {
   chooseCardImage,
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
+import type {
+  DisplayableImage,
+} from '../../../supabase/functions/_shared/builderStock/primaryImage';
 
 /* A page that presents one design as a package: the design, and package facts,
    and no lot designation anywhere. */
@@ -234,9 +237,9 @@ describe('E — a stronger image arriving later takes the card', () => {
     };
 
     // Design alone: it is the card.
-    expect(chooseCardImage([designRow as never])?.image.id).toBe('design-image');
+    expect(chooseCardImage([designRow as DisplayableImage])?.image.id).toBe('design-image');
     // Lot-specific arrives — even at a LATER position — and takes it back.
-    expect(chooseCardImage([designRow, lotRow] as never[])?.image.id).toBe('lot-image');
+    expect(chooseCardImage([designRow, lotRow] as DisplayableImage[])?.image.id).toBe('lot-image');
   });
 });
 

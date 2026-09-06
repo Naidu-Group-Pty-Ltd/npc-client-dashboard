@@ -31,6 +31,7 @@ import {
 } from './sourceAssets.pure.ts';
 import { eligibilityDetailFor } from './assessSourceImage.ts';
 import { roleDetail } from './sourceImageRole.pure.ts';
+import { sanitizationCarryForward } from './sanitizedDerivative.pure.ts';
 import { sha256Hex } from './rasterPng.ts';
 import {
   classifyPrimaryImageStanding, type DisplayableImage, type PrimaryImageStanding,
@@ -155,6 +156,21 @@ import {
  * against such a document was judged on the wrong generation's pictures and
  * is stale by definition.
  *
+ * 13 lets a COVER STATE ITS HERO BY SIZE. `selectCoverHero` refused every
+ * page presenting more than one unrepeated photograph, on the reasoning that
+ * a page presenting a choice has not said which picture is the property's.
+ * That is right where ownership is the question, and wrong where the page has
+ * already answered by how it drew them. Measured, 3 September 2026, on a
+ * builder's own single-property brochure uploaded as a stock list (LOT 1731,
+ * Austin Estate, Lara): both photographs on page 1 were found, attributed and
+ * stored — the facade render covering 47.5% of the page and the only other
+ * 14.2% — and the property was told its own brochure presents no cover image.
+ * A photograph the cover draws at least twice the page of any other is now
+ * taken as the hero, in the document's own terms and with the geometry named
+ * in the reason; comparable sizes still answer no image. Every negative
+ * banked at 12 against such a document was judged before the page's own
+ * emphasis was read.
+ *
  * This is the bump doing precisely the job it exists for: `negativeProvenance`
  * compares the stored version against this one, so raising it reopens every
  * banked negative for a reader that can now find what the old one could not.
@@ -193,6 +209,52 @@ export interface AttachOutcome {
 }
 
 /**
+ * What a re-store of these exact bytes must put back on the row.
+ *
+ * THE IO HALF of `sanitizationCarryForward`, which holds the rule. Every store
+ * path upserts a FRESH `source_detail` on
+ * `(stock_item_id, source_stage, source_reference)`, so without this a
+ * re-import destroys a repair that is still a repair of exactly the bytes
+ * being written — see that function's header for what that cost.
+ *
+ * ONE ROW, READ BY THE CONFLICT KEY the upsert is about to use, so the record
+ * carried forward is the one belonging to the row being replaced and never a
+ * sibling's. A read that fails carries NOTHING, which is the same outcome the
+ * defect already produced and is never worse than it: a lost repair costs a
+ * blank card and another repair, while a wrongly carried one puts a stale
+ * picture in front of a client.
+ *
+ * It is exported so every store path asks the same question. The alternative —
+ * each site reading the row its own way — is how three of them came to disagree
+ * about which keys they owned.
+ */
+export async function carriedSanitizationFor(
+  db: any,
+  input: {
+    stockItemId: string;
+    sourceStage: string;
+    reference: string;
+    storedSha256: string | null;
+  },
+): Promise<Record<string, unknown>> {
+  if (!input.storedSha256) return {};
+  try {
+    const { data, error } = await db.from('builder_stock_item_images')
+      .select('source_detail')
+      .eq('stock_item_id', input.stockItemId)
+      .eq('source_stage', input.sourceStage)
+      .eq('source_reference', input.reference)
+      .limit(1);
+    if (error) return {};
+    const detail = (data as Array<{ source_detail?: Record<string, unknown> | null }> | null)
+      ?.[0]?.source_detail;
+    return sanitizationCarryForward(detail ?? null, input.storedSha256);
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Fetch, validate, store and record one property's source-supplied imagery.
  *
  * `stockItemId` is resolved by the caller from the source's own statement of
@@ -228,6 +290,17 @@ export async function storeSourceImages(
         .upload(path, bytes, { contentType: check.contentType, upsert: true });
       if (uploadError) throw uploadError;
 
+      const storedSha = await sha256Hex(bytes);
+      // What the sanitization stage already established about these exact
+      // bytes. Read BEFORE the upsert replaces the column. See
+      // `carriedSanitizationFor`.
+      const carried = await carriedSanitizationFor(db, {
+        stockItemId: input.stockItemId,
+        sourceStage: 'uploaded_document',
+        reference,
+        storedSha256: storedSha,
+      });
+
       await db.from('builder_stock_item_images').upsert({
         stock_item_id: input.stockItemId,
         upload_id: input.uploadId,
@@ -260,8 +333,8 @@ export async function storeSourceImages(
           // The bytes are stored exactly as the source served them, so one
           // hash answers both "what did the builder supply" and "what are we
           // serving".
-          source_sha256: await sha256Hex(bytes),
-          stored_sha256: await sha256Hex(bytes),
+          source_sha256: storedSha,
+          stored_sha256: storedSha,
           extraction_method: 'downloaded_asset',
           transformation: null,
           provenance_version: PROVENANCE_VERSION,
@@ -269,6 +342,9 @@ export async function storeSourceImages(
           // question from every other one recorded here. See
           // `marketplaceEligibility.pure.ts`.
           ...await eligibilityDetailFor(bytes, asset.role.role),
+          // Last, so a re-store cannot lose what another stage established
+          // about these exact bytes — and only ever the keys that stage owns.
+          ...carried,
         },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 
@@ -354,6 +430,20 @@ export async function storeSourceImageBytes(
     .upload(path, input.bytes, { contentType: check.contentType, upsert: true });
   if (uploadError) return false;
 
+  /*
+   * The caller records the hash inside `detail`, so that is the one the
+   * sanitization record has to match — read it from there rather than hashing
+   * again, or a caller whose bytes and stated hash disagree would carry
+   * forward a repair of something else.
+   */
+  const carried = await carriedSanitizationFor(db, {
+    stockItemId: input.stockItemId,
+    sourceStage: 'uploaded_document',
+    reference,
+    storedSha256: typeof (input.detail ?? {}).stored_sha256 === 'string'
+      ? String((input.detail ?? {}).stored_sha256) : null,
+  });
+
   await db.from('builder_stock_item_images').upsert({
     stock_item_id: input.stockItemId,
     upload_id: input.uploadId,
@@ -378,6 +468,9 @@ export async function storeSourceImageBytes(
       provenance_version: PROVENANCE_VERSION,
       ...(input.detail ?? {}),
       ...await eligibilityDetailFor(input.bytes, (input.detail ?? {}).role),
+      // Last, so a re-store cannot lose what another stage established about
+      // these exact bytes — and only ever the keys that stage owns.
+      ...carried,
     },
   }, { onConflict: 'stock_item_id,source_stage,source_reference' });
 

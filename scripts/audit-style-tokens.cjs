@@ -23,12 +23,13 @@
  * new violation was indistinguishable from the standing backlog. A check that
  * is always red is not a ratchet; it is noise that teaches people to skip it.
  *
- * The 36 and the 20 are concentrated in the legacy print components this
- * repository is in the middle of replacing — `StrictPDFTemplate`,
- * `ClientPDFTemplate`, `HybridPDFTemplate`, `CashFlowAnalysisModal`,
- * `FormaraPDFGenerator` — where a hex literal is a *print* colour rather than
- * screen UI. Rewriting them to chase the number would be work against
- * components that are being deleted; see `docs/reports/DESIGN_SYSTEM.md`.
+ * The 36 and the 20 were concentrated in the legacy print components this
+ * repository was in the middle of replacing — `StrictPDFTemplate`,
+ * `ClientPDFTemplate`, `HybridPDFTemplate` (all three deleted in the legacy
+ * consolidation), `CashFlowAnalysisModal`, `FormaraPDFGenerator` — where a
+ * hex literal is a *print* colour rather than screen UI. Rewriting the
+ * survivors to chase the number would be work against components whose
+ * documents are legacy layouts; see `docs/reports/DESIGN_SYSTEM.md`.
  *
  * So the baseline was re-measured rather than the code rewritten, and
  * `cssHexOutsideTokens` was ratcheted **down** 15 → 2 in the same edit — a real

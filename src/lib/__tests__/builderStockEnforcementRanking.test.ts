@@ -43,6 +43,9 @@ import {
 import {
   chooseCardImage,
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
+import type {
+  DisplayableImage,
+} from '../../../supabase/functions/_shared/builderStock/primaryImage';
 import {
   MARKETPLACE_ELIGIBILITY_VERSION,
 } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
@@ -186,7 +189,7 @@ describe('the sweep settles to the ladder, not to the repealed builder-only rule
     const db = fakeDb([item('item-sv', 'image-sv')], [image]);
 
     // The ladder put it there: tier 4 is a real answer, not an absence.
-    expect(chooseCardImage([image as never])?.image.id).toBe('image-sv');
+    expect(chooseCardImage([image as unknown as DisplayableImage])?.image.id).toBe('image-sv');
 
     const enforced = await enforceStrictPrimaryImages(db as never, ORG);
 
@@ -198,7 +201,7 @@ describe('the sweep settles to the ladder, not to the repealed builder-only rule
     const image = verifiedWeb('image-web', 'item-web');
     const db = fakeDb([item('item-web', 'image-web')], [image]);
 
-    expect(chooseCardImage([image as never])?.image.id).toBe('image-web');
+    expect(chooseCardImage([image as unknown as DisplayableImage])?.image.id).toBe('image-web');
 
     const enforced = await enforceStrictPrimaryImages(db as never, ORG);
 
@@ -292,7 +295,7 @@ describe('the two writers can no longer disagree', () => {
       expect(
         db.tables.builder_stock_items[0].primary_image_id,
         `${label}: the sweep and the ranking must agree`,
-      ).toBe(chooseCardImage(images as never[])?.image.id ?? null);
+      ).toBe(chooseCardImage(images as unknown as DisplayableImage[])?.image.id ?? null);
     }
   });
 });

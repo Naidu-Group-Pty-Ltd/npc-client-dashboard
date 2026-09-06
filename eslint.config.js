@@ -36,6 +36,36 @@ export default tseslint.config(
       "@typescript-eslint/no-empty-object-type": "off",
       "react-hooks/rules-of-hooks": "off",
       "react-hooks/exhaustive-deps": "off",
+      // React Compiler rules, new in eslint-plugin-react-hooks 7 (the version
+      // ESLint 10 requires — v5 peers at eslint ^9 and is what blocked the
+      // upgrade). Its `recommended` turns on fifteen rules that did not exist
+      // in v5, and they fire 871 times on this tree: 573 "setState
+      // synchronously within an effect", 192 "cannot access refs during
+      // render", and the rest across purity, memoisation and immutability.
+      //
+      // These are real findings, not noise, so they are NOT switched off —
+      // they warn. Same treatment, and for the same reason, as the
+      // style-token guardrail below: a large standing backlog that must not
+      // block the build, kept visible so new code can be held to it. Turning
+      // any of these to "error" is a deliberate act once its backlog is paid
+      // down.
+      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/set-state-in-render": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/purity": "warn",
+      "react-hooks/immutability": "warn",
+      "react-hooks/globals": "warn",
+      "react-hooks/static-components": "warn",
+      "react-hooks/use-memo": "warn",
+      "react-hooks/void-use-memo": "warn",
+      "react-hooks/preserve-manual-memoization": "warn",
+      "react-hooks/error-boundaries": "warn",
+      "react-hooks/config": "warn",
+      "react-hooks/gating": "warn",
+      // New in ESLint 10's recommended set, with their own standing backlog
+      // (108 and 10 occurrences). Same rule: visible, not blocking.
+      "no-useless-assignment": "warn",
+      "preserve-caught-error": "warn",
       // Style-token guardrail. Warns (not errors) because thousands of legacy
       // violations still exist; the hard gate is the ratchet in
       // scripts/audit-style-tokens.cjs. New code should use semantic tokens.

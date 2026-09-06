@@ -941,6 +941,13 @@ export function buildReportCss(input: ReportCssInput): string {
   }
   ul, ol { margin: 0 0 ${pt(d.paragraphGapPt)}; padding-left: 14pt; }
   li { margin-bottom: ${pt(d.paragraphGapPt / 2)}; }
+  /* Footnotes — the markdown renderer's [^id] references and its Notes list.
+     A raised number, not vertical-align:super: the UA's super shifts a whole
+     line of leading and opens a visible gap in the paragraph above it. The
+     notes list sets a step smaller than body, like every apparatus line. */
+  sup.fn-ref { font-size: 0.65em; line-height: 0; vertical-align: 0.45em; }
+  ol.fn-notes { font-size: 0.88em; margin-top: ${pt(d.paragraphGapPt)}; }
+  ol.fn-notes li { margin-bottom: ${pt(d.paragraphGapPt / 3)}; }
   /* A list whose items carry their own leading glyph.
      The model's glance strip writes its own marker per item — a tick, a
      diamond, a warning sign, a star — and each one means something. Left as an

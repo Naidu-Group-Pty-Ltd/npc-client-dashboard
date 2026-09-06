@@ -22,6 +22,7 @@ import { collectFootnoteDefinitions } from "./footnotes.ts";
 import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 import { wrapInlineInsightParagraphs } from "./insightSections.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 // The house cover artwork used to be inlined here as ~490 KB of base64
 // (`_shared/reportDesign/defaultAssets.generated.ts`). Every file under
 // `supabase/functions/` counts toward *every* function's deploy upload, so those
@@ -2897,7 +2898,10 @@ export async function buildHtml(
     ? "Property Snapshot"
     : "Investment Report";
 
-  const fin = report.financial_calculations || {};
+  // Historic rows carry the pre-fix fold's inflated projection series and
+  // totals that do not foot; the charts and headline chips below must draw
+  // the reconciled figures. No-op on post-fix rows.
+  const fin = reconcileStoredFinancials(report.financial_calculations || {}).fin || {};
   const km = fin.keyMetrics || fin.key_metrics || {};
   const score = report.investment_score || {};
   const loc = report.location_intelligence || {};

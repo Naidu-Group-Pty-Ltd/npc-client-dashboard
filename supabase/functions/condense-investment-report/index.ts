@@ -401,10 +401,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (!targetTier || !['briefing', 'snapshot', 'financial'].includes(targetTier)) {
-      return new Response(JSON.stringify({ 
-        error: 'Target tier must be "briefing", "snapshot" or "financial"',
-        success: false 
+    // One engine per variant name (audit F9). "Financial" is a DETERMINISTIC
+    // split of the parent produced by fork-investment-report; this function
+    // summarises with a model. Both used to answer to "financial" — under
+    // different linkage columns, so neither saw the other's child and one
+    // parent could hold two contradictory Financial documents. The server
+    // refuses now, whatever a caller routes.
+    if (!targetTier || !['briefing', 'snapshot'].includes(targetTier)) {
+      return new Response(JSON.stringify({
+        error: targetTier === 'financial'
+          ? 'The Financial report is produced deterministically by fork-investment-report, not by condensation.'
+          : 'Target tier must be "briefing" or "snapshot"',
+        success: false
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -414,7 +422,7 @@ Deno.serve(async (req) => {
     // The client-facing variant is required at creation time. Never rely on
     // the database default here: that would mislabel a Briefing/Snapshot as a
     // Compass base report in the generated report library.
-    const reportVariant = targetTier as 'briefing' | 'snapshot' | 'financial';
+    const reportVariant = targetTier as 'briefing' | 'snapshot';
 
     // Supabase client already initialized above for auth verification
 
@@ -485,6 +493,18 @@ Deno.serve(async (req) => {
           status: 'processing',
           error_message: null,
           updated_at: new Date().toISOString(),
+          // A refreshed child carries the parent's CURRENT record, not the
+          // copy taken when the child was first created. Regeneration used to
+          // rewrite the prose and leave these columns as they were — fresh
+          // words over years-old figures, which is the staleness this phase
+          // exists to end (audit F10).
+          property_specs: parentReport.property_specs,
+          demographics_data: parentReport.demographics_data,
+          economic_data: parentReport.economic_data,
+          financial_calculations: parentReport.financial_calculations,
+          investment_score: parentReport.investment_score,
+          location_intelligence: parentReport.location_intelligence,
+          data_sources: parentReport.data_sources,
         })
         .eq('id', existingTier.id)
         .select('id')
@@ -506,6 +526,11 @@ Deno.serve(async (req) => {
         report_tier: targetTier,
         report_variant: reportVariant,
         parent_report_id: parentReportId,
+        // Both linkage columns, so the family is one lookup for every reader.
+        // History split them: fork children carried derived_from_report_id,
+        // condense children carried parent_report_id, and the two engines
+        // could not see each other's rows.
+        derived_from_report_id: parentReportId,
         report_scope: parentReport.report_scope,
         property_specs: parentReport.property_specs,
         // Copy structured data from parent
@@ -569,7 +594,7 @@ IMPORTANT:
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      maxTokens: targetTier === 'briefing' ? 16000 : targetTier === 'financial' ? 14000 : 6000,
+      maxTokens: targetTier === 'briefing' ? 16000 : 6000,
       temperature: 0.3,
     });
 
@@ -612,11 +637,11 @@ IMPORTANT:
     // Phase 7: QA validation (returned in response for observability)
     let postProcessReport: unknown = null;
     let qaReport: unknown = null;
-    if (targetTier === 'briefing' || targetTier === 'financial') {
+    if (targetTier === 'briefing') {
       try {
         const { postProcessReportMarkdown } = await import('../_shared/compassPostProcessor.ts');
         const { runQAValidation } = await import('../_shared/compassQAValidator.ts');
-        const tier = targetTier === 'financial' ? 'financial-analysis' : 'compass-40';
+        const tier = 'compass-40';
         const result = postProcessReportMarkdown(condensedContent, tier);
         condensedContent = result.markdown;
         postProcessReport = result.report;
@@ -635,6 +660,10 @@ IMPORTANT:
         report_content: condensedContent,
         status: 'completed',
         sources_content: parentReport.sources_content, // Copy sources from parent
+        // The staleness stamp: this child reflects its parent as of NOW.
+        // Freshness is judged against this at read (subReportFamily.pure.ts),
+        // never stored as a flag nothing remembers to clear.
+        variant_generated_at: new Date().toISOString(),
       })
       .eq('id', condensedReport.id);
 

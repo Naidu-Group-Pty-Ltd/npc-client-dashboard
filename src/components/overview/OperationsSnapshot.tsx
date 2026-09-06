@@ -5,7 +5,7 @@ import { isBefore, isToday, startOfDay, startOfMonth, addDays } from 'date-fns';
 import { AlertTriangle, Bell, CalendarClock, FileText } from 'lucide-react';
 import { KpiRow, MetricTile } from '@/components/aurixa';
 import { useAllReminders } from '@/hooks/useAllReminders';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 /**
  * The universal executive snapshot — operational metrics every tier
@@ -40,12 +40,16 @@ export function OperationsSnapshot({ showReports = true }: { showReports?: boole
     enabled: showReports,
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
-      const { count, error } = await supabase
-        .from('investment_reports')
-        .select('id', { count: 'exact', head: true })
-        .gte('created_at', startOfMonth(new Date()).toISOString());
+      // Through the server, not the table: `investment_reports`' SELECT policy
+      // is `generated_by = auth.uid()`, so a browser count answers with the
+      // current user's own reports and calls it the month's total.
+      const { data, error } = await invokeSecureFunction('get-investment-reports', {
+        projection: 'idLookup',
+        listMode: true,
+        listOptions: { createdAfter: startOfMonth(new Date()).toISOString(), pageSize: 1 },
+      });
       if (error) throw error;
-      return count ?? 0;
+      return typeof data?.count === 'number' ? data.count : 0;
     },
   });
 

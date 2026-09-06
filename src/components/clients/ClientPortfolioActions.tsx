@@ -85,16 +85,16 @@ export function ClientPortfolioActions({
       
       if (propertyIds.length === 0) return [];
 
-      const { data, error } = await supabase
-        .from('investment_reports')
-        .select('id, property_address, status, created_at, client_property_id')
-        .in('client_property_id', propertyIds)
-        .eq('is_client_report', true)
-        .eq('status', 'completed')
-        .order('created_at', { ascending: false });
+      // Through the server, not the table: the SELECT policy admits the
+      // report's author and the client's owner, so a colleague opening this
+      // client saw an empty list and a healthy screen.
+      const { data, error } = await invokeSecureFunction('get-investment-reports', {
+        listMode: true,
+        listOptions: { clientPropertyIds: propertyIds, isClientReport: true, status: 'completed', pageSize: 200 },
+      });
 
       if (error) throw error;
-      return (data || []) as InvestmentReport[];
+      return ((data?.reports ?? []) as InvestmentReport[]);
     },
     enabled: properties.length > 0,
   });

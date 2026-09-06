@@ -1,10 +1,15 @@
 /**
- * The legacy client details path is not deprecated, and this is what stops it.
+ * The legacy client details path stays reachable — demoted, named, and last.
  *
- * The stakes are higher here than for any format before it. This document is the
- * one the business actually *sends*: the first button on the client toolbar is
- * "Send to Finance", and it puts the file in a mortgage broker's portal. Break
- * that and the failure is outside the building.
+ * The stakes are higher here than for any format before it. This document is
+ * the one the business actually *sends*: it puts a file in a mortgage
+ * broker's portal, and breaking that is a failure outside the building. The
+ * legacy-consolidation phase made the typeset control the toolbar's one
+ * primary document control and moved the two raster buttons to the end with
+ * their layout named — hidden behind the unified delivery, never deleted,
+ * because the raster document carries capabilities the typeset one does not
+ * (the owner-occupied toggle, the borrowing-capacity appendix) and a
+ * partner's workflow may depend on the exact document.
  *
  * Two claims, asserted structurally on source, because that is the property that
  * matters and a behavioural test of one button says nothing about a 2,705-line
@@ -66,6 +71,23 @@ describe('the legacy generator still exists', () => {
 
   it('is still mounted twice on the client toolbar', () => {
     expect((read(MODAL).match(/<FormaraPDFGenerator/g) ?? [])).toHaveLength(2);
+  });
+
+  /**
+   * The legacy-consolidation decision, pinned: the typeset control leads the
+   * toolbar and the two raster buttons follow it, demoted and with their
+   * layout named — hidden behind the unified delivery, never deleted. Order
+   * is asserted on source position because that is the property that
+   * changed; the mounts themselves are counted above.
+   */
+  it('follows the unified control, demoted and named as the legacy layout', () => {
+    const modal = read(MODAL);
+    const unifiedAt = modal.indexOf('<ClientDetailsDownloadButton');
+    const firstLegacyAt = modal.indexOf('<FormaraPDFGenerator');
+    expect(unifiedAt).toBeGreaterThan(-1);
+    expect(firstLegacyAt).toBeGreaterThan(unifiedAt);
+    expect(modal).toContain('Send to Finance (legacy layout)');
+    expect(modal).toContain("'Download (legacy layout)'");
   });
 
   it('still reaches the email composer through the modal', () => {

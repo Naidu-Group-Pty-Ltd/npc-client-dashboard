@@ -77,21 +77,24 @@ export function PaymentGateScreen() {
     setBusy(true);
     try {
       const result = await startActivationCheckout(window.location.origin);
-      if (result.ok) {
-        // Same tab: this IS the task. A new tab leaves a dead lock screen
-        // behind that the customer comes back to and reads as "it didn't work".
-        window.location.assign(result.url);
-        return;
-      }
-      if (result.pricingUrl) {
-        setFallbackUrl(result.pricingUrl);
-        toast.error(
-          "Could not open the payment page automatically — use the link below.",
-        );
-      } else {
-        toast.error(
-          "Could not start the payment. Please try again, or contact support.",
-        );
+      switch (result.ok) {
+        case true:
+          // Same tab: this IS the task. A new tab leaves a dead lock screen
+          // behind that the customer comes back to and reads as "it didn't work".
+          window.location.assign(result.url);
+          return;
+        case false:
+          if (result.pricingUrl) {
+            setFallbackUrl(result.pricingUrl);
+            toast.error(
+              "Could not open the payment page automatically — use the link below.",
+            );
+          } else {
+            toast.error(
+              "Could not start the payment. Please try again, or contact support.",
+            );
+          }
+          return;
       }
     } finally {
       setBusy(false);
@@ -268,12 +271,16 @@ function ActivateNowButton() {
       onClick={async () => {
         setBusy(true);
         const result = await startActivationCheckout(window.location.href);
-        if (result.ok) window.location.assign(result.url);
-        else {
-          setBusy(false);
-          if (result.pricingUrl)
-            window.open(result.pricingUrl, "_blank", "noopener,noreferrer");
-          else toast.error("Could not start the payment. Please try again.");
+        switch (result.ok) {
+          case true:
+            window.location.assign(result.url);
+            break;
+          case false:
+            setBusy(false);
+            if (result.pricingUrl)
+              window.open(result.pricingUrl, "_blank", "noopener,noreferrer");
+            else toast.error("Could not start the payment. Please try again.");
+            break;
         }
       }}
     >

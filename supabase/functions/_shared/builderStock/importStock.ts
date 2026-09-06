@@ -41,7 +41,8 @@ import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { readAllRows } from './pagedRead.ts';
 import { assignPdfMediaRolesPerProperty } from './pdfPrimaryImage.pure.ts';
 import {
-  PROVENANCE_VERSION, storeSourceImages, type SourceImageFetcher,
+  carriedSanitizationFor, PROVENANCE_VERSION, storeSourceImages,
+  type SourceImageFetcher,
 } from './sourceImages.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 import { eligibilityDetailFor } from './assessSourceImage.ts';
@@ -1166,6 +1167,24 @@ export async function attachDocumentMedia(
       const attribution = attributions[index];
       const stockItemId = attribution.stockItemId;
 
+      /*
+       * WHAT A RE-IMPORT MUST NOT TAKE WITH IT.
+       *
+       * This is the path a builder's second upload of the same stock list runs
+       * through, and the upsert below replaces `source_detail` wholesale — so
+       * without this it destroys the sanitization record for bytes that have
+       * not changed. See `sanitizationCarryForward`. A row with no owning
+       * property has no per-property record to carry, so it is not asked.
+       */
+      const carried = stockItemId
+        ? await carriedSanitizationFor(db, {
+          stockItemId,
+          sourceStage: 'uploaded_document',
+          reference: media.name.slice(0, 400),
+          storedSha256: media.provenance?.storedSha256 ?? null,
+        })
+        : {};
+
       await db.from('builder_stock_item_images').upsert({
         stock_item_id: stockItemId,
         upload_id: input.uploadId,
@@ -1224,6 +1243,9 @@ export async function attachDocumentMedia(
               provenance_version: PROVENANCE_VERSION,
             }
             : {}),
+          // Last, so a re-import cannot lose what another stage established
+          // about these exact bytes — and only ever the keys that stage owns.
+          ...carried,
         },
       }, { onConflict: 'stock_item_id,source_stage,source_reference' });
       attached.push({

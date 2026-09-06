@@ -187,27 +187,70 @@ function truncateNarrativeToCap(bodyLines: string[], cap: number): { lines: stri
   const words = original.split(/\s+/).filter(Boolean);
   if (words.length <= cap) return { lines: bodyLines, removed: 0 };
 
-  // Keep tables, lists, headings and figures intact; truncate prose from the end.
+  // Truncate cleanly or not at all. The first version kept every structural
+  // line after the budget ran out and cut the last paragraph mid-clause with
+  // a literal '…' — which shipped pages of headings with nothing under them
+  // and eight sentences ending mid-thought, measured on a real client
+  // document. Now: once the budget is spent, NOTHING further is kept —
+  // structure included — a paragraph that does not fit whole is dropped
+  // whole, and any headings left dangling at the tail (their content was cut)
+  // are dropped with what they promised. Figures and tables still never cut a
+  // line in half: they are structural, so they either fit before the budget
+  // ends or go with everything after it.
   const out: string[] = [];
   let budget = cap;
   let removed = 0;
+  let spent = false;
+
+  // After the budget is spent, DATA still survives: a chart directive or a
+  // table row is a figure, and the standing rule is that a label is stripped
+  // with its paragraph but never a figure or a table. A heading survives the
+  // cut only as the label of data that follows it — buffered until the next
+  // kept line says which it is.
+  const isData = (t: string) => t.startsWith('{{') || t.startsWith('|');
+  let pendingHeading: string | null = null;
 
   for (const line of bodyLines) {
-    if (isStructuralLine(line)) {
+    const t = line.trim();
+    const w = line.split(/\s+/).filter(Boolean);
+    if (!spent) {
+      if (isStructuralLine(line)) { out.push(line); continue; }
+      if (w.length <= budget) {
+        out.push(line);
+        budget -= w.length;
+        if (budget <= 0) spent = true;
+      } else {
+        removed += w.length;
+        spent = true;
+      }
+      continue;
+    }
+    if (t === '') { out.push(line); continue; }
+    if (t.startsWith('#')) {
+      if (pendingHeading) removed += pendingHeading.split(/\s+/).filter(Boolean).length;
+      pendingHeading = line;
+      continue;
+    }
+    if (isData(t)) {
+      if (pendingHeading) { out.push(pendingHeading); pendingHeading = null; }
       out.push(line);
       continue;
     }
-    const w = line.split(/\s+/).filter(Boolean);
-    if (w.length <= budget) {
-      out.push(line);
-      budget -= w.length;
-    } else if (budget > 8) {
-      out.push(w.slice(0, budget).join(' ') + '…');
-      removed += w.length - budget;
-      budget = 0;
-    } else {
-      removed += w.length;
+    removed += w.length;
+  }
+  if (pendingHeading) removed += pendingHeading.split(/\s+/).filter(Boolean).length;
+
+  // A heading whose body was truncated away promises content the section no
+  // longer holds. Pop structural tails until the last kept line is content.
+  while (out.length) {
+    const last = out[out.length - 1].trim();
+    if (!last) { out.pop(); continue; }
+    if (/^#{1,6}\s+\S/.test(last) || /^\*\*[^*]+\*\*:?\s*$/.test(last)) {
+      removed += last.split(/\s+/).filter(Boolean).length;
+      out.pop();
+      continue;
     }
+    break;
   }
   return { lines: out, removed };
 }

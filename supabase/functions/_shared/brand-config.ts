@@ -39,6 +39,7 @@
  * exactly as before.
  */
 
+// @ts-ignore Deno-only esm.sh import; not resolvable under Node type-checking.
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 export interface BrandConfig {

@@ -3,6 +3,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
+import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -210,7 +211,12 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
     const propertiesData = reports.map((report, index) => {
       const investmentScore: any = (typeof report.investment_score === 'object' && report.investment_score !== null) ? report.investment_score : {};
       const breakdown: any = investmentScore.breakdown || {};
-      const financials: any = (typeof report.financial_calculations === 'object' && report.financial_calculations !== null) ? report.financial_calculations : {};
+      // Read-boundary heal (audit F26): the comparison reasons over figures
+      // the row stores, and a historic row's projections were folded against
+      // triple-charged operating costs. Reconcile before anything reads them.
+      const financials: any = (typeof report.financial_calculations === 'object' && report.financial_calculations !== null)
+        ? reconcileStoredFinancials(report.financial_calculations).fin ?? {}
+        : {};
       const initialCosts: any = financials.initialCosts || {};
       const income: any = financials.income || {};
       const keyMetrics: any = financials.keyMetrics || {};

@@ -128,6 +128,39 @@ export function isRecoverableStoredAvailability(
   return reason === RECOVERABLE_AVAILABILITY || reason === RECOVERABLE_AVAILABILITY_LEGACY;
 }
 
+/**
+ * Project an upload row for the browser: keep `error_detail` behind the
+ * server, and send the one thing the portal's control needs from it — whether
+ * brochure links are waiting to be recovered — as a plain boolean.
+ *
+ * MEASURED, 2 SEPTEMBER 2026: the portal's "Refresh brochure links" control
+ * had NEVER rendered. The page asked this module's question of
+ * `upload.error_detail.reason` — a field no list response carries, because
+ * `error_detail` holds the internal diagnosis and is deliberately kept off
+ * the wire — so the gate always read `undefined`. An automated type-fix then
+ * repointed it at `upload.error_code`, which carries the notice code
+ * (`source_links_unavailable`), never an availability reason: still always
+ * false. Two spellings of the same wrong answer, and no test caught either,
+ * because the pin only checked that the page NAMED the rule, not what it fed
+ * it.
+ *
+ * So the server answers the question itself, beside the data only it may
+ * read, with exactly the read `refresh_brochure_links` makes before acting —
+ * and the page renders that answer. The mutation still re-checks its own row,
+ * so a stale list can offer the act and be refused, never the reverse.
+ */
+export function projectUploadListRow<Row extends { error_detail?: unknown }>(
+  row: Row,
+): Omit<Row, 'error_detail'> & { link_recovery_available: boolean } {
+  const { error_detail, ...safe } = row;
+  return {
+    ...safe,
+    link_recovery_available: isRecoverableStoredAvailability(
+      ((error_detail ?? {}) as { reason?: string }).reason ?? null,
+    ),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Should we ask?
 // ---------------------------------------------------------------------------

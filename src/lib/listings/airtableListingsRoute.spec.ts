@@ -374,3 +374,57 @@ describe('every Airtable reader in the pipeline goes through the router', () => 
     }
   });
 });
+
+/**
+ * When a brokered read fails, the clone must be able to say WHICH END refused.
+ *
+ * Mission Control and Airtable both answer 401, 403 and 429, and the remedies
+ * are opposite: one is fixed in Mission Control's environment, the other on
+ * this deployment. `x-mission-control-refusal` is set on Mission Control's OWN
+ * refusals and never on what it relays, so the header's ABSENCE is what
+ * identifies a vendor answer.
+ *
+ * Measured 8 Sep 2026 on NPC Test — the first brokered read the fleet ever
+ * made. It failed and `listings_cache_sync.last_error` read `airtable_401`,
+ * which happened to be TRUE (Mission Control had made the call and Airtable
+ * refused its token). But it was true by luck: the same six characters would
+ * have been written had Mission Control rejected the clone's key, and an
+ * operator reading that row had nothing to tell the two apart.
+ */
+describe('a failed read names the end that refused', () => {
+  const withHeader = new Headers({ 'x-mission-control-refusal': 'unauthorized' });
+  const without = new Headers();
+
+  it('reads the header rather than guessing from the body', () => {
+    expect(missionControlRefusal(withHeader)).toBe('unauthorized');
+    expect(missionControlRefusal(without)).toBeNull();
+  });
+
+  it('every consumer that can take the brokered route reads it', () => {
+    // `listing-enrichment` is deliberately absent: its only Airtable call is
+    // the write-back, which is never brokered, so there is no second end for
+    // it to distinguish.
+    for (const [name, source] of [
+      ['airtable-proxy', proxy],
+      ['listings-cache', cache],
+      ['listing-images', images],
+      ['auto-report-sync', autoReport],
+    ] as const) {
+      expect(codeOf(source), name).toMatch(
+        /missionControlRefusal|x-mission-control-refusal/,
+      );
+    }
+  });
+
+  it('listings-cache carries the distinction out to the sync row', () => {
+    // The sync row is the only record an operator sees for a cron-driven read,
+    // so a warning in a log the fleet page does not show is not enough.
+    expect(codeOf(cache)).toMatch(/mission_control_\$\{refusal\}/);
+    expect(codeOf(cache)).toMatch(/airtable_\$\{response\.status\}/);
+  });
+
+  it('airtable-proxy labels the SERVICE it reports, rather than always saying Airtable', () => {
+    expect(codeOf(proxy)).toMatch(/redactUpstreamError\([^)]*service\)/);
+    expect(codeOf(proxy)).not.toMatch(/redactUpstreamError\([^)]*'Airtable'\)/);
+  });
+});

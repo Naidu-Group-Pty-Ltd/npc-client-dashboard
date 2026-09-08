@@ -1578,3 +1578,65 @@ verify_jwt = false
 
 [functions.template-import-finalize-worker]
 verify_jwt = false
+
+# ── Carried from the prime by hand, because the cascade brought these ten
+# functions across without their declarations. An omitted [functions.X]
+# block is not "no opinion": the CLI reads it as `true`, which ASSERTS the
+# gateway is checking a Supabase JWT in front of that function. Two of these
+# ten are `false` on the prime, so the omission was actively wrong for them.
+# Values are the prime's own, verbatim, comments included.
+
+[functions.abs-poa-ingest]
+verify_jwt = true
+
+# The RBA statistical-tables ingest: CSV text arrives in the POST body
+# (rba.gov.au refuses this project's egress), parsed server-side; internal
+# secret via X-Cron-Secret / per-table sealed-bootstrap auth inside, the
+# gateway JWT on in front.
+
+[functions.abs-regional-ingest]
+verify_jwt = true
+
+# The per-section index over stored reports: derives an addressable projection
+# of investment_reports.report_content and writes only the two derived tables.
+# Internal secret (bearer or X-Cron-Secret) or the per-report self-sealing
+# bootstrap arm inside; the gateway JWT stays on in front of it.
+
+[functions.abs-regional-service]
+verify_jwt = false
+
+[functions.crime-data-ingest]
+verify_jwt = true
+
+# The GTFS transport ingest: internal-secret / sealed-bootstrap auth in the
+# function, gateway JWT in front of it, exactly as the other ingests.
+
+[functions.market-source-probe]
+# Read-only diagnostic. Guarded by the gateway AND by its own verifyAuth: it
+# reports which market-data credential NAMES are set (never a value) and probes
+# a fixed allow-list of source URLs. It writes nothing.
+verify_jwt = true
+
+[functions.planning-data-service]
+verify_jwt = false
+
+[functions.rba-tables-ingest]
+verify_jwt = true
+
+# The ABS regional-population ingest: fetches the release datacube itself
+# (abs.gov.au answers this project's egress); internal secret /
+# sealed-bootstrap auth inside, the gateway JWT on in front.
+
+[functions.report-sections-index]
+verify_jwt = true
+
+# Public-class locality service (parseJsonBody-bounded), like its siblings.
+
+[functions.resolve-report-geography]
+verify_jwt = true
+
+[functions.transport-gtfs-ingest]
+verify_jwt = true
+
+# The ABS reference-data ingest: internal-secret / sealed-bootstrap auth
+# inside; the gateway JWT stays on in front of it.

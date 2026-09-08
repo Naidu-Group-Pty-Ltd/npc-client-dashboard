@@ -496,8 +496,21 @@ describe('a persisted standalone session is acknowledged and ignored', () => {
     expect(receiver).toContain("eq('provider_reference', sessionId)");
   });
 
-  it('a session belonging to nobody is still refused as unknown', () => {
-    expect(block).toContain("error: 'unknown_session'");
-    expect(block).toContain("reason: 'unknown_session'");
+  it('a session belonging to nobody is still refused, and still says so', () => {
+    /*
+     * The reading is chosen rather than written as a literal now, because a
+     * shared Didit application delivers every SIBLING deployment's events here
+     * too and those are routine — see `readForeignSession`. What this test
+     * still guards is the part that matters: an event that correlates to
+     * nothing on this deployment is refused, whichever of the two names it
+     * gets, and neither name is ever `processed`.
+     */
+    expect(block).toContain("readForeignSession(vendorData, caseHeldLocally)");
+    expect(block).toContain("'foreign_tenant_session'");
+    expect(block).toContain("'unknown_session'");
+    expect(block).toContain('await markEvent({ error: reason, processed_at:');
+    expect(block).toContain('json({ ok: true, processed: false, reason }, 202)');
+    // No branch here may apply an outcome.
+    expect(block).not.toContain('applyDiditDecision');
   });
 });

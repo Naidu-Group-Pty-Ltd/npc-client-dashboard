@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getInvestmentGradeTone, getInvestmentScoreSummary, resolveInvestmentGrade } from '../utils';
+import { getInvestmentGradeTone, getInvestmentScoreSummary, resolveCardInvestmentGrade, resolveInvestmentGrade } from '../utils';
 
 const report = (overrides: Record<string, unknown> = {}) => ({
   id: 'report-1',
@@ -61,5 +61,64 @@ describe('investment score display values', () => {
 
   it('handles a non-string grade defensively when called with untyped data', () => {
     expect(getInvestmentGradeTone({ unexpected: 'A' } as any)).toBe('bg-muted text-muted-foreground');
+  });
+});
+
+/**
+ * The reported defect: a property with all five report types showed the
+ * Investment Grade on three cards and nothing at all on the Financial and
+ * Strategic ones.
+ *
+ * It survived a partial fix because resolution and the render gate were two
+ * expressions of one idea in two places — the card resolved across siblings
+ * and then asked its own `investment_score` column whether to draw. These pin
+ * the joined answer.
+ */
+describe('resolveCardInvestmentGrade', () => {
+  const compass = {
+    id: 'compass', created_at: '2026-09-01T00:00:00Z', status: 'completed',
+    report_scope: 'property',
+    investment_score: { overall_score: 82, grade: 'A', recommendation: 'Strong buy' },
+  };
+  const financial = {
+    id: 'financial', created_at: '2026-09-02T00:00:00Z', status: 'completed',
+    report_scope: 'property', investment_score: null,
+  };
+
+  it('shows the property grade on a report that carries no score of its own', () => {
+    const result = resolveCardInvestmentGrade(financial as any, [compass, financial] as any);
+    expect(result.show).toBe(true);
+    expect(result.grade.status).toBe('calculated');
+    expect(result.grade.score).toBe(82);
+  });
+
+  it('says the grade was borrowed, so the card can attribute it', () => {
+    const result = resolveCardInvestmentGrade(financial as any, [compass, financial] as any);
+    expect(result.borrowedFromReportId).toBe('compass');
+  });
+
+  it('does not call a report grade borrowed when it produced the score itself', () => {
+    const result = resolveCardInvestmentGrade(compass as any, [compass, financial] as any);
+    expect(result.borrowedFromReportId).toBeNull();
+    expect(result.show).toBe(true);
+  });
+
+  it('shows nothing when no sibling ever calculated a grade', () => {
+    // Pending, failed and ungraded are the sibling's news, not this
+    // property's; repeating them here reports a state this report is not in.
+    const pending = { ...financial, id: 'pending', status: 'processing' };
+    const result = resolveCardInvestmentGrade(financial as any, [pending, financial] as any);
+    expect(result.show).toBe(false);
+  });
+
+  it('never lends a property grade to an area-scope report', () => {
+    const suburb = { ...financial, id: 'suburb', report_scope: 'suburb' };
+    const result = resolveCardInvestmentGrade(suburb as any, [compass, suburb] as any);
+    expect(result.show).toBe(false);
+  });
+
+  it('falls back to the report alone when the siblings are unknown', () => {
+    expect(resolveCardInvestmentGrade(financial as any).show).toBe(false);
+    expect(resolveCardInvestmentGrade(compass as any).show).toBe(true);
   });
 });

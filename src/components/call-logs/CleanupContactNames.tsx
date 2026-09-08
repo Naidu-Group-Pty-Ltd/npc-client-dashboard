@@ -19,7 +19,7 @@ const cleanupDialogShell =
 const cleanupSectionCard =
   'relative overflow-hidden rounded-3xl border border-border dark:border-white/10 bg-gradient-to-br from-card dark:from-background/95 via-card dark:via-background/80 to-background dark:to-black/90 shadow-xl shadow-sm dark:shadow-black/25 before:pointer-events-none before:absolute before:inset-x-6 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-success/35 before:to-transparent';
 const cleanupTriggerBase =
-  'group gap-2 border-success/20 bg-success/10 text-success-foreground shadow-lg shadow-sm dark:shadow-black/20 transition-all hover:-translate-y-0.5 hover:border-success/40 hover:bg-success/15 hover:text-success-foreground hover:shadow-success/10 focus-visible:ring-2 focus-visible:ring-success/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black';
+  'group gap-2 border-success/20 bg-success/10 text-success shadow-lg shadow-sm dark:shadow-black/20 transition-all hover:-translate-y-0.5 hover:border-success/40 hover:bg-success/15 hover:text-success hover:shadow-success/10 focus-visible:ring-2 focus-visible:ring-success/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black';
 
 interface CleanupResult {
   id: string;
@@ -169,7 +169,7 @@ export const CleanupContactNames: React.FC<{ onComplete?: () => void; triggerCla
         <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-gradient-to-r from-transparent via-success/60 to-transparent" />
         <div className="pointer-events-none absolute -right-20 -top-24 h-56 w-56 rounded-full bg-success/10 blur-3xl" />
         <DialogHeader className="relative border-b border-border dark:border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.14),transparent_34%),linear-gradient(90deg,rgba(24,24,27,0.94),rgba(0,0,0,0.78),rgba(6,78,59,0.18))] px-6 py-5">
-          <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-success-foreground">
+          <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-success">
             <ShieldCheck className="h-3 w-3" />
             Data Quality Utility
           </div>
@@ -226,7 +226,7 @@ export const CleanupContactNames: React.FC<{ onComplete?: () => void; triggerCla
               </div>
               <Progress value={progress} className="h-2 overflow-hidden rounded-full bg-card/10 dark:bg-white/10" />
               <div className="flex items-center gap-4 text-sm">
-                <Badge variant="outline" className="gap-1 rounded-full border-success/20 bg-success/10 text-success-foreground">
+                <Badge variant="outline" className="gap-1 rounded-full border-success/20 bg-success/10 text-success">
                   <CheckCircle className="h-3 w-3 text-success" />
                   {updatedCount} updated
                 </Badge>

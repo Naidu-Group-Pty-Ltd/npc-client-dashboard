@@ -27,6 +27,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
+import { stageUploadFiles } from '@/lib/uploads/stageUploadFiles.pure';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { useNotifications } from '@/contexts/NotificationsContext';
@@ -244,17 +245,23 @@ export function ClientFiles({ clientId, onSendEmail }: ClientFilesProps) {
   });
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    const nextFiles = acceptedFiles.slice(0, MAX_DOCUMENT_UPLOAD_FILES);
-    if (!nextFiles.length) return;
-    if (calculateTotalUploadSize(nextFiles) > MAX_DOCUMENT_BATCH_BYTES) {
-      toast.error('Selected files exceed the batch size limit.', {
-        description: `Keep the total under ${formatUploadBytes(MAX_DOCUMENT_BATCH_BYTES)}.`,
-      });
-      return;
-    }
-    setSelectedFiles(nextFiles);
-    setUploadFailures([]);
-  }, []);
+    if (!acceptedFiles.length) return;
+    // A pick ADDS. This used to be `setSelectedFiles(acceptedFiles)`, so
+    // choosing documents one at a time — which is what you do when they are
+    // in different folders — discarded everything already staged, silently.
+    // `stageUploadFiles` also refuses a file already in the tray and NAMES
+    // anything a cap excluded, which `slice` never did.
+    const staged = stageUploadFiles(selectedFiles, acceptedFiles, {
+      maxFiles: MAX_DOCUMENT_UPLOAD_FILES,
+      maxTotalBytes: MAX_DOCUMENT_BATCH_BYTES,
+      formatBytes: formatUploadBytes,
+    });
+    setSelectedFiles(staged.files);
+    if (staged.added.length) setUploadFailures([]);
+    // Raised here rather than inside the updater: React may run an updater
+    // more than once, and a message that appears twice reads as two problems.
+    for (const notice of staged.notices) toast.warning(notice);
+  }, [selectedFiles]);
 
   const onDropRejected = useCallback((rejections: any[]) => {
     if (!rejections.length) return;

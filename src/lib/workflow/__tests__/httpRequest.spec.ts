@@ -33,7 +33,7 @@ const ok = (result: ReturnType<typeof build>) => {
   return result.request;
 };
 
-const AIRTABLE = { AIRTABLE_API_KEY: 'pat_secret_value', AIRTABLE_BASE_ID: 'appABC' };
+const AIRTABLE = { AIRTABLE_API_KEY: 'pat_secret_value', AIRTABLE_WORKFLOW_BASE_ID: 'appABC' };
 const TWILIO = { TWILIO_ACCOUNT_SID: 'AC123', TWILIO_AUTH_TOKEN: 'tok_secret_value' };
 
 describe('resolving templates', () => {
@@ -132,7 +132,7 @@ describe('auth', () => {
   it('reports every missing credential at once rather than one at a time', () => {
     const result = build('airtable.list_records', { table: 'Listings' }, {});
     if (result.ok !== false) throw new Error('expected a failure');
-    expect(result.failure.missingSecrets.sort()).toEqual(['AIRTABLE_API_KEY', 'AIRTABLE_BASE_ID']);
+    expect(result.failure.missingSecrets.sort()).toEqual(['AIRTABLE_API_KEY', 'AIRTABLE_WORKFLOW_BASE_ID']);
     expect(result.failure.error).toMatch(/Integrations page/);
   });
 

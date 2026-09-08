@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useMemo, type KeyboardEvent } from 'react';
-import { Check, ChevronsUpDown, Search } from 'lucide-react';
+import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Popover,
   PopoverContent,
@@ -126,18 +127,17 @@ export function SearchableSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent className={cn('p-0 w-[var(--radix-popover-trigger-width)]', contentClassName, className)} align="start">
-        <div className="flex items-center border-b px-3">
-          <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-          <Input
-            ref={inputRef}
-            placeholder={`Search...`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={handleKeyDown}
-            aria-activedescendant={selectableOptions[activeIndex] ? `searchable-select-option-${activeIndex}` : undefined}
-            className="h-9 border-0 shadow-none focus-visible:ring-0 px-0"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          ref={inputRef}
+          placeholder={`Search...`}
+          onKeyDown={handleKeyDown}
+          aria-activedescendant={selectableOptions[activeIndex] ? `searchable-select-option-${activeIndex}` : undefined}
+          containerClassName="flex items-center border-b px-3"
+          className="h-9 border-0 shadow-none focus-visible:ring-0 px-0"
+          iconClassName="mr-2 opacity-50"
+        />
         <div
           ref={optionsRef}
           className={cn(

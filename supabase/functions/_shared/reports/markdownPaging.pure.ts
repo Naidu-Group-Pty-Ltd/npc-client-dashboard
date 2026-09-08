@@ -42,10 +42,21 @@ import { splitTableBlock } from './markdown.pure.ts';
  */
 export const DEFAULT_LINES_PER_PAGE = 34;
 
-/** Measured on the Compass continuation page; see the header. */
-export const CALIBRATED_CONT_LINES = 50;
-/** Measured on the Compass first narrative page (part-header furniture). */
-export const CALIBRATED_FIRST_LINES = 39;
+/**
+ * Measured on the Compass continuation page; see the header — then cut again
+ * against a failure in the field. A real Compass render (1/27D Mitchell
+ * Street, 2026-09-04) packed its final bucket at 47 charged units under the
+ * 50 budget and still overflowed the physical box: the estimator's error on
+ * a list-and-margin-heavy page exceeded the 8% held back, the tail printed
+ * over the running foot, and the sources bullet lost its description with
+ * nothing saying so. The budget therefore sits ~16% under the measured
+ * capacity (54.5), because a sparser page costs white space and an overfull
+ * one costs a client the end of the document — and only one of those is
+ * recoverable by reading on.
+ */
+export const CALIBRATED_CONT_LINES = 46;
+/** The first narrative page's box is shorter (part-header furniture). */
+export const CALIBRATED_FIRST_LINES = 36;
 
 export interface NarrativeProfile {
   /** Charge model `renderMarkdown` must be called with. */

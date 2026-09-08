@@ -39,6 +39,7 @@
  * Pure: no imports beyond the role vocabulary and the label reading it shares
  * with `drivePackage.pure.ts`, no IO, no clock.
  */
+import { mayLeadCard, type VisualKind } from './sourceImageVision.pure.ts';
 import { withoutTenureWording } from './drivePackage.pure.ts';
 import {
   noPrimaryEvidence, roleFromAssetName, roleFromDesignCover, roleFromPropertyCover,
@@ -54,6 +55,12 @@ export interface PropertyCoverEvidence {
   identity: string;
   /** The package facts it stated alongside. */
   packageFacts: string[];
+  /**
+   * Design covers only: the page designates some lot (any lot). A specimen
+   * page and the design's own page are both evidence about the design, but
+   * they are not equal — see `resolveDesignCover`.
+   */
+  lotDesignated?: boolean;
 }
 
 /**
@@ -424,24 +431,35 @@ export function designIdentityIsDistinctive(design: string | null | undefined): 
  *
  * FOUR TESTS, AND EACH REFUSES RATHER THAN GUESSES:
  *
- *   1  THE DESIGN IDENTIFIES ITSELF. Every token of the row's stated design
- *      appears on the page as a whole token. "Elara 18" against an "Elara 21"
- *      page fails on `21`, which is what keeps one design's render off another
- *      design's row.
+ *   1  THE DESIGN IDENTIFIES ITSELF, WITHOUT BORROWING FROM A LOT. Every token
+ *      of the row's stated design appears on the page as a whole token.
+ *      "Elara 18" against an "Elara 21" page fails on `21`, which is what
+ *      keeps one design's render off another design's row. The number in a
+ *      lot designation is BLANKED before the test, because it is the one
+ *      place a page types a number that says nothing about the design:
+ *      "Lot 5 · Enzo 10" must not satisfy the `5` of "Enzo 10.5".
  *
  *   2  THE PAGE IS A PACKAGE PAGE. The same `MIN_PACKAGE_FACTS` a property
  *      cover must clear. A design token in a footer, a specification table or
  *      an index is not a design's cover.
  *
- *   3  THE PAGE DESIGNATES NO LOT. A page naming a lot is some property's own
- *      package page; taking it as a design render for a different lot would be
- *      attribution by coincidence. Design evidence has to come from a page that
- *      is about the design.
+ *   3  A LOT DESIGNATION IS RECORDED, NOT REFUSED. This test used to refuse
+ *      any page naming a lot, on the argument that such a page is some
+ *      property's own package page and taking it for a different lot would be
+ *      attribution by coincidence. Measured on 6 September 2026, that argument
+ *      does not hold once test 1 has passed: Lot 1004 Five Farms links a
+ *      per-design brochure whose page 1 states every token of "Enzo 10.5"
+ *      with three package facts — and designates Lot 1002, the specimen lot
+ *      the builder first typeset the design for. The page names the design
+ *      ITSELF, so the attribution is by declaration, exactly as it is for a
+ *      lot-less design page; the specimen lot's pricing is an irrelevant fact
+ *      about a different deal, and nothing here reads it. What the designation
+ *      still means is a PREFERENCE — see `resolveDesignCover`.
  *
- *   4  EXACTLY ONE PAGE, resolved by the caller. This is what stops a range
- *      catalogue: its generic cover states no design and clears no facts, and
- *      if two pages both present the design the document has not said which is
- *      its render.
+ *   4  EXACTLY ONE PAGE, resolved by the caller through `resolveDesignCover`.
+ *      This is what stops a range catalogue: its generic cover states no
+ *      design and clears no facts, and if two pages of equal standing both
+ *      present the design the document has not said which is its render.
  */
 export function findDesignCoverPages(
   pageTexts: string[],
@@ -454,17 +472,51 @@ export function findDesignCoverPages(
   const covers: PropertyCoverEvidence[] = [];
   (pageTexts ?? []).forEach((text, index) => {
     const page = String(text ?? '');
-    const haystack = ` ${tokenise(page).join(' ')} `;
-    // 1 — the design states itself, every token of it.
+    const tokens = tokenise(page);
+    // 1 — the design states itself, every token of it, with the number of any
+    // lot designation blanked so a lot cannot lend a token to the design.
+    const lotBlind = tokens.filter((token, at) =>
+      !(at > 0
+        && (tokens[at - 1] === 'lot' || tokens[at - 1] === 'unit')
+        && /^\d{1,5}$/.test(token)));
+    const haystack = ` ${lotBlind.join(' ')} `;
     if (!wanted.every((token) => haystack.includes(` ${token} `))) return;
-    // 3 — and the page is not some property's own package page.
-    if (lotDesignations(page).length) return;
     // 2 — and it presents a package rather than mentioning a name.
     const packageFacts = packageFactsOn(page);
     if (packageFacts.length < MIN_PACKAGE_FACTS) return;
-    covers.push({ page: index + 1, identity, packageFacts });
+    covers.push({
+      page: index + 1, identity, packageFacts,
+      // 3 — whether it is also some lot's own page, for `resolveDesignCover`.
+      lotDesignated: lotDesignations(page).length > 0,
+    });
   });
   return covers;
+}
+
+/**
+ * Which of several qualifying pages is the DESIGN's cover.
+ *
+ * A page presenting the design with no lot on it is the design's own page; a
+ * page presenting the design as some lot's package is a SPECIMEN. Both are
+ * declarations about the design, but they are not interchangeable evidence:
+ * the brochure for Lot 502 Mambourin presents "Enzo 8.5" twice — page 1 is
+ * the design cover with its render, page 2 is Lot 502's own floor-plan page
+ * repeating the design header — and reading those two pages as an unresolved
+ * tie is how a document that states its render perfectly well answered no
+ * image.
+ *
+ * THE RULE: lot-less pages outrank lot-designating ones, and within the rank
+ * that speaks it is still exactly one page or nothing. A catalogue presenting
+ * the design on two specimen lots has not said which page is the render; a
+ * document with one design cover and any number of per-lot echoes has.
+ */
+export function resolveDesignCover(
+  covers: readonly PropertyCoverEvidence[],
+): PropertyCoverEvidence | null {
+  const all = covers ?? [];
+  const designOwn = all.filter((cover) => !cover.lotDesignated);
+  const ranked = designOwn.length ? designOwn : all;
+  return ranked.length === 1 ? ranked[0] : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -485,6 +537,17 @@ export interface CoverCandidate {
    * emphasis — see `selectCoverHero`.
    */
   pageAreaShare?: number | null;
+  /**
+   * What the picture IS, by its pixels — `photo`, `floorplan`, `graphic` — or
+   * null where nothing could be established.
+   *
+   * The one fact here that the document cannot state and cannot be wrong
+   * about. Everything else on this candidate is the page's own emphasis, and
+   * a brochure that leads with its floor plan states the plan exactly as
+   * emphatically as one that leads with the house. See
+   * `sourceImageVision.pure.ts`.
+   */
+  visualKind?: VisualKind | null;
 }
 
 /**
@@ -517,11 +580,40 @@ export function selectCoverHero(candidates: CoverCandidate[]): CoverHeroOutcome 
     return { kind: 'none', reason: 'the property cover page presents no photograph' };
   }
 
-  const unique = all.filter(
+  /*
+   * A PLAN IS NOT A PICTURE OF THE HOUSE, HOWEVER LARGE THE PAGE DRAWS IT.
+   *
+   * This is the one test above that is about the PICTURE rather than the
+   * page, and it is here because the page cannot answer it. On the Palomino
+   * Vanta 23 brochure the floor plan is unique on its page and drawn well
+   * over twice the size of anything else, so every rule below correctly
+   * concluded the cover had named it — and two live cards led with a green
+   * line drawing badged "Builder supplied".
+   *
+   * Excluded rather than demoted, because this function returns one hero or
+   * none: ranking a plan last would still elect it on a page that offers
+   * nothing else, which is the defect. A card with no picture is a state this
+   * marketplace already handles and says out loud; a card leading with a
+   * floor plan is one it cannot.
+   *
+   * An UNCLASSIFIED candidate is kept. Absent evidence is not evidence, and
+   * a decoder that could not read a builder's raster must not be able to
+   * withhold their photograph.
+   */
+  const depictions = all.filter((candidate) => mayLeadCard(candidate.visualKind));
+  if (!depictions.length) {
+    return {
+      kind: 'none',
+      reason: 'every picture on the property cover is a plan or a graphic rather than a '
+        + 'photograph of the property',
+    };
+  }
+
+  const unique = depictions.filter(
     (candidate) => candidate.placementsOnPage <= 1 && candidate.pagesDrawnOn <= 1,
   );
   if (unique.length === 1) {
-    const dropped = all.length - unique.length;
+    const dropped = depictions.length - unique.length;
     return {
       kind: 'hero',
       key: unique[0].key,
@@ -670,6 +762,12 @@ export function assignPdfMediaRoles(input: {
   pageOrderAuthoritative: boolean;
   media: PdfMediaPlacement[];
   /**
+   * What each picture IS, index-aligned with `media`, where the caller was
+   * able to look. Absent or null entries mean nothing was established and the
+   * candidate is judged exactly as it was before this existed.
+   */
+  visualKinds?: Array<VisualKind | null>;
+  /**
    * THE DOCUMENT IS ALREADY KNOWN TO BE THIS PROPERTY'S, AND IT CANNOT SAY SO.
    *
    * Set only where the containing document was tied to exactly one stock row by
@@ -731,35 +829,57 @@ export function assignPdfMediaRoles(input: {
     }
     : null;
   /*
-   * THE DESIGN, AND ONLY WHERE THE PROPERTY ITSELF SAID NOTHING.
+   * THE DESIGN, AND ONLY WHERE THE PROPERTY ITSELF ELECTED NOTHING.
    *
-   * Ordered, not merged: a property cover wins, then the structural tie, and
-   * only then the design. So this can turn a blank into a render and can never
-   * turn a lot-specific render into a design one. Exactly-one-or-nothing is
-   * kept — a range catalogue presenting the design twice has not said which
-   * page is its render, and answers no image.
+   * Ordered, not merged: a property cover is consulted first, then the
+   * structural tie, and the design page speaks only when the rungs above
+   * produced no HERO. So this can turn a blank into a render and can never
+   * turn a lot-specific render into a design one.
+   *
+   * "Elected nothing" rather than the earlier "found nothing", and that word
+   * is the fix, measured on 6 September 2026: Lot 502 Mambourin's brochure
+   * designates page 2 — Lot 502's own floor-plan page, two package facts, no
+   * photograph on it — as the property cover, and the old gate then refused
+   * to look at page 1, where the same document presents "Enzo 8.5" as a
+   * design cover with four facts and the render. A page that provably
+   * presents no photograph has answered its own question; it must not also
+   * answer the design's. The lot's page still wins whenever it CAN elect,
+   * which is what keeps attribution lot-first.
    */
-  const designCovers = input.pageOrderAuthoritative && !covers.length && !structural
+  const designCovers = input.pageOrderAuthoritative
     ? findDesignCoverPages(input.pageTexts ?? [], input.design)
     : [];
-  const designCover = designCovers.length === 1 ? designCovers[0] : null;
+  const designCover = resolveDesignCover(designCovers);
 
-  const cover = resolvePropertyCover(covers) ?? structural ?? designCover;
-
-  const onCover = cover
-    ? media
-      .map((entry, index) => ({ entry, index }))
-      .filter(({ entry }) => entry.page === cover.page)
-    : [];
-
-  const outcome = cover
-    ? selectCoverHero(onCover.map(({ entry, index }) => ({
+  const electOn = (cover: PropertyCoverEvidence) => selectCoverHero(media
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => entry.page === cover.page)
+    .map(({ entry, index }) => ({
       key: String(index),
       placementsOnPage: entry.placementsOnPage,
       pagesDrawnOn: entry.pagesDrawnOn,
       pageAreaShare: entry.pageAreaShare ?? null,
-    })))
-    : null;
+      visualKind: input.visualKinds?.[index] ?? null,
+    })));
+
+  const propertyChoice = resolvePropertyCover(covers) ?? structural;
+  let cover = propertyChoice;
+  let outcome = cover ? electOn(cover) : null;
+  let designElected = false;
+  if (outcome?.kind !== 'hero' && designCover
+    && designCover.page !== propertyChoice?.page) {
+    const designOutcome = electOn(designCover);
+    if (designOutcome.kind === 'hero') {
+      cover = designCover;
+      outcome = designOutcome;
+      designElected = true;
+    } else if (!propertyChoice) {
+      // No property page was ever in play, so the design page was the only
+      // one consulted and its refusal is the honest one to record.
+      cover = designCover;
+      outcome = designOutcome;
+    }
+  }
 
   const heroIndex = outcome?.kind === 'hero' ? Number(outcome.key) : -1;
 
@@ -775,10 +895,10 @@ export function assignPdfMediaRoles(input: {
         : covers.length > 1 && !resolvePropertyCover(covers)
           ? `${covers.length} pages present this property as a package and state equally `
             + 'much of it, so the document does not say which is its cover'
-          : !covers.length
-            ? 'no page states this property\'s identity together with its package information'
-            : outcome?.kind === 'none'
-              ? outcome.reason
+          : outcome?.kind === 'none'
+            ? outcome.reason
+            : !covers.length
+              ? 'no page states this property\'s identity together with its package information'
               : 'the source does not designate a primary image for this property';
 
   return media.map((entry, index) => {
@@ -795,7 +915,7 @@ export function assignPdfMediaRoles(input: {
     if (index === heroIndex && cover) {
       // The design path never claims the property named it. See
       // `roleFromDesignCover`.
-      if (designCover && cover === designCover) {
+      if (designElected) {
         return roleFromDesignCover({
           where: `visible page ${cover.page}`,
           design: cover.identity,
@@ -832,6 +952,8 @@ export function assignPdfMediaRolesPerProperty(input: {
   identityHintsByItemId?: Map<string, readonly string[]>;
   pageTexts: string[];
   pageOrderAuthoritative: boolean;
+  /** What each picture IS, index-aligned with `media`. See `assignPdfMediaRoles`. */
+  visualKinds?: Array<VisualKind | null>;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const out: SourceImageRoleAssignment[] = media.map(() => noPrimaryEvidence(
@@ -858,6 +980,9 @@ export function assignPdfMediaRolesPerProperty(input: {
         // nothing is known about where the document put it.
         page: 0, name: media[index].name, placementsOnPage: 2, pagesDrawnOn: 2,
       }),
+      // Re-indexed with the media, so a per-property slice keeps each
+      // picture's own verdict rather than the document's position.
+      visualKinds: indexes.map((index) => input.visualKinds?.[index] ?? null),
     });
     indexes.forEach((index, position) => { out[index] = assignments[position]; });
   }

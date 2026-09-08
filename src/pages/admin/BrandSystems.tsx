@@ -100,6 +100,7 @@ import {
 import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
 import { DEFAULT_REPORT_DESIGN_OPTIONS } from '@/lib/reportDesign/options.pure';
 import { TEMPLATE_BUILDER_PATH } from '@/lib/reportTemplate/templateStartRoutes';
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from '@/lib/reports/designControlsVisibility';
 
 export const BRAND_SYSTEMS_QUERY_KEY = ['brand-design-systems', 'all'] as const;
 
@@ -294,6 +295,30 @@ export default function BrandSystems() {
   const canSave = !saving.isPending && system.name.trim().length >= 2 && hexValid && auditOk === true;
   const briefTooShort = brief.trim().length < MIN_BRIEF_CHARS;
   const groups = useMemo(() => specimensByGroup(), []);
+
+  // The design factor is hidden product-wide (designControlsVisibility.ts).
+  // The route stays declared and still resolves — hiding is never deleting, and
+  // a bookmark or an old link landing on a 404 tells the reader the product is
+  // broken rather than that a feature is off. So the page answers, briefly, and
+  // offers the way back. Every hook above this line runs on both paths.
+  if (!REPORT_DESIGN_CONTROLS_VISIBLE) {
+    return (
+      <div className="container mx-auto max-w-2xl space-y-4 py-10">
+        <Button variant="ghost" size="sm" className="-ml-2" asChild>
+          <Link to={TEMPLATE_BUILDER_PATH}>
+            <ArrowLeft className="mr-2 h-4 w-4" aria-hidden />
+            Template Builder
+          </Link>
+        </Button>
+        <h1 className="text-2xl font-semibold tracking-tight">Brand systems</h1>
+        <p className="text-sm text-muted-foreground">
+          Designing and editing brand systems is turned off at the moment. Reports keep rendering
+          in the house design and in any system already saved, so nothing you have generated or
+          converted is affected.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto space-y-6 py-6">

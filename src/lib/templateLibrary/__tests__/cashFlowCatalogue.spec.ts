@@ -40,7 +40,9 @@ const cashflow = SAMPLE.cashflow as Record<string, any>;
  * Deliberately shorter than the other catalogues' list: `client` and `author`
  * are NOT here, because nothing can fill them for a report of this kind.
  */
-const AMBIENT = ['org', 'report'];
+// `partNumber` is the renderer's own per-page part counter (resolved over
+// the pages that actually draw, like `pageNumber`), not a projection leaf.
+const AMBIENT = ['org', 'report', 'partNumber'];
 
 function boundPaths(templates: typeof CASH_FLOW_COMPASS_TEMPLATES): Set<string> {
   const paths = new Set<string>();
@@ -127,6 +129,7 @@ describe('what these masters may not bind', () => {
     walk(SAMPLE.report, 'report');
     walk(SAMPLE.org, 'org');
 
+    flat.add('partNumber'); // renderer-ambient, resolved per rendered page
     const missing = [...paths].filter((p) => !flat.has(p)).sort();
     expect(missing).toEqual([]);
   });

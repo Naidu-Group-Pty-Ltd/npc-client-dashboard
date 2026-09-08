@@ -233,10 +233,10 @@ export function ReminderActions({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl border-brand-300/20 bg-background/95 dark:bg-background/95 p-1 text-foreground dark:text-foreground shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur">
-                  <SelectItem value="low" className="rounded-lg focus:bg-success/15 focus:text-success-foreground">Low</SelectItem>
+                  <SelectItem value="low" className="rounded-lg focus:bg-success/15 focus:text-success">Low</SelectItem>
                   <SelectItem value="medium" className="rounded-lg focus:bg-brand-400/15 focus:text-brand-100">Medium</SelectItem>
-                  <SelectItem value="high" className="rounded-lg focus:bg-destructive/15 focus:text-destructive-foreground">High</SelectItem>
-                  <SelectItem value="urgent" className="rounded-lg focus:bg-destructive/15 focus:text-destructive-foreground">Urgent</SelectItem>
+                  <SelectItem value="high" className="rounded-lg focus:bg-destructive/15 focus:text-destructive">High</SelectItem>
+                  <SelectItem value="urgent" className="rounded-lg focus:bg-destructive/15 focus:text-destructive">Urgent</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -365,7 +365,7 @@ export function ReminderActions({
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 rounded-full text-success hover:bg-success/15 hover:text-success-foreground focus-visible:ring-2 focus-visible:ring-success/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:opacity-60"
+          className="h-8 w-8 rounded-full text-success hover:bg-success/15 hover:text-success focus-visible:ring-2 focus-visible:ring-success/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:opacity-60"
           title="Complete"
           disabled={completeMutation.isPending}
           onClick={handleComplete}
@@ -380,7 +380,7 @@ export function ReminderActions({
         <Button
           variant="ghost"
           size="icon"
-          className="h-8 w-8 rounded-full text-destructive hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-2 focus-visible:ring-destructive/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:opacity-60"
+          className="h-8 w-8 rounded-full text-destructive hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black disabled:opacity-60"
           title="Delete"
           disabled={deleteMutation.isPending}
           onClick={handleDelete}

@@ -33,6 +33,7 @@ const code = (source: string) => source
 
 const CLIENT = read('supabase/functions/_shared/aml/providers/diditStandaloneClient.ts');
 const ORCHESTRATOR = read('supabase/functions/_shared/aml/standaloneVerification.ts');
+const ROUTE = read('supabase/functions/_shared/aml/providers/diditStandaloneRoute.pure.ts');
 const PORTAL = read('supabase/functions/aml-client-portal/index.ts');
 const PROCESSOR = read('supabase/functions/aml-verification-processor/index.ts');
 const CONSUMER = read('supabase/functions/cross-portal-outbox-worker/verificationConsumer.ts');
@@ -238,10 +239,21 @@ describe('the provider calls', () => {
   });
 
   it('carries the API key in a server-side header and nowhere else', () => {
-    expect(CLIENT).toContain("'x-api-key': apiKey");
-    // Never in a URL, a body field, or metadata.
-    expect(CLIENT).not.toMatch(/api_key=/);
-    expect(CLIENT).not.toMatch(/form\.append\([^)]*apiKey/);
+    /*
+     * The header is built where the route is decided, because a deployment
+     * that holds no Didit key sends a different credential to a different
+     * host — see `diditStandaloneRoute.pure.ts`. What the rule protects is
+     * unchanged: whichever credential a route carries goes in a request
+     * header and appears in no URL, no body field and no metadata.
+     */
+    expect(ROUTE).toContain('"x-api-key": key');
+    for (const src of [CLIENT, ROUTE]) {
+      expect(src).not.toMatch(/api_key=/);
+      expect(src).not.toMatch(/form\.append\([^)]*(apiKey|key\b)/);
+      // Never interpolated into the URL either — the other way a credential
+      // reaches a log line, a referrer and an error body.
+      expect(src).not.toMatch(/\$\{\s*(apiKey|key|cloneKey|secret)\s*\}/);
+    }
   });
 
   it('redacts the key and any URL out of every error it raises', () => {

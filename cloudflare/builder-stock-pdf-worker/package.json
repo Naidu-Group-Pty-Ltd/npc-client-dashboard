@@ -1,0 +1,8 @@
+{
+  "name": "builder-stock-pdf-worker",
+  "private": true,
+  "description": "Builder Stock PDF election worker. Runs the shared electFromPdfBytes where there is CPU for it.",
+  "dependencies": {
+    "unpdf": "0.12.1"
+  }
+}

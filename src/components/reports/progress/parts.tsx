@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Layers, Search } from 'lucide-react';
+import { Layers } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -68,6 +68,7 @@ import { format } from 'date-fns';
 import type { GenerationHistoryEntry } from '@/hooks/useGenerationHistory';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { SearchInput } from '@/components/ui/search-input';
 import { activityState, isResumable, formatEta, formatElapsed } from './selectors.pure';
 
 /* ---------- Types shared with parent ---------- */
@@ -1006,15 +1007,13 @@ export function GenerationHistoryList({
             </button>
           </div>
         </div>
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search address…"
-            className="h-7 pl-7 text-xs"
-          />
-        </div>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Search address…"
+          className="h-7 text-xs"
+          iconClassName="left-2 h-3 w-3"
+        />
         <div className="flex items-center gap-1.5">
           <Select value={filter} onValueChange={(v) => setFilter(v as HistoryFilter)}>
             <SelectTrigger className="h-7 text-xs flex-1">

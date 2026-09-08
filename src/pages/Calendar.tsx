@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, Users, Filter, RefreshCw, GripVertical, LayoutList, Flame, BarChart3, TrendingUp, AlertTriangle, Sparkles, Plus, Layers, Repeat, Bell, X, PanelLeftClose, PanelLeft, Menu, Mail, Pin, PinOff } from 'lucide-react';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { planBookingNotifications } from '@/lib/calendar/bookingNotifications.pure';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useSwipeGesture } from '@/hooks/useSwipeGesture';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -852,7 +853,9 @@ export default function Calendar() {
         appointmentTitle: event.title || 'Appointment',
         appointmentStart: event.startTime,
         appointmentEnd: event.endTime,
-        appointmentType: 'call',
+        // Deliberately not sent: the ledger recorded what kind of meeting this
+        // is when it was booked. Hardcoding 'call' here cancelled every Zoom
+        // meeting as a "Phone Call".
         appointmentNotes: event.notes || undefined,
         // The Zoom link, for a Zoom booking. GHL keeps it on `address`, and
         // nothing used to pass it here — audit item 33.
@@ -914,7 +917,7 @@ export default function Calendar() {
                 fetchCalendarData(start.toISOString(), end.toISOString());
               }}
               variant="outline"
-              className="rounded-xl border-destructive/25 bg-destructive/10 text-destructive-foreground transition-all hover:border-destructive/40 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-2 focus-visible:ring-destructive/40"
+              className="rounded-xl border-destructive/25 bg-destructive/10 text-destructive transition-all hover:border-destructive/40 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
             >
               <RefreshCw className="h-4 w-4 mr-2" />
               Retry
@@ -982,7 +985,8 @@ export default function Calendar() {
                   appointmentTitle: selectedEvent?.title || 'Appointment',
                   appointmentStart: data.newStartTime,
                   appointmentEnd: data.newEndTime,
-                  appointmentType: 'reschedule',
+                  // Not sent for the same reason: 'reschedule' is the kind
+                  // of notice, not a kind of meeting, and it printed verbatim.
                   appointmentNotes: selectedEvent?.notes,
                   appointmentLocation: selectedEvent?.address || undefined,
                   calendarName,
@@ -1980,15 +1984,38 @@ export default function Calendar() {
             const calendarName = calendars.find(c => c.id === data.calendarId)?.name;
             const appointmentId = result.event?.id || `temp-${Date.now()}`;
 
-            // Combine all notification recipients: finance contacts + booking recipients
-            const allNotificationRecipients = [
-              ...(secondaryRecipients || []),
-              ...(bookingRecipients || []).map(br => ({
-                financeContactId: `booking-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                name: br.name,
-                email: br.email,
-              })),
-            ];
+            // One sender for everyone invited, the client included.
+            //
+            // The client used to be emailed by the CRM and by nothing here, so
+            // they alone received no notes, no call type and no Zoom link.
+            // Planning the recipients in one place also means a booking with
+            // no CRM behind it is announced exactly like one that has a CRM:
+            // the address is what matters, not where the contact came from.
+            const notificationPlan = planBookingNotifications({
+              parties: [
+                ...(data.client?.email
+                  ? [{ role: 'client' as const, name: data.client.name, email: data.client.email }]
+                  : []),
+                ...(bookingRecipients || []).map(br => ({
+                  role: 'additional_contact' as const, name: br.name, email: br.email,
+                })),
+                ...(secondaryRecipients || []).map(fc => ({
+                  role: 'finance_partner' as const,
+                  name: fc.name,
+                  email: fc.email,
+                  financeContactId: fc.financeContactId,
+                })),
+              ],
+              crm: { linked: !!data.contactId, sendsClientConfirmation: false },
+            });
+            const allNotificationRecipients = notificationPlan.recipients.map(r => ({
+              financeContactId: r.financeContactId,
+              name: r.name,
+              email: r.email,
+            }));
+            for (const warning of notificationPlan.warnings) {
+              toast({ title: 'Not everyone will be emailed', description: warning });
+            }
 
             if (allNotificationRecipients.length > 0) {
               try {
@@ -1997,7 +2024,10 @@ export default function Calendar() {
                   appointmentTitle: data.title,
                   appointmentStart: data.startTime,
                   appointmentEnd: data.endTime,
-                  appointmentType: 'call',
+                  // What the operator actually chose. This was hardcoded to
+                  // 'call', so every notice said "Phone Call" however the
+                  // meeting was booked — including a Zoom one.
+                  appointmentType: data.appointmentType || 'call',
                   appointmentNotes: data.notes,
                   appointmentLocation: result.event?.address || undefined,
                   calendarName,

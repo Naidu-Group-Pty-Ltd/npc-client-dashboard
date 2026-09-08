@@ -142,6 +142,13 @@ export interface PropertyListing {
 
   fullAddress?: string | null;
   normalizedAddress?: string | null;
+  /**
+   * How far down the address the record reaches — `address` (a street number),
+   * `street` (a named street, no number), `locality` (a suburb) or `none`.
+   * Measured from the parts below by `listingAddress.pure.ts`, so a surface can
+   * plot a pin without implying a precision the data does not carry.
+   */
+  addressPrecision?: 'address' | 'street' | 'locality' | 'none' | null;
   unitNumber?: string | null;
   streetNumber?: string | null;
   streetName?: string | null;

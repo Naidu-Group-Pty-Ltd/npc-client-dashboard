@@ -13,7 +13,6 @@ import {
   MoreVertical,
   Pencil,
   Plus,
-  Search,
   Trash2,
   Workflow as WorkflowIcon,
 } from 'lucide-react';
@@ -29,6 +28,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { SearchInput } from '@/components/ui/search-input';
 import { getIntegrationName } from '@/lib/workflow/integrationNames';
 import {
   TEMPLATE_CATEGORIES,
@@ -220,19 +220,15 @@ export function WorkflowLibrary({
             </p>
           </div>
 
-          <div className="relative w-full sm:w-64">
-            <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search templates or integrations"
-              aria-label="Search templates"
-              className="h-8 pl-8 text-xs"
-            />
-          </div>
+          <SearchInput
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search templates or integrations"
+            aria-label="Search templates"
+            containerClassName="w-full sm:w-64"
+            className="h-8 text-xs"
+            iconClassName="left-2.5 h-3.5 w-3.5"
+          />
         </div>
 
         <div className="mb-3 flex flex-wrap gap-1.5">

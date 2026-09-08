@@ -117,3 +117,72 @@ export function internalErrorResponse(
     headers: { ...headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 }
+
+/**
+ * An error whose message was WRITTEN for the caller to read.
+ *
+ * ## Why this exists
+ *
+ * The opacity above is right for a caught driver error and wrong for a
+ * sentence somebody composed on purpose. `email-copilot` had already been
+ * fixed once to explain a failed model call — "the AI provider rejected this
+ * deployment's credential", "the account has no remaining balance" — and the
+ * operator still saw **"Internal error"**, because the handler threw that
+ * sentence and the outer catch flattened every throw into an opaque body.
+ * The diagnosis was written, logged, and then discarded one stack frame
+ * before it reached the person who needed it.
+ *
+ * So the distinction is carried by the error's TYPE rather than guessed from
+ * its text: an error is safe to show only when the code that raised it says
+ * so. Nothing else changes — an unrecognised throw is still opaque, which is
+ * what keeps a Postgres message off the screen.
+ *
+ * ## The rule for its message
+ *
+ * The message must be authored, never interpolated from an upstream body. A
+ * provider's error payload can name a model, an organisation or an internal
+ * host, so it belongs in the log with the correlation id like everything
+ * else. State what failed and what the operator can do about it.
+ */
+export class OperatorFacingError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(message: string, options: { status?: number; code?: string; cause?: unknown } = {}) {
+    super(message);
+    this.name = 'OperatorFacingError';
+    this.status = options.status ?? 502;
+    this.code = options.code ?? 'upstream_failed';
+    if (options.cause !== undefined) (this as { cause?: unknown }).cause = options.cause;
+  }
+}
+
+export function isOperatorFacingError(err: unknown): err is OperatorFacingError {
+  return err instanceof OperatorFacingError;
+}
+
+/**
+ * The 5xx response for a caught value: the authored sentence when there is
+ * one, an opaque body otherwise.
+ *
+ * Both paths log in full against a correlation id — an operator-facing
+ * message is a summary for a toast, not a substitute for the evidence.
+ */
+export function failureResponse(
+  err: unknown,
+  context: string,
+  headers: Record<string, string> = {},
+): Response {
+  if (isOperatorFacingError(err)) {
+    const correlationId = crypto.randomUUID();
+    console.error(`[${context}] ${err.code} correlation_id=${correlationId}`, describe(err));
+    return new Response(
+      JSON.stringify({ error: err.message, code: err.code, correlation_id: correlationId }),
+      {
+        status: err.status,
+        headers: { ...headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      },
+    );
+  }
+  return internalErrorResponse(err, context, headers);
+}

@@ -44,7 +44,7 @@ export function PortalImpersonationBanner() {
   };
 
   return (
-    <div className="bg-warning/15 border-b border-warning/40 text-warning-foreground px-4 py-2 flex items-center justify-between gap-3 text-sm">
+    <div className="bg-warning/15 border-b border-warning/40 text-warning px-4 py-2 flex items-center justify-between gap-3 text-sm">
       <div className="flex items-center gap-2 min-w-0">
         <ShieldAlert className="h-4 w-4 shrink-0 text-warning" />
         <span className="font-medium">Partner impersonation</span>

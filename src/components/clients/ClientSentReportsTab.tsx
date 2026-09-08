@@ -521,8 +521,13 @@ export function ClientSentReportsTab({ clientId, clientName, properties = [] }: 
 
       {/* Publish Dialog */}
       <Dialog open={showPublishDialog} onOpenChange={handleClosePublish}>
-        <DialogContent className="w-[92vw] max-w-[680px] max-h-[90vh] overflow-x-hidden overflow-y-auto p-4 sm:p-6">
-          <DialogHeader className="space-y-1.5">
+        {/* A column with a scrolling body and a pinned action, rather than one
+            scrolling box. The form is taller than the dialog on a laptop, and
+            the act the dialog exists for was the last thing in the scroll —
+            so it was both the thing that spilled out of the bottom border and
+            the thing you had to go looking for. */}
+        <DialogContent className="flex max-h-[90dvh] w-[92vw] max-w-[680px] flex-col gap-0 overflow-hidden p-0 sm:p-0">
+          <DialogHeader className="shrink-0 space-y-1.5 border-b border-border/60 px-4 py-4 pr-12 sm:px-6">
             <DialogTitle className="flex items-center gap-2">
               <Upload className="h-4 w-4" />
               Publish Report to Portal
@@ -532,7 +537,7 @@ export function ClientSentReportsTab({ clientId, clientName, properties = [] }: 
               produced, or a file of your own.
             </DialogDescription>
           </DialogHeader>
-          <div className="w-full max-w-full min-w-0 space-y-4 mt-2">
+          <div className="min-h-0 w-full max-w-full min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-4 py-4 sm:px-6">
             <Tabs
               value={publishSource}
               onValueChange={(v) => setPublishSource(v as 'generated' | 'upload')}
@@ -654,6 +659,9 @@ export function ClientSentReportsTab({ clientId, clientName, properties = [] }: 
               />
             </div>
 
+          </div>
+
+          <div className="shrink-0 border-t border-border/60 px-4 py-3 sm:px-6">
             <Button
               onClick={publishSource === 'generated' ? handlePublishGenerated : handlePublish}
               disabled={

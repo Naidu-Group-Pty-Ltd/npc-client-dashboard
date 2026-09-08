@@ -11,6 +11,7 @@ import { FlattenPdfMenuItem } from "@/components/common/FlattenPdfMenuItem";
 import { fetchPdfBlob } from "@/lib/pdf/downloadPdf";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Table,
   TableBody,
@@ -65,7 +66,9 @@ import {
 import {
   EnvelopeStatusDialog,
   DocuSignStatusBadge,
+  docuSignStatusLabel,
 } from "@/components/agreements/EnvelopeStatusDialog";
+import { envelopeBadgeIsRedundant } from "@/lib/agreements/statusBadges.pure";
 import { supabase } from "@/integrations/supabase/client";
 import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
 import { cn } from "@/lib/utils";
@@ -142,42 +145,42 @@ const STATUS_CONFIG: Record<
     variant: "success",
     icon: CheckCircle2,
     toneClassName:
-      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success-foreground",
+      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success",
   },
   completed: {
     label: "Completed",
     variant: "success",
     icon: CheckCircle2,
     toneClassName:
-      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success-foreground",
+      "border-success/60 bg-success/10 text-success shadow-success/5 dark:border-success/35 dark:bg-success/12 dark:text-success",
   },
   declined: {
     label: "Declined",
     variant: "destructive",
     icon: AlertTriangle,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
   voided: {
     label: "Voided",
     variant: "destructive",
     icon: Ban,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
   expired: {
     label: "Expired",
     variant: "secondary",
     icon: Clock,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
   failed: {
     label: "Failed",
     variant: "destructive",
     icon: AlertTriangle,
     toneClassName:
-      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive-foreground",
+      "border-destructive/70 bg-destructive/10 text-destructive shadow-destructive/5 dark:border-destructive/35 dark:bg-destructive/12 dark:text-destructive",
   },
 };
 
@@ -198,16 +201,59 @@ export default function Agreements() {
   const navigate = useNavigate();
   const { canEdit: canEditAgreements } = useModulePermissions("agreements");
 
-  const openPrepareForSigning = async (a: AgencyAgreement) => {
-    if (!a.pdf_storage_path) {
-      toast.error("PDF not ready yet");
-      return;
+  /**
+   * `ok` separates "the call failed" from "it answered, and there is no PDF
+   * yet". Without it a caller cannot tell them apart, and the one that reports
+   * a missing document would stack a second message on top of the failure this
+   * function has already reported.
+   */
+  const fetchAgreementPreview = async (
+    agreementId: string,
+  ): Promise<{ ok: boolean; html: string | null; pdf_url: string | null }> => {
+    const { data, error } = await invokeSecureFunction<{
+      html: string;
+      pdf_url?: string;
+      gamma_url?: string;
+    }>("manage-agency-agreements", {
+      action: "preview",
+      agreement_id: agreementId,
+    });
+    if (error || !data) {
+      toast.error(
+        "Failed to load agreement: " + (error?.message || "Unknown error"),
+      );
+      return { ok: false, html: null, pdf_url: null };
     }
-    const { data, error } = await supabase.storage
-      .from("agency-agreements")
-      .createSignedUrl(a.pdf_storage_path, 600);
-    if (error || !data?.signedUrl) {
-      toast.error(`Failed to load PDF: ${error?.message}`);
+    return { ok: true, html: data.html || null, pdf_url: data.pdf_url || null };
+  };
+
+  /**
+   * Prepare for Signing gets its PDF the way View and Download already do.
+   *
+   * It used to call `supabase.storage.createSignedUrl` from the BROWSER, and
+   * this app's identity is a custom HttpOnly cookie, so that client is anon.
+   * `agency-agreements` is a private bucket and is not in `secure-storage`'s
+   * allow-list either, so the request was refused — and Supabase Storage
+   * answers a refusal with the same message as a genuine absence, by design,
+   * to avoid confirming that an object exists. The operator therefore saw
+   * "Failed to load PDF: Object not found" on a row the page had just
+   * labelled GENERATED · READY, while View Agreement on that same row worked,
+   * because View goes through `manage-agency-agreements` and the signed URL
+   * is minted server-side with the service role.
+   *
+   * So there is one way to reach an agreement PDF now, not two.
+   */
+  const openPrepareForSigning = async (a: AgencyAgreement) => {
+    const { ok, pdf_url } = await fetchAgreementPreview(a.id);
+    // A genuine failure has already been reported; say nothing further.
+    if (!ok) return;
+    if (!pdf_url) {
+      // The ordinary case: Gamma generation is asynchronous, so a freshly
+      // generated agreement has a row before it has a document.
+      toast.error("PDF not ready yet", {
+        description:
+          "The agreement document is still being generated. Try again in a moment.",
+      });
       return;
     }
     const existingRecipients: SigningRecipient[] =
@@ -235,7 +281,7 @@ export default function Agreements() {
                 ]
               : []),
           ];
-    setSigningPdfUrl(data.signedUrl);
+    setSigningPdfUrl(pdf_url);
     setSigningAgreement({
       ...a,
       signing_recipients: existingRecipients,
@@ -256,26 +302,6 @@ export default function Agreements() {
   const pending = agreements.filter((a) =>
     ["sent", "delivered", "viewed"].includes(a.status),
   ).length;
-
-  const fetchAgreementPreview = async (
-    agreementId: string,
-  ): Promise<{ html: string | null; pdf_url: string | null }> => {
-    const { data, error } = await invokeSecureFunction<{
-      html: string;
-      pdf_url?: string;
-      gamma_url?: string;
-    }>("manage-agency-agreements", {
-      action: "preview",
-      agreement_id: agreementId,
-    });
-    if (error || !data) {
-      toast.error(
-        "Failed to load agreement: " + (error?.message || "Unknown error"),
-      );
-      return { html: null, pdf_url: null };
-    }
-    return { html: data.html || null, pdf_url: data.pdf_url || null };
-  };
 
   const handleViewAgreement = async (agreement: AgencyAgreement) => {
     setIsPreviewLoading(true);
@@ -465,14 +491,24 @@ export default function Agreements() {
           getDocuSignTrackingTone(agreement.docusign_status),
         )}
       >
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {renderStatusBadge(agreement.status)}
-            <DocuSignStatusBadge status={agreement.docusign_status} />
-          </div>
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-card/95 text-primary ring-1 ring-border/70 shadow-sm dark:bg-background/55">
-            <FileSignature className="h-4 w-4" />
-          </span>
+        {/* The envelope badge is drawn only when it says something the
+            agreement's own badge does not. The two share a vocabulary and
+            agree with each other almost always once an agreement is sent, so
+            the row used to read [✈ SENT] [✉ SENT] — which reads as a
+            rendering fault rather than as two sources.
+
+            The raised FileSignature mark that sat on the right has gone with
+            it. It had the full affordance of a button — accent ink, a ring, a
+            shadow — and did nothing at all, which is how it came to be
+            reported as "some kind of blue file with pencil icon that I'm not
+            sure what the function of it is". A decoration that reads as a
+            control is worse than no decoration. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {renderStatusBadge(agreement.status)}
+          {!envelopeBadgeIsRedundant(
+            STATUS_CONFIG[agreement.status]?.label ?? agreement.status,
+            docuSignStatusLabel(agreement.docusign_status),
+          ) && <DocuSignStatusBadge status={agreement.docusign_status} />}
         </div>
       </div>
     );
@@ -513,7 +549,7 @@ export default function Agreements() {
 
   const renderAgreementsError = () => (
     <div className="mx-4 my-5 overflow-hidden rounded-[1.35rem] border border-destructive/35 bg-[radial-gradient(circle_at_top,hsl(var(--destructive)/0.08),transparent_38%),linear-gradient(180deg,hsl(var(--card)/0.96),hsl(var(--background)/0.88))] px-5 py-10 text-center shadow-sm dark:border-destructive/25 dark:bg-[radial-gradient(circle_at_top,rgba(248,113,113,0.10),transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.78),rgba(2,6,23,0.56))]">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/40 bg-destructive/10 text-destructive dark:border-destructive/25 dark:text-destructive-foreground">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/40 bg-destructive/10 text-destructive dark:border-destructive/25 dark:text-destructive">
         <AlertTriangle className="h-5 w-5" aria-hidden="true" />
       </div>
       <p className="mx-auto max-w-md text-base font-semibold text-foreground">Unable to load agreements.</p>
@@ -682,9 +718,9 @@ export default function Agreements() {
               status, signature milestones, and safe agreement actions.
             </p>
             <div className="mt-3 flex flex-wrap gap-2 text-[0.68rem] font-bold uppercase tracking-[0.12em]">
-              <span className="rounded-full border border-info/45 bg-info/10 px-2.5 py-1 text-info dark:border-info/25 dark:text-info-foreground">Generated = ready to prepare</span>
+              <span className="rounded-full border border-info/45 bg-info/10 px-2.5 py-1 text-info dark:border-info/25 dark:text-info">Generated = ready to prepare</span>
               <span className="rounded-full border border-brand-300/45 bg-brand-500/10 px-2.5 py-1 text-brand-700 dark:border-brand-200/25 dark:text-brand-100">Sent/Awaiting = with buyer</span>
-              <span className="rounded-full border border-success/45 bg-success/10 px-2.5 py-1 text-success dark:border-success/25 dark:text-success-foreground">Signed = completed</span>
+              <span className="rounded-full border border-success/45 bg-success/10 px-2.5 py-1 text-success dark:border-success/25 dark:text-success">Signed = completed</span>
             </div>
           </div>
           <div className="group/search relative w-full sm:min-w-80 sm:max-w-md lg:w-96">
@@ -692,13 +728,13 @@ export default function Agreements() {
             <div className="pointer-events-none absolute inset-y-1.5 left-1.5 z-10 flex w-10 items-center justify-center rounded-xl border border-transparent bg-primary/8 text-primary shadow-[inset_0_1px_0_hsl(0_0%_100%/0.32)] transition-all duration-300 group-hover/search:border-brand-300/35 group-hover/search:bg-brand-400/12 group-focus-within/search:border-brand-300/55 group-focus-within/search:bg-brand-400/18 group-focus-within/search:text-brand-700 dark:bg-brand-300/10 dark:text-brand-200 dark:group-hover/search:bg-brand-200/12 dark:group-focus-within/search:bg-brand-200/16 dark:group-focus-within/search:text-brand-100">
               <Search className="h-4 w-4" aria-hidden="true" />
             </div>
-            <Input
+            <SearchInput
+              value={searchTerm}
+              onValueChange={setSearchTerm}
               id={searchInputId}
-              type="search"
               aria-label="Search agreements by buyer name, email, or status"
               placeholder={`Search ${agreements.length} agreements by name, email, status...`}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              hideIcon
               className="h-[3.25rem] rounded-[1.15rem] border-border/70 bg-background/95 py-3 pl-14 pr-4 text-[0.95rem] font-medium text-foreground shadow-[0_16px_42px_rgba(15,23,42,0.10),inset_0_1px_0_hsl(0_0%_100%/0.45)] outline-none transition-all duration-300 placeholder:text-muted-foreground/80 hover:border-brand-300/50 hover:bg-background hover:shadow-[0_18px_48px_rgba(15,23,42,0.13),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_hsl(0_0%_100%/0.55)] focus-visible:border-brand-400/70 focus-visible:ring-2 focus-visible:ring-brand-400/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-white/10 dark:bg-background/75 dark:shadow-[0_16px_42px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.08)] dark:placeholder:text-muted-foreground dark:hover:border-brand-200/35 dark:hover:bg-background/90 dark:hover:shadow-[0_18px_48px_rgba(0,0,0,0.34),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_rgba(255,255,255,0.10)] dark:focus-visible:border-brand-200/60 dark:focus-visible:ring-brand-300/25"
             />
           </div>

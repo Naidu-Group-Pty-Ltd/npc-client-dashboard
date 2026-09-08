@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -250,16 +251,15 @@ export function TokenUsagePanel() {
                   <span className="truncate">Agency-wide</span>
                 </TabsTrigger>
               </TabsList>
-              <div className="group relative min-w-0 flex-1 sm:max-w-md">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-colors group-focus-within:text-primary" />
-                <Input
-                  className="min-h-10 min-w-0 rounded-2xl border-border/70 bg-background/85 pl-10 pr-3 shadow-sm transition-all duration-200 placeholder:text-muted-foreground/75 hover:border-primary/30 hover:bg-background hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)] focus-visible:border-primary/45 focus-visible:ring-2 focus-visible:ring-primary/30"
-                  placeholder="Search by kind, function, status..."
-                  aria-label="Search token usage by kind, function, status, or idempotency key"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search by kind, function, status..."
+                aria-label="Search token usage by kind, function, status, or idempotency key"
+                containerClassName="group min-w-0 flex-1 sm:max-w-md"
+                className="min-h-10 min-w-0 rounded-2xl border-border/70 bg-background/85 pr-3 shadow-sm transition-all duration-200 placeholder:text-muted-foreground/75 hover:border-primary/30 hover:bg-background hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)] focus-visible:border-primary/45 focus-visible:ring-2 focus-visible:ring-primary/30"
+                iconClassName="left-3.5 transition-colors group-focus-within:text-primary"
+              />
             </DashboardThemeFrame>
 
             <TabsContent value={scope} className="mt-4 min-w-0 space-y-3">

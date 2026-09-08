@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { chartLegendWrapperStyle, chartTooltipContentStyle } from '@/lib/charts/tooltipStyle';
 import { Users, GitBranch, Target, TrendingUp, CheckCircle, Clock } from 'lucide-react';
 import { callLogBadgeTone } from './badgeStyles';
 import { cn } from '@/lib/utils';
@@ -58,15 +59,12 @@ const squadKpiCard =
 const squadChartCard =
   'relative overflow-hidden rounded-3xl border border-border dark:border-white/10 bg-gradient-to-br from-card dark:from-background/95 via-card dark:via-background/80 to-background dark:to-black/90 shadow-xl shadow-sm dark:shadow-black/25 transition-all duration-300 before:pointer-events-none before:absolute before:inset-x-8 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-brand-200/45 before:to-transparent hover:border-brand-300/30 hover:shadow-brand-500/10';
 const squadChartShell = 'rounded-2xl border border-border dark:border-white/10 bg-background dark:bg-black/20 p-3';
-const squadTooltipContentStyle = {
-  backgroundColor: 'rgba(9, 9, 11, 0.96)',
-  border: '1px solid rgba(255,255,255,0.12)',
-  borderRadius: '16px',
-  boxShadow: '0 24px 70px rgba(0,0,0,0.42)',
-  color: '#f4f4f5',
-};
-const squadTooltipLabelStyle = { color: '#f4f4f5' };
-const squadTooltipItemStyle = { color: '#f4f4f5' };
+// A third byte-identical copy of the same style lived here. See
+// `lib/charts/tooltipStyle` — none of the copies wrapped, so every one of them
+// drew a long agent or intent name on one unbreakable line.
+const squadTooltipContentStyle = chartTooltipContentStyle;
+const squadTooltipLabelStyle = { color: 'hsl(var(--popover-foreground))' };
+const squadTooltipItemStyle = { color: 'hsl(var(--popover-foreground))' };
 
 const getIntentColor = (intent: string, index: number): string => {
   const normalizedIntent = intent.toLowerCase().replace(/\s+/g, '_');
@@ -349,7 +347,7 @@ export const SquadAnalyticsDashboard = ({ calls }: SquadAnalyticsDashboardProps)
                       ))}
                     </Pie>
                     <Tooltip contentStyle={squadTooltipContentStyle} labelStyle={squadTooltipLabelStyle} itemStyle={squadTooltipItemStyle} />
-                    <Legend wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
+                    <Legend wrapperStyle={chartLegendWrapperStyle} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -392,7 +390,7 @@ export const SquadAnalyticsDashboard = ({ calls }: SquadAnalyticsDashboardProps)
                       axisLine={{ stroke: 'rgba(255,255,255,0.12)' }}
                     />
                     <Tooltip contentStyle={squadTooltipContentStyle} labelStyle={squadTooltipLabelStyle} itemStyle={squadTooltipItemStyle} />
-                    <Legend wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
+                    <Legend wrapperStyle={chartLegendWrapperStyle} />
                     <Bar dataKey="Total Calls" fill="#60a5fa" radius={[8, 8, 0, 0]} />
                     <Bar dataKey="Completed" fill="#34d399" radius={[8, 8, 0, 0]} />
                   </BarChart>

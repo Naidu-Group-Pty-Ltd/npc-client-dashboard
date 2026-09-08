@@ -311,7 +311,12 @@ async function extractMarketEvents(_apiKey: string): Promise<any> {
 // ─── Main Handler ────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  const corsHeaders = createCorsHeaders();
+  // The caller's origin. See `createCorsHeaders` — with no argument it answers
+  // a FIXED `Access-Control-Allow-Origin` beside
+  // `Access-Control-Allow-Credentials: true`, which the browser releases to JS
+  // only when it matches the request's own Origin exactly. This is the Market
+  // Correlation panel's own analysis call, on the same page as Audit 4 item 12.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).

@@ -1,3 +1,17 @@
+import { buildRecordedFactsBlock } from '../_shared/reports/investment/condenseFacts.pure.ts';
+import { composeFinancialChapters, composeFinancialSnapshotSection } from '../_shared/reports/investment/financialChapters.pure.ts';
+import {
+  composeScoreBreakdownSection,
+  composeScoreDimensionsSection,
+  composeSwotSection,
+  composeVerdictSection,
+} from '../_shared/reports/investment/scoreSections.pure.ts';
+import { stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
+import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
+import { assembleInDeclaredOrder, type ComposedPlacement } from '../_shared/reports/investment/tierAssembly.pure.ts';
+import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
+import { projectInvestmentReport, type InvestmentReportRowLike } from '../_shared/reportBindingProjection.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
@@ -10,162 +24,99 @@ const corsHeaders = {
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-// Report tier configurations based on NPC report templates
+// Report tier configurations based on NPC report templates.
+//
+// The Briefing guide is cut against the parent that EXISTS. Its previous
+// version was written for the 17-section legacy Compass, which carried
+// financial modelling and market-performance tables inline — and it kept
+// demanding eight financial tables and a "Current Market Performance" grid
+// from a Compass-40 parent that is forbidden to contain any of it. The model,
+// forced to fill tables from a document that never states the numbers, wrote
+// N/A: 33 occurrences per briefing before August 2026, 87 on the newest
+// (row 89b451f6). The financial tables, the score breakdown and the SWOT are
+// now COMPOSED from the row's own record after the model call
+// (financialChapters / scoreSections), so the model is asked only for what
+// the parent's prose can actually give: the condensed location case.
+//
+// Each tier used to carry a `sections` array and a `contentRatio` here. Both
+// were read by NOTHING — only `name`, `targetPages` and `structureGuide` are —
+// and the snapshot's copy was wrong, naming `Top Opportunities & Risks` and
+// `Recommendation` where the guide below it asks for `Top 3 Opportunities`,
+// `Top 3 Risks` and `Quick Recommendation`, and omitting two headings the guide
+// does ask for. Six declared entries against nine real ones, in one object
+// literal, with nothing to notice. A structure a reader trusts and no code
+// consults is worse than none, so the list now comes from
+// `sectionRegistry.pure.ts` — where it is read, and where a spec resolves every
+// entry against the thing that produces it.
 const TIER_CONFIG = {
   briefing: {
     name: 'Executive Briefing',
-    targetPages: 20,
-    contentRatio: 0.4, // 40% of original content
-    sections: [
-      'Location Overview',
-      'Current Market Performance',
-      'Market Activity',
-      'Population & Household Characteristics',
-      'Major Industries & Job Growth',
-      'Transport & Accessibility',
-      'Education Facilities',
-      'Healthcare & Shopping',
-      'Environmental Risks',
-      'Crime Statistics',
-      'Property-Level Information',
-      'Purchase & Ongoing Costs',
-      // NOTE: Comparable Sales and Rentals sections removed - requires paid API integration (CoreLogic/RP Data)
-      // TODO: Re-enable when transaction data APIs are integrated
-      'Financial Analysis (Yields, Loan Analysis, Sensitivity)',
-      'Property Value & Rental Projections',
-      'Investment Score Breakdown',
-      'SWOT Analysis',
-      'Top Opportunities & Risks',
-      'Investment Recommendations',
-      'Market Data Sources'
-    ],
+    targetPages: 12,
     structureGuide: `
-REPORT STRUCTURE (~20 PAGES):
+EXECUTIVE BRIEFING STRUCTURE (~7 pages of prose — financial tables, the
+score breakdown and the SWOT are attached programmatically from the recorded
+calculation AFTER your output; do NOT write them yourself):
 
-## Location Overview
-- Address being analyzed
-- SA2/SA3/SA4/LGA statistical areas
-- Suburb description (2-3 sentences)
-- Population trends (1-2 sentences)
+## Executive Summary
+- The verdict and the case for it in 4-6 sentences, condensed from the
+  parent's Executive Verdict.
 
-## Current Market Performance (Q3/Q4 2025)
-| Metric | Value | YoY Change |
-- Median House Price, Median Unit Price
-- Gross Rental Yield, Units Sold, Days on Market, Capital Growth
-- Source attribution
+## Location & Demand
+- Why this location matters and who wants to live here: growth corridor,
+  infrastructure pipeline, population and employment drivers, tenant/buyer
+  profile. Condense the parent's location and demand sections.
 
-## Historical Price Growth Table
-## Historical Rent Growth Table
+## Amenity & Access
+- What is nearby and how long it takes to reach: schools, healthcare,
+  shopping, transport and real commutes. Keep the parent's amenity matrix
+  rows that carry values.
 
-## Market Activity
-| Metric | Value | Source |
-- Active Listings, Sales Volume, Vacancy Rate
+## Market Position
+- Where the property sits in its local market, condensed from the parent.
+  Qualitative only — NO invented medians, sales volumes or days-on-market.
 
-## Population & Household Characteristics
-| Metric | Value | Source |
-- Employment Rate, Unemployment Rate, Labor Force
-- Median Income, IRSAD/IRSD Scores
+## Property Fit
+- How this dwelling aligns with local demand: position, layout, land/build
+  balance, tenant appeal, limitations.
 
-## Major Industries & Job Growth
-| Industry | Workforce % | Growth Rate |
-- Top 5 industries with growth rates
-- Job Growth Trends table
-
-## Transport & Accessibility
-| Metric | Value | Details |
-- Walk Score, CBD Commute, Public Transport Score
-
-## Education Facilities
-| Facility | Distance | Rating |
-- 5 nearest facilities
-
-## Healthcare & Shopping
-| Facility | Distance | Details |
-- Amenity Scores table
-
-## Environmental Risks
-| Risk Type | Assessment | Details |
-- Flood, Bushfire, Heatwave risks
-
-## Crime Statistics
-| Metric | Value | Comparison |
-- Crime Breakdown table
-
-## Property-Level Information
-| Property Characteristic | Value |
-- Type, Bedrooms, Bathrooms, Parking, Year Built, Estimated Value
-
-## Purchase & Ongoing Costs
-| Cost Category | Amount | Calculation |
-- All annual costs itemized
-
-## Base Assumptions
-- Bullet list of all financial assumptions
-
-## Gross & Net Yield Calculation
-| Metric | Calculation | Value |
-
-## Loan Analysis (P&I and Interest-Only)
-| Item | Annual | Monthly |
-
-## Sensitivity Analysis
-| Scenario | Interest Rate | Annual Cashflow |
-
-## Property Value Projections
-| Year | Conservative | Base |
-- Years 1, 3, 5, 10
-
-## Rental Income Projections
-| Year | Conservative | Base |
-
-## Cumulative Cashflow Projections
-| Year | Conservative | Base |
-
-## LVR Projections
-| Scenario | Year 10 LVR |
-
-## Overall Investment Score
-- Investment Grade (letter)
-- Total Score (/100)
-- Recommendation
-
-## Investment Score Breakdown
-| Component | Weight | Score |
-- Growth, Location, Yield, Demand, Risk
-
-## SWOT Analysis
-### Strengths (4 bullet points)
-### Weaknesses (4 bullet points)
-### Opportunities (4 bullet points)
-### Threats (4 bullet points)
+## Risk Overview
+- The parent's consolidated risk table, kept as a table. Preserve the
+  Risk / Level / Why It Matters / Required Check columns and every row that
+  carries values.
 
 ## Top 3 Opportunities
-- Detailed paragraph for each
+- Brief bullet points (1-2 sentences each)
 
 ## Top 3 Risks
-- Detailed paragraph for each
+- Brief bullet points (1-2 sentences each)
 
-## Investment Recommendations
-### Short-term Actions
-### Long-term Strategy
-### Key Considerations
+## Recommendation
+- The parent's final recommendation condensed to its verdict line and
+  150 words of rationale, then the immediate actions as a short list.
 
 ## Market Data Sources
-| Metric | Source | URL |
+- The sources the parent actually cites, with the date each was read.
+- Never invent a source, and never write "N/A" for one you do not have. If
+  the parent cites none, say so in one line — a client is entitled to know
+  what the document rests on, which is why this section is never omitted.
+
+HARD RULES:
+- Do NOT write any financial table (costs, yield, loan, cashflow,
+  sensitivity, projections, LVR) — they are attached from the recorded
+  calculation after your output and anything you write would duplicate or
+  contradict them.
+- Do NOT write an Investment Score Breakdown or SWOT section — same reason.
+- Include a metric ONLY when its value is stated in the report or the
+  recorded figures; NEVER write "N/A", "TBD" or a placeholder — omit the
+  row, or the table, entirely.
+
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+headings after them — anything outside this structure is discarded.
 `
   },
   snapshot: {
     name: 'Snapshot',
     targetPages: 5,
-    contentRatio: 0.15, // 15% of original content
-    sections: [
-      'Property Summary',
-      'Key Market Stats',
-      'Investment Score',
-      'Financial Snapshot',
-      'Top Opportunities & Risks',
-      'Recommendation'
-    ],
     structureGuide: `
 REPORT STRUCTURE (~5 PAGES):
 
@@ -175,22 +126,14 @@ REPORT STRUCTURE (~5 PAGES):
 
 ## Key Market Stats
 | Metric | Value |
-- Median Price, Rental Yield, Vacancy Rate, Capital Growth
-- Days on Market, Walk Score
+- Choose from: Median Price, Rental Yield, Vacancy Rate, Capital Growth, Days on Market, Walk Score
+- Include ONLY metrics whose value is stated in the report or the recorded figures; omit the rest — never write N/A
 
-## Investment Score
-- Grade: [Letter Grade]
-- Score: [X]/100
-- Recommendation: [BUY/HOLD/SELL]
-
-## Score Breakdown (simplified)
-| Component | Score |
-- Growth, Location, Yield, Demand, Risk
-
-## Financial Snapshot
-| Metric | Value |
-- Purchase Price, Weekly Rent, Gross Yield, Net Yield
-- Annual Cashflow, 10-Year Projected Value
+DO NOT WRITE: Investment Score, Score Breakdown, or Financial Snapshot. Those
+three sections are composed from the stored record after you finish and are
+inserted in their proper place. Anything you write under those headings is
+discarded. Do not restate the grade, the score out of 100, the recommendation
+or the score components anywhere else either.
 
 ## Top 3 Opportunities
 - Brief bullet points (1-2 sentences each)
@@ -200,25 +143,18 @@ REPORT STRUCTURE (~5 PAGES):
 
 ## Quick Recommendation
 - 2-3 sentences summarizing the investment thesis
+
+## Market Data Sources
+- Only sources actually cited in the report or the recorded figures; omit
+  the section entirely rather than writing "N/A" for a source you do not have
+
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+headings after them — anything outside this structure is discarded.
 `
   },
   financial: {
     name: 'Financial Analysis Report',
     targetPages: 20,
-    contentRatio: 0.35,
-    sections: [
-      'Property & Purchase Snapshot',
-      'Purchase & Acquisition Costs',
-      'Annual Holding Costs',
-      'Rental Income & Yield Analysis',
-      'Loan Structure & Serviceability (LVR, LMI, P&I vs IO)',
-      'Year-1 Cashflow Summary',
-      'Sensitivity Analysis (interest rate, rent, vacancy)',
-      '10-Year Projections (value, rent, cashflow, equity)',
-      'Tax Position & Depreciation',
-      'Equity & Exit Scenarios',
-      'Financial Assumptions & Data Sources',
-    ],
     structureGuide: `
 FINANCIAL ANALYSIS REPORT STRUCTURE (~20 PAGES):
 This report contains ONLY financial / numerical analysis. Do NOT include
@@ -505,6 +441,9 @@ Deno.serve(async (req) => {
           investment_score: parentReport.investment_score,
           location_intelligence: parentReport.location_intelligence,
           data_sources: parentReport.data_sources,
+          // The substance is the parent's, whatever engine produced it —
+          // unwritten, this column defaulted every child to 'legacy'.
+          generation_engine: parentReport.generation_engine ?? 'legacy',
         })
         .eq('id', existingTier.id)
         .select('id')
@@ -540,6 +479,7 @@ Deno.serve(async (req) => {
         investment_score: parentReport.investment_score,
         location_intelligence: parentReport.location_intelligence,
         data_sources: parentReport.data_sources,
+        generation_engine: parentReport.generation_engine ?? 'legacy',
         })
         .select('id')
         .single();
@@ -568,6 +508,16 @@ Deno.serve(async (req) => {
       structure_guide: tierConfig.structureGuide,
     })).text;
 
+    // The recorded figures, from the parent's own structured columns — the
+    // same reconciled projection every templated document binds. The parent's
+    // PROSE deliberately omits most of these (a Compass body carries no
+    // financials, and argues its score without restating the components), and
+    // a model told to fill a table from a document that never states the
+    // numbers wrote N/A nineteen times on a real snapshot whose row held every
+    // figure. The block is authoritative; a metric absent from it and from the
+    // prose loses its row rather than gaining a placeholder.
+    const factsBlock = buildRecordedFactsBlock(projectInvestmentReport(parentReport as InvestmentReportRowLike));
+
     const userPrompt = `Please condense the following comprehensive investment report into a ${tierConfig.name} format (~${tierConfig.targetPages} pages).
 
 Use the structure template from the system prompt and extract the relevant data from this report:
@@ -576,9 +526,10 @@ Use the structure template from the system prompt and extract the relevant data 
 ORIGINAL COMPREHENSIVE REPORT:
 ${parentReport.report_content}
 ---
-
+${factsBlock ? `\n${factsBlock}\n` : ''}
 IMPORTANT:
-- Copy all numerical values, percentages, and scores EXACTLY
+- Copy all numerical values, percentages, and scores EXACTLY — from the RECORDED FIGURES block first, then from the report
+- Include a metric's table row ONLY when its value is known from those sources; NEVER write "N/A", "TBD" or any placeholder — omit the row entirely
 - Keep all table data intact
 - Follow the section structure precisely
 - Maintain professional formatting throughout`;
@@ -635,22 +586,163 @@ IMPORTANT:
 
     // Phase 5+6: word-cap enforcement + page-pressure trimming
     // Phase 7: QA validation (returned in response for observability)
+    //
+    // Hygiene runs on BOTH tiers now. It ran on the briefing alone, which was
+    // exactly backwards: the Snapshot — the format with no room for slack —
+    // shipped a double document (its 8 declared sections followed by a copy
+    // of the parent's own headings: 17 H2s and 2.5× the format's length on
+    // row 8c6edc56) with nothing to catch it.
     let postProcessReport: unknown = null;
+    // Sections composed from the record, addressed by the registry id that
+    // decides where each one goes. Collected for both condensed tiers and
+    // placed by `assembleInDeclaredOrder` below.
+    const composedPlacements: ComposedPlacement[] = [];
     let qaReport: unknown = null;
-    if (targetTier === 'briefing') {
-      try {
+    const hygiene: Record<string, unknown> = {};
+    try {
+      const { runQAValidation } = await import('../_shared/compassQAValidator.ts');
+
+      if (targetTier === 'briefing') {
         const { postProcessReportMarkdown } = await import('../_shared/compassPostProcessor.ts');
-        const { runQAValidation } = await import('../_shared/compassQAValidator.ts');
-        const tier = 'compass-40';
-        const result = postProcessReportMarkdown(condensedContent, tier);
+        const result = postProcessReportMarkdown(condensedContent, 'compass-40');
         condensedContent = result.markdown;
         postProcessReport = result.report;
-        qaReport = runQAValidation(condensedContent, tier);
-        console.log('Post-processor report:', JSON.stringify(result.report, null, 2));
-        console.log('QA report:', JSON.stringify(qaReport, null, 2));
-      } catch (ppErr) {
-        console.error('Post-processor/QA failed (continuing):', ppErr);
+
+        // The financial tables, the score breakdown and the SWOT are COMPOSED
+        // from the row's own record, never asked of the model — the guide
+        // forbids it, and the model's version is what wrote 87 N/As on the
+        // newest briefing. The parent's score and calculations were copied
+        // onto this child above, so the composed sections and the templated
+        // KPI tiles read the same record.
+        //
+        // Each chapter is tagged with the section id the registry places it at.
+        // The map is here rather than in the composer because the composer
+        // answers to the Financial tier's layout and the registry answers to
+        // the Briefing's.
+        const CHAPTER_SECTION_ID: Record<number, ComposedPlacement['id']> = {
+          4: 'purchaseHolding', 5: 'rentalYield', 6: 'loan', 8: 'sensitivity', 9: 'tenYear',
+        };
+        for (const ch of composeFinancialChapters(
+          { financialCalculations: parentReport.financial_calculations, investmentScore: parentReport.investment_score },
+          { scenarios: 'primary' },
+        )) {
+          // 12 and 14 are the FIN-titled scorecard and SWOT; the briefing
+          // carries them under its own headings below.
+          const id = CHAPTER_SECTION_ID[ch.ordinal];
+          if (id) composedPlacements.push({ id, markdown: ch.markdown });
+        }
+        const scoreSection = composeScoreBreakdownSection(parentReport.investment_score, 'Investment Score Breakdown');
+        if (scoreSection) composedPlacements.push({ id: 'scorecard', markdown: scoreSection });
+        const swotSection = composeSwotSection(parentReport.investment_score, 'SWOT Analysis');
+        if (swotSection) composedPlacements.push({ id: 'swot', markdown: swotSection });
       }
+
+      // The Snapshot composes too, and until now composed NOTHING — the only
+      // member of the family that did not. Briefing 7 sections from the record,
+      // Financial 8, Snapshot 0, while four of its nine model-authored sections
+      // were numeric. Three of those four are figures the record holds outright,
+      // so they are typed from it here; `Key Market Stats` stays authored
+      // because median price, vacancy rate, days on market and walk score are
+      // NOT in `financial_calculations` and composing them would mean inventing
+      // a source, which is the worse failure.
+      if (targetTier === 'snapshot') {
+        const verdictSection = composeVerdictSection(parentReport.investment_score, 'Investment Score');
+        if (verdictSection) composedPlacements.push({ id: 'verdict', markdown: verdictSection });
+        const dimsSection = composeScoreDimensionsSection(parentReport.investment_score, 'Score Breakdown');
+        if (dimsSection) composedPlacements.push({ id: 'scorecard', markdown: dimsSection });
+        const finSection = composeFinancialSnapshotSection(parentReport.financial_calculations, 'Financial Snapshot');
+        if (finSection) composedPlacements.push({ id: 'financialSnapshot', markdown: finSection });
+      }
+      hygiene.composed_sections = composedPlacements.length;
+
+      // Trim to what the tier declares — on BOTH condensed tiers now.
+      //
+      // The snapshot's list used to be typed out here, a ninth copy of the
+      // structure; it comes from the registry, which declares exactly the same
+      // nine headings in the same order, so this half is a no-op.
+      //
+      // The briefing is the change. It had no trim at all, and every one of the
+      // 21 briefings in production carries the PARENT's structure rather than
+      // its own: `Location Overview` on 20, `Historical Price Growth Table` on
+      // 19, `Major Industries & Job Growth` on 19 — while six of its nine
+      // declared headings (`Location & Demand`, `Amenity & Access`, `Market
+      // Position`, `Property Fit`, `Risk Overview`, `Recommendation`) appear on
+      // NONE. Phase 1 re-cut the guide and shipped no enforcement, so the guide
+      // was aspirational; the snapshot got both halves and the briefing got one.
+      //
+      // The trim runs on the model's own output, BEFORE the composed sections
+      // are placed — they are ours and always declared, so including them here
+      // would only make the "did the model follow the guide" question answer
+      // itself.
+      if (targetTier === 'briefing' || targetTier === 'snapshot') {
+        const declared = markdownHeadingsForTier(targetTier);
+        const trimmed = trimToDeclaredSections(condensedContent, declared);
+        // A trim that keeps nothing the MODEL wrote is not a trim, it is a
+        // deletion: the briefing would go out as its composed financial tables
+        // with no case attached to them. In that state, keep the untrimmed text
+        // and record it: a stub is worse than a document with the wrong
+        // headings, and the count belongs in the log rather than in a client's
+        // hands.
+        const authored = authoredHeadingsForTier(targetTier).map((h) => h.toLowerCase());
+        const survivors = [...trimmed.markdown.matchAll(/^##\s+(.+?)\s*$/gm)]
+          .map((m) => m[1].toLowerCase().replace(/\s+/g, ' ').trim());
+        const keptAny = survivors.some((h) => authored.some((a) => h === a || h.startsWith(`${a} `)));
+        if (keptAny) {
+          condensedContent = trimmed.markdown;
+          hygiene.sections_dropped = trimmed.dropped;
+        } else {
+          hygiene.sections_trim_skipped = trimmed.dropped;
+        }
+
+        // Place every section in the order the registry declares, composed
+        // ones included. They used to be appended after everything the model
+        // wrote — so the Briefing's financial tables, score breakdown and SWOT
+        // printed after `Recommendation` (order 20) and after `Market Data
+        // Sources` (order 90), when the registry places them at 11-17. The
+        // trim filters and has never reordered.
+        //
+        // Assembly runs only where the trim actually ran: on untrimmed text a
+        // foreign heading is ABSORBED into whichever section is open rather
+        // than dropped, and the fallback append keeps the composed sections in
+        // the document rather than losing them to a structural safety check.
+        if (composedPlacements.length || keptAny) {
+          if (keptAny) {
+            const assembled = assembleInDeclaredOrder(condensedContent, composedPlacements, targetTier);
+            condensedContent = assembled.markdown;
+            hygiene.sections_placed = assembled.placed;
+            hygiene.sections_authored = assembled.authored;
+            if (assembled.unplaced.length) hygiene.sections_unplaced = assembled.unplaced;
+          } else if (composedPlacements.length) {
+            condensedContent = `${condensedContent.trimEnd()}\n\n${composedPlacements.map((c) => c.markdown).join('\n\n')}`;
+            hygiene.sections_appended_untrimmed = composedPlacements.length;
+          }
+        }
+
+        const stripped = stripEditorialLabelsFromMarkdown(condensedContent);
+        condensedContent = stripped.markdown;
+        hygiene.editorial_blocks_removed = stripped.removedBlocks;
+      }
+
+      // A labelled row is a promise that a figure follows it — on every tier.
+      const scrubbed = stripPlaceholderRows(condensedContent);
+      condensedContent = scrubbed.markdown;
+      hygiene.placeholder_rows_removed = scrubbed.removedRows;
+      hygiene.placeholder_tables_removed = scrubbed.removedTables;
+
+      // The same rule for the two block types the row scrubber cannot see: a
+      // stat card with no value (the renderer draws its UNIT in display type)
+      // and a chart already drawn earlier in the document.
+      const blocks = scrubBlocks(condensedContent);
+      condensedContent = blocks.markdown;
+      hygiene.empty_stat_cards_removed = blocks.emptyStatCards;
+      hygiene.duplicate_directives_removed = blocks.duplicateDirectives;
+
+      qaReport = runQAValidation(condensedContent, 'compass-40');
+      console.log('Hygiene:', JSON.stringify(hygiene));
+      if (postProcessReport) console.log('Post-processor report:', JSON.stringify(postProcessReport, null, 2));
+      console.log('QA report:', JSON.stringify(qaReport, null, 2));
+    } catch (ppErr) {
+      console.error('Post-processor/QA failed (continuing):', ppErr);
     }
 
     // Update the condensed report with the content
@@ -681,6 +773,7 @@ IMPORTANT:
       tierName: tierConfig.name,
       postProcessReport,
       qaReport,
+      hygiene,
       message: `${tierConfig.name} generated successfully`
     }), {
       status: 200,

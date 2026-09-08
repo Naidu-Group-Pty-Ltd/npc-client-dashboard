@@ -605,119 +605,75 @@
   pointer-events: none;
 }
 
-/* --- Clusters -----------------------------------------------------------
-   A cluster carries two facts, not one: how many listings it hides (the
-   count) and what they are worth (a band-mix ring plus the median price).
-   The ring's conic-gradient stops are written inline by the icon factory —
-   these custom properties are the colours it names, so no value is ever
-   emitted from JavaScript. */
-.listings-map .listings-cluster {
-  background: transparent;
-  border: 0;
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* --- Stacks -------------------------------------------------------------
+   Several properties standing on ONE coordinate.
+
+   Deliberately NOT the cluster bubble this replaces. That bubble stood for
+   properties spread over hundreds of kilometres and was drawn at one member's
+   position, so its location meant nothing — and a mark whose location means
+   nothing reads as a pin in the wrong place, which is how it was reported
+   every time it was seen: over Bass Strait, over the Southern Ocean, and over
+   the centre of the continent.
+
+   This is the pin itself with a count riding on its shoulder. The pin still
+   points at its coordinate, because every property behind the badge really is
+   at that coordinate. See listingsMap.groupByCoordinate. */
+.listings-map .listing-pin--stack {
   overflow: visible;
-  --tier-low: hsl(var(--brand-200));
-  --tier-mid: hsl(var(--brand-500));
-  --tier-high: hsl(var(--brand-800));
-  --tier-top: hsl(var(--brand-950));
-  --tier-unknown: hsl(var(--muted-foreground));
 }
 
-.listings-cluster__ring {
+.listing-pin__count {
   position: absolute;
-  inset: 0;
-  border-radius: 9999px;
-  box-shadow:
-    0 0 0 1px hsl(var(--background) / 0.9),
-    0 6px 18px hsl(var(--foreground) / 0.28);
-  transition: transform 140ms ease;
-}
-
-/* Punches the ring into a donut and gives the count a surface to sit on. */
-.listings-cluster__core {
-  position: absolute;
-  inset: 22%;
-  border-radius: 9999px;
-  background: hsl(var(--background));
-  box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.08);
-  transition: transform 140ms ease;
-}
-
-.listings-cluster:hover .listings-cluster__ring,
-.listings-cluster:hover .listings-cluster__core {
-  transform: scale(1.08);
-}
-
-.listings-cluster__count {
-  position: relative;
+  top: -2px;
+  right: -6px;
+  min-width: 1.05rem;
+  height: 1.05rem;
+  padding: 0 0.25rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: hsl(var(--foreground));
-  font-size: 0.6875rem;
-  font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-
-.listings-cluster--lg .listings-cluster__count,
-.listings-cluster--xl .listings-cluster__count {
-  font-size: 0.8125rem;
-}
-
-/* The median, hung under the ring. Absolute so it never changes the icon box:
-   markercluster anchors the icon at its centre and the geometry has to hold. */
-.listings-cluster__price {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translate(-50%, -0.28rem);
-  padding: 0.05rem 0.3rem;
   border-radius: 9999px;
-  white-space: nowrap;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
   font-size: 0.625rem;
   font-weight: 700;
-  line-height: 1.4;
   font-variant-numeric: tabular-nums;
-  color: hsl(var(--background));
-  background: var(--tier-unknown);
-  box-shadow: 0 1px 4px hsl(var(--foreground) / 0.3);
+  line-height: 1;
+  box-shadow:
+    0 0 0 1.5px hsl(var(--primary)),
+    0 2px 6px hsl(var(--foreground) / 0.3);
+  pointer-events: none;
 }
 
-.listings-cluster__price--low {
-  background: var(--tier-low);
-  color: hsl(var(--brand-950));
-}
-.listings-cluster__price--mid {
-  background: var(--tier-mid);
-  color: hsl(var(--brand-950));
-}
-.listings-cluster__price--high {
-  background: var(--tier-high);
-  color: hsl(var(--brand-50));
-}
-.listings-cluster__price--top {
-  background: var(--tier-top);
-  color: hsl(var(--brand-50));
-}
+/* On the ghost dot the badge sits tighter, or it dwarfs the mark — and it is
+   hidden until the mark is hovered.
 
-.listings-cluster--ghost .listings-cluster__ring {
-  background: transparent;
-  border: 1px dashed hsl(var(--foreground) / 0.3);
-  box-shadow: none;
-}
-
-.listings-cluster--ghost .listings-cluster__count {
+   The ghost variant is drawn ONLY in heat-only mode, where the pins are meant
+   to recede behind the density surface. A solid, fully opaque count riding on
+   a 30%-opacity dot inverts that: the badge becomes the loudest thing on a
+   screen whose subject is the heat. The cluster bubble this replaces had the
+   same rule for the same reason. */
+.listing-pin--ghost .listing-pin__count {
+  top: -6px;
+  right: -8px;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  font-size: 0.5625rem;
   opacity: 0;
   transition: opacity 130ms ease;
 }
 
-.listings-cluster--ghost:hover .listings-cluster__count,
-.listings-cluster--ghost:focus-visible .listings-cluster__count {
+.listing-pin--ghost:hover .listing-pin__count,
+.listing-pin--ghost:focus-visible .listing-pin__count {
   opacity: 1;
+}
+
+/* A stack's hover card lists its properties, one line each. */
+.listings-pin-tip__row {
+  display: block;
+  font-size: 0.6875rem;
+  color: hsl(var(--muted-foreground));
+  line-height: 1.35;
 }
 
 /* --- Your location ------------------------------------------------------
@@ -868,23 +824,16 @@
   border-color: hsl(var(--primary) / 0.65);
 }
 
-.listings-map--dark-tiles .listings-cluster--ghost .listings-cluster__ring {
-  border-color: hsl(var(--primary) / 0.5);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .listing-pin__chip,
   .listing-pin__dot,
   .listing-pin__marker,
-  .listings-cluster__ring,
-  .listings-cluster__count {
+  .listing-pin__count {
     transition: none;
   }
 
   .listing-pin--chip:hover .listing-pin__chip,
-  .listing-pin--pin:hover .listing-pin__marker,
-  .listings-cluster:hover .listings-cluster__ring,
-  .listings-cluster:hover .listings-cluster__core {
+  .listing-pin--pin:hover .listing-pin__marker {
     transform: none;
   }
 

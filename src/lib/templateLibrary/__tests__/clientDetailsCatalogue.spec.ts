@@ -25,7 +25,9 @@ import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
 const clientDetails = SAMPLE.clientDetails as Record<string, any>;
 
 /** Namespaces this format may bind besides its own. */
-const AMBIENT = ['org', 'report', 'client'];
+// `partNumber` is the renderer's own per-page part counter (resolved over
+// the pages that actually draw, like `pageNumber`), not a projection leaf.
+const AMBIENT = ['org', 'report', 'client', 'partNumber'];
 
 /** The 742: contact details and nothing else. */
 const EMPTY_RECORD = {
@@ -115,6 +117,7 @@ describe('the catalogue', () => {
     // Indexed leaves resolve through the arrays the projection publishes; a
     // path whose index is past the sample's own length is a capped row, not a
     // missing binding.
+    flat.add('partNumber'); // renderer-ambient, resolved per rendered page
     const missing = [...boundPaths()].filter(
       (p) => !flat.has(p) && !flat.has(p.replace(/\.\d+\./g, '.0.')),
     ).sort();

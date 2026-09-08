@@ -44,6 +44,18 @@ const root = resolve(process.cwd());
  */
 const CASES = [
   {
+    // The fabricated-data gate must notice a deleted generator coming back.
+    // This mutation re-points the ABS service's honest refusal at the ghost
+    // `getMockABSData(` — the invented-demographics generator removed on
+    // 2026-09-06 — which trips the ghost-name check whatever else survives.
+    gate: 'check-fabricated-data.mjs',
+    file: 'supabase/functions/abs-data-service/index.ts',
+    what: 'the ABS demographics fabricator returns',
+    find: 'sourceUnavailable(',
+    replace: 'getMockABSData(',
+    all: true,
+  },
+  {
     gate: 'check-agent-tool-policies.mjs',
     file: 'supabase/functions/ai-dashboard-agent/index.ts',
     what: 'agent trace log stops checking for the superadmin role',
@@ -106,6 +118,16 @@ const CASES = [
     what: 'a human upload path is caller-chosen rather than server-generated',
     find: 'uploadPath = `${uploadBinding.clientId || uploadBinding.objectClientId || uploadBinding.ownerUserId || actorId}/${crypto.randomUUID()}',
     replace: 'uploadPath = `${path}',
+  },
+  {
+    gate: 'check-migration-version-collisions.mjs',
+    file: 'supabase/migrations/MIGRATION_VERSION_COLLISIONS.json',
+    what: 'a real migration-version collision is dropped from the frozen inventory',
+    // The baseline is what makes the gate quiet about 42 historical collisions;
+    // if losing an entry did not turn it red, the inventory would be a place to
+    // hide a new one.
+    find: '"version": "20261112000000"',
+    replace: '"version": "20261112999999"',
   },
   {
     gate: 'check-edge-column-names.mjs',

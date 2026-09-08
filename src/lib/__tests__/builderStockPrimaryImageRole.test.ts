@@ -1126,3 +1126,60 @@ describe('the last generation of a compressed object wins', () => {
     expect(recovered.get(5)).not.toContain('/Old');
   });
 });
+
+// ---------------------------------------------------------------------------
+// X — a modest facade on a busy details page (Thornhill Gardens, measured)
+// ---------------------------------------------------------------------------
+
+/**
+ * WHAT THIS PINS, MEASURED ON THE LIVE DROPBOX BROCHURE, 6 SEPTEMBER 2026.
+ *
+ * "Thornhill-Gardens-Lot-313-Daylilly-Way-LX-18E-Mercer" designates its
+ * details page as the cover (identity + the package facts), and that page
+ * draws seven rasters: the property's facade from a 480x339 JPEG at 17% of
+ * the page, a 3423x1588 logo lockup at 2.8%, four icons under 50px, and the
+ * floor plan. The 600x400 pixel floor refused the facade — the ONLY
+ * photograph of the property in the document — and the row was told "none of
+ * them presents a photograph of this property".
+ *
+ * Every number below is the measurement, not an approximation: dims, stream
+ * detail, drawn share, on an A4 page.
+ */
+describe('X — a 480x339 facade at 17% of the cover qualifies and is elected', () => {
+  const A4 = { width: 595.276, height: 841.89 };
+  const drawnAt = (w: number, h: number, index = 0) => ({
+    name: 'Im', drawn: { x: 0, y: 0, width: w, height: h },
+    clip: null, index, ctm: [1, 0, 0, 1, 0, 0] as [number, number, number, number, number, number],
+  });
+  const jpeg = (name: string, objectNumber: number, width: number, height: number, bytes: number) => ({
+    name, objectNumber, width, height, start: 0, end: bytes,
+    filters: ['DCTDecode'], components: 3, bitsPerComponent: 8,
+  });
+
+  const facade = { image: jpeg('Im1', 34, 480, 339, 33_477), placement: drawnAt(348, 246) };
+  const logo = { image: jpeg('Im2', 35, 3423, 1588, 170_524), placement: drawnAt(173, 80) };
+  const icon = { image: jpeg('Im3', 69, 47, 33, 2_000), placement: drawnAt(17, 12) };
+  const plan = { image: jpeg('Im7', 76, 466, 867, 82_135), placement: drawnAt(183, 341) };
+
+  it('the facade and the plan qualify; the logo and the icons never reach the election', () => {
+    const candidates = qualifyingPhotographsFrom(
+      [facade, logo, icon, plan], A4.width, A4.height,
+    );
+    const keys = candidates.map((c) => `${c.image.objectNumber}`).sort();
+    expect(keys).toEqual(['34', '76']);
+  });
+
+  it('the election takes the photograph over the plan, by their pixels', () => {
+    const outcome = selectCoverHero([
+      { key: 'facade', placementsOnPage: 1, pagesDrawnOn: 1, pageAreaShare: 0.171, visualKind: 'photo' },
+      { key: 'plan', placementsOnPage: 1, pagesDrawnOn: 1, pageAreaShare: 0.125, visualKind: 'floorplan' },
+    ]);
+    expect(outcome.kind).toBe('hero');
+    expect(outcome.kind === 'hero' && outcome.key).toBe('facade');
+  });
+
+  it('an icon-sized raster still refuses whatever floor moves', () => {
+    const candidates = qualifyingPhotographsFrom([icon], A4.width, A4.height);
+    expect(candidates).toHaveLength(0);
+  });
+});

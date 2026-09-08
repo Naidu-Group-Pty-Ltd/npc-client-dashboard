@@ -105,8 +105,12 @@ export function RecipientSanityWarning({ to, cc, bcc, expectedDomain, bodyText, 
           key={i}
           className={cn(
             'flex items-start gap-2 text-xs p-2 rounded border',
-            w.kind === 'typo' || w.kind === 'attachment' ? 'border-warning/40 bg-warning/10 text-warning-foreground' :
-            'border-info/40 bg-info/10 text-info-foreground',
+            // `-foreground` is the ink for a SOLID `bg-warning`/`bg-info` and is
+            // near-black in dark mode. On a 10% tint it renders the warning
+            // unreadable — which is exactly how it was reported: "there is some
+            // kind of warning but I can't read it".
+            w.kind === 'typo' || w.kind === 'attachment' ? 'border-warning/40 bg-warning/10 text-warning' :
+            'border-info/40 bg-info/10 text-info',
           )}
         >
           {w.kind === 'attachment' ? <Paperclip className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" /> : <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}

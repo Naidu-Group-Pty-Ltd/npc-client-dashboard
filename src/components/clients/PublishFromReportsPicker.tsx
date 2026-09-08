@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   BarChart3, Building2, CheckCircle2, FileSpreadsheet, FileText,
-  Landmark, Search, Sparkles,
+  Landmark, Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -87,16 +88,14 @@ export function PublishFromReportsPicker({ reports, publishedFiles, selectedId, 
 
   return (
     <div className="space-y-2">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search this client's reports…"
-          aria-label="Search this client's reports"
-          className="h-9 pl-8 text-sm"
-        />
-      </div>
+      <SearchInput
+        value={query}
+        onValueChange={setQuery}
+        placeholder="Search this client's reports…"
+        aria-label="Search this client's reports"
+        className="h-9 text-sm"
+        iconClassName="left-2.5 h-3.5 w-3.5"
+      />
 
       <div
         role="radiogroup"

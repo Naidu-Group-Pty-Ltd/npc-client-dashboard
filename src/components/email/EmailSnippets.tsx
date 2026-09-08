@@ -11,7 +11,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Plus, Trash2, Pencil, Wand2, Search, Save, X } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Plus, Trash2, Pencil, Wand2, Save, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 export interface EmailSnippet {
@@ -123,10 +124,12 @@ export function SnippetManagerDialog({ open, onOpenChange, snippets, onChanged }
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1 overflow-hidden">
           {/* List */}
           <div className="flex flex-col gap-2 overflow-hidden">
-            <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search snippets…" className="pl-8" />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search snippets…"
+              iconClassName="left-2"
+            />
             <Button size="sm" variant="outline" onClick={() => setEditing({ id: '', title: '', body: '', category: 'general' })}>
               <Plus className="h-4 w-4 mr-1" /> New snippet
             </Button>

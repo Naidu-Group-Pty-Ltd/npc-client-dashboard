@@ -45,7 +45,7 @@ import {
   renderMicroMap,
   renderPictograph,
   renderQuadrant,
-  renderScoreWheel,
+  renderScoreBars,
   renderTiles,
   renderTimelineRibbon,
   renderWaterfall,
@@ -73,7 +73,7 @@ const CHARTS: Array<[string, () => string]> = [
   ['heatmap', () => renderHeatmap(ctx, [[1, 2], [3, 4]], {
     rowLabels: ['A', 'B'], colLabels: ['X', 'Y'], title: 'Growth',
   })],
-  ['scoreWheel', () => renderScoreWheel(ctx, [80, 65, 40, 90], { labels: ['A', 'B', 'C', 'D'] })],
+  ['scoreBars', () => renderScoreBars(ctx, [80, 65, 40, 90], { labels: ['A', 'B', 'C', 'D'] })],
   ['bullet', () => renderBullet(ctx, { value: 62, target: 75, label: 'Yield', sub: 'vs target' })],
   ['marimekko', () => renderMarimekko(ctx, [
     { label: 'Owner', weight: 3, segments: [2, 1] },
@@ -260,7 +260,7 @@ describe('output safety', () => {
   it('refuses oversized inputs rather than rendering them', () => {
     expect(renderWaterfall(ctx, Array.from({ length: MAX_WATERFALL_ITEMS + 1 },
       (_, i) => ({ label: `x${i}`, value: 1 })))).toBe('');
-    expect(renderScoreWheel(ctx, Array.from({ length: MAX_WHEEL_SCORES + 1 }, () => 5))).toBe('');
+    expect(renderScoreBars(ctx, Array.from({ length: MAX_WHEEL_SCORES + 1 }, () => 5))).toBe('');
     const big = Array.from({ length: 25 }, () => Array.from({ length: 25 }, () => 1));
     expect(25 * 25).toBeGreaterThan(MAX_HEATMAP_CELLS);
     expect(renderHeatmap(ctx, big)).toBe('');

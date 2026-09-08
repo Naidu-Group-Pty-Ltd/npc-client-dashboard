@@ -11,7 +11,7 @@
  * `reportDesign/charts.pure.ts` has carried `renderBars`, `renderDonut`,
  * `renderGauge`, `renderHeatmap`, `renderMarginSpark`, `renderPictograph`,
  * `renderQuadrant`, `renderTiles`, `renderTimelineRibbon`, `renderWaterfall`
- * and `renderScoreWheel` since the design system was built, each tested. The
+ * and `renderScoreBars` since the design system was built, each tested. The
  * generator's prompt asks the model for exactly those eleven shapes. Nobody had
  * ever joined the two, so 2,601 directives set as body copy while eleven
  * finished chart primitives sat unused. This module is that join, and it is
@@ -41,7 +41,7 @@ import {
   renderMarginSpark,
   renderPictograph,
   renderQuadrant,
-  renderScoreWheel,
+  renderScoreBars,
   renderTiles,
   renderTimelineRibbon,
   renderWaterfall,
@@ -230,10 +230,12 @@ export function renderVizDirective(
       return wrap(renderWaterfall(ctx, d.items, { mode: 'money' }));
 
     case 'wheel':
-      // `renderScoreWheel` takes no title of its own, so the directive's becomes
-      // the figure's caption rather than being dropped.
+      // The directive keeps its name — ~35 stored reports emit `{{scorewheel:}}`
+      // and their figures must still draw — but what it draws is a scorecard on
+      // a common baseline. `renderScoreBars` takes no title of its own, so the
+      // directive's becomes the figure's caption rather than being dropped.
       return wrap(
-        renderScoreWheel(drawCtx, d.scores, { labels: d.labels, max: d.max }),
+        renderScoreBars(drawCtx, d.scores, { labels: d.labels, max: d.max }),
         d.title ?? '',
       );
   }

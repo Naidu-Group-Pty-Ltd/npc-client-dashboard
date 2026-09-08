@@ -82,7 +82,22 @@ const premiumSelectContent = "border-border dark:border-white/10 bg-background/9
 const premiumScrollbar = "[scrollbar-width:thin] [scrollbar-color:rgba(251,191,36,0.45)_rgba(0,0,0,0.25)]";
 const premiumMetricCard = "group relative overflow-hidden border-border dark:border-white/10 bg-gradient-to-br from-card/95 dark:from-background/95 via-card/85 dark:via-background/85 to-background/95 dark:to-black/95 shadow-lg shadow-sm dark:shadow-black/25 transition-all duration-300 before:pointer-events-none before:absolute before:inset-x-4 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-brand-200/45 before:to-transparent hover:-translate-y-1 hover:border-brand-300/40 hover:shadow-2xl hover:shadow-brand-500/10";
 const premiumMetricIcon = "flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border shadow-inner transition-all duration-300 group-hover:scale-105";
-const premiumMetricLabel = "text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground dark:text-muted-foreground";
+// `min-w-0 truncate` is load-bearing, not decoration.
+//
+// Each tile is `flex items-center justify-between` with this label and a
+// `shrink-0` icon. A one-word label has `min-width: auto` = its own
+// min-content, so the row cannot shrink below label + gap + icon + padding —
+// and past that the icon is pushed outside the card, which `overflow-hidden`
+// then clips. `tracking-[0.18em]` makes the label unusually wide for its
+// point size, so the floor is high.
+//
+// Measured in Chromium against the compiled stylesheet at six widths, with
+// the sidebar expanded: at 1280 ALL NINE icons were outside their card —
+// Outbound and Voicemail by 56px each, which are two of the three the audit
+// arrows point at — and clipping persisted at 1366 (8), 1440 (5), 1536 (3)
+// and 1600 (3), clearing only at 1920. That is exactly "on a pc monitor it is
+// fine, but on a laptop screen it changes". After: zero at every width.
+const premiumMetricLabel = "min-w-0 truncate text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground dark:text-muted-foreground";
 const premiumMetricValue = "text-2xl font-bold leading-none tracking-tight md:text-[1.65rem]";
 const premiumControl = "border-border dark:border-white/10 bg-background/35 dark:bg-black/35 text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-colors hover:border-brand-400/40 hover:bg-brand-400/5 focus-visible:ring-2 focus-visible:ring-brand-400/70";
 const premiumFilterControl = "h-11 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/25 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-300/35 hover:bg-brand-300/10 focus:ring-2 focus:ring-brand-300/70 focus:ring-offset-2 focus:ring-offset-black focus-visible:ring-2 focus-visible:ring-brand-300/70";
@@ -92,9 +107,9 @@ const premiumActiveFilterBadge = "rounded-full border border-brand-300/35 bg-bra
 const premiumActionBase = "min-h-10 justify-center rounded-full border px-3.5 font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black active:translate-y-0 disabled:pointer-events-none disabled:opacity-50";
 const premiumReportAction = `${premiumActionBase} border-brand-300/50 bg-gradient-to-r from-brand-300/95 to-brand-500/90 text-brand-950 shadow-brand-500/20 hover:border-brand-100 hover:from-brand-200 hover:to-brand-400 hover:text-brand-950 hover:shadow-lg hover:shadow-brand-500/25 focus-visible:ring-brand-300`;
 const premiumUtilityAction = `${premiumActionBase} border-info/40 bg-info/10 text-info shadow-info/10 hover:border-info/60 hover:bg-info/15 hover:shadow-lg hover:shadow-info/15 focus-visible:ring-info`;
-const premiumQualityAction = `${premiumActionBase} border-success/25 bg-success/10 text-success-foreground hover:border-success/45 hover:bg-success/15 hover:text-success-foreground focus-visible:ring-success`;
+const premiumQualityAction = `${premiumActionBase} border-success/25 bg-success/10 text-success hover:border-success/45 hover:bg-success/15 hover:text-success focus-visible:ring-success`;
 const premiumAlertAction = `${premiumActionBase} border-brand-300/30 bg-brand-400/10 text-brand-100 hover:border-brand-300/55 hover:bg-brand-400/15 hover:text-brand-50 focus-visible:ring-brand-300`;
-const premiumDangerAction = `${premiumActionBase} border-destructive/35 bg-destructive/10 text-destructive hover:border-destructive/55 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-destructive`;
+const premiumDangerAction = `${premiumActionBase} border-destructive/35 bg-destructive/10 text-destructive hover:border-destructive/55 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-destructive`;
 const premiumSecondaryAction = `${premiumActionBase} border-border dark:border-white/10 bg-card/5 dark:bg-white/5 text-foreground dark:text-foreground hover:border-brand-300/35 hover:bg-brand-300/10 hover:text-brand-50 focus-visible:ring-brand-300`;
 const premiumTabList = "inline-flex h-auto min-w-max items-center gap-1.5 rounded-[1.35rem] border border-border dark:border-white/10 bg-background/45 dark:bg-black/45 p-1.5 shadow-2xl shadow-sm dark:shadow-black/30 backdrop-blur-xl";
 const premiumTabTrigger = "group relative min-h-11 rounded-2xl border border-transparent px-4 py-2.5 text-xs font-medium text-muted-foreground dark:text-muted-foreground transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-brand-300/25 hover:bg-brand-300/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-300/45 data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-400/25 data-[state=active]:via-brand-300/15 data-[state=active]:to-brand-500/10 data-[state=active]:text-brand-50 data-[state=active]:shadow-[0_14px_34px_rgba(245,158,11,0.16),inset_0_1px_0_rgba(255,255,255,0.12)] md:text-sm";
@@ -538,9 +553,15 @@ const CallLogs = () => {
       {/* Header */}
       {/* Side-by-side only from xl: at laptop widths (lg) the action toolbar
           needs its own full-width row or it wraps into the title and the
-          layout shifts with every zoom step. */}
+          layout shifts with every zoom step.
+          Even at xl the split has to be declared rather than left to the
+          leftovers. `min-w-0` alone lets the title column be crushed by the
+          seven-button toolbar beside it — measured at 314px on a 1920 window
+          and 170px at 1280, which is where "Call Logs" stops fitting on one
+          line and every zoom step moves the whole header. A column that must
+          not be crushed declares a basis; the toolbar keeps its own width. */}
       <DashboardThemeFrame as="header" variant="hero" className="flex flex-col gap-4 border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.84)_52%,hsl(var(--primary)/0.12))] p-4 shadow-2xl shadow-sm dark:shadow-black/20 sm:p-5 lg:p-6 xl:flex-row xl:items-center xl:justify-between">
-        <div className="min-w-0 overflow-visible">
+        <div className="min-w-0 overflow-visible xl:basis-[26rem] xl:grow">
           <div className="mb-2 inline-flex items-center rounded-full border border-brand-300/25 bg-brand-300/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-brand-100 shadow-sm shadow-brand-500/10">Voice Intelligence</div>
           <h1 className="overflow-visible pb-1 text-3xl font-bold leading-[1.12] tracking-tight bg-gradient-to-r from-brand-100 via-foreground to-brand-300 bg-clip-text text-transparent md:text-5xl">
             Call Logs
@@ -553,7 +574,7 @@ const CallLogs = () => {
           </div>
         </div>
 
-        <DashboardThemeFrame variant="toolbar" className="w-full border-primary/10 bg-background/45 shadow-inner shadow-sm dark:shadow-black/10 xl:w-auto xl:justify-end">
+        <DashboardThemeFrame variant="toolbar" className="w-full border-primary/10 bg-background/45 shadow-inner shadow-sm dark:shadow-black/10 xl:w-auto xl:shrink-0 xl:justify-end">
           <div className="flex flex-1 flex-wrap items-center gap-2 xl:flex-none xl:justify-end">
           {!isMobile && <WeeklyReportConfig triggerClassName={premiumReportAction} />}
           {!isMobile && showInternalCallTools && <CleanupTestCalls onComplete={fetchCalls} testNumbersButtonClassName={premiumUtilityAction} flushButtonClassName={premiumDangerAction} />}
@@ -1117,7 +1138,7 @@ const CallLogs = () => {
                   </Badge>
                 )}
                 {selectedIntent !== 'all' && (
-                  <Badge className="rounded-full border border-success/30 bg-success/15 px-2.5 py-1 text-xs text-success-foreground shadow-sm shadow-success/10">
+                  <Badge className="rounded-full border border-success/30 bg-success/15 px-2.5 py-1 text-xs text-success shadow-sm shadow-success/10">
                     Intent: {selectedIntent.replace(/_/g, ' ')}
                   </Badge>
                 )}
@@ -1233,7 +1254,7 @@ const CallLogs = () => {
 
                           {/* Intent badge */}
                           {call.call_intent && (
-                            <Badge className="rounded-full border border-success/30 bg-success/15 text-xs text-success-foreground shadow-sm shadow-success/10">
+                            <Badge className="rounded-full border border-success/30 bg-success/15 text-xs text-success shadow-sm shadow-success/10">
                               <Target className="w-3 h-3 mr-1" />
                               {call.call_intent.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                             </Badge>
@@ -1361,8 +1382,8 @@ const CallLogs = () => {
                     </TabsTrigger>
                   )}
                   <TabsTrigger value="transcript" className={cn(detailTabTrigger, "data-[state=active]:bg-brand-300/15 data-[state=active]:text-brand-100", isMobile ? "text-xs" : "")}>Transcript</TabsTrigger>
-                  <TabsTrigger value="tool-calls" className={cn(detailTabTrigger, "data-[state=active]:bg-info/15 data-[state=active]:text-info-foreground", isMobile ? "text-xs" : "")}>{isMobile ? "Tools" : "Tool Calls"}</TabsTrigger>
-                  <TabsTrigger value="analysis" className={cn(detailTabTrigger, "data-[state=active]:bg-success/15 data-[state=active]:text-success-foreground", isMobile ? "text-xs" : "")}>Analysis</TabsTrigger>
+                  <TabsTrigger value="tool-calls" className={cn(detailTabTrigger, "data-[state=active]:bg-info/15 data-[state=active]:text-info", isMobile ? "text-xs" : "")}>{isMobile ? "Tools" : "Tool Calls"}</TabsTrigger>
+                  <TabsTrigger value="analysis" className={cn(detailTabTrigger, "data-[state=active]:bg-success/15 data-[state=active]:text-success", isMobile ? "text-xs" : "")}>Analysis</TabsTrigger>
                   <TabsTrigger value="metadata" className={cn(detailTabTrigger, "data-[state=active]:bg-muted data-[state=active]:text-foreground", isMobile ? "text-xs" : "")}>{isMobile ? "Meta" : "Metadata"}</TabsTrigger>
                 </TabsList>
               </div>

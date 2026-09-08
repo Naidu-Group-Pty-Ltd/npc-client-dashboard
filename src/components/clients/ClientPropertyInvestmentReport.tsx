@@ -41,6 +41,8 @@ import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory'
 import { ComparisonViewer } from '@/components/reports/ComparisonViewer';
 import { ClientPDFGenerator } from '@/components/reports/ClientPDFGenerator';
 import { deliverInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
+import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useNotifications } from '@/contexts/NotificationsContext';
@@ -656,6 +658,13 @@ export function ClientPropertyInvestmentReport({
               </SheetDescription>
             </SheetHeader>
             <div className="mt-6 space-y-4">
+              {/* Which template the download comes out in, said before the
+                  button that uses it — this sheet is the client profile's
+                  investment exit and offered no way to see or change it. */}
+              <ReportTemplateSelector
+                reportType={INVESTMENT_REPORT_FORMAT.reportType}
+                formatLabel={INVESTMENT_REPORT_FORMAT.label}
+              />
               {/* The unified template-first delivery leads; the browser
                   generator is the named legacy layout under it. */}
               <Button

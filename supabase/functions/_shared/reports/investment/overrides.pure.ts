@@ -87,7 +87,22 @@ export function stateFromAddress(address: unknown): string | undefined {
 
 const PROPERTY_TYPES = new Set(['house', 'unit', 'townhouse']);
 
-function normalisePropertyType(v: unknown): 'house' | 'unit' | 'townhouse' | undefined {
+/**
+ * The engine's property-type vocabulary, from whatever the record spells.
+ *
+ * Exported because there were TWO vocabularies in one flow: this normaliser
+ * served the overrides path (`apartment` -> `unit`, `villa`/`duplex` ->
+ * `townhouse`) while `generate-investment-report` sent the RAW string to the
+ * calculator with a silent `|| 'house'` fallback. The calculator's only use of
+ * the type is `strataFees = o.strataFees ?? (propertyType === 'unit' ? 4800 : 0)`,
+ * so `apartment` never matched and never drew the strata estimate — measured
+ * 2026-09-07, 264 of 1,071 reports carried a type outside the vocabulary.
+ *
+ * Returning `undefined` for an unrecognised type is the point: an unresolved
+ * type is not a house, and asserting one is the silent assumption this
+ * programme exists to remove.
+ */
+export function normalisePropertyType(v: unknown): 'house' | 'unit' | 'townhouse' | undefined {
   if (typeof v !== 'string') return undefined;
   const t = v.trim().toLowerCase();
   if (PROPERTY_TYPES.has(t)) return t as 'house' | 'unit' | 'townhouse';

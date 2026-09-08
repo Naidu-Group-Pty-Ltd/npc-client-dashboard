@@ -42,6 +42,8 @@ import {
 } from './negativeProvenance.pure.ts';
 
 /** The marker. Deliberately not a verdict, and never mistaken for one. */
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
+
 export const PACKAGE_RECOVERY_ATTEMPT = 'package_recovery_attempt' as const;
 
 /**
@@ -118,6 +120,17 @@ export interface PackageAttemptRecord {
    * fetch, so it is given several more goes before it is retired.
    */
   unreachable?: number;
+  /**
+   * The runtime that was holding this question when it failed to finish.
+   *
+   * An attempt record only ever counts OUR failures — the step started and
+   * never returned — so it is stamped unconditionally, and `attemptsSoFar`
+   * compares it. A superseded runtime therefore starts the kill count again
+   * from zero, which is what reopens a property we crashed on without
+   * touching one that was answered. `unreachableSoFar` deliberately does NOT
+   * compare it: see `unreachableMatch`.
+   */
+  runtime_version?: number;
   started_at: string;
 }
 
@@ -137,6 +150,43 @@ function attemptFor(
   if (record.package_reference !== question.packageReference) return null;
   if ((record.source_anchor ?? null) !== question.sourceAnchor) return null;
 
+  /*
+   * AND THE RUNTIME, for the kill count alone. An attempt record IS a record
+   * of our own failure — a step that began and never came back — so a runtime
+   * that has been superseded is no longer the worker that failed, and its
+   * count must not be inherited by the one that replaced it. This is what
+   * reopens a property whose brochure only ever died of contention, without
+   * a version bump reaching a single property that was answered properly.
+   *
+   * A record written before this field existed compares equal to runtime 0,
+   * so the first bump reopens exactly those, once.
+   */
+  if (Number(record.runtime_version ?? 0)
+    !== Number(question.runtimeVersion ?? RUNTIME_VERSION)) return null;
+
+  return record as PackageAttemptRecord;
+}
+
+/**
+ * The same record WITHOUT the runtime comparison, for the dead-link budget.
+ *
+ * A link that answers a sign-in wall, a 404 or a scan with no text layer is
+ * not a failure a better worker fixes, so its count has to survive a runtime
+ * bump — otherwise every improvement to the worker would re-chase every dead
+ * link in the library from zero, for ever. Kept as its own matcher rather
+ * than a flag on the one above, so the two budgets cannot be confused at a
+ * call site.
+ */
+function unreachableMatch(
+  stored: unknown,
+  question: ProvenanceQuestion,
+): PackageAttemptRecord | null {
+  if (!stored || typeof stored !== 'object') return null;
+  const record = stored as Partial<PackageAttemptRecord>;
+  if (record.result !== PACKAGE_RECOVERY_ATTEMPT) return null;
+  if (Number(record.provenance_version) !== question.provenanceVersion) return null;
+  if (record.package_reference !== question.packageReference) return null;
+  if ((record.source_anchor ?? null) !== question.sourceAnchor) return null;
   return record as PackageAttemptRecord;
 }
 
@@ -150,7 +200,7 @@ export function attemptsSoFar(stored: unknown, question: ProvenanceQuestion): nu
 
 /** How many times this exact question has answered `unreachable`. */
 export function unreachableSoFar(stored: unknown, question: ProvenanceQuestion): number {
-  const record = attemptFor(stored, question);
+  const record = unreachableMatch(stored, question);
   if (!record) return 0;
   const n = Number(record.unreachable);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
@@ -178,6 +228,7 @@ export function recordUnreachableAttempt(
     source_anchor: question.sourceAnchor,
     attempts: 0,
     unreachable: unreachableSoFar(stored, question) + 1,
+    runtime_version: question.runtimeVersion ?? RUNTIME_VERSION,
     started_at: now().toISOString(),
   };
 }
@@ -233,6 +284,12 @@ export function recordPackageAttempt(
     package_reference: question.packageReference,
     source_anchor: question.sourceAnchor,
     attempts: attemptsSoFar(stored, question) + 1,
+    /*
+     * Carried across a runtime bump: the kill count above resets, this does
+     * not. A dead link stays dead however good the worker gets.
+     */
+    unreachable: unreachableSoFar(stored, question) || undefined,
+    runtime_version: question.runtimeVersion ?? RUNTIME_VERSION,
     started_at: now().toISOString(),
   };
 }
@@ -287,14 +344,29 @@ export function recordPackageUnprocessable(
   question: ProvenanceQuestion,
   now: () => Date = () => new Date(),
 ) {
-  return recordNoDeterministicImage(
-    question,
-    `This package could not be processed within the worker's resource limits `
-    + `after ${MAX_PACKAGE_ATTEMPTS} attempts, so no builder image was taken `
-    + `from it.`,
-    // A DESTROYED WORKER IS NOT AN EMPTY DOCUMENT. This is what "settling"
-    // used to buy the fallback ladder with, and it may not any more.
-    'operational',
-    now,
-  );
+  return {
+    ...recordNoDeterministicImage(
+      question,
+      `This package could not be processed within the worker's resource limits `
+      + `after ${MAX_PACKAGE_ATTEMPTS} attempts, so no builder image was taken `
+      + `from it.`,
+      // A DESTROYED WORKER IS NOT AN EMPTY DOCUMENT. This is what "settling"
+      // used to buy the fallback ladder with, and it may not any more.
+      'operational',
+      now,
+    ),
+    /*
+     * THE ONE WRITER THAT STAMPS THE RUNTIME, because this is the one
+     * retirement that is purely OUR failure. The document was never read and
+     * never answered; a worker died holding it. When the runtime that died
+     * is superseded, this record stops standing and the branch is asked
+     * again — see `runtimeVersion.pure.ts`.
+     *
+     * `recordPackageUnreachable` deliberately does NOT stamp, though it is
+     * `operational` too: a 404 or a sign-in wall is not something a better
+     * worker can open, and re-chasing dead links on every runtime change is a
+     * treadmill rather than a recovery.
+     */
+    runtime_version: question.runtimeVersion ?? RUNTIME_VERSION,
+  };
 }

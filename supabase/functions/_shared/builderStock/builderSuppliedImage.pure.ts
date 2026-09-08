@@ -64,6 +64,31 @@ export function designOfStoredRow(sourceRow: unknown): string | null {
   return null;
 }
 
+/**
+ * The design a caller states, WHICHEVER OF THE TWO SHAPES it is holding.
+ *
+ * THE READERS DIFFER IN WHICH THEY HAVE, and a reader that knows only one of
+ * them answers null for the other — silently, because null is also the honest
+ * answer for a row that states no design.
+ *
+ *   the normalised record    `house_design` at the top level. What
+ *                            `storedSourceRows` hands the repair path, having
+ *                            already unwrapped the column.
+ *   a database row           the record nested under `source_row`, which is
+ *                            the column the import writes it to.
+ *
+ * MEASURED, 6 SEPTEMBER 2026. The settler carried its own copy that read the
+ * nested shape only, while the value it was passed was always the unwrapped
+ * one — so the design never reached the election and the design-cover path
+ * produced ZERO images across the whole live database: 438 primary images at
+ * evidence levels 1, 2 and 3, none at level 4. `storedRowDevelopmentUnitKey`
+ * had already been bitten by exactly this and says so in its own header.
+ */
+export function designOfRecordOrRow(value: unknown): string | null {
+  return designOfStoredRow(value)
+    ?? designOfStoredRow((value as { source_row?: unknown } | null)?.source_row);
+}
+
 /** Where a builder-supplied object lives, so one rule names every path. */
 export function propertyImageStoragePath(input: {
   organisationId: string;

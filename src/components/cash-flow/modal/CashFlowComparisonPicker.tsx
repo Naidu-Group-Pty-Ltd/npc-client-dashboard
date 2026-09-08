@@ -19,7 +19,6 @@ import {
   Check,
   Home,
   Loader2,
-  Search,
   X,
 } from 'lucide-react';
 
@@ -34,6 +33,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select,
   SelectContent,
@@ -150,16 +150,14 @@ export function CashFlowComparisonPicker({
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative flex-1 sm:basis-[320px]">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by address, suburb or state..."
-                className="h-10 rounded-xl pl-9"
-                aria-label="Search comparison properties"
-              />
-            </div>
+            <SearchInput
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Search by address, suburb or state..."
+              aria-label="Search comparison properties"
+              containerClassName="flex-1 sm:basis-[320px]"
+              className="h-10 rounded-xl"
+            />
             <Select value={sort} onValueChange={(value) => setSort(value as PickerSort)}>
               <SelectTrigger className="h-10 w-full rounded-xl sm:w-[190px]" aria-label="Sort properties">
                 <ArrowUpDown className="mr-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />

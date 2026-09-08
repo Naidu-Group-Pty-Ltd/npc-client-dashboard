@@ -654,7 +654,7 @@ function ChunkCard({
             <div className="text-[10px] font-medium text-muted-foreground mb-1">Attached packet keys ({chunk.attached_packet_keys?.length ?? 0})</div>
             <div className="flex flex-wrap gap-1">
               {(chunk.attached_packet_keys ?? []).map((k) => (
-                <span key={k} className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${overrideKeys.includes(k) ? 'bg-warning/20 text-warning-foreground' : 'bg-primary/10'}`}>
+                <span key={k} className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${overrideKeys.includes(k) ? 'bg-warning/20 text-warning' : 'bg-primary/10'}`}>
                   {overrideKeys.includes(k) ? '★ ' : ''}{k}
                 </span>
               ))}

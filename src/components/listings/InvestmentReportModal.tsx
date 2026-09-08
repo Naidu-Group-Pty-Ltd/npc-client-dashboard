@@ -13,6 +13,8 @@ import { useNotifications } from '@/contexts/NotificationsContext';
 import { useAuth } from '@/hooks/useAuth';
 import jsPDF from 'jspdf';
 import { deliverInvestmentPdf, produceInvestmentDocument } from '@/lib/reports/investment/deliverInvestmentPdf';
+import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
+import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
 import { ReportGenerationStatus } from '@/components/billing/ReportGenerationStatus';
 import { TokenCostEstimate } from '@/components/billing/TokenCostEstimate';
 import { estimateTokens } from '@/lib/missionControl';
@@ -608,6 +610,18 @@ export function InvestmentReportModal({
                 </Button>
               </div>
 
+              {reportId ? (
+                <div className="mb-4">
+                  {/* Which template a saved report comes out in — the unified
+                      delivery below resolves it, and this modal offered no way
+                      to see or change it. Unsaved reports export as the plain
+                      text dump and take no template. */}
+                  <ReportTemplateSelector
+                    reportType={INVESTMENT_REPORT_FORMAT.reportType}
+                    formatLabel={INVESTMENT_REPORT_FORMAT.label}
+                  />
+                </div>
+              ) : null}
               <ScrollArea className="flex-1 border rounded-lg p-6">
                 <div className="prose prose-sm max-w-none dark:prose-invert">
                   <ReactMarkdown 

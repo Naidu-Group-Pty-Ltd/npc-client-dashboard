@@ -162,3 +162,169 @@ describe('edges', () => {
     expect(flag.value.snippet).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Derived figures
+//
+// Every phrase below is a verbatim production string, taken from
+// investment_reports.report_content on 2026-09-07, and the verdict beside it
+// is the one this detector must reach. The prose false positives are the ones
+// a hand-written pattern actually produced against the corpus long tail — they
+// are kept as cases because that is the only way a later widening of the gap
+// gets caught.
+// ---------------------------------------------------------------------------
+
+describe('gross and net yield', () => {
+  it('reads the figure out of the working column the generator prints', () => {
+    // 543 of the corpus's 2,153 gross mentions are this exact shape.
+    const text = [
+      '| Metric | Working | Value |',
+      '| Gross Rental Yield | $33,800 ÷ $700,000 × 100 | 4.83% |',
+      '| Net Rental Yield | $23,000 ÷ $700,000 × 100 | 3.29% |',
+    ].join('\n');
+    expect(reconcileFacts(text, { grossYieldPct: 4.83, netYieldPct: 3.29 })).toHaveLength(0);
+  });
+
+  it('accepts the prose roundings of a two-decimal figure', () => {
+    for (const written of ['4.8', '4.83', '5']) {
+      const text = `The gross rental yield of ${written}% is typical. A gross yield of ${written}% suits investors.`;
+      expect(reconcileFacts(text, { grossYieldPct: 4.83 })).toHaveLength(0);
+    }
+  });
+
+  it('flags a yield the report repeats against the one it was told to use', () => {
+    // Measured: this is the shape of a real divergence — the model recomputed
+    // on 49 letting weeks instead of the 52 it was handed.
+    const text = [
+      '| Gross Rental Yield | $33,000 ÷ $700,000 × 100 | 4.73% |',
+      'A gross rental yield of 4.73% places this mid-range.',
+      'The gross yield of 4.73% supports the case.',
+    ].join('\n');
+    const [finding] = reconcileFacts(text, { grossYieldPct: 5.02 });
+    expect(finding).toMatchObject({ fact: 'grossYieldPct', expected: 5.02, found: 4.73, occurrences: 3 });
+  });
+
+  it('keeps a negative net yield negative', () => {
+    // 62 corpus mentions are negative. Dropping the sign would turn every
+    // negatively geared property into its positive twin and flag them all.
+    const text = [
+      '| Net Rental Yield | -$8,400 ÷ $700,000 × 100 | -1.73% |',
+      'The net yield of **-1.73%** reflects the gearing.',
+    ].join('\n');
+    expect(reconcileFacts(text, { netYieldPct: -1.73 })).toHaveLength(0);
+    const [finding] = reconcileFacts(text, { netYieldPct: 3.39 });
+    expect(finding).toMatchObject({ fact: 'netYieldPct', found: -1.73 });
+  });
+
+  it('never reads a sentence as a statement of the figure', () => {
+    // Each of these was a real false positive before the gap rule required a
+    // delimiter or adjacency. The recorded yield appears nowhere, so anything
+    // the detector picked up would be reported.
+    const prose = [
+      'The gross rental yield provides substantial buffering against interest rate increases. A 1% rise is absorbable.',
+      'The net rental yield reflects the balance between rental income ($27,500 annually at 96% occupancy) and costs.',
+      'This gross rental yield significantly exceeds the Melbourne metropolitan average of 3.2% for comparable stock.',
+      'The gross yield necessitates leverage for returns. Sensitivity to RBA cash rate (4.35% currently) is material.',
+      'The gross yield supports serviceability. Monthly IO payments of $2,583 equate to 48% of net income.',
+      'This net yield is substantially higher than comparable metropolitan properties (1.5-2.0% typically).',
+    ];
+    for (const sentence of prose) {
+      const text = `${sentence}\n${sentence}`;
+      expect(reconcileFacts(text, { grossYieldPct: 4.83, netYieldPct: 3.39 })).toHaveLength(0);
+    }
+  });
+
+  it('reads the figure off an equation the model shows its working for', () => {
+    const text = [
+      'Gross Rental Yield: (Annual Rent / Property Value) = ($27,040 / $590,000) = 4.6%',
+      'Net Rental Yield: [($450 × 52) - ($1,500 + $1,800 + $1,200 + $22,968)] / $590,000 = 3.2%',
+    ].join('\n');
+    expect(reconcileFacts(text, { grossYieldPct: 4.6, netYieldPct: 3.2 })).toHaveLength(0);
+  });
+
+  it('does not file the net figure under gross when one sentence carries both', () => {
+    // `gross yield and N%` occurs 20 times in the corpus; the gap may not
+    // cross a second `yield`.
+    const text = 'The gross yield and net yield of 3.39% are shown. The gross yield and net yield of 3.39% again.';
+    const findings = reconcileFacts(text, { grossYieldPct: 4.83, netYieldPct: 3.39 });
+    expect(findings).toHaveLength(0);
+  });
+
+  it('ignores the plural, which is always somebody else s market', () => {
+    const text = 'Suburb gross yields sit below 4.0%. Comparable gross yields below 4.0% are the norm.';
+    expect(reconcileFacts(text, { grossYieldPct: 5.4 })).toHaveLength(0);
+  });
+});
+
+describe('loan-to-value ratio', () => {
+  it('reads the value-first form, which is how the corpus states it', () => {
+    const text = 'Loan: **$560,000** (80% LVR, 6.5% interest). Under an 80% LVR the deposit is $140,000.';
+    expect(reconcileFacts(text, { lvrPct: 80 })).toHaveLength(0);
+  });
+
+  it('flags an LVR the analysis repeats against the one the record holds', () => {
+    // The real defect: nine to twelve mentions of 90% on reports whose record
+    // and whose customer s own override both say 80.
+    const text = [
+      'Loan: **$604,800** (90% LVR, 6.5% interest).',
+      'A 90% LVR requires lenders mortgage insurance.',
+      'Servicing at 90% LVR leaves little buffer.',
+    ].join('\n');
+    const [finding] = reconcileFacts(text, { lvrPct: 80 });
+    expect(finding).toMatchObject({ fact: 'lvrPct', expected: 80, found: 90, occurrences: 3 });
+  });
+
+  it('never lets a prose connective introduce the number', () => {
+    // Each of these was a real false positive. `LVR, 6.5%` and `LVR at 6.5%`
+    // are the interest rate; `banks cap LVR at 95%` is policy rather than this
+    // loan; `would result in an LVR of 65%` is a projection. Only a structural
+    // connector — a table pipe, a label's colon, an equals — may introduce it.
+    const prose = [
+      'Serviceability is confirmed; banks cap LVR at 95% for investors.',
+      'The LVR, 6.5% interest and a 30-year term set the repayment.',
+      'Ten years of growth would result in a healthy LVR of 65% on this loan.',
+    ];
+    for (const sentence of prose) {
+      expect(reconcileFacts(`${sentence}\n${sentence}`, { lvrPct: 80 })).toHaveLength(0);
+    }
+  });
+
+  it('a sensitivity scenario beside the real LVR is not a contradiction', () => {
+    // Value-first is admitted, so a modelled scenario IS collected — and the
+    // report-level rule is what makes that safe: the loan's own LVR appears in
+    // the same document, so nothing is reported.
+    const text = [
+      'Loan: **$560,000** (80% LVR, 6.5% interest).',
+      'Under a 70% LVR the buffer widens; a 70% LVR would need a larger deposit.',
+    ].join('\n');
+    expect(reconcileFacts(text, { lvrPct: 80 })).toHaveLength(0);
+  });
+
+  it('does not judge the projection s final LVR against the settlement LVR', () => {
+    // `| Final LVR | 52% |` is the last row of the ten-year table and it is
+    // correct — a CURRENT LVR is a different quantity from an origination one.
+    const text = [
+      '| Closing Balance | $478,000 | $455,000 | $431,000 |',
+      '| Final LVR | 52% |',
+      '| Final LVR | 52% |',
+    ].join('\n');
+    expect(reconcileFacts(text, { lvrPct: 80 })).toHaveLength(0);
+  });
+
+  it('reads a labelled field or a table cell', () => {
+    for (const text of ['**LVR:** 80%\n**LVR:** 80%', '| LVR | 80% |\n| LVR | 80% |', 'LVR = 80%\nLVR = 80%']) {
+      expect(reconcileFacts(text, { lvrPct: 80 })).toHaveLength(0);
+      expect(reconcileFacts(text, { lvrPct: 60 })).toHaveLength(1);
+    }
+  });
+});
+
+describe('a percentage carries its unit into the disclosure', () => {
+  it('says 4.73% rather than 4.73', () => {
+    const text = 'A gross rental yield of 4.73% is typical. The gross yield of 4.73% holds.';
+    const flag = factFindingToFlag(reconcileFacts(text, { grossYieldPct: 5.02 })[0]);
+    expect(flag.field).toBe('grossYieldPct');
+    expect(flag.message).toContain('gross rental yield of 4.73%');
+    expect(flag.message).toContain('record says 5.02%');
+  });
+});

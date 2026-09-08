@@ -165,11 +165,11 @@ export const calculateCallQualityScore = (
 };
 
 const getGradeColor = (grade: string): string => {
-  if (grade.startsWith('A')) return 'border-success/40 bg-success/20 text-success-foreground shadow-success/10';
-  if (grade.startsWith('B')) return 'border-info/40 bg-info/20 text-info-foreground shadow-info/10';
+  if (grade.startsWith('A')) return 'border-success/40 bg-success/20 text-success shadow-success/10';
+  if (grade.startsWith('B')) return 'border-info/40 bg-info/20 text-info shadow-info/10';
   if (grade.startsWith('C')) return 'border-brand-300/40 bg-brand-500/20 text-brand-100 shadow-brand-500/10';
-  if (grade.startsWith('D')) return 'border-warning/40 bg-warning/20 text-warning-foreground shadow-warning/10';
-  return 'border-destructive/40 bg-destructive/20 text-destructive-foreground shadow-destructive/10';
+  if (grade.startsWith('D')) return 'border-warning/40 bg-warning/20 text-warning shadow-warning/10';
+  return 'border-destructive/40 bg-destructive/20 text-destructive shadow-destructive/10';
 };
 
 const getGradeTextColor = (grade: string): string => {

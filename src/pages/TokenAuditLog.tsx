@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchInput } from '@/components/ui/search-input';
 import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, CheckCircle2, Clock3, DatabaseZap, FileKey2, Filter, Loader2, RefreshCw, RotateCcw, Search, ShieldCheck, Sparkles, WalletCards, XCircle } from "lucide-react";
@@ -295,18 +296,17 @@ export default function TokenAuditLog() {
                     <Search className="h-3.5 w-3.5 text-primary" />
                     Keyword search
                   </label>
-                  <div className="group relative min-w-0 rounded-2xl transition-all duration-200 focus-within:-translate-y-px focus-within:shadow-[0_12px_28px_hsl(var(--primary)/0.10)]">
-                    <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground transition-colors group-hover:text-primary/80 group-focus-within:text-primary" />
-                    <Input
-                      id="token-audit-search"
-                      className="min-h-11 min-w-0 rounded-2xl border-border/70 bg-background/90 pl-10 pr-3 shadow-sm transition-all duration-200 placeholder:text-muted-foreground hover:border-primary/35 hover:bg-background hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)] active:scale-[0.995] focus-visible:border-primary/45 focus-visible:ring-2 focus-visible:ring-primary/30"
-                      placeholder="Search by idempotency key, user, function…"
-                      aria-label="Search token audit events by idempotency key, user, or function"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      disabled={loading && rows.length === 0}
-                    />
-                  </div>
+                  <SearchInput
+                    value={search}
+                    onValueChange={setSearch}
+                    id="token-audit-search"
+                    placeholder="Search by idempotency key, user, function…"
+                    aria-label="Search token audit events by idempotency key, user, or function"
+                    disabled={loading && rows.length === 0}
+                    containerClassName="group min-w-0 rounded-2xl transition-all duration-200 focus-within:-translate-y-px focus-within:shadow-[0_12px_28px_hsl(var(--primary)/0.10)]"
+                    className="min-h-11 min-w-0 rounded-2xl border-border/70 bg-background/90 pr-3 shadow-sm transition-all duration-200 placeholder:text-muted-foreground hover:border-primary/35 hover:bg-background hover:shadow-[0_10px_24px_rgba(15,23,42,0.06)] active:scale-[0.995] focus-visible:border-primary/45 focus-visible:ring-2 focus-visible:ring-primary/30"
+                    iconClassName="left-3.5 transition-colors group-hover:text-primary/80 group-focus-within:text-primary"
+                  />
                 </div>
               </div>
               <div className="grid shrink-0 grid-cols-2 gap-2 rounded-2xl border border-border/60 bg-card/70 p-2 text-xs shadow-sm sm:min-w-[220px]" aria-label={`Loaded ${rows.length.toLocaleString('en-AU')} events, ${filtered.length.toLocaleString('en-AU')} visible`}>

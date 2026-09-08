@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Loader2, Upload, Download, Trash2, FileText, Eye, EyeOff, AlertCircle, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { stageUploadFiles } from '@/lib/uploads/stageUploadFiles.pure';
 import { format } from 'date-fns';
 import { useDropzone } from 'react-dropzone';
 import { SyncConflictDetailsPopover } from '@/components/sync/SyncConflictDetailsPopover';
@@ -32,7 +33,6 @@ import {
   getOverallUploadProgress,
   getPersistedUploadMode,
   getRejectedFilesMessage,
-  mergeFilesWithLimit,
   persistUploadMode,
   runTasksByMode,
   type UploadProcessingMode,
@@ -233,22 +233,21 @@ export function DocumentVaultPanel({ clientId }: DocumentVaultPanelProps) {
 
     if (!acceptedFiles.length) return;
 
-    setUploadFiles((prev) => {
-      const nextFiles = mergeFilesWithLimit(prev, acceptedFiles, MAX_DOCUMENT_UPLOAD_FILES);
-      if (prev.length + acceptedFiles.length > MAX_DOCUMENT_UPLOAD_FILES) {
-        toast.error(`You can upload up to ${MAX_DOCUMENT_UPLOAD_FILES} files at once.`);
-      }
-      if (calculateTotalUploadSize(nextFiles) > MAX_DOCUMENT_BATCH_BYTES) {
-        toast.error('Selected files exceed the batch size limit.', {
-          description: `Keep the total under ${formatUploadBytes(MAX_DOCUMENT_BATCH_BYTES)}.`,
-        });
-        return prev;
-      }
-      return nextFiles;
+    // One decision, shared with the client Files tray: add rather than
+    // replace, never stage the same file twice, and name whatever a cap
+    // excluded. This used to raise its notices from inside the updater —
+    // which React may run more than once — and `mergeFilesWithLimit` dropped
+    // the excess with a `slice`, so the eleventh file simply was not there.
+    const staged = stageUploadFiles(uploadFiles, acceptedFiles, {
+      maxFiles: MAX_DOCUMENT_UPLOAD_FILES,
+      maxTotalBytes: MAX_DOCUMENT_BATCH_BYTES,
+      formatBytes: formatUploadBytes,
     });
+    setUploadFiles(staged.files);
+    for (const notice of staged.notices) toast.warning(notice);
 
-    setUploadFailures([]);
-  }, []);
+    if (staged.added.length) setUploadFailures([]);
+  }, [uploadFiles]);
 
   const executeUploadBatch = useCallback(async (filesToUpload: File[]) => {
     if (!filesToUpload.length) {

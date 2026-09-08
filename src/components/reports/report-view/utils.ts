@@ -112,6 +112,71 @@ export function resolveInvestmentGrade(reports: readonly GradeReport[]): Resolve
   return toResolved(latest, 'not_graded');
 }
 
+/** What a report card should draw for the Investment Grade. */
+export interface CardInvestmentGrade {
+  grade: ResolvedInvestmentGrade;
+  /** Whether the card draws the grade block at all. */
+  show: boolean;
+  /**
+   * The sibling report that produced the score, when it was not this one.
+   *
+   * Non-null means the grade is BORROWED, and the card must say so: a
+   * Financial report has not been graded, the property has.
+   */
+  borrowedFromReportId: string | null;
+}
+
+/**
+ * The Investment Grade a report card shows, and whether it shows one.
+ *
+ * ## Why this is one function
+ *
+ * The grade is a judgement about the PROPERTY. A card resolved it from its own
+ * report and then gated the render on its own `investment_score` column — two
+ * separate expressions of the same idea, in different places. Only the Compass,
+ * Snapshot and Briefing reports write that column, so on a property with all
+ * five report types the Financial and Strategic cards showed nothing while the
+ * three beside them showed a grade, which reads as two reports that failed.
+ *
+ * Fixing the resolution alone changes nothing, because the render gate still
+ * asks the column. So resolution and the decision to draw are one answer here.
+ *
+ * ## The rules
+ *
+ * - A report with its own score always shows it.
+ * - A report with none borrows the property's grade only when a sibling
+ *   actually CALCULATED one. A sibling that is pending, failed or ungraded is
+ *   that sibling's news; repeating it on this card would report a state this
+ *   report is not in.
+ * - An **area-scope** report never borrows. It is about a suburb, a postcode or
+ *   a state, and a property's grade is not a fact about an area.
+ * - A borrowed grade is always attributable, so the card can name where it came
+ *   from rather than implying this document was graded.
+ */
+export function resolveCardInvestmentGrade(
+  // `report_scope` is declared inline rather than Pick'd from
+  // `InvestmentReport`, which has never carried that field — the card reads it
+  // off a row whose shape is wider than this module's type. `Pick` of an
+  // absent key is a type error, and it reached main because CI builds with
+  // vite (which transpiles without checking types) and runs no `tsc` step.
+  report: GradeReport & { report_scope?: string | null },
+  siblings?: readonly GradeReport[] | null,
+): CardInvestmentGrade {
+  const pool = siblings && siblings.length > 0 ? siblings : [report];
+  const grade = resolveInvestmentGrade(pool);
+  const ownScore = Boolean(report.investment_score);
+  const isAreaScope = ['suburb', 'zipcode', 'state'].includes(report.report_scope || '');
+
+  const borrowedFromReportId =
+    grade.sourceReportId && grade.sourceReportId !== report.id ? grade.sourceReportId : null;
+
+  return {
+    grade,
+    show: ownScore || (grade.status === 'calculated' && !isAreaScope),
+    borrowedFromReportId,
+  };
+}
+
 export function getInvestmentGradeTone(grade?: string | null) {
   const normalizedGrade = typeof grade === 'string' ? grade.toUpperCase() : null;
   if (normalizedGrade === 'A+' || normalizedGrade === 'A') return 'bg-success text-success-foreground';

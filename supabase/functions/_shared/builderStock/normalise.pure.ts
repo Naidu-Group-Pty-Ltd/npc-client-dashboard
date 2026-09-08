@@ -95,7 +95,10 @@ type FieldKey =
   | 'bedrooms' | 'bathrooms' | 'car_spaces' | 'property_type'
   | 'land_size_sqm' | 'building_size_sqm' | 'price' | 'availability_status'
   | 'expected_completion' | 'description' | 'image_url' | 'builder_name'
-  | 'house_design';
+  | 'house_design'
+  // One column stating all three counts — "BED // BATH // CAR": "3 / 2 / 2".
+  // Not a record field: the switch parses it into the three that are.
+  | 'bed_bath_car';
 
 /**
  * Header text is compared with punctuation, spacing and case removed, so
@@ -182,6 +185,18 @@ alias('bathrooms', 'bath', 'baths', 'bathroom', 'bathrooms', 'ba', 'no of bathro
 alias('car_spaces',
   'car', 'cars', 'car space', 'car spaces', 'garage', 'garages', 'parking',
   'parking spaces', 'carports');
+/*
+ * ALL THREE COUNTS IN ONE CELL. The live master stocklist writes
+ * `BED // BATH // CAR` with values like `3 / 2 / 2` — 81 of 81 rows on the
+ * 6 September 2026 upload carried it, and every one landed in `unmapped`, so
+ * not one card showed a bedroom. The slashes vanish in `normaliseHeader`, so
+ * all these spellings are already one key.
+ */
+alias('bed_bath_car',
+  'bed bath car', 'beds baths cars', 'bed bath cars', 'bed bath car spaces',
+  // A Notion stock list heads the same column "Configuration", writing
+  // "4 Bed 2 Bath 2 Car" — measured 6 September 2026, 17 of 18 rows.
+  'configuration');
 
 alias('property_type',
   'type', 'property type', 'dwelling type', 'product', 'product type',
@@ -304,7 +319,28 @@ for (const field of [
 
 /** The field a header maps onto, or null when we do not recognise it. */
 export function fieldForHeader(raw: unknown): string | null {
-  return HEADER_ALIASES[normaliseHeader(raw)] ?? null;
+  const key = normaliseHeader(raw);
+  const exact = HEADER_ALIASES[key];
+  if (exact) return exact;
+  /*
+   * A STOCKLIST VERSIONS ITS OWN COLUMNS, AND THE VERSION IS NOT MEANING.
+   *
+   * The live master stocklist heads its price column `Package Price - V002` —
+   * the suffix is the sheet's own revision, bumped when the builder reissues
+   * it — and the exact lookup above therefore missed a heading whose alias
+   * (`package price`) this table has known all along. 81 of 81 rows priced in
+   * the sheet showed "Price not stated" on their cards, while three showed a
+   * STALE price a V001 sheet had written before the suffix appeared.
+   *
+   * So a trailing version token is stripped and the lookup retried — and only
+   * into a KNOWN alias, never into a guess: `Build Price - V002` strips to
+   * `build price`, which this table deliberately does not know (a component
+   * is not the package price), and stays unmapped exactly as before. A `V002`
+   * in the middle of a heading (`... - V002 Contract Type`) is untouched.
+   */
+  const versioned = key.match(/^(.*?)v\d{1,4}$/);
+  if (versioned) return HEADER_ALIASES[versioned[1]] ?? null;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +536,32 @@ export function normaliseStockRow(
       case 'bedrooms': record.bedrooms = clampCount(coerceNumber(value)); break;
       case 'bathrooms': record.bathrooms = clampCount(coerceNumber(value)); break;
       case 'car_spaces': record.car_spaces = clampCount(coerceNumber(value)); break;
+      case 'bed_bath_car': {
+        /*
+         * `??=`, so a dedicated Bed/Bath/Car column wins whichever side of
+         * the combined one it sits on — its own case overwrites when it
+         * comes later, and holds when it came first. The shapes themselves
+         * are `parseBedBathCar`'s.
+         */
+        const combined = parseBedBathCar(raw);
+        if (!combined) {
+          /*
+           * BACK TO THE AUDIT RECORD. A recognised heading whose value could
+           * not be read must stay visible as exactly that: the first version
+           * of this case consumed the cell and wrote nothing anywhere, so 32
+           * live rows' counts vanished without a trace and the shapes below
+           * had to be recovered from the sheet itself rather than from the
+           * record that is kept for precisely this.
+           */
+          const key = String(header).slice(0, 80);
+          if (Object.keys(record.unmapped).length < 40) record.unmapped[key] = raw.slice(0, 300);
+          break;
+        }
+        if (combined.bedrooms !== null) record.bedrooms ??= combined.bedrooms;
+        if (combined.bathrooms !== null) record.bathrooms ??= combined.bathrooms;
+        if (combined.car_spaces !== null) record.car_spaces ??= combined.car_spaces;
+        break;
+      }
       case 'property_type': record.property_type = coercePropertyType(value); break;
       case 'house_design': record.house_design = text(value, 120); break;
       case 'land_size_sqm': record.land_size_sqm = clampArea(coerceNumber(value)); break;
@@ -543,6 +605,115 @@ function clampCount(value: number | null): number | null {
   return Math.round(value * 10) / 10;
 }
 
+/**
+ * The combined BED // BATH // CAR cell, in the shapes the live sheet writes.
+ *
+ * MEASURED, 6 September 2026, on the master stocklist's 98 data rows —
+ * every distinct value, counted:
+ *
+ *   25×  "4 / 2 / 2"                         the plain form
+ *   15×  "3 / 2/ / 2"                        a doubled slash — a typo
+ *   13×  "3 / 2 / 2"
+ *   11×  "Nest 1 = 3 + 2 + 1␤Nest 2 = 1 + 1" dual occupancy, two dwellings
+ *    7×  "3 / 2 / 1"
+ *    5×  "Nest 1 = 3 + 2 + 2␤Nest 2 = 1 + 1"
+ *    2×  "3  /  2  /  2"
+ *    1×  each of "3 / 2 / 1 ", "5 / 2 / 2", "Nest 1 = 2 + 2 + 1…", ""
+ *
+ * THE PLAIN FORM is three counts in the heading's own order. A doubled slash
+ * contributes an EMPTY part, not a value, so empties are dropped before the
+ * count — which reads the 15 typo rows correctly and still refuses "3 / 2"
+ * (two values have not said which of the three is missing) and "3 / / 2"
+ * (dropping the empty leaves two).
+ *
+ * THE DUAL-OCCUPANCY FORM is one line per dwelling, each `label = counts`
+ * with the counts in the same bed/bath/car order. The card describes the
+ * PACKAGE, so positions are summed across dwellings — and a position some
+ * dwelling does not state is NOT a zero, it is unstated, so that position
+ * answers null and the card simply omits it: "Nest 2 = 1 + 1" states one
+ * bed and one bath, and asserting the package's car count from a line that
+ * names no cars would be a guess wearing a sum's clothing.
+ *
+ * Anything else answers null and the caller keeps the cell visible in
+ * `unmapped`, which is how the next shape gets found.
+ */
+function parseBedBathCar(raw: string): {
+  bedrooms: number | null; bathrooms: number | null; car_spaces: number | null;
+} | null {
+  /*
+   * THE LABELLED FORM, first because it is self-describing: every count
+   * names what it counts, so counts are summed BY LABEL and a dual
+   * occupancy can state all three totals — "3 Bed 2 Bath 1 Car + 2 Bed
+   * 1 Bath 1 Car" (a Notion stock list, measured 6 September 2026, 3 of
+   * 18 rows; the other 14 are the single-dwelling "4 Bed 2 Bath 2 Car")
+   * is five beds, three baths, two cars. A label the cell never uses stays
+   * null, and the label words are an explicit list so "2 Carrara" can
+   * never read as two car spaces.
+   */
+  const labelled = [...raw.matchAll(
+    /(\d+(?:\.\d+)?)\s*(bed(?:room)?s?|bath(?:room)?s?|cars?|carports?)\b/gi)];
+  if (labelled.length) {
+    const sums: Record<'bed' | 'bath' | 'car', number | null> = {
+      bed: null, bath: null, car: null,
+    };
+    for (const match of labelled) {
+      const label = match[2].toLowerCase().startsWith('bed') ? 'bed'
+        : match[2].toLowerCase().startsWith('bath') ? 'bath'
+          : 'car';
+      sums[label] = (sums[label] ?? 0) + Number(match[1]);
+    }
+    return {
+      bedrooms: clampCount(sums.bed),
+      bathrooms: clampCount(sums.bath),
+      car_spaces: clampCount(sums.car),
+    };
+  }
+
+  /*
+   * One segment per dwelling. The cell is written as one LINE per dwelling,
+   * but `text()` collapses a row's whitespace — newlines included — before
+   * any value reaches a parser, so the boundary cannot be the newline: a new
+   * segment begins wherever a label runs up to an `=`, which reads the cell
+   * identically in both shapes.
+   */
+  const segments = raw.split(/\r?\n/)
+    .flatMap((line) => line.split(/(?=\b[A-Za-z][^=+]{0,40}=)/))
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length && segments.every((segment) => segment.includes('='))) {
+    const perSegment: Array<number[] | null> = segments.map((segment) => {
+      const counts = segment.slice(segment.indexOf('=') + 1)
+        .split('+')
+        .map((part) => clampCount(coerceNumber(part)));
+      return counts.length >= 2 && counts.length <= 3
+        && counts.every((count) => count !== null)
+        ? counts as number[]
+        : null;
+    });
+    if (perSegment.some((counts) => counts === null)) return null;
+    const summed = (position: number): number | null => {
+      let total = 0;
+      for (const counts of perSegment as number[][]) {
+        if (counts.length <= position) return null;
+        total += counts[position];
+      }
+      return clampCount(total);
+    };
+    return {
+      bedrooms: summed(0), bathrooms: summed(1), car_spaces: summed(2),
+    };
+  }
+
+  const parts = raw.split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => clampCount(coerceNumber(part)));
+  if (parts.length === 3 && parts.every((part) => part !== null)) {
+    return { bedrooms: parts[0], bathrooms: parts[1], car_spaces: parts[2] };
+  }
+  return null;
+}
+
 function clampArea(value: number | null): number | null {
   if (value === null || value < 0) return null;
   // A "land size" of 400,000 m² in a residential stock list is a unit error,
@@ -568,8 +739,26 @@ export function identifiesAProperty(record: NormalisedStockRecord): boolean {
 export interface StockMatchKeys {
   /** organisation + the builder's own reference. */
   reference: string | null;
-  /** organisation + development + lot/unit. Both halves required. */
-  developmentUnit: { development: string; unit: string } | null;
+  /**
+   * organisation + development + lot/unit + house design. Development and
+   * lot/unit are both required; the design is whatever the row states.
+   *
+   * THE DESIGN IS PART OF THIS KEY BECAUSE THE PACKAGE IS THE PRODUCT. A
+   * house-and-land list offers one piece of land with several houses on it,
+   * and those rows are different things to sell: different price, different
+   * bedrooms, different brochure. The live master stocklist does it
+   * constantly — Harlow 801 is offered as a Cura 20B, a Nex 20 and an Elara
+   * 18, Oaklands 117 likewise — and without the design all three rows key to
+   * `harlow|801`, so the second overwrites the first and the third overwrites
+   * the second. 125 rows became 95 properties that way, the survivor decided
+   * by nothing better than its position in the file, and the two packages a
+   * buyer could not see were not archived or reported; they were never
+   * written.
+   *
+   * A row with no design keys exactly as it did before, so a list that names
+   * no design behaves as it always has.
+   */
+  developmentUnit: { development: string; unit: string; design: string } | null;
   /**
    * organisation + the SOURCE'S OWN ID FOR THIS ROW.
    *
@@ -606,14 +795,79 @@ export function stockMatchKeys(record: NormalisedStockRecord): StockMatchKeys {
 
   const development = (record.development_name ?? record.project_name ?? '').trim().toLowerCase();
   const unit = (record.unit_number ?? record.lot_number ?? '').trim().toLowerCase();
+  const design = designToken(record.house_design);
 
   const anchor = record.source_anchor ? record.source_anchor.trim() : null;
 
   return {
     reference: reference || null,
-    developmentUnit: development && unit ? { development, unit } : null,
+    developmentUnit: development && unit ? { development, unit, design } : null,
     anchor: anchor || null,
   };
+}
+
+/**
+ * A house design as a comparable token.
+ *
+ * Whitespace collapsed as well as trimmed, because "Vanta  23" and "Vanta 23"
+ * are the same house and a stock list maintained by hand contains both. The
+ * empty string means the row named no design, which is a state this key
+ * carries rather than rejects.
+ */
+export function designToken(value: string | null | undefined): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * The development-unit key as one string, built in ONE place.
+ *
+ * Three copies of this template used to exist — the stored-row index, the
+ * lookup and the post-insert update — and a key format written out at each
+ * end is how two ends drift. Adding the design to two of the three would have
+ * merged a package into its sibling on whichever copy was missed.
+ */
+export function developmentUnitMatchKey(
+  parts: { development: string; unit: string; design: string },
+): string {
+  return `${parts.development}|${parts.unit}|${parts.design}`;
+}
+
+/** A stored row, as much of it as this key needs. */
+export interface StoredRowKeyFields {
+  development_name?: string | null;
+  project_name?: string | null;
+  unit_number?: string | null;
+  lot_number?: string | null;
+  /** `source_row->>house_design`, where the reader projected it. */
+  house_design?: string | null;
+  /** The whole record, where the reader has it. */
+  source_row?: Record<string, unknown> | null;
+}
+
+/**
+ * The same key, for a row we already hold — and there is ONE of these.
+ *
+ * The importer and the image-attachment path each had their own copy of this
+ * function, which is exactly how they came to disagree: adding the design to
+ * the importer's alone would have left every Harlow 801 brochure going to
+ * whichever of the three packages was read last, badged "Builder supplied",
+ * on the wrong house.
+ *
+ * The design is taken from the projected alias or from the stored record,
+ * because the two readers differ in which they have: the importer projects
+ * the scalar and never reads the blob, while the repair path reads the record
+ * whole. Looking in both is what lets one function serve both.
+ */
+export function storedRowDevelopmentUnitKey(row: StoredRowKeyFields): string | null {
+  const development = (row.development_name ?? row.project_name ?? '').trim().toLowerCase();
+  const unit = (row.unit_number ?? row.lot_number ?? '').trim().toLowerCase();
+  if (!development || !unit) return null;
+  const fromRecord = typeof row.source_row?.house_design === 'string'
+    ? row.source_row.house_design
+    : null;
+  return developmentUnitMatchKey({
+    development, unit, design: designToken(row.house_design ?? fromRecord),
+  });
 }
 
 /**

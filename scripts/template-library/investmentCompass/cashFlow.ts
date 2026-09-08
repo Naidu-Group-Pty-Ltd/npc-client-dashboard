@@ -83,6 +83,8 @@ import {
   withFurniture,
   type KpiItem,
   type PageDef,
+  renderTimePart,
+  RENDER_TIME_NUMERAL,
 } from './blocks';
 import { hasContents } from './resolvers';
 import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
@@ -197,10 +199,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   const manifest = resolveManifest(family, variant);
   const c = beginCompassTemplate(family, variant, manifest);
 
-  let partNo = 0;
-  const nextPart = (label: string): string =>
-    `Part ${String((partNo += 1)).padStart(2, '0')} · ${label}`;
-  const nextNumeral = (): string => String(partNo).padStart(2, '0');
+  const nextPart = renderTimePart;
+  const nextNumeral = (): string => RENDER_TIME_NUMERAL;
 
   const pages: PageDef[] = [];
 

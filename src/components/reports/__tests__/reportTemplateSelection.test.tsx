@@ -131,7 +131,7 @@ describe('choosing a template before generation', () => {
     renderSelector();
     fireEvent.click(await screen.findByRole('button', { name: 'Choose template' }));
     await screen.findByText('Compass — Legacy layout');
-    expect(screen.getByText(/come out of the\s+standard generator/)).toBeTruthy();
+    expect(screen.getByText(/Renders through the standard generator/)).toBeTruthy();
   });
 
   it('never sends the user to the Template Builder', async () => {

@@ -33,9 +33,8 @@ import {
   type ScopedEntry,
   DRIVE_FOLDER_MIME, type DriveEntry,
 } from './drivePackage.pure.ts';
-import {
-  selectPdfPropertyPrimary, type PdfPhotoProvenance,
-} from './pdfSourcePhoto.ts';
+import { type PdfPhotoProvenance } from './pdfSourcePhoto.ts';
+import { runElection } from './pdfElectionClient.ts';
 import { classifyBranch, sharedLinkFileUrl } from './sourceBranches.pure.ts';
 import { readPdfPageTextResult } from './pdfText.ts';
 import { MAX_SOURCE_IMAGE_BYTES, sniffImageContentType } from './sourceAssets.pure.ts';
@@ -134,12 +133,71 @@ export type PackageOutcome =
   | { status: 'unreachable'; detail: string };
 
 /**
+ * How long one branch's recovery may run before it is answered for.
+ *
+ * WHY A DEADLINE AT ALL, MEASURED 6 SEPTEMBER 2026. Lot 709 Verve's brochure
+ * elects in seconds through this exact pipeline on the same bytes, and in
+ * production the claim that started it died ~85 seconds in with no error, no
+ * kill status and no verdict — the isolate was simply shut down mid-item, and
+ * the standing attempt read as a destroyed worker. Every step in here is
+ * individually bounded (the fetch at 30 s total, the parse in single-digit
+ * seconds) and the SUM was not: a dynamic import that never settles, a
+ * response that stalls between chunks, a stream that neither ends nor errors
+ * — any of them holds the awaiting item past the tick budget, and what kills
+ * the worker then writes nothing down.
+ *
+ * 75 seconds: past every legitimate completion this pipeline has measured
+ * (the heaviest live document finishes in under ten), inside the ~90-second
+ * item budget, so the answer is written by US rather than by the reaper.
+ *
+ * A DEADLINE IS AN `unreachable`, NEVER AN INSPECTION. The document was not
+ * read to the end, so nothing may be banked against it — `unreachable`
+ * records nothing, retries on its own budget, and retires as a fact about
+ * our access. The racer's loser keeps running to no effect: this function
+ * writes nothing anywhere, so a late completion is a discarded value.
+ */
+export const RECOVERY_DEADLINE_MS = 75_000;
+
+async function withRecoveryDeadline(
+  work: Promise<PackageOutcome>,
+  ms: number,
+): Promise<PackageOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<PackageOutcome>((resolve) => {
+    timer = setTimeout(() => resolve({
+      status: 'unreachable',
+      detail: `The package could not be read inside ${Math.round(ms / 1000)} seconds, `
+        + 'so this attempt records nothing about the document.',
+    }), ms);
+  });
+  try {
+    return await Promise.race([work, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Find, fetch and extract the one image a row's own package document leads with.
  *
  * `label` is the row's own name — it carries both the lot and the house
  * design, and both have to appear on the document before it is accepted.
+ *
+ * The whole of it runs under `withRecoveryDeadline`, so a step that hangs
+ * becomes an answer the caller can record instead of a worker the platform
+ * reaps mid-claim.
  */
 export async function recoverPackageImage(
+  input: Parameters<typeof recoverPackageImageInner>[0],
+  deps: Parameters<typeof recoverPackageImageInner>[1] & { deadlineMs?: number } = {},
+): Promise<PackageOutcome> {
+  return await withRecoveryDeadline(
+    recoverPackageImageInner(input, deps),
+    deps.deadlineMs ?? RECOVERY_DEADLINE_MS,
+  );
+}
+
+async function recoverPackageImageInner(
   input: {
     packageUrl: string;
     label: string;
@@ -630,100 +688,21 @@ async function extractFromDocument(
    * recorded as a finding — and only a document that was actually read may
    * answer `not_identified`.
    */
-  const textResult = await readPageTexts(bytes);
-  if (!textResult.ok) {
-    return {
-      status: 'unreachable',
-      detail: `That document’s text could not be read (${"reason" in textResult ? textResult.reason : "unknown"}).`,
-    };
-  }
   /*
-   * And zero pages is the same fault wearing a different hat, whichever reader
-   * produced it: a PDF always has pages, so an empty list is the read failing
-   * rather than the document being silent. Judged here rather than inside one
-   * reader so every reader is held to it — the production one, and the ones
-   * tests inject to stand in for it.
+   * AND THE HEAVY HALF IS ONE NAMED UNIT NOW.
+   *
+   * Everything above is cheap and stays here: the fetch and its guarded
+   * fetcher, the `%PDF-` sniff, and the rule that a link to an IMAGE is not a
+   * package document. What follows — the text read and the election over the
+   * same bytes, inside one decode slot — is the one indivisible unit measured
+   * to exceed an Edge Function's 2,000 ms CPU limit, and it is
+   * `electFromPdfBytes`.
+   *
+   * The lift changed no behaviour: the same code, the same slot, the same
+   * winners. What it buys is that the unit can be RUN where there is CPU for
+   * it — see `electionRoute` for which of the two happens and why.
    */
-  if (!textResult.pages.length) {
-    return {
-      status: 'unreachable',
-      detail: 'That document\'s text could not be read (no pages came back).',
-    };
-  }
-  /*
-   * AND PAGES THAT CAME BACK EMPTY ARE THE SAME FAULT AGAIN.
-   *
-   * A package whose every page yields no text at all is not a package that says
-   * nothing about the property — it is a package this reader cannot read. The
-   * live list has them: "LOT 914 • COVELLA • GREENBANK QLD.pdf" is three pages
-   * of designed brochure exported as images, and its first page carries the
-   * lot, the estate, the suburb, the price, the land and house sizes and the
-   * facade render, all of it drawn rather than set. Text extraction returns
-   * zero characters from every page.
-   *
-   * Recording that as "the document names no image for this property" banks a
-   * finished negative produced by a reader that never read the document — and
-   * `negativeProvenanceStillStands` would then suppress the source until a
-   * version bump. So it is operational, and the property is asked again: the
-   * answer changes for free the day this can read a drawn page.
-   *
-   * PARTIAL emptiness is deliberately NOT this. A document with text on some
-   * pages was read; that it says nothing identifying on the others is a fact
-   * about the document.
-   */
-  const textFree = textResult.pages.every((text) => !String(text ?? '').trim());
-  if (textFree && identifiedBy !== 'folder_structure') {
-    return {
-      status: 'unreachable',
-      detail: 'That document\'s pages carry no extractable text, so it could not be read.',
-    };
-  }
-  const pageTexts = textResult.pages;
-  const selection = await selectPdfPropertyPrimary(bytes, {
-    label,
-    design,
-    identityHints: identityHints ?? [],
-    pageTexts,
-    // Supplied ONLY when the builder's folder already named this document for
-    // this one property and the document itself can say nothing. See
-    // `assignPdfMediaRoles`.
-    structuralCoverPage: textFree ? 1 : null,
+  return await runElection(bytes, readPageTexts, {
+    label, identifiedBy, design, identityHints, documentName, url,
   });
-  const photo = selection.primary;
-  if (!photo) {
-    /*
-     * A document nothing could be read from has still established nothing, even
-     * where its first page was structurally eligible and presented no single
-     * photograph. Recording a negative for it would bank an answer this reader
-     * never earned, so it stays operational and the property is asked again.
-     */
-    if (textFree) {
-      return {
-        status: 'unreachable',
-        detail: 'That document\'s pages carry no extractable text and its first page '
-          + 'presents no single photograph, so it could not be read.',
-      };
-    }
-    return {
-      status: 'not_identified',
-      detail: 'That document does not present a page as this property\'s package cover, '
-        + 'so it names no image for it.',
-    };
-  }
-
-  const suffix = photo.provenance.method === 'page_crop'
-    ? `crop(${photo.provenance.crop?.top}-${photo.provenance.crop?.bottom})`
-    : photo.provenance.resourceName;
-  return {
-    status: 'recovered',
-    image: {
-      bytes: photo.bytes,
-      contentType: photo.contentType,
-      reference: `${documentName}#page${photo.provenance.page}:${suffix}`,
-      documentName,
-      documentUrl: url,
-      provenance: photo.provenance,
-      role: photo.role,
-    },
-  };
 }

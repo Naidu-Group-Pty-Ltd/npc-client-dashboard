@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle, Bed, Bath, Building2, Car, CheckCircle2, ChevronLeft, ChevronRight,
-  ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, Search, UserPlus,
+  ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, UserPlus,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { SearchInput } from '@/components/ui/search-input';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
@@ -120,19 +121,13 @@ export function BuilderStockTab() {
   return (
     <div className="space-y-5">
       <div className={cn(SURFACE, 'flex flex-col gap-3 lg:flex-row lg:items-center')}>
-        <div className="relative flex-1">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search address, suburb, development or builder reference"
-            className="pl-9"
-            aria-label="Search builder stock"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search address, suburb, development or builder reference"
+          aria-label="Search builder stock"
+          containerClassName="flex-1"
+        />
         <Select value={organisationId} onValueChange={setOrganisationId}>
           <SelectTrigger className="lg:w-56" aria-label="Filter by builder">
             <SelectValue />

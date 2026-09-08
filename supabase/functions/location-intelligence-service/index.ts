@@ -4,6 +4,10 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
+import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
+import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
+import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
+import { internalError } from '../_shared/errorResponse.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -62,14 +66,18 @@ Deno.serve(async (req) => {
     const googleMapsApiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
     
     if (!googleMapsApiKey) {
-      console.warn('⚠️ Google Maps API key not configured. Using mock data.');
-      const mockData = generateMockLocationData(input);
-      return new Response(JSON.stringify({ 
-        success: true, 
-        data: mockData,
-        usingMockData: true,
-        message: 'Using sample data - Configure GOOGLE_MAPS_API_KEY for real data'
-      }), {
+      // No key means no measurement, and no measurement means no data. The
+      // old branch here answered with `generateMockLocationData` — invented
+      // school names, an invented station, a Math.random() walk score and
+      // Sydney's coordinates — as HTTP 200 `success: true`, which is how a
+      // deployment with a missing credential shipped fiction into client
+      // reports and reported itself healthy while doing it.
+      console.warn('⚠️ GOOGLE_MAPS_API_KEY not configured — location intelligence unavailable.');
+      return new Response(JSON.stringify(sourceUnavailable(
+        'location-intelligence',
+        'not_configured',
+        'GOOGLE_MAPS_API_KEY is not configured — location intelligence is unavailable for this deployment.',
+      )), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -78,72 +86,114 @@ Deno.serve(async (req) => {
     console.log('✓ Google Maps API key found, fetching real data...');
     
     try {
-      const locationData = await fetchLocationIntelligence(input, googleMapsApiKey);
+      const location = await fetchLocationIntelligence(input, googleMapsApiKey);
+
+      if (!location.resolved) {
+        // Deliberately NOT the mock branch below. An address we cannot place
+        // is a fact about this property; sample data is a fact about no
+        // property, and the caller cannot tell them apart. Both report
+        // consumers already guard on `success && data`, so this lands them in
+        // the path they take when the service is unreachable — the location
+        // section is absent, and `enhancedData.locationIntelligence` stays
+        // undefined where the coverage flag can see it.
+        console.warn('[location-intelligence-service] unresolved:', location.reason);
+        return new Response(JSON.stringify({
+          success: false,
+          resolved: false,
+          reason: location.reason,
+          message: UNRESOLVED_MESSAGE[location.reason],
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       console.log('✓ Location intelligence data fetched successfully');
-      
+
       return new Response(JSON.stringify({ 
         success: true, 
-        data: locationData,
+        data: location.data,
         usingMockData: false 
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     } catch (apiError) {
+      // A provider failure is a fact about this request, and the caller can
+      // retry it. Sample data is a fact about no property at all.
       console.error('❌ Google Maps API error:', apiError);
-      console.log('Falling back to mock data due to API error');
-      
-      const mockData = generateMockLocationData(input);
-      return new Response(JSON.stringify({ 
-        success: true, 
-        data: mockData,
-        usingMockData: true,
-        message: 'Google Maps API error - using sample data',
-        error: apiError instanceof Error ? apiError.message : 'Unknown API error'
-      }), {
+      return new Response(JSON.stringify(sourceUnavailable(
+        'location-intelligence',
+        'provider_error',
+        `Google Maps could not be reached or answered unusably — location intelligence is unavailable for this request. (${apiError instanceof Error ? apiError.message : 'unknown error'})`,
+      )), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
   } catch (error) {
+    // This used to build a mock profile for a property at 'Unknown, 2000,
+    // NSW' and return it 200 `success: true` — a crash dressed as data. A
+    // crash is a 500.
     console.error('❌ Critical error in location intelligence service:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to analyze location';
-    
-    // Return mock data on critical error
-    try {
-      const mockData = generateMockLocationData({ address: 'Unknown', postcode: '2000', state: 'NSW' });
-      return new Response(JSON.stringify({ 
-        success: true,
-        data: mockData,
-        usingMockData: true,
-        error: errorMessage,
-        message: 'Error occurred - using sample data'
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    } catch {
-      return new Response(JSON.stringify({ 
-        error: errorMessage,
-        success: false 
-      }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+    return new Response(JSON.stringify({
+      ...internalError(error, 'location-intelligence-service'),
+      success: false,
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
   }
 });
 
-async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKey: string) {
-  let coordinates: { lat: number; lng: number };
+/**
+ * Why an unresolved location is its own answer.
+ *
+ * Every figure below — the amenity counts, the nearest school, the walk
+ * score, the CBD commute — is measured *from the coordinate*. A wrong
+ * coordinate does not make them fail; it makes them describe somewhere else,
+ * accurately, and there is nothing in the numbers for a reader to catch.
+ * So the coordinate is a precondition, and when it cannot be established
+ * this returns the reason instead of a profile.
+ */
+type UnresolvedReason = 'address_not_resolved' | 'supplied_coordinates_rejected';
 
-  // Get coordinates from address if not provided
-  if (!input.lat || !input.lng) {
-    coordinates = await geocodeAddress(input.address, apiKey);
+const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
+  address_not_resolved:
+    'The address could not be resolved to a location in Australia — location intelligence is unavailable for this property.',
+  supplied_coordinates_rejected:
+    'The supplied coordinates are not a location in Australia — location intelligence is unavailable for this property.',
+};
+
+type LocationIntelligenceResult =
+  | { resolved: true; data: Record<string, unknown> }
+  | { resolved: false; reason: UnresolvedReason };
+
+async function fetchLocationIntelligence(
+  input: LocationIntelligenceInput,
+  apiKey: string,
+): Promise<LocationIntelligenceResult> {
+  let coordinates: { lat: number; lng: number } | null;
+  let reason: UnresolvedReason;
+
+  if (Number.isFinite(input.lat) && Number.isFinite(input.lng)) {
+    // A supplied coordinate goes through the same gate as a fetched one.
+    // These arrive from stored rows, and the stored rows are where the 183
+    // out-of-country points live — trusting the caller here would let the
+    // fault back in through the one door the fix did not cover.
+    const verdict = assessAuPoint(input.lat as number, input.lng as number, input.state);
+    coordinates = verdict.ok ? { lat: input.lat as number, lng: input.lng as number } : null;
+    if (!coordinates) {
+      console.warn(`[location-intelligence-service] supplied point rejected (${verdict.reason})`);
+    }
+    reason = 'supplied_coordinates_rejected';
   } else {
-    coordinates = { lat: input.lat, lng: input.lng };
+    coordinates = await geocodeAddress(input, apiKey);
+    reason = 'address_not_resolved';
   }
+
+  if (!coordinates) return { resolved: false, reason };
 
   console.log('Coordinates:', coordinates);
 
@@ -180,8 +230,18 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
       );
       
       if (transportResponse.ok) {
-        publicTransportData = await transportResponse.json();
-        console.log('✓ Public transport data fetched successfully');
+        const transportBody = await transportResponse.json();
+        // The transport service historically answered with a bare payload —
+        // no `success` wrapper — so its new refusal envelope would read as a
+        // payload full of undefineds here, and `transportInfo` below would
+        // have preferred it over Google's real, coordinate-measured transit
+        // results. An honest refusal must leave the real fallback standing.
+        if (isSourceUnavailable(transportBody)) {
+          console.log('Public transport service unavailable, will use Google transit data');
+        } else {
+          publicTransportData = transportBody;
+          console.log('✓ Public transport data fetched successfully');
+        }
       } else {
         console.warn('Public transport service returned error, will use Google data');
       }
@@ -249,7 +309,7 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
     stationsWithin2km: transitData.count
   };
 
-  return {
+  const data = {
     coordinates,
     commute: commuteData,
     walkScore,
@@ -278,31 +338,106 @@ async function fetchLocationIntelligence(input: LocationIntelligenceInput, apiKe
       nearestPark: recreationData.results[0]?.name || 'N/A'
     }
   };
+
+  return { resolved: true, data };
 }
 
-async function geocodeAddress(address: string, apiKey: string) {
+/**
+ * Resolve an address to a coordinate, or to nothing.
+ *
+ * **183 of the 1,112 stored reports that carry a coordinate carry one outside
+ * Australia** — Blacksburg Virginia, Manhattan, Knoxville, Bristol,
+ * Edinburgh, Auckland, Ottawa, Bulacan — and **64 more carry Sydney CBD to
+ * four decimal places**, which is this function's old failure value. Together
+ * that is 22% of the corpus. Four faults stacked, and each one produced a
+ * confident, plausible, unfalsifiable answer rather than an error:
+ *
+ *  1. **The question had no locality.** `input.suburb`, `input.postcode` and
+ *     `input.state` were all in hand and all spent elsewhere; the geocode got
+ *     `input.address` alone, which for 768 of these rows is a bare street
+ *     name. `Keystone Drive` is a real street in most English-speaking
+ *     countries. This is the fault that caused 180 of the 183 —
+ *     see `auGeocodeQuery.pure.ts` for the split.
+ *  2. **The request carried no country filter.** `components=country:AU` is a
+ *     filter; `region=au` is only a bias, and this had neither.
+ *  3. **Nothing checked the answer.** Every property this product reports on
+ *     is in Australia, which makes an unusually strong invariant available: a
+ *     geocode in Edinburgh is not an unusual listing, it is a wrong answer.
+ *  4. **Failure returned Sydney CBD.** Everything below then computed the
+ *     schools, hospitals, parks, walk score and CBD commute *of Sydney* and
+ *     returned them as the subject property's. Real Google data, correctly
+ *     fetched, about a place up to 4,000km away, with nothing in the response
+ *     to say so.
+ *
+ * Faults 1 and 2 are not alternatives. The filter alone only relocates the
+ * error: `Keystone Drive` restricted to Australia resolves to some Keystone
+ * Drive here, in the wrong suburb, inside the country box, past every gate.
+ *
+ * The gate is `assessAuPoint` — the same one `resolve-listing-coordinates`
+ * applies, rather than a second bounding box written here: country bounds,
+ * then the land mask (every rectangle around Australia contains sea), then
+ * the record's own state when it names one.
+ *
+ * Unresolved returns **null**, and null means the location section is absent
+ * rather than wrong. That is the trade this makes deliberately: a reader can
+ * see an absent section, and cannot see a correct-looking figure measured
+ * from the wrong continent.
+ */
+async function geocodeAddress(
+  input: LocationIntelligenceInput,
+  apiKey: string,
+): Promise<{ lat: number; lng: number } | null> {
+  // The suburb, postcode and state were already in hand — used for the CBD
+  // lookup and the transport call, and withheld from the one request that
+  // needed them. See `auGeocodeQuery.pure.ts` for the split that measures it.
+  const address = buildAuGeocodeQuery(input);
+  if (!address) {
+    console.warn('[location-intelligence-service] no address to geocode');
+    return null;
+  }
+
   try {
-    const encodedAddress = encodeURIComponent(address);
+    const params = new URLSearchParams({
+      address,
+      // A filter, not a bias. `region=au` alone would only have expressed a
+      // preference, and this had neither.
+      components: 'country:AU',
+      region: 'au',
+      key: apiKey,
+    });
     const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedAddress}&key=${apiKey}`
+      `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`
     );
 
     if (!response.ok) {
-      throw new Error('Geocoding failed');
+      console.warn('[location-intelligence-service] geocode HTTP', response.status);
+      return null;
     }
 
     const data = await response.json();
-    
-    if (data.results && data.results.length > 0) {
-      const location = data.results[0].geometry.location;
-      return { lat: location.lat, lng: location.lng };
+    const location = data?.results?.[0]?.geometry?.location;
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      console.warn('[location-intelligence-service] geocode returned no point:', data?.status ?? 'unknown');
+      return null;
     }
+
+    const verdict = assessAuPoint(lat, lng, input.state);
+    if (!verdict.ok) {
+      // Named rather than swallowed: `outside_australia`, `offshore` and
+      // `wrong_state` are different faults with different remedies, and the
+      // log is the only place anybody will see which one happened.
+      console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
+      return null;
+    }
+
+    return { lat, lng };
   } catch (error) {
     console.error('Geocoding error:', error);
+    return null;
   }
-
-  // Return default Sydney coordinates if geocoding fails
-  return { lat: -33.8688, lng: 151.2093 };
 }
 
 async function fetchNearbyPlaces(
@@ -504,50 +639,4 @@ function calculateAmenityScores(amenities: any): AmenityScore[] {
   });
 
   return scores;
-}
-
-function generateMockLocationData(input: LocationIntelligenceInput) {
-  return {
-    coordinates: { lat: -33.8688, lng: 151.2093 },
-    commute: {
-      durationMinutes: Math.floor(Math.random() * 30) + 20,
-      distanceKm: Math.floor(Math.random() * 20) + 5,
-      mode: 'estimated'
-    },
-    walkScore: Math.floor(Math.random() * 40) + 60,
-    amenities: [
-      { category: 'Public Transport', count: 3, nearest: 'Train Station', distance: 0.8, score: 85 },
-      { category: 'Schools', count: 5, nearest: 'Primary School', distance: 1.2, score: 80 },
-      { category: 'Healthcare', count: 2, nearest: 'Medical Centre', distance: 1.5, score: 70 },
-      { category: 'Shopping', count: 4, nearest: 'Shopping Centre', distance: 2.1, score: 75 },
-      { category: 'Recreation', count: 6, nearest: 'Park', distance: 0.5, score: 90 }
-    ],
-    transport: {
-      nearestStation: 'Central Station',
-      distanceToStation: 0.8,
-      stationsWithin2km: 3
-    },
-    schools: {
-      nearestSchool: 'Local Primary School',
-      distanceToSchool: 1.2,
-      schoolsWithin3km: 5,
-      topSchools: [
-        { name: 'Primary School A', distance: 1.2, rating: 4.5 },
-        { name: 'High School B', distance: 2.3, rating: 4.3 },
-        { name: 'Private College C', distance: 2.8, rating: 4.7 }
-      ]
-    },
-    healthcare: {
-      nearestHospital: 'Community Hospital',
-      distanceToHospital: 3.2,
-      facilitiesWithin5km: 2
-    },
-    lifestyle: {
-      shoppingCenters: 4,
-      parks: 6,
-      restaurants: 15,
-      nearestShopping: 'Local Shopping Centre',
-      nearestPark: 'Community Park'
-    }
-  };
 }

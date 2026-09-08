@@ -239,7 +239,7 @@ export function PaymentMethodsPanel() {
             className={cn(
               "flex min-w-0 flex-col gap-3 rounded-2xl border px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between",
               defaultDrifted || orphaned.length > 0
-                ? "border-warning/30 bg-warning/10 text-warning-foreground"
+                ? "border-warning/30 bg-warning/10 text-warning"
                 : stripeVerified
                   ? "border-success/25 bg-success/10 text-foreground"
                   : "border-border/60 bg-muted/25 text-muted-foreground",

@@ -11,13 +11,17 @@ async function manageDealData(params: {
   data?: any;
 }) {
   const { data, error } = await invokeSecureFunction('manage-client-data', params);
-  if (error) throw new Error(error.message || 'Operation failed');
+  // The server puts a generic sentence in `error` and the actual cause in
+  // `details`. Both branches below have to say the cause, and only the second
+  // one did: a non-2xx takes the FIRST branch, so every database fault on this
+  // path reported as the bare "Failed to update record" — six words that name
+  // nothing and cannot be acted on. That is the whole of what an operator saw
+  // when marking a commission received.
+  const withDetail = (message: string, details?: string | null) =>
+    details && details !== message ? `${message} (${details})` : message;
+  if (error) throw new Error(withDetail(error.message || 'Operation failed', error.details));
   if (!data?.success) {
-    // The server puts the generic sentence in `error` and the actual cause in
-    // `details`; without the details every database fault reads as the same
-    // "Failed to update record" and cannot be acted on.
-    const detail = data?.details && data.details !== data?.error ? ` (${data.details})` : '';
-    throw new Error((data?.error || 'Operation failed') + detail);
+    throw new Error(withDetail(data?.error || 'Operation failed', data?.details));
   }
   return data.result;
 }
@@ -29,8 +33,25 @@ async function manageDealData(params: {
 export function usePipelineMutations() {
   const queryClient = useQueryClient();
 
+  /**
+   * Both readings of a deal, not just this page's.
+   *
+   * This invalidated `all-deals` alone, while the client page's own
+   * `useDealActions` invalidates BOTH — so the two surfaces refreshed each
+   * other in one direction only. Marking a commission received on the
+   * pipeline left the client's Deals tab showing the old value until
+   * something else happened to refetch it, which is half of "it doesn't sync
+   * the commission status between the client page and the deal pipeline".
+   *
+   * The client key is per-client and the pipeline is cross-client, so the
+   * predicate matches every `client-deals` entry rather than guessing which
+   * one the edited row belongs to.
+   */
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['all-deals'] });
+    queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[0] === 'client-deals',
+    });
   };
 
   const updateBuildPayment = useMutation({

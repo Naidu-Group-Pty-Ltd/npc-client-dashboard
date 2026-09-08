@@ -1110,7 +1110,7 @@ export default function ClientTracker() {
             </div>
           </CardHeader>
           <CardContent className="pt-0">
-            <ScrollArea className="w-full">
+            <ScrollArea horizontal className="w-full">
               <div className="flex gap-3 pb-2">
                 {upcomingAppointments.map(event => (
                   <Card 
@@ -1403,7 +1403,7 @@ export default function ClientTracker() {
             )}
             
             <div className="rounded-[1.5rem] border border-border/70 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.10),transparent_24rem),linear-gradient(135deg,hsl(var(--background)/0.72),hsl(var(--card)/0.62))] p-3 shadow-inner shadow-sm dark:shadow-black/20">
-              <ScrollArea className="client-tracker-kanban-scroll w-full whitespace-nowrap rounded-[1.15rem]" aria-label="Kanban board stages">
+              <ScrollArea horizontal className="client-tracker-kanban-scroll w-full whitespace-nowrap rounded-[1.15rem]" aria-label="Kanban board stages">
                 <div className="flex gap-4 pb-5 pr-3 sm:gap-5">
                 {/* Render stages in order */}
                 {stagesForPipeline.map(stage => {
@@ -1604,7 +1604,7 @@ export default function ClientTracker() {
                                   {stageInfo.name}
                                 </Badge>
                                 {isOverdue && (
-                                  <Badge variant="destructive" className={cn(badgeBaseClass, "bg-destructive/15 text-destructive-foreground shadow-destructive/15")}>Overdue</Badge>
+                                  <Badge variant="destructive" className={cn(badgeBaseClass, "bg-destructive/15 text-destructive shadow-destructive/15")}>Overdue</Badge>
                                 )}
                               </div>
                               <div className="mt-2 flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
@@ -2028,12 +2028,12 @@ function KanbanCard({
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
           {isOverdue && (
-            <Badge variant="destructive" className={cn(compactBadgeBaseClass, "bg-destructive/15 text-destructive-foreground shadow-destructive/15")}>
+            <Badge variant="destructive" className={cn(compactBadgeBaseClass, "bg-destructive/15 text-destructive shadow-destructive/15")}>
               Overdue
             </Badge>
           )}
           {client.deal_status === 'closed' && (
-            <Badge variant="default" className={cn(compactBadgeBaseClass, "bg-success/15 text-success-foreground shadow-success/15")}>
+            <Badge variant="default" className={cn(compactBadgeBaseClass, "bg-success/15 text-success shadow-success/15")}>
               🏆
             </Badge>
           )}

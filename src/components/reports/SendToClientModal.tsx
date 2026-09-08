@@ -10,7 +10,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, Send, Search, User, CheckCircle2, AlertCircle, BarChart3, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Loader2, Send, User, CheckCircle2, AlertCircle, BarChart3, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -315,15 +316,12 @@ export function SendToClientModal({
                   </Badge>
                 )}
               </div>
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search clients..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search clients..."
+                iconClassName="left-2.5"
+              />
 
               <ScrollArea className="h-40 rounded-md border">
                 {isLoading ? (

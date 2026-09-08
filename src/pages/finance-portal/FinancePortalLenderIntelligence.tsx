@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -13,7 +14,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import {
-  AlertCircle, BookOpen, CheckCircle2, Database, Loader2, RefreshCw, Scale, Search, Trophy,
+  AlertCircle, BookOpen, CheckCircle2, Database, Loader2, RefreshCw, Scale, Trophy,
 } from 'lucide-react';
 
 type LiveRate = {
@@ -280,10 +281,11 @@ export default function FinancePortalLenderIntelligence() {
               </Select>
             </Field>
             <Field label="Search">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Lender, product, note" />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Lender, product, note"
+              />
             </Field>
             <Field label="Lender / bank">
               <Select value={lenderFilter} onValueChange={setLenderFilter}>

@@ -67,9 +67,16 @@ export function getRejectedFilesMessage(rejections: FileRejection[]) {
   };
 }
 
-export function mergeFilesWithLimit(existingFiles: File[], incomingFiles: File[], maxFiles: number = MAX_DOCUMENT_UPLOAD_FILES) {
-  return [...existingFiles, ...incomingFiles].slice(0, maxFiles);
-}
+/**
+ * `mergeFilesWithLimit` lived here and is DELETED rather than left dormant.
+ *
+ * It enforced the file cap with a `slice`, so the eleventh file a person
+ * chose was simply not there and nothing said so — and it de-duplicated
+ * nothing, so choosing the same document twice staged it twice. Three trays
+ * called it or hand-rolled around it. `stageUploadFiles` in
+ * `lib/uploads/stageUploadFiles.pure` is the one decision now; a helper that
+ * silently drops files is one import away from putting the defect back.
+ */
 
 export function getUploadModePreferenceKey(scope: string, userId?: string | null) {
   return `upload-mode:${scope}:${userId || 'anonymous'}`;

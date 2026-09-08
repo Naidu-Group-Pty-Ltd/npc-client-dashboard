@@ -38,16 +38,29 @@ interface Props {
 const STATUS_TONE: Record<string, { tone: string; icon: any; label: string }> = {
   sent: { tone: 'border-brand-300/70 bg-brand-500/14 text-brand-950 ring-1 ring-brand-300/25 dark:border-brand-200/40 dark:bg-brand-300/14 dark:text-brand-100 dark:ring-brand-200/10', icon: Mail, label: 'Sent' },
   delivered: { tone: 'border-brand-300/70 bg-brand-500/14 text-brand-950 ring-1 ring-brand-300/25 dark:border-brand-200/40 dark:bg-brand-300/14 dark:text-brand-100 dark:ring-brand-200/10', icon: Eye, label: 'Delivered' },
-  completed: { tone: 'border-success/70 bg-success/14 text-success ring-1 ring-success/25 dark:border-success/40 dark:bg-success/14 dark:text-success-foreground dark:ring-success/10', icon: CheckCircle2, label: 'Completed' },
-  signed: { tone: 'border-success/70 bg-success/14 text-success ring-1 ring-success/25 dark:border-success/40 dark:bg-success/14 dark:text-success-foreground dark:ring-success/10', icon: CheckCircle2, label: 'Signed' },
-  declined: { tone: 'border-destructive/55 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive-foreground', icon: XCircle, label: 'Declined' },
-  voided: { tone: 'border-destructive/55 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive-foreground', icon: AlertTriangle, label: 'Voided' },
-  expired: { tone: 'border-destructive/55 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive-foreground', icon: Clock, label: 'Expired' },
+  completed: { tone: 'border-success/70 bg-success/14 text-success ring-1 ring-success/25 dark:border-success/40 dark:bg-success/14 dark:text-success dark:ring-success/10', icon: CheckCircle2, label: 'Completed' },
+  signed: { tone: 'border-success/70 bg-success/14 text-success ring-1 ring-success/25 dark:border-success/40 dark:bg-success/14 dark:text-success dark:ring-success/10', icon: CheckCircle2, label: 'Signed' },
+  declined: { tone: 'border-destructive/55 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive', icon: XCircle, label: 'Declined' },
+  voided: { tone: 'border-destructive/55 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive', icon: AlertTriangle, label: 'Voided' },
+  expired: { tone: 'border-destructive/55 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive', icon: Clock, label: 'Expired' },
   created: { tone: 'border-border/70 bg-muted/80 text-foreground dark:border-border/70 dark:bg-background/70 dark:text-foreground', icon: Clock, label: 'Created' },
   generated: { tone: 'border-border/70 bg-muted/80 text-foreground dark:border-border/70 dark:bg-background/70 dark:text-foreground', icon: FileText, label: 'Generated' },
   draft: { tone: 'border-border/70 bg-muted/80 text-foreground dark:border-border/70 dark:bg-background/70 dark:text-foreground', icon: FileText, label: 'Draft' },
   autoresponded: { tone: 'border-brand-300/55 bg-brand-500/14 text-brand-900 dark:border-brand-200/35 dark:bg-brand-300/14 dark:text-brand-100', icon: AlertTriangle, label: 'Bounced' },
 };
+
+/**
+ * The label this badge would draw for a status, without drawing it.
+ *
+ * Exported so the agreements ledger can ask whether the envelope badge would
+ * merely repeat the agreement's own — see `envelopeBadgeIsRedundant`. The
+ * comparison has to be on the label rather than the code, and the label lives
+ * here, so this is the one place that knows it.
+ */
+export function docuSignStatusLabel(status?: string | null): string | null {
+  if (!status) return null;
+  return STATUS_TONE[status.toLowerCase()]?.label ?? status;
+}
 
 export function DocuSignStatusBadge({ status }: { status?: string | null }) {
   if (!status) return null;

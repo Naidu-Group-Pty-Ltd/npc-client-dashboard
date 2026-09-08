@@ -194,6 +194,33 @@ const TABLES: Record<string, TableRule> = {
    * page the manager lives on.
    */
   gamma_agreement_templates: { module: 'agreements', openRead: true },
+
+  /*
+   * The client tag vocabulary and the assignments that attach it to a client.
+   *
+   * Reported as "add a tag says: new row violates row-level security policy for
+   * table client_tags". It was the whole feature, not one button: the RLS-W2
+   * hardening pass scoped every verb on both tables to `service_role`, and this
+   * app's browser identity is a custom HttpOnly cookie, so the client is anon.
+   * Anon SELECT is FILTERED rather than refused, so the tag list came back `[]`
+   * and read as "no tags exist"; the INSERT is the one verb that says so out
+   * loud, which is why that is the half that got reported.
+   *
+   * A `TO authenticated` policy would NOT have fixed it. It would deploy
+   * cleanly, read like a fix and change nothing at all, because the browser is
+   * never `authenticated` here — the exact shape of failure this gateway's
+   * header was written about.
+   *
+   * The rule is the one the product owner authorised: **any verified staff
+   * session** may read the vocabulary, create a tag and assign one. So no
+   * module and no role — deliberately, and it is still strictly narrower than
+   * what these tables shipped with (`FOR ALL USING (true)`, reachable by anon),
+   * because it requires a verified session and an allow-listed origin.
+   * Authorship is recorded on creation and never rewritten, so the register
+   * says who introduced a tag and who attached it.
+   */
+  client_tags:             { insertOwnerColumn: 'created_by' },
+  client_tag_assignments:  { insertOwnerColumn: 'assigned_by' },
 };
 
 const READ_METHODS = new Set(['GET', 'HEAD']);

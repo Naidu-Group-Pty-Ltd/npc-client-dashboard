@@ -30,6 +30,7 @@
 
 import { INTAKE_FIELDS as F } from './airtableIntakeFields.pure.ts';
 import { reconcileLocality, type LocalityTrust } from './auLocality.pure.ts';
+import { composeListingAddress } from './listingAddress.pure.ts';
 import {
   imageIdentity,
   normaliseImageCandidates,
@@ -355,7 +356,6 @@ export function projectAirtableRecord(
   const fields = (record.fields ?? {}) as Record<string, unknown>;
   const { stamp, known: listedAtKnown } = displayDate(record, now);
 
-  const address = text(fields[F.address]) ?? text(fields[F.fullAddress]);
   const suburb = suburbOf(fields[F.suburb]);
   // State and postcode are reconciled rather than trusted: they are contaminated
   // by batch carry-over often enough to send the geocoder to another state.
@@ -363,6 +363,31 @@ export function projectAirtableRecord(
     state: fields[F.state],
     postcode: fields[F.postcode],
   });
+
+  /**
+   * The address is COMPOSED, never inherited.
+   *
+   * It used to be `Address ?? Full Address`, which discards the street the
+   * intake extracted whenever the geocoded branch wrote its own answer back:
+   * `Address` is not written on that branch at all, and `Full Address` is a
+   * re-parse of Google's `formatted_address`. A record whose email said
+   * `Mortlock Street, Cobblebank` therefore reached the map as the bare suburb,
+   * and fourteen of them piled onto one pin. See listingAddress.pure.ts.
+   */
+  const composed = composeListingAddress({
+    unitNumber: fields[F.unitNumber],
+    streetNumber: fields[F.streetNumber],
+    streetName: fields[F.streetName],
+    streetType: fields[F.streetType],
+    suburb,
+    state: locality.state,
+    postcode: locality.postcode,
+    address: fields[F.address],
+    formatted: fields[F.fullAddress],
+  });
+  // What a person reads and what the geocoder is asked are the same string, so
+  // a pin can never stand somewhere the card does not name.
+  const address = composed.street ?? text(fields[F.address]) ?? text(fields[F.fullAddress]);
 
   const price = resolvePrice(fields);
   const confidences = resolveConfidences(fields);
@@ -373,7 +398,7 @@ export function projectAirtableRecord(
 
   const agentName = text(fields[F.agentName]);
   const agencyName = text(fields[F.agencyName]);
-  const location = [address, suburb].filter(Boolean).join(', ') || null;
+  const location = composed.full ?? ([address, suburb].filter(Boolean).join(', ') || null);
 
   return {
     id: record.id,
@@ -389,6 +414,14 @@ export function projectAirtableRecord(
       text(fields[F.recordName]) ??
       'Untitled Property',
     address,
+    /**
+     * How far down the address this record actually reaches, measured from the
+     * parts rather than guessed from the string. A surface can then plot a pin
+     * and still say "this is the street, not the letterbox" — 30 live listings
+     * carry a suburb and nothing else, and an estate lot has no street number
+     * until its plan is registered.
+     */
+    addressPrecision: composed.precision,
     fullAddress: text(fields[F.fullAddress]),
     normalizedAddress: text(fields[F.normalizedAddress]),
     unitNumber: text(fields[F.unitNumber]),

@@ -6,6 +6,14 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { readModelJson } from '../_shared/llmJson.pure.ts';
+import {
+  impactFor,
+  portfolioRateSensitivity,
+  projectPortfolio,
+  readProjectionScenario,
+  sensitivityUnavailableText,
+  type PortfolioLoanInput,
+} from '../_shared/reports/portfolio/deterministicFacts.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -36,6 +44,10 @@ interface ClientProperty {
   loan_repayment_amount: number | null;
   loan_repayment_frequency: string | null;
   lender_name: string | null;
+  // Fetched by `select('*')` and read by the deterministic facts helper. It
+  // was absent from this interface while the row carried it, which is how the
+  // repayment structure stayed invisible to everything typed.
+  repayment_type: string | null;
 }
 
 interface ClientData {
@@ -391,10 +403,113 @@ const __portfolioHandler = async (req: Request): Promise<Response> => {
 
     console.log(`📋 Built configContext for prompt injection:`, configContext || '(empty - no investor profile values set)');
 
-    // Calculate growth rate for projections
-    let growthRate = 5; // default
-    if (growthRateAssumption === 'conservative') growthRate = 3.5;
-    else if (growthRateAssumption === 'optimistic') growthRate = 7.5;
+    // ========================================================================
+    // DETERMINISTIC FACTS — computed here, and never asked of the model.
+    //
+    // Everything below comes from the record. The model is given these as
+    // authoritative context and asked to EXPLAIN them; its JSON schema no
+    // longer contains a field for any of them, so there is nothing to
+    // overwrite and nothing to reconcile. See
+    // `docs/reports/PORTFOLIO_TRUST_BOUNDARY.md`.
+    // ========================================================================
+    const toLoanInput = (p: ClientProperty): PortfolioLoanInput => ({
+      loanRemaining: p.loan_remaining,
+      interestRate: p.interest_rate,
+      repaymentType: p.repayment_type,
+      loanRepaymentAmount: p.loan_repayment_amount,
+      loanRepaymentFrequency: p.loan_repayment_frequency,
+    });
+
+    const investmentSensitivity = portfolioRateSensitivity(investmentProperties.map(toLoanInput));
+    const ownerOccupiedSensitivity = portfolioRateSensitivity(ownerOccupiedProperties.map(toLoanInput));
+
+    const projection = projectPortfolio({
+      currentPortfolioValue: portfolioMetrics.totalValue,
+      currentDebt: portfolioMetrics.totalDebt,
+      scenario: readProjectionScenario(growthRateAssumption),
+      horizonYears: projectionYears,
+    });
+    // The prompt has always shown a growth percentage; it now shows the one the
+    // arithmetic used rather than a second copy of the same intent.
+    const growthRate = projection.assumptions.annualCapitalGrowthPercent;
+
+    // Borrowing capacity: the assessment record already holds the deterministic
+    // figures, so the model is not asked to restate them either. Absent
+    // assessment means an absent block, not a zeroed one.
+    const capacityFacts = bcData && Number.isFinite(Number(bcData.borrowing_capacity))
+      ? (() => {
+          const estimated = Number(bcData.borrowing_capacity);
+          const deployed = portfolioMetrics.totalDebt;
+          return {
+            estimatedCapacity: Math.round(estimated),
+            totalDebtDeployed: Math.round(deployed),
+            availableCapacity: Math.round(estimated - deployed),
+            utilisationPercentage: estimated > 0
+              ? Math.round((deployed / estimated) * 100 * 10) / 10
+              : null,
+          };
+        })()
+      : null;
+
+    const money = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+    const sensitivityLines = (label: string, s: ReturnType<typeof portfolioRateSensitivity>, currentLabel: string, currentValue: number | null) => {
+      if (!s.available) return `${label}: ${sensitivityUnavailableText(s.unavailableReason)}`;
+      return [
+        `${label}:`,
+        `  - ${currentLabel}: ${currentValue === null ? 'not available' : money(currentValue)} per month`,
+        `  - If rates rise 1%: ${money(impactFor(s, 1)!)} per month (negative means worse off)`,
+        `  - If rates rise 2%: ${money(impactFor(s, 2)!)} per month (negative means worse off)`,
+        `  - Covers ${s.loansCovered} loan(s), ${money(s.balanceCovered)} of debt`,
+      ].join('\n');
+    };
+
+    const deterministicFactsBlock = [
+      '**CALCULATED FIGURES — THESE ARE AUTHORITATIVE. EXPLAIN THEM; DO NOT RECALCULATE OR RESTATE THEM AS YOUR OWN NUMBERS.**',
+      'Every dollar amount you quote must come from this block or from the portfolio data above. Do not derive new financial figures.',
+      '',
+      sensitivityLines(
+        'INTEREST RATE SENSITIVITY — investment properties',
+        investmentSensitivity,
+        'Current net monthly cashflow',
+        portfolioMetrics.netMonthlyCashflow,
+      ),
+      sensitivityLines(
+        'INTEREST RATE SENSITIVITY — owner-occupied properties',
+        ownerOccupiedSensitivity,
+        'Current monthly repayment',
+        ownerOccupiedSensitivity.currentMonthlyRepayment,
+      ),
+      '',
+      `${projectionYears}-YEAR PROJECTION (${projection.assumptions.scenario} scenario):`,
+      projection.projectedPortfolioValue === null
+        ? '  - Not available: the portfolio has no recorded value.'
+        : [
+            `  - Projected portfolio value: ${money(projection.projectedPortfolioValue)}`,
+            projection.projectedEquity === null
+              ? '  - Projected equity: not available (debt not recorded)'
+              : `  - Projected equity: ${money(projection.projectedEquity)}`,
+            '  - Projected monthly cashflow: NOT PROJECTED. No rent or expense growth rate is recorded for this portfolio. Do not estimate one.',
+            ...projection.assumptions.statements.map((s) => `  - Assumption: ${s}`),
+          ].join('\n'),
+      '',
+      capacityFacts === null
+        ? 'BORROWING CAPACITY: no assessment on record. Do not estimate a capacity.'
+        : [
+            'BORROWING CAPACITY UTILISATION:',
+            `  - Estimated capacity: ${money(capacityFacts.estimatedCapacity)}`,
+            `  - Debt deployed: ${money(capacityFacts.totalDebtDeployed)}`,
+            `  - Available: ${money(capacityFacts.availableCapacity)}`,
+            capacityFacts.utilisationPercentage === null
+              ? '  - Utilisation: not available'
+              : `  - Utilisation: ${capacityFacts.utilisationPercentage}%`,
+          ].join('\n'),
+    ].join('\n');
+
+    console.log(
+      `📊 Deterministic facts — investment sensitivity: ${investmentSensitivity.available ? 'available' : investmentSensitivity.unavailableReason}; `
+      + `owner-occupied: ${ownerOccupiedSensitivity.available ? 'available' : ownerOccupiedSensitivity.unavailableReason}; `
+      + `projection: ${projection.assumptions.scenario} ${growthRate}% over ${projectionYears}y`,
+    );
 
     // --- Build supplementary data sections for the prompt ---
 
@@ -678,6 +793,8 @@ ${JSON.stringify(propertyAnalyses, null, 2)}
 **ANALYSIS REQUIREMENTS:**
 Provide a comprehensive, consultative portfolio analysis. The tone should be warm, professional, and trust-building — as if you are part of the client's dedicated property advisory team preparing a personalised review. CRITICAL: Always use "we/our/us" framing (e.g. "We are pleased to present...", "Our team has reviewed...", "We recommend..."). NEVER use first-person singular "I/my" — this report is sent on behalf of a team, not an individual. Justify every assessment with data-driven reasoning. Even for underperforming portfolios, frame findings constructively with clear pathways to improvement.
 
+${deterministicFactsBlock}
+
 Provide analysis with these sections:
 
 1. PERSONALISED NARRATIVE - A warm opening statement and portfolio journey summary
@@ -749,16 +866,10 @@ Format your response as valid JSON with this structure:
   },
   "interestRateSensitivity": {
     "investmentProperties": {
-      "currentMonthlyCashflow": number,
-      "plusOnePercentImpact": number,
-      "plusTwoPercentImpact": number,
-      "commentary": "string (plain English explanation of what rate rises mean for rental income vs expenses)"
+      "commentary": "string (plain English explanation of what rate rises mean for rental income vs expenses. Use ONLY the calculated figures supplied above; if they are unavailable, say so plainly and do not estimate)"
     },
     "ownerOccupiedProperties": {
-      "currentMonthlyRepayment": number,
-      "plusOnePercentImpact": number,
-      "plusTwoPercentImpact": number,
-      "commentary": "string (plain English explanation of what rate rises mean for home loan repayments)"
+      "commentary": "string (plain English explanation of what rate rises mean for home loan repayments. Use ONLY the calculated figures supplied above; if they are unavailable, say so plainly and do not estimate)"
     },
     "combinedCommentary": "string (overall summary in plain English)"
   },
@@ -775,23 +886,14 @@ Format your response as valid JSON with this structure:
     "optimizationStrategies": ["string"]
   },
   "projections": {
-    "years": number,
-    "projectedPortfolioValue": number,
-    "projectedEquity": number,
-    "projectedMonthlyCashflow": number,
-    "assumptions": ["string"],
-    "plainEnglishSummary": "string (2-3 sentences explaining what these projections mean in everyday language for the client)"
+    "plainEnglishSummary": "string (2-3 sentences explaining what the SUPPLIED projection figures mean in everyday language for the client. Quote only the calculated values given above. Do not state a projected cashflow — none is calculated)"
   },
   "actionPlan": {
     "twelveMonthActions": ["string (concrete, prioritised actions)"],
     "optimisationScenarios": ["string (if-then improvement scenarios with dollar amounts)"]
   },
   "borrowingCapacityUtilisation": {
-    "totalDebtDeployed": number,
-    "estimatedCapacity": number,
-    "availableCapacity": number,
-    "utilisationPercentage": number,
-    "commentary": "string"
+    "commentary": "string (interpret the supplied capacity figures; if no assessment is on record, say so and do not estimate a capacity)"
   },
   "strategicRecommendations": {
     "shortTerm": ["string"],
@@ -861,6 +963,97 @@ Format your response as valid JSON with this structure:
       );
     }
     const analysis = analysisRead.value as any;
+
+    // ========================================================================
+    // CONTROLLED FINAL ASSEMBLY
+    //
+    // The model's schema no longer contains any of these fields, so nothing is
+    // being overwritten — the deterministic values are simply written into the
+    // persisted shape that existing consumers read. Model prose is carried
+    // through untouched beside them.
+    //
+    // The stored shape is deliberately unchanged: `PortfolioAnalysisPDFGenerator`
+    // reads `analysis.interestRateSensitivity.investmentProperties.*` and
+    // `normalise.pure.ts` reads `analysis.projections.*`. What changed is who
+    // produces the numbers, not where they live.
+    //
+    // `null` means the record could not establish the figure. It is never a
+    // zero — a zeroed rate shock reads as "rates rising costs you nothing".
+    // ========================================================================
+    const modelSensitivity = (analysis?.interestRateSensitivity ?? {}) as any;
+    analysis.interestRateSensitivity = {
+      investmentProperties: {
+        // ONE authority for this figure: the portfolio metric computed above.
+        // The model used to transcribe it, and on one stored report was $492
+        // a month out from the value sitting beside it in the same object.
+        currentMonthlyCashflow: portfolioMetrics.netMonthlyCashflow,
+        plusOnePercentImpact: impactFor(investmentSensitivity, 1),
+        plusTwoPercentImpact: impactFor(investmentSensitivity, 2),
+        available: investmentSensitivity.available,
+        unavailableReason: investmentSensitivity.unavailableReason,
+        unavailableExplanation: investmentSensitivity.available
+          ? null
+          : sensitivityUnavailableText(investmentSensitivity.unavailableReason),
+        loansCovered: investmentSensitivity.loansCovered,
+        balanceCovered: investmentSensitivity.balanceCovered,
+        commentary: typeof modelSensitivity?.investmentProperties?.commentary === 'string'
+          ? modelSensitivity.investmentProperties.commentary : '',
+      },
+      ownerOccupiedProperties: {
+        currentMonthlyRepayment: ownerOccupiedSensitivity.currentMonthlyRepayment,
+        plusOnePercentImpact: impactFor(ownerOccupiedSensitivity, 1),
+        plusTwoPercentImpact: impactFor(ownerOccupiedSensitivity, 2),
+        available: ownerOccupiedSensitivity.available,
+        unavailableReason: ownerOccupiedSensitivity.unavailableReason,
+        unavailableExplanation: ownerOccupiedSensitivity.available
+          ? null
+          : sensitivityUnavailableText(ownerOccupiedSensitivity.unavailableReason),
+        loansCovered: ownerOccupiedSensitivity.loansCovered,
+        balanceCovered: ownerOccupiedSensitivity.balanceCovered,
+        commentary: typeof modelSensitivity?.ownerOccupiedProperties?.commentary === 'string'
+          ? modelSensitivity.ownerOccupiedProperties.commentary : '',
+      },
+      combinedCommentary: typeof modelSensitivity?.combinedCommentary === 'string'
+        ? modelSensitivity.combinedCommentary : '',
+    };
+
+    analysis.projections = {
+      years: projection.assumptions.horizonYears,
+      projectedPortfolioValue: projection.projectedPortfolioValue,
+      projectedDebt: projection.projectedDebt,
+      projectedEquity: projection.projectedEquity,
+      // Never projected — no rent or expense growth rate is recorded, and
+      // capital growth is not rental growth.
+      projectedMonthlyCashflow: null,
+      // The assumptions shown are the assumptions used, from one object.
+      assumptions: projection.assumptions.statements,
+      assumptionDetail: projection.assumptions,
+      plainEnglishSummary: typeof analysis?.projections?.plainEnglishSummary === 'string'
+        ? analysis.projections.plainEnglishSummary : '',
+    };
+
+    analysis.borrowingCapacityUtilisation = capacityFacts === null
+      ? null
+      : {
+          ...capacityFacts,
+          commentary: typeof analysis?.borrowingCapacityUtilisation?.commentary === 'string'
+            ? analysis.borrowingCapacityUtilisation.commentary : '',
+        };
+
+    // Score bounds — the two figures the model IS the authority for. A score
+    // outside 0-100 is not a judgement this product can render, so it is
+    // dropped rather than clamped: clamping 250 to 100 would publish an
+    // excellent rating the model never gave.
+    const boundedScore = (v: unknown): number | null => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null;
+    };
+    if (analysis?.executiveSummary) {
+      analysis.executiveSummary.healthScore = boundedScore(analysis.executiveSummary.healthScore);
+    }
+    if (analysis?.compositionAnalysis) {
+      analysis.compositionAnalysis.diversificationScore = boundedScore(analysis.compositionAnalysis.diversificationScore);
+    }
 
     const processingTime = Date.now() - startTime;
     console.log(`✅ Portfolio analysis completed in ${processingTime}ms`);

@@ -3,7 +3,9 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbid
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireStepUp } from '../_shared/stepUp.ts';
 import { ALLOWED_INTEGRATION_SECRETS } from '../_shared/integrationSecrets.ts';
+import { listingsPipelineRefusal } from '../_shared/listingsPipelineSecrets.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { recordActivity } from '../_shared/activityAudit.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -119,6 +121,15 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // The Listings pipeline's names are refused BEFORE the allowlist, and
+      // said in the operator's terms: "not in allowlist" reads as a typo, and
+      // this is a rule. See listingsPipelineSecrets.pure.ts.
+      const managed = listingsPipelineRefusal(secret.name);
+      if (managed) {
+        validationErrors.push(managed);
+        continue;
+      }
+
       // Check if secret is in allowlist
       if (!ALLOWED_SECRETS.has(secret.name)) {
         validationErrors.push(`Secret not in allowlist: ${secret.name}`);
@@ -205,12 +216,19 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Log the activity
-    await supabase.from('activity_logs').insert({
+    // Record the change in the audit trail.
+    //
+    // This used to pass `entity_type: 'settings'`, which is not one of the 26
+    // values of the `activity_entity_type` enum, and discarded the insert's
+    // error — so every credential change ever made here failed to record who
+    // changed which secret while still answering `success: true`. `system` is
+    // the enum's value for a platform-level change. Secret NAMES only: a value
+    // must never reach an audit row.
+    const audit = await recordActivity(supabase, {
       user_id: authResult.userId,
       username: authResult.username,
       action_type: 'update',
-      entity_type: 'settings',
+      entity_type: 'system',
       entity_name: 'Integration Secrets',
       metadata: {
         updated_secrets: validSecrets.map(s => s.name),
@@ -220,12 +238,17 @@ Deno.serve(async (req) => {
 
     console.log(`Successfully updated ${validSecrets.length} secrets`);
 
+    // The secrets ARE written at this point, so a failed audit row must not
+    // fail the request — but it must not be invisible either. The operator is
+    // told the change landed and the record of it did not.
     return new Response(
       JSON.stringify({ 
         success: true, 
         message: `Successfully updated ${validSecrets.length} secret(s)`,
         updatedSecrets: validSecrets.map(s => s.name),
-        validationWarnings: validationErrors.length > 0 ? validationErrors : undefined
+        validationWarnings: validationErrors.length > 0 ? validationErrors : undefined,
+        auditLogged: audit.ok,
+        ...(audit.ok ? {} : { auditError: audit.reason })
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

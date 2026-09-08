@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import { 
   Scale, 
   Building2, 
@@ -177,16 +178,15 @@ export function ClientComparison({ clients }: ClientComparisonProps) {
         <CardContent className="space-y-5 p-4 sm:p-5">
           {/* Search and Active filter */}
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-700 dark:text-brand-100/55" />
-              <Input
-                placeholder="Search clients by name or email..."
-                aria-label="Search clients to compare"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-12 rounded-2xl border-brand-300/15 bg-muted/45 dark:bg-black/20 pl-11 pr-4 text-sm text-foreground dark:text-white shadow-inner shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/80 dark:text-muted-foreground transition-all hover:border-brand-300/30 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              />
-            </div>
+            <SearchInput
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              placeholder="Search clients by name or email..."
+              aria-label="Search clients to compare"
+              containerClassName="flex-1"
+              className="h-12 rounded-2xl border-brand-300/15 bg-muted/45 dark:bg-black/20 pr-4 text-sm text-foreground dark:text-white shadow-inner shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/80 dark:text-muted-foreground transition-all hover:border-brand-300/30 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              iconClassName="left-4 text-brand-700 dark:text-brand-100/55"
+            />
             <Button
               variant={showActiveOnly ? 'default' : 'outline'}
               size="sm"
@@ -320,7 +320,7 @@ export function ClientComparison({ clients }: ClientComparisonProps) {
           <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/45 to-transparent" />
           <div className="relative flex flex-col gap-3 rounded-3xl border border-border/60 dark:border-white/10 bg-muted/45 dark:bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-success dark:text-success-foreground">
+              <div className="inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.16em] text-success dark:text-success">
                 <Scale className="h-3.5 w-3.5" />
                 Comparison active
               </div>
@@ -403,7 +403,7 @@ export function ClientComparison({ clients }: ClientComparisonProps) {
                                 {metric.format(value)}
                               </p>
                               {isBest && (
-                                <Badge variant="secondary" className="shrink-0 rounded-full border border-success/20 bg-success/10 text-xs text-success dark:text-success-foreground">
+                                <Badge variant="secondary" className="shrink-0 rounded-full border border-success/20 bg-success/10 text-xs text-success dark:text-success">
                                   Best
                                 </Badge>
                               )}

@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Loader2, CircleDollarSign, TrendingUp, Target, Award, AlertTriangle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend, Cell } from 'recharts';
+import { chartTooltipContentStyleWithin, chartTooltipWrapperStyle } from '@/lib/charts/tooltipStyle';
 
 interface TrueROIPanelProps {
   insights: any[];
@@ -130,8 +131,14 @@ export function TrueROIPanel({ insights, datePreset }: TrueROIPanelProps) {
                     />
                     <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => formatCurrencyShort(v)} className="text-muted-foreground" />
                     <RechartsTooltip
-                      contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '8px', fontSize: 12, maxWidth: 320 }}
-                      wrapperStyle={{ zIndex: 50 }}
+                      // Campaign names here run to 70+ characters
+                      // (`7 Property in 7 years | Lean Agency | LA - AU |
+                      // 13.10.25 | Quiz Funnel | JH`). This used to be an
+                      // inline `maxWidth: 320` with no wrapping rule, so the
+                      // box was clamped and the label was not and the name
+                      // printed straight out through the right border.
+                      contentStyle={chartTooltipContentStyleWithin(360)}
+                      wrapperStyle={chartTooltipWrapperStyle}
                       formatter={(value: number) => formatCurrency(value)}
                       labelFormatter={(label: string) => label}
                     />

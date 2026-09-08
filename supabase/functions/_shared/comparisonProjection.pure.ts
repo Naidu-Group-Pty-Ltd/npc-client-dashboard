@@ -317,6 +317,21 @@ export function projectComparisonModel(model: PropertyComparison): ProjectedComp
       + 'Re-running the comparison would produce them.';
   }
 
+  // The verdict page's callout asks "why is there no recommendation here?"
+  // whenever the pick is absent — not only when the record was cut short. A
+  // structured, complete row can hold rankings and no best-overall (the model
+  // omits the section, or names no property): on a real three-property render
+  // (2026-09-04) the callout printed its heading over an empty body, because
+  // this note existed only for salvaged rows. Composed exactly when the
+  // master's `noPick` branch will draw, so a heading is never a promise with
+  // nothing under it.
+  if (!recommendations.bestOverall && !comparison.truncationNote) {
+    comparison.truncationNote =
+      'The saved analysis ranks every property and weighs the trade-offs, but it '
+      + 'records no single "best overall" pick. This page leads with the top-ranked '
+      + 'property instead; the full ranking and the reasons behind it follow.';
+  }
+
   const client: Record<string, unknown> = {};
   put(client, 'name', model.meta.clientName);
 

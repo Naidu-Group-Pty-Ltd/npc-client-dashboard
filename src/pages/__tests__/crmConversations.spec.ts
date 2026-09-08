@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 const root = join(__dirname, '..', '..', '..');
 const page = readFileSync(join(root, 'src', 'pages', 'Conversations.tsx'), 'utf8');
 const config = readFileSync(join(root, 'supabase', 'config.toml'), 'utf8');
+const sync = readFileSync(join(root, 'supabase', 'functions', 'sync-ghl-conversations', 'index.ts'), 'utf8');
 const broker = readFileSync(
   join(root, 'supabase', 'functions', 'get-client-data', 'index.ts'),
   'utf8',
@@ -105,5 +106,71 @@ describe('the typo that rendered nothing, everywhere it appeared', () => {
     };
     walk(join(root, 'src'));
     expect(offenders).toEqual([]);
+  });
+});
+
+
+/**
+ * Audit 3 item 15 — "Request timed out" came back after the budget was raised.
+ *
+ * Raising it was right and could never be enough: the function walks every
+ * client with a GoHighLevel contact id, pausing 500ms between contacts
+ * because GHL rate-limits, so its runtime grows with the tenant. A run that
+ * must finish inside one request will fail again at the next size. It stops
+ * while it can still answer, and the caller resumes it.
+ */
+describe('Audit 3 item 15 — the sync outgrows any single request', () => {
+  it('the function keeps a wall-clock budget and stops before the request does', () => {
+    expect(sync).toMatch(/const BUDGET_MS = [\d_]+;/);
+    expect(sync).toMatch(/if \(Date\.now\(\) - startedAt > BUDGET_MS\) break;/);
+  });
+
+  it('the budget leaves room to answer inside the declared request_timeout', () => {
+    const budgetMs = Number(sync.match(/const BUDGET_MS = ([\d_]+);/)![1].replace(/_/g, ''));
+    const declared = Number(
+      config.match(/\[functions\.sync-ghl-conversations\][\s\S]*?request_timeout\s*=\s*(\d+)/)![1],
+    );
+    expect(budgetMs).toBeLessThan(declared * 1000);
+  });
+
+  it('reports how far it got instead of only success or failure', () => {
+    expect(sync).toMatch(/done,/);
+    expect(sync).toMatch(/cursor: done \? null : nextCursor/);
+  });
+
+  it('resumes from the cursor rather than restarting the walk', () => {
+    expect(sync).toMatch(/cursor = 0 \} = body/);
+    expect(sync).toMatch(/targetContactIds\.slice\(startIndex\)/);
+  });
+
+  it('the client drives it to the end, with a bound so it cannot spin', () => {
+    expect(page).toMatch(/const MAX_LEGS = \d+;/);
+    expect(page).toMatch(/if \(data\?\.done !== false\) return/);
+  });
+
+  it('treats a server with no cursor as one complete run, not an endless loop', () => {
+    // `done` absent means an older deployment; looping against it would hang.
+    expect(page).toMatch(/data\?\.done !== false/);
+    expect(page).toMatch(/next === null \|\| next === cursor/);
+  });
+});
+
+/**
+ * Audit 3 item 14 — an emailed reply left no trace in the thread.
+ */
+describe('Audit 3 item 14 — an emailed reply is recorded in the conversation', () => {
+  it('writes the sent email into the messages table the thread reads', () => {
+    expect(page).toMatch(/table: "ghl_conversation_messages"/);
+    expect(page).toMatch(/direction: "outbound"/);
+    expect(page).toMatch(/channel_type: "email"/);
+  });
+
+  it('marks the row as ours so it can never be mistaken for a GoHighLevel id', () => {
+    expect(page).toMatch(/ghl_message_id: `local-email-\$\{idempotencyKey\}`/);
+  });
+
+  it('never fails the send over the record — the email has already gone', () => {
+    expect(page).toMatch(/catch \(persistError\)/);
+    expect(page).toMatch(/could not be added to the conversation history/);
   });
 });

@@ -297,10 +297,14 @@ describe('G,H — a builder image outranks and forecloses the paid ladder', () =
     const builderRank = rankImage(builder as never);
     const streetViewRank = rankImage(streetView as never);
     expect(builderRank!.provenance).toBe('builder_supplied');
-    expect(streetViewRank!.provenance).toBe('street_view');
-    // A lower rank number wins, so a builder original retakes the card from a
-    // Street View fallback the moment one arrives.
-    expect(builderRank!.rank).toBeLessThan(streetViewRank!.rank);
+    /*
+     * Street View no longer ranks at all — a still of a house-and-land lot in
+     * an estate under construction is not a photograph of the property. The
+     * rule this test exists for is unchanged and now holds a fortiori: the
+     * driver cannot pin a fallback in place against the builder's own file.
+     */
+    expect(streetViewRank).toBeNull();
+    expect(builderRank!.rank).toBe(1);
   });
 });
 

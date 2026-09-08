@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Library, Search, Loader2, Check, Filter, Clock, FolderOpen } from 'lucide-react';
+import { Library, Loader2, Check, Filter, Clock, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ClientSearchSelect } from '@/components/ui/ClientSearchSelect';
+import { SearchInput } from '@/components/ui/search-input';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -309,15 +310,13 @@ export function ReportLibraryPicker({ onAdd, existingNames = [], disabled, class
 
         <div className="space-y-3 border-b bg-muted/20 px-5 py-4 sm:px-6">
           <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search address, tier, scope…"
-                className="h-10 rounded-xl bg-background pl-9 shadow-sm"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search address, tier, scope…"
+              containerClassName="flex-1"
+              className="h-10 rounded-xl bg-background shadow-sm"
+            />
             <div className="w-full sm:w-64">
               <ClientSearchSelect
                 value={clientId ?? null}

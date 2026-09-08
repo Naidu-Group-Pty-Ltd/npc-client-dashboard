@@ -5,13 +5,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
-  Briefcase, Plus, Trash2, Save, Loader2, Search, Settings2, ShieldCheck,
+  Briefcase, Plus, Trash2, Save, Loader2, Settings2, ShieldCheck,
 } from 'lucide-react';
 import {
   FinancePermissionMatrixEditor,
@@ -304,15 +305,13 @@ export function FinancePartnersCard({ clientId, clientName }: Props) {
               Default permissions will be applied — you can refine them after.
             </DialogDescription>
           </DialogHeader>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search partners..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8 h-9"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search partners..."
+            className="h-9"
+            iconClassName="left-2"
+          />
           <ScrollArea className="h-72 border rounded-md">
             <div className="p-2 space-y-1">
               {filteredAvailable.length === 0 ? (

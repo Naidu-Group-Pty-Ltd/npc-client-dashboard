@@ -41,7 +41,11 @@ describe('projectAirtableRecord', () => {
       suburb: 'Atwell',
       state: 'WA',
       zipCode: '6164',
-      location: '30 Callistemon Approach, Atwell',
+      // Carries the state and postcode now: `location` is composed from the
+      // address parts rather than glued from `address` + `suburb`, so the one
+      // string a card, a report and the geocoder all read is the complete one.
+      location: '30 Callistemon Approach, Atwell WA 6164',
+      addressPrecision: 'address',
       price: 1_599_000,
       beds: 4,
       bedrooms: 4,

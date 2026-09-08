@@ -14,9 +14,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Download, RefreshCw, FileJson, Code, ExternalLink, Eye, FileArchive,
-  Search, Workflow, CheckCircle2, AlertCircle, Image as ImageIcon, Save,
+  Workflow, CheckCircle2, AlertCircle, Image as ImageIcon, Save,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -293,10 +294,11 @@ export function GhlMarketingRawDump() {
             ))}
           </div>
 
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search by name or GHL ID…" value={filter} onChange={(e) => setFilter(e.target.value)} className="pl-9" />
-          </div>
+          <SearchInput
+            value={filter}
+            onValueChange={setFilter}
+            placeholder="Search by name or GHL ID…"
+          />
 
           <ScrollArea className="h-[500px] border border-border/40 rounded-md">
             <Table>

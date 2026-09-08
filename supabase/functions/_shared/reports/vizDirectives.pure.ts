@@ -205,8 +205,31 @@ const num = (raw: string | undefined): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 
-const csv = (raw: string | undefined): string[] =>
-  raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+/**
+ * Split a label list on commas — except commas inside parentheses, which
+ * belong to the label. A real render split `rows=Risk level (1=Low, 5=High)`
+ * into two rows, and the second, having no cells, printed as an orphan label
+ * floating under the grid. The same rule the quote-aware splitter below
+ * applies to quotes, applied to parens.
+ */
+const csv = (raw: string | undefined): string[] => {
+  if (!raw) return [];
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of raw) {
+    if (ch === '(') depth += 1;
+    else if (ch === ')') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      out.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+};
 
 /**
  * Split on commas that are not inside double quotes.

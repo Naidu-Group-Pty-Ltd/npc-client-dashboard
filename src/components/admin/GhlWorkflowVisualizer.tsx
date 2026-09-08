@@ -24,12 +24,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import {
-  CheckCircle2, ExternalLink, GitBranch, Link2, Link2Off, RefreshCw, Search,
-  AlertCircle, Loader2, Download, Edit3, Eye, Save, X, Workflow as WorkflowIcon,
+  CheckCircle2, ExternalLink, GitBranch, Link2, Link2Off, RefreshCw, AlertCircle, Loader2, Download, Edit3, Eye, Save, X, Workflow as WorkflowIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { WorkflowBlueprintEditor, type Blueprint } from './WorkflowBlueprintEditor';
@@ -273,15 +273,13 @@ export function GhlWorkflowVisualizer() {
 
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search workflow name or ID…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search workflow name or ID…"
+            containerClassName="flex-1 min-w-[200px]"
+            iconClassName="left-2"
+          />
           <Select value={filter} onValueChange={(v) => setFilter(v as FilterMode)}>
             <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
             <SelectContent>

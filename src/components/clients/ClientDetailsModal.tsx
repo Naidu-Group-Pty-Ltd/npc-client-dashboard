@@ -1188,6 +1188,10 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
           current_address: fullClient?.current_address,
           secondary_first_name: fullClient?.secondary_first_name,
           secondary_surname: fullClient?.secondary_surname,
+          // The dialog renders a secondary buyer email field and the prop
+          // type has always declared this, but it was never passed — so the
+          // field sat blank on every client who has one.
+          secondary_email: fullClient?.secondary_email,
         }}
       />
 

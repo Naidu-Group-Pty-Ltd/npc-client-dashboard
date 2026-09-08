@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Table,
   TableBody,
@@ -97,10 +98,10 @@ const getHealthBadgeVariant = (health: string | null): 'default' | 'secondary' |
 
 const getHealthBadgeClassName = (health: string | null) => {
   switch (health?.toLowerCase()) {
-    case 'excellent': return 'border-success/45 bg-success/12 text-success-foreground ring-1 ring-inset ring-success/15 hover:bg-success/18';
-    case 'good': return 'border-success/45 bg-success/12 text-success-foreground ring-1 ring-inset ring-success/15 hover:bg-success/18';
+    case 'excellent': return 'border-success/45 bg-success/12 text-success ring-1 ring-inset ring-success/15 hover:bg-success/18';
+    case 'good': return 'border-success/45 bg-success/12 text-success ring-1 ring-inset ring-success/15 hover:bg-success/18';
     case 'fair': return 'border-brand-300/50 bg-brand-400/13 text-brand-100 ring-1 ring-inset ring-brand-200/15 hover:bg-brand-400/18';
-    case 'poor': return 'border-destructive/45 bg-destructive/13 text-destructive-foreground ring-1 ring-inset ring-destructive/15 hover:bg-destructive/18';
+    case 'poor': return 'border-destructive/45 bg-destructive/13 text-destructive ring-1 ring-inset ring-destructive/15 hover:bg-destructive/18';
     default: return 'border-border/30 bg-muted/40 text-foreground dark:text-foreground ring-1 ring-inset ring-border dark:ring-white/10 hover:bg-muted/60';
   }
 };
@@ -348,7 +349,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
             variant="outline"
             size="sm"
             onClick={() => refetch()}
-            className="rounded-2xl border-destructive/25 bg-destructive/10 text-destructive-foreground transition-all hover:border-destructive/45 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-2 focus-visible:ring-destructive/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="rounded-2xl border-destructive/25 bg-destructive/10 text-destructive transition-all hover:border-destructive/45 hover:bg-destructive/15 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${isRefetching ? 'animate-spin' : ''}`} />
             Retry
@@ -424,11 +425,12 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
               <div className="pointer-events-none absolute left-3.5 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl border border-brand-300/15 bg-brand-300/10 text-brand-200/80">
                 <Search className="h-4 w-4" />
               </div>
-              <Input
+              <SearchInput
+                value={searchQuery}
+                onValueChange={setSearchQuery}
                 aria-label="Search portfolio reports by client name"
                 placeholder="Search by client name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                hideIcon
                 className="h-12 rounded-2xl border-border dark:border-white/10 bg-background dark:bg-background/80 pl-14 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-all placeholder:text-muted-foreground hover:border-brand-300/25 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               />
             </div>

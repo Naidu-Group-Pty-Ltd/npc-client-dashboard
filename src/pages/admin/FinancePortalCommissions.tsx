@@ -13,10 +13,11 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { SearchInput } from '@/components/ui/search-input';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
-  Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft, AlertTriangle, ShieldCheck,
+  Loader2, Plus, RefreshCw, FileText, DollarSign, Download, ArrowLeft, AlertTriangle, ShieldCheck,
   ShieldAlert, Receipt, Landmark,
 } from 'lucide-react';
 import { ClawbackRegisterPanel } from '@/components/admin/finance-portal/ClawbackRegisterPanel';
@@ -330,10 +331,14 @@ export default function FinancePortalCommissions() {
         <Card className="border-0 bg-transparent shadow-none">
           <CardHeader className="border-b border-border/60 bg-gradient-to-r from-card/80 to-muted/25 p-4 sm:p-5">
             <div className="flex flex-wrap gap-3 items-center">
-              <div className="relative flex-1 min-w-[220px]">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="h-10 rounded-xl border-border/70 bg-background/75 pl-9 shadow-inner focus-visible:ring-primary/35" placeholder="Search partner, client, notes…" value={search} onChange={e => setSearch(e.target.value)} aria-label="Search commissions" />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search partner, client, notes…"
+                aria-label="Search commissions"
+                containerClassName="flex-1 min-w-[220px]"
+                className="h-10 rounded-xl border-border/70 bg-background/75 shadow-inner focus-visible:ring-primary/35"
+              />
               <Select value={filterPartner} onValueChange={setFilterPartner}>
                 <SelectTrigger aria-label="Filter commissions by partner" className="h-10 w-[220px] rounded-xl border-border/70 bg-background/75"><SelectValue placeholder="Partner" /></SelectTrigger>
                 <SelectContent>

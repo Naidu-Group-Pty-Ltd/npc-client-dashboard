@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchInput } from '@/components/ui/search-input';
 import { format, parseISO } from 'date-fns';
 import type { GHLEvent, GHLContact } from '@/hooks/useGHLCalendar';
 
@@ -140,15 +141,16 @@ export function CalendarSearchDropdown({
     <div ref={containerRef} className="relative min-w-[240px] flex-1 sm:flex-none">
       <div className="relative">
         <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/80" />
-        <Input
-          aria-label="Search events and contacts"
-          placeholder="Search events, contacts..."
+        <SearchInput
           value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
+          onValueChange={(value) => {
+            setSearchQuery(value);
             setIsOpen(true);
           }}
+          aria-label="Search events and contacts"
+          placeholder="Search events, contacts..."
           onFocus={() => searchQuery.trim() && setIsOpen(true)}
+          hideIcon
           className="h-10 w-full rounded-xl border-border bg-card/80 pl-10 pr-10 text-sm shadow-inner shadow-sm dark:shadow-black/20 transition-all placeholder:text-muted-foreground focus-visible:border-primary/50 focus-visible:ring-2 focus-visible:ring-primary/35 sm:w-[300px] lg:w-[340px]"
         />
         {searchQuery && (

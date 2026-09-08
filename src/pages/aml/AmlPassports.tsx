@@ -4,6 +4,7 @@ import { BookMarked, Loader2, Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { SearchInput } from '@/components/ui/search-input';
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { caseStage } from "@/lib/aml/caseDimensions";
 import {
@@ -93,19 +94,13 @@ export default function AmlPassports() {
           {/* ── customers ─────────────────────────────────────────────── */}
           <Card className="glass-panel lg:sticky lg:top-4 lg:self-start">
             <CardContent className="space-y-3 py-4">
-              <div className="relative">
-                <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <Input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search customers"
-                  aria-label="Search customers"
-                  className="pl-8"
-                />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search customers"
+                aria-label="Search customers"
+                iconClassName="left-2.5 h-3.5 w-3.5"
+              />
 
               {loading && (
                 <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground" role="status">

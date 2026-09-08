@@ -154,14 +154,17 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
   {
     id: 'airtable',
     name: 'Airtable',
-    description: 'Property listings and opportunity marketplace source-of-record.',
+    description:
+      'Airtable connection for workflow automations (the Workflow Playground\u2019s Airtable operations). ' +
+      'The Listings & Overview pipeline reads a different key, AIRTABLE_TOKEN, which is managed by Mission Control ' +
+      'and is the same across the prime and every clone \u2014 nothing entered here can change it.',
     category: 'property_data',
-    tags: ['listings', 'database', 'opportunity marketplace'],
+    tags: ['workflows', 'database', 'automation'],
     docsUrl: 'https://airtable.com/developers/web/api/introduction',
     fallbackIcon: 'database',
     fields: [
-      { key: 'AIRTABLE_API_KEY', label: 'API Key', placeholder: 'pat...', type: 'password', required: true },
-      { key: 'AIRTABLE_BASE_ID', label: 'Base ID', placeholder: 'app...', type: 'text', required: true },
+      { key: 'AIRTABLE_API_KEY', label: 'API key (workflows)', placeholder: 'pat...', type: 'password', required: true },
+      { key: 'AIRTABLE_WORKFLOW_BASE_ID', label: 'Base ID (workflows)', placeholder: 'app...', type: 'text', required: true },
     ],
   },
   {
@@ -750,7 +753,10 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
   {
     id: 'mapbox',
     name: 'Mapbox',
-    description: 'Vector basemaps, heatmap styling and geocoding for the marketplace map.',
+    // Server-side workflow credential only. The marketplace map's basemaps are
+    // keyless (Esri) and upgrade via the build-time VITE_MAPBOX_ACCESS_TOKEN
+    // public token instead — a secret stored here is unreadable to the browser.
+    description: 'Mapbox geocoding and map APIs for workflow automations.',
     category: 'property_data',
     tags: ['maps', 'tiles', 'heatmap', 'geocoding'],
     docsUrl: 'https://docs.mapbox.com',
@@ -1913,9 +1919,16 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
   },
 ];
 
-/** Frontend field key → Supabase secret name, when they differ. */
+/**
+ * Frontend field key → Supabase secret name, when they differ.
+ *
+ * `AIRTABLE_API_KEY` used to alias `AIRTABLE_TOKEN` — so a key typed on this
+ * page overwrote the one the Listings & Overview pipeline runs on. That key is
+ * managed by Mission Control now (one value across the prime and every clone),
+ * and the page's Airtable card is the workflow connection under its own names.
+ * See docs/integrations/AIRTABLE_KEY_OWNERSHIP.md.
+ */
 export const SUPABASE_SECRET_ALIASES: Record<string, string> = {
-  AIRTABLE_API_KEY: 'AIRTABLE_TOKEN',
   GHL_API_KEY: 'GOHIGHLEVEL_API_KEY',
   GHL_LOCATION_ID: 'GOHIGHLEVEL_LOCATION_ID',
 };

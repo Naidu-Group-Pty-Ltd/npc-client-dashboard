@@ -98,6 +98,24 @@ interface ComparisonAnalysis {
   };
 }
 
+/**
+ * How long the browser waits for a comparison.
+ *
+ * Audit 3 item 13 — "the comparison analysis doesn't work". The client
+ * aborted at 150s while `supabase/config.toml` grants this function 180s, so
+ * an analysis running its PERMITTED budget was reported as a failure at the
+ * 83% mark while it carried on and finished. That is also why the recovery
+ * path below then found nothing: it went looking for a completed row while
+ * the analysis was still running, and honestly reported that it "may still be
+ * finishing in the background".
+ *
+ * The same drift was fixed once already on the CRM conversation sync, and the
+ * lesson taken there applies here: the caller waits as long as the function is
+ * allowed. `propertyComparisonTimeout.spec.ts` reads the declared value out of
+ * `config.toml` and fails if the two separate again.
+ */
+const COMPARISON_TIMEOUT_MS = 180_000;
+
 export function PropertyComparisonModal({
   isOpen,
   onClose,
@@ -278,7 +296,7 @@ export function PropertyComparisonModal({
       requestBody.scoring_weights = cloneComparisonWeights(appliedWeights);
       requestBody.templateId = activeTemplateId;
 
-      let { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
+      let { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: COMPARISON_TIMEOUT_MS });
 
       // ── No response arrived; the analysis may well have completed ──
       // The rule lives in the pure module beside the shapes it recovers, and

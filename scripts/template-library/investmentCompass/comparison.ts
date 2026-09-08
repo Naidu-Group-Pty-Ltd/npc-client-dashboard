@@ -62,6 +62,8 @@ import {
   type FlowItem,
   type KpiItem,
   type PageDef,
+  renderTimePart,
+  RENDER_TIME_NUMERAL,
 } from './blocks';
 import { hasContents } from './resolvers';
 import { assembleMaster, type CompassSeedTemplate, type ReportFormat } from './master';
@@ -263,10 +265,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   const manifest = resolveManifest(family, variant);
   const c = beginCompassTemplate(family, variant, manifest);
 
-  let partNo = 0;
-  const nextPart = (label: string): string =>
-    `Part ${String((partNo += 1)).padStart(2, '0')} · ${label}`;
-  const nextNumeral = (): string => String(partNo).padStart(2, '0');
+  const nextPart = renderTimePart;
+  const nextNumeral = (): string => RENDER_TIME_NUMERAL;
 
   const pages: PageDef[] = [];
 
@@ -429,17 +429,24 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   //
   // All eleven superlatives on one page, as who-won and the figure where the
   // record carries one. The reasons are three pages of prose and follow.
-  const scorecardRow = (group: string, i: number): string[] => [
-    `{{comparison.axes.${group}.winners.${i}.label}}`,
-    `{{comparison.axes.${group}.winners.${i}.winner}}`,
-    `{{comparison.axes.${group}.winners.${i}.value}}`,
-  ];
+  // Each row is conditional on its axis existing in the record: a slot the
+  // record does not hold drew as an empty ruled stripe on a real render (two
+  // of them, directly under the one money axis the row carried).
+  const scorecardRow = (group: string, i: number) => ({
+    cells: [
+      `{{comparison.axes.${group}.winners.${i}.label}}`,
+      `{{comparison.axes.${group}.winners.${i}.winner}}`,
+      `{{comparison.axes.${group}.winners.${i}.value}}`,
+    ],
+    when: `comparison && comparison.axes && comparison.axes.${group}`
+      + ` && comparison.axes.${group}.winners && comparison.axes.${group}.winners[${i}]`,
+  });
   pages.push(withFurniture(page('The scorecard', [
     ...furniture(DOCUMENT_LABEL, nextPart('Scorecard'), 'The scorecard'),
     ...flow([
       sectionHeading({
         eyebrow: 'Who wins what',
-        heading: 'Eleven axes, side by side',
+        heading: 'The axes, side by side',
         numeral: nextNumeral(),
         standfirst: 'Where the analysis named nobody, the row says so. That is an answer '
           + 'rather than a gap — it happens on about one axis in six.',
@@ -465,20 +472,30 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // draft of this format ran 154pt past the footer on five of them.
   const reasonPage = (
     name: string, eyebrow: string, heading: string, group: string, from: number, count: number,
-  ): PageDef => withFurniture(page(name, [
-    ...furniture(DOCUMENT_LABEL, nextPart(name), name),
-    ...flow([
-      sectionHeading({ eyebrow, heading, numeral: nextNumeral() }),
-      definitions(
-        'In the analysis’s words',
-        Array.from({ length: count }, (_, k) => ({
-          term: `{{comparison.axes.${group}.winners.${from + k}.label}}`,
-          definition: `{{comparison.axes.${group}.winners.${from + k}.reason}}`,
-        })),
-        LENGTHS.axisReason,
-      ),
-    ], contentTop()),
-  ]), FOOTER);
+  ): PageDef => ({
+    ...withFurniture(page(name, [
+      ...furniture(DOCUMENT_LABEL, nextPart(name), name),
+      ...flow([
+        sectionHeading({ eyebrow, heading, numeral: nextNumeral() }),
+        definitions(
+          'In the analysis’s words',
+          Array.from({ length: count }, (_, k) => ({
+            term: `{{comparison.axes.${group}.winners.${from + k}.label}}`,
+            definition: `{{comparison.axes.${group}.winners.${from + k}.reason}}`,
+            when: `comparison && comparison.axes && comparison.axes.${group}`
+              + ` && comparison.axes.${group}.winners && comparison.axes.${group}.winners[${from + k}]`,
+          })),
+          LENGTHS.axisReason,
+        ),
+      ], contentTop()),
+    ]), FOOTER),
+    // A page whose every slot is absent is furniture over nothing: the real
+    // render shipped a whole "cash flow" page with a heading and no rows.
+    conditional: Array.from({ length: count }, (_, k) =>
+      `(comparison && comparison.axes && comparison.axes.${group}`
+      + ` && comparison.axes.${group}.winners && comparison.axes.${group}.winners[${from + k}])`,
+    ).join(' || '),
+  });
 
   pages.push(reasonPage('Money · return', 'Return and yield', 'Who wins on the money, and why', 'money', 0, 2));
   pages.push(reasonPage('Money · cash flow', 'Cash flow and value', 'Who wins on the money, and why', 'money', 2, 2));
@@ -497,6 +514,8 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         numeral: nextNumeral(),
       }),
       definitions('In the analysis’s words', [{
+        when: 'comparison && comparison.axes && comparison.axes.risk'
+          + ' && comparison.axes.risk.winners && comparison.axes.risk.winners[2]',
         term: '{{comparison.axes.risk.winners.2.label}}',
         definition: '{{comparison.axes.risk.winners.2.reason}}',
       }], LENGTHS.axisReason),
@@ -557,11 +576,16 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       ], contentTop()),
     ]), FOOTER);
 
-  pages.push(suitsPage(
-    'Who each property suits', 0, 3,
-    'The section the legacy generator never printed: its wrapper omitted the field, '
-    + 'so investor matching reached neither the PDF nor its fallback.',
-  ));
+  pages.push({
+    ...suitsPage(
+      'Who each property suits', 0, 3,
+      'The section the legacy generator never printed: its wrapper omitted the field, '
+      + 'so investor matching reached neither the PDF nor its fallback.',
+    ),
+    // The record can hold no investor matches at all — the real render shipped
+    // this page as a heading over nothing.
+    conditional: 'comparison && comparison.matches && comparison.matches[0]',
+  });
   // Only comparisons of four or five properties have a fourth match to show.
   pages.push({
     ...suitsPage('Who each property suits · continued', 3, 2),
@@ -716,11 +740,28 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   pages.push(withFurniture(page('Alternatives and basis', [
     ...furniture(DOCUMENT_LABEL, nextPart('Basis'), 'Alternatives and basis'),
     ...flow(ifItFits([
-      sectionHeading({
-        eyebrow: 'If the brief changed',
-        heading: 'Alternatives, and what this was measured against',
-        numeral: nextNumeral(),
-      }),
+      oneOf(
+        {
+          when: 'comparison && comparison.recommendations'
+            + ' && comparison.recommendations.alternativeScenarios'
+            + ' && comparison.recommendations.alternativeScenarios[0]',
+          item: sectionHeading({
+            eyebrow: 'If the brief changed',
+            heading: 'Alternatives, and what this was measured against',
+            numeral: nextNumeral(),
+          }),
+        },
+        {
+          when: '!(comparison && comparison.recommendations'
+            + ' && comparison.recommendations.alternativeScenarios'
+            + ' && comparison.recommendations.alternativeScenarios[0])',
+          item: sectionHeading({
+            eyebrow: 'The terms of the analysis',
+            heading: 'What this was measured against',
+            numeral: nextNumeral(),
+          }),
+        },
+      ),
       {
         ...definitions('Alternative scenarios', [
           { term: '{{comparison.recommendations.alternativeScenarios.0.scenario}}', definition: '{{comparison.recommendations.alternativeScenarios.0.reason}}' },
@@ -733,12 +774,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       // The assumptions behind the ranking. `analysis_summary` holds them on 44
       // of the 50 stored rows and no comparison document has ever stated them.
       definitions('Basis of the analysis', [
-        { term: 'Time horizon', definition: '{{comparison.basis.timeHorizon}}' },
-        { term: 'Risk tolerance', definition: '{{comparison.basis.riskTolerance}}' },
-        { term: 'Analysis depth', definition: '{{comparison.basis.depth}}' },
-        { term: 'Investor profile', definition: '{{comparison.basis.investorProfile}}' },
-        { term: 'Model', definition: '{{comparison.basis.model}}' },
-        { term: 'Analysed', definition: '{{comparison.analysedOn | date}}' },
+        { term: 'Time horizon', definition: '{{comparison.basis.timeHorizon}}', when: 'comparison && comparison.basis && comparison.basis.timeHorizon' },
+        { term: 'Risk tolerance', definition: '{{comparison.basis.riskTolerance}}', when: 'comparison && comparison.basis && comparison.basis.riskTolerance' },
+        { term: 'Analysis depth', definition: '{{comparison.basis.depth}}', when: 'comparison && comparison.basis && comparison.basis.depth' },
+        { term: 'Investor profile', definition: '{{comparison.basis.investorProfile}}', when: 'comparison && comparison.basis && comparison.basis.investorProfile' },
+        { term: 'Model', definition: '{{comparison.basis.model}}', when: 'comparison && comparison.basis && comparison.basis.model' },
+        { term: 'Analysed', definition: '{{comparison.analysedOn | date}}', when: 'comparison && comparison.analysedOn' },
       ]),
     ], [
       // Present only where the record was cut off and salvaged — a note the

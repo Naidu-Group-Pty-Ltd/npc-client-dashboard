@@ -84,6 +84,45 @@ export async function fetchActiveReportTemplates(): Promise<SelectableTemplateRo
   return (data?.records ?? []) as SelectableTemplateRow[];
 }
 
+/**
+ * Page one of every active template, for the picker's tiles.
+ *
+ * A standalone active row (no library lineage in the listed catalogue) has no
+ * `preview_schema`, so its face comes from the template's own `schema` — but
+ * fetching `schema` whole is exactly what `TEMPLATE_COLUMNS` exists to avoid:
+ * some rows carry hundreds of kilobytes of page definition. This asks
+ * PostgREST for page one and the token palette alone (measured across
+ * production's active rows: ~50KB total, largest page 3.9KB), and only when
+ * the dialog is open with such a row to draw.
+ *
+ * A row whose schema has no pages is simply absent from the map — the tile
+ * draws its empty sheet — and a failed fetch is the caller's to swallow: a
+ * missing picture must never take the chooser down.
+ */
+export async function fetchActiveTemplatePreviewPages(): Promise<Map<string, unknown>> {
+  const { data, error } = await invokeSecureFunction('manage-templates', {
+    operation: 'list',
+    table: 'report_templates',
+    listOptions: {
+      select: 'id,previewPage:schema->pages->0,previewTokens:schema->tokens',
+      orderBy: 'updated_at',
+      orderAsc: false,
+      filters: { is_active: true },
+      limit: 500,
+    },
+  });
+  if (error) throw new Error(error.message);
+  const map = new Map<string, unknown>();
+  const rows = (data?.records ?? []) as Array<{ id?: string; previewPage?: unknown; previewTokens?: unknown }>;
+  for (const row of rows) {
+    if (row?.id && row.previewPage && typeof row.previewPage === 'object') {
+      // The shape `TemplateDocumentPreview` reads: one page plus the palette.
+      map.set(row.id, { pages: [row.previewPage], tokens: row.previewTokens ?? {} });
+    }
+  }
+  return map;
+}
+
 /** This user's selections, every format at once. Scoped server-side. */
 export async function fetchTemplateSelections(): Promise<ReportTemplateSelectionRow[]> {
   const { data, error } = await invokeSecureFunction('manage-templates', {

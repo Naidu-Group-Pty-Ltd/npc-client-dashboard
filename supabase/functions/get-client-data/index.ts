@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     // `clients.created_by = auth.uid()` — always NULL under this app's custom
     // cookie session, so the browser could never read one. Same client scope,
     // same module permission, and the same treatment its sibling already has.
-    const allowedTables = ['clients', 'portfolio_analysis_reports', 'portfolio_reviews', 'client_properties', 'client_assets', 'client_liabilities', 'client_employment', 'client_expenses', 'client_files', 'client_additional_contacts', 'client_deals', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'borrowing_capacity_assessments', 'client_reminders', 'lead_source_attributions', 'client_portal_reports', 'client_portal_report_requests', 'ghl_client_opportunities', 'ghl_conversations', 'ghl_conversation_messages', 'custom_users', 'export_jobs', 'purchase_files'];
+    const allowedTables = ['clients', 'portfolio_analysis_reports', 'portfolio_reviews', 'client_properties', 'client_assets', 'client_liabilities', 'client_employment', 'client_expenses', 'client_files', 'client_additional_contacts', 'client_deals', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'borrowing_capacity_assessments', 'client_reminders', 'lead_source_attributions', 'client_portal_reports', 'client_portal_report_requests', 'ghl_client_opportunities', 'ghl_conversations', 'ghl_conversation_messages', 'custom_users', 'export_jobs', 'purchase_files', 'appointment_secondary_recipients'];
     const targetTable = listOptions.table || 'clients';
     
     if (listOptions.table && !allowedTables.includes(targetTable)) {

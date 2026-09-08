@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { chartLegendWrapperStyle, chartTooltipContentStyle } from '@/lib/charts/tooltipStyle';
 import { TrendingUp, Users, Smile, Frown, Meh, MessageSquare, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CallStatePanel } from './CallStatePanel';
@@ -58,15 +59,13 @@ const analyticsKpiCard =
 const analyticsChartCard =
   'relative overflow-hidden rounded-3xl border border-border dark:border-white/10 bg-gradient-to-br from-card dark:from-background/95 via-card dark:via-background/80 to-background dark:to-black/90 shadow-xl shadow-sm dark:shadow-black/25 transition-all duration-300 before:pointer-events-none before:absolute before:inset-x-8 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-brand-200/45 before:to-transparent hover:border-brand-300/30 hover:shadow-brand-500/10';
 const chartShell = 'rounded-2xl border border-border dark:border-white/10 bg-background dark:bg-black/20 p-3';
-const tooltipContentStyle = {
-  backgroundColor: 'rgba(9, 9, 11, 0.96)',
-  border: '1px solid rgba(255,255,255,0.12)',
-  borderRadius: '16px',
-  boxShadow: '0 24px 70px rgba(0,0,0,0.42)',
-  color: '#f4f4f5',
-};
-const tooltipLabelStyle = { color: '#f4f4f5' };
-const tooltipItemStyle = { color: '#f4f4f5' };
+// The shared rule — see `lib/charts/tooltipStyle`. The agent-performance
+// tooltip clipped a long agent name because Recharts draws its label
+// `nowrap` and nothing here overrode it; this is Audit 4 item 5's second
+// half and the same defect as item 10's campaign names.
+const tooltipContentStyle = chartTooltipContentStyle;
+const tooltipLabelStyle = { color: 'hsl(var(--popover-foreground))' };
+const tooltipItemStyle = { color: 'hsl(var(--popover-foreground))' };
 
 export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) => {
   // Calculate sentiment distribution
@@ -299,7 +298,7 @@ export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) =
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipContentStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                    <Legend verticalAlign="bottom" height={48} wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
+                    <Legend verticalAlign="bottom" wrapperStyle={chartLegendWrapperStyle} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -344,7 +343,7 @@ export const CallAnalyticsDashboard = ({ calls }: CallAnalyticsDashboardProps) =
                       ))}
                     </Pie>
                     <Tooltip contentStyle={tooltipContentStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-                    <Legend verticalAlign="bottom" height={48} wrapperStyle={{ color: '#d4d4d8', fontSize: 12 }} />
+                    <Legend verticalAlign="bottom" wrapperStyle={chartLegendWrapperStyle} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>

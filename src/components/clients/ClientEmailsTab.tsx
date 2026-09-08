@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Collapsible,
   CollapsibleContent,
@@ -12,7 +13,6 @@ import {
 } from '@/components/ui/collapsible';
 import { 
   Mail, 
-  Search, 
   ExternalLink, 
   Loader2, 
   Inbox,
@@ -257,15 +257,12 @@ export function ClientEmailsTab({ clientId, clientName }: ClientEmailsTabProps) 
   return (
     <div className="space-y-3 w-full min-w-0">
       {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search emails..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-9"
-        />
-      </div>
+      <SearchInput
+        value={searchQuery}
+        onValueChange={setSearchQuery}
+        placeholder="Search emails..."
+        containerClassName="max-w-sm"
+      />
 
       {/* Threaded Email List */}
       <div className="space-y-1 w-full min-w-0">

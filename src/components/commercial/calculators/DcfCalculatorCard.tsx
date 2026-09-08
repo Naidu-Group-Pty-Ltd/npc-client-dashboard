@@ -664,7 +664,7 @@ export function DcfCalculatorCard() {
 
 
   const readinessTone = readinessStatus === 'DCF Verified'
-    ? 'border-success/40 bg-success/10 text-success-foreground'
+    ? 'border-success/40 bg-success/10 text-success'
     : readinessStatus === 'Cashflow Generated'
       ? 'border-primary/40 bg-primary/10 text-primary'
       : readinessStatus === 'Cashflow Out of Date' || readinessStatus === 'Preliminary DCF Estimate' || readinessStatus === 'Specialist Review Recommended'
@@ -686,7 +686,7 @@ export function DcfCalculatorCard() {
           </div>
           <div className="flex flex-wrap gap-2 lg:justify-end">
             <Badge variant="outline" className={readinessTone}>{readinessStatus}</Badge>
-            {cashflowCurrent && <Badge variant="outline" className="border-success/40 bg-success/10 text-success-foreground">Report-ready draft</Badge>}
+            {cashflowCurrent && <Badge variant="outline" className="border-success/40 bg-success/10 text-success">Report-ready draft</Badge>}
             {cashflowOutOfDate && <Badge variant="outline" className="border-brand-500/40 bg-brand-500/10 text-brand-100">Regeneration required</Badge>}
           </div>
         </div>

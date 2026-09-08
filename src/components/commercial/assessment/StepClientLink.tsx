@@ -9,8 +9,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchInput } from '@/components/ui/search-input';
 import {
-  AlertTriangle, Check, ExternalLink, Link2, Loader2, Search, Unlink, User, UserPlus,
+  AlertTriangle, Check, ExternalLink, Link2, Loader2, Unlink, User, UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ciAssessmentApi, type ClientSearchRow } from '@/hooks/useCiAssessments';
@@ -338,17 +339,14 @@ export function StepClientLink({
         <div className="flex flex-wrap items-end gap-2">
           <div className="min-w-[16rem] flex-1 max-w-md">
             <Label htmlFor="client-search" className="ci-field-label">Search your clients</Label>
-            <div className="relative mt-1.5">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input
-                id="client-search"
-                value={search}
-                disabled={!canLink}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Name or email"
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              id="client-search"
+              disabled={!canLink}
+              placeholder="Name or email"
+              containerClassName="mt-1.5"
+            />
           </div>
           {!creatingOpen ? (
             <Button

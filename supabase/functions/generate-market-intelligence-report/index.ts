@@ -540,7 +540,22 @@ Keep it professional, warm, and action-oriented. No generic "contact us" languag
 // ─── Main Handler ────────────────────────────────────────────────────────────
 
 const __miReportHandler = async (req: Request): Promise<Response> => {
-  const corsHeaders = createCorsHeaders();
+  // The CALLER's origin, not a default. `createCorsHeaders()` with no argument
+  // answers `Access-Control-Allow-Origin: allowedOrigins[0]` — a fixed origin
+  // that has nothing to do with who asked — and it is paired with
+  // `Access-Control-Allow-Credentials: true`. A credentialed request is only
+  // released to JS when the ACAO EXACTLY equals the request's Origin, so this
+  // function answered for exactly one of the origins the deployment trusts and
+  // failed the preflight for every other one. `fetch` then rejects with an
+  // opaque `TypeError: Failed to fetch`, which the client renders as
+  //
+  //     Network/CORS error calling generate-market-intelligence-report.
+  //     Please check the function deployment and auth/CORS configuration.
+  //
+  // — advice that sends the reader to the deployment, which is fine. Audit 4
+  // item 12 is this. 344 call sites across the functions pass the origin; this
+  // was one of the handful that did not.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -1010,7 +1025,7 @@ Tone: Authoritative, data-backed, actionable. Use bold for key figures. Position
   } catch (error) {
     console.error('[market-intel-report] Fatal error:', error);
     return new Response(JSON.stringify(internalError(error, 'generate-market-intelligence-report')), {
-      status: 500, headers: { ...createCorsHeaders(), 'Content-Type': 'application/json' },
+      status: 500, headers: { ...createCorsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
     });
   }
 };

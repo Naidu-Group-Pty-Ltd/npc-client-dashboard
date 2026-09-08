@@ -60,8 +60,26 @@ export const COMPLETABLE_UPLOAD_STATUSES = ['enriching', 'partially_complete'];
 /** Enrichment states meaning a property has not been through imagery yet. */
 export const UNFINISHED_ENRICHMENT_STATUSES = ['pending', 'enriching'];
 
+/**
+ * The item-work ladder's terminal rung.
+ *
+ * Named here rather than imported so this module keeps no dependency on the
+ * settler, and spelled once so the completion rule and its test cannot drift.
+ */
+export const SETTLED_ITEM_WORK_STAGE = 'settled';
+
 /** Uploads one settler tick will look at. Cheap reads, and resumable. */
 const MAX_UPLOADS_PER_PASS = 25;
+
+/**
+ * How many property ids go into one image query's filter.
+ *
+ * The list travels in the URL, so it is chunked rather than sent whole: a
+ * thousand uuids is about 37 kB of query string and servers refuse it long
+ * before that. Two hundred keeps a request comfortably short while an ordinary
+ * upload of a few dozen properties still needs exactly one.
+ */
+const ITEM_FILTER_CHUNK = 200;
 
 /**
  * How long a `parsing` row may be believed.
@@ -129,6 +147,52 @@ export function summariseImageStages(
   return summary;
 }
 
+/**
+ * Is this entry a STAGE COUNT, rather than another tenant's metadata?
+ *
+ * `summariseImageStages` returns `Record<stage, Record<state, number>>`, so a
+ * stage entry is an object whose every value is a number — `{ ready: 78 }`.
+ * Everything else in the document belongs to somebody else and is not this
+ * function's to recompute: `repairSourceImages` keeps
+ * `notion_row_assets_version: 23` here, a scalar, which fails this test and
+ * survives.
+ *
+ * An empty object IS stage-shaped and is treated as one, which is right: a
+ * stage that counted nothing is still a stage key.
+ */
+export function isStageCountEntry(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>)
+    .every((count) => typeof count === 'number' && Number.isFinite(count));
+}
+
+/**
+ * The document to write: fresh stage counts, other tenants untouched.
+ *
+ * THE STAGE KEYS ARE REPLACED AS A SET, NOT MERGED KEY BY KEY. A spread of the
+ * old document under the new one preserves `notion_row_assets_version` — the
+ * thing it was added for — but it also preserves any stage the recomputation
+ * NO LONGER produces. An upload whose Street View image has since been retired
+ * would keep `street_view: { ready: 1 }` for ever beside its true counts, and
+ * the contract for this column is that its stage counts are recomputed.
+ *
+ * So the old stage entries are dropped wholesale and the new ones stand alone,
+ * while every non-stage key is carried across.
+ */
+export function mergeStageSummary(
+  existing: unknown,
+  fresh: Record<string, Record<string, number>>,
+): Record<string, unknown> {
+  const carried: Record<string, unknown> = {};
+  const document = (existing && typeof existing === 'object' && !Array.isArray(existing))
+    ? existing as Record<string, unknown>
+    : {};
+  for (const [key, value] of Object.entries(document)) {
+    if (!isStageCountEntry(value)) carried[key] = value;
+  }
+  return { ...carried, ...fresh };
+}
+
 /** The import's own verdict, not the imagery's. */
 export function finalUploadStatus(recordsFailed: unknown): SettledUploadStatus {
   return Number(recordsFailed ?? 0) > 0 ? 'partially_complete' : 'complete';
@@ -151,7 +215,7 @@ export async function settleUploadCompletion(
   try {
     let uploadQuery = db
       .from('builder_stock_uploads')
-      .select('id, organisation_id, status, records_failed, deleted_at')
+      .select('id, organisation_id, status, records_failed, deleted_at, image_stage_summary')
       .eq('id', uploadId);
     if (params.organisationId) {
       uploadQuery = uploadQuery.eq('organisation_id', params.organisationId);
@@ -167,6 +231,33 @@ export async function settleUploadCompletion(
     /*
      * The properties alone decide, and a FAILED count is not a count of zero:
      * a database fault must leave the upload exactly as it found it.
+     *
+     * AND A SETTLED LADDER IS FINISHED, WHATEVER THE LEGACY LATCH SAYS.
+     *
+     * `enrichment_status` is written by the fallback ladder, from the ladder's
+     * own opinion of whether a property still owes a rung. A property whose
+     * picture came from the builder's own document never needs that ladder, so
+     * nothing writes the column and it keeps the `pending` its import gave it —
+     * for ever. This question then answers "outstanding" about a property that
+     * has been finished for hours, and the upload can never be completed.
+     *
+     * MEASURED 7 SEPTEMBER 2026: 83 of 91 active properties across this
+     * deployment were `image_work_stage = 'settled'` and carrying their image
+     * while still reading `enrichment_status = 'pending'`, so 15 of the 17
+     * uploads made in two days sat at `enriching` permanently. A builder is
+     * told an import is still churning long after every photograph landed.
+     *
+     * `image_work_stage` is what actually does this work now and `settled` is
+     * its terminal rung, so it is asked here as well. The two are ANDed, which
+     * only ever makes completion more reachable: an upload that completes today
+     * still completes, and a property that is genuinely mid-ladder is still
+     * outstanding under either column.
+     *
+     * Deliberately NOT changed: how displayability is judged, what the ladder
+     * writes, and `readFallbackQueue`, which still selects on
+     * `enrichment_status` alone. Marking a property terminal in THAT queue is
+     * how one stops being offered the ladder it is owed, which is a worse
+     * failure than a stale label — so this reads the column and never writes it.
      */
     const { count, error: countError } = await db
       .from('builder_stock_items')
@@ -174,27 +265,90 @@ export async function settleUploadCompletion(
       .eq('organisation_id', upload.organisation_id)
       .eq('upload_id', uploadId)
       .eq('lifecycle_status', 'active')
-      .in('enrichment_status', UNFINISHED_ENRICHMENT_STATUSES);
+      .in('enrichment_status', UNFINISHED_ENRICHMENT_STATUSES)
+      .neq('image_work_stage', SETTLED_ITEM_WORK_STAGE);
     if (countError) return { status: null, refusal: 'read_failed' };
     if ((count ?? 0) > 0) return { status: null, refusal: 'items_outstanding' };
+
+    /*
+     * THE SUMMARY FOLLOWS THE PROPERTIES, NOT THE IMAGE ROW'S `upload_id`.
+     *
+     * The column's contract is "per-stage image counts" for this upload, and
+     * the Builder Portal renders it as `Images: uploaded document 78 · …`.
+     * This read used to ask for image rows carrying THIS upload's id, and an
+     * image keeps the id of the upload that stored it — so on a RE-UPLOAD,
+     * where every row is matched and re-pointed to the new upload, not one
+     * image carries the new id and the summary is written `{}`.
+     *
+     * MEASURED 7 SEPTEMBER 2026 on upload `5412982c`, 78 properties each
+     * carrying its builder's own photograph: 78 images carried the superseded
+     * upload's id, 156 carried none at all, and none carried the current
+     * upload's. The audit record then stated, permanently, that no images were
+     * processed — the exact falsehood the paged read below already refuses to
+     * write on a database fault, reached by a different route.
+     *
+     * So the properties are read first and their images second. A NULL
+     * `upload_id` on an image is thereby irrelevant rather than fatal, which
+     * is the point: what makes an image this upload's is the property it
+     * belongs to.
+     *
+     * Every item of this upload counts, at any lifecycle. A first-time
+     * import's rows may still be `staged` when it completes, and narrowing to
+     * `active` would empty the summary for exactly the path that works today.
+     */
+    const itemPage = await readAllRows<{ id: unknown }>(
+      () => db
+        .from('builder_stock_items')
+        .select('id')
+        .eq('organisation_id', upload.organisation_id)
+        .eq('upload_id', uploadId)
+        .order('id', { ascending: true }));
+    if (itemPage.failed) return { status: null, refusal: 'read_failed' };
+
+    const itemIds = itemPage.rows
+      .map((row) => String(row.id ?? ''))
+      .filter((id) => id.length > 0);
 
     /*
      * Paged, because the API caps a response at 1,000 rows however the limit
      * is written — and an incomplete read is never written from, because the
      * summary it would produce understates the work permanently.
+     *
+     * Chunked as well, because the property list goes into the request as a
+     * filter and an unbounded `in` is a URL long enough to be refused.
      */
-    const stagePage = await readAllRows<StageRow>(
-      () => db
-        .from('builder_stock_item_images')
-        .select('id, source_stage, processing_status')
-        .eq('upload_id', uploadId)
-        .order('id', { ascending: true }));
-    if (stagePage.failed) return { status: null, refusal: 'read_failed' };
+    const stageRows: StageRow[] = [];
+    for (let at = 0; at < itemIds.length; at += ITEM_FILTER_CHUNK) {
+      const chunk = itemIds.slice(at, at + ITEM_FILTER_CHUNK);
+      const stagePage = await readAllRows<StageRow>(
+        () => db
+          .from('builder_stock_item_images')
+          .select('id, source_stage, processing_status')
+          .in('stock_item_id', chunk)
+          .order('id', { ascending: true }));
+      if (stagePage.failed) return { status: null, refusal: 'read_failed' };
+      stageRows.push(...stagePage.rows);
+    }
 
     const status = finalUploadStatus(upload.records_failed);
+    /*
+     * This document has another tenant. `repairSourceImages` records
+     * `notion_row_assets_version` here — its own comment says the key "is
+     * MERGED, never written over the stage counts beside it" — while this
+     * write replaced the whole document and silently dropped it, costing that
+     * upload a re-fetch of its live source on every later run.
+     *
+     * `mergeStageSummary` keeps that key and replaces the stage counts AS A
+     * SET, so a stage this recomputation no longer produces disappears rather
+     * than standing for ever beside the true numbers.
+     */
     const { error: writeError } = await db
       .from('builder_stock_uploads')
-      .update({ status, image_stage_summary: summariseImageStages(stagePage.rows) })
+      .update({
+        status,
+        image_stage_summary: mergeStageSummary(
+          upload.image_stage_summary, summariseImageStages(stageRows)),
+      })
       .eq('id', uploadId);
     if (writeError) return { status: null, refusal: 'read_failed' };
 

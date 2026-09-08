@@ -917,8 +917,40 @@ const LOSSLESS_FILTERS = new Set(['FlateDecode', 'LZWDecode']);
 
 /** A picture smaller than this on the page is a logo, an icon or a rule. */
 const MIN_PAGE_AREA_SHARE = 0.06;
-/** Below this it is not a photograph of a house whatever else it is. */
-const MIN_PIXELS = { width: 600, height: 400 };
+/**
+ * Below this it is not a photograph of a house whatever else it is.
+ *
+ * 360x270, DOWN FROM 600x400, AND THE DIFFERENCE IS A REAL FACADE. Measured,
+ * 6 September 2026, on the Luxton Thornhill Gardens brochures uploaded as a
+ * stock list: the designated cover page draws the property's facade render
+ * from a 480x339 JPEG at 17% of the page — nearly three times the share
+ * floor, with photographic detail (0.206 bytes/pixel) — and the pixel floor
+ * refused it, so the whole document answered "no image" about a page whose
+ * photograph a person sees instantly. The card that render draws at 480px is
+ * sharper than the card is large.
+ *
+ * WHAT THE OLD NUMBER WAS CARRYING, AND WHAT CARRIES IT NOW. Everything else
+ * on that same page is refused by the floors that actually describe it: four
+ * icons at 47px and under die on the 6% share floor (0.000), the 3423x1588
+ * logo lockup dies on the same floor (0.028) and on lossy detail (0.031),
+ * and the floor plan that now clears the pixel floor is excluded at the
+ * election by its own pixels (`mayLeadCard`), which did not exist when
+ * 600x400 was priced. A pixel floor only has to refuse what could never
+ * draw a card, and 360x270 (0.097 MP) still does.
+ *
+ * TWO FLOORS, BECAUSE ONLY ONE PATH READS THE PIXELS. This floor serves
+ * `qualifyingPhotographsFrom`, whose candidates are classified before the
+ * election (`documentVisualKinds` → `mayLeadCard`), so a floor plan that now
+ * clears it is refused downstream by what it IS.
+ * `selectPropertyPhotographFrom` is the legacy largest-by-drawn-area answer
+ * with no vision behind it — on the Lot 537 cover its only defence against
+ * the 369x811 floor plan WAS the pixel floor — so it keeps the old number
+ * below. Lowering both together is how a plan would have re-entered through
+ * the one door with no gate.
+ */
+const MIN_PIXELS = { width: 360, height: 270 };
+/** For the ungated legacy selection alone. See the paragraph above. */
+const MIN_PIXELS_UNGATED = { width: 600, height: 400 };
 /** A banner or a spine, not a photograph. */
 const MIN_ASPECT = 0.3;
 const MAX_ASPECT = 4;
@@ -1195,7 +1227,7 @@ export function selectPropertyPhotographFrom(
   for (const { image, placement } of withoutTheFlattenedPage(drawn, pageWidth, pageHeight)) {
     const floor = detailFloorFor(image.filters);
     if (floor === null) continue;
-    if (image.width < MIN_PIXELS.width || image.height < MIN_PIXELS.height) continue;
+    if (image.width < MIN_PIXELS_UNGATED.width || image.height < MIN_PIXELS_UNGATED.height) continue;
 
     const aspect = image.width / image.height;
     if (aspect < MIN_ASPECT || aspect > MAX_ASPECT) continue;

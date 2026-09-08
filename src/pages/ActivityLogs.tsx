@@ -14,6 +14,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from '@/lib/utils';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { useSecureActivityLogs, ActivityLog, ActivityStats } from '@/hooks/useSecureActivityLogs';
@@ -21,7 +22,7 @@ import { SearchableMultiSelect, MSOption } from '@/components/shared/SearchableM
 import { format, formatDistanceToNow, startOfDay, endOfDay, subDays, isToday, isYesterday } from 'date-fns';
 import { toast } from 'sonner';
 import {
-  Activity, Search, RefreshCw, User, FileText, LogIn,
+  Activity, RefreshCw, User, FileText, LogIn,
   GitCompare, Mail, Phone, MessageSquare, Settings, Zap, Palette,
   Download, Filter, X, Users, Handshake, FileUp, StickyNote,
   CalendarIcon, ClipboardCheck, DatabaseIcon, ChevronLeft, ChevronRight,
@@ -772,16 +773,14 @@ export default function ActivityLogs() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
-            <div className="relative lg:col-span-2">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                aria-label="Search activity logs on this page"
-                placeholder="Search this page..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className={cn(FILTER_CONTROL_CLASS, "pl-10")}
-              />
-            </div>
+            <SearchInput
+              value={searchTerm}
+              onValueChange={setSearchTerm}
+              aria-label="Search activity logs on this page"
+              placeholder="Search this page..."
+              containerClassName="lg:col-span-2"
+              className={cn(FILTER_CONTROL_CLASS, "pl-10")}
+            />
 
             <Select value={dateRange} onValueChange={(v) => setDateRange(v as DateRangeKey)}>
               <SelectTrigger className={FILTER_CONTROL_CLASS} aria-label="Activity log date range"><SelectValue placeholder="Date range" /></SelectTrigger>

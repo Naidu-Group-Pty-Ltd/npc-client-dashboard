@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { SearchInput } from '@/components/ui/search-input';
 import {
   AlertTriangle, Check, FolderOpen, Loader2, Mail, Search, UserPlus, Users,
 } from "lucide-react";
@@ -180,22 +181,15 @@ export function AmlClientPicker({ onSelect, disabled, resetKey, onCreateNew }: A
     <div className="space-y-3">
       {/* Search + status slice */}
       <div className="space-y-2.5">
-        <div className="relative">
-          <Search
-            aria-hidden="true"
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            id="ac-client-search"
-            value={query}
-            disabled={disabled}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name…"
-            autoComplete="off"
-            aria-label="Search clients"
-            className="pl-9"
-          />
-        </div>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          id="ac-client-search"
+          disabled={disabled}
+          placeholder="Search by name…"
+          autoComplete="off"
+          aria-label="Search clients"
+        />
 
         <div className="flex flex-wrap items-center justify-between gap-2">
         <div

@@ -122,12 +122,18 @@ Deno.serve(async (req) => {
     const responseTime = Date.now() - startTime;
     console.log(`⏱️ Risk assessment fetched in ${responseTime}ms`);
 
-    // Cache the result for 180 days
-    await cacheRiskData(supabase, suburb, postcode, state, latitude, longitude, riskAssessment);
+    // Cache only readings a source actually produced. An 'Unavailable'
+    // reading is an outage, and caching an outage for 180 days pins it long
+    // after the source recovers.
+    const floodUnavailable = riskAssessment.floodRisk?.dataSource?.startsWith('Unavailable') ?? true;
+    const bushfireUnavailable = riskAssessment.bushfireRisk?.dataSource?.startsWith('Unavailable') ?? true;
+    if (!floodUnavailable && !bushfireUnavailable) {
+      await cacheRiskData(supabase, suburb, postcode, state, latitude, longitude, riskAssessment);
+    }
 
     // Log API health
     await logApiHealth(supabase, 'risk-assessment', '/assess', 'success', responseTime, 
-      riskAssessment.floodRisk?.dataSource.includes('estimated') ? 'estimated' : 'live');
+      floodUnavailable ? 'unavailable' : 'live');
 
     return new Response(
       JSON.stringify({
@@ -137,7 +143,7 @@ Deno.serve(async (req) => {
         state,
         postcode,
         cached: false,
-        note: 'Flood data from AFRIP (Geoscience Australia). Bushfire risk uses regional estimates.',
+        note: 'Flood data from AFRIP (Geoscience Australia). Bushfire risk from state mapping services where reachable; unavailable readings are stated, never estimated.',
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
@@ -211,7 +217,9 @@ async function cacheRiskData(
       bushfire_risk: riskAssessment.bushfireRisk,
       fetched_at: new Date().toISOString(),
       expires_at: expiresAt.toISOString(),
-      data_quality: riskAssessment.floodRisk?.dataSource.includes('estimated') ? 'estimated' : 'live'
+      // Only reached when both readings came from their real sources — the
+      // handler skips caching any 'Unavailable' reading outright.
+      data_quality: 'live'
     }, {
       onConflict: 'suburb,postcode,state'
     });
@@ -345,11 +353,11 @@ async function fetchFloodRiskFromAFRIP(latitude: number, longitude: number, subu
     }
 
     // Fallback: Generate estimate based on location patterns
-    return generateFloodEstimate(suburb, state, latitude, longitude);
+    return floodRiskUnavailable(suburb, state);
 
   } catch (error: any) {
     console.error('Error fetching flood risk:', error);
-    return generateFloodEstimate(suburb, state, latitude, longitude);
+    return floodRiskUnavailable(suburb, state);
   }
 }
 
@@ -361,7 +369,7 @@ async function fetchFloodRiskByPostcode(postcode: string, suburb: string, state:
   return {
     level: 'Unknown' as const,
     description: 'Precise flood risk assessment requires property coordinates. General flood information can be found through your local council or AFRIP at https://afrip.ga.gov.au/',
-    dataSource: 'Estimated (coordinates required for accurate assessment)',
+    dataSource: 'Unavailable (coordinates required for AFRIP assessment)',
     note: 'Contact your local council for detailed flood risk information for this postcode.'
   };
 }
@@ -393,24 +401,18 @@ function getFloodRiskDescription(level: string): string {
   return descriptions[level] || 'Flood risk level requires further assessment.';
 }
 
-function generateFloodEstimate(suburb: string, state: string, latitude?: number, longitude?: number) {
-  // Basic flood risk estimation based on known high-risk areas
-  const highRiskSuburbs = [
-    'penrith', 'windsor', 'richmond', 'lismore', 'murwillumbah', 'grafton',
-    'brisbane city', 'ipswich', 'rockhampton', 'townsville', 'cairns',
-    'maribyrnong', 'heidelberg', 'kew', 'hawthorn'
-  ];
-  
-  const suburbLower = suburb.toLowerCase();
-  const isHighRisk = highRiskSuburbs.some(s => suburbLower.includes(s));
-  
+function floodRiskUnavailable(suburb: string, state: string) {
+  // The honest reading when AFRIP cannot be reached. The old version here was
+  // `generateFloodEstimate`: a list of fifteen suburb-name fragments decided
+  // Medium or Low for the whole country — and it substring-matched, so any
+  // suburb containing "kew" or "richmond" inherited a flood history it may
+  // not have. A flood rating is a fact about a property; guessed, it either
+  // alarms an owner or reassures a buyer, and both are wrong.
   return {
-    level: isHighRisk ? 'Medium' as const : 'Low' as const,
-    description: isHighRisk 
-      ? 'This area is in a region with known flood history. Detailed flood risk assessment recommended through local council or AFRIP.'
-      : 'No major flood risk identified based on regional patterns. For property-specific information, consult local council flood maps.',
-    dataSource: 'Estimated based on regional flood patterns (AFRIP data unavailable)',
-    note: 'For accurate flood risk assessment, provide property coordinates or consult https://afrip.ga.gov.au/'
+    level: 'Unknown' as const,
+    description: `Flood risk could not be assessed for ${suburb}, ${state} — the AFRIP service was unreachable. Consult your local council's flood maps or https://afrip.ga.gov.au/ directly.`,
+    dataSource: 'Unavailable (AFRIP unreachable)',
+    note: 'For accurate flood risk assessment, retry later or consult https://afrip.ga.gov.au/'
   };
 }
 
@@ -442,17 +444,17 @@ async function fetchBushfireRiskByState(
       case 'ACT':
         return await fetchACTBushfireRisk(suburb, postcode, latitude, longitude);
       default:
-        return generateBushfireEstimate(state, suburb, postcode);
+        return bushfireRiskUnavailable(state);
     }
   } catch (error: any) {
     console.error(`Error fetching ${state} bushfire risk:`, error);
-    return generateBushfireEstimate(state, suburb, postcode);
+    return bushfireRiskUnavailable(state);
   }
 }
 
 async function fetchBushfireRiskByPostcode(state: string, suburb: string, postcode: string) {
   // Without coordinates, provide state-specific general risk information
-  return generateBushfireEstimate(state, suburb, postcode);
+  return bushfireRiskUnavailable(state);
 }
 
 // NSW Rural Fire Service (RFS)
@@ -514,7 +516,7 @@ async function fetchNSWBushfireRisk(suburb: string, postcode: string, latitude: 
     console.log('NSW RFS API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('NSW', suburb, postcode);
+  return bushfireRiskUnavailable('NSW');
 }
 
 // VIC Country Fire Authority (CFA)
@@ -562,7 +564,7 @@ async function fetchVICBushfireRisk(suburb: string, postcode: string, latitude: 
     console.log('VIC CFA API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('VIC', suburb, postcode);
+  return bushfireRiskUnavailable('VIC');
 }
 
 // QLD Fire and Emergency Services (QFES)
@@ -612,7 +614,7 @@ async function fetchQLDBushfireRisk(suburb: string, postcode: string, latitude: 
     console.log('QLD QFES API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('QLD', suburb, postcode);
+  return bushfireRiskUnavailable('QLD');
 }
 
 // SA Country Fire Service (CFS)
@@ -658,7 +660,7 @@ async function fetchSABushfireRisk(suburb: string, postcode: string, latitude: n
     console.log('SA CFS API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('SA', suburb, postcode);
+  return bushfireRiskUnavailable('SA');
 }
 
 // WA Department of Fire and Emergency Services (DFES)
@@ -702,7 +704,7 @@ async function fetchWABushfireRisk(suburb: string, postcode: string, latitude: n
     console.log('WA DFES API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('WA', suburb, postcode);
+  return bushfireRiskUnavailable('WA');
 }
 
 // TAS Tasmania Fire Service (TFS)
@@ -746,7 +748,7 @@ async function fetchTASBushfireRisk(suburb: string, postcode: string, latitude: 
     console.log('TAS Fire Service API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('TAS', suburb, postcode);
+  return bushfireRiskUnavailable('TAS');
 }
 
 // NT Police, Fire and Emergency Services (NTPFES)
@@ -790,7 +792,7 @@ async function fetchNTBushfireRisk(suburb: string, postcode: string, latitude: n
     console.log('NT PFES API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('NT', suburb, postcode);
+  return bushfireRiskUnavailable('NT');
 }
 
 // ACT Emergency Services Agency (ESA)
@@ -834,36 +836,21 @@ async function fetchACTBushfireRisk(suburb: string, postcode: string, latitude: 
     console.log('ACT ESA API fetch failed:', error.message);
   }
   
-  return generateBushfireEstimate('ACT', suburb, postcode);
+  return bushfireRiskUnavailable('ACT');
 }
 
-function generateBushfireEstimate(state: string, suburb: string, postcode: string) {
-  // Generate bushfire risk estimates based on state and location patterns
-  const highRiskStates = ['NSW', 'VIC', 'SA', 'WA', 'TAS'];
-  const veryHighRiskAreas = ['blue mountains', 'dandenong', 'hills', 'ranges', 'forest'];
-  
-  const suburbLower = suburb.toLowerCase();
-  const isVeryHighRisk = veryHighRiskAreas.some(area => suburbLower.includes(area));
-  const isHighRiskState = highRiskStates.includes(state.toUpperCase());
-  
-  let level: 'Low' | 'Medium' | 'High' | 'Extreme' | 'Unknown';
-  let description: string;
-  
-  if (isVeryHighRisk) {
-    level = 'Extreme';
-    description = 'This area is in a high bushfire risk zone. Properties should have a Bushfire Attack Level (BAL) assessment and bushfire management plan.';
-  } else if (isHighRiskState) {
-    level = 'High';
-    description = `${state} experiences regular bushfire seasons. Check with ${getStateBushfireAgency(state)} for specific property risk ratings.`;
-  } else {
-    level = 'Medium';
-    description = 'Moderate bushfire risk. Maintain defensible space and stay informed during fire season.';
-  }
-  
+function bushfireRiskUnavailable(state: string) {
+  // The honest reading when the state mapping service cannot be reached (or
+  // no coordinates were supplied to ask it with). The old version here was
+  // `generateBushfireEstimate`: any suburb whose NAME contained "hills",
+  // "ranges" or "forest" was rated **Extreme** — Baulkham Hills and Surry
+  // Hills alike — and five whole states were rated High, labelled
+  // "Estimated". A bushfire rating drives construction standards (AS 3959)
+  // and insurance; it is measured from mapping, never from a suburb's name.
   return {
-    level,
-    description,
-    dataSource: `Estimated - Verify with ${getStateBushfireAgency(state)}`,
+    level: 'Unknown' as const,
+    description: `Bushfire risk could not be assessed — the ${getStateBushfireAgency(state)} mapping service was unreachable or the property's coordinates were not available. Obtain the property's rating from the official source directly.`,
+    dataSource: `Unavailable (${getStateBushfireAgency(state)} not reached)`,
     officialSource: getStateBushfireDataSource(state),
     note: 'Bushfire risk varies by exact location. Obtain a formal Bushfire Attack Level (BAL) assessment for construction or insurance purposes.'
   };

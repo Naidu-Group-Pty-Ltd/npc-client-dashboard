@@ -44,6 +44,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SearchInput } from '@/components/ui/search-input';
 import { toast } from "@/hooks/use-toast";
 import {
   AmlAccessGate,
@@ -535,20 +536,15 @@ export default function AmlCasesPage() {
         className="rounded-xl border border-border/60 bg-card/45 p-3 shadow-sm space-y-3"
       >
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative w-full min-w-0 sm:max-w-sm sm:flex-1">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              placeholder="Search a customer or case reference…"
-              aria-label="Search subject or case reference"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && load()}
-              className="h-10 w-full pl-9"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search a customer or case reference…"
+            aria-label="Search subject or case reference"
+            onKeyDown={(e) => e.key === "Enter" && load()}
+            containerClassName="w-full min-w-0 sm:max-w-sm sm:flex-1"
+            className="h-10 w-full"
+          />
 
           {/*
             Status and risk behind ONE control that says how many are on.

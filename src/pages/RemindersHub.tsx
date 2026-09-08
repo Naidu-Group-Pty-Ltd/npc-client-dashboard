@@ -13,6 +13,7 @@ import {
   endOfWeek,
   endOfMonth,
 } from 'date-fns';
+import { matchesTimeBucket, type ReminderTimeBucket } from '@/lib/reminders/timeBucket.pure';
 import { cn } from '@/lib/utils';
 import {
   Bell,
@@ -50,7 +51,9 @@ import { ReminderActions } from '@/components/reminders/ReminderActions';
 import { toast } from 'sonner';
 
 type ReminderTab = 'client' | 'team';
-type TimeFilter = 'all' | 'overdue' | 'today' | 'week' | 'month' | 'later';
+// The buckets and the predicate are `lib/reminders/timeBucket.pure` now, so
+// the team tab can offer the same chips without a second copy of the rule.
+type TimeFilter = ReminderTimeBucket;
 type SourceFilter = 'all' | 'client_reminder' | 'follow_up' | 'deal_milestone';
 type PriorityFilter = 'all' | 'high' | 'medium' | 'low';
 
@@ -161,23 +164,13 @@ export default function RemindersHub() {
       result = result.filter(r => r.priority === priorityFilter);
     }
 
-    // Time filter
+    // Time filter — one rule, shared with the team tab.
     if (timeFilter !== 'all') {
-      result = result.filter(r => {
-        const d = new Date(r.due_date);
-        switch (timeFilter) {
-          case 'overdue': return isPast(d) && !isToday(d);
-          case 'today': return isToday(d);
-          case 'week': return d >= todayStart && d <= weekEnd;
-          case 'month': return d >= todayStart && d <= monthEnd;
-          case 'later': return d > monthEnd;
-          default: return true;
-        }
-      });
+      result = result.filter(r => matchesTimeBucket(new Date(r.due_date), timeFilter, now));
     }
 
     return result;
-  }, [reminders, timeFilter, sourceFilter, priorityFilter]);
+  }, [reminders, timeFilter, sourceFilter, priorityFilter, now]);
 
   // Group by date
   const grouped = useMemo(() => {
@@ -444,7 +437,7 @@ export default function RemindersHub() {
               <TabsList aria-label="Reminder timeframe" className="relative inline-flex h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl border border-brand-300/10 bg-[linear-gradient(135deg,rgba(0,0,0,0.58),rgba(15,23,42,0.58))] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] scrollbar-thin scrollbar-track-slate-950 scrollbar-thumb-amber-500/30">
                 <div className="pointer-events-none absolute inset-x-4 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/45 to-transparent" />
                 <TabsTrigger value="all" className="h-9 min-w-16 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-brand-300/20 hover:bg-brand-400/10 hover:text-brand-100 motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_22px_rgba(245,158,11,0.22),inset_0_1px_0_rgba(255,255,255,0.35)] sm:h-10 sm:min-w-20 sm:text-sm">All</TabsTrigger>
-                <TabsTrigger value="overdue" className="h-9 min-w-24 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive-foreground motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_22px_rgba(245,158,11,0.22),inset_0_1px_0_rgba(255,255,255,0.35)] sm:h-10 sm:min-w-28 sm:text-sm">
+                <TabsTrigger value="overdue" className="h-9 min-w-24 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_22px_rgba(245,158,11,0.22),inset_0_1px_0_rgba(255,255,255,0.35)] sm:h-10 sm:min-w-28 sm:text-sm">
                   Overdue {stats.overdue > 0 && <Badge variant="destructive" className="ml-1 h-4 px-1 text-[9px] shadow-[0_0_12px_rgba(248,113,113,0.28)]">{stats.overdue}</Badge>}
                 </TabsTrigger>
                 <TabsTrigger value="today" className="h-9 min-w-20 rounded-xl border border-transparent px-3 text-xs font-semibold text-muted-foreground dark:text-foreground transition-all duration-200 hover:border-brand-300/20 hover:bg-brand-400/10 hover:text-brand-100 motion-safe:hover:-translate-y-px focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black data-[state=active]:border-brand-200/45 data-[state=active]:bg-[linear-gradient(135deg,#fbbf24,#d97706)] data-[state=active]:text-black data-[state=active]:shadow-[0_0_22px_rgba(245,158,11,0.22),inset_0_1px_0_rgba(255,255,255,0.35)] sm:h-10 sm:min-w-24 sm:text-sm">Today</TabsTrigger>
@@ -579,13 +572,13 @@ export default function RemindersHub() {
                       className={cn(
                         'shrink-0 text-[10px] font-semibold shadow-[0_0_16px_rgba(245,158,11,0.10)]',
                         isOverdueGroup
-                          ? 'border-destructive/30 bg-destructive/10 text-destructive-foreground'
+                          ? 'border-destructive/30 bg-destructive/10 text-destructive'
                           : isTodayGroup
                             ? 'border-brand-200/40 bg-brand-400/15 text-brand-100'
                             : isWeekPlanningGroup
                               ? 'border-brand-300/30 bg-brand-400/10 text-brand-100'
                               : isMonthPlanningGroup
-                                ? 'border-success/30 bg-success/10 text-success-foreground'
+                                ? 'border-success/30 bg-success/10 text-success'
                           : 'border-brand-300/30 bg-brand-400/10 text-brand-100'
                       )}
                     >
@@ -612,7 +605,7 @@ export default function RemindersHub() {
                               isOverdue && 'border-destructive/35 bg-[linear-gradient(135deg,rgba(127,29,29,0.20),rgba(2,6,23,0.88))] hover:bg-destructive/[0.055]',
                               isDueToday && !isOverdue && 'border-brand-300/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.18),rgba(2,6,23,0.88))] hover:bg-brand-400/[0.075]',
                               isWeekPlanningReminder && 'border-brand-300/25 bg-[linear-gradient(135deg,rgba(245,158,11,0.10),rgba(2,6,23,0.90))] hover:bg-brand-400/[0.055]',
-                              isMonthPlanningReminder && 'border-success/25 bg-[linear-gradient(135deg,rgba(20,184,166,0.11),rgba(2,6,23,0.88))] hover:bg-success/60/[0.055]',
+                              isMonthPlanningReminder && 'border-success/25 bg-[linear-gradient(135deg,rgba(20,184,166,0.11),rgba(2,6,23,0.88))] hover:bg-success/[0.055]',
                             )}
                             onClick={() => handleReminderClick(reminder)}
                             onKeyDown={(event) => {

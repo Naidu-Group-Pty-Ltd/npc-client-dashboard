@@ -3,6 +3,14 @@ import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, create
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { assessAuPoint } from '../_shared/auGeoSanity.pure.ts';
+import { isTrustworthyAuPoint } from '../_shared/auPointTrust.pure.ts';
+import { assessGeocodeGranularity } from '../_shared/geocodeGranularity.pure.ts';
+import {
+  cohortStateFrom,
+  indexLocalities,
+  resolveAuLocality,
+  type LocalityRow,
+} from '../_shared/auSuburbGazetteer.pure.ts';
 import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
 import { assessAgainstConsensus, type GeoPointLike } from '../_shared/geoConsensus.pure.ts';
 import {
@@ -14,9 +22,33 @@ import {
 
 // Resolves map coordinates for property listings WITHOUT any browser-side
 // geocoding. Order of resolution per listing:
-//   1. Coordinates already supplied by the source record (no lookup).
+//   1. Coordinates already supplied by the source record -- ACCEPTED ONLY IF
+//      THEY LAND IN AUSTRALIA. See recordPointIsTrustworthy below.
 //   2. Cache hit in public.listing_geocodes.
 //   3. Google Geocoding API (server key), result written to the cache.
+//
+// Step 1 used to be an unconditional `continue`: any record carrying a numeric
+// latitude/longitude was served verbatim, because `validPoint` asks only
+// whether a number is a coordinate at all (|lat| <= 90, |lng| <= 180) -- which
+// is true of every point on Earth. The three gates below it (country:AU on the
+// provider call, assessAuPoint, assessAuPostcodePoint, the suburb consensus)
+// therefore protected only the geocoded path, and the one path nobody checked
+// was the one carrying data this product does not control.
+//
+// Intake writes those coordinates, and it geocodes bare locality names with no
+// country restriction, so Australian localities land on their overseas
+// namesakes: `Ripley` in Missouri, `Kerry` in Ireland, `York` in Yorkshire,
+// `Blenheim` in New Zealand, and an `Alfred Road` in London on a record whose
+// state column says VIC. 17 of 120 live listings were affected. None of them
+// drew a wrong pin -- the browser runs assessAuPoint too, so it discarded them
+// -- but "discarded" is why the marketplace reported 29 unmapped listings and
+// why those properties were invisible on the map.
+//
+// The rule: a coordinate the record supplies is a HINT, not an answer. It is
+// trusted where it is consistent with the record's own Australian geography,
+// and where it is not the listing falls through to the geocoder -- which is
+// restricted to country:AU and then re-checked -- so a bad hint costs one
+// lookup instead of one lost property.
 
 interface ListingInput {
   id: string;
@@ -109,6 +141,14 @@ Deno.serve(async (req) => {
       postcode: string | null;
       suburb: string | null;
     }> = [];
+    /** Records that still need a provider query, before locality resolution. */
+    const needsQuery: Array<{
+      id: string;
+      address: string | null;
+      state: string | null;
+      postcode: string | null;
+      suburb: string | null;
+    }> = [];
 
     for (const listing of rawListings) {
       const id = clean(listing.id, 120);
@@ -117,19 +157,87 @@ Deno.serve(async (req) => {
       const lat = numeric(listing.latitude);
       const lng = numeric(listing.longitude);
       if (validPoint(lat, lng)) {
-        results.push({ id, lat: lat as number, lng: lng as number, source: 'record' });
-        continue;
+        // The same three questions the geocoded path answers, asked of the
+        // record's own claim. A hint that fails is dropped rather than served,
+        // and the listing continues to the lookup below.
+        const trustworthy = isTrustworthyAuPoint(
+          lat,
+          lng,
+          clean(listing.state, 60) || null,
+          clean(listing.postcode, 8) || null,
+        );
+        if (trustworthy) {
+          results.push({ id, lat: lat as number, lng: lng as number, source: 'record' });
+          continue;
+        }
       }
 
-      const query = buildQuery(listing);
-      if (!query || query.length < 6) continue;
-      pending.push({
+      // The query is built AFTER the locality is resolved (below): a bare
+      // suburb name is ambiguous across states, and asking the provider before
+      // settling that is how `Donnybrook` became Western Australia.
+      needsQuery.push({
         id,
-        query,
-        hash: await hashQuery(query),
+        address: clean(listing.address) || null,
         state: clean(listing.state, 60) || null,
         postcode: clean(listing.postcode, 8) || null,
         suburb: clean(listing.suburb, 80) || null,
+      });
+    }
+
+    if (needsQuery.length === 0) return j({ success: true, results });
+
+    // 1b. Resolve each record's locality against the Australian gazetteer
+    // before anything is asked of the provider. Only the suburbs in THIS
+    // request are read, and a request is capped at MAX_BATCH.
+    let localityIndex = indexLocalities([]);
+    const wantedSuburbs = Array.from(
+      new Set(
+        needsQuery
+          .map((item) => (item.suburb ?? '').trim())
+          .filter((v) => v.length > 0),
+      ),
+    );
+    if (wantedSuburbs.length > 0) {
+      // Case-insensitive match without relying on a functional index: the
+      // gazetteer is small and the batch is bounded.
+      const { data: localityRows, error: localityError } = await supabase
+        .from('suburb_directory')
+        .select('suburb, state, postcode')
+        .or(
+          wantedSuburbs
+            .slice(0, MAX_BATCH)
+            .map((s) => `suburb.ilike.${s.replace(/[,()]/g, ' ')}`)
+            .join(','),
+        );
+      if (localityError) {
+        // A gazetteer that cannot be read must never fail the lookup — the
+        // records simply keep the geography they arrived with.
+        console.warn('[resolve-listing-coordinates] gazetteer unavailable', redactError(localityError));
+      } else {
+        localityIndex = indexLocalities((localityRows ?? []) as LocalityRow[]);
+      }
+    }
+
+    const cohort = cohortStateFrom(needsQuery.map((item) => item.suburb), localityIndex);
+
+    for (const item of needsQuery) {
+      const resolved = resolveAuLocality(item, localityIndex, cohort);
+      const state = resolved.state ?? item.state;
+      const postcode = resolved.postcode ?? item.postcode;
+      const query = buildQuery({
+        address: item.address,
+        suburb: item.suburb,
+        state,
+        postcode,
+      } as ListingInput);
+      if (!query || query.length < 6) continue;
+      pending.push({
+        id: item.id,
+        query,
+        hash: await hashQuery(query),
+        state,
+        postcode,
+        suburb: item.suburb,
       });
     }
 
@@ -163,18 +271,26 @@ Deno.serve(async (req) => {
       },
     );
 
-    const needsLookup: Array<{ id: string; query: string; hash: string }> = [];
+    const needsLookup: Array<{
+      id: string;
+      query: string;
+      hash: string;
+      state: string | null;
+      postcode: string | null;
+      suburb: string | null;
+    }> = [];
     for (const item of pending) {
       const hit = cacheMap.get(item.hash);
       if (hit) {
         if (
           hit.status === 'ok' &&
           validPoint(hit.lat, hit.lng) &&
-          // The Australian-geography gate, against the listing's own state. A
+          // The one plottability rule, against the listing's own state. A
           // stored answer that fails it is never served — a wrong pin with a
-          // cache behind it is the most durable kind of wrong.
-          assessAuPoint(hit.lat as number, hit.lng as number, item.state).ok &&
-          assessAuPostcodePoint(hit.lat as number, hit.lng as number, item.postcode).ok
+          // cache behind it is the most durable kind of wrong, and this cache
+          // holds answers written before the country-centroid fallback was
+          // understood.
+          isTrustworthyAuPoint(hit.lat, hit.lng, item.state, item.postcode)
         ) {
           results.push({
             id: item.id,
@@ -275,8 +391,25 @@ Deno.serve(async (req) => {
             const neighbours = item.suburb
               ? (neighboursBySuburb.get(item.suburb.toLowerCase()) ?? [])
               : [];
+            // What KIND of thing did the provider match? `country:AU` does not
+            // make an unmatched address fail — it returns the centre of the
+            // continent, with HTTP 200 and APPROXIMATE precision, and every
+            // gate below waves it through because the centre of Australia is
+            // inside Australia and on land. Granularity is the only check that
+            // can see it.
+            const granularity = assessGeocodeGranularity(
+              lat as number,
+              lng as number,
+              data.results[0]?.types,
+            );
+            if (!granularity.ok) {
+              console.warn(
+                `[resolve-listing-coordinates] refused a ${granularity.verdict} result: ${granularity.reason}`,
+              );
+            }
             const sane =
               validPoint(lat, lng) &&
+              granularity.ok &&
               assessAuPoint(lat as number, lng as number, item.state).ok &&
               // A geocode in the right state but the wrong end of it — the
               // postcode band is the only gate that can see this.
@@ -298,10 +431,12 @@ Deno.serve(async (req) => {
                 resolved_at: new Date().toISOString(),
               });
             } else if (validPoint(lat, lng)) {
-              // Google answered, but outside Australia or the listing's own
-              // state — a contaminated locality being taken at its word.
-              // Recorded as suspect so the sweep does not retry it forever,
-              // and never served as a coordinate.
+              // Google answered with a point that cannot be this property:
+              // outside Australia, outside the listing's own state, far from
+              // every verified neighbour, or no finer than the country — the
+              // last being what an unmatched overseas address gets under
+              // `country:AU`. Recorded as suspect so the sweep does not retry
+              // it forever, and never served as a coordinate.
               cacheMap.set(item.hash, { lat: null, lng: null, status: 'suspect', precision: null });
               inserts.push({
                 listing_hash: item.hash,

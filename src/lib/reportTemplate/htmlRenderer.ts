@@ -797,6 +797,17 @@ export function renderTemplateToHtml(
 
   const visiblePages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
 
+  // Part numbers, counted over the pages that actually render. A composer
+  // that bakes "Part 07" into a page's furniture keeps counting pages a
+  // conditional later drops — a real comparison shipped with its running
+  // heads jumping Part 12 → Part 19. A page opts in by binding
+  // `{{partNumber}}` anywhere in its content; every such visible page
+  // increments the counter, and the same number serves the running head and
+  // the section numeral because both resolve from one per-page value.
+  let partCount = 0;
+  const partNumbers = visiblePages.map((p) =>
+    (JSON.stringify(p).includes('{{partNumber') ? ++partCount : partCount));
+
   // Phase 8 — walk all bookmarks to build a TOC index that auto-toc blocks read.
   const tocEntries: Array<{ label: string; level: number; pageIndex: number; anchor: string }> = [];
   visiblePages.forEach((pg, pi) => {
@@ -832,6 +843,9 @@ export function renderTemplateToHtml(
         String(visiblePages.length),
         visiblePages.map((p) => `${p.id}\u0000${p.name}`).join('\u0001'),
         JSON.stringify(tocEntries),
+        // A page part number depends on which PRECEDING pages opted in,
+        // which the per-page cache key cannot see.
+        partNumbers.join(','),
       ].join('\u0002')
     : '';
   const liveCacheKeys = pageCache ? new Set<string>() : null;
@@ -856,7 +870,14 @@ export function renderTemplateToHtml(
     }
     const pageCtx: ResolveContext = {
       tokens: pageTokens,
-      data: { ...ctxBase.data, pageNumber: idx + 1, pageCount: visiblePages.length, __tocEntries: tocEntries },
+      data: {
+        ...ctxBase.data,
+        pageNumber: idx + 1,
+        pageCount: visiblePages.length,
+        partNumber: partNumbers[idx],
+        partCount,
+        __tocEntries: tocEntries,
+      },
     };
     (pageCtx as any)._cascadeMetadata = !!options.cascadeMetadata;
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;

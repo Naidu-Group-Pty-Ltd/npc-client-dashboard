@@ -454,7 +454,7 @@ export function PrepareForSigningModal({
         </DialogHeader>
 
         {(loadingPdf || pdfError || actionError) && (
-          <div className={`border-b px-4 py-3 text-sm ${pdfError || actionError ? 'border-destructive/25 bg-destructive/8 text-destructive dark:text-destructive-foreground' : 'border-brand-300/25 bg-brand-500/10 text-brand-800 dark:text-brand-100'}`}>
+          <div className={`border-b px-4 py-3 text-sm ${pdfError || actionError ? 'border-destructive/25 bg-destructive/8 text-destructive dark:text-destructive' : 'border-brand-300/25 bg-brand-500/10 text-brand-800 dark:text-brand-100'}`}>
             <div className="flex items-center gap-2">
               {pdfError || actionError ? <AlertTriangle className="h-4 w-4 shrink-0" /> : <Loader2 className="h-4 w-4 shrink-0 animate-spin" />}
               <span className="font-medium">{pdfError ? `PDF loading error: ${pdfError}` : actionError ? `DocuSign action error: ${actionError}` : 'Loading PDF workspace...'}</span>

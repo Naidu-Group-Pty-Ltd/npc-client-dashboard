@@ -37,7 +37,9 @@ import {
 import {
   diditWorkflowId, resolveTenantProvider, currentEnvironment, isStandaloneIdvProvider,
 } from '../_shared/aml/providers/index.ts';
-import { vendorDataMatches } from '../_shared/aml/providers/didit.pure.ts';
+import {
+  vendorDataMatches, readForeignSession, caseIdFromVendorData,
+} from '../_shared/aml/providers/didit.pure.ts';
 import {
   applyDiditDecision, DiditCorrelationError,
   HOSTED_CHECK_COLUMNS, type HostedCheckRow,
@@ -366,10 +368,52 @@ Deno.serve(async (req) => {
       }, 202);
     }
 
-    // A session NPC did not create, or one whose row is gone. Accepted so it
-    // is not retried, recorded so it is visible, and it changes nothing.
-    await markEvent({ error: 'unknown_session', processed_at: new Date().toISOString() });
-    return json({ ok: true, processed: false, reason: 'unknown_session' }, 202);
+    /*
+     * A session this deployment did not create. Two very different things
+     * arrive here and used to share one name.
+     *
+     * Under the fleet-wide Didit key, the prime and every clone share one
+     * application — and an application's webhook destinations FAN OUT rather
+     * than route, so each deployment receives every sibling's
+     * `status.updated`. A sibling's routine verification is therefore the
+     * ORDINARY case at this point, and calling it `unknown_session` made the
+     * alarm fire on normal traffic until it meant nothing.
+     *
+     * `readForeignSession` separates them on `vendor_data`: our shape over a
+     * case this deployment does not hold is a sibling's; anything else keeps
+     * the louder name. The case lookup is by id only — nothing about the
+     * event is trusted to name a row, and nothing is read FROM the case.
+     *
+     * Both readings end identically: acknowledged, identifiers recorded,
+     * nothing applied. The classification is a log label and can never settle
+     * an outcome, which is what makes it safe to derive from a
+     * provider-supplied field.
+     */
+    let caseHeldLocally: boolean | null = null;
+    const foreignCaseId = caseIdFromVendorData(vendorData);
+    if (foreignCaseId && NPC_ID.test(foreignCaseId)) {
+      /*
+       * Asked of `verification_checks`, deliberately, and never of `cases`.
+       *
+       * `diditAmlScope.test.ts` holds this endpoint to three tables, and the
+       * rule is worth more than the convenience of the obvious lookup: a
+       * reader should not have to work out whether a particular `cases` access
+       * happens to be a read. It is also the tighter question — an event
+       * exists only because a session was created, which on this deployment
+       * means a check row exists for that case.
+       */
+      const { data, error } = await admin.schema('aml').from('verification_checks')
+        .select('id').eq('case_id', foreignCaseId).limit(1);
+      // A failed read stays `null`: it must never be reported as a confident
+      // "this belongs to somebody else".
+      if (!error) caseHeldLocally = ((data ?? []).length > 0);
+    }
+    const reading = readForeignSession(vendorData, caseHeldLocally);
+    const reason = reading === 'sibling_deployment'
+      ? 'foreign_tenant_session'
+      : 'unknown_session';
+    await markEvent({ error: reason, processed_at: new Date().toISOString() });
+    return json({ ok: true, processed: false, reason }, 202);
   }
 
   await markEvent({ verification_check_id: check.id });
@@ -392,14 +436,54 @@ Deno.serve(async (req) => {
   const resolved = await resolveTenantProvider(admin, 'default', 'idv');
   const expectedWorkflowId = diditWorkflowId(resolved);
   if (!expectedWorkflowId) {
-    await markEvent({ error: 'workflow_not_configured' });
-    return json({ ok: false, reason: 'not_configured' }, 500);
+    /*
+     * 202, not 500. A 5xx tells Didit the delivery failed and to retry, and
+     * this condition is not transient: no hosted workflow is configured on
+     * this deployment, so every retry of this event will reach the same
+     * answer. On the prime it has answered 500 to every hosted event since
+     * the hosted provider was deactivated, which is most of that endpoint's
+     * 64% delivery-failure rate and is the kind of reading that gets a
+     * destination disabled by the vendor.
+     *
+     * Acknowledged, recorded with its reason, and nothing applied — the same
+     * shape as every other "this event is not actionable here" branch. The
+     * event row is what an operator reads; the status code is only for
+     * Didit's retry machinery, and there is nothing to retry.
+     */
+    await markEvent({ error: 'workflow_not_configured', processed_at: new Date().toISOString() });
+    return json({ ok: true, processed: false, reason: 'workflow_not_configured' }, 202);
   }
 
   const apiKey = Deno.env.get('DIDIT_API_KEY') || '';
   if (!apiKey) {
+    /*
+     * A deployment that brokers verification through Mission Control holds no
+     * Didit key on purpose — an application-scoped key can read every other
+     * tenant's customers' identity documents. The HOSTED session flow this
+     * webhook settles is the one path that still needs the raw credential, so
+     * it is unavailable there, and `diditConfigured()` already refuses to
+     * CREATE a hosted session without the key — which is why no webhook can
+     * legitimately arrive here on such a deployment.
+     *
+     * Named rather than left as a bare `not_configured`, because a 500 with
+     * no reason on a webhook is read as an outage, and this is a deliberate
+     * shape. 200 would be worse: it would tell Didit the event was accepted.
+     */
+    const brokered = Boolean(Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'));
+    // The event marker is unchanged: it is the durable record, and renaming a
+    // value other rows already carry makes the history unqueryable. The
+    // brokered nuance belongs in the answer, which nothing stores.
     await markEvent({ error: 'api_key_not_configured' });
-    return json({ ok: false, reason: 'not_configured' }, 500);
+    return json({
+      ok: false,
+      reason: 'not_configured',
+      brokered,
+      detail: brokered
+        ? 'This deployment reaches Didit through Mission Control and holds no vendor key, so ' +
+          'the hosted-session flow is not available here. Identity verification runs through ' +
+          'the capture flow instead.'
+        : 'DIDIT_API_KEY is not set on this deployment.',
+    }, 500);
   }
 
   // ── The authoritative read. The body said something changed; this is what it

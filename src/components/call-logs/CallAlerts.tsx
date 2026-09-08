@@ -550,7 +550,7 @@ export const CallAlerts = ({ calls, onAlertTriggered, triggerClassName }: CallAl
                     <Button
                       size="sm"
                       variant="outline"
-                      className="rounded-2xl border-info/20 bg-info/10 text-info-foreground hover:bg-info/20"
+                      className="rounded-2xl border-info/20 bg-info/10 text-info hover:bg-info/20"
                       onClick={() => {
                         localStorage.setItem('alertEmailRecipient', emailRecipient);
                         toast({ title: 'Saved', description: 'Email recipient saved' });

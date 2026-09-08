@@ -148,6 +148,81 @@ export const PROPERTY_TOKENS = [
   '--chart-5',
 ] as const;
 
+/**
+ * How a compared property's line is DRAWN, not just what colour it is.
+ *
+ * The comparison chart gave the open report a solid line and every peer the
+ * same `strokeDasharray="5 5"`, so four of the five properties were told apart
+ * by hue alone — and the audit's screenshot is what that looks like when it
+ * fails: five series, three readable line indicators, two pairs an adviser
+ * cannot separate. Colour is the first thing a chart loses. It is lost to a
+ * projector, to a greyscale print, to the PNG export pasted into a report, and
+ * to the ~8% of men with a colour vision deficiency — and this chart's palette
+ * puts red and green on adjacent slots, which is the pair that goes first.
+ *
+ * So the pattern carries the identity and the colour reinforces it. Five
+ * patterns for five properties, and a spec asserts they stay distinct.
+ *
+ * ## Why the numbers are what they are
+ *
+ * A dash array is in the drawing surface's own units. On the chart that is
+ * pixels; in a Recharts legend swatch it is a 32-unit viewBox scaled down, so
+ * a pattern whose period is longer than 32 renders in the legend as a solid
+ * line — the swatch would then say the opposite of the chart. Every period
+ * here is at most 20, so each one repeats at least once in the swatch.
+ *
+ * `round` is not decoration either: it is what turns `1 5` into a row of dots
+ * rather than a row of hairlines, which is the difference between the dotted
+ * series and the fine-dashed one.
+ */
+export interface PropertyLineStyle {
+  /** SVG `stroke-dasharray`. Absent for the solid line. */
+  dash?: string;
+  /** SVG `stroke-linecap`. `round` is what makes a 1-unit dash read as a dot. */
+  linecap?: 'butt' | 'round';
+  /**
+   * What the pattern is called.
+   *
+   * Rendered into a marker's accessible name, so a screen reader and a
+   * greyscale print carry the same distinction the colour does.
+   */
+  name: string;
+}
+
+export const PROPERTY_LINE_STYLES: readonly PropertyLineStyle[] = [
+  { name: 'solid' },
+  { dash: '10 5', name: 'dashed' },
+  { dash: '1 5', linecap: 'round', name: 'dotted' },
+  { dash: '12 4 1 4', linecap: 'round', name: 'dash-dot' },
+  { dash: '4 4', name: 'fine dash' },
+] as const;
+
+/** A compared property's colour and line pattern together. */
+export interface PropertySeriesStyle extends PropertyLineStyle {
+  colour: string;
+}
+
+/**
+ * The style for the property in comparison slot `index`.
+ *
+ * Slot 0 is the report the adviser opened. Beyond the fifth slot the palette
+ * and the patterns both wrap rather than running out — a sixth line drawn in
+ * the muted tick colour, which is what the chart used to fall back to, is a
+ * line the reader cannot attribute to anything.
+ */
+export function propertySeriesStyle(
+  theme: CashFlowChartTheme,
+  index: number,
+): PropertySeriesStyle {
+  const slot = ((index % PROPERTY_LINE_STYLES.length) + PROPERTY_LINE_STYLES.length)
+    % PROPERTY_LINE_STYLES.length;
+  const palette = theme.property.length ? theme.property : FALLBACK.property;
+  return {
+    ...PROPERTY_LINE_STYLES[slot],
+    colour: palette[slot % palette.length] ?? FALLBACK.property[slot],
+  };
+}
+
 /** Resolve the whole palette against an element's computed styles. */
 export function resolveChartTheme(element: Element | null): CashFlowChartTheme {
   if (!element) return FALLBACK;

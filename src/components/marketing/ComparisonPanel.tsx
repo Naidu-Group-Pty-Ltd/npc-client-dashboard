@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { GitCompareArrows, X, Trophy, TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
+import { chartTooltipContentStyle } from '@/lib/charts/tooltipStyle';
 
 interface ComparisonPanelProps {
   items: any[];
@@ -150,7 +151,7 @@ export function ComparisonPanel({
               <XAxis type="number" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} className="text-muted-foreground" />
               <YAxis dataKey="metric" type="category" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} className="text-muted-foreground" width={75} />
               <RechartsTooltip
-                contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 14, boxShadow: '0 18px 50px hsl(var(--foreground) / 0.12)', color: 'hsl(var(--popover-foreground))', fontSize: 12 }}
+                contentStyle={chartTooltipContentStyle}
               />
               <Legend wrapperStyle={{ fontSize: 11, color: 'hsl(var(--muted-foreground))' }} />
               {enriched.map((item, idx) => (

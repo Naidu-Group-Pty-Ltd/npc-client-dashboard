@@ -40,7 +40,7 @@ const TIERS = ['unknown', 'low', 'mid', 'high', 'top'] as const;
 
 describe('listings map marker specificity', () => {
   it('scopes the marker roots so Leaflet cannot take their display back', () => {
-    for (const root of ['listing-pin', 'listings-cluster', 'listings-locator']) {
+    for (const root of ['listing-pin', 'listings-locator']) {
       const base = selectorsFor(root).filter((s) => s.endsWith(`.${root}`));
       expect(base.length, `${root} should declare a base rule`).toBeGreaterThan(0);
       for (const selector of base) {
@@ -92,14 +92,15 @@ describe('listings map marker specificity', () => {
   });
 
   it('keeps every band-coloured surface on the same ramp', () => {
-    // Pin, cluster ring, cluster median chip, legend swatch and results-panel
-    // row all encode the same variable. One of them drifting onto a different
-    // palette is how a legend stops describing the map.
+    // Pin, legend swatch and results-panel row all encode the same variable.
+    // One of them drifting onto a different palette is how a legend stops
+    // describing the map. (The cluster ring and its median chip are gone:
+    // proximity clustering was removed because a bubble's position is not a
+    // location — see listingsMap.groupByCoordinate.)
     const families = [
-      'listings-cluster',
+      'listing-pin',
       'listings-tier-swatch',
       'listings-row-mark',
-      'listings-cluster__price',
     ];
     for (const family of families) {
       const blocks = CSS.match(new RegExp(`\\.${family}[^{]*\\{[^}]*\\}`, 'g')) ?? [];

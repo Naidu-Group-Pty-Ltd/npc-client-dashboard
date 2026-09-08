@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Mail, Building2, User, Phone, ArrowUpRight, Loader2, RefreshCw, BarChart3, TrendingUp, Hash, Search } from 'lucide-react';
+import { Mail, Building2, User, Phone, ArrowUpRight, Loader2, RefreshCw, BarChart3, TrendingUp, Hash } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchInput } from '@/components/ui/search-input';
 import { PropertyListing } from '@/lib/airtable';
 import { propertyDataService } from '@/services/propertyDataService';
 import { toast } from 'sonner';
@@ -309,15 +310,11 @@ export default function Sources() {
       )}
 
       {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search sources, agencies, or agents..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10"
-        />
-      </div>
+      <SearchInput
+        value={searchQuery}
+        onValueChange={setSearchQuery}
+        placeholder="Search sources, agencies, or agents..."
+      />
 
       {/* Tabs */}
       <Tabs defaultValue="email" className="space-y-4">

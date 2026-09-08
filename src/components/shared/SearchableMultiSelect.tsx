@@ -1,9 +1,10 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Check, ChevronDown, X, Search, Filter } from 'lucide-react';
+import { Check, ChevronDown, X, Filter } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from '@/lib/utils';
 
 export interface MSOption {
@@ -110,16 +111,15 @@ export function SearchableMultiSelect({
         </Button>
       </PopoverTrigger>
       <PopoverContent className={cn('p-0', width)} align="start">
-        <div className="flex items-center border-b px-3">
-          <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-          <Input
-            ref={inputRef}
-            placeholder={searchPlaceholder}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-9 border-0 shadow-none focus-visible:ring-0 px-0"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          ref={inputRef}
+          placeholder={searchPlaceholder}
+          containerClassName="flex items-center border-b px-3"
+          className="h-9 border-0 shadow-none focus-visible:ring-0 px-0"
+          iconClassName="mr-2 opacity-50"
+        />
 
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/50 text-xs">
           <button

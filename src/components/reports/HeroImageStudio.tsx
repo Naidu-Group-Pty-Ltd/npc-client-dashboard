@@ -21,6 +21,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from '@/components/ui/search-input';
 import {
   AlertCircle,
   Image as ImageIcon,
@@ -635,15 +636,14 @@ export function HeroImageStudio({ reportId, open, onOpenChange }: Props) {
                 <Badge variant="secondary" className="ml-1 text-[10px]">{library.length}</Badge>
               </h3>
               <div className="flex w-full flex-wrap items-center gap-2 xl:ml-auto xl:w-auto">
-                <div className="relative min-w-[180px] flex-1 xl:flex-none">
-                  <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search prompts"
-                    className="h-8 pl-7 text-xs w-full xl:w-56"
-                  />
-                </div>
+                <SearchInput
+                  value={search}
+                  onValueChange={setSearch}
+                  placeholder="Search prompts"
+                  containerClassName="min-w-[180px] flex-1 xl:flex-none"
+                  className="h-8 text-xs w-full xl:w-56"
+                  iconClassName="h-3.5 w-3.5 left-2"
+                />
                 <Select value={orientationFilter} onValueChange={setOrientationFilter}>
                   <SelectTrigger className="h-8 w-[132px] text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>

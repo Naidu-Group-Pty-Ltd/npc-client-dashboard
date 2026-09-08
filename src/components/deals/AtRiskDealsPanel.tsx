@@ -140,7 +140,7 @@ export function AtRiskDealsPanel({ deals, onDealClick }: Props) {
                   'group cursor-pointer rounded-[1rem] border bg-background dark:bg-black/25 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_16px_34px_rgba(0,0,0,0.28)]',
                   'focus-within:ring-2 focus-within:ring-brand-300/35',
                   isCritical
-                    ? 'border-destructive/20 hover:border-destructive/40 hover:bg-destructive/60/[0.06]'
+                    ? 'border-destructive/20 hover:border-destructive/40 hover:bg-destructive/[0.06]'
                     : 'border-brand-300/20 hover:border-brand-300/40 hover:bg-brand-400/[0.06]'
                 )}
                 onClick={() => onDealClick?.(deal)}
@@ -173,7 +173,7 @@ export function AtRiskDealsPanel({ deals, onDealClick }: Props) {
                           className={cn(
                             'max-w-full break-words rounded-md border px-2 py-1 text-[11px] font-medium leading-4',
                             isCritical
-                              ? 'border-destructive/20 bg-destructive/60/[0.08] text-destructive-foreground'
+                              ? 'border-destructive/20 bg-destructive/[0.08] text-destructive'
                               : 'border-brand-300/20 bg-brand-400/[0.08] text-brand-100'
                           )}
                         >

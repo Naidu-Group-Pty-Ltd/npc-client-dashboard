@@ -24,6 +24,7 @@ import { StaffFinancePortalMessagesPanel } from '@/components/clients/StaffFinan
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { SearchInput } from '@/components/ui/search-input';
 import { toast } from 'sonner';
 
 type NewMessageScope =
@@ -274,12 +275,13 @@ export default function Messages() {
               <div className="relative min-w-0 flex-1 xl:max-w-2xl">
                 <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/75" />
                 <label htmlFor="portal-message-search" className="sr-only">Search portal messages by client, partner, or message</label>
-                <Input
+                <SearchInput
+                  value={search}
+                  onValueChange={setSearch}
                   id="portal-message-search"
                   aria-label="Search portal messages by client, partner, or message"
                   placeholder="Search by client, partner, or message…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+                  hideIcon
                   className="h-12 rounded-2xl border-border/70 bg-background/70 pl-11 pr-4 text-sm text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_14px_34px_rgba(0,0,0,0.10)] transition-all duration-200 placeholder:text-muted-foreground/75 hover:border-primary/35 hover:bg-background/90 focus-visible:border-primary/65 focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:bg-background/55"
                 />
               </div>
@@ -312,7 +314,7 @@ export default function Messages() {
                     <CardTitle className="text-[13px] font-bold uppercase tracking-[0.18em] text-primary">Clients</CardTitle>
                     <p className="mt-1 text-[11px] text-muted-foreground">{filteredClientThreads.length} visible · {totalClientUnread} unread</p>
                   </div>
-                  <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2 text-[10px] text-success-foreground">Client Portal</Badge>
+                  <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2 text-[10px] text-success">Client Portal</Badge>
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 p-0">
@@ -405,7 +407,7 @@ export default function Messages() {
                     <CardTitle className="text-[13px] font-bold uppercase tracking-[0.18em] text-primary">Finance clients</CardTitle>
                     <p className="mt-1 text-[11px] text-muted-foreground">{filteredFinanceGroups.length} visible · {totalFinanceUnread} unread</p>
                   </div>
-                  <Badge variant="outline" className="rounded-full border-info/25 bg-info/10 px-2 text-[10px] text-info-foreground">Finance Portal</Badge>
+                  <Badge variant="outline" className="rounded-full border-info/25 bg-info/10 px-2 text-[10px] text-info">Finance Portal</Badge>
                 </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 p-0">
@@ -450,7 +452,7 @@ export default function Messages() {
                             <div className="truncate text-[10px] text-muted-foreground/75">
                               {g.partner_emails.join(', ') || 'Unassigned'}
                             </div>
-                            <Badge variant="outline" className="shrink-0 rounded-full border-info/20 bg-info/10 px-2 text-[10px] text-info-foreground">
+                            <Badge variant="outline" className="shrink-0 rounded-full border-info/20 bg-info/10 px-2 text-[10px] text-info">
                               {g.thread_count} {g.thread_count === 1 ? 'thread' : 'threads'}
                             </Badge>
                           </div>
@@ -485,7 +487,7 @@ export default function Messages() {
                       <p className="mt-2 text-xs leading-5 text-muted-foreground">Choose a finance-linked client to review partner-visible thread activity.</p>
                       <div className="mt-4 flex flex-wrap justify-center gap-1.5 text-[10px] font-medium text-primary/90">
                         <span className="rounded-full border border-primary/15 bg-brand-300/10 px-2 py-0.5">Partner view</span>
-                        <span className="rounded-full border border-info/15 bg-info/10 px-2 py-0.5 text-info-foreground">Finance threads</span>
+                        <span className="rounded-full border border-info/15 bg-info/10 px-2 py-0.5 text-info">Finance threads</span>
                       </div>
                       <div className="mx-auto mt-4 h-1 w-14 rounded-full bg-gradient-to-r from-transparent via-brand-300/70 to-transparent" />
                     </div>
@@ -529,12 +531,13 @@ export default function Messages() {
               <div className="relative">
                 <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-primary/75" />
                 <label htmlFor="new-portal-message-client-search" className="sr-only">Search clients for a new portal message</label>
-                <Input
+                <SearchInput
+                  value={newClientSearch}
+                  onValueChange={setNewClientSearch}
                   id="new-portal-message-client-search"
                   aria-label="Search clients for a new portal message"
                   placeholder="Search clients…"
-                  value={newClientSearch}
-                  onChange={(e) => setNewClientSearch(e.target.value)}
+                  hideIcon
                   className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/35 dark:bg-black/35 pl-11 text-sm shadow-inner shadow-sm dark:shadow-black/20 transition-all duration-200 placeholder:text-muted-foreground/70 hover:border-brand-300/30 hover:bg-black/45 focus-visible:border-brand-300/50 focus-visible:ring-2 focus-visible:ring-brand-300/30"
                 />
               </div>

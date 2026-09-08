@@ -34,6 +34,7 @@ import {
   operatingExpensesFrom,
   reconcileStoredFinancials,
   seriesLvrPercent,
+  healFinanceIdentity,
 } from '../../../../supabase/functions/_shared/reports/investment/financialEngine.pure';
 
 /** The captured production inputs (financial_calculations of a live report). */
@@ -421,5 +422,129 @@ describe('reconcileStoredFinancials — healing historic rows at read time', () 
     const partial = reconcileStoredFinancials({ keyMetrics: { annualNet: -5 } });
     expect(partial.metricsReconciled).toBe(false);
     expect(partial.fin.keyMetrics.annualNet).toBe(-5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The finance identity: deposit + loan = purchase price
+//
+// Every row below is a verbatim production shape, taken from
+// investment_reports.financial_calculations on 2026-09-07. The rule was tested
+// against all 21 broken rows before it was written: 17 heal the loan, 1 heals
+// the deposit, 3 are left alone, and of the 13 carrying an independent witness
+// (the customer's own `manual_overrides.loanAmount`) 13 agree with the healed
+// figure and none contradict it.
+// ---------------------------------------------------------------------------
+
+describe('healFinanceIdentity', () => {
+  it('says nothing about a block that already foots', () => {
+    expect(healFinanceIdentity(
+      { propertyValue: 672_000, deposit: 134_400, loanAmount: 537_600 },
+      { lvr: 80 },
+    )).toEqual({ healed: null, reason: 'holds', patch: {} });
+  });
+
+  it('re-derives the loan when the deposit is the half that matches the LVR', () => {
+    // Production: deposit at 20% beside a loan at 90%, so the two lines a
+    // client reads come to $739,200 against a $672,000 purchase. The
+    // customer's own override recorded the loan as $537,600 — which is what
+    // this returns, without ever reading the override.
+    const heal = healFinanceIdentity(
+      { propertyValue: 672_000, deposit: 134_400, loanAmount: 604_800 },
+      { lvr: 80 },
+    );
+    expect(heal).toEqual({ healed: 'loan', reason: 'holds', patch: { loanAmount: 537_600 } });
+  });
+
+  it('re-derives the deposit when the LOAN is the half that matches', () => {
+    // The mirror shape, and the reason the arbiter is asked rather than the
+    // loan simply being assumed stale: here the deposit was taken at 10% while
+    // keyMetrics and the loan both say 80.
+    const heal = healFinanceIdentity(
+      { propertyValue: 656_987, deposit: 65_698, loanAmount: 525_589.6 },
+      { lvr: 80 },
+    );
+    expect(heal.healed).toBe('deposit');
+    expect(heal.patch.deposit).toBeCloseTo(131_397.4, 2);
+  });
+
+  it('heals nothing when the arbiter settles nothing', () => {
+    // Neither half agrees with the stated LVR, so a repair would be a third
+    // opinion rather than a reconstruction. `financeIdentityBreaches`
+    // discloses these instead.
+    expect(healFinanceIdentity(
+      { propertyValue: 462_000, deposit: 86_000, loanAmount: 344_000 },
+      { lvr: 80 },
+    )).toEqual({ healed: null, reason: 'ambiguous', patch: {} });
+  });
+
+  it('refuses a row with no arbiter and a row with nothing to arbitrate', () => {
+    expect(healFinanceIdentity(
+      { propertyValue: 644_460, deposit: 64_446, loanAmount: 515_568 }, {},
+    ).reason).toBe('no_arbiter');
+    expect(healFinanceIdentity({ propertyValue: 600_000 }, { lvr: 80 }).reason).toBe('insufficient');
+    expect(healFinanceIdentity({ propertyValue: 0, deposit: 1, loanAmount: 2 }, { lvr: 80 }).reason)
+      .toBe('insufficient');
+  });
+
+  it('leaves the junk row alone rather than inventing a repair for it', () => {
+    // A stored row with a purchase price of $3 beside a $150,000 deposit.
+    expect(healFinanceIdentity(
+      { propertyValue: 3, deposit: 150_000, loanAmount: 600_000 }, { lvr: 80 },
+    ).healed).toBeNull();
+  });
+});
+
+describe('reconcileStoredFinancials heals the identity on every read path', () => {
+  const broken = {
+    initialCosts: {
+      propertyValue: 672_000, deposit: 134_400, loanAmount: 604_800,
+      stampDuty: 26_000, lmi: 0, legalFees: 1_500, inspectionFees: 500, totalUpfront: 162_400,
+    },
+    keyMetrics: { lvr: 80 },
+  };
+
+  it('re-derives the loan and reports which half it moved', () => {
+    const out = reconcileStoredFinancials(broken);
+    expect(out.financeIdentityHealed).toBe('loan');
+    expect(out.fin.initialCosts.loanAmount).toBe(537_600);
+    expect(out.fin.initialCosts.deposit).toBe(134_400);
+    const { propertyValue, deposit, loanAmount } = out.fin.initialCosts;
+    expect(deposit + loanAmount).toBe(propertyValue);
+  });
+
+  it('does not touch the stored object', () => {
+    const before = JSON.stringify(broken);
+    reconcileStoredFinancials(broken);
+    expect(JSON.stringify(broken)).toBe(before);
+  });
+
+  it('carries the healed deposit into the upfront total, and keeps the other lines', () => {
+    const out = reconcileStoredFinancials({
+      initialCosts: {
+        propertyValue: 656_987, deposit: 65_698, loanAmount: 525_589.6,
+        stampDuty: 24_000, lmi: 0, legalFees: 1_500, inspectionFees: 500, totalUpfront: 91_698,
+      },
+      keyMetrics: { lvr: 80 },
+    });
+    expect(out.financeIdentityHealed).toBe('deposit');
+    // The upfront total is the deposit plus the acquisition lines, so it has
+    // to follow the heal — and the acquisition lines must survive it.
+    expect(out.fin.initialCosts.totalUpfront).toBeCloseTo(131_397.4 + 24_000 + 1_500 + 500, 2);
+    expect(out.fin.initialCosts.stampDuty).toBe(24_000);
+    expect(out.fin.initialCosts.loanAmount).toBe(525_589.6);
+  });
+
+  it('reports null for a healthy row and changes nothing', () => {
+    const healthy = {
+      initialCosts: {
+        propertyValue: 672_000, deposit: 134_400, loanAmount: 537_600,
+        stampDuty: 26_000, legalFees: 1_500, inspectionFees: 500, totalUpfront: 162_400,
+      },
+      keyMetrics: { lvr: 80 },
+    };
+    const out = reconcileStoredFinancials(healthy);
+    expect(out.financeIdentityHealed).toBeNull();
+    expect(out.fin.initialCosts.loanAmount).toBe(537_600);
   });
 });

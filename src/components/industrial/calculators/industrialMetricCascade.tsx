@@ -190,9 +190,9 @@ export function useCascadedIndustrialField(
 export function SourceBadge({ source }: { source: IndustrialMetricSource }) {
   const variant = source === 'User Override' ? 'secondary' : source === 'Verified' ? 'default' : 'outline';
   const toneClass = source === 'Verified'
-    ? 'border-success/40 bg-success/15 text-success-foreground shadow-success/10'
+    ? 'border-success/40 bg-success/15 text-success shadow-success/10'
     : source === 'User Override' || source === 'Manual'
-      ? 'border-info/40 bg-info/15 text-info-foreground shadow-info/10'
+      ? 'border-info/40 bg-info/15 text-info shadow-info/10'
       : source === 'AI Estimate' || source === 'Research Engine'
         ? 'border-accent/40 bg-accent/15 text-accent-foreground shadow-accent/10'
         : source === 'Blank'

@@ -524,3 +524,39 @@ describe('two properties that share a house design', () => {
     expect(outcome.image.reference).toContain('#page1:X13');
   });
 });
+
+// ---------------------------------------------------------------------------
+// A recovery that hangs is answered for, not reaped
+// ---------------------------------------------------------------------------
+
+/**
+ * MEASURED, 6 SEPTEMBER 2026, LOT 709 VERVE. The brochure elects in seconds
+ * on the same bytes, and the production claim that started it died ~85s in
+ * with no error, no kill status and no verdict — the isolate was shut down
+ * mid-item and the standing attempt read as a destroyed worker. Every step
+ * is individually bounded and the sum was not. The deadline turns any hang —
+ * an import that never settles, a response stalled between chunks, a stream
+ * that neither ends nor errors — into the `unreachable` answer the branch
+ * machinery already retries and retires honestly.
+ */
+describe('a recovery that hangs is answered for, not reaped', () => {
+  it('a fetch that never settles resolves as unreachable at the deadline', async () => {
+    const outcome = await recoverPackageImage(
+      { packageUrl: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view', label: 'Lot 1 Example St' },
+      { fetchPackage: () => new Promise(() => {/* never settles */}), deadlineMs: 120 },
+    );
+    expect(outcome.status).toBe('unreachable');
+    expect(outcome.status === 'unreachable' && outcome.detail).toContain('records nothing');
+  });
+
+  it('a recovery that finishes on time is untouched by the deadline', async () => {
+    const outcome = await recoverPackageImage(
+      { packageUrl: 'https://example.com/not-a-drive-page', label: 'Lot 1 Example St' },
+      { fetchPackage: async () => { throw new Error('refused'); }, deadlineMs: 5_000 },
+    );
+    // The prompt outcome (whatever it is) wins the race; the timer must not
+    // replace a real answer that arrived first.
+    expect(outcome.status).not.toBe('recovered');
+    expect(outcome.status === 'unreachable' ? outcome.detail : '').not.toContain('records nothing about the document');
+  });
+});

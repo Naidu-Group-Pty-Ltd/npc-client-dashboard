@@ -84,6 +84,7 @@ import { CONVERTED_REPORT_TYPES } from '@/lib/reports/converted/reportType';
 import { type ConversionFidelity } from '@/lib/reports/converted/enrich.pure';
 import { FIDELITY_CHOICES, fidelityLabel } from '@/lib/reports/converted/fidelityChoices';
 import { BRAND_SYSTEMS_PATH } from '@/lib/reportTemplate/templateStartRoutes';
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from '@/lib/reports/designControlsVisibility';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
 
 const ACCEPT = [...TEXT_SUFFIXES, '.pdf'].join(',');
@@ -659,21 +660,28 @@ export default function TemplateConverter() {
                 </Label>
               </div>
 
-              <Button variant="outline" onClick={() => setSystemDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                New design system
-              </Button>
+              {/* Authoring a design system is hidden product-wide — see
+                  `designControlsVisibility.ts`. Both doors are inside the one
+                  guard: the in-flow dialog, and the link to the Brand systems
+                  page, which is hidden by the same switch (a door to a hidden
+                  page is worse than no door). SELECTING an existing system is
+                  deliberately outside the guard — the converter needs one to
+                  convert, and it still has every system already saved. */}
+              {REPORT_DESIGN_CONTROLS_VISIBLE && (
+                <>
+                  <Button variant="outline" onClick={() => setSystemDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    New design system
+                  </Button>
 
-              {/* The dialog stays for the quick in-flow case — somebody halfway
-                  through a conversion who wants one colour changed. Managing
-                  design systems, importing one from Claude Design, and seeing
-                  what any of the levers actually do belong on their own page. */}
-              <Button variant="ghost" asChild>
-                <Link to={BRAND_SYSTEMS_PATH}>
-                  <Palette className="mr-2 h-4 w-4" aria-hidden />
-                  Manage brand systems
-                </Link>
-              </Button>
+                  <Button variant="ghost" asChild>
+                    <Link to={BRAND_SYSTEMS_PATH}>
+                      <Palette className="mr-2 h-4 w-4" aria-hidden />
+                      Manage brand systems
+                    </Link>
+                  </Button>
+                </>
+              )}
 
               <Button onClick={handleRender} disabled={rendering}>
                 {rendering
@@ -863,6 +871,8 @@ export default function TemplateConverter() {
         </CardContent>
       </Card>
 
+      {/* Guarded here too, so the hidden feature mounts nothing at all. */}
+      {REPORT_DESIGN_CONTROLS_VISIBLE && (
       <BrandDesignSystemDialog
         open={systemDialogOpen}
         onOpenChange={setSystemDialogOpen}
@@ -881,6 +891,7 @@ export default function TemplateConverter() {
           setResult(null);
         }}
       />
+      )}
     </div>
   );
 }

@@ -101,9 +101,16 @@
  * a client's financial report, which is why it was measured rather than
  * inferred.
  *
- * Weekly figures are `annual / 52` — a unit conversion, not a model. The one
- * modelled value is `annualRent`, which uses the report's own stated
- * `occupancyWeeks` rather than assuming 52.
+ * Weekly figures are `annual / 52` — a unit conversion, not a model.
+ *
+ * `annualRent` is the CONTRACTUAL rent (`weeklyRent × 52`, or the record's own
+ * `income.annualRent`), because that is the basis the stored yields rest on and
+ * the figure a template prints as a bare "p.a." beside the weekly rent. It used
+ * to be `weeklyRent × occupancyWeeks` — a third quantity agreeing with neither
+ * the record nor the yield beside it. The occupancy assumption keeps its own
+ * figure under `annualRentAtOccupancy`; `rentBasis.pure.ts` decides both, and
+ * the composed financial chapters read the same module so the tile and the
+ * table cannot drift.
  */
 import { renderMarkdown } from './reports/markdown.pure.ts';
 import {
@@ -113,12 +120,18 @@ import {
   resolveNarrativeProfile,
 } from './reports/markdownPaging.pure.ts';
 import { stripBakedCover } from './reports/investment/narrativeClean.pure.ts';
+import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures.pure.ts';
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
+import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
+import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
+import { gradedDetailLine, gradedLine } from './reports/investment/scoreSections.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
   property_address?: string | null;
+  report_tier?: string | null;
   property_specs?: Record<string, unknown> | null;
+  manual_overrides?: Record<string, unknown> | null;
   financial_calculations?: Record<string, unknown> | null;
   investment_score?: Record<string, unknown> | null;
   updated_at?: string | null;
@@ -239,19 +252,51 @@ function recommendationAction(headline: string | undefined): string | undefined 
  * writes, and the other is a by-product of the finance run.
  */
 function specReader(
-  specs: Record<string, unknown>,
-  fallback: Record<string, unknown>,
+  ...sources: Array<Record<string, unknown>>
 ): (...keys: string[]) => unknown {
   return (...keys: string[]): unknown => {
-    for (const key of keys) {
-      if (specs[key] !== undefined && specs[key] !== null) return specs[key];
-    }
-    for (const key of keys) {
-      if (fallback[key] !== undefined && fallback[key] !== null) return fallback[key];
+    // Source order is precedence, and it is checked source-by-source rather
+    // than key-by-key: the first SOURCE that answers any of the keys wins, so
+    // a stored spec is never overridden by an operator's entry for the same
+    // attribute under a different spelling.
+    for (const source of sources) {
+      for (const key of keys) {
+        const v = source[key];
+        if (v !== undefined && v !== null && v !== '') return v;
+      }
     }
     return undefined;
   };
 }
+
+/**
+ * What each Investment tier's document is CALLED, and the line under its
+ * cover title. One vocabulary, translated here and bound by the masters —
+ * never spelled per family, because ten families times five layouts is how
+ * one wording change becomes fifty edits.
+ */
+export const DOCUMENT_IDENTITY: Record<string, { title: string; standfirst: string }> = {
+  compass: {
+    title: 'Investment Compass',
+    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
+  },
+  financial: {
+    title: 'Financial Analysis',
+    standfirst: 'What it costs to buy and hold, what it returns, and how the position moves over ten years.',
+  },
+  snapshot: {
+    title: 'Snapshot Report',
+    standfirst: 'The numbers that matter and a short assessment.',
+  },
+  briefing: {
+    title: 'Executive Briefing',
+    standfirst: 'The assessment, condensed for a decision.',
+  },
+  strategic: {
+    title: 'Strategic Overview',
+    standfirst: 'The strategy this assessment supports, and what carries it.',
+  },
+};
 
 export interface ProjectedNamespaces {
   property: Record<string, unknown>;
@@ -343,7 +388,16 @@ export function projectReportNarrative(
   // cannot disagree. `linesPerPage` doubles as the schema sentinel: the value
   // deployed masters bake (34) resolves to the calibrated budgets.
   const profile = resolveNarrativeProfile('investment');
-  const blocks = renderMarkdown(source, { charging: profile?.charging }).blocks;
+  // The SAME directive accounting the block makes. The block draws the
+  // figures in the template's palette; this side draws them in the planning
+  // greys and keeps only the line charge — `figureLines` reads the SVG's own
+  // geometry, so the two sides charge identical counts whatever each paints
+  // with. Without this the count ignored every figure while the block drew
+  // them, which is exactly the one-line drift this module's header forbids.
+  const blocks = renderMarkdown(source, {
+    charging: profile?.charging,
+    renderDirective: vizDirectiveRenderer(planningChartContext()),
+  }).blocks;
   const pages = (profile
     ? packNarrativePages(blocks, profile, linesPerPage)
     : packMarkdownPages(blocks, linesPerPage)).length;
@@ -373,13 +427,38 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   const assumptions = obj(fin.assumptions);
 
   // ── property ──────────────────────────────────────────────────────────────
-  const spec = specReader(specs, obj(fin.propertySpecs));
+  // Three sources, in precedence order, and the third one is a repair.
+  //
+  // `property_specs` is what the generator wrote and what every template binds.
+  // Measured across all 1,199 stored reports, six of its nine attributes have
+  // never held a value: parking, year_built, building_size_sqm, land_size_sqm,
+  // council_area and zoning are empty on every row.
+  //
+  // Four of those six were never missing. Operators type them into the manual
+  // inputs panel and they land in `manual_overrides` — land size on 150
+  // reports, build size on 145, car spaces on 155, construction year on 29 —
+  // under different spellings (`landSizeSqm`/`landSize`,
+  // `buildSizeSqm`/`buildSize`, `carSpaces`, `constructionYear`) from the ones
+  // `property_specs` uses. Nothing ever copied them across, so a Property
+  // Identity table rendered blank on 150 reports whose operator had entered the
+  // land size by hand.
+  //
+  // This is healed on READ, the same way `reconcileStoredFinancials` heals the
+  // financial fold above: the stored row is never rewritten, every report
+  // already issued gains the figure its operator supplied, and the write path
+  // is fixed separately. Overrides come LAST, so a real stored spec always
+  // wins.
+  //
+  // Zoning and council area are the other two, and no source has them — not
+  // specs, not overrides, not any table in the schema. See
+  // docs/reports/PROPERTY_ATTRIBUTE_ACQUISITION.md.
+  const spec = specReader(specs, obj(fin.propertySpecs), obj(row.manual_overrides));
   const property: Record<string, unknown> = {};
   put(property, 'address', str(row.property_address));
   put(property, 'type', str(spec('property_type', 'propertyType')));
-  put(property, 'yearBuilt', num(spec('year_built', 'yearBuilt')) ?? str(spec('year_built', 'yearBuilt')));
-  put(property, 'landArea', num(spec('land_size_sqm', 'landSizeSqm')));
-  put(property, 'buildingArea', num(spec('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm')));
+  put(property, 'yearBuilt', num(spec('year_built', 'yearBuilt', 'constructionYear')) ?? str(spec('year_built', 'yearBuilt', 'constructionYear')));
+  put(property, 'landArea', num(spec('land_size_sqm', 'landSizeSqm', 'landSize')));
+  put(property, 'buildingArea', num(spec('building_size_sqm', 'buildingSizeSqm', 'buildSizeSqm', 'buildSize')));
   put(property, 'zoning', str(spec('zoning')));
   put(property, 'council', str(spec('council_area', 'councilArea')));
   put(property, 'configuration', configuration(spec));
@@ -405,12 +484,31 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'deposit', num(initial.deposit));
   put(financials, 'loanAmount', num(loan.loanAmount) ?? num(initial.loanAmount));
   put(financials, 'weeklyRent', weeklyRent);
-  // The report's own occupancy assumption, not a flat 52 weeks.
-  put(financials, 'annualRent', weeklyRent !== undefined && occupancyWeeks !== undefined
-    ? weeklyRent * occupancyWeeks
-    : undefined);
-  put(financials, 'grossYield', num(metrics.grossRentalYield));
-  put(financials, 'netYield', num(metrics.netRentalYield));
+  // Two annual rents, named apart, from the module the composed chapters also
+  // ask. `annualRent` is the CONTRACTUAL rent, because that is what the yields
+  // below rest on (measured: 149 of 153 stored gross yields are `weeklyRent ×
+  // 52`, and 18 of 18 stored `income.annualRent` values are too) and because
+  // this is the figure a template prints as a bare "p.a." beside the weekly
+  // rent. It used to be `weeklyRent × occupancyWeeks`, which agreed with
+  // neither: on 62 of 153 reports the KPI tile's annual rent could not produce
+  // the gross yield printed with it, by $1,832 on average and $2,600 at worst.
+  //
+  // The occupancy assumption keeps its figure under its own name. And where a
+  // report states no occupancy at all — 44 of 170 with a weekly rent — the
+  // contractual reading still answers, so the tile's "p.a." note stops
+  // rendering as the empty string.
+  const rent = readAnnualRent(income, assumptions);
+  put(financials, 'annualRent', rent.contractual);
+  put(financials, 'annualRentAtOccupancy', rent.atOccupancy);
+  put(financials, 'annualRentAtOccupancyLabel', rent.occupancyLabel);
+  // A yield rests on a rent. Where the record establishes none, these describe
+  // nothing — and this projection is the widest of the four readers, feeding
+  // every bound template AND the recorded-facts block the model is handed, so
+  // an unfounded yield published here becomes a figure the model then repeats
+  // as authoritative. One rule, `rentIsEstablished`, asked by all four.
+  const yieldIsFounded = rentIsEstablished(income);
+  put(financials, 'grossYield', yieldIsFounded ? num(metrics.grossRentalYield) : undefined);
+  put(financials, 'netYield', yieldIsFounded ? num(metrics.netRentalYield) : undefined);
   put(financials, 'cashOnCash', num(metrics.cashOnCashReturn));
   put(financials, 'weeklyNet', num(metrics.weeklyNet));
   put(financials, 'annualNet', num(metrics.annualNet));
@@ -447,6 +545,16 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(recommendation, 'action', recommendationAction(str(score.recommendation)));
   put(recommendation, 'grade', str(score.grade));
   put(recommendation, 'score', num(score.totalScore));
+  // The verdict sentence, composed here so it exists only when the record can
+  // say it. The templates used to interpolate grade and score into a literal
+  // ("Graded {{grade}} at {{score}} out of 100, weighted across growth,
+  // location, yield, demand and risk"), which printed with the holes left in
+  // on every row without a score — and misstated the weighting for variant
+  // scores, whose dimensions are not the composite five. `gradedLine` names
+  // the dimensions this score actually carries; absent grade or score, the
+  // binding is absent and the sentence is not drawn.
+  put(recommendation, 'gradedLine', gradedLine(score));
+  put(recommendation, 'gradedDetailLine', gradedDetailLine(score));
 
   const strengths = strArray(score.strengths);
   const weaknesses = strArray(score.weaknesses);
@@ -580,6 +688,22 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
 
   const report: Record<string, unknown> = {};
   put(report, 'generatedDate', str(row.updated_at) ?? str(row.created_at));
+  // ── the document's own name ────────────────────────────────────────────────
+  // The Investment masters serve FOUR document kinds — the compass tier plus
+  // the financial, snapshot, briefing and strategic tiers all resolve to this
+  // page sequence — and the composer's identity strings (cover eyebrow,
+  // wordmark, running head, running foot) used to be the literal words
+  // "Investment Compass". So a Financial Analysis rendered as an Investment
+  // Compass on every one of its pages, and no template choice could say
+  // otherwise. The masters bind `report.documentTitle` / `report.standfirst`
+  // now, and THIS is the one place the tier is translated into them; an
+  // unrecognised or absent tier reads as compass, which is what the ranking's
+  // default document has always been.
+  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
+  const identity = DOCUMENT_IDENTITY[tier] ?? DOCUMENT_IDENTITY.compass;
+  put(report, 'tier', tier);
+  put(report, 'documentTitle', identity.title);
+  put(report, 'standfirst', identity.standfirst);
 
   return {
     property, financials, assumptions: assumptionsOut, recommendation,

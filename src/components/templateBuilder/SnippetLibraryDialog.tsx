@@ -7,7 +7,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Library, Plus, Search } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Library, Plus } from 'lucide-react';
 import {
   SNIPPETS, SNIPPET_CATEGORIES, searchSnippets,
   type Snippet, type SnippetCategory,
@@ -62,16 +63,13 @@ export function SnippetLibraryDialog({ onInsert, trigger, open: controlledOpen, 
           </DialogTitle>
         </DialogHeader>
         <div className="px-4 py-3 border-b space-y-2">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              autoFocus
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search by name, tag or description…"
-              className="pl-8 h-9"
-            />
-          </div>
+          <SearchInput
+            value={q}
+            onValueChange={setQ}
+            placeholder="Search by name, tag or description…"
+            className="h-9"
+            iconClassName="left-2.5 h-3.5 w-3.5"
+          />
           <div className="flex flex-wrap gap-1.5">
             <button
               onClick={() => setCat(null)}

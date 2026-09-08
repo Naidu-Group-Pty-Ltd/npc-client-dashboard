@@ -142,9 +142,23 @@ export function classifyVisual(features: VisualFeatures, aspect?: number | null)
   // plans measured 20–105 distinct colours, the "coming soon" card 213.
   if (white >= 0.62) return palette <= 160 ? 'floorplan' : 'graphic';
 
-  // A plan whose site diagram carries lawn and pool fills, so it is less white
-  // — but still nothing like a photograph's colour.
-  if (white >= 0.45 && colour <= 0.30 && palette <= 140) return 'floorplan';
+  /*
+   * A plan whose rooms are FILLED with colour.
+   *
+   * The bound here was 0.30, fitted to plans whose colour is lawn and pool on
+   * an otherwise white sheet. A builder's modern floor plan fills every room
+   * with a brand colour instead, and the Palomino Vanta 23 plan measured
+   * `colour` 0.301 — outside by a thousandth, elected as the hero of two live
+   * cards, badged "Builder supplied", twice through a re-derivation.
+   *
+   * WHAT ACTUALLY SEPARATES THE POPULATIONS HERE IS `white`, and it is not
+   * close: no photograph in the corpus exceeds 0.118 and this plan is 0.518.
+   * `colour` was never the discriminator in this band — it was a guard against
+   * a washed-out photograph, which a low-palette bound already refuses — so
+   * widening it admits coloured plans without reaching any measured
+   * photograph. The "coming soon" card stays a graphic on its palette of 213.
+   */
+  if (white >= 0.45 && colour <= 0.45 && palette <= 140) return 'floorplan';
 
   // Flat artwork on a light ground: a marketing card, a rendered tile. Needs a
   // restrained palette *and* little colour, because a genuine photograph of a

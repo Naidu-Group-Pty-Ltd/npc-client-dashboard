@@ -134,7 +134,9 @@ const integrationSecretMap: Record<string, string[]> = {
   'perplexity': ['PERPLEXITY_API_KEY'],
   'openrouter': ['OPENROUTER_API_KEY'],
   // Property & market data
-  'airtable': ['AIRTABLE_TOKEN', 'AIRTABLE_BASE_ID', 'AIRTABLE_TABLE_NAME'],
+  // The workflow connection. The Listings pipeline's AIRTABLE_TOKEN / AIRTABLE_BASE_ID
+  // are managed by Mission Control and are not an integration this page configures.
+  'airtable': ['AIRTABLE_API_KEY', 'AIRTABLE_WORKFLOW_BASE_ID'],
   'cotality': ['COTALITY_API_KEY'],
   'domain': ['DOMAIN_API_KEY'],
   'google': ['GOOGLE_MAPS_API_KEY'],

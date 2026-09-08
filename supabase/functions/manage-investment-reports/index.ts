@@ -6,6 +6,7 @@ import { releaseInvestmentReportRunTokens } from '../_shared/reportMetering.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { applyDisplayOverrides, buildCalculatorInput, overridesAffectModel } from '../_shared/reports/investment/overrides.pure.ts';
+import { healFinanceIdentity } from '../_shared/reports/investment/financialEngine.pure.ts';
 // Dynamic CORS headers for credential-based requests
 function createCorsHeaders(origin: string | null): Record<string, string> {
   // Support Lovable preview + published domains for credentialed requests
@@ -27,6 +28,9 @@ function createCorsHeaders(origin: string | null): Record<string, string> {
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
 }
+
+const isRecord = (v: unknown): v is Record<string, any> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 interface RequestBody {
   action: 'insert' | 'update' | 'delete' | 'archive' | 'unarchive' | 'archivePackage' | 'unarchivePackage' | 'bulkDelete' | 'getVersion';
@@ -133,6 +137,7 @@ Deno.serve(async (req) => {
         // and the response says which happened.
         let financialsRecalculated = false;
         let financialsRecalcSkipped: string | null = null;
+        let financeIdentityHealed: 'loan' | 'deposit' | null = null;
         if (data.manual_overrides !== undefined) {
           try {
             if (!overridesAffectModel(data.manual_overrides)) {
@@ -172,6 +177,42 @@ Deno.serve(async (req) => {
           } catch (recalcError) {
             financialsRecalcSkipped = `recalc_failed:${(recalcError instanceof Error ? recalcError.message : String(recalcError)).slice(0, 160)}`;
             console.error('[manage-investment-reports] financials recompute failed (save proceeds with client data):', financialsRecalcSkipped);
+          }
+        }
+
+        // The recompute above never blocks a save, so on the two paths where
+        // it is skipped — display-only overrides, or a calculator that could
+        // not be reached — whatever the client sent is what gets stored. That
+        // is how 21 production rows came to hold a deposit taken at one LVR
+        // beside a loan taken at another; on one, the two lines a client reads
+        // exceed the purchase price by $67,200.
+        //
+        // `healFinanceIdentity` re-derives whichever half the record's own
+        // `keyMetrics.lvr` contradicts, and refuses when that arbiter settles
+        // nothing — so this can correct a stale figure but never invent one.
+        // It runs on the write as well as the read because a record that is
+        // right at rest is worth more than one that is right only when
+        // something remembers to reconcile it.
+        if (isRecord(data.financial_calculations)) {
+          const initial = data.financial_calculations.initialCosts;
+          if (isRecord(initial)) {
+            const heal = healFinanceIdentity(initial, data.financial_calculations.keyMetrics);
+            if (heal.healed) {
+              data.financial_calculations = {
+                ...data.financial_calculations,
+                initialCosts: { ...initial, ...heal.patch },
+              };
+              financeIdentityHealed = heal.healed;
+              console.warn(
+                `[manage-investment-reports] finance identity healed on write (${heal.healed} re-derived) for report ${reportId}`,
+              );
+            } else if (heal.reason === 'ambiguous' || heal.reason === 'no_arbiter') {
+              // Stored as sent, and named — the disclosure surface picks it up
+              // from `financeIdentityBreaches` on the next generation.
+              console.warn(
+                `[manage-investment-reports] finance identity broken and unarbitrable (${heal.reason}) for report ${reportId}`,
+              );
+            }
           }
         }
 
@@ -218,7 +259,7 @@ Deno.serve(async (req) => {
             report,
             ...(tokenRelease ? { tokenRelease } : {}),
             ...(data.manual_overrides !== undefined
-              ? { financialsRecalculated, ...(financialsRecalcSkipped ? { financialsRecalcSkipped } : {}) }
+              ? { financialsRecalculated, ...(financialsRecalcSkipped ? { financialsRecalcSkipped } : {}), ...(financeIdentityHealed ? { financeIdentityHealed } : {}) }
               : {}),
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

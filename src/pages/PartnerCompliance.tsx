@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -12,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  ShieldCheck, ShieldAlert, Archive, Loader2, RefreshCw, Search, Lock, LockOpen,
+  ShieldCheck, ShieldAlert, Archive, Loader2, RefreshCw, Lock, LockOpen,
   Trash2, Gavel, Link2, CheckCircle2, AlertTriangle, FileClock,
 } from 'lucide-react';
 import {
@@ -216,15 +217,12 @@ export default function PartnerCompliance() {
         {/* ── AUDIT ── */}
         <TabsContent value="audit" className="space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="Search actions, actors or descriptions"
-                value={auditSearch}
-                onChange={(e) => setAuditSearch(e.target.value)}
-              />
-            </div>
+            <SearchInput
+              value={auditSearch}
+              onValueChange={setAuditSearch}
+              placeholder="Search actions, actors or descriptions"
+              containerClassName="flex-1"
+            />
             <Select value={auditCategory} onValueChange={setAuditCategory}>
               <SelectTrigger className="sm:w-56"><SelectValue /></SelectTrigger>
               <SelectContent>

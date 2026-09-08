@@ -66,6 +66,7 @@ import {
   TABLE_STYLE_OPTIONS,
 } from '@/lib/brandDesign/formOptions';
 import type { ReportDesignOptions } from '@/lib/reportDesign/options.pure';
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from '@/lib/reports/designControlsVisibility';
 
 const BLANK: BrandDesignSystem = {
   name: '',
@@ -253,6 +254,12 @@ export function BrandDesignSystemDialog({ open, onOpenChange, onSaved, companyNa
 
   const briefTooShort = brief.trim().length < MIN_BRIEF_CHARS;
   const canSave = !saving && system.name.trim().length >= 2 && hexValid && audit?.ok === true;
+
+  // Authoring a design system is hidden product-wide
+  // (designControlsVisibility.ts). The refusal lives here rather than only at
+  // the call site so a future mount inherits the decision. Selecting an
+  // EXISTING system is untouched — the converter still needs one to convert.
+  if (!REPORT_DESIGN_CONTROLS_VISIBLE) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

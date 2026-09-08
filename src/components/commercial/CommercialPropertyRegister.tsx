@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -21,7 +22,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Building2, Factory, Loader2, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Building2, Factory, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useCommercialProperties, commercialApi, type CommercialProperty } from '@/hooks/useCommercialProperties';
 import { useIndustrialProperties, industrialApi, type IndustrialProperty } from '@/hooks/useIndustrialProperties';
 import { CommercialPropertyFormModal } from '@/components/commercial/CommercialPropertyFormModal';
@@ -148,16 +149,13 @@ export function CommercialPropertyRegister() {
   return (
     <div className="space-y-4">
       <div className="ci-toolbar">
-        <div className="relative w-full max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search properties"
-            aria-label="Search properties"
-            className="pl-9"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search properties"
+          aria-label="Search properties"
+          containerClassName="w-full max-w-sm"
+        />
         <div className="ci-toolbar-filters">
           <div className="inline-flex overflow-hidden rounded-md border border-border" role="group" aria-label="Filter by segment">
             {([

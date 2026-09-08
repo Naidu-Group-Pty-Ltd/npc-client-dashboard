@@ -176,7 +176,7 @@ export default function FinancePortalPipeline() {
           </CardContent>
         </Card>
       ) : (
-        <ScrollArea className="w-full">
+        <ScrollArea horizontal className="w-full">
           <div className={`flex gap-4 pb-6 transition-opacity ${refreshing ? 'opacity-70' : ''}`}>
 
             {lanes.map((lane) => (

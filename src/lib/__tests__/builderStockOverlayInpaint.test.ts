@@ -2566,10 +2566,17 @@ describe('the deployment ships both halves of the version', () => {
    * to be the version this code is written to.
    */
   it('some migration raises the target to exactly SANITIZATION_VERSION', async () => {
-    const { readFileSync, readdirSync } = await import('node:fs');
+    const { readFileSync, readdirSync, statSync } = await import('node:fs');
     const targets: number[] = [];
     for (const file of readdirSync('supabase/migrations')) {
       if (!file.endsWith('.sql')) continue;
+      // The generated template-library seeds run to ~40MB each, and reading
+      // them under full-suite load is what timed this test out when the v12
+      // seed joined the v11 one. A hand-written migration is never within two
+      // orders of magnitude of this cap, and the seed builder writes only
+      // template rows — it cannot emit the sanitization-target call — so the
+      // skip narrows the scan without narrowing the guard.
+      if (statSync(`supabase/migrations/${file}`).size > 2_000_000) continue;
       const sql = readFileSync(`supabase/migrations/${file}`, 'utf8');
       for (const match of sql.matchAll(/set_builder_stock_sanitization_target\((\d+)\)/g)) {
         targets.push(Number(match[1]));
@@ -2577,7 +2584,7 @@ describe('the deployment ships both halves of the version', () => {
     }
     expect(targets.length).toBeGreaterThan(0);
     expect(Math.max(...targets)).toBe(SANITIZATION_VERSION);
-  });
+  }, 15_000);
 });
 
 // ---------------------------------------------------------------------------

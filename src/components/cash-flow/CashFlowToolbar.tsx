@@ -1,9 +1,10 @@
-import { Search, SlidersHorizontal, X } from 'lucide-react';
+import { SlidersHorizontal, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchInput } from '@/components/ui/search-input';
 import type { BuildTypeFilter, DateRangeFilter } from './types';
 import { BUILD_TYPE_FILTER_OPTIONS, DATE_RANGE_OPTIONS } from './utils';
 
@@ -49,15 +50,13 @@ export function CashFlowToolbar({
             Command filters
           </div>
 
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search by property address..."
-              value={searchQuery}
-              onChange={(e) => onSearchQueryChange(e.target.value)}
-              className="h-11 pl-10"
-            />
-          </div>
+          <SearchInput
+            value={searchQuery}
+            onValueChange={onSearchQueryChange}
+            placeholder="Search by property address..."
+            containerClassName="flex-1"
+            className="h-11"
+          />
 
           <div className="flex flex-col gap-3 sm:flex-row xl:items-center">
             <Select value={dateRange} onValueChange={(value) => onDateRangeChange(value as DateRangeFilter)}>

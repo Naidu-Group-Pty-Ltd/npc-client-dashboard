@@ -1744,7 +1744,7 @@ export function strengthsWatch(
  */
 export function definitions(
   title: string,
-  items: Array<{ term: string; definition: string }>,
+  items: Array<{ term: string; definition: string; when?: string }>,
   chars?: number,
 ): FlowItem {
   const c = ctx();
@@ -2140,3 +2140,18 @@ export function disclaimerPage(text: string): PageDef {
     }),
   ]);
 }
+
+/**
+ * Render-time part furniture.
+ *
+ * A compose-time `partNo += 1` keeps counting pages a `conditional` later
+ * drops, so a document with dropped pages ships with holes in its own
+ * numbering — a real three-property comparison's running heads jumped
+ * Part 12 → Part 19. `{{partNumber}}` is resolved by the renderer over the
+ * pages that actually draw, and binding it anywhere on a page is also the
+ * page's opt-in to the count — the cover binds nothing and stays outside it.
+ * The running head and the section numeral resolve from the same per-page
+ * value, so the two can never disagree.
+ */
+export const renderTimePart = (label: string): string => `Part {{partNumber | pad2}} · ${label}`;
+export const RENDER_TIME_NUMERAL = '{{partNumber | pad2}}';

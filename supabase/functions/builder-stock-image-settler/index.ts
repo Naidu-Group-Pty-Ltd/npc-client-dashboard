@@ -80,6 +80,8 @@ import {
   settleFallbackImages, MAX_FALLBACK_ITEMS_PER_TICK,
 } from '../_shared/builderStock/settleFallbackImages.ts';
 import { previewSanitization } from '../_shared/builderStock/previewSanitization.ts';
+import { RECOVERY_DEADLINE_MS } from '../_shared/builderStock/packageImages.ts';
+import { readStage } from '../_shared/builderStock/settleItemImages.ts';
 import { PROVENANCE_VERSION } from '../_shared/builderStock/sourceImages.ts';
 import { enforceStrictPrimaryImages } from '../_shared/builderStock/primaryImage.ts';
 import { storeVerifiedWebImages } from '../_shared/builderStock/webImageStore.ts';
@@ -379,15 +381,96 @@ Deno.serve(async (req: Request) => {
       itemQueueDrained = true;
     } else {
 
-    const claimed = itemClaim.item;
     /*
-     * The whole tick's wall clock goes to this one property, less a reserve to
-     * write the outcome down. That is the other half of the fix: the upload
+     * ONE PROPERTY AT A TIME, AND AS MANY AS THE CLOCK ALLOWS.
+     *
+     * The rule this preserves is the one the old single-item shape existed
+     * for: a worker must never hold a lease on a property it has not started.
+     * Claiming A, B, C, D up front and dying on A leaves B, C and D leased by
+     * a process that no longer exists, unlooked at until their leases expire.
+     * So nothing here is pre-claimed — the next property is claimed only
+     * after the previous one has been settled AND recorded, so exactly one
+     * lease is held at any instant and a kill still costs exactly one
+     * property. Identical blast radius, without the throughput ceiling.
+     *
+     * WHY THE CEILING HAD TO GO. Throughput used to be bought only by
+     * invoking more often, and concurrent invocations of one function share
+     * an isolate and its memory. Measured 7 September 2026 on upload
+     * `bd7a0ef5`: the scheduler dispatched up to TEN invocations a minute
+     * (`least(greatest(v_item_work, 1), 10)` — concurrency scaled off the
+     * backlog, so the larger the import the harder it hit), five concurrent
+     * 8 MB brochures peak at 429 MB against a 256 MB ceiling, and the isolate
+     * died. Seventy-eight properties took 161 minutes — 0.48 a minute, an
+     * order of magnitude under the design's own ceiling — because every kill
+     * threw away all the work in flight. The same six documents run one at a
+     * time elect in about a second each.
+     *
+     * So concurrency comes down to two and the work per invocation goes up:
+     * fewer isolates, each doing more, each holding one document at a time.
+     */
+    /*
+     * ENOUGH TIME TO FINISH, NOT MERELY SOME TIME LEFT.
+     *
+     * The first version of this reserved a flat 30 s, which proves nothing: a
+     * source-stage claim can legitimately spend `RECOVERY_DEADLINE_MS`
+     * (75 s) before it answers, and the recovery does not consult the item's
+     * deadline — so an item claimed at the 70 s mark could still be running
+     * at 145 s, past a 100 s budget, and be killed mid-flight. That is the
+     * exact failure this whole change removes, reintroduced by the throughput
+     * fix.
+     *
+     * So the reserve is DERIVED from the worst case rather than chosen, and
+     * it is per-stage because the stages are not alike: only `source` runs a
+     * package recovery. The write-back allowance matches the one the per-item
+     * deadline already holds back.
+     */
+    const WRITE_BACK_RESERVE_MS = 10_000;
+    const HEAVY_STAGE_RESERVE_MS = RECOVERY_DEADLINE_MS + WRITE_BACK_RESERVE_MS;
+    const LIGHT_STAGE_RESERVE_MS = 20_000;
+    const reserveFor = (stage: string): number =>
+      stage === 'source' ? HEAVY_STAGE_RESERVE_MS : LIGHT_STAGE_RESERVE_MS;
+
+    /*
+     * HOW MANY DOCUMENTS ONE ISOLATE MAY OPEN, and why a clock is not enough.
+     *
+     * The serial loop above fixed throughput and introduced this: an isolate
+     * that reads several PDFs never gives the memory back, so the invocation
+     * dies of ACCUMULATION rather than of any one document. The property in
+     * the chair when it happens takes the blame — a surviving attempt record
+     * naming a document that was never the problem.
+     *
+     * MEASURED 7 SEPTEMBER 2026, Lot 608 Acclaim Estate (`1nMsonm9`), the one
+     * property of seventy-eight that did not recover. Its brochure reads in
+     * 0.84 s and its facade render is on page 1; run six times in one process,
+     * resident memory went 50 → 173 → 236 → 247 → 254 → 287 → 318 MB. The
+     * FIFTH document crosses an Edge Function's ~256 MB ceiling. Each one is
+     * individually cheap and the isolate is dead by the fifth all the same,
+     * which is exactly the shape of the four kills that document collected.
+     *
+     * Three, so the invocation stops two documents before the crossing rather
+     * than at it. Light stages are not counted: eligibility, sanitization and
+     * fallback decode nothing, and it is decoding that accumulates — counting
+     * them would give back the throughput this loop exists to win.
+     */
+    const HEAVY_DOCUMENTS_PER_INVOCATION = 3;
+    const isHeavy = (stage: string): boolean => stage === 'source';
+    let heavyDocuments = 0;
+
+    let claimed = itemClaim.item;
+    let settledCount = 0;
+    let lastSettlement: Awaited<ReturnType<typeof settleClaimedItem>> | null = null;
+    let publication: Awaited<ReturnType<typeof publishUploadIfReady>> | null = null;
+
+    for (;;) {
+    /*
+     * The whole REMAINING wall clock goes to this one property, less a reserve
+     * to write the outcome down. That is the other half of the fix: the upload
      * walk gave each property a 12-second slice of which the preceding ones had
      * already spent most, so a linked-package recovery — which declines the bet
      * unless ten seconds remain — could be starved indefinitely while the
      * counter that would have retired it never advanced.
      */
+    if (isHeavy(claimed.image_work_stage)) heavyDocuments += 1;
     const settlement = await settleClaimedItem(supabase, claimed, {
       deadlineAt: startedAt + BUDGET_MS - 10_000,
       repairBudget: newRepairBudget(),
@@ -403,11 +486,6 @@ Deno.serve(async (req: Request) => {
      * with `available: false` therefore means the two halves disagree: the
      * property was claimed, the work was done, and nothing recorded it. It
      * stays leased until expiry and is then re-done, for ever.
-     *
-     * That exact state existed in production: 20261019000000 shipped
-     * `complete_builder_stock_image_work` with five arguments while this code
-     * calls it with six. There is no repair from in here — the migration has
-     * to land — so the job is to make it unmissable rather than to guess.
      */
     const completion = await completeItemWork(supabase, claimed.id, {
       nextStage: settlement.nextStage,
@@ -430,6 +508,9 @@ Deno.serve(async (req: Request) => {
       }, 503);
     }
 
+    settledCount += 1;
+    lastSettlement = settlement;
+
     /*
      * AND ASK WHETHER THIS PROPERTY'S UPLOAD CAN NOW BE PUBLISHED.
      *
@@ -439,58 +520,98 @@ Deno.serve(async (req: Request) => {
      * readiness rule lives inside the function, evaluated in the same statement
      * that flips the rows, so nothing can change between the check and the act.
      *
-     * A replacement upload therefore publishes itself, minutes after the
-     * builder closed the browser, with no operator anywhere in the loop.
-     */
-    let publication: Awaited<ReturnType<typeof publishUploadIfReady>> | null = null;
-    /*
-     * THE UPLOAD THAT IS WAITING, NOT THE ONE THAT IS SERVING.
-     *
-     * This used to read `claimed.upload_id` behind `lifecycle_status ===
-     * 'staged'`, and both halves were wrong for a replacement whose rows all
-     * MATCHED. Such a row is `active`, not staged, so the question was never
-     * asked; and its `upload_id` is still the OLD upload, because re-pointing
-     * it is step 1 of the cutover — so the one id in hand named the dataset
-     * already on screen. `pending_upload_id` is the upload holding this
-     * property's replacement values.
-     *
-     * This is now a fast path rather than the mechanism. The scheduler sweeps
-     * for ready uploads every tick, because an import whose rows all matched
-     * owes NO image work at all and therefore has no completed item to hang
-     * the question on — which is how a ready upload came to wait for ever.
+     * THE UPLOAD THAT IS WAITING, NOT THE ONE THAT IS SERVING. This used to
+     * read `claimed.upload_id` behind `lifecycle_status === 'staged'`, and both
+     * halves were wrong for a replacement whose rows all MATCHED.
      */
     const waitingUpload = claimed.pending_upload_id ?? (
       claimed.lifecycle_status === 'staged' ? claimed.upload_id : null);
     if (waitingUpload) {
-      publication = await publishUploadIfReady(supabase, waitingUpload);
-      if (publication.published) {
+      const published = await publishUploadIfReady(supabase, waitingUpload);
+      publication = published.published ? published : (publication ?? published);
+      if (published.published) {
         console.log('[builder-stock-image-settler] stock list published', {
           phase: 'publication',
           upload_id: waitingUpload,
-          promoted: publication.promoted,
-          archived: publication.archived,
+          promoted: published.promoted,
+          archived: published.archived,
         });
       }
+    }
+
+    /*
+     * ANOTHER ONE, ONLY IF THERE IS REAL TIME FOR IT.
+     *
+     * The reserve is sized on the work rather than on the average: a linked
+     * package may spend up to `RECOVERY_DEADLINE_MS` before it answers, so
+     * starting one with less than this left would guarantee the very
+     * mid-flight kill this whole change exists to remove. Below the reserve
+     * the invocation stops cleanly and the next tick picks the queue up —
+     * nothing is held, nothing is lost.
+     */
+    if (Date.now() > startedAt + BUDGET_MS - LIGHT_STAGE_RESERVE_MS) break;
+    const next = await claimOneImageWorkItem(supabase, {
+      leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
+    });
+    if (!next.available || !next.item) break;
+
+    /*
+     * THE STAGE IS ONLY KNOWN ONCE CLAIMED, so a claim that turns out to be
+     * too expensive for the time left is HANDED BACK rather than started.
+     * Released at the same stage with no progress, so the next tick takes it
+     * with a full budget; the recovery never begins, so no branch attempt is
+     * spent and nothing is recorded about the document. Doing the work with
+     * too little clock would either kill the worker or bank a timeout as if
+     * it were an answer about the link.
+     */
+    const remaining = startedAt + BUDGET_MS - Date.now();
+    const spentOnDocuments = isHeavy(next.item.image_work_stage)
+      && heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION;
+    if (spentOnDocuments || remaining < reserveFor(next.item.image_work_stage)) {
+      await completeItemWork(supabase, next.item.id, {
+        nextStage: readStage(next.item.image_work_stage),
+        result: spentOnDocuments
+          ? 'deferred: this invocation has opened its allowance of documents'
+          : 'deferred: not enough of this invocation left to finish it',
+        error: null,
+        retryAfterSeconds: 0,
+        // Nothing advanced — the stage was never entered.
+        progressed: false,
+        /*
+         * But the CLAIM already incremented the backoff counter, and this
+         * property did nothing to earn it: the invocation ran short, which is
+         * our scheduling and not its document. Left standing, a handful of
+         * these would push a perfectly healthy row to a 32-minute backoff and
+         * slow the very queue this loop exists to speed up. So the row goes
+         * back exactly as it was found.
+         */
+        resetAttempts: true,
+      });
+      break;
+    }
+    claimed = next.item;
     }
 
     const pending = await readItemWorkPending(supabase);
     console.log('[builder-stock-image-settler] item tick', {
       phase: 'item_work',
-      stock_item_id: claimed.id,
-      stage: settlement.stage,
-      next_stage: settlement.nextStage,
-      progressed: settlement.progressed,
-      primary_set: settlement.primarySet,
+      settled: settledCount,
+      last_stock_item_id: claimed.id,
+      stage: lastSettlement?.stage,
+      next_stage: lastSettlement?.nextStage,
+      progressed: lastSettlement?.progressed,
+      primary_set: lastSettlement?.primarySet,
       claimable: pending.claimable,
       outstanding: pending.outstanding,
       ms: Date.now() - startedAt,
     });
 
     return json({
-      success: true, path: 'item_work', settled: 1,
-      stage: settlement.stage, nextStage: settlement.nextStage,
-      progressed: settlement.progressed, primarySet: settlement.primarySet,
-      error: settlement.error ?? undefined,
+      success: true, path: 'item_work', settled: settledCount,
+      stage: lastSettlement?.stage, nextStage: lastSettlement?.nextStage,
+      progressed: lastSettlement?.progressed ?? false,
+      primarySet: lastSettlement?.primarySet ?? false,
+      error: lastSettlement?.error ?? undefined,
       published: publication?.published ?? false,
       promoted: publication?.promoted ?? 0,
       archivedOnCutover: publication?.archived ?? 0,

@@ -4,6 +4,7 @@
 // validated against an allowlist. Idempotency is enforced against
 // push_delivery_log so retries never fan out duplicate pushes.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { resolveVapidSubject } from '../_shared/vapidSubject.pure.ts';
 import webpush from 'https://esm.sh/web-push@3.6.7';
 import { verifySignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
 
@@ -123,16 +124,22 @@ Deno.serve(async (req) => {
 
     const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY');
     const VAPID_PRIVATE = Deno.env.get('VAPID_PRIVATE_KEY');
-    const VAPID_SUBJECT = Deno.env.get('VAPID_SUBJECT_EMAIL') || 'admin@example.com';
     if (!VAPID_PUBLIC || !VAPID_PRIVATE) {
       console.error('[send-web-push] VAPID keys not configured');
       return securityJsonError(503, 'service_unavailable');
     }
-    webpush.setVapidDetails(
-      VAPID_SUBJECT.startsWith('mailto:') ? VAPID_SUBJECT : `mailto:${VAPID_SUBJECT}`,
-      VAPID_PUBLIC,
-      VAPID_PRIVATE,
-    );
+    // The contact a push service uses about THIS sender. `mailto:` and
+    // `https:` are both valid (RFC 8292 §2.1) and the prefix that stood here
+    // corrupted the second: `https://x` became `mailto:https://x`. Every
+    // deployment of this platform is its own sender with its own key pair, so
+    // the subject is its own site or its own address — see
+    // `_shared/vapidSubject.pure.ts` for why there is no default any more.
+    const subject = resolveVapidSubject(Deno.env.get('VAPID_SUBJECT_EMAIL'));
+    if (!subject.ok) {
+      console.error(`[send-web-push] VAPID subject ${subject.reason}: ${subject.detail}`);
+      return securityJsonError(503, 'service_unavailable');
+    }
+    webpush.setVapidDetails(subject.subject, VAPID_PUBLIC, VAPID_PRIVATE);
 
     let payload: DispatchPayload;
     try {

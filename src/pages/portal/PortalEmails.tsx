@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
-import { Mail, Search, Loader2, Inbox, Clock, AlertTriangle } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Mail, Loader2, Inbox, Clock, AlertTriangle } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { PortalEmptyState } from '@/components/finance-portal/PortalEmptyState';
 
@@ -51,15 +52,13 @@ export default function PortalEmails() {
 
       {/* Search */}
       {emails.length > 0 && (
-        <div className="client-portal-soft-panel relative rounded-2xl p-4">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search emails by subject or sender..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border-border/60 bg-background/70 pl-10"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search emails by subject or sender..."
+          containerClassName="client-portal-soft-panel rounded-2xl p-4"
+          className="border-border/60 bg-background/70"
+        />
       )}
 
       {/* Email List */}

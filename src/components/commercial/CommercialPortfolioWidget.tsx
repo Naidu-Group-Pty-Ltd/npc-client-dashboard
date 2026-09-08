@@ -175,7 +175,7 @@ export function CommercialPortfolioWidget() {
               })}
             </div>
             {metrics.upcomingExpiries12m > 0 && (
-              <div className="mt-4 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning-foreground">
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 {metrics.upcomingExpiries12m} lease{metrics.upcomingExpiries12m === 1 ? '' : 's'} expiring in the next 12 months — review renewal strategy.
               </div>

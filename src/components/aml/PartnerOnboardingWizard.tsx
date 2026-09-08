@@ -43,6 +43,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SearchInput } from '@/components/ui/search-input';
 import { Loader2, Copy, Check, ShieldCheck, Mail, AlertTriangle, Building2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -932,11 +933,12 @@ export function PartnerOnboardingWizard({
                   </p>
                 )}
                 {!contactsLoading && !contactsError && portalContacts.length > 6 && (
-                  <Input
+                  <SearchInput
+                    value={contactSearch}
+                    onValueChange={setContactSearch}
                     aria-label="Search existing partners"
                     placeholder="Search by name or email…"
-                    value={contactSearch}
-                    onChange={(e) => setContactSearch(e.target.value)}
+                    hideIcon
                     className="h-8"
                   />
                 )}

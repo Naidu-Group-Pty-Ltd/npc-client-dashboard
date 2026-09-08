@@ -65,6 +65,81 @@ const MAX_DECODE_BYTES = 12 * 1024 * 1024;
 const MAX_DECODE_PIXELS = 40_000_000;
 
 /**
+ * A JPEG at least this long on its long side is decoded at BLOCK RESOLUTION
+ * when the caller only wants the thumbnail.
+ *
+ * WHY. The most expensive decode this pipeline has met in production is the
+ * hero of the Lumina lots' 17.9 MB brochures: one 3556×2000 baseline JPEG,
+ * 8.5 MB, measured at 3.1 s to decode here — 0.9 s of entropy parsing,
+ * 1.4 s of inverse DCT, 0.3 s reading seven million pixels back down to 400.
+ * The worker that has to read it is killed at around three seconds of CPU,
+ * so the document elected nothing, five times over, and the card stayed
+ * blank. The parse cannot be skipped (a block's coefficients say where the
+ * next block starts), but the reconstruction can stop at each block's DC
+ * coefficient — which IS the block's average, i.e. exactly the sample an
+ * 8×8 box filter takes. Measured on the same file: 3.1 s becomes ~0.9 s.
+ *
+ * WHY THE BOUND MAKES IT LOSSLESS. This module's contract is a thumbnail at
+ * most `TARGET_EDGE` on its long side, produced by box-filtering the full
+ * raster. For a source at least 8×`TARGET_EDGE` long, the DC reading is at
+ * least `TARGET_EDGE` wide, so the thumbnail that comes out of it is the
+ * same resolution the full decode would have produced, made of the same
+ * block averages. The recorded objection to an eighth-scale reading — a
+ * caption shredding into unmeasurable fragments on a 1200×600 tile, whose
+ * eighth-scale reading is 150 px — is an objection to a SMALLER thumbnail,
+ * and below this bound the full decode still runs, unchanged.
+ *
+ * JPEG only, deliberately: it is the one container whose decode has killed
+ * a worker (the entropy stage dominates PNG's inflate), and the only one
+ * measured doing so. `sourceWidth`/`sourceHeight` still report the true
+ * dimensions, because the pixel floors in the election read them.
+ */
+const COARSE_DECODE_LONG_SIDE = TARGET_EDGE * 8;
+
+/**
+ * The pixel count a container's HEADER states, read without decoding.
+ *
+ * For the callers that must decide whether a decode is affordable before
+ * paying for it — see `documentVisualKinds` and `eligibilityDetailFor` in
+ * `assessSourceImage.ts`. Null when the container is unrecognised or the
+ * header cannot be read (WebP included, undissected because no oversized
+ * WebP has ever been measured in a builder document); null means "nothing
+ * is known", and the caller decodes exactly as it did before this existed.
+ */
+export function imageHeaderPixels(bytes: Uint8Array): number | null {
+  if (!bytes?.length) return null;
+  if (isPng(bytes) && bytes.length >= 24) {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    return view.getUint32(16) * view.getUint32(20) || null;
+  }
+  if (isGif(bytes)) {
+    return ((bytes[6] | (bytes[7] << 8)) * (bytes[8] | (bytes[9] << 8))) || null;
+  }
+  if (!isJpeg(bytes)) return null;
+  let at = 2;
+  while (at + 3 < bytes.length) {
+    if (bytes[at] !== 0xff) { at += 1; continue; }
+    const marker = bytes[at + 1];
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      at += 2;
+      continue;
+    }
+    if (marker === 0xd9 || marker === 0xda) return null;
+    const length = (bytes[at + 2] << 8) | bytes[at + 3];
+    // Every SOF marker, baseline through progressive, carries the frame size.
+    if ((marker >= 0xc0 && marker <= 0xcf) && marker !== 0xc4
+      && marker !== 0xc8 && marker !== 0xcc) {
+      if (at + 8 >= bytes.length) return null;
+      const height = (bytes[at + 5] << 8) | bytes[at + 6];
+      const width = (bytes[at + 7] << 8) | bytes[at + 8];
+      return width * height || null;
+    }
+    at += 2 + length;
+  }
+  return null;
+}
+
+/**
  * What came of trying to read an image.
  *
  * `unsupported` and `failed` are kept APART because the caller does different
@@ -83,14 +158,31 @@ export const DECODABLE_CONTAINERS: readonly string[] = [
 ];
 
 /** Which decoder reads this container. One answer, used by both callers. */
-async function decodeRaster(bytes: Uint8Array): Promise<DecodedRaster | null> {
+async function decodeRaster(
+  bytes: Uint8Array,
+  allowCoarse = false,
+): Promise<DecodedRaster | null> {
   return isPng(bytes)
     ? await decodePng(bytes)
     : isJpeg(bytes)
-      ? decodeJpeg(bytes)
+      ? decodeJpeg(bytes, allowCoarse)
       : isGif(bytes)
         ? await decodeGif(bytes)
         : decodeWebpRaster(bytes);
+}
+
+/**
+ * The thumbnail's `sourceWidth`/`sourceHeight` must state the picture the
+ * builder supplied, not the resolution it happened to be read at — the
+ * election's pixel floors judge them. One place, both coarse-capable callers.
+ */
+function statedSource(thumbnail: Thumbnail, raster: DecodedRaster): Thumbnail {
+  if (!raster.coarse) return thumbnail;
+  return {
+    ...thumbnail,
+    sourceWidth: raster.trueWidth ?? thumbnail.sourceWidth,
+    sourceHeight: raster.trueHeight ?? thumbnail.sourceHeight,
+  };
 }
 
 export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeResult> {
@@ -101,9 +193,11 @@ export async function decodeThumbnailResult(bytes: Uint8Array): Promise<DecodeRe
   if (!supported) return { ok: false, reason: 'unsupported' };
 
   try {
-    const raster = await decodeRaster(bytes);
+    const raster = await decodeRaster(bytes, true);
     const thumbnail = raster && box(raster.width, raster.height, raster.read);
-    return thumbnail ? { ok: true, thumbnail } : { ok: false, reason: 'failed' };
+    return thumbnail
+      ? { ok: true, thumbnail: statedSource(thumbnail, raster) }
+      : { ok: false, reason: 'failed' };
   } catch {
     return { ok: false, reason: 'failed' };
   }
@@ -194,11 +288,24 @@ export async function decodeRasterBoth(bytes: Uint8Array): Promise<DecodedBoth> 
   }
 
   try {
-    const raster = await decodeRaster(bytes);
+    const raster = await decodeRaster(bytes, true);
     if (!raster) return { ok: false, reason: 'failed' };
     const thumbnail = box(raster.width, raster.height, raster.read);
     if (!thumbnail) return { ok: false, reason: 'failed' };
-    return { ok: true, thumbnail, full: () => materialise(raster) };
+    /*
+     * A COARSE reading has no full-size pixels to hand back — reconstructing
+     * them is the cost the coarse decode exists to avoid, and handing back
+     * the block-resolution raster as "full" would let a repair store a
+     * 445-pixel rendition of a 3556-pixel photograph. `full()` answers null,
+     * which is the answer an over-`MAX_DECODE_PIXELS` picture has always
+     * given, and every caller already treats it as "this picture cannot be
+     * repaired here" rather than as a verdict about the picture.
+     */
+    return {
+      ok: true,
+      thumbnail: statedSource(thumbnail, raster),
+      full: () => raster.coarse ? null : materialise(raster),
+    };
   } catch {
     return { ok: false, reason: 'failed' };
   }
@@ -534,7 +641,7 @@ function exifOrientation(bytes: Uint8Array, body: number, length: number): numbe
   return 1;
 }
 
-function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
+function decodeJpeg(bytes: Uint8Array, allowCoarse = false): DecodedRaster | null {
   const dcTables: Record<number, HuffTable> = {};
   const acTables: Record<number, HuffTable> = {};
   const quantisers: Record<number, Int32Array> = {};
@@ -663,9 +770,21 @@ function decodeJpeg(bytes: Uint8Array): DecodedRaster | null {
   }
 
   if (!frame) return null;
-  const raster = reconstruct(frame, quantisers);
+  const coarse = allowCoarse
+    && Math.max(frame.width, frame.height) >= COARSE_DECODE_LONG_SIDE;
+  const raster = reconstruct(frame, quantisers, coarse);
   if (!raster) return null;
-  return orientation > 1 ? orientRaster(raster, orientation) : raster;
+  const oriented = orientation > 1 ? orientRaster(raster, orientation) : raster;
+  if (!coarse) return oriented;
+  // The camera's orientation turns the true dimensions exactly as it turned
+  // the raster's, or `sourceWidth`/`sourceHeight` would state a sideways size.
+  const swapped = orientation >= 5 && orientation <= 8;
+  return {
+    ...oriented,
+    coarse: true,
+    trueWidth: swapped ? frame.height : frame.width,
+    trueHeight: swapped ? frame.width : frame.height,
+  };
 }
 
 /**
@@ -928,14 +1047,33 @@ function frameOf() {
 function reconstruct(
   frame: NonNullable<ReturnType<typeof frameOf>>,
   quantisers: Record<number, Int32Array>,
+  coarse = false,
 ): DecodedRaster | null {
+  /*
+   * COARSE: one value per block, and that value is exact. A block whose AC
+   * coefficients are ignored inverse-transforms to a flat field at its DC
+   * level — `round(DC × quantiser / 8) + 128` pixel-for-pixel — which is the
+   * block's average, i.e. the very sample an 8×8 box filter would take from
+   * the full reconstruction. So the plane is built at block resolution, the
+   * chroma mapping below works unchanged (a plane's `width` is simply its
+   * blocks-per-line), and the 1,024-multiply IDCT per block is not run.
+   */
   const block = new Int32Array(64);
   const spatial = new Uint8Array(64);
   const planes = frame.components.map((component) => {
-    const width = component.blocksPerLine * 8;
-    const height = component.blocksPerColumn * 8;
+    const width = coarse ? component.blocksPerLine : component.blocksPerLine * 8;
+    const height = coarse ? component.blocksPerColumn : component.blocksPerColumn * 8;
     const data = new Uint8Array(width * height);
     const quantiser = quantisers[component.quantiser];
+    if (coarse) {
+      const dcQuantiser = quantiser ? quantiser[0] : 1;
+      const blocks = component.blocksPerLine * component.blocksPerColumn;
+      for (let at = 0; at < blocks; at++) {
+        data[at] = clamp(
+          Math.round(component.coefficients[at * 64] * dcQuantiser / 8) + 128);
+      }
+      return { width, height, data, h: component.h, v: component.v };
+    }
     for (let row = 0; row < component.blocksPerColumn; row++) {
       for (let column = 0; column < component.blocksPerLine; column++) {
         const at = (row * component.blocksPerLine + column) * 64;
@@ -972,7 +1110,13 @@ function reconstruct(
     ];
   };
 
-  return { width: frame.width, height: frame.height, read };
+  return coarse
+    ? {
+      width: Math.ceil(frame.width / 8),
+      height: Math.ceil(frame.height / 8),
+      read,
+    }
+    : { width: frame.width, height: frame.height, read };
 }
 
 const clamp = (value: number) => value < 0 ? 0 : value > 255 ? 255 : value;
@@ -1200,6 +1344,14 @@ export interface DecodedRaster {
   width: number;
   height: number;
   read: (x: number, y: number) => [number, number, number];
+  /**
+   * Set when the raster is a block-resolution reading of a larger picture —
+   * see `COARSE_DECODE_LONG_SIDE`. `width`/`height` are then the resolution
+   * `read` answers at, and `trueWidth`/`trueHeight` are the picture's own.
+   */
+  coarse?: boolean;
+  trueWidth?: number;
+  trueHeight?: number;
 }
 
 /** The picture at the size it was supplied, as RGB triples. */

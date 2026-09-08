@@ -6,8 +6,7 @@ import {
   readCachedPoint,
   writeCachedPoint,
 } from '@/lib/listingCoordinateCache';
-import { assessAuPoint } from '../../supabase/functions/_shared/auGeoSanity.pure';
-import { assessAuPostcodePoint } from '../../supabase/functions/_shared/auPostcodeGeo.pure';
+import { isTrustworthyAuPoint } from '../../supabase/functions/_shared/auPointTrust.pure';
 import type { PropertyListing } from '@/lib/airtable';
 
 export interface ResolvedPoint {
@@ -68,18 +67,18 @@ function numeric(value: unknown): number | null {
  * one: a Perth listing plotted in the Tasman is wrong even though both points
  * are inside the country box.
  */
-function isValid(
+/**
+ * The plottability rule, imported rather than restated. The edge function this
+ * hook calls asks the identical question of the identical inputs — see
+ * `_shared/auPointTrust.pure.ts` for why a record's own coordinate is a hint
+ * and not an answer.
+ */
+const isValid = (
   lat: number | null,
   lng: number | null,
   state?: string | null,
   postcode?: string | null,
-): boolean {
-  if (lat === null || lng === null) return false;
-  if (!assessAuPoint(lat, lng, state).ok) return false;
-  // The state box cannot catch a Sunshine Coast property geocoded to Cairns —
-  // both are Queensland. The postcode band can, and does.
-  return assessAuPostcodePoint(lat, lng, postcode).ok;
-}
+): boolean => isTrustworthyAuPoint(lat, lng, state, postcode);
 
 /** Enough of an address for the server to have any chance of placing it. */
 function isResolvable(row: ListingPayload): boolean {

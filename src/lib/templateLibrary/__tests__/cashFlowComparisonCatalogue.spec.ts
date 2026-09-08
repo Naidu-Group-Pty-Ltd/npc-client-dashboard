@@ -35,7 +35,9 @@ import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
 const cfc = SAMPLE.cashFlowComparison as Record<string, any>;
 
 /** Namespaces this format may bind besides its own. */
-const AMBIENT = ['org', 'report', 'client'];
+// `partNumber` is the renderer's own per-page part counter (resolved over
+// the pages that actually draw, like `pageNumber`), not a projection leaf.
+const AMBIENT = ['org', 'report', 'client', 'partNumber'];
 
 /** A comparison the adviser never asked an analysis for. */
 const NO_ANALYSIS = (() => {
@@ -123,6 +125,7 @@ describe('the catalogue', () => {
     // projection cannot publish, and that is the defect this catches.
     const parentOf = (path: string) => path.slice(0, path.lastIndexOf('.'));
     const known = (path: string) => flat.has(path) || flat.has(path.replace(/\.\d+\./g, '.0.'));
+    flat.add('partNumber'); // renderer-ambient, resolved per rendered page
     const missing = [...boundPaths()]
       .filter((p) => !known(p) && !known(parentOf(p)))
       .sort();

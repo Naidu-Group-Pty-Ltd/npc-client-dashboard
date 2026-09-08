@@ -35,6 +35,14 @@ export interface LoanCalculationInput {
   propertyType: 'house' | 'unit' | 'townhouse';
   isFirstHomeBuyer?: boolean;
   isNewBuild?: boolean;
+  /**
+   * What is being bought. The duty engine has always had three categories
+   * (`established` | `new` | `vacant_land`) and every state schedule declares
+   * a `vacantLand` first-home concession; the caller only ever computed two of
+   * them, so the vacant-land schedules were unreachable. Absent means the
+   * `isNewBuild` flag decides, exactly as before.
+   */
+  buildType?: 'existing_property' | 'new_build' | 'land_only';
   borrowerType?: 'owner_occupier' | 'investor';
   // Capital growth rate - if provided, uses this instead of hardcoded scenarios
   // This allows researched capital growth from Perplexity to cascade into projections
@@ -88,6 +96,14 @@ export interface InterestRateInfo {
   lmiEstimate: number;
 }
 
+/**
+ * The 10-year CPI path expenses are indexed against. Produced ONLY by
+ * `cpiProjectionsFromMeasured` in `_shared/rbaReading.pure.ts` — a named
+ * assumption converging from the measured year-ended CPI toward the RBA
+ * target midpoint. The convergence arithmetic used to live here too, as a
+ * silent unlabelled fallback; two copies of one assumption is how they
+ * drift.
+ */
 export interface CpiProjection {
   year: number;
   cpiPercent: number;
@@ -340,21 +356,6 @@ export function generateProjections(
   return projections;
 }
 
-export function getDefaultCpiProjections(): CpiProjection[] {
-  return generateConvergenceProjections(2.5);
-}
-
-export function generateConvergenceProjections(currentCpi: number): CpiProjection[] {
-  const target = 2.5;
-  const projections = [];
-  for (let year = 1; year <= 10; year++) {
-    const convergenceFactor = 1 - Math.pow(0.8, year);
-    const projected = currentCpi + (target - currentCpi) * convergenceFactor;
-    projections.push({ year, cpiPercent: Math.round(projected * 10) / 10 });
-  }
-  return projections;
-}
-
 export function calculateKeyMetrics(
   input: LoanCalculationInput & { interestRate: number },
   monthlyPayment: number,
@@ -516,6 +517,12 @@ export interface StoredFinancialsReconciliation {
   metricsReconciled: boolean;
   /** Whether totalUpfront was re-derived from the row's own lines. */
   totalUpfrontDerived: boolean;
+  /**
+   * Which half of a broken `deposit + loan = price` was re-derived, if either.
+   * Null is the ordinary state: the identity held, or nothing settled which
+   * figure was sound. See `healFinanceIdentity`.
+   */
+  financeIdentityHealed: 'loan' | 'deposit' | null;
 }
 
 const isRecord = (v: unknown): v is Record<string, any> =>
@@ -527,9 +534,85 @@ const asNum = (v: unknown): number | null =>
 /** The threshold separating a CPI-escalated year-1 charge (≤ ~1.1×) from the fold (≥ 2×). */
 const FOLD_DETECTION_RATIO = 1.7;
 
+/** A dollar of rounding is allowed on the identity; a hundred is a different number. */
+const IDENTITY_DOLLAR_SLACK = 1;
+/** Half a point, the band an LVR is quoted to. */
+const IDENTITY_LVR_SLACK = 0.5;
+
+export interface FinanceIdentityHeal {
+  /** Which figure was re-derived, or null when nothing was. */
+  readonly healed: 'loan' | 'deposit' | null;
+  readonly reason: 'holds' | 'no_arbiter' | 'ambiguous' | 'insufficient';
+  readonly patch: { deposit?: number; loanAmount?: number };
+}
+
+/**
+ * `deposit + loan = purchase price`, and which side to believe when it doesn't.
+ *
+ * A finance block that breaks this describes two different deals. Measured
+ * across the corpus on 2026-09-07: **21 stored reports** carry a deposit taken
+ * at one LVR beside a loan taken at another — on one, $134,400 and $604,800
+ * against a $672,000 purchase, so the two lines a client reads exceed what
+ * they are buying by $67,200. The written analysis then repeats the loan
+ * block's LVR up to twelve times, because that is the number the model was
+ * handed.
+ *
+ * The cause was the pre-rework override splat, which wrote some leaves of a
+ * recomputed block and left others stale; `manage-investment-reports` now
+ * recomputes through the engine (measured: 17 reports with an LVR override in
+ * August and September, all consistent). What remains is the history, and it
+ * is healed HERE rather than migrated — this runs on every read path the
+ * register, the PDF, the comparison and both projections already use, so the
+ * repair reaches every reader without overwriting a single stored byte.
+ *
+ * **`keyMetrics.lvr` is the arbiter**, because the engine derives it from the
+ * inputs it was actually given (`(propertyValue − deposit) / propertyValue`).
+ * Whichever of the deposit and the loan agrees with it is the surviving half;
+ * the other is re-derived from the identity. Where NEITHER agrees, nothing is
+ * healed — a repair that cannot say which figure is sound would just be a
+ * third opinion, and `financeIdentityBreaches` discloses it instead.
+ *
+ * Verified against all 21 broken rows: 17 heal the loan, 1 heals the deposit,
+ * 3 are left alone. Of the 13 that carry an independent witness — the
+ * customer's own `manual_overrides.loanAmount` — **13 agree with the healed
+ * figure and none contradict it.**
+ */
+export function healFinanceIdentity(
+  initial: Record<string, any>,
+  keyMetrics: unknown,
+): FinanceIdentityHeal {
+  const nothing = (reason: FinanceIdentityHeal['reason']): FinanceIdentityHeal =>
+    ({ healed: null, reason, patch: {} });
+
+  const price = asNum(initial.propertyValue);
+  const deposit = asNum(initial.deposit);
+  const loan = asNum(initial.loanAmount);
+  if (price === null || price <= 0 || deposit === null || loan === null) return nothing('insufficient');
+  if (Math.abs(deposit + loan - price) <= IDENTITY_DOLLAR_SLACK) return nothing('holds');
+
+  const statedLvr = isRecord(keyMetrics) ? asNum(keyMetrics.lvr) : null;
+  if (statedLvr === null) return nothing('no_arbiter');
+
+  const lvrFromDeposit = (1 - deposit / price) * 100;
+  const lvrFromLoan = (loan / price) * 100;
+  const depositAgrees = Math.abs(lvrFromDeposit - statedLvr) <= IDENTITY_LVR_SLACK;
+  const loanAgrees = Math.abs(lvrFromLoan - statedLvr) <= IDENTITY_LVR_SLACK;
+
+  // Exactly one may agree. Both agreeing is impossible while the identity is
+  // broken, and neither agreeing means the arbiter settles nothing.
+  if (depositAgrees && !loanAgrees) {
+    return { healed: 'loan', reason: 'holds', patch: { loanAmount: Math.round((price - deposit) * 100) / 100 } };
+  }
+  if (loanAgrees && !depositAgrees) {
+    return { healed: 'deposit', reason: 'holds', patch: { deposit: Math.round((price - loan) * 100) / 100 } };
+  }
+  return nothing('ambiguous');
+}
+
 export function reconcileStoredFinancials(raw: unknown): StoredFinancialsReconciliation {
   const none = (fin: any): StoredFinancialsReconciliation => ({
-    fin, healedScenarios: [], sensitivityHealed: false, metricsReconciled: false, totalUpfrontDerived: false,
+    fin, healedScenarios: [], sensitivityHealed: false, metricsReconciled: false,
+    totalUpfrontDerived: false, financeIdentityHealed: null,
   });
   if (!isRecord(raw)) return none(raw);
 
@@ -638,14 +721,33 @@ export function reconcileStoredFinancials(raw: unknown): StoredFinancialsReconci
     }
   }
 
+  // ── the finance identity: deposit + loan = price ──────────────────────────
+  // Placed AFTER the series, deliberately: the projections' ROI denominator is
+  // the stored deposit, and re-basing a ten-year series on a healed one would
+  // change every row of a table this heal has no business rewriting. The
+  // upfront total below is a different matter — it is the deposit plus the
+  // acquisition lines, so it must follow.
+  const identity = healFinanceIdentity(initial, raw.keyMetrics);
+  let settledDeposit = deposit;
+  if (identity.healed) {
+    fin.initialCosts = { ...(isRecord(fin.initialCosts) ? fin.initialCosts : initial), ...identity.patch };
+    result.financeIdentityHealed = identity.healed;
+    if (identity.patch.deposit !== undefined) settledDeposit = identity.patch.deposit;
+  }
+
   // ── totals derived from the row's own lines ───────────────────────────────
   const stampDuty = asNum(initial.stampDuty);
   let derivedUpfront: number | null = null;
-  if (deposit !== null && stampDuty !== null) {
-    derivedUpfront = deposit + stampDuty + (asNum(initial.lmi) ?? 0)
+  if (settledDeposit !== null && stampDuty !== null) {
+    derivedUpfront = settledDeposit + stampDuty + (asNum(initial.lmi) ?? 0)
       + (asNum(initial.legalFees) ?? 0) + (asNum(initial.inspectionFees) ?? 0);
     if (derivedUpfront !== asNum(initial.totalUpfront)) {
-      fin.initialCosts = { ...initial, totalUpfront: derivedUpfront };
+      // Spread whatever `fin.initialCosts` now holds, not the raw block — the
+      // identity heal above may already have written into it.
+      fin.initialCosts = {
+        ...(isRecord(fin.initialCosts) ? fin.initialCosts : initial),
+        totalUpfront: derivedUpfront,
+      };
       result.totalUpfrontDerived = true;
     }
   }

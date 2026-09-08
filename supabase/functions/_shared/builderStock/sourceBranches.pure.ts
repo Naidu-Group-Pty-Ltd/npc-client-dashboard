@@ -40,9 +40,13 @@
  */
 import { driveFileId, driveFolderId } from './drivePackage.pure.ts';
 import {
-  NO_DETERMINISTIC_IMAGE, type ProvenanceQuestion,
+  NO_DETERMINISTIC_IMAGE, negativeProvenanceStillStands,
+  type ProvenanceQuestion,
 } from './negativeProvenance.pure.ts';
-import { PACKAGE_RECOVERY_ATTEMPT, MAX_PACKAGE_ATTEMPTS } from './packageAttempt.pure.ts';
+import {
+  PACKAGE_RECOVERY_ATTEMPT, packageAttemptsExhausted,
+} from './packageAttempt.pure.ts';
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
 
 /** What a link can be asked for, decided by the URL alone. */
 export type BranchKind =
@@ -289,8 +293,11 @@ export function branchQuestion(
   branch: RowSourceBranch,
   provenanceVersion: number,
   sourceAnchor: string | null,
+  runtimeVersion: number = RUNTIME_VERSION,
 ): ProvenanceQuestion {
-  return { provenanceVersion, packageReference: branch.url, sourceAnchor };
+  return {
+    provenanceVersion, packageReference: branch.url, sourceAnchor, runtimeVersion,
+  };
 }
 
 /**
@@ -301,8 +308,10 @@ export function branchQuestion(
  * nothing here can take a photograph out of it at all. Only the first two are
  * findings about the document.
  *
- * A branch whose record belongs to a DIFFERENT question — a bumped version, a
- * changed anchor — is not finished, because that record answers something else.
+ * A branch whose record belongs to a DIFFERENT question — a bumped extractor
+ * version, a changed anchor, or a retirement OUR OWN worker caused under a
+ * runtime that has since been superseded — is not finished, because that
+ * record answers something else.
  */
 export function branchTerminal(
   stored: unknown,
@@ -316,9 +325,20 @@ export function branchTerminal(
   if (Number(record.provenance_version) !== question.provenanceVersion) return false;
   if ((record.source_anchor ?? null) !== (question.sourceAnchor ?? null)) return false;
 
-  if (record.result === NO_DETERMINISTIC_IMAGE) return true;
+  /*
+   * BOTH TERMINAL ANSWERS ARE READ BY THE MODULE THAT WROTE THEM, and that is
+   * the whole of this fix. This function used to read `result` and `attempts`
+   * off the record itself, which meant it agreed with those two modules on
+   * every question except the one the runtime version exists to ask — so a
+   * runtime bump reopened a property's ROW while its branches stayed shut, and
+   * the settler claimed it, found nothing open, and re-settled it within the
+   * second. Delegating is what keeps the three predicates from drifting again.
+   */
+  if (record.result === NO_DETERMINISTIC_IMAGE) {
+    return negativeProvenanceStillStands(record, question);
+  }
   if (record.result === PACKAGE_RECOVERY_ATTEMPT) {
-    return Number(record.attempts ?? 0) >= MAX_PACKAGE_ATTEMPTS;
+    return packageAttemptsExhausted(record, question);
   }
   return false;
 }
@@ -337,9 +357,11 @@ export function openBranches(
   branches: RowSourceBranch[],
   provenanceVersion: number,
   sourceAnchor: string | null,
+  runtimeVersion: number = RUNTIME_VERSION,
 ): RowSourceBranch[] {
   return branches.filter((branch) => !branchTerminal(
-    stored, branch, branchQuestion(branch, provenanceVersion, sourceAnchor)));
+    stored, branch,
+    branchQuestion(branch, provenanceVersion, sourceAnchor, runtimeVersion)));
 }
 
 /**
@@ -385,6 +407,8 @@ export function allBranchesTerminal(
   branches: RowSourceBranch[],
   provenanceVersion: number,
   sourceAnchor: string | null,
+  runtimeVersion: number = RUNTIME_VERSION,
 ): boolean {
-  return openBranches(stored, branches, provenanceVersion, sourceAnchor).length === 0;
+  return openBranches(
+    stored, branches, provenanceVersion, sourceAnchor, runtimeVersion).length === 0;
 }

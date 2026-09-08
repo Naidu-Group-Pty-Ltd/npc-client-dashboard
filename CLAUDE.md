@@ -112,6 +112,75 @@ Airtable returns `undefined` for a column that does not exist exactly as it does
 that is empty, so a mistyped name is invisible — that file's header records what that cost
 last time.
 
+**Where a pin goes is a different question again, and it took four rounds.**
+Read [`MAP_PIN_PLACEMENT.md`](./docs/listings/MAP_PIN_PLACEMENT.md) before
+touching `resolve-listing-coordinates`, any `_shared/au*.pure.ts`,
+`src/lib/listingsMap.ts` or `ListingsMapView`. The map has **never had an API
+key and must never need one** — a clone has nowhere to inherit a tile account
+from, and a `VITE_` token is inlined into every clone's bundle. Three rules
+bite. **`components=country:AU` does not restrict the SEARCH, it restricts the
+ANSWER**: an address it cannot match returns the centre of the continent with
+HTTP 200, which is inside Australia, on land, and contradicts no state — so
+`London` and `Pittsburgh` drew a tidy cluster in the desert, and that fault was
+introduced by the previous fix in this same area, which correctly stopped
+trusting their overseas coordinates and sent them to the geocoder instead.
+`geocodeGranularity.pure.ts` reads the provider's own `types`, refuses anything
+no finer than a state, and keeps `locality` acceptable because a suburb
+centroid is imprecise rather than wrong — refusing it would empty the map of
+every builder-stock item. **Only co-location may put more than one property
+behind one mark**: a proximity bubble is drawn at one member's coordinate while
+standing for properties hundreds of kilometres apart, so its position carries
+no information and it was read as a misplaced pin every time it was seen — two
+rounds were spent moving it to a better member, which worked and did not help.
+`groupByCoordinate` groups by exact coordinate, so a mark that says "26" is
+TRUE at every zoom and nothing is ever drawn where no property stands. And
+**removing clustering removed the spiderfy**, which was the only way to reach
+one of the twenty-six listings sharing `104 Grubb Avenue, Traralgon`;
+`ListingStackPager` is what keeps the count badge's promise, and it is never
+drawn for a stack of one.
+
+**The address a pin and a card are built from is COMPOSED, never inherited.**
+Read [`ADDRESS_COMPOSITION.md`](./docs/listings/ADDRESS_COMPOSITION.md) before
+touching `_shared/listingAddress.pure.ts`,
+`_shared/builderStockAddress.pure.ts` or the `address` line in
+`projectAirtableRecord`. Airtable decomposes every address — `Unit Number`,
+`Street Number`, `Street Name`, `Street Type` — and **97 of 139 live listings
+can build a street line from those parts**, which had **zero call sites** in
+the frontend: the projection did `Address ?? Full Address` and everything
+downstream took that string. It disagrees with the parts because of a loop at
+the source — Make geocodes `{{address}},{{suburb}}` (no street number, no
+state, no postcode), Google answers with the suburb centroid, and a second
+model call re-parses that answer and writes **eight** address columns back over
+the extraction. So `Full Address` reads `Cobblebank VIC 3338, Australia` on a
+record that knows `Mortlock Street`, and 202 of 1,019 cached geocodes collapse
+onto 95 points. Three rules bite. **The parts outrank any formatted string** —
+a `formatted_address` describes what the provider MATCHED, which is smaller
+than what the source said. **Precision is measured** (`address` / `street` /
+`locality` / `none`), because 30 listings genuinely carry only a suburb and no
+parsing invents a street number that was never in the email. And for builder
+stock, **a bare leading number is a LOT, not a street number** — measured: of
+the 44 rows opening with a number that also carry a `lot_number`, it equals the
+lot in 44 and differs in none, at every magnitude. Calling a lot a street
+number puts the pin on somebody else's house. The Make repair is
+`blueprints/apply-address-fix.py`, which **chains from `apply-sender-fix.py`**
+because both write the same file.
+
+**The Listings key is one key across the prime and every clone, and the
+Integrations page cannot touch it.** Read
+[`AIRTABLE_KEY_OWNERSHIP.md`](./docs/integrations/AIRTABLE_KEY_OWNERSHIP.md)
+before touching `AIRTABLE_TOKEN`, the Airtable card in
+`src/lib/integrations/registry.ts`, or `update-integration-secret`. That card
+used to alias its `AIRTABLE_API_KEY` field onto `AIRTABLE_TOKEN` and write it
+into the project environment through the Management API — so a key typed on
+the Integrations page silently superseded the one `airtable-proxy`,
+`listings-cache`, `listing-images` and `listing-enrichment` run on. The six
+pipeline names are listed once, in `_shared/listingsPipelineSecrets.pure.ts`,
+managed by Mission Control (forwarded to every clone), and refused by the
+write endpoint before the allow-list with a message that names the rule. The
+page's Airtable card is the **workflow** connection, under its own names
+(`AIRTABLE_API_KEY`, `AIRTABLE_WORKFLOW_BASE_ID`), and the workflow catalog
+reads only those.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's
@@ -256,6 +325,38 @@ all of them. And **normalisation is server-side, always**: names are indexed
 with the same function the screening query uses, so a browser that normalised
 differently writes entries no query can ever match, which looks exactly like a
 list that works.
+
+## Identity verification reaches Didit through Mission Control
+Read [`docs/aml/VERIFICATION_BROKER.md`](./docs/aml/VERIFICATION_BROKER.md)
+before touching `_shared/aml/providers/diditStandaloneRoute.pure.ts`,
+`probeStandaloneRoute`, the `verification_selftest` operation or Mission
+Control's `verificationBroker.*`. A Didit API key is scoped to an
+APPLICATION, and that scope includes the application's session list — measured
+7 Sep 2026, one key returned all eight sessions with the customer's name and
+**live pre-signed URLs to their passport portrait and selfie**. Forwarding it
+fleet-wide put a credential on three tenant projects that could read every
+other tenant's customers' identity documents, and Didit publishes no API to
+mint one per tenant. So the credential stops travelling and the CALL travels:
+Mission Control holds the key and runs the three write operations on a
+tenant's behalf.
+
+Four rules bite. **A brokered call is not metered at the clone** — Mission
+Control writes the usage row because Mission Control made the vendor call, and
+both ends billing is worse than neither. **Nothing readable is brokered**, so
+the enumeration this closes cannot be reached through the thing that closes
+it. **Who refused is read from a header** (`x-mission-control-refusal`, set on
+Mission Control's own refusals and never on what it relays) rather than
+guessed from a body, because both ends answer 401 with similar JSON and send
+an operator to opposite remedies. And **configuration is not reachability**:
+every readiness reading here was green on three tenants that had never
+completed a verification, so `verification_selftest` makes one real call —
+deliberately incomplete, so the vendor rejects it for free — and being
+rejected is the PASS. It is never metered and writes nothing.
+
+The **hosted-session** flow (`diditClient.ts`, `didit-webhook`) is deliberately
+NOT brokered: it is legacy, `diditConfigured()` refuses to create a session
+without the raw key, and a decision read is parameterised by session id — so
+brokering it needs per-session ownership or the broker becomes the leak.
 
 ## AML screening execution
 Read [`docs/aml/SCREENING_EXECUTION.md`](./docs/aml/SCREENING_EXECUTION.md)
@@ -1257,6 +1358,79 @@ is a data edit in `schedules.pure.ts` plus a regenerated seed — never a hand-w
 one. The weekly sweep flags stale schedules and **never writes a rate**; the doc
 explains why that asymmetry is deliberate.
 
+## The three numbers a client acts on
+Read [`docs/reports/DERIVED_FIGURES.md`](./docs/reports/DERIVED_FIGURES.md)
+before touching `_shared/reports/metrics/propertyMetrics.pure.ts`, the yield or
+LVR detectors in `factReconciliation.pure.ts`, or any inline yield/LVR
+arithmetic. Gross yield, net yield and LVR are derived — the record contains
+none of them — and **nothing in this product had ever compared a number**:
+`runQAValidation`'s seven rules are page band, keyword presence, placeholders,
+editorial labels, duplicate headings and section counts, every one structural.
+
+The finding that shaped the fix: **the divergence was mostly not a bug.** Six
+gross-yield sites, four net, eight LVR — but `liveProjectionRow.ts` divides the
+settlement loan by the purchase price while the strategy surfaces divide the
+remaining balance by today's value, and those are *different quantities*
+(origination LVR, current LVR) that coincide only at settlement. Collapsing
+them onto one definition would have destroyed a real distinction and silently
+changed documents. So **basis is part of the call**, never a default, the
+answer carries its basis back, and `labelFor` prints "Gross yield (on purchase
+price)". Two rules travel with it — **absent is never zero** (84 of 1,072
+stored reports print a `0.00%` yield, because the rent was unknown) and **net
+yield is unlevered while cash-on-cash is not**.
+
+Three rules bite in the reconciliation. **Tolerance is absolute for a
+percentage** — a 2% relative band on 4.83 is ±0.097, which rejects the ordinary
+rounding "5%" — so yields carry 0.25 points and LVR 0.5. **A verb may never
+introduce the number**: 543 of 2,153 gross mentions are a working column
+(`| Gross Rental Yield | $33,800 ÷ $700,000 × 100 | 4.83% |`) so the pattern
+must cross arithmetic, but the corpus long tail read "gross rental yield
+provides substantial buffering against interest rate increases. A 1%" as the
+figure, so the value must arrive through a delimiter or sit adjacent to the
+label. And **LVR refuses the value-after-label form altogether** — `LVR, 6.5%`
+and `LVR at 6.5%` are the interest rate, `banks cap LVR at 95%` is policy, and
+`| Final LVR | 52% |` is the correct CURRENT LVR at year ten; admitting only
+value-first and structurally-connected forms doubled coverage and cut
+disagreement from 22 of 57 reports to 10 of 115.
+
+Those 10 are one real defect and it is not the model's: **21 stored reports
+contradict themselves**, carrying a deposit at one LVR beside a loan at
+another — on one, the two lines exceed the purchase price by $67,200 while the
+customer's own override names the right loan — after which the analysis says
+"90% LVR" up to twelve times because the loan block is what it was handed.
+`derivedFigureDefinitions.spec.ts` is a **ratchet, not a ban** — 22 modules, 53
+inline definitions, frozen — because most of the copies are the real
+distinction above and what needed fixing was the slope.
+
+Both of those were then fixed at the cause, and §5–§6 of the same doc carry
+them. **There is one rent** (`rentalEvidence.pure.ts`): the generator resolved
+it twice, and the SQM lookup landed in a variable scoped INSIDE the enrichment
+block, so 83 reports printed `0.00%` beside projections built on a real rent —
+and the scoring service, handed the same zero, scored the property as earning
+nothing. Where no rent is established every figure derived from it is now
+absent, and the prompt forbids an estimate while still permitting qualitative
+discussion, because a prohibition with no permitted action is one a model
+routes around. Two rules bite: **arithmetic keeps its zero** (management fees
+are a percentage OF the rent) so only what a reader is *shown* changes, and the
+**`%` sign lives inside the formatter**, since every call site read
+`${preCalculatedGrossYield}%` and a null there prints `null%`. The yields keep
+their `.toFixed(2)` rather than adopting `propertyMetrics` — measured over
+2,207,223 pairs the two roundings disagree on 2,763, so unifying them would
+shift 0.125% of documents by a hundredth for nobody's benefit.
+
+**The finance identity is healed on READ, never migrated.**
+`healFinanceIdentity` lives in `reconcileStoredFinancials`, which the register,
+the PDF renderer, the comparison and both projections already call — so all 21
+rows repair for every reader with no migration and no stored byte overwritten.
+**`keyMetrics.lvr` is the arbiter**: whichever of the deposit and the loan
+agrees with it survives and the other is re-derived, and where neither agrees
+nothing is healed, because a repair that cannot say which figure is sound is
+just a third opinion. Verified on all 21 — 17 heal the loan, 1 the deposit, 3
+left alone; of the 13 with an independent witness, 13 agree and none
+contradict. Placement is load-bearing: **after** the series heal (the ROI
+denominator is the stored deposit) and **before** the upfront total (which is
+the deposit plus the acquisition lines).
+
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
 else here.** The design system renders **0.14%** of the documents this product
@@ -1351,6 +1525,68 @@ Ten formats have been migrated onto it, and each carries its own contract:
 relevant one before touching that format — each records defects that only a
 render against production data revealed, and each names the legacy generators
 that must stay.
+
+**Public transport is real now, and the archive is addressed rather than
+downloaded.** Read [`TRANSPORT_SOURCES.md`](./docs/reports/TRANSPORT_SOURCES.md)
+before touching `_shared/gtfsFeed.pure.ts`, `_shared/transportReading.pure.ts`,
+`transport-gtfs-ingest` or `public-transport-service`. It replaces audit
+Section 24's clearest fabricator — eight per-state "fetchers" that ignored the
+coordinate, so every NSW property was 450m from Central Station, cached 30 days
+and driving up to 30 points of every report's walk score. NSW's published
+bundle is 292,247,414 bytes and `shapes.txt` is 77% of it, so the loader reads
+the zip's central directory from a range-fetched tail and takes `stops.txt`
+alone: **1.467%, byte-exact against the declared size**. 185,177 stops across
+four networks. Three rules bite. **A station and its platforms are ONE place** —
+thirteen production rows within 1.6 km of Parramatta all carry
+`parent_station: 215020`, and a nearest-eight over rows lists six platforms of
+one station as six stops; grouping is by the publisher's own field, never by
+name similarity. **A stop found is a fact about the area; no stop found is a
+fact about the FEEDS** — a Perth property is outside every loaded network, not
+poorly served, so `outside_loaded_networks` is its own verdict and Victoria
+stays declared-but-unloaded (PTV nests deflated per-mode archives) rather than
+vanishing. And **nothing returns a score or a mode**: the invented
+`qualityScore` is what corrupted the walk score, and mode lives behind a 399 MB
+member, so both are named as not measured on every answer.
+
+**Recorded crime now covers four states, and the fourth one changed its
+classification mid-series.** Read
+[`CRIME_SOURCES.md`](./docs/reports/CRIME_SOURCES.md) before touching
+`_shared/crimeIngest.pure.ts` (NSW/QLD), `_shared/crimeIngestSaNt.pure.ts`
+(SA/NT), the `crime-data-ingest` stages or `crime_reference`. The rule that
+carries the new half: **SAPOL reclassified its offences from 2025-07 and it is
+a reclassification, not a rename** — the Level 3 leaves moved too, so any
+crosswalk would be an invention and a year-on-year change computed across it
+would be a confident figure that is not like-for-like. SA is therefore stored
+at two grains: Level 1 (stable, measured continuous across the boundary)
+carries the comparison and six calendar years, and Level 2 carries `prior12`
+NULL with a `series_note` that reaches the reader. Three more things bite. The
+SAPOL catalogue holds **Family & Domestic Abuse files beside the crime files
+and its own note says the two must never be added** — the matcher recognises
+only the crime family. **A row the register declines to place is not a
+malformed row**: `NOT DISCLOSED` is 1.18–1.90% of every file and is counted
+and reported, while a wrong-shape row is capped at the measured 1-in-84,949.
+And **NT's alcohol/DV rows are a cross-tab, not a hierarchy** — the opposite
+of QLD's rollup trap, proved on every load (0 repeated cells, 0 `-` totals
+beside their parts) because the day that stops being true is the day summing
+silently double-counts.
+
+**A stored report is addressable by section now.** Read
+[`SECTION_STORAGE.md`](./docs/reports/SECTION_STORAGE.md) before touching
+`_shared/reports/investment/sectionStorage.pure.ts`, `detectSectionLevel` /
+`partitionByRegistry` in `sectionRegistry.pure.ts`, the `report-sections-index`
+function or the two derived tables. `report_content` stays the source of truth
+and nothing writes to it; the index is a projection over it, and a report whose
+re-assembly cannot be proven lossless is left **unindexed** rather than half
+indexed. Two things bite. **The partition was blind to 70% of the corpus** — it
+read `##` only, and 842 of 1,199 stored reports write their sections at H1
+(`# 1. Location Overview` … `# 36. Demographic & Economic Data`), so it returned
+each of those whole documents as preamble; the coverage fixture that vouched for
+it was H2-only for the same reason, measuring 10,185 heading instances while
+26,860 sat outside it. And **a repeat is an occurrence, never a merge**: one
+briefing carries `marketPosition` four times, so the key is `(report_id,
+ordinal)` and re-assembly walks them in order. Verified by execution over the
+whole corpus — 1,199 of 1,199 conserve — and the deployment was checked against
+the repo by digest and sample rather than assumed to match it.
 
 **Investment Location & Property Fit** is the highest-volume format by an order
 of magnitude — 1,182 rows, 5-18 a week. Its *structure* is

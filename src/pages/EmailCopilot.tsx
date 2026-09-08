@@ -5,6 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { buildForwardedHtml, buildForwardedSubject } from '@/lib/email/forwardedMessage.pure';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useEmailNotifications } from '@/hooks/useEmailNotifications';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -1456,7 +1457,7 @@ export default function EmailCopilot() {
 
   // Send forwarded email
   const handleSendForward = async () => {
-    if (!selectedEmail || !forwardTo || !forwardBody) return;
+    if (!selectedEmail || !forwardTo) return;
     
     setIsForwarding(true);
     
@@ -1475,8 +1476,11 @@ export default function EmailCopilot() {
 
       const { data, error } = await invokeSecureFunction('send-email-reply', {
         to: parseEmailList(forwardTo),
-        subject: `Fwd: ${selectedEmail.subject}`,
-        body: forwardBody,
+        subject: buildForwardedSubject(selectedEmail.subject),
+        // The original message travels WITH the note. It used to be dropped
+        // entirely, so the recipient got the covering note and none of the
+        // email being forwarded — no layout, no calls to action.
+        body: buildForwardedHtml(forwardBody, selectedEmail),
         cc: ccList.length > 0 ? ccList : undefined,
         bcc: bccList.length > 0 ? bccList : undefined,
         attachments: attachmentsData.length > 0 ? attachmentsData : undefined,
@@ -3177,7 +3181,7 @@ export default function EmailCopilot() {
                     value={replyCc}
                     aria-label="Reply CC recipients"
                     onChange={(e) => setReplyCc(e.target.value)}
-                    placeholder="cc@example.com"
+                    placeholder="cc@example.com, another@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 text-xs focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)] sm:text-sm"
                   />
                 </div>
@@ -3187,7 +3191,7 @@ export default function EmailCopilot() {
                     value={replyBcc}
                     aria-label="Reply BCC recipients"
                     onChange={(e) => setReplyBcc(e.target.value)}
-                    placeholder="bcc@example.com"
+                    placeholder="bcc@example.com, another@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 text-xs focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)] sm:text-sm"
                   />
                 </div>
@@ -3601,7 +3605,7 @@ export default function EmailCopilot() {
                     value={composeEmail.bcc}
                     aria-label="BCC recipients"
                     onChange={(e) => setComposeEmail({ ...composeEmail, bcc: e.target.value })}
-                    placeholder="bcc@example.com"
+                    placeholder="bcc@example.com, another@example.com"
                     className="h-9 rounded-xl border-border/70 bg-background/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)]"
                   />
                 </div>
@@ -3841,7 +3845,7 @@ export default function EmailCopilot() {
                     value={replyCc}
                     aria-label="Reply CC recipients"
                     onChange={(e) => setReplyCc(e.target.value)}
-                    placeholder="cc@example.com"
+                    placeholder="cc@example.com, another@example.com"
                     className="h-8"
                   />
                 </div>
@@ -3851,7 +3855,7 @@ export default function EmailCopilot() {
                     value={replyBcc}
                     aria-label="Reply BCC recipients"
                     onChange={(e) => setReplyBcc(e.target.value)}
-                    placeholder="bcc@example.com"
+                    placeholder="bcc@example.com, another@example.com"
                     className="h-8"
                   />
                 </div>
@@ -3954,7 +3958,7 @@ export default function EmailCopilot() {
                   <Input
                     value={forwardCc}
                     onChange={(e) => setForwardCc(e.target.value)}
-                    placeholder="cc@example.com"
+                    placeholder="cc@example.com, another@example.com"
                     className="h-8"
                   />
                 </div>
@@ -3963,7 +3967,7 @@ export default function EmailCopilot() {
                   <Input
                     value={forwardBcc}
                     onChange={(e) => setForwardBcc(e.target.value)}
-                    placeholder="bcc@example.com"
+                    placeholder="bcc@example.com, another@example.com"
                     className="h-8"
                   />
                 </div>
@@ -4033,7 +4037,7 @@ export default function EmailCopilot() {
                   value={forwardBody}
                   onChange={(e) => setForwardBody(e.target.value)}
                   className="h-[250px] resize-none font-sans text-sm"
-                  placeholder="Add a message before the forwarded content..."
+                  placeholder="Add a message before the forwarded content (optional)..."
                 />
               </div>
             </div>
@@ -4050,7 +4054,7 @@ export default function EmailCopilot() {
               </Button>
               <Button 
                 onClick={handleSendForward} 
-                disabled={isForwarding || !forwardTo || !forwardBody}
+                disabled={isForwarding || !forwardTo}
                 className="bg-info hover:bg-info"
               >
                 {isForwarding ? (
@@ -4118,6 +4122,45 @@ export default function EmailCopilot() {
               />
             )}
           </div>
+          {/* Expanding an email used to be a dead end — it showed the message
+              and offered nothing to do with it, so the operator had to close
+              the window to act. The same three acts the reading pane offers
+              are here, on the message they are looking at. */}
+          {selectedEmail && (
+            <DialogFooter className="shrink-0 flex-col gap-2 border-t pt-3 sm:flex-row sm:justify-end">
+              <Button
+                onClick={() => { setShowBodyModal(false); handleSummarize(); }}
+                disabled={isSummarizing}
+                variant={selectedEmail.summary ? 'outline' : 'default'}
+                className="rounded-full"
+              >
+                <Sparkles className={`mr-2 h-4 w-4 ${isSummarizing ? 'animate-pulse' : ''}`} />
+                {selectedEmail.summary ? 'Re-summarize' : 'Summarize'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowBodyModal(false);
+                  setCurrentDraft('');
+                  setReplyContext('');
+                  initializeReplyFields();
+                  setShowDraftModal(true);
+                }}
+                variant="outline"
+                className="rounded-full border-brand-500/25 bg-brand-500/5 hover:bg-brand-500/10"
+              >
+                <Reply className="mr-2 h-4 w-4 text-brand-600" />
+                Compose Reply
+              </Button>
+              <Button
+                onClick={() => { setShowBodyModal(false); handleOpenForward(); }}
+                variant="outline"
+                className="rounded-full"
+              >
+                <Forward className="mr-2 h-4 w-4" />
+                Forward
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 

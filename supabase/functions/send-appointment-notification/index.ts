@@ -36,7 +36,15 @@ interface NotificationRequest {
   appointmentTitle: string;
   appointmentStart: string; // ISO string
   appointmentEnd: string;   // ISO string
-  appointmentType: string;
+  /**
+   * call | zoom | in-person. Optional: a cancellation or reschedule notice is
+   * about an appointment that was already booked, and the ledger recorded what
+   * kind it was. The callers used to hardcode 'call' and 'reschedule' here,
+   * so every such notice announced the wrong thing — a Zoom booking was
+   * cancelled as a "Phone Call", and a reschedule printed the raw word
+   * "reschedule" because it is not a meeting type at all.
+   */
+  appointmentType?: string;
   appointmentNotes?: string;
   /**
    * Where the meeting happens — for a Zoom booking this is the join link.
@@ -145,7 +153,8 @@ function buildEmailBody(params: {
   title: string;
   start: string;
   end: string;
-  type: string;
+  /** Optional: a notice about an existing booking resolves it from the ledger. */
+  type?: string;
   notes?: string;
   calendarName?: string;
   brandName: string;
@@ -172,7 +181,12 @@ function buildEmailBody(params: {
     'zoom': '💻 Zoom Meeting',
     'in-person': '🤝 In-Person Meeting',
   };
-  const typeLabel = typeLabels[params.type] || params.type;
+  // An unrecognised value is rendered as words rather than as the token
+  // itself: "reschedule" reached this line and was printed verbatim.
+  const typeLabel = (params.type ? typeLabels[params.type] : undefined)
+    || (params.type
+      ? params.type.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+      : 'Meeting');
 
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -280,15 +294,34 @@ Deno.serve(async (req) => {
     // cancel path is `updateEvent(id, { appointmentStatus: 'cancelled' })` and
     // holds nothing else. Resolved here so one caller cannot uninvite a
     // different set of people from the set that was invited.
+    // What kind of meeting this actually is. A caller announcing a change to
+    // an existing booking need not know: the booking recorded it.
+    let effectiveType = appointmentType;
     let effectiveRecipients = recipients;
-    if (isCancellation && (!effectiveRecipients || effectiveRecipients.length === 0)) {
+    // Whoever was invited is already recorded against the booking, so a notice
+    // about a change to it need not be told again. This applied to
+    // cancellations only, which is why a reschedule made the operator re-add
+    // the additional contact and the finance partner by hand every time —
+    // and quietly told nobody when they forgot.
+    //
+    // `recipientsWereResolved` then keeps the ledger honest: it records who was
+    // INVITED, so a reschedule must not add a second row per person per change.
+    let recipientsWereResolved = false;
+    if (!effectiveRecipients || effectiveRecipients.length === 0) {
+      recipientsWereResolved = true;
       const { data: invited, error: lookupError } = await supabase
         .from('appointment_secondary_recipients')
-        .select('finance_contact_id, contact_name, contact_email')
+        .select('finance_contact_id, contact_name, contact_email, appointment_type')
         .eq('appointment_ghl_id', appointmentGhlId);
       if (lookupError) {
         console.error('[Appointment Notification] Could not read invited recipients:', lookupError.message);
       }
+      // The booking knows what kind of meeting it is; the canceller does not.
+      const recordedType = (invited ?? [])
+        .map((r: any) => String(r?.appointment_type ?? '').trim())
+        .find((t: string) => t && t !== 'reschedule');
+      if (recordedType) effectiveType = recordedType;
+
       // One notice per person, however many rows they have.
       const seen = new Set<string>();
       effectiveRecipients = (invited ?? [])
@@ -303,7 +336,7 @@ Deno.serve(async (req) => {
           name: r.contact_name,
           email: r.contact_email,
         }));
-      console.log(`[Appointment Notification] Cancellation: ${effectiveRecipients.length} previously-invited recipient(s)`);
+      console.log(`[Appointment Notification] Resolved ${effectiveRecipients.length} previously-invited recipient(s) from the booking`);
     }
 
     if (!effectiveRecipients || effectiveRecipients.length === 0) {
@@ -347,7 +380,7 @@ Deno.serve(async (req) => {
           title: appointmentTitle,
           start: appointmentStart,
           end: appointmentEnd,
-          type: appointmentType,
+          type: effectiveType,
           notes: appointmentNotes,
           calendarName,
           brandName,
@@ -392,7 +425,7 @@ Deno.serve(async (req) => {
         // of who was INVITED, and it is what a cancellation reads back to know
         // whom to tell. Writing a row here would make the next cancellation
         // find the same person twice.
-        if (!isCancellation) await supabase
+        if (!isCancellation && !recipientsWereResolved) await supabase
           .from('appointment_secondary_recipients')
           .insert({
             appointment_ghl_id: appointmentGhlId,
@@ -404,7 +437,7 @@ Deno.serve(async (req) => {
             appointment_title: appointmentTitle,
             appointment_start: appointmentStart,
             appointment_end: appointmentEnd,
-            appointment_type: appointmentType,
+            appointment_type: effectiveType,
             appointment_notes: appointmentNotes || null,
             calendar_name: calendarName || null,
           });
@@ -416,7 +449,7 @@ Deno.serve(async (req) => {
         console.error(`[Appointment Notification] ✗ Failed for ${recipient.email}:`, err.message);
         
         // Record failure in DB — same reasoning as the success path above.
-        if (!isCancellation) await supabase
+        if (!isCancellation && !recipientsWereResolved) await supabase
           .from('appointment_secondary_recipients')
           .insert({
             appointment_ghl_id: appointmentGhlId,
@@ -428,7 +461,7 @@ Deno.serve(async (req) => {
             appointment_title: appointmentTitle,
             appointment_start: appointmentStart,
             appointment_end: appointmentEnd,
-            appointment_type: appointmentType,
+            appointment_type: effectiveType,
             appointment_notes: appointmentNotes || null,
             calendar_name: calendarName || null,
           });

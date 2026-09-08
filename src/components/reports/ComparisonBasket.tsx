@@ -121,7 +121,14 @@ export function ComparisonBasket({ onCompare }: ComparisonBasketProps) {
         // A flex column, so the list below can be given a DEFINITE height to
         // scroll inside. `max-h` alone left the tray's height driven by its
         // content, which is what silently clipped the 4th and 5th properties.
-        <Card className="flex max-h-[calc(100vh-7rem)] w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-3xl border-brand-400/25 bg-card/95 shadow-2xl shadow-sm dark:shadow-black/20 backdrop-blur dark:bg-background/95">
+        //
+        // The unit matters as much as the structure: `100vh` counts browser
+        // chrome that is not part of the visible area, so on a zoomed window
+        // the panel was taller than the space it had and the Compare button
+        // fell past the fold with five reports selected. `dvh` measures what
+        // is actually on screen. The 8rem clears the 88px top offset this
+        // overlay is anchored at, with room to breathe.
+        <Card className="flex max-h-[calc(100dvh-8rem)] w-[420px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-3xl border-brand-400/25 bg-card/95 shadow-2xl shadow-sm dark:shadow-black/20 backdrop-blur dark:bg-background/95">
           <CardHeader className="shrink-0 border-b border-border/60 pb-4">
             <div className="flex items-start justify-between gap-3">
               <div>

@@ -86,30 +86,79 @@ export function SendAgreementDialog({ open, onOpenChange, client, dealId }: Send
   const [pdfPollAttempts, setPdfPollAttempts] = useState(0);
   const [pdfTimedOut, setPdfTimedOut] = useState(false);
 
-  // Pre-fill when dialog opens
+  /**
+   * The dialog is seeded ONCE per opening, and never re-seeded because the
+   * parent re-rendered.
+   *
+   * This effect used to depend on `[open, client]`, and the client modal
+   * builds `client={{ ... }}` as an object literal at the call site — a fresh
+   * identity on every one of its renders. So a background refetch, or the
+   * token estimate ticking over, re-ran the whole block while the dialog was
+   * open: every field was reset to the client's stored value and `notes` was
+   * cleared outright. On a client whose phone and email are blank in the
+   * record, that meant the two fields the operator had just filled in emptied
+   * themselves a few seconds later, which is exactly how it was reported.
+   *
+   * `client.id` is the identity that matters, and it is a PRIMITIVE: the
+   * effect re-runs when the dialog opens, and when it is open and genuinely
+   * switches to another client — never because the parent re-rendered.
+   */
   useEffect(() => {
-    if (open) {
-      setBuyerNames(`${client.primary_first_name} ${client.primary_surname}`);
-      setBuyerAddress(client.current_address || '');
-      setBuyerPhone(client.primary_mobile || '');
-      setBuyerEmail(client.primary_email || '');
-      setAgreementDate(format(new Date(), 'yyyy-MM-dd'));
-      setSecondaryBuyerName(
-        client.secondary_first_name && client.secondary_surname
-          ? `${client.secondary_first_name} ${client.secondary_surname}`
-          : ''
-      );
-      setSecondaryBuyerEmail(client.secondary_email || '');
-      setCommitmentFee('$1,500.00 + GST');
-      setNotes('');
-      setStep('fill');
-      setGeneratedId(null);
-      setPdfReady(false);
-      setPdfPolling(false);
-      setPdfPollAttempts(0);
-      setPdfTimedOut(false);
-    }
-  }, [open, client]);
+    if (!open) return;
+
+    setBuyerNames(`${client.primary_first_name} ${client.primary_surname}`);
+    setBuyerAddress(client.current_address || '');
+    setBuyerPhone(client.primary_mobile || '');
+    setBuyerEmail(client.primary_email || '');
+    setAgreementDate(format(new Date(), 'yyyy-MM-dd'));
+    setSecondaryBuyerName(
+      client.secondary_first_name && client.secondary_surname
+        ? `${client.secondary_first_name} ${client.secondary_surname}`
+        : ''
+    );
+    setSecondaryBuyerEmail(client.secondary_email || '');
+    setCommitmentFee('$1,500.00 + GST');
+    setNotes('');
+    setStep('fill');
+    setGeneratedId(null);
+    setPdfReady(false);
+    setPdfPolling(false);
+    setPdfPollAttempts(0);
+    setPdfTimedOut(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the
+    // client's IDENTITY, deliberately. `client` itself is a fresh object on
+    // every render of the parent, and naming it here is the defect above.
+  }, [open, client.id]);
+
+  /**
+   * Detail that arrives after the dialog opened may fill a blank. It may
+   * never overwrite something the operator typed.
+   *
+   * The client modal loads the full record separately, so `current_address`
+   * and the secondary buyer are often undefined at the moment the dialog
+   * opens and arrive a moment later. Seeding once would lose them; seeding
+   * again unconditionally is the defect above. The functional updater keeps
+   * a non-empty field exactly as it is, and every dependency here is a
+   * PRIMITIVE, so this runs when a value actually changes rather than on
+   * every render of the parent.
+   */
+  useEffect(() => {
+    if (!open) return;
+    setBuyerAddress((current) => current || client.current_address || '');
+    setSecondaryBuyerName((current) =>
+      current ||
+      (client.secondary_first_name && client.secondary_surname
+        ? `${client.secondary_first_name} ${client.secondary_surname}`
+        : ''),
+    );
+    setSecondaryBuyerEmail((current) => current || client.secondary_email || '');
+  }, [
+    open,
+    client.current_address,
+    client.secondary_first_name,
+    client.secondary_surname,
+    client.secondary_email,
+  ]);
 
   // Poll PDF readiness once we have a generated agreement (Gamma generation is async)
   useEffect(() => {

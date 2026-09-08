@@ -155,8 +155,11 @@ describe('7,8,19 — the builder source wins, and a clean original wins inside i
   });
 
   it('18 — a builder image arriving later takes the card back from a fallback', () => {
-    const before = chooseCardImage([streetView()] as never);
-    expect(before?.provenance).toBe('street_view');
+    // The fallback that can still hold a card is the VERIFIED web photograph;
+    // Street View no longer draws at all. The rule under test is unchanged:
+    // the builder's own file takes the card back whenever it arrives.
+    const before = chooseCardImage([verifiedWeb()] as never);
+    expect(before?.provenance).toBe('web_sourced');
     const after = chooseCardImage([streetView(), verifiedWeb(), cleanSource()] as never);
     expect(after?.provenance).toBe('builder_supplied');
   });
@@ -198,10 +201,19 @@ describe('9,10,11,12,15,16 — which stage is worth paying for', () => {
       { sourceSettlementComplete: true })).toBe('street_view');
   });
 
-  it('15 — Street View is selected when it is all there is', () => {
-    const chosen = chooseCardImage([unverifiedWeb(), streetView()] as never);
-    expect(chosen?.image.id).toBe('sv-1');
-    expect(chosen?.provenance).toBe('street_view');
+  it('15 — Street View is NOT a card image, even when it is all there is', () => {
+    /*
+     * This reverses rank 4, on the instruction that a card's picture comes
+     * from the builder's uploaded stock. A Street View still of a
+     * house-and-land lot in an estate under construction is a photograph of
+     * bare dirt or, on the reported card, a roundabout — real, and not of the
+     * property. The correct blank is the answer this marketplace can act on.
+     *
+     * `isStreetViewImage` still recognises one, and the rows are untouched:
+     * what changed is only what may be DRAWN.
+     */
+    expect(isStreetViewImage(streetView() as never)).toBe(true);
+    expect(chooseCardImage([unverifiedWeb(), streetView()] as never)).toBeNull();
   });
 
   it('16 — no Street View coverage means no image at all', () => {
@@ -240,7 +252,9 @@ describe('20 — no fallback is ever badged Builder supplied', () => {
     expect(provenanceOf(cleanSource() as never)).toBe('builder_supplied');
     expect(provenanceOf(repairedSource() as never)).toBe('builder_supplied');
     expect(provenanceOf(verifiedWeb() as never)).toBe('web_sourced');
-    expect(provenanceOf(streetView() as never)).toBe('street_view');
+    // A Street View row is no longer drawable, so it has no provenance to
+    // claim — the badge and the ranking are one decision and cannot disagree.
+    expect(provenanceOf(streetView() as never)).toBeNull();
     expect(provenanceOf(unverifiedWeb() as never)).toBeNull();
     expect(provenanceOf(satellite() as never)).toBeNull();
   });

@@ -67,8 +67,34 @@ describe('cancellation notice — what a cancellation does', () => {
   it('never writes itself into the invitation log', () => {
     // That table is the record of who was INVITED and is what the next
     // cancellation reads back.
-    const inserts = notifier.match(/if \(!isCancellation\) await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)/g) ?? [];
+    //
+    // Audit 3 item 10 widened this: a RESCHEDULE now also resolves its
+    // recipients from the ledger rather than making the operator re-add them,
+    // so it must not re-record them either — that would grow a second row per
+    // person per change and is the same fault under a different verb. The
+    // guard therefore covers both, and this asserts the rule rather than the
+    // sentence that expressed it.
+    const inserts = notifier.match(
+      /if \(!isCancellation && !recipientsWereResolved\) await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)/g,
+    ) ?? [];
     expect(inserts).toHaveLength(2);
+    // No unguarded write survives anywhere.
+    const unguarded = notifier.match(/(?<!&& !recipientsWereResolved\) )await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)\s*\n\s*\.insert/g) ?? [];
+    expect(unguarded).toHaveLength(0);
+  });
+
+  it('a notice about an existing booking reuses who was invited, whatever the verb', () => {
+    // Reschedules used to make the operator re-add the additional contact and
+    // the finance partner by hand, and told nobody when they forgot.
+    expect(notifier).toMatch(/let recipientsWereResolved = false;/);
+    expect(notifier).toMatch(/if \(!effectiveRecipients \|\| effectiveRecipients\.length === 0\) \{\s*\n\s*recipientsWereResolved = true;/);
+  });
+
+  it('takes the meeting type from the booking rather than from the caller', () => {
+    // 'call' was hardcoded on cancellation and 'reschedule' on reschedule, so
+    // a Zoom meeting was cancelled as a "Phone Call".
+    expect(notifier).toMatch(/const recordedType = /);
+    expect(notifier).toMatch(/if \(recordedType\) effectiveType = recordedType;/);
   });
 });
 

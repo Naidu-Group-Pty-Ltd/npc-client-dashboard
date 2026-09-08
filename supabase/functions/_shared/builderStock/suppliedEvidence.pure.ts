@@ -68,10 +68,11 @@
  * Pure: no IO, no clock, no network.
  */
 import {
-  NO_DETERMINISTIC_IMAGE, type ProvenanceQuestion,
+  NO_DETERMINISTIC_IMAGE, negativeProvenanceStillStands,
+  type ProvenanceQuestion,
 } from './negativeProvenance.pure.ts';
 import {
-  MAX_PACKAGE_ATTEMPTS, PACKAGE_RECOVERY_ATTEMPT,
+  attemptsSoFar, PACKAGE_RECOVERY_ATTEMPT, packageAttemptsExhausted,
 } from './packageAttempt.pure.ts';
 import {
   branchQuestion, branchRecord, isTraversableBranch, rowSourceBranches,
@@ -199,6 +200,13 @@ export interface SuppliedEvidenceInput {
   /** The property's `source_provenance_result`, whatever shape it holds. */
   stored: unknown;
   provenanceVersion: number;
+  /**
+   * The runtime asking now — compared only against a stored
+   * `runtime_version`, which only OUR OWN failures carry. Without it this
+   * reader would go on treating a branch the settler is about to re-ask as
+   * a closed answer, and the two would disagree on screen.
+   */
+  runtimeVersion?: number;
   sourceAnchor: string | null;
   /**
    * Whether a builder-supplied image has already been accepted for this
@@ -241,6 +249,18 @@ export function classifyBranchRecord(
 
   if (record.result === NO_DETERMINISTIC_IMAGE) {
     /*
+     * FIRST, WHETHER IT IS STILL AN ANSWER AT ALL. A retirement OUR OWN worker
+     * caused carries the runtime that caused it, and a better runtime has to
+     * ask again — the same rule `branchTerminal` applies, read from the same
+     * module, because this reader and the settler disagreeing about one
+     * property is precisely the screen the operator was shown: a branch the
+     * queue had reopened, reported as four of four sources that could not be
+     * read. A document's own answer and a dead link carry no stamp and fall
+     * straight through.
+     */
+    if (!negativeProvenanceStillStands(record, question)) return 'open';
+
+    /*
      * THE DISCRIMINATOR, AND WHY AN ABSENT ONE IS `operational`.
      *
      * Records written before this field existed cannot say which of the three
@@ -262,7 +282,15 @@ export function classifyBranchRecord(
      * budget the branch is retired and the retirement is OURS, never the
      * document's.
      */
-    return Number(record.attempts ?? 0) >= MAX_PACKAGE_ATTEMPTS ? 'operational' : 'in_flight';
+    if (packageAttemptsExhausted(record, question)) return 'operational';
+
+    /*
+     * AND A CLAIM FROM A SUPERSEDED RUNTIME IS NOT IN FLIGHT. Nothing is
+     * running: it is the mark of a worker that no longer exists, which is why
+     * `attemptsSoFar` answers zero for it. `open` — ask again — is what the
+     * settler will do with it, and this reader has to say the same.
+     */
+    return attemptsSoFar(record, question) > 0 ? 'in_flight' : 'open';
   }
 
   return 'open';
@@ -330,7 +358,8 @@ export function readSuppliedEvidence(
   for (const branch of branches) {
     const verdict = classifyBranchRecord(
       input.stored, branch,
-      branchQuestion(branch, input.provenanceVersion, input.sourceAnchor));
+      branchQuestion(
+        branch, input.provenanceVersion, input.sourceAnchor, input.runtimeVersion));
     if (verdict === 'inspected') inspected += 1;
     else if (verdict === 'operational') { operational += 1; failing.push(branch.column); }
     else if (verdict === 'in_flight') inFlight += 1;
@@ -424,6 +453,7 @@ export function readStoredRowEvidence(input: {
   sourceRow: unknown;
   stored: unknown;
   provenanceVersion: number;
+  runtimeVersion?: number;
   builderImageAccepted?: boolean;
 }): SuppliedEvidenceReading {
   const row = (input.sourceRow ?? null) as Record<string, unknown> | null;
@@ -434,6 +464,7 @@ export function readStoredRowEvidence(input: {
     branches: rowSourceBranches(unmappedWithRecoveredLinks(unmapped, row)),
     stored: input.stored,
     provenanceVersion: input.provenanceVersion,
+    runtimeVersion: input.runtimeVersion,
     sourceAnchor: anchor,
     builderImageAccepted: input.builderImageAccepted,
     linkDiscovery: readLinkDiscovery(row),

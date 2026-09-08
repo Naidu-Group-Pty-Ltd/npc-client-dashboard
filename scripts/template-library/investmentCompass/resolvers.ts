@@ -702,7 +702,19 @@ export function railFooter(footerStyle: string): boolean {
   return footerStyle === 'rail_number' || footerStyle === 'rail_progress';
 }
 
-/** Whether a contents page is emitted. */
-export function hasContents(tocStyle: string): boolean {
-  return tocStyle !== 'none';
+/**
+ * Whether a contents page is emitted: always.
+ *
+ * `toc_style: none` was a catalogue statement about the decorative index a
+ * family draws, and it silenced the page outright — Luxury Editorial and
+ * Private Banking declared it family-wide, so all ten of their masters (the
+ * house default among them) shipped multi-page client documents with no way
+ * to navigate them, and the owner read five real PDFs without finding a
+ * single contents page. Navigability is a property of the DOCUMENT, not of a
+ * family's styling: every master emits the Contents page now, and a family's
+ * `toc_style` remains free to say how its list is drawn. The parameter stays
+ * so the call sites keep stating what they are asking about.
+ */
+export function hasContents(_tocStyle: string): boolean {
+  return true;
 }

@@ -24,6 +24,8 @@
  *     customer who failed verification.
  */
 
+import { meteredFetch } from '../../meteredFetch.ts';
+
 const DIDIT_API_BASE = (Deno.env.get('DIDIT_API_BASE_URL') || 'https://verification.didit.me')
   .replace(/\/+$/, '');
 
@@ -102,7 +104,10 @@ async function diditFetch(
 ): Promise<Record<string, unknown>> {
   let res: Response;
   try {
-    res = await fetch(`${DIDIT_API_BASE}${path}`, {
+    // Metered: a Didit call spends the fleet's forwarded key, and an unmetered
+    // vendor call is billed to nobody. The credential is named explicitly
+    // because DIDIT_API_BASE_URL can point the client off the default host.
+    res = await meteredFetch(`${DIDIT_API_BASE}${path}`, {
       ...init,
       headers: {
         'x-api-key': apiKey,
@@ -111,7 +116,7 @@ async function diditFetch(
         ...(init.headers ?? {}),
       },
       signal: AbortSignal.timeout(DIDIT_TIMEOUT_MS),
-    });
+    }, { secretName: 'DIDIT_API_KEY', feature: `aml/idv-hosted${path.split('?')[0]}` });
   } catch (e) {
     const aborted = (e as Error)?.name === 'TimeoutError' || (e as Error)?.name === 'AbortError';
     throw new DiditApiError(

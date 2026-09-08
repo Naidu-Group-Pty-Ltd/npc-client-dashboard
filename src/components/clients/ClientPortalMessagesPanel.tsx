@@ -221,7 +221,7 @@ export function ClientPortalMessagesPanel({ clientId, clientName, className, fil
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <p className="truncate text-sm font-semibold text-foreground">{displayName}</p>
-                <Badge variant="outline" className="shrink-0 rounded-full border-success/25 bg-success/10 px-2 text-[10px] text-success-foreground">
+                <Badge variant="outline" className="shrink-0 rounded-full border-success/25 bg-success/10 px-2 text-[10px] text-success">
                   Client Portal
                 </Badge>
               </div>
@@ -259,7 +259,7 @@ export function ClientPortalMessagesPanel({ clientId, clientName, className, fil
                   <Avatar className="h-7 w-7 shrink-0">
                     <AvatarFallback className={cn(
                       'text-[10px] font-semibold',
-                      mine ? 'bg-brand-300/10 text-brand-100' : 'bg-success/10 text-success-foreground',
+                      mine ? 'bg-brand-300/10 text-brand-100' : 'bg-success/10 text-success',
                     )}>
                       {mine ? <Headphones className="h-3.5 w-3.5" /> : getInitials(m.sender_name || clientName)}
                     </AvatarFallback>

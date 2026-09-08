@@ -124,8 +124,11 @@ export async function inflate(bytes: Uint8Array): Promise<Uint8Array<ArrayBuffer
  * Written against the stream's own writer rather than `new Blob(…).stream()`:
  * `Blob` has no `stream()` under jsdom, and a compression path nothing can
  * test is a compression path that breaks quietly.
+ *
+ * Exported for `builderStockRasterPump.test.ts` alone: the failure it pins is
+ * a property of THIS function's promise wiring, not of any caller.
  */
-async function pump(
+export async function pump(
   transform: { writable: WritableStream<BufferSource>; readable: ReadableStream<Uint8Array> },
   bytes: Uint8Array,
 ): Promise<Uint8Array<ArrayBuffer>> {
@@ -134,6 +137,31 @@ async function pump(
   // `ArrayBufferLike`; the stream's writer is typed for the narrow one.
   const written = writer.write(bytes as unknown as BufferSource);
   const closed = written.then(() => writer.close());
+  /*
+   * A DAMAGED STREAM MUST REJECT THIS FUNCTION, NOT THE ISOLATE.
+   *
+   * On truncated deflate data the transform errors, `reader.read()` below
+   * throws, and this function unwinds BEFORE `await closed` ever attaches a
+   * handler — leaving `closed` a rejected promise nobody is listening to.
+   * An unhandled rejection tears down the whole isolate: the invocation ends
+   * with no throw any caller can catch, no error is written anywhere, and a
+   * package-recovery claim is left standing as if the worker had been killed.
+   *
+   * MEASURED, 5 SEPTEMBER 2026, Lot 58 Lumina Estate. Its 17.9 MB brochure
+   * carries one truncated object stream; every inflate call site already
+   * catches ("a stream we cannot inflate contributes nothing"), and none of
+   * those catches ever ran, because the rejection that escaped was this
+   * orphan rather than the one the loop throws. Four claims, four silent
+   * deaths, no 546, no error, and the branch retired as unprocessable while
+   * the same document elected its cover in under five seconds anywhere the
+   * orphan was handled.
+   *
+   * The branch below marks `closed` handled the moment it exists. `await
+   * closed` on the success path still observes a real close failure —
+   * attaching a handler to a promise does not change what other awaiters
+   * see — so nothing about the healthy path moves.
+   */
+  closed.catch(() => undefined);
 
   const chunks: Uint8Array[] = [];
   const reader = transform.readable.getReader();

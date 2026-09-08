@@ -19,6 +19,15 @@ import {
 } from '../_shared/publicAbuseControls.ts';
 import { assertPublicUrl } from '../_shared/ssrfGuard.ts';
 import {
+  listingsRequestUrl,
+  MAX_RECORD_IDS,
+  resolveListingsRoute,
+  resolveWritebackRoute,
+  writebackRequestUrl,
+  type ListingsRoute,
+  type WritebackRoute,
+} from '../_shared/airtableListingsRoute.pure.ts';
+import {
   imageSetFingerprint,
   nextRefreshAt,
   normaliseImageCandidates,
@@ -1037,41 +1046,88 @@ function selectPerListing(
 /* Airtable                                                                    */
 /* -------------------------------------------------------------------------- */
 
-interface AirtableConfig {
-  token: string;
-  baseId: string;
+/**
+ * Reading the intake table and writing back to it are different questions.
+ *
+ * The READ is what puts photographs on a listing, and every deployment needs
+ * it — a clone reaches it through Mission Control's broker, because the
+ * Airtable token does not travel. The WRITE publishes signed URLs into OUR
+ * bucket, so only the deployment that owns the base may do it. See
+ * `_shared/airtableListingsRoute.pure.ts`.
+ */
+interface AirtableReadConfig {
+  /** Narrowed: a config only exists where the route can actually be used. */
+  route: Extract<ListingsRoute, { via: 'direct' | 'broker' }>;
+  table: string;
+}
+
+interface AirtableWriteConfig {
+  /** Narrowed likewise — there is no config for a write-back that is refused. */
+  route: Extract<WritebackRoute, { via: 'direct' }>;
   table: string;
   field: string;
 }
 
-function airtableConfig(): AirtableConfig | null {
-  const token = Deno.env.get('AIRTABLE_TOKEN');
-  const baseId = Deno.env.get('AIRTABLE_BASE_ID');
+function airtableReadConfig(): AirtableReadConfig | { why: string } {
+  const route = resolveListingsRoute({
+    airtableToken: Deno.env.get('AIRTABLE_TOKEN'),
+    airtableBaseId: Deno.env.get('AIRTABLE_BASE_ID'),
+    missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+    cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+  });
+  if (route.via === 'unconfigured') return { why: route.why };
+  const table = Deno.env.get('AIRTABLE_TABLE_NAME');
+  if (!table) return { why: 'AIRTABLE_TABLE_NAME names the table to read and is not set' };
+  return { route, table };
+}
+
+function airtableWriteConfig(): AirtableWriteConfig | { why: string } {
+  const route = resolveWritebackRoute({
+    airtableToken: Deno.env.get('AIRTABLE_TOKEN'),
+    airtableBaseId: Deno.env.get('AIRTABLE_BASE_ID'),
+  });
+  if (route.via === 'refused') return { why: route.why };
   const table = Deno.env.get('AIRTABLE_TABLE_NAME');
   // The enrichment column is named per base, so it is configuration rather than
   // a constant. Without it the write-back is skipped, not guessed.
   const field = Deno.env.get('AIRTABLE_IMAGE_LIBRARY_FIELD');
-  if (!token || !baseId || !table || !field) return null;
-  return { token, baseId, table, field };
+  if (!table) return { why: 'AIRTABLE_TABLE_NAME names the table to write and is not set' };
+  if (!field) return { why: 'AIRTABLE_IMAGE_LIBRARY_FIELD names the enrichment column and is not set' };
+  return { route, table, field };
 }
 
 /** Reads the image field for a batch of records during a cron sweep. */
 async function readAirtableImages(
-  config: AirtableConfig,
+  config: AirtableReadConfig,
   listingIds: string[],
 ): Promise<Map<string, { images: unknown; listedAt: number | null }>> {
   const out = new Map<string, { images: unknown; listedAt: number | null }>();
-  const formula = `OR(${listingIds.map((id) => `RECORD_ID()='${id}'`).join(',')})`;
-  const url =
-    `https://api.airtable.com/v0/${config.baseId}/${encodeURIComponent(config.table)}` +
-    `?filterByFormula=${encodeURIComponent(formula)}&pageSize=${listingIds.length}`;
+  // A sweep may claim more listings than one read may name, so chunk. Airtable
+  // caps a page at 100 and the old code sent `pageSize=${listingIds.length}`,
+  // which is invalid the moment a sweep claims 101.
+  for (let i = 0; i < listingIds.length; i += MAX_RECORD_IDS) {
+    const chunk = listingIds.slice(i, i + MAX_RECORD_IDS);
+    await readAirtableImageChunk(config, chunk, out);
+  }
+  return out;
+}
 
-  const response = await fetchWithTimeout(
-    url,
-    { headers: { Authorization: `Bearer ${config.token}` } },
-    12_000,
-  );
-  if (!response.ok) throw new Error(`airtable_read_${response.status}`);
+async function readAirtableImageChunk(
+  config: AirtableReadConfig,
+  listingIds: string[],
+  out: Map<string, { images: unknown; listedAt: number | null }>,
+): Promise<void> {
+  const url = listingsRequestUrl(config.route, 'records', config.table, {
+    recordIds: listingIds,
+    pageSize: listingIds.length,
+  });
+
+  const response = await fetchWithTimeout(url, { headers: config.route.headers }, 12_000);
+  if (!response.ok) {
+    // Which end refused decides the remedy, so say which end.
+    const refusal = response.headers.get('x-mission-control-refusal');
+    throw new Error(refusal ? `mission_control_${refusal}` : `airtable_read_${response.status}`);
+  }
 
   const payload = (await response.json()) as {
     records?: Array<{ id: string; fields?: Record<string, unknown>; createdTime?: string }>;
@@ -1105,7 +1161,6 @@ async function readAirtableImages(
         epochMs(record.createdTime),
     });
   }
-  return out;
 }
 
 /**
@@ -1117,7 +1172,7 @@ async function readAirtableImages(
  */
 async function syncAirtable(
   supabase: ListingImagesClient,
-  config: AirtableConfig,
+  config: AirtableWriteConfig,
   listingIds: string[],
 ): Promise<{ synced: number; error: string | null }> {
   if (listingIds.length === 0) return { synced: 0, error: null };
@@ -1141,13 +1196,10 @@ async function syncAirtable(
     const chunk = records.slice(i, i + 10);
     try {
       const response = await fetchWithTimeout(
-        `https://api.airtable.com/v0/${config.baseId}/${encodeURIComponent(config.table)}`,
+        writebackRequestUrl(config.route, config.table),
         {
           method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${config.token}`,
-            'Content-Type': 'application/json',
-          },
+          headers: config.route.headers,
           body: JSON.stringify({ records: chunk, typecast: true }),
         },
         12_000,
@@ -1375,9 +1427,9 @@ Deno.serve(async (req) => {
         return j({ success: true, op, listingId, ...outcome });
       }
 
-      const config = airtableConfig();
-      if (!config) {
-        return j({ success: false, error: 'airtable_not_configured' }, 500);
+      const readConfig = airtableReadConfig();
+      if ('why' in readConfig) {
+        return j({ success: false, error: 'airtable_not_configured', detail: readConfig.why }, 500);
       }
 
       const limit = Math.min(
@@ -1393,7 +1445,20 @@ Deno.serve(async (req) => {
           .order('airtable_synced_at', { ascending: true, nullsFirst: true })
           .limit(limit);
         const ids = (drifted ?? []).map((r: { listing_id: string }) => r.listing_id);
-        const result = await syncAirtable(supabase, config, ids);
+        const writeConfig = airtableWriteConfig();
+        if ('why' in writeConfig) {
+          // Not an error: a deployment that does not own the base is not meant
+          // to write to it, and the sweep has nothing else to do here.
+          return j({
+            success: true,
+            op,
+            considered: ids.length,
+            synced: 0,
+            skipped: 'writeback_not_ours',
+            detail: writeConfig.why,
+          });
+        }
+        const result = await syncAirtable(supabase, writeConfig, ids);
         return j({ success: true, op, considered: ids.length, ...result });
       }
 
@@ -1414,7 +1479,7 @@ Deno.serve(async (req) => {
       // each spending the allowance would be a minute of decoding.
       const sweepBudget = newAnalysisBudget();
       try {
-        const fresh = await readAirtableImages(config, dueIds);
+        const fresh = await readAirtableImages(readConfig, dueIds);
         const held = await storedIdentities(supabase, dueIds);
 
         for (const listingId of dueIds) {

@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+  AIRTABLE_RECORD_ID,
   BROKERED_LISTINGS_OPERATIONS,
   listingsRequestUrl,
+  MAX_RECORD_IDS,
   missionControlRefusal,
+  recordIdFormula,
+  refuseRecordIds,
   resolveListingsRoute,
+  resolveWritebackRoute,
+  writebackRequestUrl,
 } from '../../../supabase/functions/_shared/airtableListingsRoute.pure.ts';
 
 const src = readFileSync('supabase/functions/_shared/airtableListingsRoute.pure.ts', 'utf8');
@@ -155,6 +161,18 @@ describe('the module stays pure and coupling-free', () => {
 /* Adoption: the two consumers must actually go through the route.            */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * A source file with its comments stripped.
+ *
+ * Every source-level assertion below is about what the code DOES. These
+ * functions explain in their own comments what they no longer do — the old
+ * `api.airtable.com` URL, the old `pageSize=${listingIds.length}` — and a scan
+ * that reads an explanation as a violation is one people satisfy by deleting
+ * the explanation.
+ */
+const codeOf = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+
 const proxy = readFileSync('supabase/functions/airtable-proxy/index.ts', 'utf8');
 const cache = readFileSync('supabase/functions/listings-cache/index.ts', 'utf8');
 
@@ -201,6 +219,158 @@ describe('an unconfigured deployment says which half is missing', () => {
     for (const src of [proxy, cache]) {
       expect(src).toMatch(/route\.via === 'unconfigured'/);
       expect(src).toContain('route.why');
+    }
+  });
+});
+
+const images = readFileSync('supabase/functions/listing-images/index.ts', 'utf8');
+const enrichment = readFileSync('supabase/functions/listing-enrichment/index.ts', 'utf8');
+const autoReport = readFileSync('supabase/functions/auto-report-sync/index.ts', 'utf8');
+
+const ID_A = 'recAAAAAAAAAAAAAA';
+const ID_B = 'recBBBBBBBBBBBBBB';
+
+/**
+ * Reading the photograph columns is what puts pictures on a listing, and it is
+ * the one read expressed in Airtable as a formula.
+ *
+ * A clone held no Airtable token and `listing-images` still built a direct
+ * Airtable URL, so `airtableConfig()` returned null and the sweep refused
+ * before it began: a marketplace with no photographs on any card. Brokering it
+ * meant admitting the read WITHOUT admitting a query language, which is what
+ * `recordIds` is — the caller names rows, this module composes the formula.
+ */
+describe('a read may name rows, never ask a question', () => {
+  it('accepts Airtable record ids and rejects anything that could be an expression', () => {
+    expect(AIRTABLE_RECORD_ID.test(ID_A)).toBe(true);
+    for (const bad of ["rec'),RECORD_ID()='x", 'recSHORT', 'tblAAAAAAAAAAAAAA', 'rec AAAAAAAAAAAAA']) {
+      expect(AIRTABLE_RECORD_ID.test(bad)).toBe(false);
+    }
+  });
+
+  it('refuses an empty, oversized or malformed set rather than filtering it', () => {
+    // Silently dropping one would fingerprint that listing as having no
+    // photographs and re-arm its schedule having done nothing.
+    expect(refuseRecordIds([])).toBeTruthy();
+    expect(refuseRecordIds(Array(MAX_RECORD_IDS + 1).fill(ID_A))).toBeTruthy();
+    expect(refuseRecordIds([ID_A, 'nope'])).toBeTruthy();
+    expect(refuseRecordIds([ID_A, ID_B])).toBeNull();
+  });
+
+  it('composes the formula only from checked ids', () => {
+    expect(recordIdFormula([ID_A, ID_B])).toBe(
+      `OR(RECORD_ID()='${ID_A}',RECORD_ID()='${ID_B}')`,
+    );
+    expect(() => recordIdFormula(["'"])).toThrow();
+  });
+
+  it('sends IDS on the brokered route and a FORMULA on the direct one', () => {
+    const broker = new URL(
+      listingsRequestUrl(resolveListingsRoute({ ...MC, airtableToken: null, airtableBaseId: null }), 'records', 'Intake', {
+        recordIds: [ID_A, ID_B],
+      }),
+    );
+    // Nothing Mission Control could mistake for a query.
+    expect(broker.searchParams.get('recordIds')).toBe(`${ID_A},${ID_B}`);
+    expect(broker.searchParams.get('filterByFormula')).toBeNull();
+
+    const direct = new URL(
+      listingsRequestUrl(
+        resolveListingsRoute({ airtableToken: 'pat', airtableBaseId: 'appNPC', ...MC }),
+        'records',
+        'Intake',
+        { recordIds: [ID_A, ID_B] },
+      ),
+    );
+    // The deployment holding the token writes its own formula.
+    expect(direct.searchParams.get('filterByFormula')).toBe(recordIdFormula([ID_A, ID_B]));
+    expect(direct.searchParams.get('recordIds')).toBeNull();
+  });
+
+  it('refuses to build a URL from ids it has not checked, on either route', () => {
+    for (const route of [
+      resolveListingsRoute({ ...MC, airtableToken: null, airtableBaseId: null }),
+      resolveListingsRoute({ airtableToken: 'pat', airtableBaseId: 'app', ...MC }),
+    ]) {
+      expect(() => listingsRequestUrl(route, 'records', 'Intake', { recordIds: ["'"] })).toThrow();
+    }
+  });
+});
+
+/**
+ * The write-back is the other half, and it does NOT travel.
+ *
+ * `listing-images` publishes signed URLs into its own bucket, and
+ * `listing-enrichment` writes resolved field values — into a table every
+ * deployment reads. From a clone those URLs point at storage no other reader
+ * can open, so the act is wrong there for a reason that has nothing to do with
+ * secrecy, and the broker must never grow a write operation to carry it.
+ */
+describe('the write-back never leaves the account holder', () => {
+  it('is direct where the token is held', () => {
+    const w = resolveWritebackRoute({ airtableToken: 'pat', airtableBaseId: 'appNPC' });
+    expect(w.via).toBe('direct');
+    if (w.via !== 'direct') throw new Error('unreachable');
+    expect(writebackRequestUrl(w, 'Intake')).toBe('https://api.airtable.com/v0/appNPC/Intake');
+  });
+
+  it('is refused everywhere else, and there is no brokered branch to fall to', () => {
+    for (const input of [
+      { airtableToken: null, airtableBaseId: null },
+      { airtableToken: 'pat', airtableBaseId: null },
+      { airtableToken: null, airtableBaseId: 'appNPC' },
+    ]) {
+      const w = resolveWritebackRoute(input);
+      expect(w.via).toBe('refused');
+      if (w.via !== 'refused') throw new Error('unreachable');
+      // The refusal names the RULE. "Not configured" would send an operator
+      // looking for a setting that must never exist on a clone.
+      expect(w.why).toMatch(/shared record|does not hold/);
+      expect(() => writebackRequestUrl(w, 'Intake')).toThrow();
+    }
+  });
+
+  it('the type carries no broker option at all', () => {
+    expect(src).not.toMatch(/WritebackRoute[\s\S]{0,400}via: 'broker'/);
+  });
+});
+
+describe('every Airtable reader in the pipeline goes through the router', () => {
+  it('none of the five names api.airtable.com itself', () => {
+    for (const [name, source] of [
+      ['airtable-proxy', proxy],
+      ['listings-cache', cache],
+      ['listing-images', images],
+      ['listing-enrichment', enrichment],
+      ['auto-report-sync', autoReport],
+    ] as const) {
+      expect(codeOf(source), name).not.toContain('api.airtable.com');
+    }
+  });
+
+  it('none of them builds an Airtable bearer header of its own', () => {
+    for (const source of [proxy, cache, images, enrichment, autoReport]) {
+      expect(codeOf(source)).not.toMatch(/Authorization: `Bearer \$\{[^}]*[Tt]oken/);
+    }
+  });
+
+  it('the two writers refuse rather than reporting a missing setting', () => {
+    for (const source of [images, enrichment]) {
+      expect(source).toContain('resolveWritebackRoute');
+      expect(source).toMatch(/via === 'refused'/);
+    }
+  });
+
+  it('listing-images chunks a sweep larger than one read may name', () => {
+    // A sweep can claim 120; the old code sent `pageSize=${listingIds.length}`,
+    // which Airtable rejects above 100.
+    expect(images).toContain('MAX_RECORD_IDS');
+    expect(codeOf(images)).not.toMatch(/pageSize=\$\{listingIds\.length\}/);
+  });
+
+  it('a brokered refusal is told apart from a vendor one at every reader', () => {
+    for (const source of [images, autoReport]) {
+      expect(source).toContain('x-mission-control-refusal');
     }
   });
 });

@@ -195,6 +195,17 @@ Mission Control composing the formula: `rec` plus fourteen alphanumerics can
 hold no quote, parenthesis, comma or operator, which is the difference between
 a caller naming rows and a caller asking questions.
 
+**And there are two `NPC Emails` bases.** `apptyShYE0yzL4IGB` is live and
+growing; `appFNPL7iYiuQyHAO` is a rebuild of it in a DIFFERENT Airtable account,
+copied on 2026-08-18, whose 148 records all carry that one timestamp and which
+has taken nothing since — the cutover was never completed, and both
+`REBUILT_BASE.md` and `MAKE_CUTOVER.md` read as though it had been. Two things
+follow: **re-pointing anything at the rebuild replaces a growing marketplace
+with a frozen one** (171 of the prime's cached listings were created after the
+copy), and **a perfectly valid token can be refused across the boundary** —
+a personal access token reaches only its own account's bases, so the first
+question on a 401 is which account minted it, not whether the token is good.
+
 That card used to alias its `AIRTABLE_API_KEY` field onto `AIRTABLE_TOKEN` and
 write it into the project environment through the Management API — so a key
 typed on the Integrations page silently superseded the one the pipeline runs

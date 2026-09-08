@@ -8,7 +8,7 @@ import {
 import { requireModulePermission } from '../_shared/authz.ts';
 import {
   listingsRequestUrl,
-  missionControlRefusal,
+  describeListingsFailure,
   resolveListingsRoute,
   type ListingsRoute,
 } from '../_shared/airtableListingsRoute.pure.ts';
@@ -131,10 +131,9 @@ async function tableAliases(): Promise<Map<string, string>> {
       // Not fatal. Resolution falls back to the raw string, which is what the
       // code did before this existed — but name which end declined, for the
       // same reason the records walk does.
-      const refusal = missionControlRefusal(response.headers);
       console.warn(
         '[listings-cache] table metadata unavailable',
-        refusal ? `mission_control_${refusal}` : `airtable_${response.status}`,
+        describeListingsFailure(route, response).code,
       );
       return new Map();
     }
@@ -244,29 +243,29 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
         continue;
       }
       /*
-       * Say which END refused, because the two remedies are opposite.
+       * Say which END answered, because the remedies are opposite and there
+       * are THREE of them.
        *
-       * `airtable_401` is what this wrote for both "Airtable rejected the
-       * token Mission Control holds" and "Mission Control rejected this
+       * `airtable_401` is what this used to write for both "Airtable rejected
+       * the token Mission Control holds" and "Mission Control rejected this
        * clone's key" — the first is fixed in Mission Control's environment,
-       * the second on this deployment, and an operator reading the sync row
-       * had nothing to tell them apart. Mission Control sets the header on
-       * its OWN refusals and never on what it relays, so its ABSENCE is what
-       * identifies a vendor answer.
+       * the second on this deployment. Measured 8 Sep 2026 on NPC Test: the
+       * first brokered read wrote `airtable_401`, which happened to be true,
+       * but it was true by luck and the same six characters would have been
+       * written had the key been wrong.
        *
-       * Measured 8 Sep 2026 on NPC Test: the first brokered read wrote
-       * `airtable_401`, which happened to be true — Mission Control had made
-       * the call and Airtable refused it — but it was true by luck, and the
-       * same six characters would have been written had the key been wrong.
+       * The third reading is the one that cost a morning. A brokered answer
+       * Mission Control did not MARK never reached Mission Control at all, and
+       * on 8 Sep one clone read its own wrong `MISSION_CONTROL_URL` as
+       * `airtable_404` on every tick while the two beside it were served
+       * normally. `describeListingsFailure` is the one place that separates
+       * the three, so this walk and the metadata lookup above cannot disagree.
        */
-      const refusal = missionControlRefusal(response.headers);
       return {
         records,
         complete: false,
         sorted: !sortRejected,
-        error: refusal
-          ? `mission_control_${refusal}`
-          : `airtable_${response.status}`,
+        error: describeListingsFailure(config.route, response).code,
       };
     }
 

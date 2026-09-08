@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1028,
+  "migration_files": 1029,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -1723,6 +1723,7 @@
     "index:push_subscriptions_user_lookup_idx",
     "index:report_brand_snapshots_created_idx",
     "index:report_brand_snapshots_source_idx",
+    "index:report_geography_needs_attention_idx",
     "index:report_geography_sa2_idx",
     "index:report_geography_status_idx",
     "index:report_geography_suburb_state_idx",

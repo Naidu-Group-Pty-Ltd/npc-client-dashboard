@@ -5,7 +5,10 @@ import {
   BROKERED_LISTINGS_OPERATIONS,
   listingsRequestUrl,
   MAX_RECORD_IDS,
+  describeListingsFailure,
+  missionControlAnswered,
   missionControlRefusal,
+  MISSION_CONTROL_ENDPOINT_HEADER,
   recordIdFormula,
   refuseRecordIds,
   resolveListingsRoute,
@@ -369,8 +372,31 @@ describe('every Airtable reader in the pipeline goes through the router', () => 
   });
 
   it('a brokered refusal is told apart from a vendor one at every reader', () => {
-    for (const source of [images, autoReport]) {
-      expect(source).toContain('x-mission-control-refusal');
+    // The rule, not the mechanism: each reader must SEPARATE the ends. It used
+    // to be asserted as "contains the header literal", which passed for four
+    // hand-written two-way copies of a rule that turned out to have three
+    // outcomes — and every one of them would have needed finding again.
+    for (const [name, source] of [
+      ['airtable-proxy', proxy],
+      ['listings-cache', cache],
+      ['listing-images', images],
+      ['auto-report-sync', autoReport],
+    ] as const) {
+      expect(codeOf(source), name).toContain('describeListingsFailure');
+    }
+  });
+
+  it('and no reader spells the header itself', () => {
+    // One implementation. Four is how a fifth outcome gets added in one place
+    // and the other three keep reporting the old two.
+    for (const [name, source] of [
+      ['airtable-proxy', proxy],
+      ['listings-cache', cache],
+      ['listing-images', images],
+      ['auto-report-sync', autoReport],
+    ] as const) {
+      expect(codeOf(source), name).not.toContain('x-mission-control-refusal');
+      expect(codeOf(source), name).not.toContain('missionControlRefusal');
     }
   });
 });
@@ -411,7 +437,7 @@ describe('a failed read names the end that refused', () => {
       ['auto-report-sync', autoReport],
     ] as const) {
       expect(codeOf(source), name).toMatch(
-        /missionControlRefusal|x-mission-control-refusal/,
+        /describeListingsFailure|missionControlRefusal|x-mission-control-refusal/,
       );
     }
   });
@@ -419,12 +445,111 @@ describe('a failed read names the end that refused', () => {
   it('listings-cache carries the distinction out to the sync row', () => {
     // The sync row is the only record an operator sees for a cron-driven read,
     // so a warning in a log the fleet page does not show is not enough.
-    expect(codeOf(cache)).toMatch(/mission_control_\$\{refusal\}/);
-    expect(codeOf(cache)).toMatch(/airtable_\$\{response\.status\}/);
+    expect(codeOf(cache)).toMatch(/error: describeListingsFailure\(/);
+  });
+
+  it('neither consumer spells the code itself any more', () => {
+    // Two hand-written copies of the same three-way rule is how one surface
+    // comes to report something the other does not.
+    for (const [name, source] of [
+      ['airtable-proxy', proxy],
+      ['listings-cache', cache],
+    ] as const) {
+      expect(codeOf(source), name).not.toMatch(/`mission_control_\$\{/);
+      expect(codeOf(source), name).not.toMatch(/`airtable_\$\{response/);
+    }
   });
 
   it('airtable-proxy labels the SERVICE it reports, rather than always saying Airtable', () => {
     expect(codeOf(proxy)).toMatch(/redactUpstreamError\([^)]*service\)/);
     expect(codeOf(proxy)).not.toMatch(/redactUpstreamError\([^)]*'Airtable'\)/);
+  });
+});
+
+describe('a brokered answer nobody marked never reached Mission Control', () => {
+  /*
+   * The reading that did not exist, and what its absence cost.
+   *
+   * Measured 8 Sep 2026: one clone recorded `airtable_404` on every Listings
+   * sync for a morning while the two beside it were served normally, and
+   * nothing from it reached Mission Control's ledger at any tick. Its bundle
+   * carried the broker, so it had addressed whatever MISSION_CONTROL_URL
+   * named — and wrote the answer down as the vendor's, which is where it sent
+   * everyone who looked.
+   */
+  const BROKER = resolveListingsRoute({
+    airtableToken: null,
+    airtableBaseId: null,
+    ...MC,
+  });
+  const DIRECT = resolveListingsRoute({
+    airtableToken: 'pat123',
+    airtableBaseId: 'appNPC',
+    ...MC,
+  });
+  const marked = (extra: Record<string, string> = {}) =>
+    new Headers({ [MISSION_CONTROL_ENDPOINT_HEADER]: 'listings', ...extra });
+
+  it('knows Mission Control answered from the endpoint header alone', () => {
+    expect(missionControlAnswered(marked())).toBe(true);
+    expect(missionControlAnswered(new Headers())).toBe(false);
+  });
+
+  it('an unmarked brokered answer is neither end we know', () => {
+    const f = describeListingsFailure(BROKER, { status: 404, headers: new Headers() });
+    expect(f.end).toBe('not_mission_control');
+    expect(f.code).toBe('mission_control_unreachable_404');
+    // The remedy has to name the setting, because investigating Airtable
+    // cannot succeed and looks reasonable for as long as you like.
+    expect(f.service).toMatch(/MISSION_CONTROL_URL/);
+  });
+
+  it('a marked relay is the vendor answering', () => {
+    const f = describeListingsFailure(BROKER, { status: 401, headers: marked() });
+    expect(f.end).toBe('airtable');
+    expect(f.code).toBe('airtable_401');
+  });
+
+  it("a marked refusal is Mission Control's own no", () => {
+    const f = describeListingsFailure(BROKER, {
+      status: 401,
+      headers: marked({ 'x-mission-control-refusal': 'unauthorized' }),
+    });
+    expect(f.end).toBe('mission_control');
+    expect(f.code).toBe('mission_control_unauthorized');
+  });
+
+  it('the direct route can only ever be the vendor', () => {
+    // Nothing sits between this deployment and Airtable, so an unmarked
+    // answer there means exactly what it always meant.
+    const f = describeListingsFailure(DIRECT, { status: 404, headers: new Headers() });
+    expect(f.end).toBe('airtable');
+    expect(f.code).toBe('airtable_404');
+  });
+
+  it('the three codes share no spelling', () => {
+    const codes = [
+      describeListingsFailure(BROKER, { status: 404, headers: new Headers() }).code,
+      describeListingsFailure(BROKER, { status: 404, headers: marked() }).code,
+      describeListingsFailure(BROKER, {
+        status: 404,
+        headers: marked({ 'x-mission-control-refusal': 'rate_limited' }),
+      }).code,
+    ];
+    expect(new Set(codes).size).toBe(3);
+  });
+
+  it('reports rather than throws on a route that made no call', () => {
+    // This runs on a failure path. Throwing here replaces a real fault with a
+    // stack trace about the reporting of it.
+    const un = resolveListingsRoute({
+      airtableToken: 'pat123',
+      airtableBaseId: null,
+      ...MC,
+    });
+    expect(un.via).toBe('unconfigured');
+    expect(describeListingsFailure(un, { status: 0, headers: new Headers() }).end).toBe(
+      'unconfigured',
+    );
   });
 });

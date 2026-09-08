@@ -322,3 +322,103 @@ export function writebackRequestUrl(route: WritebackRoute, table: string): strin
 export function missionControlRefusal(headers: Headers): string | null {
   return headers.get('x-mission-control-refusal');
 }
+
+/**
+ * Mission Control names itself on every answer its listings endpoint gives —
+ * a refusal AND a relay.
+ *
+ * `x-mission-control-refusal` answers "did Mission Control refuse this, or did
+ * Airtable?". It cannot answer the question one step further out: **did the
+ * request reach Mission Control at all?** It is absent on a relayed vendor
+ * failure and equally absent on a 404 from some other host that
+ * `MISSION_CONTROL_URL` happens to name.
+ *
+ * Measured 8 Sep 2026. One clone recorded `airtable_404` on every Listings
+ * sync for a morning while the two beside it were served normally, and nothing
+ * from it reached Mission Control's ledger at any tick. Its deployed bundle
+ * carried the broker, so it had resolved the brokered route and addressed the
+ * URL it was given — something that is not Mission Control answered, and the
+ * clone wrote it down as the vendor's. Every reading it had was consistent
+ * with a marketplace-wide outage, so that is where it sent anyone who looked.
+ *
+ * This header is a POSITIVE marker of arrival, which is what lets its absence
+ * mean something.
+ */
+export const MISSION_CONTROL_ENDPOINT_HEADER = 'x-mission-control-endpoint';
+
+/** Did Mission Control produce this answer at all — refusal or relay? */
+export function missionControlAnswered(headers: Headers): boolean {
+  return headers.get(MISSION_CONTROL_ENDPOINT_HEADER) !== null;
+}
+
+/** Which end produced a failing answer. */
+export type FailingEnd = 'airtable' | 'mission_control' | 'not_mission_control' | 'unconfigured';
+
+export interface ListingsFailure {
+  /** The end that answered. */
+  readonly end: FailingEnd;
+  /** A stable code for a log line or a `last_error` column. */
+  readonly code: string;
+  /** How to name that end to a person reading a message. */
+  readonly service: string;
+}
+
+/**
+ * Name the end that produced a failing answer, for a route WE chose.
+ *
+ * Three outcomes rather than the two the refusal header alone can give:
+ *
+ * - **`airtable`** — the direct route (only the vendor can answer), or a
+ *   brokered answer Mission Control marked as its own and did not refuse.
+ * - **`mission_control`** — Mission Control's own no, which is fixed in
+ *   Mission Control's environment rather than on this deployment.
+ * - **`not_mission_control`** — a brokered call whose answer Mission Control
+ *   did not mark. The request went somewhere; that somewhere is not this
+ *   endpoint. `MISSION_CONTROL_URL` is the thing to look at, and no amount of
+ *   investigating Airtable will help.
+ *
+ * The third is the reading that did not exist, and the one a wrong
+ * `MISSION_CONTROL_URL` needs.
+ */
+export function describeListingsFailure(
+  route: ListingsRoute,
+  response: { status: number; headers: Headers },
+): ListingsFailure {
+  if (route.via === 'unconfigured') {
+    // Nothing was called, so nothing answered. Reported rather than thrown:
+    // this runs on a failure path, and throwing here would replace a real
+    // fault with a stack trace about the reporting of it.
+    return { end: 'unconfigured', code: 'airtable_not_configured', service: 'this deployment' };
+  }
+
+  if (route.via === 'direct') {
+    return {
+      end: 'airtable',
+      code: `airtable_${response.status}`,
+      service: 'Airtable',
+    };
+  }
+
+  const refusal = missionControlRefusal(response.headers);
+  if (refusal) {
+    return {
+      end: 'mission_control',
+      code: `mission_control_${refusal}`,
+      service: 'Mission Control',
+    };
+  }
+
+  if (missionControlAnswered(response.headers)) {
+    return {
+      end: 'airtable',
+      code: `airtable_${response.status}`,
+      service: 'Airtable',
+    };
+  }
+
+  return {
+    end: 'not_mission_control',
+    code: `mission_control_unreachable_${response.status}`,
+    service: 'the host MISSION_CONTROL_URL names, which is not Mission Control',
+  };
+}

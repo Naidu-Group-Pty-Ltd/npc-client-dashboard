@@ -4,6 +4,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import {
+  describeListingsFailure,
   listingsRequestUrl,
   resolveListingsRoute,
 } from '../_shared/airtableListingsRoute.pure.ts';
@@ -271,13 +272,15 @@ Deno.serve(async (req) => {
 
     if (!airtableResponse.ok) {
       const errorText = await airtableResponse.text();
-      const refusal = airtableResponse.headers.get('x-mission-control-refusal');
-      // Which end refused decides the remedy — "fix this deployment's Mission
-      // Control key" is a different job from "fix the Airtable token".
+      // Which end answered decides the remedy, and there are three of them.
+      // "Fix this deployment's Mission Control key", "fix the Airtable token"
+      // and "MISSION_CONTROL_URL does not name Mission Control" are three
+      // different jobs, and the third used to read as the second.
+      const failure = describeListingsFailure(listingsRoute, airtableResponse);
       throw new Error(
-        refusal
-          ? `Mission Control refused the listings read: ${refusal}`
-          : `Airtable API error: ${errorText}`,
+        failure.end === 'airtable'
+          ? `Airtable API error: ${errorText}`
+          : `${failure.service} refused the listings read: ${failure.code}`,
       );
     }
 

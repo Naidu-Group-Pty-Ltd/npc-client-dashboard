@@ -135,13 +135,60 @@ export type ListingsRoute =
     }
   | {
       via: 'broker';
+      /** Mission Control's ORIGIN. Any path the setting carried is trimmed. */
       missionControlUrl: string;
+      /**
+       * What was trimmed, when the setting carried a path.
+       *
+       * Kept so a failure can SAY it rather than a repair happening silently:
+       * a deployment whose `MISSION_CONTROL_URL` is `…/api` was composing
+       * `…/api/api/public/listings/tables`, which Mission Control's own router
+       * answers 404 — indistinguishable, before this, from Airtable's 404.
+       */
+      trimmedPath?: string;
       headers: Record<string, string>;
       secret: string;
       /** Mission Control meters the vendor call it makes. Never both. */
       meter: false;
     }
   | { via: 'unconfigured'; why: string };
+
+/**
+ * Read `MISSION_CONTROL_URL` as an ORIGIN, and say what was trimmed.
+ *
+ * Every path this module composes is rooted — `/api/public/listings/…` — so a
+ * base carrying its own path is unusable by construction: the two are
+ * concatenated and the result is a URL nobody serves. Measured 8 Sep 2026,
+ * `https://mission-control.aurixasystems.com.au/api` composes
+ * `…/api/api/public/listings/tables`, which Mission Control's router answers
+ * **404** with none of its own headers on it — so the clone recorded Airtable's
+ * name against Mission Control's refusal to route, and no request was ever
+ * metered because none reached a handler.
+ *
+ * Trailing slashes were already trimmed here for the same reason; a path is
+ * the same mistake one character further on. It is trimmed rather than refused
+ * because refusing would take a deployment that is one concatenation from
+ * correct entirely off the air — and it is REPORTED rather than trimmed
+ * silently, because a repair nobody is told about is a setting that stays
+ * wrong.
+ */
+export function missionControlOrigin(raw: string): {
+  origin: string;
+  trimmedPath?: string;
+} {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed) return { origin: '' };
+  try {
+    const u = new URL(trimmed);
+    const path = u.pathname.replace(/\/+$/, '');
+    return path ? { origin: u.origin, trimmedPath: path } : { origin: u.origin };
+  } catch {
+    // Not parseable as a URL. Hand it back as it was: naming the setting in a
+    // failure is more use than replacing it with an empty string, which reads
+    // as "not configured" and sends an operator to the wrong remedy.
+    return { origin: trimmed };
+  }
+}
 
 export function resolveListingsRoute(input: {
   airtableToken: string | null | undefined;
@@ -175,9 +222,10 @@ export function resolveListingsRoute(input: {
     };
   }
 
-  const mcUrl = (input.missionControlUrl ?? '').trim().replace(/\/+$/, '');
+  const rawMc = (input.missionControlUrl ?? '').trim();
+  const mc = missionControlOrigin(rawMc);
   const cloneKey = (input.cloneApiKey ?? '').trim();
-  if (!mcUrl || !cloneKey) {
+  if (!mc.origin || !cloneKey) {
     return {
       via: 'unconfigured',
       why:
@@ -188,7 +236,8 @@ export function resolveListingsRoute(input: {
 
   return {
     via: 'broker',
-    missionControlUrl: mcUrl,
+    missionControlUrl: mc.origin,
+    ...(mc.trimmedPath ? { trimmedPath: mc.trimmedPath } : {}),
     headers: { 'x-clone-api-key': cloneKey, Accept: 'application/json' },
     secret: cloneKey,
     meter: false,
@@ -357,10 +406,17 @@ export type FailingEnd = 'airtable' | 'mission_control' | 'not_mission_control' 
 export interface ListingsFailure {
   /** The end that answered. */
   readonly end: FailingEnd;
-  /** A stable code for a log line or a `last_error` column. */
+  /**
+   * A stable code for a log line or a `last_error` column.
+   *
+   * Stable is the point: it is grepped and compared across ticks, so nothing
+   * variable belongs in it. Anything that varies goes in `detail`.
+   */
   readonly code: string;
   /** How to name that end to a person reading a message. */
   readonly service: string;
+  /** Anything variable worth saying beside the code. Never a credential. */
+  readonly detail?: string;
 }
 
 /**
@@ -419,6 +475,13 @@ export function describeListingsFailure(
   return {
     end: 'not_mission_control',
     code: `mission_control_unreachable_${response.status}`,
-    service: 'the host MISSION_CONTROL_URL names, which is not Mission Control',
+    // Name what was ADDRESSED. "Something that is not Mission Control
+    // answered" narrows the search; the URL ends it — and the host is often
+    // right while the setting carried a path, which reads as the opposite
+    // fault if the message asserts the host is wrong.
+    service: `${route.missionControlUrl} (MISSION_CONTROL_URL)`,
+    detail: route.trimmedPath
+      ? `MISSION_CONTROL_URL carried the path ${route.trimmedPath}, read as its origin`
+      : undefined,
   };
 }

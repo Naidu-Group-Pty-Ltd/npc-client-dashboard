@@ -350,6 +350,19 @@ const CASES = [
     replace: "JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' })",
   },
 
+  {
+    gate: 'check-error-disclosure.mjs',
+    file: 'supabase/functions/_shared/aml/standaloneVerification.ts',
+    what: 'the console carve-out widens from a literal message to any expression',
+    /* The carve-out admits `console.warn('literal', JSON.stringify({ … }))`
+       because that is a log line and the log is where the detail belongs. It
+       must admit ONLY a literal: an expression in that position could carry
+       the very leak this gate exists to catch, and the object beside it is
+       still built inside a catch block. */
+    find: "console.warn('[aml-verification] token reserve unavailable', JSON.stringify({",
+    replace: 'console.warn(logPrefix(err), JSON.stringify({',
+  },
+
   // ── The Cloudflare worker's own gate ─────────────────────────────────────
   {
     gate: 'check-cloudflare-worker-hardening.mjs',

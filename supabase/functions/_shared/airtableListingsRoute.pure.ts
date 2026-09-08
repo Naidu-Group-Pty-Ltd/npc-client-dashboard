@@ -452,6 +452,23 @@ export function describeListingsFailure(
       end: 'airtable',
       code: `airtable_${response.status}`,
       service: 'Airtable',
+      /*
+       * Say the ROUTE, not only the end.
+       *
+       * `resolveListingsRoute` prefers `direct` whenever a token AND a base id
+       * are both present, and it is right to: a deployment holding the
+       * credential should spend its own. But Mission Control withholding a
+       * secret stops it FORWARDING one; it does not remove a value already on
+       * the project. So a clone that everything believes is brokered can still
+       * hold a stale pair, take the direct road, and report the vendor's
+       * status for a base id nobody has looked at since.
+       *
+       * Measured 8 Sep 2026: one clone answered `airtable_404` on every
+       * Listings sync for five hours while appearing zero times in Mission
+       * Control's ledger — every reading it produced was true, and none of
+       * them said which road it had taken.
+       */
+      detail: 'read directly, with AIRTABLE_TOKEN and AIRTABLE_BASE_ID held on this deployment',
     };
   }
 
@@ -469,6 +486,9 @@ export function describeListingsFailure(
       end: 'airtable',
       code: `airtable_${response.status}`,
       service: 'Airtable',
+      // The other road to the same vendor status, named so the two are never
+      // confused: Mission Control made this call and relayed the answer.
+      detail: 'brokered by Mission Control, which relayed this answer',
     };
   }
 

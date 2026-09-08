@@ -646,3 +646,60 @@ describe('MISSION_CONTROL_URL is an origin, and a path on it is the 404', () => 
     expect(codeOf(cache)).toMatch(/failure\.detail \? `\$\{failure\.code\}; \$\{failure\.detail\}`/);
   });
 });
+
+describe('a vendor status names the ROAD it came by', () => {
+  /*
+   * Both roads reach Airtable and both report its status, so `airtable_404`
+   * alone is true on either and distinguishes nothing.
+   *
+   * Measured 8 Sep 2026. NPC Client Dashboard answered `airtable_404` on every
+   * Listings sync for five hours while appearing ZERO times in Mission
+   * Control's ledger. Mission Control marks every answer it gives, so a
+   * brokered relay would have carried that mark — leaving only the direct
+   * road, taken because a withheld secret stops Mission Control FORWARDING a
+   * value and does not remove one already on the project. Every reading the
+   * clone produced was true. None of them said which road it had taken.
+   */
+  const DIRECT = resolveListingsRoute({
+    airtableToken: 'pat123', airtableBaseId: 'appNPC',
+    missionControlUrl: 'https://mc.example', cloneApiKey: 'ck_live',
+  });
+  const BROKER = resolveListingsRoute({
+    airtableToken: null, airtableBaseId: null,
+    missionControlUrl: 'https://mc.example', cloneApiKey: 'ck_live',
+  });
+  const marked = new Headers({ [MISSION_CONTROL_ENDPOINT_HEADER]: 'listings' });
+
+  it('names a direct read, and the two settings that put it on that road', () => {
+    const f = describeListingsFailure(DIRECT, { status: 404, headers: new Headers() });
+    expect(f.detail).toContain('directly');
+    expect(f.detail).toContain('AIRTABLE_TOKEN');
+    expect(f.detail).toContain('AIRTABLE_BASE_ID');
+  });
+
+  it('names a relay as Mission Control having made the call', () => {
+    const f = describeListingsFailure(BROKER, { status: 404, headers: marked });
+    expect(f.detail).toContain('brokered');
+  });
+
+  it('the two roads to the same status are told apart', () => {
+    const direct = describeListingsFailure(DIRECT, { status: 404, headers: new Headers() });
+    const relay = describeListingsFailure(BROKER, { status: 404, headers: marked });
+    // Same end, same code — the code is what gets compared across ticks and
+    // must not fork. The detail is what tells them apart.
+    expect(direct.end).toBe(relay.end);
+    expect(direct.code).toBe(relay.code);
+    expect(direct.detail).not.toBe(relay.detail);
+  });
+
+  it('no detail ever carries a credential', () => {
+    for (const f of [
+      describeListingsFailure(DIRECT, { status: 404, headers: new Headers() }),
+      describeListingsFailure(BROKER, { status: 404, headers: marked }),
+      describeListingsFailure(BROKER, { status: 404, headers: new Headers() }),
+    ]) {
+      expect(f.detail ?? '').not.toContain('pat123');
+      expect(f.detail ?? '').not.toContain('ck_live');
+    }
+  });
+});

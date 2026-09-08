@@ -3,6 +3,10 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import {
+  listingsRequestUrl,
+  resolveListingsRoute,
+} from '../_shared/airtableListingsRoute.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -186,8 +190,15 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const airtableToken = Deno.env.get('AIRTABLE_TOKEN');
-    const airtableBaseId = Deno.env.get('AIRTABLE_BASE_ID');
+    // The prime holds the token and reads Airtable directly; every clone
+    // reaches the same table through Mission Control's broker, because the
+    // credential does not travel. See `_shared/airtableListingsRoute.pure.ts`.
+    const listingsRoute = resolveListingsRoute({
+      airtableToken: Deno.env.get('AIRTABLE_TOKEN'),
+      airtableBaseId: Deno.env.get('AIRTABLE_BASE_ID'),
+      missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+      cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+    });
     const airtableTableName = Deno.env.get('AIRTABLE_TABLE_NAME') || 'Property Listings';
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -240,23 +251,34 @@ Deno.serve(async (req) => {
     const processedIds = new Set((processedListings || []).map(p => p.listing_id));
 
     // Fetch recent records from Airtable
-    if (!airtableToken || !airtableBaseId) {
+    if (listingsRoute.via === 'unconfigured') {
       return new Response(
-        JSON.stringify({ error: 'Airtable credentials not configured' }),
+        JSON.stringify({ error: 'Airtable credentials not configured', detail: listingsRoute.why }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Fetch most recent records sorted by Created field
-    const airtableUrl = `https://api.airtable.com/v0/${airtableBaseId}/${encodeURIComponent(airtableTableName)}?maxRecords=${maxRecords}&sort[0][field]=Created&sort[0][direction]=desc`;
-    
-    const airtableResponse = await fetch(airtableUrl, {
-      headers: { 'Authorization': `Bearer ${airtableToken}` },
+    // Fetch most recent records sorted by Created field. `maxRecords` was the
+    // old spelling of a page cap; both routes carry it as `pageSize`, which
+    // Airtable bounds at 100 either way.
+    const airtableUrl = listingsRequestUrl(listingsRoute, 'records', airtableTableName, {
+      pageSize: maxRecords,
+      sortField: 'Created',
+      sortDirection: 'desc',
     });
+
+    const airtableResponse = await fetch(airtableUrl, { headers: listingsRoute.headers });
 
     if (!airtableResponse.ok) {
       const errorText = await airtableResponse.text();
-      throw new Error(`Airtable API error: ${errorText}`);
+      const refusal = airtableResponse.headers.get('x-mission-control-refusal');
+      // Which end refused decides the remedy — "fix this deployment's Mission
+      // Control key" is a different job from "fix the Airtable token".
+      throw new Error(
+        refusal
+          ? `Mission Control refused the listings read: ${refusal}`
+          : `Airtable API error: ${errorText}`,
+      );
     }
 
     const airtableData = await airtableResponse.json();

@@ -19,6 +19,10 @@ import { INTAKE_FIELDS as F } from '../_shared/airtableIntakeFields.pure.ts';
 import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 import { scrapeListingPage } from '../_shared/listingScrape.pure.ts';
 import {
+  resolveWritebackRoute,
+  writebackRequestUrl,
+} from '../_shared/airtableListingsRoute.pure.ts';
+import {
   MAX_REDIRECT_HOPS,
   classifyListingUrl,
   mayFollow,
@@ -883,9 +887,21 @@ async function runWriteback(
     return j({ success: true, op: 'writeback', refused: 'daily_writeback_budget' });
   }
 
-  const token = Deno.env.get('AIRTABLE_TOKEN');
-  const baseId = Deno.env.get('AIRTABLE_BASE_ID');
-  if (!token || !baseId) return j({ success: false, error: 'airtable_not_configured' }, 500);
+  /*
+   * The write-back is the account holder's alone. Every deployment reads the
+   * SAME intake table, so a tenant writing resolved values into it would edit
+   * the shared record every other tenant reads — which is why the broker is
+   * read-only and this route has no brokered branch at all.
+   */
+  const writeback = resolveWritebackRoute({
+    airtableToken: Deno.env.get('AIRTABLE_TOKEN'),
+    airtableBaseId: Deno.env.get('AIRTABLE_BASE_ID'),
+  });
+  if (writeback.via === 'refused') {
+    // Success, because nothing failed and there is nothing to fix: a
+    // deployment that does not own the base has no write-back to perform.
+    return j({ success: true, op: 'writeback', skipped: 'not_ours', detail: writeback.why });
+  }
 
   const { data: pending } = await supabase
     .from('listing_enrichment')
@@ -971,10 +987,10 @@ async function runWriteback(
     const chunk = patches.slice(i, i + 10);
     try {
       const response = await fetchWithTimeout(
-        `https://api.airtable.com/v0/${baseId}/${encodeURIComponent(tableKey)}`,
+        writebackRequestUrl(writeback, tableKey),
         {
           method: 'PATCH',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: writeback.headers,
           body: JSON.stringify({ records: chunk, typecast: true }),
         },
         15_000,

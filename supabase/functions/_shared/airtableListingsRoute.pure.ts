@@ -38,6 +38,24 @@
  * the base is its and the caller never names one; this is the clone-side half
  * of that rule, enforced by the type rather than by a comment.
  *
+ * ## Reads travel. The write-back does not.
+ *
+ * Two functions PATCH this base: `listing-images` writes the durable image
+ * URLs into the enrichment column, and `listing-enrichment` writes resolved
+ * field values. Both are correct on the prime, which owns the base, and both
+ * are wrong from a clone for a reason that has nothing to do with secrecy:
+ * every clone reads the SAME table, and what a clone would write are signed
+ * URLs into ITS OWN bucket. Publishing those into the shared record hands
+ * every other tenant links that are useless to them and were never theirs to
+ * hold.
+ *
+ * So the broker is read-only by construction and stays that way — adding a
+ * write operation would hand a tenant the ability to rewrite the table every
+ * other tenant reads, which is the leak this whole arrangement exists to
+ * close. `resolveWritebackRoute` is the other half: a deployment that does
+ * not hold the token is REFUSED with the rule, not reported as
+ * misconfigured, because there is nothing here for an operator to fix.
+ *
  * Pure: no Deno, so the frontend tests import it too.
  */
 
@@ -47,13 +65,62 @@ export type BrokeredListingsOperation = (typeof BROKERED_LISTINGS_OPERATIONS)[nu
 
 export const AIRTABLE_API_BASE = 'https://api.airtable.com/v0';
 
+/**
+ * An Airtable record id: `rec` and fourteen alphanumerics.
+ *
+ * This shape is why `recordIds` can cross the boundary at all. The read it
+ * serves — "the photograph columns for these listings" — is expressed in
+ * Airtable as `filterByFormula`, which is a QUERY LANGUAGE, and a query
+ * language is exactly what a broker must not accept from a caller: it would
+ * let a tenant ask the shared base anything the token can answer. So the
+ * formula is never sent. The caller names records, each one is checked against
+ * this pattern, and Mission Control composes the formula itself from ids that
+ * can contain nothing but `rec` and alphanumerics.
+ */
+export const AIRTABLE_RECORD_ID = /^rec[A-Za-z0-9]{14}$/;
+
+/**
+ * How many records one read may name.
+ *
+ * Airtable's own page cap is 100 and a caller with more listings than that
+ * chunks. `listing-images` can claim up to 120 in a sweep, so this is a real
+ * bound rather than a formality.
+ */
+export const MAX_RECORD_IDS = 100;
+
 export type ListingsQuery = {
   readonly table?: string;
   readonly pageSize?: number;
   readonly offset?: string;
   readonly sortField?: string;
   readonly sortDirection?: 'asc' | 'desc';
+  /** Read exactly these records. Never a formula — see `AIRTABLE_RECORD_ID`. */
+  readonly recordIds?: readonly string[];
 };
+
+/**
+ * The record ids that may be sent, or the reason none may.
+ *
+ * Refusing here rather than filtering is deliberate: a caller that asked for
+ * twelve listings and silently received eleven would fingerprint the twelfth
+ * as having no photographs and re-arm its schedule having done nothing, which
+ * is a failure this pipeline has already had once under a different cause.
+ */
+export function refuseRecordIds(ids: readonly string[]): string | null {
+  if (ids.length === 0) return 'no record ids were named';
+  if (ids.length > MAX_RECORD_IDS) {
+    return `${ids.length} record ids were named; at most ${MAX_RECORD_IDS} may be read at once`;
+  }
+  const bad = ids.find((id) => !AIRTABLE_RECORD_ID.test(id));
+  return bad === undefined ? null : `not an Airtable record id: ${JSON.stringify(bad)}`;
+}
+
+/** Airtable's own spelling of "these records", composed only from checked ids. */
+export function recordIdFormula(ids: readonly string[]): string {
+  const refusal = refuseRecordIds(ids);
+  if (refusal) throw new Error(`recordIdFormula refused: ${refusal}`);
+  return `OR(${ids.map((id) => `RECORD_ID()='${id}'`).join(',')})`;
+}
 
 export type ListingsRoute =
   | {
@@ -128,7 +195,7 @@ export function resolveListingsRoute(input: {
   };
 }
 
-/** The five parameters both ends carry, and nothing else. */
+/** The parameters both ends carry, and nothing else. */
 function appendQuery(url: URL, q: ListingsQuery, includeTable: boolean): void {
   if (includeTable && q.table) url.searchParams.set('table', q.table);
   if (q.pageSize !== undefined) url.searchParams.set('pageSize', String(q.pageSize));
@@ -136,6 +203,14 @@ function appendQuery(url: URL, q: ListingsQuery, includeTable: boolean): void {
   if (q.sortField) {
     url.searchParams.set('sortField', q.sortField);
     url.searchParams.set('sortDirection', q.sortDirection ?? 'desc');
+  }
+  if (q.recordIds && q.recordIds.length > 0) {
+    // Ids, never the formula they become. Checked here so a caller learns at
+    // its own call site, and checked again by Mission Control, because a
+    // broker that trusts its callers is not a boundary.
+    const refusal = refuseRecordIds(q.recordIds);
+    if (refusal) throw new Error(`listingsRequestUrl refused record ids: ${refusal}`);
+    url.searchParams.set('recordIds', q.recordIds.join(','));
   }
 }
 
@@ -175,7 +250,64 @@ export function listingsRequestUrl(
     url.searchParams.set('sort[0][field]', q.sortField);
     url.searchParams.set('sort[0][direction]', q.sortDirection ?? 'desc');
   }
+  if (q.recordIds && q.recordIds.length > 0) {
+    // The deployment holding the token composes the formula for itself, from
+    // the same checked ids the brokered route would have sent as ids.
+    url.searchParams.set('filterByFormula', recordIdFormula(q.recordIds));
+  }
   return url.toString();
+}
+
+/**
+ * Where a write-back to the intake base goes.
+ *
+ * There are exactly two answers and neither is "the broker". A deployment
+ * holding the token owns the base and writes directly; every other deployment
+ * is refused, and the refusal names the RULE rather than a missing setting —
+ * because a clone will never hold this token, so "not configured" would send
+ * an operator looking for something to fix that must not exist.
+ */
+export type WritebackRoute =
+  | {
+      via: 'direct';
+      baseId: string;
+      headers: Record<string, string>;
+      secret: string;
+      meter: true;
+    }
+  | { via: 'refused'; why: string };
+
+export function resolveWritebackRoute(input: {
+  airtableToken: string | null | undefined;
+  airtableBaseId: string | null | undefined;
+}): WritebackRoute {
+  const token = (input.airtableToken ?? '').trim();
+  const baseId = (input.airtableBaseId ?? '').trim();
+  if (token && baseId) {
+    return {
+      via: 'direct',
+      baseId,
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      secret: token,
+      meter: true,
+    };
+  }
+  return {
+    via: 'refused',
+    why:
+      'the Property Intake Master base is the account holder\'s shared record and this ' +
+      'deployment does not hold its credential, so it does not write to it — the values ' +
+      'that would be written are signed URLs into this deployment\'s own storage, which no ' +
+      'other reader of the base could use',
+  };
+}
+
+/** The URL for one write-back. Only ever a route that holds the token. */
+export function writebackRequestUrl(route: WritebackRoute, table: string): string {
+  if (route.via === 'refused') {
+    throw new Error(`writebackRequestUrl called on a refused route: ${route.why}`);
+  }
+  return `${AIRTABLE_API_BASE}/${encodeURIComponent(route.baseId)}/${encodeURIComponent(table)}`;
 }
 
 /**

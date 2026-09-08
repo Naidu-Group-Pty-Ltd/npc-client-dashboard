@@ -84,6 +84,13 @@ import {
   parseDocumentChoice, identityDocumentCapturePlan,
   type IdentityDocumentChoice,
 } from './identityDocuments.pure.ts';
+import {
+  VERIFICATION_RESERVE_TOKENS, WORKSPACE_OUT_OF_TOKENS,
+  describeVerificationCharge, verificationTokenCharge,
+} from './verificationTokenPrice.pure.ts';
+import {
+  cancelTokens, commitTokens, reserveTokens, InsufficientTokensError,
+} from '../missionControl.ts';
 
 /** Matches MAX_VERIFICATION_ATTEMPTS in aml-client-portal and the DB counter. */
 export const MAX_VERIFICATION_ATTEMPTS = 3;
@@ -264,9 +271,150 @@ async function recordTechnical(
 
 export interface StandaloneRunResult {
   checkId: string;
+  /**
+   * The settled status, in the CANONICAL vocabulary.
+   *
+   * `passed`, not `verified`: the settle write stores `canonicalOutcome`'s
+   * `CanonicalStatus`, and this union said `verified` for a long time while
+   * the row said `passed`. Nothing compared against it, so nothing broke —
+   * but it is the kind of stale type that makes the next reader's `===` test
+   * silently never fire, which is exactly what it did to the token charge
+   * before `VERIFIED_OUTCOMES` was written down.
+   */
   outcome:
-  | 'verified' | 'failed' | 'referred' | 'exhausted'
+  | 'passed' | 'failed' | 'referred' | 'exhausted'
   | 'retake_required' | 'technical_failure' | 'not_claimed';
+}
+
+/**
+ * A token reservation held across one verification run.
+ *
+ * Mission Control is asked for the WORST case before the first paid call and
+ * told the truth once the run settles — see
+ * `verificationTokenPrice.pure.ts` for the price and for why the trigger is
+ * the product's own `attempt_consumed` signal rather than "we made a call".
+ *
+ * `jobId` is null when nothing is held. That is not an error state: Mission
+ * Control being unreachable, slow or broken must not stop a customer being
+ * verified, so the run proceeds unmetered and says so. Only an explicit
+ * refusal blocks — the same asymmetry the activation gate turns on, and for
+ * the same reason: the enforcement that protects revenue is Mission Control's
+ * own 402, while the failure this could otherwise cause is refusing to verify
+ * somebody who has paid.
+ */
+interface TokenHold {
+  readonly jobId: string | null;
+  /** What the ledger reads back on the row. */
+  readonly note: Record<string, unknown>;
+  /** Settle at what the run actually owes; 0 gives the whole hold back. */
+  settle(tokens: number, meta: Record<string, unknown>): Promise<Record<string, unknown>>;
+  /** Give the whole hold back — nothing is owed. */
+  release(reason: string): Promise<Record<string, unknown>>;
+}
+
+/**
+ * Record what the run cost the workspace, beside the evidence it produced.
+ *
+ * `verification_checks` carries no `mc_job_id` column — `identity_checks` and
+ * `screening_checks` do, this table never did — so the ledger handle lives in
+ * `outcome_detail.standalone.token_charge`, which is where every other fact
+ * about a standalone run already lives and which needs no migration on a
+ * clone. Mission Control's own job row remains the authority on what was
+ * charged; this is what a reconciliation joins it back to.
+ */
+function withTokenCharge(
+  evidence: Record<string, unknown>, tokenCharge: Record<string, unknown>,
+): Record<string, unknown> {
+  const standalone = (evidence.standalone ?? {}) as Record<string, unknown>;
+  return { ...evidence, standalone: { ...standalone, token_charge: tokenCharge } };
+}
+
+/** A hold that reserved nothing, so settling and releasing are both no-ops. */
+function unmeteredHold(reason: string): TokenHold {
+  const note = { metered: false, reason };
+  return {
+    jobId: null,
+    note,
+    settle: async () => note,
+    release: async () => note,
+  };
+}
+
+/**
+ * Take the reservation, or say why the run may not proceed.
+ *
+ * Returns a hold on success, and `null` only where Mission Control REFUSED —
+ * every other failure yields an unmetered hold and lets the verification run.
+ */
+async function holdVerificationTokens(
+  check: any, checkId: string,
+): Promise<TokenHold | null> {
+  let reservation: { jobId: string; reserved: number };
+  try {
+    reservation = await reserveTokens({
+      kind: 'aml_identity_check',
+      estimatedTokens: VERIFICATION_RESERVE_TOKENS,
+      // Per CHECK, not per case or per customer: a re-run of the same row is
+      // the same reservation, and a fresh attempt is a fresh row.
+      idempotencyKey: `aml-idv-standalone-${checkId}`,
+      // No staff user is on this path — the customer submitted and a worker
+      // is spending. The check is what the charge is about, and it is what a
+      // reconciliation against `verification_checks` needs to find.
+      userId: checkId,
+      requestPayload: {
+        case_id: check.case_id,
+        party_id: check.party_id ?? null,
+        capture_sequence: check.capture_sequence ?? check.attempt_number ?? 1,
+        integration_mode: 'didit_standalone',
+      },
+    });
+  } catch (err: any) {
+    if (err instanceof InsufficientTokensError) return null;
+    // Unreachable, timed out, rate limited, or answered something we could not
+    // read. Verify the customer and record that nothing was held.
+    console.warn('[aml-verification] token reserve unavailable', JSON.stringify({
+      check_id: checkId, error: String(err?.code ?? err?.message ?? err),
+    }));
+    return unmeteredHold(String(err?.code ?? 'reserve_unavailable'));
+  }
+
+  const jobId = reservation.jobId;
+  if (!jobId) return unmeteredHold('reserve_returned_no_job');
+
+  const base = { metered: true, job_id: jobId, reserved: VERIFICATION_RESERVE_TOKENS };
+
+  const settle = async (
+    tokens: number, meta: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    try {
+      if (tokens <= 0) {
+        await cancelTokens(jobId, String(meta.reason ?? 'nothing_owed'));
+        return { ...base, charged: 0, ...meta };
+      }
+      await commitTokens(jobId, tokens, meta);
+      return { ...base, charged: tokens, ...meta };
+    } catch (err: any) {
+      // A settle that never lands leaves a reservation Mission Control will
+      // expire on its own. It must never turn a completed verification into a
+      // failure, so it is recorded rather than thrown — this is the one fact a
+      // token reconciliation needs and nothing else records.
+      console.error('[aml-verification] token settle failed', JSON.stringify({
+        check_id: checkId, job_id: jobId, tokens,
+        error: String(err?.code ?? err?.message ?? err),
+      }));
+      return {
+        ...base, charged: null, settle_failed: true,
+        settle_error: String(err?.code ?? err?.message ?? err), ...meta,
+      };
+    }
+  };
+
+  return {
+    jobId,
+    note: base,
+    settle,
+    release: (reason: string) => settle(0, { reason }),
+  };
 }
 
 /**
@@ -341,6 +489,34 @@ export async function runStandaloneVerification(
     selfieBytes = await download(db, plan.objects.selfie.bucket, plan.objects.selfie.path);
   } catch (err: any) {
     await recordTechnical(db, check, 'storage_unreadable', String(err?.message ?? err));
+    return { checkId, outcome: 'technical_failure' };
+  }
+
+  /**
+   * The workspace pays for this attempt, and it pays before the vendor is
+   * asked.
+   *
+   * Didit's USD 0.30 is the platform's and is never passed on; the workspace
+   * is charged 5 tokens for a consumed attempt and 5 more where the identity
+   * is actually verified. The reservation is the worst case (both), because
+   * the charge is not known until the vendor answers and the vendor must not
+   * be asked until the answer can be paid for — reserving the attempt alone
+   * would let a success land that nobody could afford.
+   *
+   * Last of the free steps, first of the paid ones. Everything above costs
+   * nothing to discover (a damaged plan, an unresolvable provider, a missing
+   * object), so none of it holds a workspace's balance; everything below
+   * spends money.
+   */
+  const hold = await holdVerificationTokens(check, checkId);
+  if (!hold) {
+    // Mission Control refused explicitly. Nothing was called, no attempt was
+    // consumed and no customer outcome is written — see
+    // `verificationTokenPrice.pure.ts` for why this is its own category and
+    // not the provider's `insufficient_credits`.
+    await recordTechnical(db, check, WORKSPACE_OUT_OF_TOKENS,
+      `workspace has fewer than ${VERIFICATION_RESERVE_TOKENS} tokens available`,
+      { token_charge: { metered: true, charged: 0, refused: 'insufficient_funds' } });
     return { checkId, outcome: 'technical_failure' };
   }
 
@@ -455,7 +631,7 @@ export async function runStandaloneVerification(
     }));
     id = readIdVerification(body);
   } catch (err: any) {
-    return await handleProviderError(db, check, 'id_verification', err, evidenceBase, checkId);
+    return await handleProviderError(db, check, 'id_verification', err, evidenceBase, checkId, hold);
   }
 
   /**
@@ -511,7 +687,7 @@ export async function runStandaloneVerification(
     } catch (err: any) {
       return await handleProviderError(db, check, 'passive_liveness', err, {
         ...evidenceBase, id_verification: id.sanitised, id_verdict: id.verdict,
-      }, checkId);
+      }, checkId, hold);
     }
     await persistProgress({
       id_verification: id.sanitised, id_verdict: id.verdict,
@@ -538,7 +714,7 @@ export async function runStandaloneVerification(
       return await handleProviderError(db, check, 'face_match', err, {
         ...evidenceBase, id_verification: id.sanitised, id_verdict: id.verdict,
         liveness: liveness.sanitised, liveness_verdict: liveness.verdict,
-      }, checkId);
+      }, checkId, hold);
     }
   }
 
@@ -591,18 +767,34 @@ export async function runStandaloneVerification(
 
   if (outcome.processingStatus === 'capture_unusable') {
     // The provider looked and could not examine identity. No identity outcome,
-    // NO attempt consumed — the customer photographs it again.
+    // NO attempt consumed — the customer photographs it again. The platform
+    // paid Didit for the look and the workspace pays nothing, which is the
+    // whole point of charging on `attempt_consumed`.
+    const tokenCharge = await hold.release('capture_unusable');
     await db.schema('aml').from('verification_checks').update({
       processing_status: outcome.processingStatus,
       provider_error_category: outcome.providerErrorCategory,
       provider: provider.name,
       provider_attempt_reference: id.requestId,
-      outcome_detail: evidence,
+      outcome_detail: withTokenCharge(evidence, tokenCharge),
       processing_completed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }).eq('id', checkId);
     return { checkId, outcome: 'retake_required' };
   }
+
+  /* What the workspace owes, read from the two facts the row is about to
+     carry and from nowhere else. Settled BEFORE the write so one update
+     records both the identity outcome and what it cost; nobody is waiting on
+     this request (the portal polls the row), so the extra round trip costs a
+     customer nothing. */
+  const charge = { attemptConsumed: outcome.attemptConsumed, outcome: outcome.status };
+  const tokenCharge = await hold.settle(verificationTokenCharge(charge), {
+    reason: describeVerificationCharge(charge),
+    check_id: checkId,
+    status: outcome.status,
+    attempt_consumed: outcome.attemptConsumed,
+  });
 
   await db.schema('aml').from('verification_checks').update({
     status: outcome.status,
@@ -614,7 +806,7 @@ export async function runStandaloneVerification(
     provider: provider.name,
     provider_reference: id.requestId,
     provider_attempt_reference: id.requestId,
-    outcome_detail: evidence,
+    outcome_detail: withTokenCharge(evidence, tokenCharge),
     completed_at: new Date().toISOString(),
     processing_completed_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -635,11 +827,17 @@ export async function runStandaloneVerification(
  */
 async function handleProviderError(
   db: any, check: any, step: string, err: unknown,
-  evidence: Record<string, unknown>, checkId: string,
+  evidence: Record<string, unknown>, checkId: string, hold: TokenHold,
 ): Promise<StandaloneRunResult> {
   const standalone = err instanceof DiditStandaloneError ? err : null;
   const category: string = standalone?.category ?? 'provider_unavailable';
   const message = String((err as Error)?.message ?? err);
+
+  /* Neither branch below consumes an attempt, so neither owes anything. The
+     platform may already have paid Didit for the steps that landed, and it
+     absorbs that: a workspace is never charged for this product's own failure
+     or for a photograph the provider could not read. */
+  const tokenCharge = await hold.release(`provider_error:${category}`);
 
   const detail = {
     ...evidence,
@@ -648,6 +846,7 @@ async function handleProviderError(
     // The one fact a reconciliation needs and nothing else records: we sent a
     // request whose outcome — and whose billing — we never learned.
     billing_unknown: standalone?.billingUnknown ?? false,
+    token_charge: tokenCharge,
     failed_at: new Date().toISOString(),
   };
 

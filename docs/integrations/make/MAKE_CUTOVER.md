@@ -1,5 +1,16 @@
 # Make cutover — what is left, and the webhook table
 
+> **The Airtable half of this cutover was never thrown.** The blueprints below
+> are re-pointed at `appFNPL7iYiuQyHAO`, but the scenario that is actually
+> running still writes `apptyShYE0yzL4IGB`, and that is where every listing the
+> product serves comes from. `appFNPL7iYiuQyHAO` has held the same 148 records,
+> all stamped `2026-08-18T13:20:37`, ever since the copy. Importing these
+> blueprints as they stand therefore *moves* intake to a base nothing reads.
+> Read
+> [`AIRTABLE_KEY_OWNERSHIP.md`](../AIRTABLE_KEY_OWNERSHIP.md) before acting on
+> this file.
+
+
 State of the migration into the new Make account (team `2731020`, org `8699071`,
 zone **us2**) as of 2026-08-18. 31 scenarios were cloned through the API; this
 file covers what is not done and what has to change outside Make.

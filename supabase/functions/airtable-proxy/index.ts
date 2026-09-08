@@ -7,9 +7,10 @@ import { checkModuleView } from '../_shared/permissions.ts';
 import { isSuperadmin, rateLimit, redactUpstreamError } from '../_shared/wp08Guards.ts';
 import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 import {
+  describeListingsFailure,
   listingsRequestUrl,
   resolveListingsRoute,
-  missionControlRefusal,
+  type ListingsRoute,
 } from '../_shared/airtableListingsRoute.pure.ts';
 import { allowlistAdmits, buildAllowlist, parseTableAliases } from '../_shared/airtableTableKey.pure.ts';
 
@@ -18,15 +19,23 @@ import { allowlistAdmits, buildAllowlist, parseTableAliases } from '../_shared/a
  *
  * Mission Control and Airtable both answer 401, 403 and 429, and the remedies
  * are opposite: one is fixed in Mission Control's environment, the other on
- * this deployment. Mission Control sets `x-mission-control-refusal` on its OWN
- * refusals and never on what it relays, so the header's ABSENCE is what
- * identifies a vendor answer. Written once because there are three branches
- * that report an upstream failure and two of them used to say "Airtable"
- * whatever had happened.
+ * this deployment. There is a third end, and it is the one that cost a
+ * morning: a brokered answer Mission Control did not MARK as its own never
+ * reached Mission Control, so `MISSION_CONTROL_URL` is the thing to look at
+ * and no amount of investigating Airtable will help.
+ *
+ * `describeListingsFailure` is the one place that separates the three, shared
+ * with `listings-cache` so the proxy and the cron cannot disagree about what
+ * happened to the same call. Written once here too because three branches
+ * report an upstream failure and two of them used to say "Airtable" whatever
+ * had happened.
  */
-function refusingEnd(response: Response): { service: string; refusal: string | null } {
-  const refusal = missionControlRefusal(response.headers);
-  return { service: refusal ? 'Mission Control' : 'Airtable', refusal };
+function refusingEnd(
+  route: ListingsRoute,
+  response: Response,
+): { service: string; refusal: string } {
+  const failure = describeListingsFailure(route, response);
+  return { service: failure.service, refusal: failure.code };
 }
 
 interface AirtableRecord {
@@ -186,7 +195,7 @@ Deno.serve(async (req) => {
       const metaRes = await fetch(metaUrl, { headers: route.headers });
       if (!metaRes.ok) {
         const errorText = await metaRes.text();
-        const { service, refusal } = refusingEnd(metaRes);
+        const { service, refusal } = refusingEnd(route, metaRes);
         console.error(
           `${service} metadata error:`,
           metaRes.status,
@@ -254,7 +263,7 @@ Deno.serve(async (req) => {
         airtableResponse = await fetch(retryUrl, { headers: route.headers });
       } else {
         // Non-sort error — redact upstream body (WP-08).
-        const { service, refusal } = refusingEnd(airtableResponse);
+        const { service, refusal } = refusingEnd(route, airtableResponse);
         console.error(
           `${service} API error:`,
           airtableResponse.status,
@@ -269,7 +278,7 @@ Deno.serve(async (req) => {
 
     if (!airtableResponse.ok) {
       const errorText = await airtableResponse.text();
-      const { service, refusal } = refusingEnd(airtableResponse);
+      const { service, refusal } = refusingEnd(route, airtableResponse);
       console.error(
         `${service} error:`,
         airtableResponse.status,

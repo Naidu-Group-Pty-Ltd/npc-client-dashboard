@@ -1,5 +1,20 @@
 # The rebuilt base — what landed in the new account, and what did not
 
+> **The cutover was never completed, and this base is a snapshot.** Every one of
+> the 148 `Property Intake Master` records here carries the same creation
+> timestamp — `2026-08-18T13:20:37` — and nothing has been written since.
+> Meanwhile the source base `apptyShYE0yzL4IGB` is still live: the prime's
+> `listings_cache` has taken 171 records created *after* that copy, on 3
+> separate days in the last week alone (measured 2026-09-08). The dashboard,
+> Mission Control's listings broker and the Make scenario all still read the
+> source. **Do not re-point anything at this base** without first moving the
+> live data — doing so replaces a growing marketplace with a frozen one, and
+> `listings_cache` is an archive that cannot rebuild a listing. The full
+> reasoning, and the reason a valid Airtable token can be refused across this
+> boundary, is in
+> [`AIRTABLE_KEY_OWNERSHIP.md`](../../AIRTABLE_KEY_OWNERSHIP.md).
+
+
 The bundle beside this file describes the **source** base (`apptyShYE0yzL4IGB`).
 This file describes the **target**: base **`appFNPL7iYiuQyHAO`**, still named
 `NPC Emails`, in workspace `wsp6aFpcSUCiVC3Dp` of the company Airtable account.

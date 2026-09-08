@@ -32,6 +32,60 @@ check is what stops two of them).
 
 The names live once, in `supabase/functions/_shared/listingsPipelineSecrets.pure.ts`.
 
+## Which base is live, and why a valid token can still be refused
+
+**There are two `NPC Emails` bases, in two different Airtable accounts, and only
+one of them is live.** The live one is `apptyShYE0yzL4IGB`. It was rebuilt into a
+second account as `appFNPL7iYiuQyHAO` on 2026-08-18 and **the cutover was never
+completed** — so both are documented as though the move had happened
+([`REBUILT_BASE.md`](./airtable/npc-emails/REBUILT_BASE.md) describes the target,
+[`MAKE_CUTOVER.md`](./make/MAKE_CUTOVER.md) records the re-pointed blueprints),
+and nothing in either file says the switch was never thrown. That is the trap:
+it all reads like a finished migration.
+
+Measured 2026-09-08:
+
+| | `apptyShYE0yzL4IGB` (live) | `appFNPL7iYiuQyHAO` (rebuild) |
+|---|---|---|
+| Property Intake Master | `tblWIg5cs85O30pcY` | `tblumTIRYBn92B2ST` |
+| Records | growing | **148, unchanged since the copy** |
+| Newest record | `2026-09-08 04:11` | `2026-08-18 13:20:37` |
+| Created timestamps | spread over weeks | **every one of the 148 identical** — one bulk write |
+
+The prime's `listings_cache` holds 222 rows of which **171 were created after
+that copy** (the other 51 are archived and all predate it), landing on 3
+separate days in the last week alone. The intake scenario is still writing to
+the base the rebuild was meant to replace.
+
+Two things follow, and both have already cost time.
+
+**A perfectly good token can be refused, and the 401 says nothing about the
+token.** A personal access token is minted inside one account and can only ever
+reach that account's bases. A `pat…` from the account that owns
+`appFNPL7iYiuQyHAO` is well-formed, unrevoked and correctly scoped — and still
+answers 401 against `apptyShYE0yzL4IGB`, which its account does not own.
+(Measured: a credential holding `appFNPL7iYiuQyHAO` gets **403** merely listing
+`apptyShYE0yzL4IGB`'s tables.) So when a brokered read is refused, the first
+question is not whether the token is valid but **which account minted it**; the
+prime reads this base successfully, so the prime's account is the comparison.
+Mission Control's `describeCredential` leads its remedy with this cause for
+exactly that reason, and records the verdict in
+`api_usage_events.metadata.credential_shape` so the next occurrence is
+diagnosable from the ledger alone.
+
+**Re-pointing the dashboard at the rebuild would destroy the marketplace.** It
+substitutes 148 records frozen on 18 August for a table that has grown by 171
+since, and `listings_cache` is an archive with nothing anywhere that can rebuild
+a listing — see [`AIRTABLE_RETENTION.md`](./AIRTABLE_RETENTION.md), which
+records what a thirty-day fuse on this table already nearly cost. Completing the
+cutover is a legitimate decision, but it begins with moving the live data and
+re-pointing the Make scenario, **not** with changing a base id. Until it is
+made, `AIRTABLE_BASE_ID` names `apptyShYE0yzL4IGB` on the prime and in Mission
+Control, and `TABLE_KEY_ALIASES` in `src/lib/listingsCacheApi.ts` correctly
+resolves `Property Intake Master` to `tblWIg5cs85O30pcY`. The base id itself
+lives only in the environment; the table id is the one identifier written in
+source, which is why it is named here.
+
 ## Reading it: the credential stops, the call travels
 
 An Airtable personal access token carries its **whole scope** — a set of bases

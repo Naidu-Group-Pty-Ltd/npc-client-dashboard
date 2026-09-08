@@ -19,6 +19,7 @@ import {
 } from '../_shared/publicAbuseControls.ts';
 import { assertPublicUrl } from '../_shared/ssrfGuard.ts';
 import {
+  describeListingsFailure,
   listingsRequestUrl,
   MAX_RECORD_IDS,
   resolveListingsRoute,
@@ -1124,9 +1125,10 @@ async function readAirtableImageChunk(
 
   const response = await fetchWithTimeout(url, { headers: config.route.headers }, 12_000);
   if (!response.ok) {
-    // Which end refused decides the remedy, so say which end.
-    const refusal = response.headers.get('x-mission-control-refusal');
-    throw new Error(refusal ? `mission_control_${refusal}` : `airtable_read_${response.status}`);
+    // Which end answered decides the remedy, and there are three of them —
+    // including "this never reached Mission Control at all", which reads as a
+    // vendor outage in every other spelling. One classifier, shared.
+    throw new Error(describeListingsFailure(config.route, response).code);
   }
 
   const payload = (await response.json()) as {

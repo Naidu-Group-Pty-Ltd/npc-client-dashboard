@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import MarketSourceProbePanel from '@/components/integrations/MarketSourceProbePanel';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Settings2,
@@ -787,6 +788,8 @@ export default function Integrations() {
           Sync Status
         </Button>
       </DashboardThemeFrame>
+
+      <MarketSourceProbePanel />
 
       {supabaseSetupRequired && (
         <Alert className="min-w-0 rounded-2xl border-brand-400/40 bg-brand-500/10 shadow-sm">

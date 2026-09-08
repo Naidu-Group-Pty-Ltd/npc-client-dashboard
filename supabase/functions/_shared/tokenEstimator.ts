@@ -12,6 +12,7 @@
 // plans/packs sold on the Aurixa Systems pricing page — do not paste raw LLM
 // token counts (~thousands per report) in here.
 import type { TokenKind } from "./missionControl.ts";
+import { VERIFICATION_RESERVE_TOKENS } from "./aml/verificationTokenPrice.pure.ts";
 
 const BASE: Record<TokenKind, number> = {
   "report.investment.compass": 12,
@@ -25,7 +26,12 @@ const BASE: Record<TokenKind, number> = {
   "report.bulk-item": 8, // averaged; caller should override per-item
   "report.chart-analysis": 2,
   "report.qualitative-regen": 3,
-  "aml_identity_check": 4,
+  // Imported, never a literal: the two live verification routes reserve from
+  // `verificationTokenPrice.pure.ts` and this is the fallback they fall back
+  // TO, so a number typed here would be a second price list that disagrees
+  // with the one being charged. It was 4 while `aml-verification` reserved
+  // 400 and the standalone path reserved nothing at all.
+  "aml_identity_check": VERIFICATION_RESERVE_TOKENS,
   "aml_screening_check": 4,
 };
 

@@ -183,8 +183,23 @@ for (const file of walk(FUNC_DIR)) {
       const call = precedingCall(src, s);
       if (!HELPERS.has(call)) continue;
       if (call === 'JSON.stringify') {
-        const before = src.slice(Math.max(0, s - 60), s);
-        if (/console\.(error|warn|log|info|debug)\s*\(\s*JSON\.stringify\s*\(\s*$/.test(before)) continue;
+        /* A structured log line, not a response body — the header's own scope
+           note says `console.*` is deliberately out of scope, and Supabase's
+           log viewer needs one JSON object per line to be searchable.
+           A leading string LITERAL message is allowed before it, because
+           `console.warn('[fn] what happened', JSON.stringify({ … }))` is the
+           shape every such log in this repo actually takes and the one-argument
+           form alone missed all of them. Only a literal: an expression there
+           could itself carry the leak this gate exists to catch. The window is
+           long enough to hold a real prefix — 60 characters could not, which is
+           the second half of why this carve-out never fired. */
+        const before = src.slice(Math.max(0, s - 200), s);
+        const LOGGED = new RegExp(
+          String.raw`console\.(?:error|warn|log|info|debug)\s*\(\s*`
+          + String.raw`(?:(?:'[^'\n]*'|"[^"\n]*"|\`[^\`\n]*\`)\s*,\s*)?`
+          + String.raw`JSON\.stringify\s*\(\s*$`,
+        );
+        if (LOGGED.test(before)) continue;
       }
       const inner = src.slice(s + 1, e - 1);
       if (!inner.trim()) continue;

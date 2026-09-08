@@ -172,7 +172,25 @@ describe('the existing non-KYC AML architecture is untouched', () => {
        * above and the AML-endpoint test below are what hold it to that.
        */
       'supabase/functions/_shared/aml/standaloneVerification.ts',
+      /*
+       * The verification price. It names the vendor and its per-operation
+       * charges in prose, because the whole model turns on them: Didit bills
+       * Aurixa USD 0.30 for a complete verification, the platform absorbs
+       * that, and a workspace pays tokens instead. That is a comment and not
+       * a dependency — the module imports nothing at all and takes a status
+       * string, which the next assertion holds.
+       */
+      'supabase/functions/_shared/aml/verificationTokenPrice.pure.ts',
     ]);
+  });
+
+  it('the verification price is coupled to no provider', () => {
+    const price = read('supabase/functions/_shared/aml/verificationTokenPrice.pure.ts');
+    // No import of any kind: it cannot reach a provider, a client or a key.
+    expect(price).not.toMatch(/^\s*import\s/m);
+    // The vendor is named only where a comment explains the money.
+    const code = price.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/didit/i);
   });
 });
 

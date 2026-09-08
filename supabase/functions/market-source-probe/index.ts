@@ -89,6 +89,29 @@ type ProviderStatus =
   | "entitlement_unavailable"
   | "licensing_unverified";
 
+/**
+ * Whether a target is somebody we could hold an account with.
+ *
+ * This decides whether "not entitled" is even a sentence that can be true. A
+ * government publisher has no entitlement to grant, so a 403 from one is an
+ * origin refusal — and calling it an entitlement problem sends an operator to
+ * negotiate with a vendor that does not exist. The first live run did exactly
+ * that to a Victorian Government spreadsheet.
+ */
+type TargetKind = "commercial" | "government";
+
+/**
+ * How this probe authenticates a target, when it can at all.
+ *
+ * `not_implemented` is a real and honest state: Cotality wants an OAuth token
+ * exchange this diagnostic does not perform, and PropTrack publishes no
+ * documentation at all, so we do not know what header its key goes in.
+ * Guessing one would be inventing a contract — the exact thing this programme
+ * refuses — so the probe says it did not authenticate rather than reporting an
+ * unauthenticated refusal as an entitlement finding.
+ */
+type AuthMethod = "domain_api_key" | "not_implemented" | "none_required";
+
 interface Target {
   /** How the caller names it. */
   id: string;
@@ -96,6 +119,14 @@ interface Target {
   /** Bytes to request; a range keeps a probe cheap against a large file. */
   rangeBytes?: number;
   note: string;
+  kind: TargetKind;
+  /**
+   * Credential names that would authenticate THIS target. Presence of these in
+   * the runtime is what decides whether a credential was actually sent — never
+   * an assumption, which is what the first version got wrong.
+   */
+  credentialNames: readonly string[];
+  auth: AuthMethod;
 }
 
 /**
@@ -111,13 +142,35 @@ const TARGETS: readonly Target[] = [
       "https://api.domain.com.au/v2/suburbPerformanceStatistics/NSW/Bowral/2576" +
       "?propertyCategory=house&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12",
     note: "Domain Properties & Locations — the v2 route the repo does not yet call.",
+    kind: "commercial",
+    credentialNames: ["DOMAIN_API_KEY", "DOMAIN_CLIENT_ID", "DOMAIN_CLIENT_SECRET"],
+    auth: "domain_api_key",
   },
   {
     id: "domain_v1_suburb_performance",
     url:
       "https://api.domain.com.au/v1/suburbPerformanceStatistics/NSW/Bowral" +
       "?propertyCategory=house&chronologicalSpan=12&tPlusFrom=1&tPlusTo=12",
-    note: "The v1 route domain-data-service calls today.",
+    note: "Domain v1 Suburb Performance — DEPRECATED by Domain and replaced by v2. Kept as a control proving the old route is gone, never as a live blocker: the production adapter targets v2.",
+    kind: "commercial",
+    credentialNames: ["DOMAIN_API_KEY", "DOMAIN_CLIENT_ID", "DOMAIN_CLIENT_SECRET"],
+    auth: "domain_api_key",
+  },
+  {
+    // A SECOND Domain package, so one run can tell "the key works for nothing"
+    // from "the key works, and Suburb Performance is not in this project".
+    // Domain's documentation is explicit that no endpoint is reachable until
+    // the required package is added to the project — so a valid-but-unpackaged
+    // key answers 403 on every product alike, while an invalid key answers 401
+    // on all of them. Two products, one round trip, and the pair is the
+    // diagnosis. This is Domain's own documented read-only Address Suggestion
+    // route, not an endpoint invented for testing.
+    id: "domain_address_suggest",
+    url: "https://api.domain.com.au/v1/properties/_suggest?terms=1%20Bowral%20Street%20Bowral%20NSW&pageSize=1",
+    note: "Domain Address Suggestion — a DIFFERENT package on the same key, separating key validity from product entitlement.",
+    kind: "commercial",
+    credentialNames: ["DOMAIN_API_KEY", "DOMAIN_CLIENT_ID", "DOMAIN_CLIENT_SECRET"],
+    auth: "domain_api_key",
   },
   {
     // Cotality/CoreLogic suburb statistics — branch 4 of the scoping spec
@@ -128,6 +181,9 @@ const TARGETS: readonly Target[] = [
     id: "cotality_suburb_statistics",
     url: "https://api.corelogic.asia/property/au/v2/statistics/locality/1234",
     note: "Cotality Market Trends / Suburb Statistics — the branch-4 endpoint shape.",
+    kind: "commercial",
+    credentialNames: ["COTALITY_API_KEY", "COTALITY_CLIENT_ID", "COTALITY_CLIENT_SECRET"],
+    auth: "not_implemented",
   },
   {
     id: "proptrack_market_api",
@@ -135,42 +191,63 @@ const TARGETS: readonly Target[] = [
       "https://data.proptrack.com/api/v2/market/sale/historic-median-sale-price" +
       "?suburb=Bowral&state=NSW&postcode=2576&propertyTypes=house&frequency=monthly",
     note: "PropTrack (REA Group) historic median sale price — the licensed realestate.com.au route.",
+    kind: "commercial",
+    credentialNames: ["PROPTRACK_API_KEY"],
+    auth: "not_implemented",
   },
   {
     id: "vic_data_catalogue",
     url: "https://discover.data.vic.gov.au/api/3/action/package_search?q=median+house+suburb&rows=1",
     rangeBytes: 2048,
     note: "Victorian open-data CATALOGUE. Reachable where the file host is not.",
+    kind: "government",
+    credentialNames: [],
+    auth: "none_required",
   },
   {
     id: "qld_statistician",
     url: "https://www.qgso.qld.gov.au/",
     rangeBytes: 2048,
     note: "Queensland Government Statistician — median sales by suburb publisher.",
+    kind: "government",
+    credentialNames: [],
+    auth: "none_required",
   },
   {
     id: "vic_median_house_by_suburb",
     url: "https://www.land.vic.gov.au/__data/assets/excel_doc/0032/756581/houses-by-suburb-2014-2024.xlsx",
     rangeBytes: 2048,
     note: "Victorian Property Sales Report, median house by suburb 2014-2024. CC-BY 4.0.",
+    kind: "government",
+    credentialNames: [],
+    auth: "none_required",
   },
   {
     id: "nsw_valuer_general_psi",
     url: "https://www.valuation.property.nsw.gov.au/embed/propertySalesInformation",
     rangeBytes: 2048,
     note: "NSW Valuer General bulk property sales index page.",
+    kind: "government",
+    credentialNames: [],
+    auth: "none_required",
   },
   {
     id: "sa_data_portal",
     url: "https://data.sa.gov.au/data/api/3/action/package_search?q=metro+median+house+sales&rows=1",
     rangeBytes: 2048,
     note: "data.sa.gov.au CKAN — metro median house sales.",
+    kind: "government",
+    credentialNames: [],
+    auth: "none_required",
   },
   {
     id: "abs_res_dwell",
     url: "https://data.api.abs.gov.au/rest/data/ABS,RES_DWELL,/all?startPeriod=2026-Q1",
     rangeBytes: 2048,
     note: "ABS RES_DWELL — regional benchmark/context layer.",
+    kind: "government",
+    credentialNames: [],
+    auth: "none_required",
   },
 ];
 
@@ -186,13 +263,39 @@ type Verdict =
   | "server_error"
   | "unreachable";
 
-function classify(status: number, hasCredential: boolean): Verdict {
+/**
+ * A verdict is HTTP status + whether a credential was actually sent + what
+ * kind of party answered. Never the status alone.
+ *
+ * The first live run proved why. `classify(status, isDomain ? … : true)` told
+ * this function a credential had been sent for every non-Domain target, so an
+ * unauthenticated 401 from Cotality was reported as "credential rejected, or
+ * scope missing" — advice to check a credential that does not exist — and an
+ * unauthenticated 403 from a Victorian Government spreadsheet was reported as
+ * "not entitled", owner `commercial`, with the note that entitlement is added
+ * to the account. There is no account. That is a fabricated finding pointing at
+ * a fabricated relationship, and it is exactly the class of error this
+ * programme exists to remove.
+ *
+ * Two rules follow. **An unauthenticated refusal says nothing about
+ * entitlement** — it is a statement about a request that carried no identity.
+ * And **only a commercial party can withhold an entitlement**: a government
+ * publisher's 403 is an origin refusal however the request was made.
+ */
+function classify(status: number, credentialSent: boolean, kind: TargetKind): Verdict {
   if (status >= 200 && status < 300) return "reachable";
-  if (status === 401) return hasCredential ? "credential_invalid_or_scope_missing" : "credential_absent";
-  if (status === 403) return hasCredential ? "not_entitled" : "blocked_by_origin";
   if (status === 404) return "route_not_found";
   if (status === 429) return "rate_limited";
   if (status >= 500) return "server_error";
+  if (status === 401) {
+    return credentialSent ? "credential_invalid_or_scope_missing" : "credential_absent";
+  }
+  if (status === 403) {
+    // Entitlement is a thing a vendor grants. Nobody holds an account with a
+    // state government's file server, so its refusal is about the origin.
+    if (kind === "government") return "blocked_by_origin";
+    return credentialSent ? "not_entitled" : "blocked_by_origin";
+  }
   return "unreachable";
 }
 
@@ -233,15 +336,22 @@ Deno.serve(async (req) => {
       ? TARGETS.filter((t) => requested.includes(t.id))
       : TARGETS;
 
+    /** Does the runtime hold any credential that would authenticate this target? */
+    const anyCredentialFor = (t: Target) => t.credentialNames.some((n) => credentials[n] === true);
+
     const results = [];
     for (const target of wanted) {
-      const isDomain = target.id.startsWith("domain_");
       const headers: Record<string, string> = { Accept: "application/json" };
       if (target.rangeBytes) headers["Range"] = `bytes=0-${target.rangeBytes - 1}`;
-      // Send whichever Domain credential exists. Legacy key and OAuth bearer are
-      // both attempted so the response distinguishes "wrong scheme" from
-      // "wrong credential" — neither is echoed back.
-      if (isDomain && hasDomainKey) headers["X-Api-Key"] = Deno.env.get("DOMAIN_API_KEY")!;
+
+      // Whether a credential is actually PUT ON THE WIRE — never assumed. A
+      // provider whose scheme this probe does not implement is authenticated
+      // by nothing, and its refusal must be read that way.
+      let credentialSent = false;
+      if (target.auth === "domain_api_key" && credentials.DOMAIN_API_KEY === true) {
+        headers["X-Api-Key"] = Deno.env.get("DOMAIN_API_KEY")!;
+        credentialSent = true;
+      }
 
       const startedAt = Date.now();
       try {
@@ -259,12 +369,50 @@ Deno.serve(async (req) => {
           id: target.id,
           note: target.note,
           status: response.status,
-          verdict: classify(response.status, isDomain ? hasDomainKey || hasDomainOAuth : true),
+          verdict: classify(response.status, credentialSent, target.kind),
+          kind: target.kind,
+          /** Whether a credential reached the wire. The reader states it plainly. */
+          credentialSent,
+          /**
+           * Set when credentials EXIST for this provider but the probe cannot
+           * use them. Cotality needs an OAuth token exchange this diagnostic
+           * does not perform; PropTrack publishes no documentation, so the
+           * header its key belongs in is unknown and inventing one would be
+           * fabricating a contract.
+           */
+          authNotImplemented: target.auth === "not_implemented" && anyCredentialFor(target),
           contentType: response.headers.get("content-type"),
           contentLength: response.headers.get("content-length"),
           bytesRead: text.length,
-          // Bounded, and only ever the provider's own diagnostic text.
+          // Bounded, and only ever the provider's own diagnostic text. A
+          // credential is never echoed: nothing here reads the request headers.
           bodyPreview: text.slice(0, 400),
+          /**
+           * The provider's own signals, for diagnosing a refusal without a
+           * second round trip. Deliberately an ALLOW-LIST: `authorization`,
+           * `cookie` and `set-cookie` are never read, so no credential or
+           * session material can travel out in this field.
+           */
+          providerHeaders: Object.fromEntries(
+            ([
+              // Domain's OWN canonical diagnostic for 401/403 — their
+              // troubleshooting guidance names it as the first thing to read.
+              // It carries a reason phrase, never credential material.
+              "x-domain-security-reason",
+              "www-authenticate", "x-quota-perminute-limit", "x-quota-perminute-remaining",
+              "x-quota-perday-limit", "x-quota-perday-remaining", "retry-after",
+              "x-ratelimit-remaining", "server", "cf-ray", "x-amzn-errortype",
+            ] as const)
+              .map((h) => [h, response.headers.get(h)])
+              .filter(([, v]) => v !== null),
+          ),
+          /**
+           * Lifted out of the header map because it is the one header that
+           * decides the verdict's meaning. Domain names it as the first
+           * diagnostic for a 401 or 403, and a 403 without it is an
+           * unexplained refusal rather than an entitlement finding.
+           */
+          securityReason: response.headers.get("x-domain-security-reason"),
           elapsedMs: Date.now() - startedAt,
         });
       } catch (cause) {
@@ -288,16 +436,26 @@ Deno.serve(async (req) => {
       credentials.COTALITY_CLIENT_ID === true && credentials.COTALITY_CLIENT_SECRET === true;
 
     const providers = {
+      // Domain documents TWO current authentication schemes side by side:
+      // an API key (X-API-Key header, or an api_key query parameter) AND OAuth2
+      // client credentials. ME-6 read that from Domain's own public developer
+      // portal, which corrects what ME-5.1 inferred from an error code: the API
+      // key is NOT obsolete, and calling it so sent an operator to replace a
+      // working scheme. Either credential shape is therefore testable.
       domain: {
-        status: (hasDomainOAuth
+        status: (hasDomainOAuth || hasDomainKey
           ? "configured_and_testable"
+          : "credential_absent") as ProviderStatus,
+        authScheme: hasDomainOAuth
+          ? "oauth_client_credentials"
           : hasDomainKey
-            ? "authentication_implementation_obsolete"
-            : "credential_absent") as ProviderStatus,
-        authScheme: hasDomainOAuth ? "oauth_client_credentials" : hasDomainKey ? "api_key_legacy" : "none",
-        // v1 answers 404 "No Matching Route"; the live contract is v2 with a
-        // {postcode} segment and a Bearer token (§51).
-        repositoryImplementation: "v1 + X-Api-Key (obsolete)",
+            ? "api_key"
+            : "none",
+        // Of the three counts ME-5.1 called legacy, exactly one survives. v1 is
+        // gone (404 "No Matching Route"); v2 exists in BOTH {state}/{suburb} and
+        // {state}/{suburb}/{postcode} shapes, so the path was never wrong; and
+        // X-API-Key is a documented current scheme. Only the version prefix.
+        repositoryImplementation: "v1 route (removed by Domain) — the version prefix is the only defect; X-API-Key remains a documented scheme",
         licensingStatus: "not_assessed",
       },
       cotality: {

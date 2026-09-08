@@ -6455,7 +6455,9 @@ separate step, and a test asserts the reading says so.
 ### 60.10 The one operator action
 
 > **Where:** the Command Centre, signed in as an administrator —
-> **Integrations** (`/admin/integrations`).
+> **Integrations** — reached from the sidebar under Administration. The route
+> is **`/integrations`**; there is no `/admin/integrations` and the router
+> 404s on it.
 >
 > **What to do:** press **Run source probe** at the top of the page. One click.
 > Nothing is written, no report or score is touched, and no credential value
@@ -6465,6 +6467,16 @@ separate step, and a test asserts the reading says so.
 > (which names read *set* / *not set*), the per-provider standing, and the
 > per-source verdict rows. Presence only. **Do not send a key, a fragment of
 > one, or a screenshot that includes one.**
+
+**Correction — this instruction named the wrong URL when first written.**
+ME-5.1 said `/admin/integrations`. `App.tsx` declares
+`<Route path="integrations">` and the navigation registry points at
+`/integrations`; loading `/admin/integrations` in a built bundle logs
+*"404 Error: User attempted to access non-existent route"* and renders the
+not-found page. An operator clicking the sidebar entry was never affected —
+that link has always been right — but an instruction naming a URL that 404s
+is one an operator cannot follow, and it is exactly the kind of detail that
+turns "the feature is missing" into a half-day investigation.
 
 Two things that answer are worth the click even though every credential slot is
 expected to be empty.
@@ -6487,5 +6499,585 @@ If every credential reads *not set*, that is the answer and it is a complete
 one: the blocker recorded in §54.6 has not moved, it is commercial, and no
 engineering step unblocks it. The provider order in §60.7 is then the next act,
 and it is Aurixa's rather than this repository's.
+
+---
+
+## §61 — ME-6: real market evidence activation (2026-09-08)
+
+ME-6's objective is one thing: get genuine, licensed, suburb-level Australian
+market evidence flowing through `MarketEvidence` so Growth (40%) and Demand
+(15%) can be computed from real data. This section records what was established
+by execution, what was built, and the exact point at which provider access
+becomes the gate.
+
+**Stage outcome: B — commercial activation remains blocked.** No credential
+exists for any provider, so no genuine market figure was retrieved. Everything
+that does not require one is complete, and §61.8 states precisely what unblocks
+it. **No substitute Growth or Demand data was invented to keep engineering
+moving.**
+
+### 61.1 The ME-5.1 components are present
+
+All eleven confirmed on `0eda00b02`: canonical geography and its maintenance
+columns, trusted/untrusted classification, the `MarketEvidence` contract,
+provider-neutral ingestion, the shadow scorer, the backtest harness, Model D
+property Risk, separate Finance Suitability, Location evidence provenance,
+`market-source-probe`, and the Integrations probe UI. None was redesigned.
+
+### 61.2 Provider contracts, established by execution — and two ME-5.1 corrections
+
+Every call below was made **with no credential**. Reproducing §51's
+measurements on today's date:
+
+| request | result | reading |
+| --- | --- | --- |
+| `GET /v1/suburbPerformanceStatistics/NSW/Bowral` | **404** No Matching Route | the route the repo calls is gone |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral` | **401** | exists, credential-gated |
+| `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **401** | exists, credential-gated |
+
+**Domain's developer portal is public**, which §54 did not establish — the 401
+body names it, and its sitemap enumerates every page. Reading it corrects ME-5.1
+§60.3 on two counts.
+
+**Correction 1 — `X-API-Key` is NOT obsolete.** `/docs/latest/authentication/`
+documents *two* current schemes side by side: an API key (as an `X-API-Key`
+header or an `api_key` query parameter) **and** OAuth2 client credentials. ME-5.1
+called the repository's implementation "legacy on three independent counts" and
+the third count was wrong. The correct reading is that Domain offers both and
+the account decides which applies.
+
+**Correction 2 — the path shape was not wrong either.** `/v2/…/{state}/{suburb}`
+exists as its own documented route beside `/v2/…/{state}/{suburb}/{postcode}`,
+and both answer 401. So of the three counts, exactly one survives: **the version
+prefix**. That is a materially smaller change than ME-5.1 recorded, and it is
+the kind of error that comes from inferring a contract from an error code
+instead of reading the vendor's own documentation.
+
+What the documentation settles, precisely:
+
+| question | Domain's answer |
+| --- | --- |
+| token endpoint | `POST https://auth.domain.com.au/v1/connect/token` |
+| token auth | **HTTP Basic** — client_id as username, client_secret as password |
+| scope for suburb performance | `api_suburbperformance_read` |
+| allowed environments | **Any** (sandbox included) |
+| user context required | **No** — client credentials suffice |
+| unavailable scope | `400 invalid_scope` |
+| authorisation rate limit | 3,000 token requests/hour; cache to expiry |
+| general rate limit | 1,000–3,000 requests/minute by plan |
+| daily quota | per plan, reset **10am AEST** |
+| usage headers | `X-Quota-PerMinute-Limit`, `-Remaining`, `X-Quota-PerDay-Limit` |
+| package gate | *"You will not be able to access any API Endpoint until the required API package(s) have been added to your project."* |
+
+One measured obstacle: from **this development egress**, presenting an
+`Authorization` header to the token endpoint returns **403 Access Denied** from
+an edge WAF, while a bare POST returns the ordinary `400 invalid_request`. That
+is an egress fact, not a credential fact, and it is exactly the class §52
+recorded — two egresses differing. It must be re-measured from the Supabase
+runtime before any conclusion is drawn, which is what `market-source-probe` is
+for.
+
+**Cotality/CoreLogic — a live gateway, and the registry points at the wrong
+host.** `developer.corelogic.asia` answers 200 (a client-rendered portal, no
+server-side content). The API gateway is real:
+
+| request (no real credential) | result |
+| --- | --- |
+| `POST api.corelogic.asia/access/oauth/token`, no credential | `401 {"error":"unauthorized","error_description":"There is no client authentication…"}` |
+| same, Basic auth with an obviously-fake key | `401 …"clientId 'not-a-real-key' not known"` |
+| `https://api.cotality.com` (the registry's placeholder base URL) | **404** |
+
+Two things follow. The registry's `COTALITY_BASE_URL` placeholder names a host
+that does not serve the API; `api.corelogic.asia` does. And — decisively for
+diagnosis — **CoreLogic's gateway distinguishes "no credential" from "unknown
+client", which Domain's does not.** §51 recorded that a dummy key, a dummy
+Bearer and no header at all produced byte-identical 401s from Domain, so the
+accepted scheme cannot be read off an unauthenticated probe. CoreLogic's
+Apigee gateway names the failure. That materially improves what
+`market-source-probe` can report once a credential exists.
+
+**PropTrack — unchanged from §54.** `developer.proptrack.com` does not resolve;
+`data.proptrack.com/docs` answers 403. There is still no public documentation to
+read, so no endpoint, field or response shape is written anywhere in this repo.
+
+**SQM Research** — `sqmresearch.com.au` answers 200; no public API
+documentation was found.
+
+### 61.3 What the corpus gives a provider to match on
+
+The provider-independent denominator, measured against the 867 trusted
+geography records (item 19's structural half — the provider-matched numerator
+waits on access).
+
+A provider is asked for `(state, suburb, postcode, dwelling type)`. **All 867
+trusted records carry the first three and no untrusted record carries all
+three** — the trusted set and the provider-addressable set are the same set,
+which is a useful accident of how ME-5 resolved geography.
+
+| state | trusted | house | attached | land | type unresolved | growth-addressable | provider calls |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| QLD | 404 | 276 | 60 | 20 | 48 | 336 | 112 |
+| VIC | 201 | 100 | 11 | 3 | 87 | 111 | 37 |
+| WA | 179 | 88 | 47 | 3 | 41 | 135 | 59 |
+| NSW | 59 | 27 | 9 | 0 | 23 | 36 | 26 |
+| SA | 11 | 7 | 0 | 0 | 4 | 7 | 5 |
+| TAS | 7 | 5 | 1 | 0 | 1 | 6 | 3 |
+| ACT | 4 | 4 | 0 | 0 | 0 | 4 | 2 |
+| NT | 2 | 2 | 0 | 0 | 0 | 2 | 1 |
+| **total** | **867** | **509** | **128** | **26** | **204** | **637** | **245** |
+
+Three readings matter.
+
+**245 provider calls cover 637 properties.** One call answers a (suburb,
+postcode, dwelling type), and the corpus concentrates: 225 distinct suburbs
+behind 637 properties, a 2.6:1 amplification. Whatever the plan, the first
+genuine extraction is a few hundred calls — well inside a single day's quota on
+any tier. Cost is not the blocker and should not be modelled as one.
+
+**637 of 867 (73.5%) are growth-addressable**, or 52.8% of the whole
+1,207-report corpus.
+
+**The largest single loss is ours, not the provider's.** 204 records — 23.5% —
+carry no resolvable dwelling type: `residential property` (81), `other` (28),
+absent (95). ME-5 already ruled those must resolve to unavailable rather than
+default to house. Recovering them needs no provider and no licence, and it is
+worth more than any secondary provider would add.
+
+### 61.4 The sample frame — structural, never outcome-selected
+
+`evidenceSampleFrame.pure.ts` fixes 37 cells across NSW/VIC/QLD/WA/SA, four
+remoteness classes and both dwelling types.
+
+The brief asks the sample to span strong, average and weak markets and also
+forbids cherry-picking historically strong examples. Those are in tension only
+if the first is satisfied at selection time — and we have no growth data, which
+is the whole reason ME-6 exists. **Any strong/average/weak label applied now
+would be our guess about a market, and selecting on it would manufacture the
+spread the extraction is meant to test for.** So the frame is drawn on measured
+structural axes (state × ABS remoteness × dwelling type, ordered
+deterministically), and the performance spread is **verified after retrieval**.
+If the sample turns out to contain no falling market, that is a finding about
+the corpus and a real one. A test asserts no cell carries a performance label
+and that the module cannot even spell one.
+
+Item 15's differentiation tests are **named before the data arrives**, so the
+eventual result cannot be a search for whichever pair happened to differ:
+Parmelia vs Gosnells (WA metro houses), Elanora Heights vs Kellyville (NSW
+metro houses), and Buddina QLD 4575 house vs unit — with Truganina VIC 3029
+house vs unit as a second-state control so the first is not a QLD artefact.
+
+### 61.5 Aurixa owns the growth arithmetic
+
+`growth/growthPeriods.pure.ts` computes 1-year movement and 3- and 5-year CAGR
+from a provider's observations. Every result persists the start observation, the
+end observation, the exact elapsed period, the formula version, the value, the
+provider and the working as a reader would check it.
+
+Four mixings are refused before any arithmetic runs, because none is detectable
+from the numbers afterwards: house with unit, suburb with regional, observed
+with forecast, median price with valuation index. A blended series looks
+entirely plausible.
+
+Three rules bite. **A shorter window is never reported as a longer one** — the
+start observation must sit within ±0.5 years of the anniversary, `actualYears`
+records what was really used, and 2 years of history refuses a 5-year figure
+rather than producing one. **A refusal is never a zero.** And **each period
+refuses independently**, so a missing 5-year does not cost the 1-year.
+
+### 61.6 The validator rejects what is not evidence and never rewrites a market
+
+`evidenceQuality.pure.ts` separates two failures that look alike in a validator
+and are opposites in a market.
+
+**Malformed** — a period in the future, a duplicated period, a series running
+backwards, a suburb the request never asked about, a coarser geography than was
+requested — is **rejected**. Using it is using something that is not evidence.
+
+**Extreme** — a 75% quarter-on-quarter move — is **flagged and passed through at
+full value**. Perth houses genuinely moved like that; a thin regional median
+genuinely halves when three cheap sales land together. Clipping it would rewrite
+a real market event into a plausible one and nothing downstream could tell. The
+words `clip`, `clamp`, `winsorise` and `Math.min(Math.max` do not appear in the
+module and a test asserts it, and no finding may carry a corrected value.
+
+Geography is **matched against the trusted Aurixa record, never trusted from the
+provider's echo** — including the state, because Australian suburb names repeat.
+That check found a real defect in this module's first version: the suburb
+normaliser strips a bracketed state disambiguator (`Araluen (NSW)`), and
+applying it to the *state field* reduced every state to the empty string, so
+`VIC` matched `NSW`. Two separate normalisers now, and the regression is pinned.
+
+Dwelling-type substitution is **flagged, not rejected** — usable as context,
+never as this dwelling type's own growth. Sample sizes are retained exactly and
+absence is flagged rather than assumed. Freshness is measured from the period
+the source describes, never from when we fetched.
+
+### 61.7 The snapshot that makes ME-7 reproducible
+
+`evidenceSnapshot.pure.ts` plus `20261117090000_market_evidence_snapshots.sql`.
+
+ME-7 decides whether the methodology needs calibrating; that is only meaningful
+if re-running it gives the same answer. A provider's median moves every quarter
+and its API can be re-priced or withdrawn, so a backtest driven by live calls is
+a measurement whose instrument changes while it is being read.
+
+A snapshot is `draft` while records accumulate and `sealed` afterwards, and
+sealing takes a content hash over a canonical ordering — so re-extraction in a
+different order hashes identically while any changed value does not.
+`extractedAt` (when we asked) and `evidenceAsOf` (the newest period the data
+describes) are separate fields, for the reason the sanctions work settled.
+Licensing aggregates to the **most restrictive** record and defaults to
+`unverified`, which means scorable in a shadow backtest and not renderable to a
+client.
+
+**Sealed is enforced by the database, not only by TypeScript**, because this
+repository has twice found a rule that lived only in application code and was
+bypassed by the one caller that mattered. Proven by execution in production: a
+draft is editable; a sealed snapshot cannot be edited, cannot be deleted, and
+cannot have a record added to it. The fixture was removed and 0 rows remain.
+
+### 61.8 The gate, exactly
+
+Everything above is provider-neutral and complete. What ME-6 cannot do without
+access:
+
+| item | state |
+| --- | --- |
+| 10 — retrieve a real multi-state sample | **blocked** — frame ready, 37 cells, 245-call budget known |
+| 11 — normalise through `MarketEvidence` | **blocked** — contract and validator ready |
+| 13 — Growth Performance + Confidence on real data | **blocked** — arithmetic ready and tested |
+| 14 — Demand Performance + Confidence on real data | **blocked** — which components a provider supports cannot be known until one answers |
+| 15 — real property differentiation | **blocked** — four pairs named in advance |
+| 19 — provider coverage of the corpus | **half done** — denominator measured (§61.3); numerator needs a provider |
+| 20 — is a secondary provider necessary | **blocked** — it is a question about measured coverage, and there is none |
+
+**The provider decision is deliberately not made.** Item 3 says to decide from
+evidence rather than preference once actual entitlement is established, and
+entitlement is a property of an account that this repository cannot read. What
+the evidence so far favours is worth recording without pretending it is a
+decision: Domain has a fully public contract, both auth schemes documented, a
+named scope, sandbox access and published quotas; Cotality has an existing
+commercial relationship and a gateway that diagnoses failures precisely, but no
+outbound call has ever been written and its own scoping document leaves cache
+duration, client-report redistribution and derived-metric persistence open.
+
+**No credential model was changed.** Item 5 says to correct Domain's
+configuration *if* the real contract confirms it is needed — and the real
+contract says `X-API-Key` remains current, so ripping it out on ME-5.1's reading
+would have removed a working scheme on a false premise. What ME-5.1 recorded as
+a defect (that `DOMAIN_CLIENT_ID`/`DOMAIN_CLIENT_SECRET` cannot be entered
+anywhere) is real and still true, but it is now an *addition* to make when
+OAuth is the chosen scheme, not a replacement.
+
+### 61.9 What did not change
+
+Scoring V2 is not wired into live report generation. A = 75 and A+ = 85 are
+untouched. No Growth weight, Demand weight, dimension weight or eligibility rule
+was modified — calibration belongs to ME-7. Risk remains `null` and no
+flood/strata/planning acquisition was started. Finance Suitability remains
+separate. No contaminated historical Location composite was reused.
+
+---
+
+## §62 — ME-6: the first authoritative runtime result, and what it corrected (2026-09-08)
+
+`market-source-probe` ran from the deployed Command Centre. This is the first
+reading of this deployment's own runtime, and it settled a question §49 could
+only call *suggestive* — **`DOMAIN_API_KEY` is SET**. It also exposed a defect in
+the probe itself, which is recorded first because two of its findings were
+fabrications.
+
+### 62.1 What the run returned
+
+**Credential presence — 1 of 11 names set.** `DOMAIN_API_KEY` set;
+`DOMAIN_CLIENT_ID`, `DOMAIN_CLIENT_SECRET`, all four Cotality names, both
+PropTrack names, Pricefinder and SQM Research all **not set**.
+
+| target | status | first verdict | corrected verdict |
+| --- | ---: | --- | --- |
+| `domain_v2_suburb_performance` | 403 | Not entitled | **under diagnosis** (62.3) |
+| `domain_v1_suburb_performance` | **404** | Route does not exist | unchanged |
+| `cotality_suburb_statistics` | 401 | Credential rejected, or scope missing | **credential absent** |
+| `proptrack_market_api` | **404** | Route does not exist | unchanged |
+| `vic_data_catalogue` | 206 | Reachable | unchanged |
+| `qld_statistician` | 206 | Reachable | unchanged |
+| `vic_median_house_by_suburb` | 403 | Not entitled | **refused, not about entitlement** |
+| `nsw_valuer_general_psi` | — | Unreachable | unchanged |
+| `sa_data_portal` | 200 | Reachable | unchanged |
+| `abs_res_dwell` | 200 | Reachable | unchanged |
+
+Four government sources answer this runtime, which is a real and useful finding
+in its own right: VIC's catalogue, the QLD Statistician, data.sa.gov.au and ABS
+are all reachable where the development egress could not always reach them.
+
+### 62.2 The classification defect — two fabricated findings
+
+`classify(response.status, isDomain ? hasDomainKey || hasDomainOAuth : true)`.
+The third argument is the literal `true` for **every non-Domain target**, so the
+classifier was told a credential had been sent when none had.
+
+Two consequences reached an operator as instructions:
+
+**Cotality** answered 401 to an unauthenticated request and was reported as
+*"Credential rejected, or scope missing — confirm the credential and that the
+account holds the named scope."* There is no Cotality credential. The advice was
+to check something that does not exist.
+
+**A Victorian Government spreadsheet** answered 403 and was reported as *"Not
+entitled — owner: commercial. Entitlement is a property of the provider account;
+it is added to the account, never worked around here."* Nobody holds an account
+with `land.vic.gov.au`. That is a fabricated finding pointing at a fabricated
+commercial relationship, and it is precisely the class of error this programme
+exists to remove — it would have sent someone to negotiate with a vendor that
+is not a vendor.
+
+The correction has three parts. **`classify` takes real credential presence**,
+resolved per target from the names that would authenticate it. **Every target
+declares its `kind`**, and a `government` 403 can never be an entitlement
+finding however the request was made — only a commercial party has an
+entitlement to withhold. And **`auth` is declared per target**, because a
+credential that exists is not a credential that was sent: Cotality needs an
+OAuth token exchange this diagnostic does not perform, and PropTrack publishes
+no documentation at all, so the header its key belongs in is unknown and
+inventing one would be fabricating a contract. Those read as
+`authNotImplemented` and the panel says so in words.
+
+Two rules, pinned by tests that read the function's source: **an
+unauthenticated refusal says nothing about entitlement**, and **no call site may
+assert that a credential was sent**.
+
+### 62.3 The Domain 403 — what it does and does not prove
+
+The word "not entitled" is withheld until the evidence carries it. What is
+measured:
+
+| request | credential | result |
+| --- | --- | --- |
+| v2 suburb performance, development egress (§61.2) | none | **401** *"Unable to verify credentials"* |
+| v2 suburb performance, Supabase runtime | `DOMAIN_API_KEY` | **403** |
+
+**The transition is the evidence.** Domain's gateway answers 401 when it cannot
+verify a credential and 403 when it can but refuses the request. Moving from one
+to the other on the same route, when the only difference is that a key was
+attached, is consistent with the key being **recognised** — and inconsistent
+with hypothesis B, an invalid or disabled key, which would have stayed at 401.
+
+Domain's own documentation supplies the mechanism: *"You will not be able to
+access any API Endpoint until the required API package(s) have been added to
+your project."* A project whose key is valid but which does not hold
+**Properties & Locations** would answer exactly this.
+
+That is strong, and it is not yet conclusive, because a WAF refusal (hypothesis
+D) also presents as 403 — and §61.2 measured this development egress being
+403'd by an edge WAF on Domain's token host. Two things settle it and both are
+now in the probe rather than in an argument:
+
+1. **The provider's own diagnostic is captured and rendered** — content type,
+   a bounded body preview, and an allow-list of response headers
+   (`www-authenticate`, the `X-Quota-*` family, `retry-after`, `server`,
+   `cf-ray`). A JSON body in Domain's own error shape is the API refusing; an
+   HTML *"Access Denied"* page is a WAF. The allow-list never reads
+   `authorization`, `cookie` or `set-cookie`, so no credential or session
+   material can travel in this field.
+2. **A second Domain package is probed on the same key** —
+   `domain_address_suggest`, Domain's documented read-only Address Suggestion
+   route. If the key answers 200 there and 403 on suburb performance, the key
+   is valid and the product is not in the project. If it answers 403 on both,
+   the key is unpackaged entirely. If 401 on both, the key is not recognised.
+   One run, three distinguishable outcomes.
+
+Item 4 asked whether the key is already used successfully elsewhere in this
+repository. It is not: `domain-data-service` is the only Domain caller and it
+calls the **v1 route Domain has removed**, so it has never succeeded and cannot
+serve as a control. The second package is therefore the control, and it is
+Domain's own published route rather than one invented for testing.
+
+### 62.4 Dwelling-type recovery — the record does not hold it
+
+204 of 867 trusted reports carry no resolvable dwelling type. Every deterministic
+route was measured; none infers from narrative, price or address.
+
+| route | recoverable |
+| --- | ---: |
+| sibling report on the same `canonical_property_key`, unambiguous | **4** |
+| same key, ambiguous (two different types) | 0 |
+| `property_listing_id` → `listings_cache` | **0** — 41 links, **0 rows survive** |
+| an alternative structured key in `property_specs` | **0** — one key exists, `property_type`, present on 109 and specific on none |
+| `client_property_id` → `client_properties` | **0** — no report carries one |
+| **total recovered** | **4** |
+| **not recoverable from the record** | **200** |
+
+The revised Growth-addressable denominator is therefore **641 of 867 (73.9%)**,
+against 637 before. That is the honest answer and it is a small one: item 8's
+premise — that lineage recovery would return a material number — does not hold
+against this record.
+
+The reason the listing route returns nothing is documented elsewhere in this
+repository and is the same fault: Airtable prunes `Property Intake Master` at 30
+days, and `listings_cache` mirrored that prune until it was made an archive. The
+41 listings that would have answered this question aged out before the archive
+existed. **The dwelling type for 200 properties is not somewhere else in the
+system; it is gone.**
+
+### 62.5 Why it was gone — and the writer that will stop taking the next 200
+
+`generate-investment-report/index.ts` composed the stored property type as
+`… : (rawPropertyType.includes('house') ? 'House' : … : rawPropertyType ||
+'Residential Property')`. When nothing was known, the generator wrote the
+literal `'Residential Property'` — and that string is indistinguishable, to
+every downstream reader, from a type somebody actually established.
+
+This repository had already written the rule down. `propertyRecord.pure.ts`
+says in as many words: *"Absent is absent — never a placeholder."* The generator
+did it anyway, and it is why 81 rows say `residential property` today.
+
+One value became two. **`resolvedPropertyType` is the fact** and is `null` when
+nothing authoritative is known — it is what reaches `composePropertySpecs` and
+the stored record. **`propertyTypeLabel` is prose**, used in the six prompt and
+table positions where a readable phrase is wanted and no fact is asserted. A
+generic label can no longer overwrite absence, and it never could overwrite a
+specific value — the specific branches are unchanged and still win.
+
+### 62.6 Provider standing corrected
+
+The live panel read *"Credential present, scheme obsolete"* and described this
+repository as *"v1 + X-Api-Key (obsolete)"*. §61.2 had already established from
+Domain's public developer portal that the API key is a **current documented
+scheme**, so that status was stale the moment it was measured. With
+`DOMAIN_API_KEY` set, Domain now reads **configured — testable**, `authScheme`
+is `api_key`, and the repository description names the one defect that survives:
+the version prefix.
+
+### 62.7 Cotality and PropTrack stay where they are
+
+Neither has a runtime credential, so neither unauthenticated result says
+anything about entitlement — which is the whole point of 62.2. They remain
+fallback candidates. Domain remains the first activation path because a
+credential exists, the contract is public and measured, the required route is
+documented, and the implementation delta is a version prefix.
+
+---
+
+## §63 — ME-6: one trustworthy Domain diagnostic (2026-09-08)
+
+§62 corrected a probe that fabricated two findings. This pass corrects a third
+thing it still did — concluding from a status code — and adds the one header
+Domain itself says to read.
+
+### 63.1 `X-Domain-Security-Reason`
+
+Domain's troubleshooting guidance names it as the **first** diagnostic for a 401
+or 403. It carries a reason phrase, never credential material, so it joins the
+response-header allow-list and is lifted into its own field because it is the
+one header that decides what the verdict means. The panel renders it under the
+Domain row, quoted verbatim.
+
+The allow-list stays an allow-list: `authorization`, `cookie`, `set-cookie`,
+`x-api-key` and `proxy-authorization` are never read, and nothing anywhere reads
+back the request headers the probe sent. Three tests assert it.
+
+### 63.2 A 403 with a credential is not an entitlement finding
+
+The `not_entitled` reading asserted its own conclusion — *"the account is not
+entitled to this endpoint"* — and routed it to `commercial`. Domain documents
+several causes for one 403: a missing scope, a plan that does not include the
+API, an environment restriction, an access restriction, an invalid or expired
+key, and other internal denials. **They do not share an owner.** Sending that to
+a commercial negotiation on the status alone routes a key problem to the wrong
+department.
+
+The verdict is now *"Refused with a credential — reason required"*, owner
+`unassigned`, next action: read the provider's own reason before assigning it to
+anybody. A standing test permits `unassigned` **only** where the reading also
+states what would resolve it — a verdict that names nobody and asks for nothing
+is a dead end rather than a caution.
+
+### 63.3 The two-product matrix, and the case it refuses to conclude
+
+`domain_address_suggest` requires `api_properties_read`; suburb performance
+requires `api_suburbperformance_read`. Probing both on one key separates a key
+problem from a product problem, which no single status can.
+
+| Address Suggestion | Suburb Performance | reading |
+| --- | --- | --- |
+| 2xx | 2xx | the key works and both capabilities are reachable — qualify the payload |
+| 2xx | 403 | **strong**: the key itself works; the issue is specific to Suburb Performance access, scope or plan. The stated reason names which |
+| 401 | 401 | an authentication or key problem is likely — qualify with the header and body before replacing anything |
+| 403 | 403 | **AMBIGUOUS.** Never *"the key has no packages"* |
+
+The both-403 row is the point of this section. It is the reading that was
+written here once and is now refused: project or package configuration, missing
+scopes, an environment restriction, a plan restriction, the key's own state, a
+WAF or origin refusal that never reached Domain's gateway, and other Domain
+access policies all present identically. `interpretDomainAccess` returns
+`conclusive: false` and `owner: null` for it, and its next step forbids raising
+a commercial request until something names the cause. Where Domain does state a
+reason it is quoted into the reading verbatim.
+
+Two more rules fall out. **One product alone concludes nothing** — a single
+result cannot separate the two failure modes, so the matrix says so rather than
+reading the one it has. And **an unnamed combination is never concluded from**:
+anything the matrix does not name is a reason to look, not a reason to guess.
+
+### 63.4 The v1 404 is a deprecation control, not a blocker
+
+Domain deprecated v1 Suburb Performance and replaced it with v2. The v1 target
+stays in the probe as evidence the old route is gone — that is what it proves,
+and it proved it — but it is not an ME-6 blocker and the production adapter
+targets v2. Its note now says so.
+
+### 63.4a The local gate runner was under-reporting, and that is on me
+
+CI failed `security` on a head my local run had called clean. The cause was not
+the repository: **the local harness was reporting the wrong exit status.** Each
+step ran as `( cmd1 \n cmd2 \n … ); echo "EXIT:$?"`, and without `set -e` a
+subshell's `$?` is the status of the LAST command only. Any failure earlier in a
+multi-command step was swallowed, and every step in that runner is
+multi-command.
+
+So the "all 47 gates, 0 failures" reported for the ME-6 heads was weaker than it
+sounded: it meant *the last command of each of 47 steps passed*. The runner now
+carries `set -e` in all 47 groups, and the first failure in a group is the
+group's status.
+
+Re-running it immediately surfaced a second failure that had been hidden — and
+both remaining local failures are the same environment-bound class rather than
+defects: `migrationSyntax.test.ts` at 5,029 ms and `diditProviderConfigTruth`
+at 8,584 ms, each against a 5,000 ms limit, on a corpus of 1,030 migrations and
+4,495 tests. CI settled it on this exact head: **`verify` passed on GitHub**,
+running both of those specs, while `security` failed on the one real defect
+below. This container is slower than the runner; the repository is not broken.
+
+The real defect CI caught was `check-cors-contract.mjs`, and its finding was
+sound in the way it was raised even though the conclusion did not apply. The
+gate scans `src/` for `headers.get('x-…')` and requires the header to be in
+`CORS_EXPOSED_RESPONSE_HEADERS`. It matched a **test file** — the spec asserting
+that the probe lifts `x-domain-security-reason` into its own field quoted the
+whole call expression as a string literal.
+
+The header is read **server-side**, inside the Edge Function, from *Domain's*
+response, and its value leaves in the probe's JSON body; it never crosses a
+browser CORS boundary. Adding it to the expose list to quiet the gate would have
+declared that our own function emits a header it does not — a false statement to
+a security gate, in order to go green. The test asserts the same rule without
+embedding the call expression instead, and the gate is untouched.
+
+### 63.5 What is settled, and what the next run decides
+
+The dwelling-type conclusion stands as measured: 204 unresolved, **4**
+deterministically recovered, ~200 genuinely unrecoverable from the structured
+record, and a Growth-addressable corpus of **641 of 867**. No LLM, narrative,
+price or address inference was used to manufacture the missing types and none
+will be. `resolvedPropertyType` is the fact and is null when unknown;
+`propertyTypeLabel` is prose; a generic label can no longer be persisted as a
+factual type.
+
+Demand qualification is deliberately deferred until Suburb Performance actually
+answers. Domain's documented series may expose median sold price, number sold,
+sale listing count, auction counts, days on market, discount percentage, median
+rent listing price and rent listing count — which could carry a substantial part
+of Demand as well as Growth. Only the fields genuinely present under this
+deployment's data access will be used, and **no secondary provider is added
+unless a measured evidence gap remains** after that inspection.
 
 ---

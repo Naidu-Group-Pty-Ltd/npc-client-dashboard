@@ -3680,9 +3680,24 @@ Produce a comprehensive statewide investment analysis following the structure ab
          rawPropertyType.includes('studio') ? 'Studio Apartment' : 'Unit')
       : (rawPropertyType.includes('house') ? 'House' :
          rawPropertyType.includes('duplex') ? 'Duplex' :
-         rawPropertyType || 'Residential Property');
-    
-    console.log(`🏠 Property Type Standardization: "${rawPropertyType}" → "${standardizedPropertyType}" (isStrata: ${isStrataProperty})`);
+         rawPropertyType || null);
+
+    // ME-6: `'Residential Property'` is a PROSE fallback and must never become
+    // the stored fact. It reads to every downstream consumer as a real value,
+    // so an unknown type was written down as a plausible-looking string and
+    // could not afterwards be told apart from a genuine one. Measured on the
+    // trusted corpus: 204 of 867 reports carry no resolvable dwelling type
+    // (`residential property` 81, `other` 28, absent 95), and only 4 of those
+    // could be recovered from anywhere in the record — the rest is simply gone,
+    // because the placeholder is all that was ever kept.
+    //
+    // Two values from here on. `resolvedPropertyType` is the FACT and is null
+    // when nothing authoritative is known; `propertyTypeLabel` is for prose the
+    // model reads, where a readable phrase is wanted and no fact is asserted.
+    const resolvedPropertyType: string | null = standardizedPropertyType;
+    const propertyTypeLabel = resolvedPropertyType ?? 'Residential Property';
+
+    console.log(`🏠 Property Type Standardization: "${rawPropertyType}" → "${resolvedPropertyType ?? '(unknown — stored as null)'}" (isStrata: ${isStrataProperty})`);
     
     // ============================================================================
     // PRE-CALCULATED YIELD VALUES - Recalculated using OVERRIDDEN expense values
@@ -3798,7 +3813,7 @@ Your role is to produce comprehensive, professional-grade investment reports fol
 **CRITICAL CALCULATION RULES:**
 1. OCCUPANCY ASSUMPTION: Use 100% occupancy rate (52 weeks per year) for ALL rental income calculations unless explicitly overridden. This is industry standard for investment analysis.
 2. YIELD VALUES: Use the pre-calculated yield values provided below EXACTLY - do NOT recalculate or estimate yields.
-3. PROPERTY TYPE: Use the standardized property type "${standardizedPropertyType}" consistently throughout the report - never switch terminology.
+3. PROPERTY TYPE: Use the standardized property type "${propertyTypeLabel}" consistently throughout the report - never switch terminology.
 
 **PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO NOT RECALCULATE):**
 - Gross Rental Yield: ${statedYield(preCalculatedGrossYield)}
@@ -3824,7 +3839,7 @@ ${absentRentDirective(rentalEvidence)}
 ${propertyDetails ? `**Property Details Provided:**
 - Price: $${propertyDetails.price?.toLocaleString() || 'Not specified'}
 - Weekly Rent: $${propertyDetails.weeklyRent || 'Not specified'}
-- Property Type: ${standardizedPropertyType}
+- Property Type: ${propertyTypeLabel}
 - Bedrooms: ${propertyDetails.beds || 'Not specified'}
 - Bathrooms: ${propertyDetails.baths || 'Not specified'}
 ${propertyDetails.landSizeSqm ? `- Land Size: ${propertyDetails.landSizeSqm}m²` : ''}
@@ -3857,7 +3872,7 @@ This executive summary provides a high-level overview of the investment opportun
 | Attribute | Value |
 |-----------|-------|
 | Property Address | ${formattedInput} |
-| Property Type | ${standardizedPropertyType} |
+| Property Type | ${propertyTypeLabel} |
 | Purchase Price | $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} |
 | Estimated Weekly Rent | ${quotedWeeklyRent ? `$${quotedWeeklyRent}` : 'Not established'} |
 | Gross Rental Yield | ${statedYield(preCalculatedGrossYield)} |
@@ -4107,7 +4122,7 @@ Based on ${documentContent ? 'the provided property listing data' : 'location in
 
 | Property Characteristic | ${documentContent ? 'Value' : 'Estimated Value'} |
 |------------------------|-------|
-| Property Type | ${standardizedPropertyType} |
+| Property Type | ${propertyTypeLabel} |
 ${[
   // A specification table states facts. Where the record holds none, the row
   // is OMITTED — it is not filled with an instruction to estimate one.
@@ -4134,7 +4149,7 @@ ${[
   ['Condition', propertyDetails?.condition ?? null],
 ].filter(([, v]) => v !== null && v !== undefined && v !== '')
  .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
-${isStrataProperty ? `| Strata Type | ${standardizedPropertyType} within strata scheme |` : ''}
+${isStrataProperty ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
 
 The table above contains every physical attribute on record for this property.
 Do not add a row to it, and do not state a land size, floor area, bedroom or
@@ -4307,7 +4322,7 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Property Type | Estimated Weekly Rent | Annual Rental Income |
 |--------------|----------------------|---------------------|
-| ${effectiveBeds || 'X'}-Bed ${standardizedPropertyType} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
+| ${effectiveBeds || 'X'}-Bed ${propertyTypeLabel} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
 
 **Selected Rental Assumption:** ${rentalEvidence.established ? `$${quotedWeeklyRent}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString()} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})` : 'No rental evidence was available for this property, so no rental income is assumed and no yield is stated.'}
 
@@ -6236,7 +6251,7 @@ YOUR DEDICATED PROPERTY PARTNER
       // `'Residential Property'` on 84. See
       // `_shared/reports/investment/propertyRecord.pure.ts`.
       const propertySpecs = composePropertySpecs({
-        propertyType: effectivePropertyType ?? standardizedPropertyType,
+        propertyType: effectivePropertyType ?? resolvedPropertyType,
         landSizeSqm: effectiveLandSizeSqm,
         buildSizeSqm: effectiveBuildSizeSqm,
         beds: effectiveBeds,

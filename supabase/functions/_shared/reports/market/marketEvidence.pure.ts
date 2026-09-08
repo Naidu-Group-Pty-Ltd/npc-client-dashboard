@@ -96,6 +96,10 @@ export type EvidenceDwellingType = 'house' | 'attached' | 'land' | 'any';
 export type EvidenceProvider =
   | 'domain'
   | 'cotality'
+  // ME-6: named so a snapshot and a probe reading can identify them. An
+  // adapter is written for the ONE provider actually selected, never all four.
+  | 'proptrack'
+  | 'sqm_research'
   | 'abs_res_dwell'
   | 'abs_census'
   | 'abs_erp'

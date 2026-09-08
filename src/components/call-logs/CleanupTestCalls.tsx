@@ -26,12 +26,13 @@ import { cn } from '@/lib/utils';
  * Test phone numbers, from the environment rather than from source.
  *
  * These were two real staff mobiles written into this file, which meant they
- * shipped inside the JavaScript bundle of every build — readable by anyone
- * who opened the app, including client-facing deployments where the control
- * itself is hidden (hiding a button does not unship the module it lives in).
- * Set VITE_TEST_CALL_NUMBERS as a comma-separated list on internal builds;
- * the default is empty, and the operator can still add numbers by hand in
- * the popover as before.
+ * shipped inside the JavaScript bundle of every build — readable by anyone who
+ * opened the app. Hiding the control does not unship the module it lives in, so
+ * a client-facing deployment carried them too.
+ *
+ * Set VITE_TEST_CALL_NUMBERS as a comma-separated list on internal builds; the
+ * default is empty, and an operator can still add numbers by hand in the
+ * popover exactly as before.
  */
 const DEFAULT_TEST_NUMBERS: string[] = (
   (import.meta as { env?: Record<string, string | undefined> })?.env?.VITE_TEST_CALL_NUMBERS ?? ''
@@ -146,7 +147,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
         </PopoverTrigger>
         <PopoverContent className={utilityPopoverShell} align="end">
           <div className="border-b border-border dark:border-white/10 bg-gradient-to-r from-info/10 via-transparent to-brand-500/10 px-4 py-3">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-info-foreground">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-info/20 bg-info/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-info">
               <FlaskConical className="h-3 w-3" />
               Controlled Testing
             </div>
@@ -163,7 +164,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
                 onKeyDown={(e) => e.key === 'Enter' && handleAddNumber()}
                 className={cn("flex-1", utilityControl)}
               />
-              <Button size="sm" onClick={handleAddNumber} disabled={!newNumber.trim()} className="rounded-2xl bg-info/15 text-info-foreground hover:bg-info/25">
+              <Button size="sm" onClick={handleAddNumber} disabled={!newNumber.trim()} className="rounded-2xl bg-info/15 text-info hover:bg-info/25">
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -225,7 +226,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
         <AlertDialogContent className={destructiveDialogShell}>
           <div className="border-b border-destructive/20 bg-gradient-to-r from-destructive/15 via-background dark:via-black/40 to-brand-500/10 px-6 py-5">
             <AlertDialogHeader>
-              <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full border border-destructive/25 bg-destructive/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-destructive-foreground">
+              <div className="mb-3 inline-flex w-fit items-center gap-2 rounded-full border border-destructive/25 bg-destructive/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-destructive">
                 <ShieldAlert className="h-3 w-3" />
                 Destructive Action
               </div>
@@ -239,7 +240,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
                   <li key={number}>{number}</li>
                 ))}
               </ul>
-              <p className="rounded-2xl border border-destructive/25 bg-destructive/10 px-3 py-2 font-semibold text-destructive-foreground">
+              <p className="rounded-2xl border border-destructive/25 bg-destructive/10 px-3 py-2 font-semibold text-destructive">
                 This action cannot be undone.
               </p>
             </AlertDialogDescription>

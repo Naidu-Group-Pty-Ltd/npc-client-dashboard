@@ -134,6 +134,14 @@ export function toProjectionYear(raw: unknown, index: number): ProjectionYear {
 
     depreciation: audPerYear(optionalNum(r, 'depreciation', where)),
     taxRefund: audPerYear(optionalNum(r, 'taxRefund', where)),
+    // The SIGNED tax effect. A client that predates the fix sends no
+    // `taxEffect`, and the refund is then the whole of it — which is exactly
+    // what this renderer assumed before a rental PROFIT started being taxed.
+    taxEffect: audPerYear(
+      r.taxEffect === undefined || r.taxEffect === null
+        ? optionalNum(r, 'taxRefund', where)
+        : optionalNum(r, 'taxEffect', where),
+    ),
     landTax: audPerYear(optionalNum(r, 'landTax', where)),
 
     capitalGrowth: percent(optionalNum(r, 'capitalGrowth', where), 1),
@@ -207,6 +215,7 @@ export function toYearOne(first: ProjectionYear): YearOneBlock {
     grossYield: first.grossYield,
     netYield: first.netYield,
     taxRefund: first.taxRefund,
+    taxEffect: first.taxEffect,
   };
 }
 

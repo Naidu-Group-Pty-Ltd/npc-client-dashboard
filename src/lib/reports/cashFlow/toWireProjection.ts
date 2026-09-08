@@ -38,6 +38,8 @@ export interface ModalProjectionYear {
   preTaxCashFlowPA: number;
   depreciation: number;
   taxRefund: number;
+  taxPayable?: number;
+  taxEffect?: number;
   landTax: number;
   afterTaxCashFlowPA: number;
 }
@@ -85,6 +87,9 @@ function toYear(row: ModalProjectionYear, calendarYear: number | null): WireProj
     afterTaxAnnual: finite(row.afterTaxCashFlowPA),
     depreciation: finite(row.depreciation),
     taxRefund: finite(row.taxRefund),
+    // The signed effect, so the renderer can say "(payable)" rather than
+    // printing a zero refund beside a cash flow that fell.
+    taxEffect: row.taxEffect === undefined ? finite(row.taxRefund) : finite(row.taxEffect),
     landTax: finite(row.landTax),
     capitalGrowth: finite(row.capitalGrowthRate),
     cpiGrowth: finite(row.cpiGrowthRate),

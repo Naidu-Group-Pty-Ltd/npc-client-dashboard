@@ -8,6 +8,7 @@ import {
 import { requireModulePermission } from '../_shared/authz.ts';
 import {
   listingsRequestUrl,
+  missionControlRefusal,
   resolveListingsRoute,
   type ListingsRoute,
 } from '../_shared/airtableListingsRoute.pure.ts';
@@ -128,8 +129,13 @@ async function tableAliases(): Promise<Map<string, string>> {
     );
     if (!response.ok) {
       // Not fatal. Resolution falls back to the raw string, which is what the
-      // code did before this existed.
-      console.warn('[listings-cache] table metadata unavailable', response.status);
+      // code did before this existed — but name which end declined, for the
+      // same reason the records walk does.
+      const refusal = missionControlRefusal(response.headers);
+      console.warn(
+        '[listings-cache] table metadata unavailable',
+        refusal ? `mission_control_${refusal}` : `airtable_${response.status}`,
+      );
       return new Map();
     }
     const payload = (await response.json()) as { tables?: Array<{ id?: string; name?: string }> };
@@ -237,11 +243,30 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
         pages -= 1;
         continue;
       }
+      /*
+       * Say which END refused, because the two remedies are opposite.
+       *
+       * `airtable_401` is what this wrote for both "Airtable rejected the
+       * token Mission Control holds" and "Mission Control rejected this
+       * clone's key" — the first is fixed in Mission Control's environment,
+       * the second on this deployment, and an operator reading the sync row
+       * had nothing to tell them apart. Mission Control sets the header on
+       * its OWN refusals and never on what it relays, so its ABSENCE is what
+       * identifies a vendor answer.
+       *
+       * Measured 8 Sep 2026 on NPC Test: the first brokered read wrote
+       * `airtable_401`, which happened to be true — Mission Control had made
+       * the call and Airtable refused it — but it was true by luck, and the
+       * same six characters would have been written had the key been wrong.
+       */
+      const refusal = missionControlRefusal(response.headers);
       return {
         records,
         complete: false,
         sorted: !sortRejected,
-        error: `airtable_${response.status}`,
+        error: refusal
+          ? `mission_control_${refusal}`
+          : `airtable_${response.status}`,
       };
     }
 

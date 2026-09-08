@@ -9,8 +9,25 @@ import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 import {
   listingsRequestUrl,
   resolveListingsRoute,
+  missionControlRefusal,
 } from '../_shared/airtableListingsRoute.pure.ts';
 import { allowlistAdmits, buildAllowlist, parseTableAliases } from '../_shared/airtableTableKey.pure.ts';
+
+/**
+ * Which end refused, so the error names it.
+ *
+ * Mission Control and Airtable both answer 401, 403 and 429, and the remedies
+ * are opposite: one is fixed in Mission Control's environment, the other on
+ * this deployment. Mission Control sets `x-mission-control-refusal` on its OWN
+ * refusals and never on what it relays, so the header's ABSENCE is what
+ * identifies a vendor answer. Written once because there are three branches
+ * that report an upstream failure and two of them used to say "Airtable"
+ * whatever had happened.
+ */
+function refusingEnd(response: Response): { service: string; refusal: string | null } {
+  const refusal = missionControlRefusal(response.headers);
+  return { service: refusal ? 'Mission Control' : 'Airtable', refusal };
+}
 
 interface AirtableRecord {
   id: string;
@@ -169,9 +186,14 @@ Deno.serve(async (req) => {
       const metaRes = await fetch(metaUrl, { headers: route.headers });
       if (!metaRes.ok) {
         const errorText = await metaRes.text();
-        console.error('Airtable metadata error:', metaRes.status, errorText);
+        const { service, refusal } = refusingEnd(metaRes);
+        console.error(
+          `${service} metadata error:`,
+          metaRes.status,
+          refusal ? `${refusal}; ${errorText}` : errorText,
+        );
         return new Response(
-          JSON.stringify({ error: redactUpstreamError(metaRes.status, 'Airtable') }),
+          JSON.stringify({ error: redactUpstreamError(metaRes.status, service) }),
           { status: metaRes.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -232,9 +254,14 @@ Deno.serve(async (req) => {
         airtableResponse = await fetch(retryUrl, { headers: route.headers });
       } else {
         // Non-sort error — redact upstream body (WP-08).
-        console.error('Airtable API error:', airtableResponse.status, errorText);
+        const { service, refusal } = refusingEnd(airtableResponse);
+        console.error(
+          `${service} API error:`,
+          airtableResponse.status,
+          refusal ? `${refusal}; ${errorText}` : errorText,
+        );
         return new Response(
-          JSON.stringify({ error: redactUpstreamError(airtableResponse.status, 'Airtable') }),
+          JSON.stringify({ error: redactUpstreamError(airtableResponse.status, service) }),
           { status: airtableResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -242,9 +269,14 @@ Deno.serve(async (req) => {
 
     if (!airtableResponse.ok) {
       const errorText = await airtableResponse.text();
-      console.error('Airtable API error:', airtableResponse.status, errorText);
+      const { service, refusal } = refusingEnd(airtableResponse);
+      console.error(
+        `${service} error:`,
+        airtableResponse.status,
+        refusal ? `${refusal}; ${errorText}` : errorText,
+      );
       return new Response(
-        JSON.stringify({ error: redactUpstreamError(airtableResponse.status, 'Airtable') }),
+        JSON.stringify({ error: redactUpstreamError(airtableResponse.status, service) }),
         { status: airtableResponse.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

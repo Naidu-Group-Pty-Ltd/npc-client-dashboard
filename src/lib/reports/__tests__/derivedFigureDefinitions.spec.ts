@@ -40,17 +40,34 @@ const DEFINITION =
 /** The canonical module is the point; its own spec exercises it. */
 const EXEMPT = /(__tests__|\.spec\.|\.test\.|propertyMetrics\.pure)/;
 
-/** Measured 2026-09-07. See the header before changing a number here. */
+/**
+ * Measured 2026-09-07; `CashFlowAnalysisModal` / `projectionEngine` re-measured
+ * 2026-09-08. See the header before changing a number here.
+ *
+ * That one movement is a ratchet DOWN, and it is the answer to the question
+ * the header asks. The modal held 8 definitions because it held the 10-year
+ * projection TWICE — once for the report a client receives and once for the
+ * properties it is compared against — so gross yield, net yield and LVR were
+ * each written out twice in one file. The two engines are now one,
+ * `src/lib/cashFlow/projectionEngine.pure.ts`, and the same three figures are
+ * defined once: 8 becomes 4, and the modal leaves this list entirely.
+ *
+ * They stay defined there rather than calling `propertyMetrics.pure.ts`
+ * because the engine's quantities are the CURRENT-year ones — rent and
+ * expenses against the year's grown value, and the amortised balance against
+ * it — computed inside the chained loop that produces them, which is the
+ * distinction that module exists to keep rather than collapse.
+ */
 const FROZEN = new Map<string, number>([
   ['src/components/borrowing-capacity/scenarios/AdditionalStrategyLevers.tsx', 1],
   ['src/components/borrowing-capacity/scenarios/StrategyScenarioModeling.tsx', 1],
   ['src/components/clients/PropertyReportGenerator.tsx', 3],
   ['src/components/clients/review-wizard/useReviewWizard.ts', 3],
   ['src/components/finance-portal/CalculatorsTab.tsx', 1],
-  ['src/components/reports/CashFlowAnalysisModal.tsx', 8],
   ['src/components/reports/PixelPerfectPDFGenerator.tsx', 1],
   ['src/components/reports/manual-inputs/IncomeExpensesTab.tsx', 1],
   ['src/lib/cashFlow/investmentMetrics.pure.ts', 1],
+  ['src/lib/cashFlow/projectionEngine.pure.ts', 4],
   ['src/lib/reports/cashFlow/liveProjectionRow.ts', 1],
   ['src/lib/templateLibrary/sampleReportData.ts', 9],
   ['src/pages/portal/PortalPropertyInsights.tsx', 1],

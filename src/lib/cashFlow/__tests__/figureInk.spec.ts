@@ -127,12 +127,14 @@ describe('the screen agrees with the documents it exports', () => {
     expect(modal).toMatch(/\.text-red \{ color: #dc2626; \}/);
   });
 
-  it('and both colour the same five rows the screen does', () => {
+  it('and both colour every sign-driven row the screen does', () => {
     // `drawRow(..., true)` is the PDF's highlight flag; `text-red` is the
-    // HTML export's. Five rows apiece, matching the five on screen.
+    // HTML export's. SIX rows now: the five cash-flow rows plus Tax Refund /
+    // (Payable), which became sign-driven when a rental profit started being
+    // taxed — a payable is a negative and must not print green.
     const pdfRows = modal.match(/\], false, false, true\);/g) ?? [];
-    expect(pdfRows).toHaveLength(5);
+    expect(pdfRows).toHaveLength(6);
     const htmlRows = modal.match(/< 0 \? 'text-red' : 'text-green'/g) ?? [];
-    expect(htmlRows).toHaveLength(6); // the five rows plus the 10-year summary card
+    expect(htmlRows).toHaveLength(7); // the six rows plus the 10-year summary card
   });
 });

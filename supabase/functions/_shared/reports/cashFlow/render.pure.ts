@@ -145,7 +145,7 @@ function positionSection(cf: CashFlowProjection): string {
     { item: 'Property expenses', value: formatAmount(y1.expenses) },
     { item: 'Interest', value: formatAmount(y1.interest) },
     { item: 'Cash flow before tax', value: formatAmount(y1.preTaxAnnual), __total: false },
-    { item: 'Tax refund', value: formatAmount(y1.taxRefund) },
+    { item: 'Tax refund / (payable)', value: formatAmount(y1.taxEffect) },
     { item: 'Cash flow after tax', value: formatAmount(y1.afterTaxAnnual), __total: true },
   ];
 
@@ -219,7 +219,7 @@ function projectionSection(cf: CashFlowProjection): string {
       line('Principal', (y) => formatAmount(y.principal)),
       line('Before tax', (y) => formatAmount(y.preTaxAnnual)),
       line('Depreciation', (y) => formatAmount(y.depreciation)),
-      line('Tax refund', (y) => formatAmount(y.taxRefund)),
+      line('Tax refund / (payable)', (y) => formatAmount(y.taxEffect)),
       line('After tax', (y) => formatAmount(y.afterTaxAnnual), true),
       line('After tax, per week', (y) => formatAmount(y.afterTaxWeekly), true),
     ],

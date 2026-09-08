@@ -131,9 +131,10 @@ async function tableAliases(): Promise<Map<string, string>> {
       // Not fatal. Resolution falls back to the raw string, which is what the
       // code did before this existed — but name which end declined, for the
       // same reason the records walk does.
+      const failure = describeListingsFailure(route, response);
       console.warn(
         '[listings-cache] table metadata unavailable',
-        describeListingsFailure(route, response).code,
+        failure.detail ? `${failure.code}; ${failure.detail}` : failure.code,
       );
       return new Map();
     }
@@ -261,11 +262,15 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
        * normally. `describeListingsFailure` is the one place that separates
        * the three, so this walk and the metadata lookup above cannot disagree.
        */
+      const failure = describeListingsFailure(config.route, response);
       return {
         records,
         complete: false,
         sorted: !sortRejected,
-        error: describeListingsFailure(config.route, response).code,
+        // The sync row is the only record an operator sees for a cron-driven
+        // read, so what VARIES travels with the stable code rather than only
+        // reaching a log nothing in the product renders.
+        error: failure.detail ? `${failure.code}; ${failure.detail}` : failure.code,
       };
     }
 

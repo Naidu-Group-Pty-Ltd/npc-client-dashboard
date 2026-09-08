@@ -1,45 +1,67 @@
 /**
- * BUILDER STOCK — the PDF election worker.
+ * BUILDER STOCK — the PDF election worker. A THIN INGRESS.
  *
  * WHAT IT IS FOR. Per-execution platform telemetry, 8 September 2026: thirteen
  * settler kills in one cold start, EVERY one `reason: CPUTime` — successes at
  * 1,828 ms of CPU or less, kills at 2,031 ms or more, against a 2,000 ms
  * limit — while memory peaked at 108 MB of 256. Reading one heavy brochure and
  * electing its image is indivisible and costs about 2.4 s. So that one unit
- * runs here, where there is CPU for it, and nothing else moves.
+ * runs on Cloudflare, and nothing else moves.
+ *
+ * WHY THIS FILE DOES ALMOST NOTHING. Every millisecond spent here is charged
+ * against the account's Workers plan, so the ingress is four cheap things —
+ * a health answer, a bearer check, a route check, and a hand-off — and the
+ * expensive work happens inside the `PdfElection` Durable Object, which is a
+ * separate execution context. This Worker never parses a PDF, never decodes
+ * one, and never even reads the request body: the raw body is STREAMED to the
+ * Durable Object by passing the original `Request` to the stub, so a 14 MB
+ * brochure is not copied and never base64-encoded at the edge.
  *
  * IT DECIDES NOTHING ABOUT A PROPERTY. It is handed a document and a label and
- * it answers which image the shared election chose. It is never told which
+ * it returns which image the shared election chose. It is never told which
  * property ROW it is looking at — no row id, no organisation, no upload — so
  * it could not act on one even in principle. Every write stays in the Supabase
  * path: the image, the provenance, the work stage, the settlement, the
  * availability. This has no database client, no Supabase key, no storage
  * credential and no storage.
  *
- * THE ELECTION IS THE SHARED ONE, AND SO IS THE READER. `electFromPdfBytes`
- * and `readPdfPageTextResult` are imported, never reimplemented, so a winner
- * here is the winner everywhere and no threshold can drift between the two
- * ends. A measured trap from the research that preceded this: a hand-written
- * `extractText` wrapper answered `not_identified` on both heavy production
- * brochures where the real reader answers `recovered`, because
- * `readPdfPageTextResult` also appends each page's AcroForm FIELD text, which
- * is what identifies those covers. The esm.sh specifier is resolved to the
- * same pinned npm package by a build alias in `wrangler.jsonc`.
- *
  * This mirrors `builder-stock-image-worker`: narrowly scoped Cloudflare
  * compute, bearer-authenticated, with Supabase authoritative for everything
  * else.
  */
-import { electFromPdfBytes } from '../../../supabase/functions/_shared/builderStock/pdfElection.ts';
-import { readPdfPageTextResult } from '../../../supabase/functions/_shared/builderStock/pdfText.ts';
-import {
-  ELECTION_CONTEXT_HEADER, MAX_DOCUMENT_BYTES, PDF_ELECTION_PROTOCOL,
-  bytesToBase64, decodeElectionContext,
-} from '../../../supabase/functions/_shared/builderStock/pdfElectionBoundary.pure.ts';
+import { PDF_ELECTION_PROTOCOL } from '../../../supabase/functions/_shared/builderStock/pdfElectionBoundary.pure.ts';
+
+/*
+ * ONLY handlers and Durable Object classes may be named exports of a Worker
+ * entrypoint. workerd validates this at startup and refuses to boot on
+ * anything else, so the lane NAME is imported rather than re-exported here.
+ */
+export { PdfElection } from './pdfElection.do.ts';
+import { ELECTION_LANE } from './pdfElection.do.ts';
+
+/**
+ * The two methods this ingress uses on the Durable Object binding, declared
+ * rather than pulled from Cloudflare's ambient types.
+ *
+ * `deno check` is what type-checks the SHARED election modules through this
+ * worker's import graph in CI, and Deno has no `@cloudflare/workers-types`.
+ * Naming the surface we actually touch keeps that check working, keeps the
+ * worker free of a types dependency, and states the whole of what the ingress
+ * is allowed to do with the object: name one, and hand it a request.
+ */
+interface ElectionLaneStub {
+  fetch(request: Request): Promise<Response>;
+}
+interface ElectionLaneNamespace {
+  idFromName(name: string): unknown;
+  get(id: unknown): ElectionLaneStub;
+}
 
 interface Env {
-  /** The only configuration this worker has. */
+  /** The only secret this worker has. */
   BUILDER_STOCK_PDF_WORKER_TOKEN?: string;
+  /** The internal binding to the compute object. Not reachable from outside. */
+  PDF_ELECTION: ElectionLaneNamespace;
 }
 
 const json = (body: unknown, status = 200) =>
@@ -49,16 +71,24 @@ const json = (body: unknown, status = 200) =>
   });
 
 /**
- * Constant-time bearer comparison, as `builder-stock-image-worker` does it: a
- * length-leaking early return on a shared secret is worth avoiding even behind
- * an unadvertised URL.
+ * Constant-time equality: both values are SHA-256 digested and the digests
+ * XOR-compared, so neither length nor prefix of the expected token leaks
+ * through timing, and the comparison itself cannot short-circuit.
+ *
+ * The SAME implementation `builder-stock-image-worker` uses, deliberately
+ * rather than coincidentally: two workers on one account guarding one kind of
+ * secret should not have two answers to how a bearer is compared.
  */
-function tokenMatches(presented: string, expected: string): boolean {
-  if (presented.length !== expected.length) return false;
+async function tokensMatch(received: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(received)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+  ]);
+  const va = new Uint8Array(a);
+  const vb = new Uint8Array(b);
   let diff = 0;
-  for (let i = 0; i < presented.length; i += 1) {
-    diff |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
-  }
+  for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
   return diff === 0;
 }
 
@@ -83,7 +113,7 @@ export default {
     if (!expected) return json({ error: 'worker_token_not_configured' }, 503);
     const auth = request.headers.get('authorization') ?? '';
     const presented = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
-    if (!presented || !tokenMatches(presented, expected)) {
+    if (!presented || !(await tokensMatch(presented, expected))) {
       return json({ error: 'unauthorised' }, 401);
     }
 
@@ -91,46 +121,21 @@ export default {
       return json({ error: 'not_found' }, 404);
     }
 
-    const context = decodeElectionContext(request.headers.get(ELECTION_CONTEXT_HEADER));
-    if (!context) return json({ error: 'bad_context' }, 400);
-
-    const bytes = new Uint8Array(await request.arrayBuffer());
-    if (!bytes.length || bytes.length > MAX_DOCUMENT_BYTES) {
-      return json({ error: 'bad_document', bytes: bytes.length }, 413);
-    }
-
-    const outcome = await electFromPdfBytes(bytes, readPdfPageTextResult, {
-      label: context.label,
-      identifiedBy: context.identifiedBy,
-      design: context.design,
-      identityHints: context.identityHints,
-      documentName: context.documentName,
-      url: context.url,
-    });
-
-    if (outcome.status === 'recovered') {
-      return json({
-        protocol: PDF_ELECTION_PROTOCOL,
-        status: 'recovered',
-        image: {
-          bytes: bytesToBase64(outcome.image.bytes),
-          contentType: outcome.image.contentType,
-          reference: outcome.image.reference,
-          provenance: outcome.image.provenance,
-          role: outcome.image.role,
-        },
-      });
-    }
     /*
-     * The election's own verdicts, relayed unchanged. `not_identified` is a
-     * finding it earned by reading the document; `unreachable` is its own
-     * operational answer (a reader that failed, a page list that came back
-     * empty). Neither is invented here.
+     * ONE NAMED OBJECT, ON PURPOSE.
+     *
+     * `idFromName` on a fixed string resolves to the same Durable Object for
+     * every election, so all of them queue in one lane rather than fanning out
+     * across many objects that would each hold a multi-megabyte document in a
+     * shared 128 MB isolate. Memory is the ceiling that does not move, and
+     * this is the deliberate opposite of the usual sharding advice: the point
+     * is a bottleneck, not throughput.
+     *
+     * The original Request is handed over untouched, so the PDF streams
+     * through as the raw body it arrived as — not read here, not copied here,
+     * not encoded here.
      */
-    return json({
-      protocol: PDF_ELECTION_PROTOCOL,
-      status: outcome.status,
-      detail: 'detail' in outcome ? outcome.detail : undefined,
-    });
+    const stub = env.PDF_ELECTION.get(env.PDF_ELECTION.idFromName(ELECTION_LANE));
+    return await stub.fetch(request);
   },
 };

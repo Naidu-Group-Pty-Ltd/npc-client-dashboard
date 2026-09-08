@@ -89,6 +89,15 @@ export default defineConfig({
         find: /^https:\/\/deno\.land\/x\/djwt@.+$/,
         replacement: path.resolve(__dirname, "./src/test/stubs/djwt.ts"),
       },
+      // `cloudflare:workers` is provided by the Workers runtime and by nothing
+      // else, so Vite cannot resolve it and collection dies for any test that
+      // reaches the Builder Stock PDF election Durable Object. The stub is a
+      // base class holding `ctx` and `env` and nothing more — the REAL object
+      // is what the tests then construct and drive.
+      {
+        find: /^cloudflare:workers$/,
+        replacement: path.resolve(__dirname, "./src/test/stubs/cloudflareWorkers.ts"),
+      },
       { find: /^https:\/\/esm\.sh\/(@[^/]+\/[^@]+)@[^/]+$/, replacement: "$1" },
       { find: /^https:\/\/esm\.sh\/([^@/][^@]*)@[^/]+$/, replacement: "$1" },
     ],

@@ -199,10 +199,37 @@ describe('the service asks the right question and refuses to guess', () => {
   });
 
   it('keeps the two legitimate uses of that coordinate', () => {
-    const s = src();
     // NSW's CBD is the commute *destination*, and it is correct. Removing a
     // fallback must never remove the fact it was impersonating.
-    expect(s).toContain("'NSW': { lat: -33.8688, lng: 151.2093 }");
+    //
+    // ME-5 moved the destination table out of this service into
+    // `cbdDestination.pure.ts`, so the fact is asserted where it now lives —
+    // the point of this test is that it still exists somewhere, not that it
+    // exists in a particular file.
+    const table = readFileSync(
+      resolve(REPO, 'supabase/functions/_shared/reports/location/cbdDestination.pure.ts'),
+      'utf8',
+    );
+    expect(table).toContain('lat: -33.8688, lng: 151.2093');
+    expect(table).toContain("capital: 'Sydney'");
+  });
+
+  it('no longer defaults an unknown state to that coordinate', () => {
+    // The same table used to end `|| cbdLocations['NSW']`, which measured 494
+    // non-NSW properties' commutes to Sydney — Bentley WA at 3,283.6 km.
+    // Judge the CODE, not the comment that explains the fix — that comment
+    // quotes the old line verbatim, and a naive scan would fail on the very
+    // documentation of the thing it is checking for.
+    const table = readFileSync(
+      resolve(REPO, 'supabase/functions/_shared/reports/location/cbdDestination.pure.ts'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(table).not.toMatch(/\|\|\s*(cbdLocations|STATE_CAPITALS)\[/);
+    expect(table).toContain('return null');
+    // And the service asks that module rather than keeping a second copy.
+    const s = src();
+    expect(s).toContain('resolveCbdDestination(input.state)');
+    expect(s).not.toContain("cbdLocations['NSW']");
   });
 
   it('returns an unresolved state rather than falling through to sample data', () => {

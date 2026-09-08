@@ -42,10 +42,18 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 vi.mock('../../../supabase/functions/_shared/builderStock/pdfText', () => ({
-  readPdfPageTextResult: vi.fn(async () => ({ ok: true as const, pages: [COVER_TEXT] })),
+  readPdfPageTextResult: vi.fn(async () => {
+    READER_CALLS.push('enter');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    READER_CALLS.push('exit');
+    return { ok: true as const, pages: [COVER_TEXT] };
+  }),
 }));
 
 import worker from '../../../cloudflare/builder-stock-pdf-worker/src/index';
+import {
+  ELECTION_LANE, PdfElection,
+} from '../../../cloudflare/builder-stock-pdf-worker/src/pdfElection.do';
 import { readPdfPageTextResult } from '../../../supabase/functions/_shared/builderStock/pdfText';
 import { electFromPdfBytes } from '../../../supabase/functions/_shared/builderStock/pdfElection';
 import { runElectionOnRoute } from '../../../supabase/functions/_shared/builderStock/pdfElectionClient';
@@ -54,12 +62,16 @@ import {
 } from '../../../supabase/functions/_shared/builderStock/pdfElectionRoute.pure';
 import {
   ELECTION_CONTEXT_HEADER, MAX_DOCUMENT_BYTES, PDF_ELECTION_PROTOCOL,
-  decodeElectionContext,
+  decodeElectionContext, encodeElectionContext,
 } from '../../../supabase/functions/_shared/builderStock/pdfElectionBoundary.pure';
 import { RUNTIME_VERSION } from '../../../supabase/functions/_shared/builderStock/runtimeVersion.pure';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 const WORKER_SRC = 'cloudflare/builder-stock-pdf-worker/src/index.ts';
+const DO_SRC = 'cloudflare/builder-stock-pdf-worker/src/pdfElection.do.ts';
+
+/** Ordered enter/exit marks from the page reader, for the serialisation proof. */
+const READER_CALLS: string[] = [];
 
 /** Source with comments removed, so prose is never the evidence. */
 const stripComments = (source: string) => source
@@ -128,12 +140,43 @@ const CONTEXT = {
 const TOKEN = 'a-long-random-worker-bearer-value';
 const ENDPOINT = 'https://builder-stock-pdf-worker.example.workers.dev';
 
-/** The real worker handler, reached the way the real client reaches it. */
-function workerBackedFetch(env: { BUILDER_STOCK_PDF_WORKER_TOKEN?: string } = {
+/**
+ * A Durable Object lane: the REAL `PdfElection`, reached the way the real
+ * ingress reaches it.
+ *
+ * `ctx.storage` is a proxy that THROWS on any access. That is a runtime proof
+ * rather than a grep: if the object ever touched storage — for a PDF, a
+ * result, a property fact or anything else — every test through this lane
+ * would fail, whatever the source happened to look like.
+ */
+function electionLane() {
+  const named: string[] = [];
+  const ctx = {
+    storage: new Proxy({}, {
+      get(_t, prop) { throw new Error(`Durable Object storage was used: ${String(prop)}`); },
+    }),
+  };
+  const instance = new PdfElection(ctx as never, {} as never);
+  return {
+    named,
+    namespace: {
+      idFromName: (name: string) => { named.push(name); return name; },
+      get: () => instance,
+    },
+  };
+}
+
+/**
+ * The real ingress and the real Durable Object, wired together, reached the
+ * way the real Supabase client reaches them.
+ */
+function workerBackedFetch(env: Partial<{ BUILDER_STOCK_PDF_WORKER_TOKEN: string }> = {
   BUILDER_STOCK_PDF_WORKER_TOKEN: TOKEN,
-}) {
-  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-    worker.fetch(new Request(String(input), init as RequestInit), env));
+}, lane = electionLane()) {
+  const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    worker.fetch(new Request(String(input), init as RequestInit),
+      { ...env, PDF_ELECTION: lane.namespace } as never));
+  return Object.assign(fetchSpy, { lane });
 }
 
 // ---------------------------------------------------------------------------
@@ -141,10 +184,14 @@ function workerBackedFetch(env: { BUILDER_STOCK_PDF_WORKER_TOKEN?: string } = {
 describe('one implementation decides which image wins', () => {
   const source = read(WORKER_SRC);
 
-  it('the worker runs the shared election rather than its own copy', () => {
-    expect(source).toContain(
+  it('the Durable Object runs the shared election rather than its own copy', () => {
+    const durable = read(DO_SRC);
+    expect(durable).toContain(
       "from '../../../supabase/functions/_shared/builderStock/pdfElection.ts'");
-    expect(source).toContain('electFromPdfBytes(bytes, readPdfPageTextResult');
+    expect(durable).toContain('electFromPdfBytes(bytes, readPdfPageTextResult');
+    // And the ingress cannot run it: it does not import it at all.
+    expect(source).not.toContain('pdfElection.ts');
+    expect(source).not.toContain('electFromPdfBytes');
   });
 
   /*
@@ -156,8 +203,10 @@ describe('one implementation decides which image wins', () => {
    * reader measures its own reimplementation.
    */
   it('and the shared reader, so a verdict there is the verdict here', () => {
-    expect(source).toContain(
+    const durable = read(DO_SRC);
+    expect(durable).toContain(
       "from '../../../supabase/functions/_shared/builderStock/pdfText.ts'");
+    expect(source).not.toContain('pdfText.ts');
   });
 
   it('and holds no election logic of its own', () => {
@@ -263,15 +312,162 @@ describe('the wire is lossless: the same bytes elect the same image', () => {
   });
 });
 
+/*
+ * THE SPLIT ITSELF: A THIN INGRESS AND A HEAVY OBJECT.
+ *
+ * Every millisecond in the outer Worker is charged against the account's
+ * Workers plan, so it does four cheap things and hands over. The election runs
+ * in the Durable Object, which is a separate execution context.
+ */
+describe('the ingress does only authentication and routing', () => {
+  const source = read(WORKER_SRC);
+
+  it('never reads, copies or encodes the document', () => {
+    // The REQUEST HANDLER is what is judged. `tokensMatch` legitimately builds
+    // a Uint8Array — over a 32-byte SHA-256 digest, not over a brochure — and
+    // a whole-file grep cannot tell those apart.
+    const handler = stripComments(source.slice(source.indexOf('async fetch(request')));
+    // Reading the body at the edge would buffer a 14 MB brochure in exactly
+    // the isolate that must stay cheap; base64 would add ~19 MB and real CPU.
+    for (const forbidden of ['arrayBuffer', 'bytesToBase64', 'new Uint8Array',
+      '.text()', '.blob()', '.formData()']) {
+      expect(handler).not.toContain(forbidden);
+    }
+  });
+
+  /*
+   * ONLY HANDLERS AND DURABLE OBJECT CLASSES MAY BE NAMED EXPORTS.
+   *
+   * workerd validates the entrypoint's export map at STARTUP and refuses to
+   * boot on anything else. A first version of this exported the lane name as a
+   * `const` from here and the Worker would not start at all:
+   *
+   *   Uncaught TypeError: Incorrect type for map entry 'ELECTION_LANE':
+   *   the provided value is not of type 'function or ExportedHandler'.
+   *
+   * Nothing else caught it — not `deno check`, not the wrangler build, not
+   * fifty-two tests — because none of them boots the runtime. Only running it
+   * did. This is the guard that would have.
+   */
+  it('exports only what a Worker entrypoint may export', () => {
+    const exported = [...stripComments(source).matchAll(/^export\s+(.+)$/gm)]
+      .map((m) => m[1].trim());
+    expect(exported).toEqual([
+      "{ PdfElection } from './pdfElection.do.ts';",
+      'default {',
+    ]);
+  });
+
+  it('hands the original request over, so the PDF streams through untouched', () => {
+    expect(source).toContain('stub.fetch(request)');
+  });
+
+  it('and does nothing else: health, bearer, route, hand-off', () => {
+    const handler = stripComments(source.slice(source.indexOf('async fetch(request')));
+    // The only awaited calls in the ingress are the bearer digest and the
+    // hand-off. Anything else would be work done at the edge.
+    const awaited = [...handler.matchAll(/await ([\w.$]+)\(/g)].map((m) => m[1]);
+    expect(awaited).toEqual(['tokensMatch', 'stub.fetch']);
+  });
+});
+
+describe('the heavy election happens in the Durable Object', () => {
+  it('and the ingress routes every election to ONE named lane', async () => {
+    const fetchSpy = workerBackedFetch();
+    vi.stubGlobal('fetch', fetchSpy);
+    await runElectionOnRoute(DOCUMENT, readPdfPageTextResult, CONTEXT,
+      { kind: 'worker', endpoint: ENDPOINT, token: TOKEN });
+    vi.unstubAllGlobals();
+    // One stable name, deliberately: elections queue in one lane rather than
+    // fanning across objects that would each hold a document in a shared
+    // 128 MB isolate.
+    expect(fetchSpy.lane.named).toEqual([ELECTION_LANE]);
+    expect(read(WORKER_SRC)).toContain('idFromName(ELECTION_LANE)');
+  });
+
+  /*
+   * SERIALISED, AND THE OBJECT'S OWN THREADING IS NOT ENOUGH. A Durable Object
+   * runs one callback at a time but still interleaves at every `await`, so two
+   * elections entering together would both be resident. This drives two
+   * through one lane at once and asserts the reader's enter/exit marks do not
+   * overlap.
+   */
+  it('runs one document at a time, even when two arrive together', async () => {
+    READER_CALLS.length = 0;
+    const lane = electionLane();
+    const send = () => worker.fetch(
+      new Request(`${ENDPOINT}/v1/elect`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          [ELECTION_CONTEXT_HEADER]: encodeElectionContext(CONTEXT),
+        },
+        body: DOCUMENT,
+      }),
+      { BUILDER_STOCK_PDF_WORKER_TOKEN: TOKEN, PDF_ELECTION: lane.namespace } as never);
+
+    const [a, b] = await Promise.all([send(), send()]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    // Interleaved would read enter,enter,exit,exit.
+    expect(READER_CALLS).toEqual(['enter', 'exit', 'enter', 'exit']);
+  });
+
+  /*
+   * AND IT STORES NOTHING. `ctx.storage` in the lane harness is a proxy that
+   * throws on ANY access, so this is a runtime proof rather than a grep: a
+   * single touch — for a PDF, a result, a property fact or anything else —
+   * would fail this election outright.
+   */
+  it('stores nothing: the object is compute only', async () => {
+    const lane = electionLane();
+    const response = await worker.fetch(
+      new Request(`${ENDPOINT}/v1/elect`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          [ELECTION_CONTEXT_HEADER]: encodeElectionContext(CONTEXT),
+        },
+        body: DOCUMENT,
+      }),
+      { BUILDER_STOCK_PDF_WORKER_TOKEN: TOKEN, PDF_ELECTION: lane.namespace } as never);
+    expect(response.status).toBe(200);
+    expect((await response.json() as { status: string }).status).toBe('recovered');
+    // And the source names no storage call either.
+    expect(stripComments(read(DO_SRC))).not.toMatch(/ctx\.storage|state\.storage|\bsql\b/);
+  });
+});
+
 describe('the worker can hold no credential and reach no data', () => {
   const source = read(WORKER_SRC);
   const config = read('cloudflare/builder-stock-pdf-worker/wrangler.jsonc');
 
-  it('declares exactly one environment value, and it is the bearer', () => {
+  it('declares only the bearer and the internal object binding', () => {
     const env = source.slice(source.indexOf('interface Env'));
     const body = env.slice(0, env.indexOf('}'));
     const keys = [...body.matchAll(/^\s*(\w+)\??:/gm)].map((m) => m[1]);
-    expect(keys).toEqual(['BUILDER_STOCK_PDF_WORKER_TOKEN']);
+    expect(keys).toEqual(['BUILDER_STOCK_PDF_WORKER_TOKEN', 'PDF_ELECTION']);
+  });
+
+  /*
+   * AND THE OBJECT ITSELF HOLDS NOTHING AT ALL. It is reached only through the
+   * internal binding from an already-authenticated request, so it needs no
+   * bearer of its own — and it must have no credential it could misuse.
+   */
+  /*
+   * NOT ANCHORED TO A LINE START. A first version of this matched keys with
+   * `/^\s*(\w+)\??:/gm`, which a one-line `interface PdfElectionEnv { KEY?:
+   * string }` walks straight past — the mutation that added a service-role key
+   * to this object passed the test. A member declaration is found wherever it
+   * sits.
+   */
+  it('and the Durable Object has an empty environment', () => {
+    const durable = read(DO_SRC);
+    const start = durable.indexOf('export interface PdfElectionEnv');
+    expect(start).toBeGreaterThan(-1);
+    const open = durable.indexOf('{', start);
+    const body = durable.slice(open + 1, durable.indexOf('}', open));
+    expect([...body.matchAll(/(\w+)\s*\??\s*:/g)].map((m) => m[1])).toEqual([]);
   });
 
   it('names no Supabase, database or storage identifier in its code', () => {
@@ -289,12 +485,18 @@ describe('the worker can hold no credential and reach no data', () => {
    * stronger anyway: not "none of the bindings I thought to list", but "no key
    * at all beyond these five".
    */
-  it('and its configuration declares no binding of any kind', () => {
+  it('and its configuration declares no binding that reaches data', () => {
     const parsed = JSON.parse(config.replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, ''));
+    // Parsed, not grepped: this asserts "no key beyond these", which catches a
+    // binding nobody thought to forbid.
     expect(Object.keys(parsed).sort()).toEqual([
-      'alias', 'compatibility_date', 'compatibility_flags', 'limits', 'main',
-      'name', 'observability',
+      'alias', 'compatibility_date', 'compatibility_flags', 'durable_objects',
+      'main', 'migrations', 'name', 'observability',
+    ]);
+    // The one binding is internal compute, not a store.
+    expect(parsed.durable_objects.bindings).toEqual([
+      { name: 'PDF_ELECTION', class_name: 'PdfElection' },
     ]);
   });
 
@@ -327,11 +529,18 @@ describe('authentication fails closed', () => {
     expect(response.status).toBe(401);
   });
 
-  it('compares in constant time, so a length cannot be probed', () => {
-    const source = stripComments(read(WORKER_SRC));
-    expect(source).toContain('diff |=');
-    // No early return inside the comparison loop.
-    expect(source).not.toMatch(/for \([^)]*\) \{[^}]*return false/);
+  it('compares bearers exactly as the image worker does', () => {
+    const body = (src: string) => {
+      const start = src.indexOf('async function tokensMatch');
+      return src.slice(start, src.indexOf('\n}', start));
+    };
+    const mine = body(read(WORKER_SRC));
+    const theirs = body(read('cloudflare/builder-stock-image-worker/src/index.ts'));
+    expect(mine).not.toBe('');
+    expect(mine).toBe(theirs);
+    // Digested, so neither length nor prefix leaks through timing.
+    expect(mine).toContain("crypto.subtle.digest('SHA-256'");
+    expect(mine).not.toMatch(/\.length !== .*\.length/);
   });
 
   it('refuses a context it cannot vouch for rather than electing something', async () => {
@@ -340,7 +549,8 @@ describe('authentication fails closed', () => {
         method: 'POST',
         headers: { authorization: `Bearer ${TOKEN}`, [ELECTION_CONTEXT_HEADER]: 'not-base64!!' },
         body: DOCUMENT,
-      }), { BUILDER_STOCK_PDF_WORKER_TOKEN: TOKEN });
+      }), { BUILDER_STOCK_PDF_WORKER_TOKEN: TOKEN,
+        PDF_ELECTION: electionLane().namespace } as never);
     expect(response.status).toBe(400);
   });
 });

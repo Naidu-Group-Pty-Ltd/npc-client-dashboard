@@ -165,21 +165,44 @@ number puts the pin on somebody else's house. The Make repair is
 `blueprints/apply-address-fix.py`, which **chains from `apply-sender-fix.py`**
 because both write the same file.
 
-**The Listings key is one key across the prime and every clone, and the
-Integrations page cannot touch it.** Read
+**The Listings key never reaches a clone; the READ travels instead.** Read
 [`AIRTABLE_KEY_OWNERSHIP.md`](./docs/integrations/AIRTABLE_KEY_OWNERSHIP.md)
-before touching `AIRTABLE_TOKEN`, the Airtable card in
-`src/lib/integrations/registry.ts`, or `update-integration-secret`. That card
-used to alias its `AIRTABLE_API_KEY` field onto `AIRTABLE_TOKEN` and write it
-into the project environment through the Management API — so a key typed on
-the Integrations page silently superseded the one `airtable-proxy`,
-`listings-cache`, `listing-images` and `listing-enrichment` run on. The six
-pipeline names are listed once, in `_shared/listingsPipelineSecrets.pure.ts`,
-managed by Mission Control (forwarded to every clone), and refused by the
-write endpoint before the allow-list with a message that names the rule. The
-page's Airtable card is the **workflow** connection, under its own names
-(`AIRTABLE_API_KEY`, `AIRTABLE_WORKFLOW_BASE_ID`), and the workflow catalog
-reads only those.
+before touching `AIRTABLE_TOKEN`, `_shared/airtableListingsRoute.pure.ts`, the
+Airtable card in `src/lib/integrations/registry.ts`, or
+`update-integration-secret`. Every deployment shows the same marketplace, so
+the fleet-wide answer was to forward all six `AIRTABLE_*` names — but an
+Airtable personal access token carries its whole SCOPE (a set of bases, a set
+of permissions) and nothing narrows it to one table, so a forwarded token
+reaches every base its scope admits and, with `data.records:write`, can rewrite
+the shared intake table every other clone reads. `AIRTABLE_TOKEN` and
+`AIRTABLE_BASE_ID` are therefore **`withheld`** on every clone and brokered by
+Mission Control (`GET /api/public/listings/{tables|records|selftest}`); the
+other four are configuration and still forward.
+
+`airtableListingsRoute.pure.ts` is the one module that decides where a read
+goes, and **no pipeline function may name `api.airtable.com` itself** — a spec
+asserts that over all five (`airtable-proxy`, `listings-cache`,
+`listing-images`, `listing-enrichment`, `auto-report-sync`). Three rules bite.
+**A token with no base id is `unconfigured`, never brokered** — brokering it
+serves a plausible marketplace of somebody else's listings. **The write-back
+never leaves the account holder**: `listing-images` and `listing-enrichment`
+PATCH signed URLs into their OWN bucket, and every deployment reads the same
+table, so `resolveWritebackRoute` refuses anywhere the token is not held and
+names the rule rather than reporting a missing setting — the broker is
+read-only by construction and must never grow a write operation. And **the one
+read that needs `filterByFormula` sends checked record IDS instead**, with
+Mission Control composing the formula: `rec` plus fourteen alphanumerics can
+hold no quote, parenthesis, comma or operator, which is the difference between
+a caller naming rows and a caller asking questions.
+
+That card used to alias its `AIRTABLE_API_KEY` field onto `AIRTABLE_TOKEN` and
+write it into the project environment through the Management API — so a key
+typed on the Integrations page silently superseded the one the pipeline runs
+on. The six pipeline names are listed once, in
+`_shared/listingsPipelineSecrets.pure.ts`, and refused by the write endpoint
+before the allow-list with a message that names the rule. The page's Airtable
+card is the **workflow** connection, under its own names (`AIRTABLE_API_KEY`,
+`AIRTABLE_WORKFLOW_BASE_ID`), and the workflow catalog reads only those.
 
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before

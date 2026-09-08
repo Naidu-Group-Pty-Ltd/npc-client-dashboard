@@ -5478,3 +5478,572 @@ No production wiring. No historical backtest — real or simulated. No threshold
 change. The system is methodology-ready and backtest-ready; it is not data-ready
 until geography is resolved and a licensed suburb source lands, and it is not
 live until real distributions have been inspected.
+
+---
+
+## §56 — ME-5: canonical geography, and what the historical record really holds (2026-09-08)
+
+### 56.1 The geography blocker is removed
+
+ME-4 measured suburb, postcode and state stored on **0 of 1,204** reports. After
+this stage, **931 carry a full ASGS chain**.
+
+Resolution is point-in-polygon against the ABS ASGS 2021 boundaries — the ones
+the ABS publishes its own statistics against — so the geography and the
+evidence will share one definition. Reachability was proved from **Supabase
+infrastructure** rather than from this repository's development egress, because
+§52 already caught that distinction the hard way; all 25 ASGS layers answer 200.
+
+One coordinate resolves the chain:
+
+```
+SAL → suburb + locality code        POA → postcode
+SA2 → statistical area              → local join to abs_sa2_meta for SA3/SA4/GCCSA/state
+RA  → remoteness                    UCL → the urban centre it actually sits in
+```
+
+Deriving the hierarchy locally rather than fetching it means fewer calls **and**
+a hierarchy that cannot disagree with itself.
+
+| | reports |
+| --- | ---: |
+| resolved | **931** (83.6%) |
+| unresolved | 183 |
+| requires_review | 0 |
+| resolved_with_warning | 0 |
+| distinct suburbs / SA2s | 302 / 274 |
+
+445 distinct Australian coordinates, 2,225 point queries, **445 of 445 resolved
+on all five layers, zero failures.**
+
+Remoteness: Major Cities 657, Inner Regional 220, Outer Regional 46, Remote 6,
+Very Remote 2 — so **274 reports are non-metro**, which is the population the
+Location fairness work exists to protect.
+
+**The address is never consulted.** `ADDRESS_COMPOSITION.md` records why, and
+the corpus proves it: the coordinate whose stored address reads `Cobblebank VIC
+3338` resolves to **Melton South**, correctly, with urban centre **Melton**
+rather than Melbourne.
+
+### 56.2 Independently cross-validated, 100%
+
+All 144 initial `suburb_not_in_directory` warnings were the ABS's own
+disambiguating qualifier — `Fernvale (Qld)`, `Armadale (WA)`, `Churchill
+(Vic.)`, `Springfield (Ipswich - Qld)` — against a directory that stores plain
+names. Normalised, **all 144 matched, and postcode AND state agreed on all
+144, with zero disagreements.**
+
+So across all 931 resolved reports: **0 state mismatches, 0 postcode
+mismatches**, confirmed by a source independent of the boundaries themselves.
+
+### 56.3 The 183 unresolved are an integrity finding, not a resolver weakness
+
+**16.4% of stored coordinates fall outside Australia** — latitudes as far north
+as 55.9, longitudes as far west as −122.3. They are left unplaced. Coverage is
+not the objective: forcing them into a suburb would attach real market evidence
+to the wrong property, and every figure downstream would inherit it silently.
+
+### 56.4 The financial figures were not missing — they were in the wrong drawer
+
+ME-4 reported purchase price on 203 of 1,204. That was true of
+`financial_calculations` and wrong about the record.
+
+**997 of 1,207 reports have no financial block at all**, so the gaps are whole
+reports rather than scattered fields — but **459 carry `manual_overrides`**,
+and those hold exactly the figures in question, **entered by an operator**:
+
+| figure | `financial_calculations` | `manual_overrides` | **either** |
+| --- | ---: | ---: | ---: |
+| purchase price | 203 | **431** | **493** |
+| weekly rent | 184 | 193 | 227 |
+| LVR | 204 | 200 | 251 |
+
+`manual_overrides` also carries the full cost structure — council and water
+rates, management and letting fees, insurance, repairs, stamp duty, solicitor
+fees, occupancy rate, loan amount, interest rate, term.
+
+Purchase-price coverage is therefore **2.4× what ME-4 reported**, from a source
+that was already in the record. An operator-typed figure is the strongest
+provenance available and outranks anything derived.
+
+### 56.5 The historical transport data is fabricated, and it contaminates Location
+
+ME-4 recommended preferring "actual evidence such as amenity distances and
+transport" over the saturated walk score. **Measured, that recommendation
+cannot be followed on historical data, because the transport block is worse.**
+
+`distanceToStop` holds **five distinct values across 1,108 reports**, one per
+state:
+
+| distance | "nearest stop" | reports |
+| ---: | --- | ---: |
+| 450 m | Central Station | **822** |
+| 250 m | Swanston Street Tram | 117 |
+| 350 m | Queen Street Bus Station | 86 |
+| 320 m | Wellington Street Bus Station | 79 |
+| 280 m | Currie Street Bus Stop | 4 |
+
+This is precisely the defect `TRANSPORT_SOURCES.md` records — *"eight per-state
+fetchers that ignored the coordinate, so every NSW property was 450 m from
+Central Station"*. The GTFS work fixed the forward path; **the historical
+records still hold the fabricated values.**
+
+Three consequences, and the second is the one that bites:
+
+1. The transport block cannot complement or replace the walk score for a
+   backtest. It has 5 distinct values against the walk score's 65.
+2. **The historical walk score is itself contaminated.** `calculateWalkScore`
+   takes up to 30 of its 100 points from `publicTransportData.qualityScore` —
+   and that field is present, at one constant per state (83, 82, 56, 70, 78).
+   So the saturation is not only scale compression: roughly a third of the
+   historical walk score is a per-state constant.
+3. Location on historical reports therefore rests partly on fabricated input.
+   For the backtest it must be recomputed from the real GTFS stops the platform
+   now holds, or declared not-evidence. It must not be silently scored.
+
+This is why the walk-score recalibration in ME-4 was correctly marked
+provisional, and why recalibrating against this corpus would have been
+calibrating against a fabrication.
+
+---
+
+## §57 — ME-5: the Location evidence, measured end to end (2026-09-08)
+
+§56 closed the geography blocker. This is the item the revised brief called the
+highest remaining priority: *"Audit the entire historical Location intelligence
+object for common template/state-level patterns."*
+
+The audit's own Section 24 named one contaminated field, `distanceToStop`. A
+sweep of all **1,114** stored `location_intelligence` objects found five
+distinct kinds of contamination, and the headline is one number:
+
+> **Three reports of 1,114 carry both a measured walk score and a measured
+> commute.**
+
+### 57.1 The whole transport block is a per-state constant
+
+1,108 of 1,114 objects carry the legacy transport shape. Across all of them:
+
+| field | distinct values | modal value | reports at the mode |
+| --- | ---: | --- | ---: |
+| `stopsWithin1km` | **1** | `3` | 1,108 |
+| `nearestStop` | 5 | `Central Station` | 822 |
+| `distanceToStop` | 5 | `450` | 822 |
+| `qualityScore` | 5 | `83` | 822 |
+| `serviceFrequency` | 5 | `{peak:18, offPeak:8}` | 822 |
+| `routeCoverage` | 5 | `T2 Inner West Line …` | 822 |
+| `summary` | 5 | `Excellent public transport access with 3 stops within 1km.` | 822 |
+| `transportTypes` | 3 | `[Train, Light Rail, Bus, Ferry]` | 822 |
+
+The five values are the capital-city interchanges — Sydney's Central Station,
+Melbourne's Swanston Street trams, Brisbane's Queen Street, Perth's Wellington
+Street, Adelaide's Currie Street — and Sydney is the fallback. **The 822
+reports that say the nearest stop is Central Station, 450 m away, span all
+eight states and territories.**
+
+### 57.2 The walk score is that constant plus four saturated counts
+
+`calculateWalkScore` spends its whole 30-point transit allowance on
+`publicTransportData.qualityScore`. The other four components saturate at
+counts of 3–5, against a hard `.slice(0, 10)` in `fetchNearbyPlaces`:
+
+| component | formula | maxes at | reports maxed |
+| --- | --- | ---: | ---: |
+| Shopping & dining | `min(25, (shops + restaurants/2) × 2)` | 10 + 10 | 676 |
+| Schools | `min(15, count × 3)` | 5 | 952 |
+| Healthcare | `min(15, count × 5)` | 3 | 919 |
+| Recreation | `min(15, count × 3)` | 5 | 967 |
+
+**641 objects have all four maxed.** For those the walk score is the state
+constant and nothing else — **four distinct values across 641 properties**.
+Reconstructing the formula from the stored counts reproduces the stored score
+exactly on **1,109 of 1,114**, so this is the mechanism rather than a theory
+about it.
+
+### 57.3 The commute is a real query to the wrong city — and 438 are not queries at all
+
+`getCBDCoordinates` ended `|| cbdLocations['NSW']`, so a request carrying no
+state measured a transit journey to Sydney.
+
+The marker and the cause turn out to be one thing. Of the non-NSW reports:
+
+| stored `nearestStop` | non-NSW reports | commute consistent with Sydney only | with own capital only |
+| --- | ---: | ---: | ---: |
+| `Central Station` | 519 | **494** | **0** |
+| `Swanston Street Tram` | 117 | 0 | 93 |
+| `Queen Street Bus Station` | 86 | 0 | 68 |
+| `Wellington Street Bus Station` | 78 | 0 | 66 |
+| `Currie Street Bus Stop` | 4 | 0 | 4 |
+
+One absent `input.state`, two symptoms. Concretely: **Bentley WA, 8 km from
+Perth, stored 3,283.6 km and 82.1 hours** — straight-line Bentley→Sydney is
+3,284 km. Richmond Vic, 3 km from Melbourne, stored 968.7 km.
+
+This is not merely a wrong number. The Location score bands the commute in
+**minutes**, so all 494 land in *"Limited CBD access (>60 min)"* for **3 points
+of 30** — while **74 of them are within 10 km of their own CBD**, the closest
+0.4 km. A 27-point inversion on a dimension weighted at 25%.
+
+Separately, **438 of the 1,114 commutes were never a route**: when the Distance
+Matrix call fails, the helper returns straight-line distance × 1.5 minutes as
+`mode: 'estimated'`, mean 10,125 minutes. `commute.mode` is the only thing that
+tells the two apart.
+
+### 57.4 Counts, failed reads, and 183 foreign measurements
+
+Every "within N km" count is `min(actual, 10)` — the field names promise a
+radius count they do not deliver. At the ceiling: restaurants 990/1,114
+(88.9%), schools 851 (76.4%), parks 818 (73.4%), healthcare 686 (61.6%),
+shopping 596 (53.5%).
+
+A failed read is stored as an empty area: the fetch helper's `catch` returns
+`{ count: 0, results: [] }`, which becomes `nearest*: 'N/A'` and
+`distanceTo*: 0`. Zero is the modal school and hospital distance.
+
+And 183 objects measure a location outside Australia. **US school vocabulary
+appears in 31 of those 183 and in 0 of the 931** whose coordinate resolves to
+an ASGS boundary — an independent confirmation of §56's classification, from a
+completely different field. One object's coordinate is 53.44, −2.98 (Liverpool,
+England) with "Early Learners Day Nursery" as its nearest school.
+
+Two further findings that are real but weaker, recorded as such: Google's
+`type=school` admits childcare centres, driving, swim and music schools — the
+modal nearest school across the corpus is "Style Academy Australia", 66 reports
+at 0.02 km — and `topSchools[].rating` is a Google user rating, zero where
+absent, not an academic one.
+
+### 57.5 What was built
+
+`locationEvidenceProvenance.pure.ts` classifies every field into seven kinds.
+Four are non-evidence (`legacy_non_evidence`, `measured_misdirected`,
+`read_failed`, `offshore`); `measured_capped` and `measured_unverified_class`
+are **disclosed rather than discarded**, because a saturating count still
+separates a remote property from an urban one.
+
+`report_location_provenance` holds the verdict beside the record. Nothing
+edits `location_intelligence` and no issued report changes.
+
+| walk score | commute | reports |
+| --- | --- | ---: |
+| `legacy_non_evidence` | `measured_misdirected` | 364 |
+| `legacy_non_evidence` | `measured` | 307 |
+| `legacy_non_evidence` | `legacy_non_evidence` (estimated) | 253 |
+| `offshore` | `offshore` | 183 |
+| `measured_capped` | `measured` | **3** |
+| `measured_capped` | `legacy_non_evidence` | 2 |
+| `legacy_non_evidence` | `read_failed` | 2 |
+
+The table is materialised in SQL and the classifier is TypeScript, so
+`locationEvidenceProvenance.spec.ts` compares the two on **23 verbatim
+production objects** covering all four stored shapes. That comparison is what
+stops them drifting — and it is what caught the `estimated` commute, which the
+first version of the classifier wrongly called a measurement.
+
+**Three rules.** A template is not a measurement, and a measurement of the
+wrong thing is not a template — they need different remedies, and collapsing
+them would discard 364 recoverable commutes. A ceiling is disclosed, never
+silently trusted. And `legacy_non_evidence` is a status, not a deletion.
+
+### 57.6 The live writer, fixed
+
+Four faults, all still live before this:
+
+1. **The Sydney default is gone.** `resolveCbdDestination` returns null for an
+   absent or unrecognised state and the caller measures nothing rather than
+   something else.
+2. **The invented commute is gone.** A failed route returns an explicit
+   not-measured with a reason, and no number a reader could mistake for a
+   journey. `destination_unknown` and `no_route_returned` send an operator to
+   different remedies.
+3. **A latent crash is fixed.** `public-transport-service` answers
+   `{ success, data: {…} }` and the consumer took the *envelope*, so
+   `publicTransportData.stopsWithin1km.length` dereferenced undefined —
+   reproduced by execution against the service's real success body. It would
+   have thrown for every location a loaded feed covers: Sydney, south-east
+   Queensland, Darwin, Alice Springs, 185,177 stops. Latent rather than fired,
+   because the last eight reports are all outside those feeds.
+4. **The `qualityScore` branch is deleted, not left dormant.** The service
+   publishes no such field now, and a dormant branch is one service change away
+   from restoring the contamination.
+
+`projectTransportForLocationIntelligence` states the rule once: **naming a
+field the source cannot fill is how a template gets written.**
+`TEMPLATE_ONLY_TRANSPORT_FIELDS` names the nine a stops feed cannot answer and
+a test asserts the stored block contains none of them. Typing that projection
+caught a real error in this change's own first draft — it read
+`nearest.distanceMetres` where the field is `metres`, which would have stored
+null for every property.
+
+### 57.7 Staged readiness, recalculated
+
+Measured over the whole corpus of 1,207, with geography from §56 and the
+financial precedence from §56.4:
+
+| stage | ready | of 1,207 | what binds it |
+| --- | ---: | ---: | --- |
+| Geography | **931** | 77.1% | 183 coordinates outside Australia, 93 with none |
+| Growth | **0** | 0% | no licensed suburb price series is held |
+| Demand | **0** | 0% | no licensed vacancy / days-on-market series |
+| Yield | **222** | 18.4% | weekly rent — 493 have a price, 226 a rent |
+| Risk | **105** | 8.7% | weekly net (188), then LVR (251) |
+| Location | **3** | 0.2% | §57.5 |
+| Partial composite (≥3 dimensions) | **2** | 0.2% | |
+| Full composite (5 dimensions) | **0** | 0% | Growth and Demand are empty |
+| **A/A+ evidence ready** | **0** | 0% | |
+
+Component coverage, so the constraint is legible rather than only the verdict:
+
+| input | present | of 1,207 |
+| --- | ---: | ---: |
+| dwelling type (a real one) | 896 | 74.2% |
+| purchase price | 493 | 40.8% |
+| LVR | 251 | 20.8% |
+| weekly rent | 226 | 18.7% |
+| weekly net | 188 | 15.6% |
+
+The purchase-price figure is 493 rather than ME-4's 203 because §56.4's
+precedence reads `manual_overrides` as the calculator's input. That is a
+2.4× gain from data already stored, and it is the only one of these numbers
+that improved by better reading rather than by acquiring anything.
+
+**Nothing here changes the A = 75 / A+ = 85 thresholds, and nothing here is a
+backtest.** A backtest on this corpus would be a measurement of an empty
+Growth dimension and a quarantined Location one.
+
+---
+
+## §58 — ME-5: the centre a property belongs to, and the risk that is the buyer's (2026-09-08)
+
+§57 quarantined the historical Location evidence. This is what replaces it, and
+what the same measurement turned up about Risk.
+
+### 58.1 Two wrong commutes, only one of which is a bug
+
+The corpus measured every property's access to its **state capital**:
+
+* **Bentley WA, 8 km from Perth, stored 82.1 hours.** A defect — the
+  destination defaulted to Sydney (§57.3).
+* **Moranbah QLD stored 1,487 minutes to Brisbane.** *Not* a defect. The
+  Distance Matrix answered correctly. The **question** is wrong: nobody in
+  Moranbah commutes to Brisbane, and grading the property on how long that
+  takes grades it on being regional.
+
+`resolveActivityCentre` reads the answer the ABS already publishes, in three
+tiers, most specific first:
+
+| tier | what it is | why it is trusted |
+| --- | --- | --- |
+| `capital_labour_market` | a Greater capital's GCCSA | the GCCSA is *defined* from journey-to-work data |
+| `significant_urban_area` | an SUA of 10,000+ | the functional town outside a capital |
+| `local_centre` | the Urban Centre itself | where the property **is**, not where its jobs are |
+
+The UCL is deliberately **last**. The brief's caution — that a UCL is not
+automatically the right activity centre — is exactly right: a dormitory town's
+UCL says nothing about where its residents work.
+
+SUA was resolved for all 931 placed reports against the ABS ASGS 2021 layer
+(931 of 931 answered HTTP 200). The result:
+
+| tier | reports | distinct centres |
+| --- | ---: | ---: |
+| capital labour market | **587** | 12 |
+| significant urban area | **236** | 34 |
+| local centre | **108** | 35 |
+| none | 0 | — |
+
+So **344 reports — 37% — were being graded on a commute to a city they have no
+relationship with**, the Sunshine Coast's 92 among them.
+
+That resolution also found the trap a loader has to know about: **the ABS tiles
+the continent, so "no urban centre here" arrives as a NAMED polygon** —
+`Not in any Significant Urban Area (Qld)`, on 131 of 931 rows. Reading it as a
+place would route every rural property's access to a centre of that name.
+
+Two tiers resolve a **named centre with a null coordinate**, because the ABS
+publishes the boundary and not the centre, and a polygon centroid would be an
+invention of exactly the kind this programme keeps removing. Those report
+access as *not yet measurable* rather than measuring to a guess.
+
+### 58.2 A jurisdiction's own feed, or nothing
+
+Reconstructing the transport reading for all 931 placed reports against the
+185,177 loaded stops — boardable stops within 1,600 m, grouped to places by
+`parent_station`:
+
+* **355 have a stop within 1,600 m.** Median nearest 113 m, closest 11 m,
+  furthest-nearest 1,512 m. Against a stored template that said *"3 stops
+  within 1 km"* for all 1,108.
+
+But the raw reconstruction hides a trap. **`nsw_sydney` is Transport for NSW's
+whole bundle**, not Sydney's, and it carries the interstate rail and coach
+network — so a **Docklands property finds "Melbourne (Southern Cross) Station"
+225 m away**, a Wodonga property finds NSW border-town buses, and a Lyneham
+property finds NSW school services in Canberra.
+
+| state | a stop within 1.6 km | in-jurisdiction | interstate feed only |
+| --- | ---: | ---: | ---: |
+| QLD | 221 | 221 | 0 |
+| NSW | 123 | 123 | 0 |
+| VIC | 6 | **0** | **6** |
+| ACT | 4 | **0** | **4** |
+| SA | 1 | **0** | **1** |
+
+Every one of those 11 is a real stop at a real distance, and none measures the
+network the property's residents use. It is **worse than the honest
+`outside_loaded_networks`**, because a Docklands property with trams every three
+minutes would be reported as having one stop nearby. `readingIsInJurisdiction`
+applies the rule where both the live service and a backtest must apply it
+identically. **344 of 931 carry a genuine in-jurisdiction reading.**
+
+### 58.3 Location Evidence V2, and its neutrality
+
+| component | source | held today |
+| --- | --- | --- |
+| transit stops | loaded GTFS, by coordinate | NSW, QLD SEQ, NT ×2 |
+| activity centre | ABS ASGS 2021 | all 931 placed |
+| access to that centre | not acquired | no |
+| schools, shops, health | not acquired | no |
+
+Three rules, each with a test.
+
+**There is no composite score.** A weighting over one measured component and
+three absent ones is a confident answer to a question the evidence cannot
+settle. The module publishes components and coverage; whether that is enough to
+grade is the caller's decision.
+
+**Transit is measured or unmeasured, never poor.** Inner-metro Perth reads
+`not_covered` because WA publishes no loaded feed, and a test forbids that
+absence being worded as poor service. Scoring those 587 as badly served would
+grade them on which state government publishes an open feed.
+
+**Nothing compares across tiers or across coverage states.** Minutes to the
+Perth CBD and minutes to a country town's main street are different quantities.
+A test asserts a Moranbah property scores no worse than an inner-Perth one on
+components measured.
+
+### 58.4 Risk: 70% of its weight is the buyer, not the property
+
+The same repeated-address analysis settles the Risk model question with
+evidence rather than preference. 55 addresses appear in more than one report:
+
+| what differs for the same address | addresses |
+| --- | ---: |
+| purchase price | 7 of 55 |
+| **LVR** | **16 of 55** |
+| **weekly cash flow** | **21 of 55** |
+
+The property is stable; the financing is not. Concretely: **1 Boxer Drive,
+Wyndham Vale — two reports, the same day, the same $635,000, the same −$562
+weekly net — one at 80% LVR and one at 90%.** Three more Truganina addresses
+carry the identical pair. On the leverage anchors that is 62 → 30, weighted
+0.40: **12.8 points of Risk for a number an operator typed into a calculator.**
+
+| model | what it scores | the buyer's position |
+| --- | --- | --- |
+| **A** asset only | asset type, overheating | dropped |
+| **B** asset scored, finance disclosed | asset type, overheating | reported beside the grade |
+| **C** blended (today) | all four | folded into the grade |
+
+They are separated by an **invariant**: the same property, on the same day, at
+the same price must receive the same property Risk score. A and B hold it by
+construction; **C fails it on 16 of 55 repeated addresses.**
+
+The fair counter-argument, which is the strong one: a report IS about a
+specific purchase at a specific LVR, so the buyer's leverage really does bear
+on that investment's risk, and **Model A throws it away.** That is precisely
+why **B is preferable to A** — it moves the information out of a number
+presented as a property grade and reports it as what it is.
+
+The trade-off in the other direction is coverage: A and B are scoreable on
+**879** of 1,207 reports against C's **1,010** — and **131 of C's are scoreable
+on buyer facts alone**, which is to say C can produce a Risk score for a report
+that carries no property attribute at all. That is not a point in C's favour.
+
+**Recommendation: Model B**, on the invariance evidence and on the coverage
+composition — not because it was the preferred hypothesis. `scoreRisk` is
+untouched, nothing is switched, and no live path calls `riskModels.pure.ts`.
+
+**Overheating sensitivity (item 13).** The anchors are flat below 12% growth,
+so ordinary appreciation is not charged as risk — charging for it would be a
+second opinion on Growth. Dropping leverage raises overheating's share from
+0.10 to 0.33, which is the trade-off to weigh rather than a free improvement,
+and it is pinned by a test. Overheating remains **unscoreable on this corpus
+anyway**, because no suburb price series is held.
+
+### 58.5 The forward geography writer (item 15)
+
+`report_geography` holds 1,114 rows, all stamped 2026-09-08, all written by the
+backfill — and **nothing wrote a row for a report created afterwards.** A grep
+of the whole fleet finds the table named in four places, every one of them a
+pure module or a spec. The same is true of `report_location_provenance`.
+
+A derived table that only a backfill maintains is correct on the day it lands
+and silently stale from the next one, which is the failure this programme keeps
+finding. `resolve-report-geography` is what maintains it: it resolves the
+geography for reports that have no row, from the report's own stored
+coordinate, through the same `asgsGeography.pure.ts` the backfill used.
+
+Four rules. The **coordinate is the question** and the free-text address is
+never consulted. A **failed boundary service is `unresolved`, never guessed** —
+and the ArcGIS endpoint reports failure as HTTP 200 with an error body, so that
+shape is treated as transport and left retryable, unlike `outside_australia`,
+which is final. It **never writes to `investment_reports`**. And the **batch is
+bounded at eight** — one report costs six queries to a public service somebody
+else pays to run, so a small batch that drains over several invocations is the
+courteous shape, and a bad deploy cannot spend an afternoon of somebody's rate
+limit.
+
+`verify_jwt = true` is a decision rather than a default: the function holds the
+service-role key and performs no auth check of its own, so the gateway is the
+only thing between an anonymous caller and a sweep that spends the ABS
+geoserver's budget on our behalf. A service-role key is itself a valid JWT, so
+a scheduled invocation still reaches it.
+
+**It is not deployed and not scheduled**, and that is deliberate: deploying an
+Edge Function and adding a cron entry are production changes, and this stage's
+instruction was to fix the writer, not to switch it on.
+
+### 58.6 The asset-type component, challenged (item 12)
+
+`ASSET_TYPE_SCORES` asserts house 82, duplex 74, townhouse 66, unit 55,
+apartment 55, land 45. Four things are true of it, and none is comfortable.
+
+**The numbers are unevidenced.** Nothing in this repository justifies why a
+duplex is eight points safer than a townhouse. They are a plausible ordering
+somebody wrote down, and the programme's own rule — a point must come from a
+real observation or a deterministic calculation — does not admit them as they
+stand.
+
+**It barely discriminates.** The stored distribution:
+
+| stored type | reports | scored |
+| --- | ---: | ---: |
+| house | 631 | 82 |
+| *residential property* (placeholder) | 145 | — |
+| *(empty)* | 128 | — |
+| apartment | 110 | 55 |
+| land | 72 | 45 |
+| *other* (placeholder) | 38 | — |
+| unit | 37 | 55 |
+| duplex | 18 | 74 |
+| townhouse | 11 | 66 |
+| **house_and_land** | **9** | **—** |
+| **villa** | **8** | **—** |
+
+Of the 896 carrying a real type, **631 are `house`: 70.4% receive the identical
+82**, so for seven reports in ten this component is a constant.
+
+**Two real types resolve to nothing.** `house_and_land` and `villa` are genuine
+stored values absent from the table. Under Model C that costs 0.20 of the
+weight; under A and B, where asset type carries 0.67, it costs most of the
+dimension — a test asserts C keeps three components on such a report while A
+keeps one.
+
+**Vacant land is a category error, not a low score.** Land has no dwelling, no
+rent, no depreciation and different financing, so its risk is not a point on the
+same scale as a house's. Scoring it 45 says *"a somewhat worse house"*, which is
+not what it is.
+
+The honest conclusion: **asset type is a classifier, not a score.** Nothing here
+changes it — this records what it is worth *before* anybody weights it more
+heavily, which is precisely what Models A and B would do.

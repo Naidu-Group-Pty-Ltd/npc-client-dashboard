@@ -27,8 +27,23 @@ describe('a fact and a modelling default are different things (F17 at source)', 
   it('the modelling default exists separately and feeds only the scorer and the rent lookup', () => {
     expect(generator).toContain('const modelledBeds = effectiveIsLandOnly ? 0 : (effectiveBeds ?? 3);');
     expect(generator).toContain('bedrooms: modelledBeds');
-    // The prompt's specification table reads the fact, with its placeholder.
-    expect(generator).toContain("| Bedrooms | ${effectiveBeds || 'X (typical for property type)'} |");
+
+    // This used to pin the spec table's placeholder verbatim —
+    // `${effectiveBeds || 'X (typical for property type)'}` — as evidence that
+    // the table read the FACT rather than `modelledBeds`. Stage 5 removed the
+    // placeholder: a specification table states facts, and where the record
+    // holds none the row is omitted rather than handed to the model as a
+    // fill-in-the-blank (169 stored documents print an "Estimated N–N m²" land
+    // size that way, three of them roughly double the recorded figure).
+    //
+    // The rule this test exists for is unchanged and is asserted directly: the
+    // table reads `effectiveBeds`, and the modelling default of 3 never
+    // reaches it.
+    const table = generator.slice(generator.indexOf('| Property Characteristic |'));
+    const rows = table.slice(0, table.indexOf('**Property Position Relative to Market:**'));
+    expect(rows).toContain("['Bedrooms', effectiveBeds || null]");
+    expect(rows).not.toContain('modelledBeds');
+    expect(rows).not.toContain('typical for property type');
   });
 
   it('normalises every caller spelling of the physical facts once, before anything reads them', () => {
@@ -36,13 +51,29 @@ describe('a fact and a modelling default are different things (F17 at source)', 
     expect(generator).toContain('propertyDetails.landSizeSqm = firstFinite(propertyDetails.landSizeSqm, propertyDetails.landSize, propertyDetails.land_size_sqm);');
   });
 
-  it('writes the specs column from the normalised spellings', () => {
-    const specs = /const propertySpecs = \{[\s\S]*?\};/.exec(generator)?.[0] ?? '';
+  it('writes the specs column from the merged facts, on the normalised spellings', () => {
+    // The original defect this guards: the write read `.landSize` /
+    // `.buildingSize` / `.parking` while every caller sent `landSizeSqm` /
+    // `buildSizeSqm` / `carSpaces`, so three of nine specs were null whatever
+    // the caller knew.
+    //
+    // Stage 5 found the other half. The un-aliased spellings were right and
+    // still wrong: they read `propertyDetails` ALONE, while the generator had
+    // already merged `manual_overrides` over it into `effectiveLandSizeSqm`
+    // and its siblings. So the answer was computed, used to build the prompt
+    // and the duty assessment, and discarded at the moment of writing it down
+    // — 127 land sizes, 122 build sizes and 144 car-space counts an operator
+    // supplied were stored as null.
+    const specs = /const propertySpecs = composePropertySpecs\(\{[\s\S]*?\}\);/.exec(generator)?.[0] ?? '';
     expect(specs, 'propertySpecs block not found').not.toBe('');
-    expect(specs).toContain('land_size_sqm: propertyDetails?.landSizeSqm || null');
-    expect(specs).toContain('building_size_sqm: propertyDetails?.buildSizeSqm || null');
-    expect(specs).toContain('parking: propertyDetails?.carSpaces || null');
-    expect(specs).not.toContain('propertyDetails?.landSize ||');
+    expect(specs).toContain('landSizeSqm: effectiveLandSizeSqm');
+    expect(specs).toContain('buildSizeSqm: effectiveBuildSizeSqm');
+    expect(specs).toContain('carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces');
+    // The alias spellings stay forbidden, which is what this test was for.
+    expect(specs).not.toContain('propertyDetails?.landSize ');
+    expect(specs).not.toContain('propertyDetails?.buildingSize');
+    // And the placeholder type is gone: absent is absent.
+    expect(specs).not.toContain('Residential Property');
   });
 });
 

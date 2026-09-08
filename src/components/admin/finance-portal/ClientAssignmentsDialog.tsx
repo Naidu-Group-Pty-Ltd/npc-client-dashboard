@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
-import { Loader2, Search, Trash2, Wand2, Save } from 'lucide-react';
+import { Loader2, Trash2, Wand2, Save } from 'lucide-react';
 import { FinancePermissionMatrixEditor, normalizeMatrix, type FinancePermissionMatrix } from './FinancePermissionMatrix';
 
 interface Assignment {
@@ -297,15 +298,13 @@ export function ClientAssignmentsDialog({ open, onOpenChange, financeUser, defau
               </ScrollArea>
 
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Add a client</div>
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search clients..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="pl-8 h-8 text-sm"
-                />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search clients..."
+                className="h-8 text-sm"
+                iconClassName="left-2"
+              />
               <ScrollArea className="h-40 border rounded-lg">
                 <div className="p-2 space-y-1">
                   {filteredAvailable.length === 0 && (

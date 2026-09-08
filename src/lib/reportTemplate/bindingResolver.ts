@@ -76,6 +76,14 @@ function dateStyle(fmt: string | undefined): ReportDateStyle {
 }
 
 export const FILTERS: Record<string, Filter> = {
+  /**
+   * Two-digit zero padding — `{{partNumber | pad2}}` → "07". For the running
+   * furniture that numbers a document's parts at render time, where the count
+   * must be over the pages that actually rendered: a part number baked at
+   * compose time keeps counting pages a conditional later drops, and a real
+   * comparison shipped with its parts jumping 12 → 19.
+   */
+  pad2: (v) => String(v ?? '').padStart(2, '0'),
   // Money / numeric formatting
   currency: (v, decimals) => {
     const n = num(v);

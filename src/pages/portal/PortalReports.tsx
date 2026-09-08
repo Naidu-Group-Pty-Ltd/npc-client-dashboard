@@ -5,8 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import {
-  FileText, Search, Loader2, Download,
+  FileText, Loader2, Download,
   BarChart3, PiggyBank, TrendingUp, FileBarChart, Inbox,
   Plus, Send, Clock, CheckCircle2, XCircle, ArrowRight
 } from 'lucide-react';
@@ -179,15 +180,11 @@ export default function PortalReports() {
           {/* Filters */}
           {reports.length > 0 && (
             <div className="space-y-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search reports..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search reports..."
+              />
               <div className="flex flex-wrap gap-2">
                 {filterOptions.map((opt) => (
                   <Button

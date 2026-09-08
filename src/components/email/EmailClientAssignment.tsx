@@ -24,7 +24,8 @@ import {
 } from '@/components/ui/tooltip';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { User, UserPlus, X, Search, Loader2, Link as LinkIcon, ExternalLink } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { User, UserPlus, X, Loader2, Link as LinkIcon, ExternalLink } from 'lucide-react';
 
 interface Client {
   id: string;
@@ -203,15 +204,13 @@ export function EmailClientAssignment({
         </PopoverTrigger>
       <PopoverContent className="w-72 p-0" align="start">
         <div className="p-3 border-b">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search clients..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8 h-8"
-            />
-          </div>
+          <SearchInput
+            value={searchQuery}
+            onValueChange={setSearchQuery}
+            placeholder="Search clients..."
+            className="h-8"
+            iconClassName="left-2.5"
+          />
         </div>
         <ScrollArea className="max-h-[300px]">
           {isLoadingClients ? (

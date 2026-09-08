@@ -196,7 +196,7 @@ export function ChecklistInstanceView({ instance, onBack, canEdit, canDelete }: 
               ? 'border-brand-400/20 bg-[linear-gradient(145deg,rgba(120,53,15,0.18),rgba(9,9,11,0.96)_42%,rgba(0,0,0,0.98))] hover:border-brand-300/45'
               : 'border-border dark:border-border/45 bg-[linear-gradient(145deg,rgba(39,39,42,0.5),rgba(9,9,11,0.96)_42%,rgba(0,0,0,0.98))] hover:border-border/60';
           const sectionIconClass = sectionComplete
-            ? 'border-success/20 bg-success/10 text-success-foreground'
+            ? 'border-success/20 bg-success/10 text-success'
             : sectionStarted
               ? 'border-brand-300/20 bg-brand-400/10 text-brand-100'
               : 'border-border/40 bg-background dark:bg-black/30 text-muted-foreground dark:text-foreground';

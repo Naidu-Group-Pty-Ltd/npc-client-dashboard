@@ -33,7 +33,9 @@ const properties = SAMPLE.properties as Array<Record<string, number>>;
 const sum = (key: string) => properties.reduce((t, p) => t + Number(p[key] ?? 0), 0);
 
 /** Namespaces every template may bind regardless of format. */
-const AMBIENT = ['client', 'org', 'report', 'author'];
+// `partNumber` is the renderer's own per-page part counter (resolved over
+// the pages that actually draw, like `pageNumber`), not a projection leaf.
+const AMBIENT = ['client', 'org', 'report', 'author', 'partNumber'];
 
 function boundNamespaces(templates: Array<{ schema: unknown }>): Set<string> {
   const out = new Set<string>();

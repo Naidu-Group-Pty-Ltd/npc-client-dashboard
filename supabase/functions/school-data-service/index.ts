@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0';
 import { internalError } from '../_shared/errorResponse.ts';
 import { parseJsonBody } from '../_shared/validate.ts';
 import { SchoolDataRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
+import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -63,8 +64,22 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Fetch school data from database
+    // Two real sources, in order: the imported schools directory, then
+    // Google Places measured from the coordinate. There is no third: the old
+    // final fallback invented "<suburb> Public School" and "<suburb> High
+    // School" with an ICSEA guessed from a postcode list and a student count
+    // of 450 — named institutions that do not exist, in a client's report.
     const schoolData = await fetchSchoolDataFromDB(supabase, suburb, state, postcode, latitude, longitude);
+
+    if (!schoolData) {
+      return new Response(JSON.stringify(sourceUnavailable(
+        'school-data',
+        'no_data_for_location',
+        'Neither the schools directory nor Google Places holds school data for this location — school figures are unavailable rather than invented.',
+      )), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     return new Response(JSON.stringify({ 
       success: true, 
@@ -167,13 +182,13 @@ async function fetchSchoolDataFromDB(
       }
     }
 
-    // Final fallback: Generate estimates
-    console.log('⚠️ Using estimated school data');
-    return generateSchoolEstimates(suburb, state, postcode);
+    // Neither real source answered; there is nothing honest to return.
+    console.log('No school data available for this location');
+    return null;
 
   } catch (error: any) {
     console.error('❌ Error fetching school data:', error);
-    return generateSchoolEstimates(suburb, state, postcode);
+    return null;
   }
 }
 
@@ -333,51 +348,4 @@ function getEducationQualityDescription(icsea: number | null, rating: number | n
   } else {
     return 'Average - Schools in this area perform around the national average.';
   }
-}
-
-function generateSchoolEstimates(suburb: string, state: string, postcode: string) {
-  console.log(`⚠️ Generating school estimates for ${suburb}, ${state} ${postcode}`);
-  
-  const postcodeNum = parseInt(postcode);
-  let baseICSEA = 1000;
-  
-  // Estimate ICSEA based on postcode patterns
-  const affluent = [2026, 2027, 2028, 2030, 3142, 3144, 3181, 6000, 6009];
-  if (affluent.includes(postcodeNum)) {
-    baseICSEA = 1150;
-  } else if (postcodeNum >= 2000 && postcodeNum < 2100) {
-    baseICSEA = 1050;
-  }
-
-  const schools: School[] = [
-    {
-      name: `${suburb} Public School`,
-      type: 'Government',
-      level: 'Primary',
-      address: `${suburb}, ${state} ${postcode}`,
-      postcode,
-      icsea: baseICSEA,
-      studentCount: 450,
-      rating: calculateSchoolRating(baseICSEA, null)
-    },
-    {
-      name: `${suburb} High School`,
-      type: 'Government',
-      level: 'Secondary',
-      address: `${suburb}, ${state} ${postcode}`,
-      postcode,
-      icsea: baseICSEA - 20,
-      studentCount: 850,
-      rating: calculateSchoolRating(baseICSEA - 20, null)
-    }
-  ];
-
-  return {
-    schools,
-    summary: calculateSchoolSummary(schools, postcode),
-    dataSource: `Estimated based on ${state} education patterns`,
-    dataQuality: 'estimated',
-    lastUpdated: new Date().toISOString(),
-    note: 'School data is estimated. For official information, visit myschool.edu.au and import real data.'
-  };
 }

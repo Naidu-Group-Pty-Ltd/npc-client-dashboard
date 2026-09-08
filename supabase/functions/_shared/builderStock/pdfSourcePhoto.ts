@@ -41,6 +41,8 @@ import {
   IDENTITY,
   type DrawnImage, type Matrix, type PdfScope, type PdfWidget,
 } from './pdfPageImages.pure.ts';
+import { documentVisualKinds } from './assessSourceImage.ts';
+import { withPdfDecodeSlot } from './pdfDecodeSlot.pure.ts';
 import {
   assignPdfMediaRoles, coverSearchPages, type PdfMediaPlacement,
 } from './pdfPrimaryImage.pure.ts';
@@ -606,6 +608,40 @@ export async function selectPdfPropertyPrimary(
   pageOrderAuthoritative: boolean;
 }> {
   /*
+   * THE WHOLE ELECTION HOLDS THE DECODE SLOT, discovery and classification
+   * both — see `pdfDecodeSlot.pure.ts` for the five-way 546 this bounds. The
+   * internal discovery call below goes to the unwrapped body, because a slot
+   * taken twice by one caller is a deadlock, not a bound.
+   */
+  return withPdfDecodeSlot(() => selectPdfPropertyPrimaryHoldingSlot(bytes, options));
+}
+
+/**
+ * The election with the slot ALREADY HELD by the caller.
+ *
+ * Exported for `extractFromDocument`, which takes the slot once around the
+ * whole heavy path — the text read as well as the election — so the two
+ * stages of reading one document cannot be interleaved with another
+ * document's. Taking the slot twice in one call stack is a deadlock, not a
+ * bound, which is the entire reason this variant is separate from the
+ * wrapper above.
+ */
+export async function selectPdfPropertyPrimaryHoldingSlot(
+  bytes: Uint8Array,
+  options: {
+    label?: string | null;
+    pageTexts?: string[];
+    maxPages?: number;
+    structuralCoverPage?: number | null;
+    design?: string | null;
+    identityHints?: readonly string[] | null;
+  },
+): Promise<{
+  assets: PdfSourceAsset[];
+  primary: PdfSourceAsset | null;
+  pageOrderAuthoritative: boolean;
+}> {
+  /*
    * THE EXPENSIVE STEP IS TOLD WHERE TO LOOK.
    *
    * Which page can be this property's cover is decidable from the text, which
@@ -623,10 +659,52 @@ export async function selectPdfPropertyPrimary(
     structuralCoverPage: options.structuralCoverPage ?? null,
     identityHints: options.identityHints ?? [],
   });
-  const found = await discoverPdfSourceAssets(bytes, {
+  /*
+   * NO CANDIDATE PAGE MEANS NO ELECTION, SO NOTHING IS DECODED.
+   *
+   * `coverSearchPages` is a SUPERSET of every page `assignPdfMediaRoles` can
+   * designate — the property covers, the design covers and the structural
+   * page all come from it — so an empty answer here decides the outcome
+   * before a byte of raster is touched: no page can be the cover, no picture
+   * can be primary, and the caller records exactly the refusal it records
+   * today.
+   *
+   * WHAT RUNNING ON ANYWAY COST, MEASURED 6 SEPTEMBER 2026. "EMPTY MEANS
+   * EVERY PAGE" is the right reading for discovery's own callers, but through
+   * THIS path it sent a document nothing could elect into a full-document
+   * walk — materialising rasters, flattening pages, classifying pixels — and
+   * on Lot 709 Verve's 13-page brochure that was ~2.6 s of the ~2.9 s total,
+   * spent producing assets whose only fate was the refusal already decided
+   * above. The worker died inside that waste on every attempt, faster than
+   * any wall-clock deadline could answer for it, and the branch burned its
+   * whole budget without one honest verdict. The same document now refuses
+   * in ~0.3 s.
+   */
+  if (!searchPages.length) {
+    const recovered = await recoverCompressedObjects(bytes);
+    return {
+      assets: [],
+      primary: null,
+      pageOrderAuthoritative: pageOrderIsAuthoritative(bytes, recovered),
+    };
+  }
+  const found = await discoverPdfSourceAssetsHoldingSlot(bytes, {
     maxPages: options.maxPages,
     pages: searchPages,
   });
+
+  /*
+   * WHAT EACH PICTURE IS, before the election — and it has to be read HERE as
+   * well as on the import path.
+   *
+   * "The same decision over the same inputs" is only true if both sides supply
+   * the same inputs. When the visual gate was added it was wired into the
+   * import alone, so a re-derivation re-elected exactly what it had elected
+   * before: lots 109 and 115 Palomino came back out of the v14 reopen still
+   * pointing at `page1:Im3`, the floor plan. This is the path a reopen runs
+   * through, so this is the path that has to look.
+   */
+  const visualKinds = await documentVisualKinds(found.assets);
 
   // The SAME decision an upload and a repair make, over the same inputs.
   const roles = assignPdfMediaRoles({
@@ -636,6 +714,7 @@ export async function selectPdfPropertyPrimary(
     pageTexts: options.pageTexts ?? [],
     pageOrderAuthoritative: found.pageOrderAuthoritative,
     media: found.assets.map((asset) => asset.placement),
+    visualKinds,
     structuralCoverPage: options.structuralCoverPage ?? null,
   });
 
@@ -673,6 +752,17 @@ export async function discoverPdfSourceAssets(
      * EMPTY OR ABSENT MEANS EVERY PAGE. A caller with no opinion gets the walk
      * it has always had.
      */
+    pages?: readonly number[];
+  } = {},
+): Promise<{ assets: PdfSourceAsset[]; pageOrderAuthoritative: boolean }> {
+  // Same bound as the election: one document's buffers at a time per isolate.
+  return withPdfDecodeSlot(() => discoverPdfSourceAssetsHoldingSlot(bytes, options));
+}
+
+async function discoverPdfSourceAssetsHoldingSlot(
+  bytes: Uint8Array,
+  options: {
+    maxPages?: number;
     pages?: readonly number[];
   } = {},
 ): Promise<{ assets: PdfSourceAsset[]; pageOrderAuthoritative: boolean }> {

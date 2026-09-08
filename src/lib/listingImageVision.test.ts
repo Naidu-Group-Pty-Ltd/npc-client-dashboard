@@ -41,6 +41,10 @@ const CORPUS: Sample[] = [
   { label: 'floorplan', what: 'plan with lawn fills', aspect: 1.42, features: f(0.742, 0.040, 0.001, 70, 16.39) },
   { label: 'floorplan', what: 'Yaltara Rd, portrait', aspect: 0.71, features: f(0.759, 0.005, 0.011, 52, 18.46) },
   { label: 'floorplan', what: 'Challenger Pde', aspect: 1.42, features: f(0.731, 0.051, 0.009, 69, 17.91) },
+  // Builder stock, Palomino Vanta 23 brochure, measured through the pipeline's
+  // own decoder. Every room filled with a brand colour, which put it outside
+  // the old 0.30 bound by a thousandth and made it the hero of two live cards.
+  { label: 'floorplan', what: 'colour-filled builder plan', aspect: 1.49, features: f(0.518, 0.301, 0.000, 97, 9.94) },
 
   // ── Marketing graphics ─────────────────────────────────────────────────────
   { label: 'graphic', what: '"coming soon" text card', aspect: 1.50, features: f(0.512, 0.160, 0.012, 213, 18.75) },
@@ -59,6 +63,10 @@ const CORPUS: Sample[] = [
   { label: 'photo', what: 'apartments and pool', aspect: 1.50, features: f(0.020, 0.433, 0.013, 356, 25.41) },
   { label: 'photo', what: 'interior, muted', aspect: 1.50, features: f(0.001, 0.077, 0.080, 223, 22.57) },
   { label: 'photo', what: 'garden exterior', aspect: 1.50, features: f(0.029, 0.496, 0.013, 556, 28.14) },
+  // The two facade renders from that same brochure, so the widened bound is
+  // pinned against the photographs it sits beside rather than in isolation.
+  { label: 'photo', what: 'builder facade render', aspect: 1.50, features: f(0.003, 0.403, 0.025, 376, 28.86) },
+  { label: 'photo', what: 'builder facade render, second', aspect: 1.78, features: f(0.010, 0.331, 0.093, 245, 17.19) },
 ];
 
 describe('classifyVisual — against the corpus it was fitted to', () => {
@@ -67,12 +75,27 @@ describe('classifyVisual — against the corpus it was fitted to', () => {
   });
 
   it('separates the two populations by a wide margin, not a hair', () => {
-    // The whole approach rests on this gap. If a future corpus closes it, the
-    // thresholds need refitting rather than nudging.
+    /*
+     * The whole approach rests on this gap. If a future corpus closes it, the
+     * thresholds need refitting rather than nudging.
+     *
+     * The floor was 0.7 while every measured plan was line-work on a white
+     * sheet. A builder's plan with every room filled in a brand colour reads
+     * 0.518, which lowers the plan population without touching the
+     * photographs — so the claim worth pinning is the SEPARATION, not the
+     * absolute. It is still more than fourfold, and the assertion is written
+     * as a ratio so that a corpus which genuinely closes it fails here
+     * instead of being absorbed by a smaller constant.
+     */
     const plans = CORPUS.filter((s) => s.label === 'floorplan').map((s) => s.features.white);
     const photos = CORPUS.filter((s) => s.label === 'photo').map((s) => s.features.white);
-    expect(Math.min(...plans)).toBeGreaterThan(0.7);
-    expect(Math.max(...photos)).toBeLessThan(0.15);
+    const lowestPlan = Math.min(...plans);
+    const whitestPhoto = Math.max(...photos);
+
+    expect(whitestPhoto).toBeLessThan(0.15);
+    // Below the rule's own 0.45 band a plan would not be caught at all.
+    expect(lowestPlan).toBeGreaterThan(0.45);
+    expect(lowestPlan / whitestPhoto).toBeGreaterThan(3);
   });
 
   it('gives a bright, colourful exterior the benefit of the doubt', () => {

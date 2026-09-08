@@ -142,7 +142,7 @@ describe('the payloads real callers send are accepted', () => {
     // Public transport takes coordinates plus a nullable suburb.
     ['PublicTransportRequest',
       { lat: -33.81, lng: 151.0, state: 'NSW', suburb: null },
-      'location-intelligence-service/index.ts:154'],
+      'location-intelligence-service/index.ts:224'],
   ];
 
   it.each(REAL_PAYLOADS)('%s accepts the body from %s', (name, payload) => {

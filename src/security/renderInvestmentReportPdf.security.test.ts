@@ -35,12 +35,22 @@ describe('render-investment-report-pdf insight wrapping contract', () => {
 
 describe('render-investment-report-pdf SVG escaping contract', () => {
   it('escapes explicit donut center subtitles before inserting them into SVG', () => {
+    // This used to pin `svgEscape((… ?? "").toUpperCase())` verbatim. The call
+    // site now goes through `svgLabelUpper`, which is
+    // `svgEscape(decodeHtmlEntities(s).toUpperCase())` — the same escape, with
+    // the decode that stopped chart labels printing `&AMP;` (§43). The contract
+    // this test is actually about is that the subtitle is escaped BEFORE it
+    // reaches the SVG, so it is asserted on that rather than on one spelling.
     expect(functionSource).toContain(
-      'const centerSub = svgEscape((opts.centerSub ?? segments[0]?.label ?? "").toUpperCase());',
+      'const centerSub = svgLabelUpper(opts.centerSub ?? segments[0]?.label ?? "");',
     );
-    expect(functionSource).not.toContain(
-      'const centerSub = opts.centerSub ?? svgEscape(',
+    // `svgLabelUpper` must remain an escaping helper, not a passthrough.
+    expect(functionSource).toContain(
+      'function svgLabelUpper(s: unknown): string {\n  return svgEscape(decodeHtmlEntities(s).toUpperCase());',
     );
+    // And the raw value must never reach the markup on either older spelling.
+    expect(functionSource).not.toContain('const centerSub = opts.centerSub ?? svgEscape(');
+    expect(functionSource).not.toMatch(/const centerSub = \(?opts\.centerSub[^;]*;\s*$/m);
   });
 
   it('authorizes report access before reading with the service-role client', () => {

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchInput } from '@/components/ui/search-input';
 import {
   AmlEmptyState,
   AmlLoadingState,
@@ -110,12 +111,14 @@ export default function AmlCounterparty() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center gap-3">
-            <div className="relative min-w-[240px] flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search legal name, trading name, ABN or ACN…" value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && loadEntities()} className="pl-8" />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search legal name, trading name, ABN or ACN…"
+              onKeyDown={(e) => e.key === "Enter" && loadEntities()}
+              containerClassName="min-w-[240px] flex-1"
+              iconClassName="left-2.5"
+            />
             <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as any)}>
               <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
               <SelectContent>

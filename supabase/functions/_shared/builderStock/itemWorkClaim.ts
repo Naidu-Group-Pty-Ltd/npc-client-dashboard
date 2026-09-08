@@ -132,6 +132,24 @@ export async function completeItemWork(
     error?: string | null;
     retryAfterSeconds?: number;
     progressed?: boolean;
+    /**
+     * Clear the claim's backoff counter, independently of whether work
+     * advanced.
+     *
+     * WHY THESE ARE TWO QUESTIONS. `image_work_attempts` is incremented by
+     * the CLAIM, before anything is attempted, and the completion clears it
+     * only when work progressed or the stage moved. That is right for a stage
+     * that ran and failed. It is wrong for a claim HANDED BACK untouched: the
+     * serial loop releases a property when too little of the invocation
+     * remains to finish it, and nothing whatsoever was attempted — yet the
+     * increment would stand, and `least(30 * 2^attempts, 3600)` turns a sixth
+     * such deferral into a 32-minute backoff. A property would be penalised,
+     * repeatedly, for our clock rather than for anything about itself.
+     *
+     * Defaults to `progressed === true`, so every existing caller keeps the
+     * behaviour it had; only the handback passes it explicitly.
+     */
+    resetAttempts?: boolean;
   },
 ): Promise<{ available: boolean }> {
   const { error } = await db.rpc('complete_builder_stock_image_work', {
@@ -140,7 +158,7 @@ export async function completeItemWork(
     p_result: outcome.result ?? null,
     p_error: outcome.error ?? null,
     p_retry_after_seconds: Math.max(0, Math.trunc(outcome.retryAfterSeconds ?? 0)),
-    p_reset_attempts: outcome.progressed === true,
+    p_reset_attempts: outcome.resetAttempts ?? outcome.progressed === true,
   });
   if (error && isMissingCapability(error)) return { available: false };
   if (error) {

@@ -31,6 +31,11 @@ export const PIN_GLYPH_PATHS: Record<PropertyGlyph, string> = {
   // A plain disc — "located, type not on record". Solid rather than a ring so it
   // cannot be misread as the `land` parcel outline at pin scale.
   property: 'M12 5.2a6.8 6.8 0 1 1 0 13.6 6.8 6.8 0 0 1 0-13.6z',
+  // A hard hat: dome with a brim, the same mark the Builder Stock tab carries
+  // in its own header, so one vocabulary covers the tab and the map. It reads
+  // as builder stock at pin scale where a house-with-a-crane does not.
+  builder:
+    'M3 16.4h18v2.6H3zM12 4.4c3.5 0 6.3 2.9 6.3 6.4v4.2h-2.9V9.6h-1.9v5.4h-3V9.6H8.6v5.4H5.7v-4.2c0-3.5 2.8-6.4 6.3-6.4z',
 };
 
 export const PIN_GLYPH_LABELS: Record<PropertyGlyph, string> = {
@@ -39,6 +44,7 @@ export const PIN_GLYPH_LABELS: Record<PropertyGlyph, string> = {
   land: 'Land',
   commercial: 'Commercial',
   property: 'Other',
+  builder: 'Builder stock',
 };
 
 /**

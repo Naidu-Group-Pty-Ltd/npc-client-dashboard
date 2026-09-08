@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import { Loader2, Component as ComponentIcon, Plus, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -140,7 +141,13 @@ export function ComponentLibraryDialog({ open, onOpenChange, template, activePag
           </TabsList>
 
           <TabsContent value="browse" className="flex-1 min-h-0 pt-3 flex flex-col">
-            <Input placeholder="Search by name or tag…" value={q} onChange={(e) => setQ(e.target.value)} className="mb-3" />
+            <SearchInput
+              value={q}
+              onValueChange={setQ}
+              placeholder="Search by name or tag…"
+              hideIcon
+              className="mb-3"
+            />
             {loading ? (
               <div className="flex-1 flex items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
             ) : (

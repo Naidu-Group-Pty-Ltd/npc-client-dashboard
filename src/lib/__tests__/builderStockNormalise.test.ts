@@ -37,6 +37,169 @@ describe('header aliasing', () => {
     expect(fieldForHeader('Deposit Required')).toBeNull();
     expect(fieldForHeader('Commission %')).toBeNull();
   });
+
+  /*
+   * THE LIVE MASTER STOCKLIST'S OWN HEADINGS, VERBATIM. Measured on the
+   * 6 September 2026 upload: 81 of 81 rows carried `Package Price - V002` and
+   * `BED // BATH // CAR`, every value landed in `unmapped`, and every card
+   * read "Price not stated" with no bedroom in sight — while three rows showed
+   * a STALE price a V001 sheet had written before the suffix appeared.
+   */
+  it('a heading may carry the sheet\'s own version suffix', () => {
+    expect(fieldForHeader('Package Price - V002')).toBe('price');
+    expect(fieldForHeader('Package Price - V003')).toBe('price');
+    expect(fieldForHeader('Status V2')).toBe('availability_status');
+  });
+
+  it('the version strip lands only on a KNOWN alias, never on a guess', () => {
+    // Components of the package price have no field on purpose — see the
+    // alias table — and versioning them must not change that.
+    expect(fieldForHeader('Build Price - V002')).toBeNull();
+    expect(fieldForHeader('Land Price')).toBeNull();
+    // A version in the MIDDLE of a heading is part of the heading.
+    expect(fieldForHeader('[VG] MASTER STOCKLIST - V002 Contract Type')).toBeNull();
+    // A document-link column is not the property's image, versioned or not.
+    expect(fieldForHeader('Brochure V002')).toBeNull();
+  });
+
+  it('recognises the combined BED // BATH // CAR column', () => {
+    expect(fieldForHeader('BED // BATH // CAR')).toBe('bed_bath_car');
+    expect(fieldForHeader('Beds/Baths/Cars')).toBe('bed_bath_car');
+  });
+});
+
+describe('the combined BED // BATH // CAR value', () => {
+  it('parses the three counts in stated order', () => {
+    const record = normaliseStockRow({ Lot: '927', 'BED // BATH // CAR': '3 / 2 / 2' });
+    expect(record?.bedrooms).toBe(3);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBe(2);
+    expect(record?.unmapped['BED // BATH // CAR']).toBeUndefined();
+  });
+
+  it('writes NOTHING unless exactly three counts parse', () => {
+    // "3 / 2" has not said which of the three it dropped; a partial write
+    // would put the bathrooms in the car spaces.
+    for (const value of ['3 / 2', '3 / 2 / 2 / 1', 'TBA', '3 / two / 2', '3 / / 2']) {
+      const record = normaliseStockRow({ Lot: '1', 'BED // BATH // CAR': value });
+      expect(record?.bedrooms, `"${value}" must not set bedrooms`).toBeNull();
+      expect(record?.bathrooms, `"${value}" must not set bathrooms`).toBeNull();
+      expect(record?.car_spaces, `"${value}" must not set car spaces`).toBeNull();
+    }
+  });
+
+  it('an unreadable cell stays VISIBLE as unplaced', () => {
+    // The first version of the parser consumed the cell and wrote nothing
+    // anywhere, so 32 live rows' counts vanished with no audit trail and the
+    // failing shapes had to be recovered from the sheet itself. ("TBA" is
+    // not this: `text()` reads it as not-stated before any parser runs.)
+    const record = normaliseStockRow({ Lot: '1', 'BED // BATH // CAR': '3 / two / 2' });
+    expect(record?.unmapped['BED // BATH // CAR']).toBe('3 / two / 2');
+  });
+
+  it('reads the doubled-slash typo the live sheet writes on 15 rows', () => {
+    // "3 / 2/ / 2" — the heading's own // style leaking into a value. A
+    // doubled slash contributes an EMPTY part, not a value, so it is
+    // dropped before the exactly-three rule is applied.
+    const record = normaliseStockRow({ Lot: '606', 'BED // BATH // CAR': '3 / 2/ / 2' });
+    expect(record?.bedrooms).toBe(3);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBe(2);
+  });
+
+  it('sums a dual-occupancy cell per position, and never invents the missing one', () => {
+    // Verbatim from the live sheet (11 rows): two dwellings, counts in the
+    // heading's bed/bath/car order. Both lines state beds and baths; only
+    // Nest 1 states a car — so the car count is UNSTATED for the package,
+    // not zero, and the card omits it rather than guessing.
+    const record = normaliseStockRow({
+      Lot: '324', 'BED // BATH // CAR': 'Nest 1 = 3 + 2 + 1\nNest 2 = 1 + 1',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(3);
+    expect(record?.car_spaces).toBeNull();
+  });
+
+  it('sums the car spaces too once every dwelling states them', () => {
+    const record = normaliseStockRow({
+      Lot: '1', 'BED // BATH // CAR': 'Nest 1 = 3 + 2 + 2\nNest 2 = 1 + 1 + 1',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(3);
+    expect(record?.car_spaces).toBe(3);
+  });
+
+  it('refuses a dual-occupancy cell with an unreadable line, whole', () => {
+    const record = normaliseStockRow({
+      Lot: '1', 'BED // BATH // CAR': 'Nest 1 = 3 + 2 + 1\nNest 2 = one + 1',
+    });
+    expect(record?.bedrooms).toBeNull();
+    expect(record?.bathrooms).toBeNull();
+    expect(record?.car_spaces).toBeNull();
+  });
+
+  it('reads the Notion list\'s labelled Configuration column', () => {
+    // Verbatim from the live Notion stock list: the heading is
+    // "Configuration" and every count names itself.
+    const record = normaliseStockRow({
+      Property: 'Lot 12 Example St', Configuration: '4 Bed 2 Bath 2 Car',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBe(2);
+  });
+
+  it('sums a labelled dual occupancy by label, cars included', () => {
+    // Also verbatim: two dwellings joined by "+", every count labelled — so
+    // unlike the positional Nest form, the car total IS stated and is
+    // summed.
+    const record = normaliseStockRow({
+      Property: 'Lot 9 Example St',
+      Configuration: '3 Bed 2 Bath 1 Car + 2 Bed 1 Bath 1 Car',
+    });
+    expect(record?.bedrooms).toBe(5);
+    expect(record?.bathrooms).toBe(3);
+    expect(record?.car_spaces).toBe(2);
+  });
+
+  it('a label the cell never uses stays null, and a street name is not a car', () => {
+    const record = normaliseStockRow({
+      Property: 'Lot 9 Example St', Configuration: '4 Bed 2 Bath',
+    });
+    expect(record?.bedrooms).toBe(4);
+    expect(record?.bathrooms).toBe(2);
+    expect(record?.car_spaces).toBeNull();
+    // "2 Carrara" must not read as two car spaces: the label words are an
+    // explicit list with a word boundary, not a prefix match.
+    const street = normaliseStockRow({
+      Property: 'Lot 9', Configuration: '2 Carrara',
+    });
+    expect(street?.car_spaces).toBeNull();
+  });
+
+  it('a dedicated column beats the combined one, whichever side it sits on', () => {
+    const before = normaliseStockRow({ Lot: '1', Beds: '4', 'BED // BATH // CAR': '3 / 2 / 2' });
+    expect(before?.bedrooms).toBe(4);
+    expect(before?.bathrooms).toBe(2);
+    const after = normaliseStockRow({ Lot: '1', 'BED // BATH // CAR': '3 / 2 / 2', Beds: '4' });
+    expect(after?.bedrooms).toBe(4);
+    expect(after?.bathrooms).toBe(2);
+  });
+
+  it('the versioned package price reaches the record as the price', () => {
+    const record = normaliseStockRow({
+      Lot: '927',
+      'Package Price - V002': '$780,050',
+      'Land Price': '$423,500',
+      'Build Price - V002': '$356,550',
+    });
+    expect(record?.price).toBe(780050);
+    // A bare figure needs no display string — see `coercePrice`.
+    expect(record?.price_display).toBeNull();
+    // The components stay in the audit record, visibly unplaced.
+    expect(record?.unmapped['Land Price']).toBe('$423,500');
+    expect(record?.unmapped['Build Price - V002']).toBe('$356,550');
+  });
 });
 
 describe('coercion never invents', () => {
@@ -111,8 +274,10 @@ describe('duplicate matching is conservative', () => {
 
   it('requires BOTH halves of development + unit', () => {
     const withUnit = normaliseStockRow({ Estate: 'Riverbend', Lot: '108' })!;
+    // The design rides along and is empty where the row names none; the two
+    // halves this is about are still both required.
     expect(stockMatchKeys(withUnit).developmentUnit)
-      .toEqual({ development: 'riverbend', unit: '108' });
+      .toEqual({ development: 'riverbend', unit: '108', design: '' });
 
     const withoutUnit = normaliseStockRow({ Estate: 'Riverbend', Suburb: 'Tarneit' })!;
     expect(stockMatchKeys(withoutUnit).developmentUnit).toBeNull();

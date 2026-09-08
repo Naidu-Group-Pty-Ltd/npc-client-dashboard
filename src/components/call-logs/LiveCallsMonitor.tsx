@@ -54,7 +54,7 @@ interface LiveCall {
 const livePanel =
   'relative h-full overflow-hidden rounded-3xl border border-border dark:border-white/10 bg-gradient-to-br from-card dark:from-background/95 via-card dark:via-background/80 to-background dark:to-black/90 shadow-2xl shadow-sm dark:shadow-black/30';
 const liveControl =
-  'rounded-full border border-border dark:border-white/10 bg-background dark:bg-black/35 text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/25 transition-all hover:border-success/35 hover:bg-success/10 hover:text-success-foreground focus-visible:ring-2 focus-visible:ring-success/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black';
+  'rounded-full border border-border dark:border-white/10 bg-background dark:bg-black/35 text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/25 transition-all hover:border-success/35 hover:bg-success/10 hover:text-success focus-visible:ring-2 focus-visible:ring-success/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black';
 const liveCallCard =
   'group relative cursor-default overflow-hidden rounded-3xl border border-border dark:border-white/10 bg-gradient-to-r from-card dark:from-background/95 via-card dark:via-background/80 to-background dark:to-black/90 p-4 shadow-sm shadow-sm dark:shadow-black/25 transition-all duration-300 before:pointer-events-none before:absolute before:inset-y-4 before:left-0 before:w-1 before:rounded-r-full before:bg-gradient-to-b before:from-transparent before:via-success/0 before:to-transparent hover:-translate-y-0.5 hover:border-success/40 hover:bg-success/5 hover:shadow-xl hover:shadow-success/10 hover:before:via-success/90';
 
@@ -216,7 +216,7 @@ export const LiveCallsMonitor = () => {
       <CardHeader className="relative border-b border-border dark:border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.14),transparent_34%),linear-gradient(90deg,rgba(24,24,27,0.92),rgba(0,0,0,0.72),rgba(8,47,73,0.16))] pb-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-success-foreground">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-success/20 bg-success/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-success">
               <span className="h-1.5 w-1.5 rounded-full bg-success/30 shadow-[0_0_10px_rgba(110,231,183,0.8)] animate-pulse" />
               Realtime Voice Ops
             </div>

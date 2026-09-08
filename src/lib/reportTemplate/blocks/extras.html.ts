@@ -4,7 +4,7 @@
  * existing `*.html.ts` blocks (absolute positioning, pt units, bindings).
  */
 import type { Block } from '../templateSchema';
-import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { evalConditional, resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { esc, type HtmlBlockContext } from './_shared.html';
 import { resolveDataPath } from './_data';
 
@@ -358,7 +358,18 @@ export function renderMetricDeltaHtml(block: Block, ctx: HtmlBlockContext): stri
 // ── 17. Definition list ──────────────────────────────────────────────────────
 export function renderDefinitionListHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as R;
-  const items = Array.isArray(p.items) ? (p.items as R[]) : [];
+  // A term is a promise that a definition follows it, so an item may carry a
+  // `when` — the same per-row conditional `data-table` rows have. Fixed-slot
+  // masters bind items that half the records do not hold, and an unresolved
+  // pair drew as an empty ruled stripe (a real comparison carried one under
+  // its single money axis). Dropping items only shortens the list, which is
+  // the safe direction: the declared height was sized for every slot.
+  const authored = Array.isArray(p.items) ? (p.items as R[]) : [];
+  const items = authored.filter((it) =>
+    (typeof it.when === 'string' && String(it.when).trim() !== ''
+      ? evalConditional(String(it.when), ctx)
+      : true));
+  if (authored.length > 0 && items.length === 0) return '';
   const rows = items
     .map(
       (it) => `<div style="display:grid;grid-template-columns:160pt 1fr;gap:14pt;padding:8pt 0;border-bottom:1pt solid ${line(ctx)};">

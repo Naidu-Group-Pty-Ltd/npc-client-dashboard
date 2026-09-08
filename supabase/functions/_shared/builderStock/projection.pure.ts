@@ -26,7 +26,8 @@ export const STOCK_ITEM_SELECT = `
   land_size_sqm, building_size_sqm, price, price_display,
   availability_status, expected_completion, description,
   lifecycle_status, enrichment_status, enriched_at, primary_image_id,
-  created_at, updated_at, last_seen_at
+  created_at, updated_at, last_seen_at,
+  image_work_stage
 `;
 
 /**

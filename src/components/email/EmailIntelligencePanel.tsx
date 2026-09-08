@@ -206,8 +206,16 @@ export function EmailIntelligencePanel({ email, threadEmails, intelligence, onIn
   return (
     <div className="rounded-lg border border-border bg-gradient-to-br from-muted/40 to-background overflow-hidden">
       {/* Top row: badges + actions */}
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border/60 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
+      {/* `flex-wrap` alone does not save this row. A flex item's default
+          `min-width: auto` refuses to shrink below its content, so the two
+          groups keep their max-content widths, the line cannot break inside
+          them, and the cluster runs off the pane's right edge — which is how
+          it was reported: "Translate/Thread is cut off, and the cutoff
+          disappears when the side panel is collapsed". Both groups declare
+          `min-w-0` so the row can actually wrap, and the whole strip is
+          allowed to shrink with the pane. */}
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-2.5 border-b border-border/60">
+        <div className="flex min-w-0 items-center gap-2 flex-wrap">
           <Brain className="h-4 w-4 text-primary" />
           <span className="text-xs font-medium text-foreground">Intelligence</span>
 
@@ -234,11 +242,11 @@ export function EmailIntelligencePanel({ email, threadEmails, intelligence, onIn
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 text-xs gap-1"
+            className="h-7 shrink-0 text-xs gap-1"
             onClick={runAnalyze}
             disabled={analyzing}
           >
@@ -248,7 +256,7 @@ export function EmailIntelligencePanel({ email, threadEmails, intelligence, onIn
 
           <div className="flex items-center gap-1">
             <Select value={translateLang} onValueChange={setTranslateLang}>
-              <SelectTrigger className="h-7 text-xs px-2 w-[110px]">
+              <SelectTrigger className="h-7 w-[110px] max-w-full shrink text-xs px-2">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -296,7 +304,7 @@ export function EmailIntelligencePanel({ email, threadEmails, intelligence, onIn
 
       {/* Foreign language nudge */}
       {isForeign && !translation && !translating && (
-        <div className="px-4 py-2 bg-warning/5 border-b border-warning/20 flex items-center gap-2 text-xs text-warning-foreground">
+        <div className="px-4 py-2 bg-warning/5 border-b border-warning/20 flex items-center gap-2 text-xs text-warning">
           <AlertTriangle className="h-3.5 w-3.5 text-warning" />
           <span>This email appears to be in <strong>{detectedLang}</strong>. Click Translate to read it in {LANGUAGES.find(l => l.code === translateLang)?.label}.</span>
         </div>

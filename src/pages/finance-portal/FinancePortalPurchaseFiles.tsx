@@ -16,8 +16,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import {
-  Briefcase, Plus, Search, ChevronRight, AlertTriangle, Clock, CheckCircle2, Loader2, Eye, EyeOff,
+  Briefcase, Plus, ChevronRight, AlertTriangle, Clock, CheckCircle2, Loader2, Eye, EyeOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { smartCapitalize } from '@/lib/nameUtils';
@@ -206,15 +207,12 @@ export default function FinancePortalPurchaseFiles() {
       </Tabs>
 
       <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="relative flex-1 min-w-[240px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by client, address, lender…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search by client, address, lender…"
+          containerClassName="flex-1 min-w-[240px]"
+        />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
           <SelectContent>

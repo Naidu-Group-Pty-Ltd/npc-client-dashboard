@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
 import { RegenerateReportButton } from '@/components/reports/RegenerateReportButton';
 import { type ReportTier } from '@/components/reports/TierBadge';
-import { resolveInvestmentGrade } from '@/components/reports/report-view/utils';
+import { resolveCardInvestmentGrade } from '@/components/reports/report-view/utils';
 import type { InvestmentReport } from './types';
 import { normalizeComparableReportType, REPORT_TYPE_CONFIG, resolveInvestmentReportType, type ReportVariant } from '@/lib/reports/reportVariants';
 import { ReportTypeBadge } from '@/components/reports/ReportTypeBadge';
@@ -31,6 +31,11 @@ import { resolveReportAddress } from '@/lib/reports/reportAddress';
 
 interface InvestmentReportCardProps {
   report: InvestmentReport;
+  /**
+   * Every report for the same property, where the caller knows them. The
+   * Investment Grade is resolved across these — see `gradeReports` below.
+   */
+  siblingReports?: InvestmentReport[];
   isSelected: boolean;
   canAddMore: boolean;
   comparisonSelectable: boolean;
@@ -59,6 +64,7 @@ const scopeMeta = {
 
 export function InvestmentReportCard({
   report,
+  siblingReports,
   isSelected,
   canAddMore,
   comparisonSelectable,
@@ -83,7 +89,23 @@ export function InvestmentReportCard({
     ? scopeMeta[report.report_scope as keyof typeof scopeMeta]
     : null;
   const ScopeIcon = scope?.icon;
-  const resolvedGrade = resolveInvestmentGrade([report as any]);
+  /**
+   * The Investment Grade is a judgement about the PROPERTY, not about the
+   * document being looked at — so resolving it and deciding whether to draw it
+   * are one answer, in `resolveCardInvestmentGrade`. See its header: the two
+   * halves used to live apart, which is why fixing either one alone changed
+   * nothing on screen.
+   */
+  const gradeReports = siblingReports && siblingReports.length > 0 ? siblingReports : [report];
+  const { grade: resolvedGrade, show: showGrade, borrowedFromReportId } =
+    resolveCardInvestmentGrade(report as any, gradeReports as any);
+  const gradeSourceLabel = borrowedFromReportId
+    ? (() => {
+        const source = gradeReports.find((r) => r.id === borrowedFromReportId);
+        const sourceType = source ? normalizeComparableReportType(source) : null;
+        return sourceType ? REPORT_TYPE_CONFIG[sourceType].label : null;
+      })()
+    : null;
   const hasAreaPlaceholder = !report.investment_score && ['suburb', 'zipcode', 'state'].includes(report.report_scope || '');
   const reportType = resolveInvestmentReportType(report);
   const comparableType = normalizeComparableReportType(report);
@@ -188,8 +210,8 @@ export function InvestmentReportCard({
       </CardHeader>
 
       <CardContent className="relative space-y-4 px-4 pb-4">
-        {report.investment_score ? (
-          <InvestmentGradeSummary grade={resolvedGrade} />
+        {showGrade ? (
+          <InvestmentGradeSummary grade={resolvedGrade} sourceLabel={gradeSourceLabel} />
         ) : hasAreaPlaceholder ? (
           <div className="rounded-2xl border border-dashed border-border/70 bg-muted/25 p-3">
             <div className="flex items-center gap-3">

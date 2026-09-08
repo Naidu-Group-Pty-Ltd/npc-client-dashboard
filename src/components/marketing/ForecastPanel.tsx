@@ -2,8 +2,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, TrendingUp, TrendingDown, Minus, Brain, AlertTriangle, DollarSign, Target, BarChart3 } from 'lucide-react';
+import { Loader2, TrendingUp, TrendingDown, ArrowRight, Brain, AlertTriangle, DollarSign, Target, BarChart3 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
+import { chartTooltipContentStyle } from '@/lib/charts/tooltipStyle';
 
 interface ForecastPoint {
   date: string;
@@ -43,7 +44,12 @@ const HORIZON_OPTIONS = [7, 14, 30, 60, 90];
 function TrendIcon({ trend }: { trend: string }) {
   if (trend === 'increasing' || trend === 'improving') return <TrendingUp className="h-3.5 w-3.5 text-success" />;
   if (trend === 'decreasing' || trend === 'worsening') return <TrendingDown className="h-3.5 w-3.5 text-destructive" />;
-  return <Minus className="h-3.5 w-3.5 text-muted-foreground" />;
+  // A SIDEWAYS arrow, never a minus. Up / down / sideways is one vocabulary and
+  // the third member has to belong to it — a bare `—` is what this product
+  // draws for "not recorded" on every table and tile it has, so beside the
+  // word "steady" it read as a stray mark rather than as a flat trend. That is
+  // the audit's question verbatim: "why is there a dash beside each of it".
+  return <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
 function TrendBadge({ label, trend }: { label: string; trend?: string }) {
@@ -70,15 +76,6 @@ function TrendBadge({ label, trend }: { label: string; trend?: string }) {
     </Badge>
   );
 }
-
-const chartTooltipStyle = {
-  backgroundColor: 'hsl(var(--popover))',
-  border: '1px solid hsl(var(--border))',
-  borderRadius: 14,
-  boxShadow: '0 18px 50px hsl(var(--foreground) / 0.12)',
-  color: 'hsl(var(--popover-foreground))',
-  fontSize: 12,
-};
 
 const chartTick = { fontSize: 11, fill: 'hsl(var(--muted-foreground))' };
 
@@ -163,12 +160,31 @@ export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiErr
               Projects the NEXT {horizonDays} days forward from historical trends — separate from the analytics date range above, which selects the history it learns from
             </CardDescription>
           </div>
+          {/* The cluster says what it IS.
+              Four unlabelled chips in the top-right corner of a card are a
+              reading with no question attached, and the audit asked the
+              obvious one: "im not sure what that supposed to be. Is it
+              supposed to be a health/quality status?". They are neither a
+              health nor a quality score — they are the DIRECTION each metric
+              moved over the history the forecast learned from, which is a
+              different claim and one only a label can make. The title
+              attribute already said so and nobody hovers a badge to find out
+              what a panel is showing them. */}
           {trends && (
-            <div className="flex max-w-full flex-wrap gap-1.5">
-              <TrendBadge label="Spend" trend={trends.spend_trend} />
-              <TrendBadge label="Leads" trend={trends.lead_trend} />
-              <TrendBadge label="CPL" trend={trends.cpl_trend} />
-              <TrendBadge label="Efficiency" trend={trends.efficiency_trend} />
+            <div
+              role="group"
+              aria-label="Direction of each metric over the history window"
+              className="flex max-w-full flex-col items-start gap-1 sm:items-end"
+            >
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Trend over history
+              </span>
+              <div className="flex max-w-full flex-wrap gap-1.5 sm:justify-end">
+                <TrendBadge label="Spend" trend={trends.spend_trend} />
+                <TrendBadge label="Leads" trend={trends.lead_trend} />
+                <TrendBadge label="CPL" trend={trends.cpl_trend} />
+                <TrendBadge label="Efficiency" trend={trends.efficiency_trend} />
+              </div>
             </div>
           )}
         </div>
@@ -226,7 +242,7 @@ export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiErr
                   <XAxis dataKey="date" tick={chartTick} className="text-muted-foreground" />
                   <YAxis tick={chartTick} className="text-muted-foreground" tickFormatter={(v) => `$${v}`} width={48} />
                   <RechartsTooltip
-                    contentStyle={chartTooltipStyle}
+                    contentStyle={chartTooltipContentStyle}
                     formatter={(value: number, name: string) => {
                       if (name === 'spend') return [`$${value.toFixed(2)}`, 'Projected Spend'];
                       if (name === 'spendUpper') return [`$${value.toFixed(2)}`, 'Upper Range'];
@@ -250,7 +266,7 @@ export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiErr
                   <XAxis dataKey="date" tick={chartTick} className="text-muted-foreground" />
                   <YAxis tick={chartTick} className="text-muted-foreground" width={42} />
                   <RechartsTooltip
-                    contentStyle={chartTooltipStyle}
+                    contentStyle={chartTooltipContentStyle}
                     formatter={(value: number, name: string) => {
                       if (name === 'leads') return [value.toFixed(1), 'Projected Leads'];
                       if (name === 'leadsUpper') return [value.toFixed(1), 'Upper Range'];
@@ -274,7 +290,7 @@ export function ForecastPanel({ forecast, trends, projections, aiAnalysis, aiErr
                   <XAxis dataKey="date" tick={chartTick} className="text-muted-foreground" />
                   <YAxis tick={chartTick} className="text-muted-foreground" tickFormatter={(v) => `$${v}`} width={48} />
                   <RechartsTooltip
-                    contentStyle={chartTooltipStyle}
+                    contentStyle={chartTooltipContentStyle}
                     formatter={(value: number) => [`$${value.toFixed(2)}`, 'Projected CPL']}
                   />
                   <Area type="monotone" dataKey="cpl" stroke="hsl(38 92% 50%)" fill="hsl(38 92% 50% / 0.15)" strokeWidth={2} dot={false} />

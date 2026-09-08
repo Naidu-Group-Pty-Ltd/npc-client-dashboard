@@ -17,7 +17,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Inbox, Search, RefreshCw, Loader2, Mail, Phone } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Inbox, RefreshCw, Loader2, Mail, Phone } from 'lucide-react';
 import { toast } from 'sonner';
 import { REFERRAL_STATUS_LABELS, type ReferralStatus } from '@/hooks/usePartnerReferrals';
 
@@ -185,10 +186,12 @@ export default function PartnerReferralInbox() {
             <TabsTrigger value="all">All</TabsTrigger>
           </TabsList>
         </Tabs>
-        <div className="relative w-full sm:w-72">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Search referrals…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={setSearch}
+          placeholder="Search referrals…"
+          containerClassName="w-full sm:w-72"
+        />
       </div>
 
       <Card>

@@ -28,6 +28,7 @@
 import { markdownToPlainText, sanitiseGlyphs } from '../markdown.pure.ts';
 import { neutraliseUrls } from '../text.pure.ts';
 import { reconcileStoredFinancials } from './financialEngine.pure.ts';
+import { rentIsEstablished } from './rentalEvidence.pure.ts';
 import {
   type Demographics,
   type EconomicContext,
@@ -639,9 +640,15 @@ export function toFinancial(raw: unknown): FinancialModel | null {
   const sens = isRecord(raw.sensitivityAnalysis) ? raw.sensitivityAnalysis : {};
 
   const annualNet = num(km.annualNet);
+  // A yield rests on a rent. Where the record establishes none, the stored
+  // yield describes nothing and travels no further — the same rule
+  // `financialChapters` applies to the FIN table, asked of the one module
+  // that owns it so the WeasyPrint document and the composed chapters cannot
+  // disagree about whether a yield exists.
+  const foundedYield = rentIsEstablished(income);
   const model: FinancialModel = {
-    grossYield: num(km.grossRentalYield),
-    netYield: num(km.netRentalYield),
+    grossYield: foundedYield ? num(km.grossRentalYield) : null,
+    netYield: foundedYield ? num(km.netRentalYield) : null,
     cashOnCash: num(km.cashOnCashReturn),
     lvr: num(km.lvr ?? loan.lvr),
     totalInvestment: num(km.totalInvestment),

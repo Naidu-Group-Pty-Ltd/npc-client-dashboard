@@ -1,0 +1,27 @@
+/**
+ * BUILDER STOCK — the PDF election worker.
+ *
+ * Narrow by design. No AI binding, no KV, no D1, no R2, no queue, no database,
+ * no Supabase secret, no storage. One bearer token is the entire configuration,
+ * following `builder-stock-image-worker`, the Builder Stock boundary this
+ * mirrors: Cloudflare provides the compute, Supabase stays authoritative for
+ * orchestration, storage, provenance and settlement.
+ */
+{
+  "name": "builder-stock-pdf-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // pdf.js (via unpdf) reaches for Node built-ins.
+  "compatibility_flags": ["nodejs_compat"],
+  // The shared reader loads unpdf with `import('https://esm.sh/unpdf@0.12.1')`,
+  // and a Worker cannot fetch a module at runtime. This resolves that exact
+  // specifier to the SAME library at the SAME pinned version from npm, so
+  // `readPdfPageTextResult` — including its AcroForm field-text pass — runs
+  // unchanged. A packaging alias, not a substitute reader.
+  "alias": { "https://esm.sh/unpdf@0.12.1": "unpdf" },
+  // The election is CPU-heavy by definition — it is here BECAUSE it exceeds an
+  // Edge Function's 2,000 ms. The Workers Paid default is 30 s; this states the
+  // intent rather than relying on it.
+  "limits": { "cpu_ms": 30000 },
+  "observability": { "enabled": true }
+}

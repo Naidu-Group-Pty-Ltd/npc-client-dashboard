@@ -25,8 +25,10 @@ import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
 import { readBaseFinancials } from '@/lib/reports/cashFlow/readBaseFinancials';
 import {
   exportBackgroundFor,
+  propertySeriesStyle,
   useCashFlowChartTheme,
 } from '@/lib/cashFlow/chartTheme';
+import { PropertySeriesMarker } from '@/components/cash-flow/PropertySeriesMarker';
 import {
   METRICS_UNAVAILABLE_REASON,
   deriveInvestmentMetrics,
@@ -81,6 +83,11 @@ import {
   PROJECTION_TOTAL_LABEL_CELL_CLASS,
   PROJECTION_TOTAL_LABEL_INNER_CLASS,
 } from '@/lib/cashFlow/projectionTableGeometry.pure';
+import {
+  NEGATIVE_FIGURE_INK,
+  POSITIVE_FIGURE_INK,
+  signedFigureInk,
+} from '@/lib/cashFlow/figureInk.pure';
 import {
   get10YearLoanProjection,
   type MortgageInput,
@@ -431,9 +438,25 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
   // One entry per compared property. The old shape carried a second `cashFlow`
   // colour per property that nothing ever read.
-  const COMPARISON_COLORS = useMemo(
-    () => chartTheme.property.map((value) => ({ value })),
+  //
+  // A comparison holds five properties and the chart drew them with one solid
+  // line and four identical dashes, so four of the five were separated by hue
+  // alone. `propertySeriesStyle` gives each slot its own pattern as well, and
+  // every surface that names a property reads from this same array — so the
+  // table's column head, the switcher and the chart cannot disagree about
+  // which line is whose.
+  const comparisonSeries = useMemo(
+    () => chartTheme.property.map((_, index) => propertySeriesStyle(chartTheme, index)),
     [chartTheme],
+  );
+  const COMPARISON_COLORS = useMemo(
+    () => comparisonSeries.map((style) => ({ value: style.colour })),
+    [comparisonSeries],
+  );
+  /** The style for comparison slot `index`, never falling off the end. */
+  const seriesStyleAt = useCallback(
+    (index: number) => comparisonSeries[index] ?? propertySeriesStyle(chartTheme, index),
+    [comparisonSeries, chartTheme],
   );
 
   // Initialize overrides from report when modal opens
@@ -1536,17 +1559,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       {
         id: report.id,
         address: report.property_address,
-        colour: COMPARISON_COLORS[0]?.value ?? chartTheme.series.propertyValue,
+        ...seriesStyleAt(0),
         isPrimary: true,
       },
       ...allComparisonMetrics.map(({ report: compReport }, index) => ({
         id: compReport.id,
         address: compReport.property_address,
-        colour: COMPARISON_COLORS[index + 1]?.value ?? chartTheme.tick,
+        ...seriesStyleAt(index + 1),
         isPrimary: false,
       })),
     ];
-  }, [report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
+  }, [report, allComparisonMetrics, seriesStyleAt]);
 
   /**
    * The selected peer, or null for the open report.
@@ -1561,10 +1584,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     const index = allComparisonMetrics.indexOf(entry);
     return {
       ...entry,
-      colour: COMPARISON_COLORS[index + 1]?.value ?? chartTheme.tick,
+      ...seriesStyleAt(index + 1),
       inputs: readBaseFinancials(entry.report, new Date().getFullYear()),
     };
-  }, [detailPropertyId, report, allComparisonMetrics, COMPARISON_COLORS, chartTheme]);
+  }, [detailPropertyId, report, allComparisonMetrics, seriesStyleAt]);
 
   /**
    * Which of the eight sections this analysis actually holds.
@@ -4612,7 +4635,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                           <span className="font-medium">
                                             ${Number(entry.value).toLocaleString('en-AU')}
                                             {yoyVal !== null && yoyVal !== 0 && (
-                                              <span className={`ml-1.5 ${yoyVal > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                              <span className={`ml-1.5 ${signedFigureInk(yoyVal)}`}>
                                                 {yoyVal > 0 ? '↑' : '↓'}{Math.abs(yoyVal).toFixed(1)}%
                                               </span>
                                             )}
@@ -4789,7 +4812,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                   <div className="flex items-end justify-between">
                                     <div>
                                       <p className="text-xs font-bold">{kpi.yr10}</p>
-                                      <p className={`text-[10px] font-semibold ${kpi.positive ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                      <p className={`text-[10px] font-semibold ${kpi.positive ? POSITIVE_FIGURE_INK : NEGATIVE_FIGURE_INK}`}>
                                         {kpi.change}
                                       </p>
                                     </div>
@@ -4939,7 +4962,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(gross.value).toFixed(2)}%
                                           {yoyGross !== 0 && (
-                                            <span className={`ml-1.5 ${yoyGross > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                            <span className={`ml-1.5 ${signedFigureInk(yoyGross)}`}>
                                               {yoyGross > 0 ? '↑' : '↓'}{Math.abs(yoyGross).toFixed(2)}pp
                                             </span>
                                           )}
@@ -4955,7 +4978,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(net.value).toFixed(2)}%
                                           {yoyNet !== 0 && (
-                                            <span className={`ml-1.5 ${yoyNet > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
+                                            <span className={`ml-1.5 ${signedFigureInk(yoyNet)}`}>
                                               {yoyNet > 0 ? '↑' : '↓'}{Math.abs(yoyNet).toFixed(2)}pp
                                             </span>
                                           )}
@@ -5153,25 +5176,35 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             fontSize: '11px'
                           }}
                         />
-                        <Legend wrapperStyle={{ fontSize: '9px' }} />
+                        {/* `plainline` at 22px: the default legend icon is a
+                            hook that ignores the dash array, so the key would
+                            have drawn five identical swatches for five
+                            different lines. */}
+                        <Legend wrapperStyle={{ fontSize: '9px' }} iconType="plainline" iconSize={22} />
                         <Line 
                           type="monotone" 
                           dataKey={`${report?.property_address.split(',')[0]} Value`}
-                          stroke={COMPARISON_COLORS[0].value} 
+                          stroke={seriesStyleAt(0).colour} 
                           strokeWidth={2}
+                          strokeDasharray={seriesStyleAt(0).dash}
+                          strokeLinecap={seriesStyleAt(0).linecap ?? 'butt'}
                           dot={{ r: 2 }}
                         />
-                        {allComparisonProjections.map(({ report: compReport }, idx) => (
-                          <Line 
-                            key={compReport.id}
-                            type="monotone" 
-                            dataKey={`${compReport.property_address.split(',')[0]} Value`}
-                            stroke={COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick}
-                            strokeWidth={2}
-                            strokeDasharray="5 5"
-                            dot={{ r: 2 }}
-                          />
-                        ))}
+                        {allComparisonProjections.map(({ report: compReport }, idx) => {
+                          const style = seriesStyleAt(idx + 1);
+                          return (
+                            <Line 
+                              key={compReport.id}
+                              type="monotone" 
+                              dataKey={`${compReport.property_address.split(',')[0]} Value`}
+                              stroke={style.colour}
+                              strokeWidth={2}
+                              strokeDasharray={style.dash}
+                              strokeLinecap={style.linecap ?? 'butt'}
+                              dot={{ r: 2 }}
+                            />
+                          );
+                        })}
                       </LineChart>
                     </ResponsiveContainer>
                   </div>
@@ -5206,7 +5239,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <div key={cat.label} className="bg-muted/40 rounded-lg p-2.5 text-center space-y-1">
                               <p className="text-[10px] text-muted-foreground font-medium">{cat.icon} {cat.label}</p>
                               <p className="text-xs font-bold truncate" style={{ color: winner.color }}>{winner.name}</p>
-                              <p className="text-[10px] font-semibold text-success-foreground">{cat.format(cat.getValue(winner))}</p>
+                              <p className="text-[10px] font-semibold text-success">{cat.format(cat.getValue(winner))}</p>
                             </div>
                           );
                         })}
@@ -5257,13 +5290,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <TableRow>
                             <TableHead className="min-w-[140px] sticky left-0 bg-background">Metric</TableHead>
                             <TableHead className="text-center min-w-[120px]">
-                              <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COMPARISON_COLORS[0].value }} />
-                              {report?.property_address.split(',')[0].substring(0, 15)}
+                              <span className="inline-flex items-center justify-center gap-1.5">
+                                <PropertySeriesMarker {...seriesStyleAt(0)} />
+                                {report?.property_address.split(',')[0].substring(0, 15)}
+                              </span>
                             </TableHead>
                             {allComparisonMetrics.map(({ report: compReport }, idx) => (
                               <TableHead key={compReport.id} className="text-center min-w-[120px]">
-                                <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COMPARISON_COLORS[idx + 1]?.value || chartTheme.tick }} />
-                                {compReport.property_address.split(',')[0].substring(0, 15)}
+                                <span className="inline-flex items-center justify-center gap-1.5">
+                                  <PropertySeriesMarker {...seriesStyleAt(idx + 1)} />
+                                  {compReport.property_address.split(',')[0].substring(0, 15)}
+                                </span>
                               </TableHead>
                             ))}
                           </TableRow>
@@ -5381,19 +5418,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <SelectContent>
                         <SelectItem value="growth">
                           <div className="flex items-center gap-2">
-                            <TrendingUp className="h-3 w-3 text-info-foreground" />
+                            <TrendingUp className="h-3 w-3 text-info" />
                             Growth Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="income">
                           <div className="flex items-center gap-2">
-                            <DollarSign className="h-3 w-3 text-success-foreground" />
+                            <DollarSign className="h-3 w-3 text-success" />
                             Income Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="balanced">
                           <div className="flex items-center gap-2">
-                            <Zap className="h-3 w-3 text-accent-foreground" />
+                            <Zap className="h-3 w-3 text-accent" />
                             Balanced
                           </div>
                         </SelectItem>
@@ -5464,7 +5501,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <ul className="text-xs space-y-1">
                             {propertyRecommendation.insights.map((insight, i) => (
                               <li key={i} className="flex items-start gap-1">
-                                <span className="text-success-foreground mt-0.5">✓</span>
+                                <span className="text-success mt-0.5">✓</span>
                                 <span>{insight}</span>
                               </li>
                             ))}
@@ -5621,7 +5658,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   {isGeneratingAiAnalysis && (
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
-                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info-foreground" />
+                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info" />
                         <p className="text-sm text-muted-foreground">Analyzing cash flow projections...</p>
                       </div>
                     </div>
@@ -6092,7 +6129,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       {/* Custom Stage Month Selection (only in custom mode) */}
                       {schedulePreset === 'custom' && (
                         <div className="rounded-2xl border border-info/30 bg-info/10 p-4 dark:border-info/30 dark:bg-info/30">
-                          <h5 className="text-sm font-medium mb-3 text-info dark:text-info-foreground">Custom Stage Positioning</h5>
+                          <h5 className="text-sm font-medium mb-3 text-info">Custom Stage Positioning</h5>
                           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
                             {[
                               { index: 0, label: 'Deposit' },
@@ -6440,10 +6477,18 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                         ))}
                       </TableRow>
                       
+                      {/* `signedFigureInk`, never `text-destructive-foreground`.
+                          These five rows are the only ones in the table whose
+                          colour carries meaning, and all five spelled the loss
+                          colour as the ink for text on a SOLID destructive fill
+                          — which is `0 0% 100%` in both themes, so every
+                          negative figure on this screen was painted white while
+                          the PDF and the HTML export printed the same rows in
+                          red. See `src/lib/cashFlow/figureInk.pure.ts`. */}
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.preTaxCashFlowPA)}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6452,7 +6497,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.preTaxCashFlowPW)}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6511,7 +6556,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Profit/Loss $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} ${signedFigureInk(p.netProfitLoss)}`}>
                             {p.year === 0 ? '' : p.netProfitLoss.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6534,7 +6579,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/a $</div>
                         </TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${signedFigureInk(p.afterTaxCashFlowPA)}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString('en-AU')}
                           </TableCell>
                         ))}
@@ -6545,7 +6590,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <div className={PROJECTION_TOTAL_LABEL_INNER_CLASS}>After-Tax Cash Flow p/w $</div>
                         </TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`${PROJECTION_YEAR_CELL_CLASS} font-bold ${signedFigureInk(p.afterTaxCashFlowPW)}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString('en-AU')}
                           </TableCell>
                         ))}

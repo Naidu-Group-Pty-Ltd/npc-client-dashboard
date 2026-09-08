@@ -61,7 +61,7 @@ export function CommissionForecastWidget({ deals }: Props) {
               <span className="block text-[10px] font-medium uppercase tracking-[0.18em] text-brand-100/60">Next 6 months</span>
             </span>
           </CardTitle>
-          <Badge variant="outline" className="rounded-full border-success/30 bg-success/10 px-3 py-1 text-[11px] font-semibold text-success-foreground shadow-[0_0_26px_rgba(16,185,129,0.16)]">
+          <Badge variant="outline" className="rounded-full border-success/30 bg-success/10 px-3 py-1 text-[11px] font-semibold text-success shadow-[0_0_26px_rgba(16,185,129,0.16)]">
             <TrendingUp className="mr-1 h-3 w-3" />
             {fmt(totalForecast)}
           </Badge>

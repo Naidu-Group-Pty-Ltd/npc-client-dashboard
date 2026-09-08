@@ -5,7 +5,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Star, Bell, RefreshCw, Search, TrendingDown, Pin, PinOff } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Star, Bell, RefreshCw, TrendingDown, Pin, PinOff } from 'lucide-react';
 import { useBankLendingRates } from '@/hooks/useBankLendingRates';
 import { useLenderFavourites } from '@/hooks/useLenderFavourites';
 import { LenderRateAlertManager } from '@/components/lenders/LenderRateAlertManager';
@@ -63,15 +64,12 @@ export default function Lenders() {
         </TabsList>
 
         <TabsContent value="leaderboard" className="space-y-4">
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search lenders..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search lenders..."
+            containerClassName="max-w-md"
+          />
 
           <Card>
             <CardHeader className="pb-3">

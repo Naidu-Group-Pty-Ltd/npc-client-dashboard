@@ -62,6 +62,7 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react';
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from '@/lib/reports/designControlsVisibility';
 
 export interface NavItemDef {
   title: string;
@@ -137,7 +138,14 @@ export const ADMIN_NAVIGATION_ITEMS: readonly NavItemDef[] = [
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates', group: 'Administration' },
   { title: 'Template Builder', url: '/admin/template-builder', icon: Layers, moduleKey: 'templates', group: 'Administration', keywords: ['visual editor', 'pdf template', 'builder', 'report template'], paletteOnly: true },
   { title: 'Template Converter', url: '/admin/template-builder/converter', icon: Wand2, moduleKey: 'templates', group: 'Administration', keywords: ['convert', 'converter', 'refurbish', 'rebrand', 'existing template', 'design system'], paletteOnly: true },
-  { title: 'Brand systems', url: '/admin/template-builder/brand-systems', icon: Palette, moduleKey: 'templates', group: 'Administration', keywords: ['brand', 'design system', 'palette', 'paper', 'ink', 'claude design', 'import design system', 'tokens'], paletteOnly: true },
+  // Brand systems is hidden product-wide with the rest of the design factor
+  // (`@/lib/reports/designControlsVisibility`). The ROUTE stays declared in
+  // App.tsx — hiding is never deleting, so a bookmark lands on a page that
+  // explains itself rather than a 404 — but no navigation surface draws a door
+  // to it. An entry is a claim that a page will open and do something.
+  ...(REPORT_DESIGN_CONTROLS_VISIBLE
+    ? [{ title: 'Brand systems', url: '/admin/template-builder/brand-systems', icon: Palette, moduleKey: 'templates', group: 'Administration', keywords: ['brand', 'design system', 'palette', 'paper', 'ink', 'claude design', 'import design system', 'tokens'], paletteOnly: true }]
+    : []),
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label', group: 'Administration' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations', group: 'Administration' },
   { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations', group: 'Administration' },

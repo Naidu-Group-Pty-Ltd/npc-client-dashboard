@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { Search, LayoutGrid, Rows3, Rows2, X } from 'lucide-react';
+import { LayoutGrid, Rows3, Rows2, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from '@/lib/utils';
 
 /**
@@ -63,16 +64,14 @@ export function DataTableToolbar({
         {leading && <div className="min-w-0 shrink-0">{leading}</div>}
 
         {onSearchChange && (
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={searchValue ?? ''}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder={searchPlaceholder}
-              className="h-10 pl-9"
-              aria-label={searchPlaceholder}
-            />
-          </div>
+          <SearchInput
+            value={searchValue ?? ''}
+            onValueChange={onSearchChange}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+            containerClassName="min-w-0 flex-1"
+            className="h-10"
+          />
         )}
 
         {filters && <div className="flex flex-wrap items-center gap-2">{filters}</div>}

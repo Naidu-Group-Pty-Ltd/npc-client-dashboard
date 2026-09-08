@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { SearchInput } from '@/components/ui/search-input';
 import { useSearch } from '@/contexts/SearchContext';
 import { useAuth } from '@/hooks/useAuth';
 import { NotificationsDropdown } from './NotificationsDropdown';
@@ -52,8 +53,8 @@ export function DashboardHeader({ theme, isDark, onCycleTheme }: DashboardHeader
     return theme === 'dark' ? 'Dark' : 'Light';
   };
 
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setGlobalSearchQuery(e.target.value);
+  const handleSearchChange = (value: string) => {
+    setGlobalSearchQuery(value);
   };
 
   const handleSearchKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -82,17 +83,14 @@ export function DashboardHeader({ theme, isDark, onCycleTheme }: DashboardHeader
             <SidebarTrigger className="h-8 w-8 rounded-lg" />
           </div>
           
-          <div className="relative max-w-md flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-            <Input
-              type="text"
-              placeholder="Search properties..."
-              value={globalSearchQuery}
-              onChange={handleSearchChange}
-              onKeyPress={handleSearchKeyPress}
-              className="dashboard-input-control h-11 border-0 pl-10 pr-4"
-            />
-          </div>
+          <SearchInput
+            value={globalSearchQuery}
+            onValueChange={handleSearchChange}
+            placeholder="Search properties..."
+            onKeyPress={handleSearchKeyPress}
+            containerClassName="max-w-md flex-1"
+            className="dashboard-input-control h-11 border-0"
+          />
         </div>
 
         <div className="flex items-center gap-2">

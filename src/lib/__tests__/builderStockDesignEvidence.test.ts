@@ -18,10 +18,16 @@
  * the card back without this module's help (cases D and E).
  */
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import {
+  designOfRecordOrRow,
+} from '../../../supabase/functions/_shared/builderStock/builderSuppliedImage.pure';
 
 import {
   designIdentityIsDistinctive, findDesignCoverPages, findPropertyCoverPages,
-  assignPdfMediaRoles,
+  assignPdfMediaRoles, assignPdfMediaRolesPerProperty, resolveDesignCover,
 } from '../../../supabase/functions/_shared/builderStock/pdfPrimaryImage.pure';
 import {
   DESIGN_EVIDENCE_LEVEL, comparePrimaryEvidence, roleFromDesignCover,
@@ -58,6 +64,65 @@ const media = (pages: number[]) => pages.map((page, index) => ({
 // ---------------------------------------------------------------------------
 // The heading maps generically
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The design has to REACH the election, and for a year it never did
+// ---------------------------------------------------------------------------
+
+describe('the design reaches the election whichever shape the caller holds', () => {
+  /*
+   * THE DEFECT THIS PINS. Everything below in this file passed while the
+   * feature produced nothing at all: 438 primary images across the live
+   * database at evidence levels 1, 2 and 3, and not one at level 4. The
+   * settler read `record.source_row.house_design`, and the value it is handed
+   * is the normalised record ITSELF — `storedSourceRows` unwraps the column
+   * before returning it — so `house_design` sat at the top level, the nested
+   * read answered undefined, and the design never reached the election.
+   *
+   * Null is also the honest answer for a row stating no design, which is why
+   * nothing anywhere reported a fault.
+   *
+   * These cases use a REAL `normaliseStockRow` output rather than a
+   * hand-written object, because a hand-written stand-in is precisely what
+   * would have been written in the broken shape and passed.
+   */
+  const rowFor = (extra: Record<string, string>) =>
+    normaliseStockRow({ Lot: '1004', Development: 'Five Farms', ...extra });
+
+  it('reads the normalised record the repair path actually holds', () => {
+    const record = rowFor({ 'House Design': 'Enzo 10.5' });
+    expect(record.house_design).toBe('Enzo 10.5');
+    // The shape with no `source_row` key at all — the one that answered null.
+    expect((record as { source_row?: unknown }).source_row).toBeUndefined();
+    expect(designOfRecordOrRow(record)).toBe('Enzo 10.5');
+  });
+
+  it('and the database row that keeps the same record nested', () => {
+    const stored = { id: 'item-1', source_row: rowFor({ 'House Design': 'Enzo 8.5' }) };
+    expect(designOfRecordOrRow(stored)).toBe('Enzo 8.5');
+  });
+
+  it('recovers a design a row carries only as an unmapped HOUSE column', () => {
+    const record = normaliseStockRow({ Lot: '55', HOUSE: 'VGU19' });
+    expect(designOfRecordOrRow(record)).toBe('VGU19');
+  });
+
+  it('still answers null where the row genuinely states no design', () => {
+    expect(designOfRecordOrRow(rowFor({}))).toBeNull();
+    expect(designOfRecordOrRow(null)).toBeNull();
+    expect(designOfRecordOrRow({ source_row: null })).toBeNull();
+  });
+
+  it('the settler asks through that one reader rather than its own copy', () => {
+    // A private one-shape copy is exactly what was wrong; a second copy would
+    // be free to drift back to it without any behavioural test noticing.
+    const source = readFileSync(join(
+      process.cwd(), 'supabase/functions/_shared/builderStock/repairSourceImages.ts',
+    ), 'utf8');
+    expect(source).toContain('designOfRecordOrRow');
+    expect(source).not.toMatch(/function designOf\s*\(/);
+  });
+});
 
 describe('house design is a canonical field, mapped by heading like any other', () => {
   it.each([
@@ -262,6 +327,46 @@ describe('F — two lots stating the same design may share the render', () => {
       expect(roles[0].evidenceLevel).toBe(DESIGN_EVIDENCE_LEVEL);
     }
   });
+
+  it('ONE RENDER IS NEVER FANNED ACROSS LOTS: sharing needs each row\'s own statement', () => {
+    /*
+     * The operator's rule, verbatim: "Do not take one design render and fan
+     * it across multiple lots." What licenses the render above is that EACH
+     * row independently states the design AND links the document presenting
+     * it — the builder's own marketing linkage. A row that states a
+     * different design, or none, takes nothing from the same page; nothing
+     * anywhere copies a stored image from one row to another.
+     */
+    for (const design of ['Aspire 22', null]) {
+      const roles = assignPdfMediaRoles({
+        media: media([1]),
+        label: 'Lot 1302, Lara',
+        design,
+        pageTexts: [designPage('Elara 18')],
+        pageOrderAuthoritative: true,
+      });
+      expect(roles[0].role, `design=${design} must take nothing`)
+        .not.toBe('primary_property');
+    }
+  });
+
+  it('a document listing MANY lots cannot hand one lot\'s render to another', () => {
+    // The per-property assignment judges each lot against its own label and
+    // deliberately has no design rung at all: in a shared stock document the
+    // design fallback does not exist, so a render placed on Lot 1's page can
+    // never become Lot 2's card — whatever designs the rows state.
+    const roles = assignPdfMediaRolesPerProperty({
+      media: [{ name: 'render.jpg', placement: {
+        page: 1, name: 'render.jpg', placementsOnPage: 1, pagesDrawnOn: 1,
+      } }],
+      stockItemIds: ['item-2'],
+      labelByItemId: new Map([['item-2', 'Lot 1302, Lara']]),
+      pageTexts: [propertyPage('1219', 'Elara 18'), propertyPage('1302', 'Elara 18')],
+      pageOrderAuthoritative: true,
+    });
+    // Lot 1302's own page is page 2 and draws nothing; page 1 is Lot 1219's.
+    expect(roles[0].role).not.toBe('primary_property');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -330,11 +435,143 @@ describe('I — a multi-design range catalogue', () => {
   it('refuses a page that names the design but states no package facts', () => {
     expect(findDesignCoverPages(['Elara 18 — see page 4'], 'Elara 18')).toEqual([]);
   });
+});
 
-  it('refuses a page that names a LOT, because that is some property\'s own page', () => {
-    // Lot 1450's own package page mentions Elara 18. It must not become Lot
-    // 1219's design render.
-    expect(findDesignCoverPages([propertyPage('1450', 'Elara 18')], 'Elara 18')).toEqual([]);
+// ---------------------------------------------------------------------------
+// M — specimen pages: a design presented as some OTHER lot's package
+// ---------------------------------------------------------------------------
+
+describe('M — a page presenting the design as another lot\'s package', () => {
+  /*
+   * MEASURED, 6 SEPTEMBER 2026. Lot 1004 Five Farms links a per-design
+   * brochure whose page 1 states every token of "Enzo 10.5" with three
+   * package facts — and designates Lot 1002, the specimen lot the builder
+   * first typeset the design for. The old rule refused any page naming a
+   * lot, so the row's card stayed blank while Lot 1002's own row, fed the
+   * same picture through the property path, displayed it. The page names
+   * the design ITSELF, so taking its render is attribution by declaration
+   * exactly as it is for a lot-less design page.
+   */
+  it('qualifies, flagged as lot-designating, and elects when it is the only page', () => {
+    const pages = [propertyPage('1002', 'Enzo 10.5')];
+    const covers = findDesignCoverPages(pages, 'Enzo 10.5');
+    expect(covers).toHaveLength(1);
+    expect(covers[0].lotDesignated).toBe(true);
+    expect(resolveDesignCover(covers)?.page).toBe(1);
+
+    const roles = assignPdfMediaRoles({
+      media: media([1]),
+      label: 'Lot 1004, Clyde North',
+      design: 'Enzo 10.5',
+      pageTexts: pages,
+      pageOrderAuthoritative: true,
+    });
+    expect(roles[0].role).toBe('primary_property');
+    expect(roles[0].evidenceLevel).toBe(DESIGN_EVIDENCE_LEVEL);
+  });
+
+  it('the lot designation may not LEND a token to the design identity', () => {
+    // "Lot 5 · Enzo 10" contains the tokens enzo, 10 and 5 — but the 5 is
+    // the LOT's, and reading it as the ".5" of "Enzo 10.5" would put the
+    // Enzo 10's render on the Enzo 10.5's row. The number after Lot/Unit is
+    // blanked before the token test.
+    const page = 'Lot 5 Coridale Lara\nEnzo 10\n4 bed 2 bath 2 car\n$745,525';
+    expect(findDesignCoverPages([page], 'Enzo 10.5')).toEqual([]);
+    // Sanity: the same page IS the Enzo 10's specimen page.
+    expect(findDesignCoverPages([page], 'Enzo 10')).toHaveLength(1);
+  });
+
+  it('a lot-less design page OUTRANKS a specimen page', () => {
+    /*
+     * Lot 502 Mambourin's brochure, measured the same day: page 1 presents
+     * "Enzo 8.5" as a design cover (no lot, four facts, the render); page 2
+     * is Lot 502's own floor-plan page repeating the design header. Reading
+     * those as an unresolved pair is how a document that states its render
+     * perfectly well answered no image.
+     */
+    const pages = [designPage('Enzo 8.5'), propertyPage('502', 'Enzo 8.5')];
+    const covers = findDesignCoverPages(pages, 'Enzo 8.5');
+    expect(covers).toHaveLength(2);
+    expect(resolveDesignCover(covers)?.page).toBe(1);
+  });
+
+  it('two specimen pages with no design page of their own still refuse', () => {
+    const pages = [
+      propertyPage('1002', 'Enzo 10.5'),
+      propertyPage('1006', 'Enzo 10.5'),
+    ];
+    expect(resolveDesignCover(findDesignCoverPages(pages, 'Enzo 10.5'))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N — the design page speaks when the property's own cover elects nothing
+// ---------------------------------------------------------------------------
+
+describe('N — a property cover that provably presents no photograph', () => {
+  /*
+   * Lot 502 Mambourin again, the other half of the fault: the document
+   * designates page 2 — the lot's own floor-plan page, two package facts —
+   * as the property cover, and page 2 draws no electable picture. The old
+   * gate consulted the design path only when NO property cover existed, so
+   * a photo-less lot page vetoed the design cover standing beside it.
+   */
+  const lotPlanPage = 'Lot 502 Mambourin Green\nEnzo 8.5\nHouse size 178 m2\n4 bed 2 bath 2 car';
+
+  it('falls through to the design cover, which elects its render', () => {
+    // The document's only media sits on page 1, the design cover. Page 2 is
+    // the property cover and draws nothing.
+    const roles = assignPdfMediaRoles({
+      media: media([1]),
+      label: 'Lot 502, Mambourin',
+      design: 'Enzo 8.5',
+      pageTexts: [designPage('Enzo 8.5'), lotPlanPage],
+      pageOrderAuthoritative: true,
+    });
+    expect(roles[0].role).toBe('primary_property');
+    expect(roles[0].evidenceLevel).toBe(DESIGN_EVIDENCE_LEVEL);
+  });
+
+  it('but the property cover still wins whenever it CAN elect', () => {
+    // Media on both pages: the lot's own page elects, at a property level,
+    // and the design page's picture is not the primary.
+    const roles = assignPdfMediaRoles({
+      media: media([1, 2]),
+      label: 'Lot 502, Mambourin',
+      design: 'Enzo 8.5',
+      pageTexts: [designPage('Enzo 8.5'), lotPlanPage],
+      pageOrderAuthoritative: true,
+    });
+    const primary = roles.findIndex((role) => role.role === 'primary_property');
+    expect(primary).toBe(1);
+    expect(roles[primary].evidenceLevel).not.toBe(DESIGN_EVIDENCE_LEVEL);
+  });
+
+  it('a strict property-cover tie also falls through to the design page', () => {
+    // Two pages state the lot's package equally fully — the document has not
+    // said which is the property's cover — and the design page still states
+    // the render. An elected design render beats a blank card; the property
+    // attribution stays unresolved exactly as it was.
+    const roles = assignPdfMediaRoles({
+      media: media([3]),
+      label: 'Lot 502, Mambourin',
+      design: 'Enzo 8.5',
+      pageTexts: [lotPlanPage, lotPlanPage, designPage('Enzo 8.5')],
+      pageOrderAuthoritative: true,
+    });
+    expect(roles[0].role).toBe('primary_property');
+    expect(roles[0].evidenceLevel).toBe(DESIGN_EVIDENCE_LEVEL);
+  });
+
+  it('and where the design page also elects nothing, the property refusal stands', () => {
+    const roles = assignPdfMediaRoles({
+      media: [],
+      label: 'Lot 502, Mambourin',
+      design: 'Enzo 8.5',
+      pageTexts: [designPage('Enzo 8.5'), lotPlanPage],
+      pageOrderAuthoritative: true,
+    });
+    expect(roles).toEqual([]);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
 import type { DealWithClient } from '@/hooks/useAllDeals';
+import { agentFeeEntry, agentFeeReceiptPatch } from '@/lib/deals/commissionModel.pure';
 import { pipelineBadgeClass } from '@/components/deals/pipelineBadgeStyles';
 import { DealLoadingState, NoResultsState } from '@/components/deals/DealStatePresentation';
 
@@ -25,10 +26,29 @@ interface Props {
   deals: DealWithClient[];
   isLoading: boolean;
   onUpdatePayment?: (paymentId: string, clientId: string, data: any) => void;
+  /**
+   * Writes an agent fee's receipt, which lives on the deal rather than on a
+   * build payment. Without it those rows still SHOW — a fee nobody can mark
+   * received is still a fee that is owed — they simply carry no controls.
+   */
+  onUpdateDeal?: (dealId: string, clientId: string, data: any) => void;
 }
 
 interface CommissionRow {
-  paymentId: string;
+  /**
+   * Which table the row's toggles write to. A house-and-land deal earns its
+   * commission stage by stage and each stage is a `build_progress_payments`
+   * row; an existing-property purchase or a refinance earns a single agent
+   * fee recorded on `client_deals` itself.
+   *
+   * The dashboard was built out of build payments alone, so a deal type with
+   * no payment schedule contributed nothing to the table, nothing to Total
+   * Expected and nothing to Total Received — invisible on the one screen
+   * that exists to show what the agency is owed.
+   */
+  source: 'build_payment' | 'deal';
+  /** The build payment's id, or the deal's — see `source`. */
+  recordId: string;
   dealId: string;
   clientId: string;
   clientName: string;
@@ -45,15 +65,40 @@ interface CommissionRow {
   buildPrice: number | null;
 }
 
-export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props) {
+export function CommissionDashboard({ deals, isLoading, onUpdatePayment, onUpdateDeal }: Props) {
   const commissionRows = useMemo(() => {
     const rows: CommissionRow[] = [];
     for (const deal of deals) {
+      // A deal paid once rather than per stage contributes exactly one row.
+      // `agentFeeEntry` answers null for house-and-land, so the two branches
+      // can never both fire and double-count the same commission.
+      const fee = agentFeeEntry(deal);
+      if (fee) {
+        rows.push({
+          source: 'deal',
+          recordId: deal.id,
+          dealId: deal.id,
+          clientId: deal.client_id,
+          clientName: deal.client_name || 'Unknown',
+          stageName: fee.label,
+          stageNumber: 0,
+          percentage: 0,
+          amount: null,
+          builderInvoiceReceived: false,
+          submittedToLender: false,
+          fundsReleased: false,
+          commissionReceived: fee.received,
+          commissionReceivedDate: fee.receivedDate,
+          commissionAmount: fee.amount,
+          buildPrice: null,
+        });
+      }
       const payments = deal.buildPayments || [];
       for (const p of payments) {
         if (!p.is_commission_trigger) continue;
         rows.push({
-          paymentId: p.id,
+          source: 'build_payment',
+          recordId: p.id,
           dealId: deal.id,
           clientId: deal.client_id,
           clientName: deal.client_name || 'Unknown',
@@ -91,6 +136,12 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
     new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(val);
 
   function ToggleCheck({ value, field, row }: { value: boolean; field: string; row: CommissionRow }) {
+    // Builder invoice, lender submission and funds release are build-payment
+    // facts. An agent fee has none of them, and drawing an unticked circle
+    // would read as an outstanding step rather than as an inapplicable one.
+    if (row.source === 'deal') {
+      return <span className={emptyDashClass}>—</span>;
+    }
     if (!onUpdatePayment) {
       return value ? (
         <CheckCircle className="h-4 w-4 text-success mx-auto" />
@@ -111,7 +162,7 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
       if (dateField) {
         update[dateField] = newVal ? new Date().toISOString().split('T')[0] : null;
       }
-      onUpdatePayment(row.paymentId, row.clientId, update);
+      onUpdatePayment(row.recordId, row.clientId, update);
     };
 
     const iconTone = field === 'funds_released'
@@ -203,7 +254,7 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
               <TableHeader className={tableHeaderClass}>
                 <TableRow>
                   <TableHead className="whitespace-nowrap">Client</TableHead>
-                  <TableHead className="whitespace-nowrap">Stage</TableHead>
+                  <TableHead className="whitespace-nowrap">Stage / basis</TableHead>
                   <TableHead className="text-right whitespace-nowrap hidden sm:table-cell">Draw %</TableHead>
                   <TableHead className="text-right whitespace-nowrap hidden sm:table-cell">Draw amount</TableHead>
                   <TableHead className="text-right whitespace-nowrap">Commission</TableHead>
@@ -230,26 +281,35 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                           <span className="text-xs sm:text-sm">{row.stageName}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="hidden text-right font-mono text-xs font-semibold text-muted-foreground sm:table-cell">{row.percentage}%</TableCell>
+                      <TableCell className="hidden text-right font-mono text-xs font-semibold text-muted-foreground sm:table-cell">{row.source === 'deal' ? <span className={emptyDashClass}>—</span> : `${row.percentage}%`}</TableCell>
                       <TableCell className="hidden text-right text-xs font-bold text-brand-700 tabular-nums sm:table-cell sm:text-sm">{row.amount ? formatCurrency(row.amount) : <span className={emptyDashClass}>—</span>}</TableCell>
                       <TableCell className="text-right">
-                        {onUpdatePayment ? (
+                        {(row.source === 'deal' ? onUpdateDeal : onUpdatePayment) ? (
                           <Input
-                            key={`${row.paymentId}-comm-${row.commissionAmount ?? 'unset'}`}
+                            key={`${row.recordId}-comm-${row.commissionAmount ?? 'unset'}`}
                             type="number"
                             inputMode="decimal"
                             min="0"
                             defaultValue={row.commissionAmount ?? ''}
                             placeholder="$"
                             aria-label={`Commission amount for ${row.clientName} — ${row.stageName}`}
-                            title="Commission the agency is owed at this stage (varies builder to builder)"
+                            title={row.source === 'deal'
+                              ? 'The agent fee this deal earns, paid once rather than per stage'
+                              : 'Commission the agency is owed at this stage (varies builder to builder)'}
                             className="ml-auto h-8 w-24 text-right font-mono text-xs"
                             onBlur={(e) => {
                               const raw = e.target.value.trim();
                               const parsed = raw === '' ? null : Number(raw);
                               const next = parsed !== null && Number.isFinite(parsed) ? parsed : null;
-                              if ((next ?? null) !== (row.commissionAmount ?? null)) {
-                                onUpdatePayment(row.paymentId, row.clientId, { commission_amount: next });
+                              if ((next ?? null) === (row.commissionAmount ?? null)) return;
+                              // A build payment keeps its own `commission_amount`;
+                              // an agent fee IS the deal's `commission_estimate`,
+                              // which is the figure Financial Controls edits — one
+                              // number in one column, reachable from both screens.
+                              if (row.source === 'deal') {
+                                onUpdateDeal?.(row.dealId, row.clientId, { commission_estimate: next });
+                              } else {
+                                onUpdatePayment?.(row.recordId, row.clientId, { commission_amount: next });
                               }
                             }}
                           />
@@ -274,7 +334,9 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                             see what it meant silently marked the commission
                             received. The act now has its own labelled button. */}
                         <div className="flex items-center gap-1.5 whitespace-nowrap">
-                          {row.fundsReleased ? (
+                          {row.source === 'deal' ? (
+                            <Badge variant="outline" className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><DollarSign className="mr-1 h-3 w-3" />Agent fee</Badge>
+                          ) : row.fundsReleased ? (
                             <Badge className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><Banknote className="mr-1 h-3 w-3" />Awaiting</Badge>
                           ) : row.submittedToLender ? (
                             <Badge variant="outline" className={pipelineBadgeClass('warning', false, 'whitespace-nowrap')}><Send className="mr-1 h-3 w-3" />Submitted</Badge>
@@ -283,16 +345,22 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                           ) : (
                             <span className={emptyDashClass}>—</span>
                           )}
-                          {onUpdatePayment && (
+                          {(row.source === 'deal' ? onUpdateDeal : onUpdatePayment) && (
                             <Button
                               variant="outline"
                               size="sm"
                               className="h-7 shrink-0 rounded-full border-success/35 bg-success/5 px-2.5 text-[11px] font-semibold text-success hover:bg-success/10"
                               title="Record that this commission payment has been received"
-                              onClick={() => onUpdatePayment(row.paymentId, row.clientId, {
-                                commission_received: true,
-                                commission_received_date: new Date().toISOString().split('T')[0],
-                              })}
+                              onClick={() => {
+                                // The flag and the date are set together, by the
+                                // one rule both surfaces use.
+                                const patch = agentFeeReceiptPatch(true, new Date().toISOString().split('T')[0]);
+                                if (row.source === 'deal') {
+                                  onUpdateDeal?.(row.dealId, row.clientId, patch);
+                                } else {
+                                  onUpdatePayment?.(row.recordId, row.clientId, patch);
+                                }
+                              }}
                             >
                               Mark received
                             </Button>
@@ -323,7 +391,7 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment }: Props
                 <TableHeader className={tableHeaderClass}>
                   <TableRow>
                     <TableHead className="whitespace-nowrap">Client</TableHead>
-                    <TableHead className="whitespace-nowrap">Stage</TableHead>
+                    <TableHead className="whitespace-nowrap">Stage / basis</TableHead>
                     <TableHead className="text-right whitespace-nowrap">Amount</TableHead>
                     <TableHead className="whitespace-nowrap">Date</TableHead>
                   </TableRow>

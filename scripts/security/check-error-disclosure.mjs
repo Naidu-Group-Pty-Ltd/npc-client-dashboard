@@ -56,7 +56,7 @@ const ERROR_DISCLOSURE_EXEMPTIONS = new Map([
   ['outlook-email-webhook', 'Microsoft Graph notification ack at 200; the body is read by Graph, not by a user, and a silent 200 would hide a sync failure.'],
   ['aml-verification', 'Provider resolution errors are shown to the AML operator at 4xx with the internal prefix stripped — an unactionable AML failure stalls a case.'],
   ['mission-control-handoff', 'Handoff URL resolution failure is reported to the Command Centre operator so they can tell a tenant why billing is unreachable.'],
-  ['location-intelligence-service', 'Mock-data fallback notice at 200; the message states which upstream was unavailable so the figures are not mistaken for live ones.'],
+  ['location-intelligence-service', 'Source-unavailable envelope at 200 (mock data is gone); the message carries the upstream failure so an operator can see why the location section is absent.'],
   ['manage-templates', 'Schema version mismatch at 4xx names the unsupported version, which is what tells the author what to change.'],
   ['import-from-url', 'Fetch failure at 4xx tells the user their URL could not be read — the whole operation is "read this URL".'],
   ['domain-data-service', 'Upstream Domain API failure surfaced at 4xx so staff can distinguish a quota exhaustion from a bad address.'],

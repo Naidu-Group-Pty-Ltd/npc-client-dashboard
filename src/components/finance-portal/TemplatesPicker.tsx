@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { FileText, Search, Sparkles } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { FileText, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -63,16 +64,14 @@ export function TemplatesPicker({ kind, vars, onPick, align = 'start', className
       </PopoverTrigger>
       <PopoverContent align={align} className="w-[380px] p-0">
         <div className="p-2 border-b border-border">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search templates…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-7 h-8 text-xs"
-              autoFocus
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search templates…"
+            autoFocus
+            className="h-8 text-xs"
+            iconClassName="left-2 h-3.5 w-3.5"
+          />
         </div>
         <ScrollArea className="max-h-[360px]">
           {filtered.length === 0 ? (

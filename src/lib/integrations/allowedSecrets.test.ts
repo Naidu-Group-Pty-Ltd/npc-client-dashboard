@@ -58,9 +58,13 @@ describe('update-integration-secret allowlist', () => {
   it('stores aliased secret names, not raw field keys', () => {
     const generated = new Set(generatedNames());
 
-    // The three legacy fields whose stored key differs from the Supabase secret name.
-    expect(generated.has('AIRTABLE_TOKEN')).toBe(true);
-    expect(generated.has('AIRTABLE_API_KEY')).toBe(false);
+    // The Listings pipeline's names are fleet-managed and never writable from
+    // the page; the page's Airtable card is the workflow connection.
+    expect(generated.has('AIRTABLE_TOKEN')).toBe(false);
+    expect(generated.has('AIRTABLE_BASE_ID')).toBe(false);
+    expect(generated.has('AIRTABLE_API_KEY')).toBe(true);
+    expect(generated.has('AIRTABLE_WORKFLOW_BASE_ID')).toBe(true);
+    // The two legacy fields whose stored key differs from the Supabase secret name.
     expect(generated.has('GOHIGHLEVEL_API_KEY')).toBe(true);
     expect(generated.has('GHL_API_KEY')).toBe(false);
     expect(generated.has('GOHIGHLEVEL_LOCATION_ID')).toBe(true);

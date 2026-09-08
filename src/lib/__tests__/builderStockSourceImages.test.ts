@@ -1427,6 +1427,55 @@ describe('a package that named no image is not read again', () => {
       .toMatchObject({ provenance_version: PROVENANCE_VERSION });
   });
 
+  /*
+   * THE CARD'S STANDING IMAGE OUTLIVES ITS OWN RE-DERIVATION.
+   *
+   * A version bump rolls a re-derivation across the settled fleet, and the
+   * demote used to run before the primary was re-chosen — so an item whose
+   * package recovery produced nothing this pass lost its pointer, and the
+   * live card read "Finding a picture…" about a property whose picture was
+   * fine minutes earlier (Lot 516 Winterset was the one caught on screen,
+   * mid bump-rollout, 6 September 2026). The pointer now moves first and
+   * the demote spares whichever row is still being pointed at: a pass that
+   * proves nothing leaves the card exactly as it was.
+   */
+  it('a standing primary survives a re-derivation pass that proves nothing new', async () => {
+    const staleRow = {
+      id: 'stale-doc-1',
+      stock_item_id: 'item-NPC-1',
+      organisation_id: 'org-a',
+      source_stage: 'uploaded_document',
+      source_reference: 'the linked document#page1:Im2',
+      processing_status: 'ready',
+      verification_status: 'source_supplied',
+      position: 0,
+      storage_path: 'org/items/item-NPC-1/source/cover.png',
+      source_detail: { ...PRIMARY_ROLE_DETAIL, provenance_version: PROVENANCE_VERSION - 1 },
+    };
+    const db = fakeDb({
+      uploads: [upload],
+      items: [itemFor('NPC-1', '1', { primary_image_id: 'stale-doc-1' })],
+      images: [staleRow],
+      objects: {
+        [upload.storage_path]: new TextEncoder().encode(
+          csvFor([{ ref: 'NPC-1', lot: '1', pkg: FOLDER_A }])),
+      },
+    });
+    const drive = readableButEmpty();
+
+    const outcome = await run(db, { fetchPackage: drive.fetchPackage });
+
+    // The recovery looked and found nothing for this property. That must
+    // cost the card NOTHING: the pointer stands, the row it points at is
+    // still drawable, and no demote fired against the one picture it has.
+    expect(drive.fetched.length).toBeGreaterThan(0);
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('stale-doc-1');
+    const row = db.tables.builder_stock_item_images.find(
+      (r: { id: string }) => r.id === 'stale-doc-1');
+    expect(row.processing_status).toBe('ready');
+    expect(outcome.demoted).toBe(0);
+  });
+
   // ── E ────────────────────────────────────────────────────────────────────
   it('E — a changed package is checked, and the old answer does not suppress it', async () => {
     const db = fakeDb({

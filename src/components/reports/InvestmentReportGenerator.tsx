@@ -28,6 +28,7 @@ import { ReportGenerationStatus } from '@/components/billing/ReportGenerationSta
 import { TokenCostEstimate } from '@/components/billing/TokenCostEstimate';
 import { estimateTokens } from '@/lib/missionControl';
 import { ENGINE_LABEL } from '@/lib/reports/generationEngine.pure';
+import { cleanListingTitle, composePropertyAddress } from '@/lib/reports/propertyAddress.pure';
 
 
 export function InvestmentReportGenerator() {
@@ -651,17 +652,19 @@ export function InvestmentReportGenerator() {
       const extracted = scrapedResult.extractedDetails || {};
       console.log('Extracted details from scrape:', extracted);
       
-      // Build property address - try multiple sources
-      let propertyAddress = extracted.extractedAddress;
-      if (!propertyAddress && extracted.extractedSuburb && extracted.extractedState) {
-        propertyAddress = `${extracted.extractedSuburb}, ${extracted.extractedState}${extracted.extractedPostcode ? ' ' + extracted.extractedPostcode : ''}`;
-      }
+      // Build the property address from EVERY part the scrape extracted.
+      // This used to be `extracted.extractedAddress` alone, so a listing whose
+      // street line came back on its own ("6 Acer Court") was filed under it
+      // with no suburb — on the report, its title, the activity log and the
+      // notification, not just on the confirmation line below.
+      let propertyAddress = composePropertyAddress({
+        address: extracted.extractedAddress,
+        suburb: extracted.extractedSuburb,
+        state: extracted.extractedState,
+        postcode: extracted.extractedPostcode,
+      });
       if (!propertyAddress) {
-        const title = scrapedResult.metadata?.title || '';
-        const cleanedTitle = title
-          .replace(/\s*[-|]\s*(Domain|realestate\.com\.au|Real Estate|Property|For Sale|Sold).*$/i, '')
-          .replace(/^(Domain|realestate\.com\.au|Real Estate|Property|For Sale)\s*[-|]\s*/i, '')
-          .trim();
+        const cleanedTitle = cleanListingTitle(scrapedResult.metadata?.title || '');
         propertyAddress = cleanedTitle || `Property from ${new URL(propertyUrl).hostname}`;
       }
 
@@ -1076,11 +1079,14 @@ export function InvestmentReportGenerator() {
       console.log('✅ Document parsed successfully:', data);
       const extracted = data.extractedData || {};
       
-      // Build property address
-      let propertyAddress = extracted.extractedAddress;
-      if (!propertyAddress && extracted.extractedSuburb) {
-        propertyAddress = `${extracted.extractedSuburb}${extracted.extractedState ? ', ' + extracted.extractedState : ''}${extracted.extractedPostcode ? ' ' + extracted.extractedPostcode : ''}`;
-      }
+      // The same composition as the URL path — it was the same bug here, and
+      // two copies of "what is this property called" is how they drift.
+      let propertyAddress = composePropertyAddress({
+        address: extracted.extractedAddress,
+        suburb: extracted.extractedSuburb,
+        state: extracted.extractedState,
+        postcode: extracted.extractedPostcode,
+      });
       if (!propertyAddress) {
         propertyAddress = `Property from ${pdfFile.name}`;
       }

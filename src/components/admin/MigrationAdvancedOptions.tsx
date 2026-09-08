@@ -432,7 +432,7 @@ export const MigrationAdvancedOptions: React.FC<Props> = ({ domain, flags, onCha
 
       {domain === 'conversations_replay' && (
         <div className="space-y-3">
-          <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-[11px] leading-relaxed text-warning-foreground">
+          <div className="rounded-md border border-warning/40 bg-warning/5 p-3 text-[11px] leading-relaxed text-warning">
             <strong>Heads-up:</strong> This worker re-creates legacy conversations in the
             target account by calling <code>POST /conversations/</code> then replaying each
             message via <code>POST /conversations/messages</code> with a historical{' '}

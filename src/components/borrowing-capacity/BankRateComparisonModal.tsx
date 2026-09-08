@@ -41,9 +41,9 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import { 
   RefreshCw, 
-  Search, 
   TrendingDown, 
   Building2, 
   CheckCircle2,
@@ -204,15 +204,12 @@ export function BankRateComparisonModal({
 
           <div className="space-y-1">
             <Label className="text-xs">Search</Label>
-            <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search lender or product..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8"
-              />
-            </div>
+            <SearchInput
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              placeholder="Search lender or product..."
+              iconClassName="left-2"
+            />
           </div>
         </div>
 

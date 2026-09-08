@@ -77,39 +77,33 @@ export function describeGeocodePrecision(precision: string | null | undefined): 
 }
 
 /**
- * The member a cluster bubble should sit on.
+ * Why a pin is imprecise, said in terms of the RECORD rather than the provider.
  *
- * Nearest-to-centroid was the first attempt, and it has a degenerate case:
- * when the cluster library anchors the bubble on a member that is itself a
- * wrong coordinate, the nearest member to that position is the wrong member,
- * at distance zero — the snap ratifies the error it exists to fix. The
- * coordinate-wise median is immune: one member in the Southern Ocean cannot
- * drag the median of four hundred Melbourne properties anywhere, so the
- * bubble lands on a typical member, which is on land.
+ * `describeGeocodePrecision` reports how well the geocoder matched. That is the
+ * right answer when the record held a full address and the provider could not
+ * place it — but useless when the record never had a street number to offer,
+ * which is the ordinary state of 30 live listings and 68 of 124 builder lots
+ * (an estate lot has no number until its plan is registered).
+ *
+ * Saying "approximate" about both hides the difference between "we could not
+ * find it" and "nobody has told us yet", and only the second is something an
+ * operator can act on.
  */
-export function robustClusterAnchor(points: GeoPoint[]): GeoPoint | null {
-  if (points.length === 0) return null;
-  if (points.length === 1) return points[0];
-
-  const median = (values: number[]): number => {
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-  };
-  const centreLat = median(points.map((p) => p.lat));
-  const centreLng = median(points.map((p) => p.lng));
-
-  let best = points[0];
-  let bestDistance = Infinity;
-  for (const point of points) {
-    const d = (point.lat - centreLat) ** 2 + (point.lng - centreLng) ** 2;
-    if (d < bestDistance) {
-      bestDistance = d;
-      best = point;
-    }
+export function describeAddressCompleteness(
+  precision: string | null | undefined,
+): string | null {
+  switch (precision) {
+    case 'street':
+      return 'Street known, no street number on record';
+    case 'locality':
+      return 'Suburb only — no street on record';
+    case 'none':
+      return 'No address on record';
+    default:
+      return null;
   }
-  return best;
 }
+
 
 export function getStoredListingPoint(listing: PropertyListing): GeoPoint | null {
   const lat = toFiniteNumber(listing.latitude);
@@ -228,44 +222,47 @@ export function priceTier(price: number | null | undefined, tiers: PriceTiers | 
 }
 
 /* -------------------------------------------------------------------------- */
-/* Cluster summaries                                                           */
+/* Stack summaries                                                             */
 /* -------------------------------------------------------------------------- */
 
 /** Ramp order — cheapest band first, then the band for listings with no price. */
 export const PRICE_TIER_ORDER: PriceTier[] = ['low', 'mid', 'high', 'top', 'unknown'];
 
-export interface ClusterMember {
+export interface StackMember {
   price: number | null;
   tier: PriceTier;
 }
 
 export interface TierShare {
   tier: PriceTier;
-  /** Fraction of the cluster sitting in this band, 0–1. */
+  /** Fraction of the stack sitting in this band, 0–1. */
   share: number;
 }
 
-export interface ClusterSummary {
+export interface StackSummary {
   count: number;
-  /** Median of the priced members, or null when nothing in the cluster has a price. */
+  /** Median of the priced members, or null when nothing in the stack has a price. */
   median: number | null;
   /** Band of the member at the median, so the colour and the number always agree. */
   medianTier: PriceTier;
-  /** Bands present, in ramp order, each with its share of the cluster. */
+  /** Bands present, in ramp order, each with its share of the stack. */
   mix: TierShare[];
   /** Members carrying no usable price. */
   unpriced: number;
 }
 
 /**
- * What a cluster is worth, not just how many listings it hides.
+ * What the properties on one coordinate are worth, not just how many there are.
  *
  * A count alone answers "how much stock is here" and nothing else, which is the
- * less interesting half of the question on a property map. The mix drives a
- * band-coloured ring and the median drives a price label, so a collapsed
- * cluster still reads as "twelve listings, mostly upper-mid, around $1.2M".
+ * less interesting half of the question on a property map. The median drives the
+ * hover card's headline, so a stack reads as "twenty-six properties here ·
+ * median $640K" before anyone opens it.
+ *
+ * Named for the proximity clusters it once served; those are gone, and this
+ * now describes a set of properties sharing a POINT. See groupByCoordinate.
  */
-export function summariseCluster(members: ClusterMember[]): ClusterSummary {
+export function summariseStack(members: StackMember[]): StackSummary {
   const count = members.length;
   if (count === 0) {
     return { count: 0, median: null, medianTier: 'unknown', mix: [], unpriced: 0 };
@@ -273,7 +270,7 @@ export function summariseCluster(members: ClusterMember[]): ClusterSummary {
 
   const priced = members
     .filter(
-      (m): m is ClusterMember & { price: number } =>
+      (m): m is StackMember & { price: number } =>
         typeof m.price === 'number' && Number.isFinite(m.price) && m.price > 0,
     )
     .sort((a, b) => a.price - b.price);
@@ -294,33 +291,23 @@ export function summariseCluster(members: ClusterMember[]): ClusterSummary {
   return { count, median, medianTier, mix, unpriced: count - priced.length };
 }
 
-/**
- * Conic-gradient stops describing a cluster's band mix.
- *
- * Colours are emitted as `var(--tier-*)` rather than values, so the ramp stays
- * in the stylesheet and re-themes with the tenant brand — nothing here names a
- * colour. The last stop is pinned to 100% because accumulated floats otherwise
- * leave a hairline of backdrop showing through the ring.
- */
-export function tierMixGradientStops(mix: TierShare[]): string {
-  if (mix.length === 0) return 'var(--tier-unknown) 0% 100%';
-  const round = (n: number) => Math.round(n * 10) / 10;
-  const parts: string[] = [];
-  let at = 0;
-  mix.forEach(({ tier, share }, index) => {
-    const end = index === mix.length - 1 ? 100 : Math.min(100, at + share * 100);
-    parts.push(`var(--tier-${tier}) ${round(at)}% ${round(end)}%`);
-    at = end;
-  });
-  return parts.join(',');
-}
-
 /* -------------------------------------------------------------------------- */
 /* Property type glyphs (pin iconography)                                      */
 /* -------------------------------------------------------------------------- */
 
-export type PropertyGlyph = 'house' | 'apartment' | 'land' | 'commercial' | 'property';
+export type PropertyGlyph =
+  | 'house'
+  | 'apartment'
+  | 'land'
+  | 'commercial'
+  | 'property'
+  | 'builder';
 
+/**
+ * The property-TYPE key, which is what the legend lists. `builder` is
+ * deliberately absent: it is not a property type, it is where the record came
+ * from, so it is chosen by source and explained on its own legend line.
+ */
 export const PROPERTY_GLYPHS: PropertyGlyph[] = [
   'house',
   'apartment',
@@ -627,6 +614,225 @@ export function calibrateHeatMax(
   );
   return Math.max(target, floor);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Co-location grouping                                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The only honest way to put more than one property behind a single mark.
+ *
+ * Proximity clustering — a bubble drawn wherever a group of nearby pins
+ * averages out — was removed because its position means nothing. The bubble is
+ * placed at ONE member's coordinate (or, before the anchoring patch, at the
+ * arithmetic mean of them all) while standing for properties spread across
+ * hundreds of kilometres, so a reader has no way to tell a legitimate bubble
+ * from a misplaced pin. It was read as a misplaced pin every single time it was
+ * looked at: over Bass Strait, over the Southern Ocean, and finally over the
+ * centre of the continent — where, that time, the pins really were wrong.
+ *
+ * Co-location is different, and it is the case that actually needs solving: the
+ * corpus stacks properties on IDENTICAL coordinates. Twenty-six listings share
+ * `104 Grubb Avenue, Traralgon`; fourteen share a Cobblebank suburb centroid;
+ * every builder estate puts its whole release on one suburb point. Those pins
+ * are exactly on top of each other, so only the top one is clickable and the
+ * other twenty-five are invisible.
+ *
+ * A mark that says "26" at that coordinate is TRUE — all twenty-six really are
+ * there — and it stays true at every zoom, because the grouping is by
+ * coordinate rather than by screen distance. Nothing is ever drawn where no
+ * property stands.
+ *
+ * Rounding is to 5 decimal places, about a metre. Two geocodes of the same
+ * address agree far more precisely than that, and two genuinely different
+ * addresses are never that close.
+ */
+const COLOCATION_DP = 5;
+
+export function colocationKey(lat: number, lng: number): string {
+  return `${lat.toFixed(COLOCATION_DP)},${lng.toFixed(COLOCATION_DP)}`;
+}
+
+export interface ColocatedGroup<T> {
+  key: string;
+  lat: number;
+  lng: number;
+  /** Every record at this exact coordinate, input order preserved. */
+  members: T[];
+}
+
+/**
+ * Groups records that share a coordinate. Order is the input's own, so the
+ * caller's sort (dearest first, most recent first) survives into the groups and
+ * into the member that represents each one.
+ */
+export function groupByCoordinate<T>(
+  rows: T[],
+  at: (row: T) => { lat: number; lng: number },
+): ColocatedGroup<T>[] {
+  const groups = new Map<string, ColocatedGroup<T>>();
+  for (const row of rows) {
+    const point = at(row);
+    if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    const key = colocationKey(point.lat, point.lng);
+    const existing = groups.get(key);
+    if (existing) existing.members.push(row);
+    else groups.set(key, { key, lat: point.lat, lng: point.lng, members: [row] });
+  }
+  return [...groups.values()];
+}
+
+/**
+ * Step through a stack, wrapping at both ends.
+ *
+ * Extracted for one reason: a stack of twenty-six is only reachable through
+ * this arithmetic, and an off-by-one at either end silently strips a property
+ * off a mark that promises twenty-six. JavaScript's `%` keeps the sign of its
+ * left operand, so `(0 - 1) % 26` is `-1` rather than `25`; adding `total`
+ * before the modulo is what makes the backwards arrow reach the last member
+ * instead of nothing.
+ *
+ * Neither arrow is ever a dead end, deliberately: a disabled control at the
+ * end of a list reads as a broken one, and there is no ordering here a reader
+ * would think of as having a start.
+ */
+export function stepStackIndex(index: number, delta: number, total: number): number {
+  if (!Number.isFinite(total) || total < 1) return 0;
+  if (!Number.isInteger(index) || index < 0 || index >= total) return 0;
+  const step = Number.isFinite(delta) ? Math.trunc(delta) : 0;
+  return ((index + step) % total + total) % total;
+}
+
+/** Everything at one coordinate, and where a given record sits inside it. */
+export interface ResolvedStack<T> {
+  /** Every record on the open record's exact point, input order preserved. */
+  members: T[];
+  /** Zero-based position of the open record, or -1 when it is not present. */
+  index: number;
+}
+
+/**
+ * What is standing underneath the open pin.
+ *
+ * Read by filtering rather than by re-grouping the whole corpus: the marker
+ * layer already builds the full index for drawing, and building a second one
+ * for the one group a popup needs walks every marker twice for no gain.
+ *
+ * A record whose own point is not finite resolves to an empty stack rather
+ * than to a stack of itself — `colocationKey` cannot key `NaN`, and a pager
+ * over a member nothing can draw is a control with nowhere to go.
+ */
+export function resolveStack<T>(
+  rows: T[],
+  selected: T | null | undefined,
+  at: (row: T) => { lat: number; lng: number },
+): ResolvedStack<T> {
+  if (!selected) return { members: [], index: -1 };
+  const point = at(selected);
+  if (!Number.isFinite(point.lat) || !Number.isFinite(point.lng)) {
+    return { members: [], index: -1 };
+  }
+  const key = colocationKey(point.lat, point.lng);
+  const members = rows.filter((row) => {
+    const p = at(row);
+    return (
+      Number.isFinite(p.lat) &&
+      Number.isFinite(p.lng) &&
+      colocationKey(p.lat, p.lng) === key
+    );
+  });
+  return { members, index: members.indexOf(selected) };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Basemap catalogue                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Where the map's ground comes from, and why it is exactly these providers.
+ *
+ * The Street and Midnight basemaps used to be CARTO's raster tiles
+ * (`basemaps.cartocdn.com`), which stopped serving anonymous traffic: every
+ * tile now comes back stamped "API KEY REQUIRED", so the marketplace map drew
+ * its pins and heat surface over a wall of watermarks. A key cannot fix that
+ * here — this dashboard is cloned per tenant, and a provisioned clone has
+ * nowhere to inherit a CARTO account from.
+ *
+ * Every basemap therefore has to work with NO credential at all, which rules
+ * more out than it sounds like:
+ *
+ * - openstreetmap.org's own tile servers are run by volunteers and actively
+ *   block apps — probing from this project's egress returned their literal
+ *   "403 Access blocked · App is not following the tile usage policy" tile.
+ *   Defaulting a commercial product onto them plants the next watermark.
+ * - Esri's classic tile services (`server.arcgisonline.com`) serve anonymous
+ *   traffic without fuss and are ALREADY this map's satellite provider — the
+ *   one basemap that kept working. Street and Midnight now ride the same
+ *   host: World_Street_Map for daylight, and the Dark Gray Canvas pair for
+ *   Midnight, which is drawn by Esri specifically as a ground for thematic
+ *   overlays — exactly what a heat surface needs. Its one cost is a native
+ *   ceiling of z16; past that Leaflet upscales, and parcel-level scrutiny is
+ *   what the Satellite basemap (native z18) is for.
+ *
+ * A keyed provider (Mapbox, MapTiler, CARTO with an account) is deliberately
+ * NOT offered as a build-time upgrade. Their browser tokens are billable and
+ * `VITE_`-prefixed values are inlined into the bundle, so a token published
+ * that way is lifted from the page source and spent by anyone — and per
+ * `docs/integrations/API_USAGE_METERING.md` a provisioned clone runs on the
+ * PRIME's vendor keys, so it would be the prime's money. That is the rule
+ * `scripts/security/check-client-bundle-secrets.mjs` enforces, and it refused
+ * exactly this. Deeper-zoom cartography needs a server-side proxy that keeps
+ * the credential in a Supabase function secret, not an env var in `src/`.
+ */
+export interface BasemapDefinition {
+  id: Exclude<BasemapId, 'auto'>;
+  url: string;
+  attribution: string;
+  /** A second tile layer of place labels drawn over an unlabelled base. */
+  labelsUrl?: string;
+  maxNativeZoom: number;
+  /** Tiles are dark, so overlays need the inverted treatment. */
+  dark: boolean;
+}
+
+export type BasemapCatalog = Record<Exclude<BasemapId, 'auto'>, BasemapDefinition>;
+
+const ESRI_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+
+const OSM_CREDIT =
+  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+const ESRI_ATTRIBUTION = `Tiles &copy; Esri &mdash; Esri, HERE, Garmin, ${OSM_CREDIT}`;
+
+export const BASEMAP_CATALOG: BasemapCatalog = {
+  light: {
+    id: 'light',
+    // Esri's tile scheme is {z}/{y}/{x} — row before column. Written {x}/{y}
+    // it fetches the transpose of the tile it meant to, which reads on screen
+    // as a map of the wrong part of the world rather than as an error.
+    url: `${ESRI_TILES}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`,
+    attribution: ESRI_ATTRIBUTION,
+    maxNativeZoom: 19,
+    dark: false,
+  },
+  dark: {
+    id: 'dark',
+    // The canvas base carries no place names by design; the reference layer
+    // supplies them, so the two always travel together.
+    url: `${ESRI_TILES}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`,
+    labelsUrl: `${ESRI_TILES}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`,
+    attribution: ESRI_ATTRIBUTION,
+    maxNativeZoom: 16,
+    dark: true,
+  },
+  satellite: {
+    id: 'satellite',
+    url: `${ESRI_TILES}/World_Imagery/MapServer/tile/{z}/{y}/{x}`,
+    labelsUrl: `${ESRI_TILES}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`,
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+    maxNativeZoom: 18,
+    dark: true,
+  },
+};
 
 /* -------------------------------------------------------------------------- */
 /* Misc                                                                        */

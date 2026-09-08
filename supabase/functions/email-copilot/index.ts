@@ -4,7 +4,7 @@ import { verifyAuth, createCorsHeaders as createAuthCorsHeaders, createUnauthori
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
-import { internalError } from '../_shared/errorResponse.ts';
+import { OperatorFacingError, failureResponse } from '../_shared/errorResponse.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -122,11 +122,9 @@ Deno.serve(async (req) => {
     }
 
   } catch (error) {
-    console.error('[Email Copilot] Error:', error);
-    return new Response(
-      JSON.stringify(internalError(error, 'email-copilot')),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    // A sentence a handler composed on purpose reaches the operator; anything
+    // else stays opaque. Both are logged in full against a correlation id.
+    return failureResponse(error, 'email-copilot', corsHeaders);
   }
 });
 
@@ -141,7 +139,7 @@ Deno.serve(async (req) => {
  *
  * Bounded, because this reaches a toast.
  */
-async function describeLlmFailure(r: { status: number; text: () => Promise<string> }): Promise<string> {
+async function describeLlmFailure(r: { status: number; text: () => Promise<string> }): Promise<OperatorFacingError> {
   let detail = '';
   try { detail = (await r.text()).slice(0, 300); } catch { /* body already consumed */ }
   const hint = r.status === 401 || r.status === 403
@@ -149,9 +147,15 @@ async function describeLlmFailure(r: { status: number; text: () => Promise<strin
     : r.status === 402
       ? 'the AI provider account has no remaining balance'
       : r.status === 429
-        ? 'the AI provider is rate limiting this deployment'
+        ? 'the AI provider is rate limiting this deployment — try again shortly'
         : 'the AI provider did not answer';
-  return `AI request failed (${r.status}) — ${hint}.${detail ? ` ${detail}` : ''}`;
+  // The provider's own body can name a model, an organisation or an internal
+  // host, so it is logged rather than shown. The sentence is authored here.
+  if (detail) console.error('[email-copilot] provider response body:', detail);
+  return new OperatorFacingError(`AI request failed (${r.status}) — ${hint}.`, {
+    status: 502,
+    code: 'ai_provider_failed',
+  });
 }
 
 async function handleSummarize(email: EmailData, emailId: string | null, supabase: any, corsHeaders: Record<string, string>): Promise<Response> {
@@ -206,7 +210,7 @@ ${email.body}`;
       // provider, and this deployment's `email_copilot` assignment can be any
       // of gateway, native or openrouter.
       console.error('[Email Copilot] model call failed:', response.status, errorText);
-      throw new Error(await describeLlmFailure({ status: response.status, text: async () => errorText }));
+      throw await describeLlmFailure({ status: response.status, text: async () => errorText });
     }
 
     const data = await response.json();
@@ -324,7 +328,7 @@ Please draft a suitable reply that addresses the sender's concerns or questions.
       // provider, and this deployment's `email_copilot` assignment can be any
       // of gateway, native or openrouter.
       console.error('[Email Copilot] model call failed:', response.status, errorText);
-      throw new Error(await describeLlmFailure({ status: response.status, text: async () => errorText }));
+      throw await describeLlmFailure({ status: response.status, text: async () => errorText });
     }
 
     const data = await response.json();
@@ -605,7 +609,7 @@ Output ONLY the rewritten text. No preamble, no quotes, no markdown fences.${ton
       temperature: 0.4,
       maxTokens: 1200,
     });
-    if (!r.ok) throw new Error(await describeLlmFailure(r));
+    if (!r.ok) throw await describeLlmFailure(r);
     const data = await r.json();
     const improved = (data.choices?.[0]?.message?.content || '').trim();
 
@@ -652,7 +656,7 @@ Return JSON: { "suggestions": ["...", "...", "..."] }${threadCtx}`;
       maxTokens: 200,
       responseFormat: { type: 'json_object' },
     });
-    if (!r.ok) throw new Error(await describeLlmFailure(r));
+    if (!r.ok) throw await describeLlmFailure(r);
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content || '{}';
     let parsed: any = {};
@@ -711,7 +715,7 @@ Rules:
       maxTokens: 200,
       responseFormat: { type: 'json_object' },
     });
-    if (!r.ok) throw new Error(await describeLlmFailure(r));
+    if (!r.ok) throw await describeLlmFailure(r);
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content || '{}';
     let parsed: any = {};
@@ -780,7 +784,7 @@ async function handleTranslate(args: any, supabase: any, corsHeaders: Record<str
       temperature: 0.2,
       maxTokens: 2000,
     });
-    if (!r.ok) throw new Error(await describeLlmFailure(r));
+    if (!r.ok) throw await describeLlmFailure(r);
     const data = await r.json();
     const translated = (data.choices?.[0]?.message?.content || '').trim();
 
@@ -845,7 +849,7 @@ Be specific. If a section has nothing, return an empty array (or empty string fo
       maxTokens: 800,
       responseFormat: { type: 'json_object' },
     });
-    if (!r.ok) throw new Error(await describeLlmFailure(r));
+    if (!r.ok) throw await describeLlmFailure(r);
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content || '{}';
     let parsed: any = {};

@@ -389,7 +389,7 @@ export function ActiveClientCard({ client, stageInfo }: ActiveClientCardProps) {
               {stageInfo.name}
             </Badge>
             {client.deal_status === 'closed' && (
-              <Badge variant="default" className={cn(activeClientBadgeClass, "border border-success/30 bg-success/15 text-success-foreground shadow-success/15 hover:bg-success/20")}>
+              <Badge variant="default" className={cn(activeClientBadgeClass, "border border-success/30 bg-success/15 text-success shadow-success/15 hover:bg-success/20")}>
                 🏆 Deal Closed
               </Badge>
             )}

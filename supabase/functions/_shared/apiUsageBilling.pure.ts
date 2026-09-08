@@ -110,9 +110,21 @@ const BINDINGS: Record<string, ServiceBinding> = {
     unit: "render",
     quantityFrom: "requests",
   },
+  // The same again for the Builder Stock PDF election worker — a Cloudflare
+  // Worker running the shared `electFromPdfBytes` on the workspace's own
+  // account, because that one unit exceeds an Edge Function's CPU ceiling. Its
+  // token is the workspace's own service secret rather than a forwarded vendor
+  // key, so Mission Control rates the usage at nothing; the binding exists so
+  // the call is visible in the ledger rather than untracked.
+  builderstockpdfworker: {
+    secretName: "BUILDER_STOCK_PDF_WORKER_TOKEN",
+    unit: "document",
+    quantityFrom: "requests",
+  },
   docusign: { secretName: "DOCUSIGN_INTEGRATION_KEY", unit: "document", quantityFrom: "requests" },
 
   // ── Compliance ──
+  didit: { secretName: "DIDIT_API_KEY", unit: "request", quantityFrom: "requests" },
   aml: { secretName: "AML_VERIFICATION_SERVICE_TOKEN", unit: "verification", quantityFrom: "requests" },
   amlverification: {
     secretName: "AML_VERIFICATION_SERVICE_TOKEN",
@@ -176,6 +188,11 @@ const HOST_SECRETS: Record<string, string> = {
   "leadconnectorhq.com": "GOHIGHLEVEL_API_KEY",
   "gohighlevel.com": "GOHIGHLEVEL_API_KEY",
   "manychat.com": "MANYCHAT_API_KEY",
+  // Didit identity verification. The base URL is env-overridable
+  // (DIDIT_API_BASE_URL), so the two call sites also name the credential
+  // explicitly — this entry covers the default host and keeps host inference
+  // honest for anything else that reaches it.
+  "didit.me": "DIDIT_API_KEY",
 
   // ── Host-specific, because the parent domain is shared across products that
   //    are billed separately or not at all. `googleapis.com` alone would catch

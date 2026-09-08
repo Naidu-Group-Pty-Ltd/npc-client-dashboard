@@ -63,7 +63,7 @@ export function PropertyReportPackageCard({ reports, isSelected, generatingTier,
     </CardHeader>
     <div id={contentId} className={`grid transition-[grid-template-rows] duration-200 motion-reduce:transition-none ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
       <div className="overflow-hidden">
-        <CardContent className="border-t border-border/60 bg-muted/15 p-4"><div className="grid gap-4">{ordered.map(report => <InvestmentReportCard key={report.id} {...cardProps} report={report} isSelected={isSelected(report.id)} comparisonSelectable={canSelectReport(report)} activeComparisonType={activeComparisonType} generatingTier={generatingTier?.reportId === report.id ? generatingTier.tier : null} />)}</div></CardContent>
+        <CardContent className="border-t border-border/60 bg-muted/15 p-4"><div className="grid gap-4">{ordered.map(report => <InvestmentReportCard key={report.id} {...cardProps} report={report} siblingReports={ordered} isSelected={isSelected(report.id)} comparisonSelectable={canSelectReport(report)} activeComparisonType={activeComparisonType} generatingTier={generatingTier?.reportId === report.id ? generatingTier.tier : null} />)}</div></CardContent>
       </div>
     </div>
   </Card>;

@@ -29,7 +29,7 @@ import {
   renderBullet,
   renderGauge,
   renderMicroMap,
-  renderScoreWheel,
+  renderScoreBars,
   renderSeriesFan,
   renderTiles,
   renderWaterfall,
@@ -172,21 +172,28 @@ export function scorePeerStrip(ctx: ChartContext, score: InvestmentScore): strin
 }
 
 /**
- * The five dimensions as a radar, and the table that explains it.
+ * The scored dimensions as bars on a common baseline, and the table that
+ * explains them.
  *
- * The wheel alone says how the five scored and nothing about which of them the
- * composite leaned on. The engine records a `weight` and a one-line `details`
- * for each — "Excellent walkability (90+). Limited CBD access (>60 min)." —
- * and until `toScore` learned to read the dimension objects, none of it left
- * the database. A shape without its weights is a picture; with them it is an
- * argument, so the two ship together.
+ * The chart alone says how the dimensions scored and nothing about which of
+ * them the composite leaned on. The engine records a `weight` and a one-line
+ * `details` for each — "Excellent walkability (90+). Limited CBD access
+ * (>60 min)." — and until `toScore` learned to read the dimension objects,
+ * none of it left the database. A shape without its weights is a picture; with
+ * them it is an argument, so the two ship together.
+ *
+ * This drew a radar until 2026-09-08. `renderScoreBars` carries why it does
+ * not any more; the short version is that the polygon's area depended on the
+ * arbitrary order of the axes, which made the chart's most dominant property
+ * carry no information.
  */
 export function scoreWheel(ctx: ChartContext, score: InvestmentScore): string {
   const present = score.breakdown.filter((b) => b.value !== null);
-  // A radar over one or two axes is a line, not a shape.
-  if (present.length < 3) return '';
+  // Two bars are a comparison; one is a number, and a number belongs in the
+  // table rather than in a chart of its own.
+  if (present.length < 2) return '';
   const wheel = chartFigure(
-    renderScoreWheel(compactCtx(ctx), present.map((b) => b.value as number), {
+    renderScoreBars(compactCtx(ctx), present.map((b) => b.value as number), {
       labels: present.map((b) => b.label),
       max: 100,
     }),

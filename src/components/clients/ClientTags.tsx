@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +27,17 @@ interface ClientTagsProps {
 }
 
 export function ClientTags({ clientId, compact = false }: ClientTagsProps) {
+  /**
+   * The cookie-authenticated gateway, not the plain browser client.
+   *
+   * `client_tags` and `client_tag_assignments` are scoped to `service_role`,
+   * and this app's identity is a custom HttpOnly cookie — so the anon client
+   * had its reads FILTERED to nothing (the tag list looked empty) and its
+   * inserts refused outright ("new row violates row-level security policy").
+   * Both tables are declared in `authenticated-data`, which verifies the staff
+   * session server-side and stamps who created and who assigned.
+   */
+  const { supabase } = useAuthenticatedSupabase();
   const [open, setOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [newTagColor, setNewTagColor] = useState('#3B82F6');
@@ -111,7 +122,7 @@ export function ClientTags({ clientId, compact = false }: ClientTagsProps) {
     mutationFn: async () => {
       const { data, error } = await supabase
         .from('client_tags')
-        .insert({ name: newTagName, color: newTagColor })
+        .insert({ name: newTagName.trim(), color: newTagColor })
         .select()
         .single();
       if (error) throw error;
@@ -132,10 +143,28 @@ export function ClientTags({ clientId, compact = false }: ClientTagsProps) {
   const assignedTagIds = assignedTags.map(at => at.tag_id);
   const availableTags = allTags.filter(tag => !assignedTagIds.includes(tag.id));
 
-  const colorPresets = [
-    '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', 
-    '#EC4899', '#6B7280', '#14B8A6', '#F97316', '#6366F1'
+  /**
+   * The ten tag colours, each with the name a person would use for it.
+   *
+   * The name is not decoration. A swatch grid is a control whose only signal
+   * is colour, which is exactly the signal a colour-blind operator does not
+   * have and a screen reader never had — "button" ten times over. The name is
+   * the accessible label and the tooltip, so the control can be operated
+   * without seeing the difference between the red one and the orange one.
+   */
+  const colorPresets: Array<{ value: string; name: string }> = [
+    { value: '#EF4444', name: 'Red' },
+    { value: '#F59E0B', name: 'Amber' },
+    { value: '#10B981', name: 'Green' },
+    { value: '#3B82F6', name: 'Blue' },
+    { value: '#8B5CF6', name: 'Violet' },
+    { value: '#EC4899', name: 'Pink' },
+    { value: '#6B7280', name: 'Grey' },
+    { value: '#14B8A6', name: 'Teal' },
+    { value: '#F97316', name: 'Orange' },
+    { value: '#6366F1', name: 'Indigo' },
   ];
+  const selectedColorName = colorPresets.find((preset) => preset.value === newTagColor)?.name;
 
   if (compact) {
     return (
@@ -220,15 +249,41 @@ export function ClientTags({ clientId, compact = false }: ClientTagsProps) {
                   onChange={(e) => setNewTagName(e.target.value)}
                   className="h-8"
                 />
-                <div className="flex flex-wrap gap-1">
-                  {colorPresets.map((color) => (
-                    <button
-                      key={color}
-                      onClick={() => setNewTagColor(color)}
-                      className={`w-6 h-6 rounded-full border-2 ${newTagColor === color ? 'border-primary' : 'border-transparent'}`}
-                      style={{ backgroundColor: color }}
-                    />
-                  ))}
+                <div className="space-y-1.5">
+                  {/* The selection used to be a 2px border drawn INSIDE the
+                      swatch, in a colour close to several of the swatches —
+                      so on a dark popover nothing looked chosen at all. A ring
+                      sits outside the circle, a tick sits on top of it, and
+                      the chosen colour is named underneath, because a control
+                      whose only signal is colour has no signal for the reader
+                      most likely to need one. */}
+                  <div role="radiogroup" aria-label="Tag colour" className="flex flex-wrap gap-1.5">
+                    {colorPresets.map((preset) => {
+                      const selected = newTagColor === preset.value;
+                      return (
+                        <button
+                          key={preset.value}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          aria-label={preset.name}
+                          title={preset.name}
+                          onClick={() => setNewTagColor(preset.value)}
+                          className={`flex h-7 w-7 items-center justify-center rounded-full ring-offset-2 ring-offset-popover transition-shadow ${
+                            selected
+                              ? 'ring-2 ring-foreground'
+                              : 'ring-1 ring-border hover:ring-2 hover:ring-foreground/40'
+                          }`}
+                          style={{ backgroundColor: preset.value }}
+                        >
+                          {selected && <Check className="h-3.5 w-3.5 text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedColorName ? `${selectedColorName} selected` : 'Choose a colour'}
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Button 

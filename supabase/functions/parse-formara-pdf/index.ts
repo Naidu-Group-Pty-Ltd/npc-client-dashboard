@@ -10,9 +10,17 @@ import { parseLlmJson } from '../_shared/llmJson.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
-const corsHeaders = createCorsHeaders();
-
 Deno.serve(async (req) => {
+  // The CALLER's origin. This was a module-level `createCorsHeaders()` — a
+  // constant computed at import time, when no request exists — so it answered
+  // a FIXED `Access-Control-Allow-Origin` beside
+  // `Access-Control-Allow-Credentials: true`. The browser releases a
+  // credentialed response to JS only when the ACAO exactly equals the
+  // request's Origin, so this function answered for one of the origins the
+  // deployment trusts and failed the preflight for every other, with `fetch`
+  // rejecting opaquely.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }

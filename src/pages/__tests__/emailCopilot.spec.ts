@@ -160,7 +160,11 @@ describe('items 44, 45, 46 — a dialog that scrolls', () => {
    * 1,717px down a 700px window.
    */
   it('bounds the viewport by flex, not by a percentage', () => {
-    expect(scrollArea).toMatch(/className="min-h-0 flex-1 w-full rounded-\[inherit\]/);
+    // The className is composed with `cn()` since Audit 4 item 3 added the
+    // block-level content wrapper beside it, so this matches the classes
+    // rather than the whole attribute — the rule is what they say, not how
+    // they are spelled into the element.
+    expect(scrollArea).toMatch(/"min-h-0 flex-1 w-full rounded-\[inherit\]/);
     expect(scrollArea).not.toMatch(/Viewport className="h-full w-full/);
   });
 

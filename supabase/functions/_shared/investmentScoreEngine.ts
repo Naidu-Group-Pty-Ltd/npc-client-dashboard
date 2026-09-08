@@ -184,7 +184,10 @@ function dRisk(i: ScoringInput): DimensionResult {
 
 const COMPOSITE_WEIGHTS = { yieldScore: 15, growthScore: 40, locationScore: 25, demandScore: 15, riskScore: 5 };
 const FINANCIAL_WEIGHTS = { yieldScore: 30, cashflowScore: 25, serviceabilityScore: 20, riskScore: 15, growthScore: 10 };
-const DUE_DILIGENCE_WEIGHTS = { locationScore: 30, demandScore: 25, tenantFitScore: 20, planningRiskScore: 15, liveabilityScore: 10 };
+// tenantFitScore is gone from this map because it was never a dimension: it
+// was dDemand computed twice (see scorePropertyFundamentals). Its 20 points
+// return to the two real measurements they were diluting.
+const DUE_DILIGENCE_WEIGHTS = { locationScore: 40, demandScore: 35, planningRiskScore: 15, liveabilityScore: 10 };
 
 function gradeAndRec(totalScore: number): { grade: string; recommendation: string } {
   if (totalScore >= 85) return { grade: 'A+', recommendation: 'STRONG BUY' };
@@ -201,9 +204,10 @@ function assemble(
   variant: ScoreVariant,
   dims: Record<string, DimensionResult>,
   weights: Record<string, number>,
+  minAvailable = 3,
 ): ScoreOutput | null {
   const available = Object.entries(dims).filter(([, d]) => d.available);
-  if (available.length < 3) return null;
+  if (available.length < minAvailable) return null;
   const totalAvailWeight = available.reduce((s, [k]) => s + (weights[k] || 0), 0);
   if (totalAvailWeight <= 0) return null;
 
@@ -250,21 +254,34 @@ export function scoreFinancial(raw: any): ScoreOutput | null {
 export function scorePropertyFundamentals(raw: any): ScoreOutput | null {
   const i = transformScoringInput(raw);
   if (i.propertyPrice <= 0) return null;
-  // tenantFit, planningRisk, liveability are derived proxies from existing inputs
-  const tenantFit = dDemand(i);
+  // planningRisk and liveability are derived proxies from existing inputs.
+  //
+  // This scorer used to carry a fifth dimension, `tenantFitScore`, that was
+  // literally `dDemand(i)` computed a second time — the same data counted
+  // twice toward `assemble`'s three-available floor, and toward the total.
+  // Combined with that floor it meant a row without BOTH real dimensions
+  // (location + demand) could never score, and the Due Diligence report
+  // shipped with `investment_score: null` on all 11 rows ever produced — its
+  // verdict page read "Graded  at  out of 100" with the holes left in.
+  //
+  // Four honest dimensions now, and the floor is stated here rather than
+  // inherited: at least two dimensions, of which at least one must be a real
+  // measurement (location or demand) — two proxies alone are not a score.
   const planningRisk: DimensionResult = i.state
     ? { score: 70, weight: 0, details: 'Proxy: state-baseline planning risk', available: true }
     : { score: 0, weight: 0, details: 'No state data', available: false };
   const liveability: DimensionResult = i.walkScore
     ? { score: Math.min(100, (i.walkScore || 0) + 20), weight: 0, details: `WalkScore: ${i.walkScore}`, available: true }
     : { score: 0, weight: 0, details: 'No walk score', available: false };
+  const location = dLocation(i);
+  const demand = dDemand(i);
+  if (!location.available && !demand.available) return null;
   return assemble('due_diligence', {
-    locationScore: dLocation(i),
-    demandScore: dDemand(i),
-    tenantFitScore: tenantFit,
+    locationScore: location,
+    demandScore: demand,
     planningRiskScore: planningRisk,
     liveabilityScore: liveability,
-  }, DUE_DILIGENCE_WEIGHTS);
+  }, DUE_DILIGENCE_WEIGHTS, 2);
 }
 
 export function scoreForVariant(variant: ScoreVariant, raw: any): ScoreOutput | null {

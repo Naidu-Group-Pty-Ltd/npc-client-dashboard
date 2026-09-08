@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
@@ -17,7 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription
 } from '@/components/ui/dialog';
 import {
-  Search, Loader2, Clock, ArrowRight, CheckCircle2, XCircle,
+  Loader2, Clock, ArrowRight, CheckCircle2, XCircle,
   BarChart3, PiggyBank, Building2, User, Send, Calendar,
   MessageSquare, Filter, Inbox, Mail, Phone, MapPin, ExternalLink
 } from 'lucide-react';
@@ -35,9 +36,9 @@ const requestTypeConfig: Record<string, { label: string; icon: typeof BarChart3;
 
 const statusConfig: Record<string, { label: string; icon: typeof Clock; color: string; badgeVariant: string }> = {
   pending: { label: 'Pending', icon: Clock, color: 'text-brand-300', badgeVariant: 'border-brand-300/35 bg-brand-400/10 text-brand-100 shadow-brand-950/20' },
-  in_progress: { label: 'In Progress', icon: ArrowRight, color: 'text-info', badgeVariant: 'border-info/35 bg-info/10 text-info-foreground shadow-info/20' },
-  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success', badgeVariant: 'border-success/35 bg-success/10 text-success-foreground shadow-success/20' },
-  declined: { label: 'Declined', icon: XCircle, color: 'text-destructive', badgeVariant: 'border-destructive/35 bg-destructive/10 text-destructive-foreground shadow-destructive/20' },
+  in_progress: { label: 'In Progress', icon: ArrowRight, color: 'text-info', badgeVariant: 'border-info/35 bg-info/10 text-info shadow-info/20' },
+  completed: { label: 'Completed', icon: CheckCircle2, color: 'text-success', badgeVariant: 'border-success/35 bg-success/10 text-success shadow-success/20' },
+  declined: { label: 'Declined', icon: XCircle, color: 'text-destructive', badgeVariant: 'border-destructive/35 bg-destructive/10 text-destructive shadow-destructive/20' },
 };
 
 const statusCardConfig: Record<string, { glow: string; iconWrap: string; edge: string; count: string; active: string }> = {
@@ -78,18 +79,18 @@ const statusButtonConfig: Record<string, { idle: string; active: string; icon: s
     icon: 'text-brand-200',
   },
   in_progress: {
-    idle: 'hover:border-info/45 hover:bg-info/10 hover:text-info-foreground focus-visible:ring-info/35',
-    active: 'border-info/55 bg-info/15 text-info-foreground ring-2 ring-info/20 shadow-[0_10px_26px_rgba(59,130,246,0.16)]',
+    idle: 'hover:border-info/45 hover:bg-info/10 hover:text-info focus-visible:ring-info/35',
+    active: 'border-info/55 bg-info/15 text-info ring-2 ring-info/20 shadow-[0_10px_26px_rgba(59,130,246,0.16)]',
     icon: 'text-info',
   },
   completed: {
-    idle: 'hover:border-success/45 hover:bg-success/10 hover:text-success-foreground focus-visible:ring-success/35',
-    active: 'border-success/55 bg-success/15 text-success-foreground ring-2 ring-success/20 shadow-[0_10px_26px_rgba(16,185,129,0.14)]',
+    idle: 'hover:border-success/45 hover:bg-success/10 hover:text-success focus-visible:ring-success/35',
+    active: 'border-success/55 bg-success/15 text-success ring-2 ring-success/20 shadow-[0_10px_26px_rgba(16,185,129,0.14)]',
     icon: 'text-success',
   },
   declined: {
-    idle: 'hover:border-destructive/45 hover:bg-destructive/10 hover:text-destructive-foreground focus-visible:ring-destructive/35',
-    active: 'border-destructive/55 bg-destructive/15 text-destructive-foreground ring-2 ring-destructive/20 shadow-[0_10px_26px_rgba(248,113,113,0.14)]',
+    idle: 'hover:border-destructive/45 hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/35',
+    active: 'border-destructive/55 bg-destructive/15 text-destructive ring-2 ring-destructive/20 shadow-[0_10px_26px_rgba(248,113,113,0.14)]',
     icon: 'text-destructive',
   },
 };
@@ -319,16 +320,15 @@ export default function ReportRequests() {
         <DashboardThemeFrame variant="toolbar" className="relative overflow-hidden p-3 shadow-xl shadow-sm dark:shadow-black/10 sm:p-4 dark:shadow-black/25">
           <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/35 to-transparent" />
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="group/search relative flex-1">
-              <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground dark:text-muted-foreground transition-colors group-focus-within/search:text-brand-200" />
-              <Input
-                aria-label="Search report requests"
-                placeholder="Search by client, property, or notes..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 pl-11 pr-4 text-sm text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-black/55 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              aria-label="Search report requests"
+              placeholder="Search by client, property, or notes..."
+              containerClassName="group/search flex-1"
+              className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 pr-4 text-sm text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-black/55 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+              iconClassName="left-4 dark:text-muted-foreground transition-colors group-focus-within/search:text-brand-200"
+            />
             <Select value={typeFilter} onValueChange={setTypeFilter}>
               <SelectTrigger
                 aria-label="Filter report requests by type"
@@ -471,9 +471,12 @@ export default function ReportRequests() {
                         <div className={cn('shrink-0 rounded-2xl p-3 shadow-inner shadow-sm dark:shadow-black/20', typeConf.color)}><TypeIcon className="h-5 w-5" /></div>
                         <p className="min-w-0 [overflow-wrap:anywhere] break-words text-base font-semibold tracking-tight text-foreground dark:text-white">{typeConf.label}</p>
                       </div>
+                      {/* One status, drawn once. There were two of these — the
+                          same badge, the same variant, the same label — one in
+                          this row and a second directly under it, which is the
+                          audit's "it says in progress twice". */}
                       <Badge variant="outline" className={cn('w-fit shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm backdrop-blur', statConf.badgeVariant)}>{statConf.label}</Badge>
                     </div>
-                    <Badge variant="outline" className={cn('w-fit rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] shadow-sm backdrop-blur', statConf.badgeVariant)}>{statConf.label}</Badge>
                   </div>
 
                   <div className="grid gap-2.5 text-sm">

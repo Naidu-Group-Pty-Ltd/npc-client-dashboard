@@ -38,6 +38,16 @@ export interface Deal {
   clawback_expiry_date: string | null;
   clawback_risk_active: boolean;
 
+  /**
+   * Receipt of the single agent fee. A house-and-land deal is paid stage by
+   * stage and records receipt on each `BuildProgressPayment`; an
+   * existing-property purchase or a refinance is paid once and records it
+   * here. Optional because every deal written before the column existed
+   * reads as undefined until it is next saved.
+   */
+  commission_received?: boolean | null;
+  commission_received_date?: string | null;
+
   // Dates (shared)
   finance_clause_expiry: string | null;
   settlement_date: string | null;

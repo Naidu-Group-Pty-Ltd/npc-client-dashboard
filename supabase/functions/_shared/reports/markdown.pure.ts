@@ -553,6 +553,60 @@ export interface MarkdownNotices {
   listRunsMerged: number;
 }
 
+/**
+ * What a render LOST, in sentences a person can act on.
+ *
+ * ## Why this is here
+ *
+ * `MarkdownNotices` is a complete degradation report and, measured 2026-09-07,
+ * **every caller throws it away**. `reportBindingProjection`,
+ * `reportQaProjection`, `marketIntelligenceProjection` and both converted-report
+ * renderers take `.blocks`, `.html` or `.lines` and read no notice at all; the
+ * investment renderer reads exactly two of the twenty-four
+ * (`figuresDrawn` / `figuresDropped`) and discards the rest.
+ *
+ * That includes every notice that means a client's content did not reach the
+ * page. On `28 Bligh Street, Muswellbrook` a table row written as
+ * `… | General evidence only || Tenant stability …` — two rows concatenated —
+ * renders with `tablesRagged: 1` and **`tableColumnsDropped: 5`**, and nothing
+ * anywhere is told. Across the corpus 12 reports carry that shape and 118 carry
+ * an unterminated row.
+ *
+ * ## The line this draws
+ *
+ * A notice that means content was **lost** is a problem. A notice that means
+ * content was **transformed** is not: `tablesLandscaped`, `listsFlattened`,
+ * `linksFlattened`, `glyphsTransliterated`, `urlsNeutralised`, `listRunsMerged`
+ * and `inlineSkipped` all describe a deliberate accommodation that keeps the
+ * words, and reporting them would bury the ones that do not. `tablesRagged` is
+ * likewise a description rather than a loss — the loss it causes is counted
+ * separately as dropped columns and rows, and counting both would double it.
+ *
+ * Returns an empty array for a clean render, so a caller can spread it into an
+ * existing `problems` list without a guard.
+ */
+export function contentLosses(notices: MarkdownNotices): string[] {
+  const out: string[] = [];
+  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+  if (notices.truncatedAtChars !== null) {
+    out.push(`${plural(notices.truncatedAtChars, 'character')} cut from the end of a section`);
+  }
+  if (notices.truncatedAtBlocks) out.push('a section was cut short at a block boundary');
+  if (notices.tablesRejected) out.push(`${plural(notices.tablesRejected, 'table')} could not be parsed and was dropped`);
+  if (notices.tableColumnsDropped) out.push(`${plural(notices.tableColumnsDropped, 'table column')} dropped from a malformed row`);
+  if (notices.tableRowsDropped) out.push(`${plural(notices.tableRowsDropped, 'table row')} dropped`);
+  if (notices.listItemsDropped) out.push(`${plural(notices.listItemsDropped, 'list item')} dropped`);
+  if (notices.codeLinesDropped) out.push(`${plural(notices.codeLinesDropped, 'code line')} dropped`);
+  if (notices.headingsDropped) out.push(`${plural(notices.headingsDropped, 'heading')} dropped`);
+  if (notices.headingsDroppedEmpty) out.push(`${plural(notices.headingsDroppedEmpty, 'heading')} dropped with nothing under it`);
+  if (notices.imagesDropped) out.push(`${plural(notices.imagesDropped, 'image')} dropped`);
+  if (notices.glyphsDropped) out.push(`${plural(notices.glyphsDropped, 'character')} dropped as unprintable`);
+  if (notices.footnoteRefsDropped) out.push(`${plural(notices.footnoteRefsDropped, 'footnote marker')} dropped with no definition`);
+  if (notices.figuresDropped) out.push(`${plural(notices.figuresDropped, 'chart directive')} did not draw`);
+  return out;
+}
+
 export interface MarkdownResult {
   blocks: readonly MarkdownBlock[];
   /** `blocks.map(b => b.html).join('')` — the common case. */
@@ -958,7 +1012,15 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
    */
   const listLines = (items: readonly ListItem[]) => items.reduce(
     (n, it) => {
-      const width = Math.max(20, cpl - it.depth * 4);
+      // A top-level item does not set at the full measure either: its marker
+      // and hanging indent eat ~6 characters before the nesting steps start.
+      // Charging depth 0 at the whole `cpl` is how a source-note list charged
+      // 17.5 lines and rendered past the footer on a real Compass render
+      // (1/27D Mitchell Street, p19, 2026-09-04) — every item was a bold
+      // lead-in plus a long sentence, undercharged by its own indent, and the
+      // page's tail printed over the running foot. Measured model only; the
+      // legacy charge stays byte-identical for the uncalibrated formats.
+      const width = Math.max(20, cpl - (measured ? 6 : 0) - it.depth * 4);
       return n + (measured
         ? Math.max(1, it.text.length / width)
         : Math.ceil(Math.max(1, it.text.length) / width));

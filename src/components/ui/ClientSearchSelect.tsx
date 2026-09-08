@@ -6,7 +6,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Check, ChevronsUpDown, Search, User } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Check, ChevronsUpDown, User } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ClientOption {
@@ -84,15 +85,14 @@ export function ClientSearchSelect({
       </PopoverTrigger>
       <PopoverContent className="w-[280px] p-0" align="start">
         <div className="p-2 border-b">
-          <div className="flex items-center gap-2 px-2">
-            <Search className="h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search clients..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="border-0 h-8 p-0 text-sm focus-visible:ring-0 shadow-none"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search clients..."
+            containerClassName="flex items-center gap-2 px-2"
+            className="border-0 h-8 p-0 text-sm focus-visible:ring-0 shadow-none"
+            iconClassName="h-3.5 w-3.5"
+          />
         </div>
         <ScrollArea className="max-h-[220px]">
           <div className="p-1">

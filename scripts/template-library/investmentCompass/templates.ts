@@ -103,7 +103,7 @@ const INVESTMENT_COMPASS_FORMAT: ReportFormat = {
  * Compass document was footed "<address> · " with a dangling separator. An
  * unresolved binding renders as the empty string, never as a visible `{{…}}`.
  */
-const FOOTER = '{{property.address}} · Investment Compass';
+const FOOTER = '{{property.address}} · {{report.documentTitle}}';
 
 /**
  * The longest each bound field runs across the 1,182 stored reports.
@@ -124,7 +124,7 @@ const FOOTER = '{{property.address}} · Investment Compass';
 const DETAIL_CHARS = { location: 94, yield: 51, risk: 228 } as const;
 
 /** The left half of the running head. */
-const DOCUMENT_LABEL = 'Investment Compass · {{property.address}}';
+const DOCUMENT_LABEL = '{{report.documentTitle}} · {{property.address}}';
 
 /**
  * The property specification, one guarded row at a time.
@@ -258,10 +258,16 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // ── 01 Cover ─────────────────────────────────────────────────────────────
   pages.push(cover({
     wordmarkTop: '{{org.name}}',
-    wordmarkBottom: 'Investment Compass',
+    // The document's NAME, not the format family's: these masters serve the
+    // compass, financial, snapshot, briefing and strategic tiers, and the
+    // projection translates the tier into `report.documentTitle` /
+    // `report.standfirst` in one place (`DOCUMENT_IDENTITY`). Spelled as a
+    // literal, every Financial Analysis rendered as an "Investment Compass"
+    // on its cover and on every running head and foot.
+    wordmarkBottom: '{{report.documentTitle}}',
     tagline: 'Your dedicated property partner',
-    marker: 'Investment Compass',
-    eyebrow: 'Investment Compass',
+    marker: '{{report.documentTitle}}',
+    eyebrow: '{{report.documentTitle}}',
     title: '{{property.address}}',
     // Was `{{summary.narrative}}`, `{{property.suburb}}`, `{{market.postcode}}`
     // and `{{market.state}}` — none of which any adapter publishes, and none of
@@ -269,7 +275,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     // amenities, commute, schools and transport; there is no postcode, no state
     // and no market prose anywhere in the row. So the cover said nothing under
     // the address, on every report.
-    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
+    standfirst: '{{report.standfirst}}',
     locations: 'Prepared {{report.generatedDate | date}}',
     facts: [
       // The action, not the sentence. A KPI cell is a quarter of the measure
@@ -350,11 +356,14 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         heading: '{{recommendation.headline}}',
         // `investment_score` holds ONE recommendation string and no rationale
         // beside it, so this used to be blank under a heading that promised an
-        // explanation. The grade and the weighting are what the record can
-        // actually say about how the verdict was reached; the scorecard on the
-        // assessment page shows the five dimensions it is composed of.
-        body: 'Graded {{recommendation.grade}} at {{recommendation.score | fixed:0}} out of 100, '
-          + 'weighted across growth, location, yield, demand and risk.',
+        // explanation. The sentence is COMPOSED by the projection
+        // (`recommendation.gradedLine`) rather than interpolated here, for two
+        // measured reasons: a row with no score used to print "Graded  at
+        // out of 100" with the holes left in (every Strategic fork ever
+        // produced), and the hardcoded weighting clause misstated variant
+        // scores, whose dimensions are not the composite five. Absent score →
+        // absent binding → no sentence, never a broken one.
+        body: '{{recommendation.gradedLine}}',
       }),
       kpis(dashboardKpis),
       ...(splitSnapshot ? [] : [
@@ -668,9 +677,12 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
       },
       recommendation(
         '{{recommendation.headline}}',
-        // Was `recommendation.rationale`, which the record does not carry.
-        'Graded {{recommendation.grade}} at {{recommendation.score | fixed:0}} out of 100. '
-        + 'The five weighted dimensions behind that grade are set out on the assessment page.',
+        // Was `recommendation.rationale`, which the record does not carry —
+        // and then a hand-interpolated "Graded … out of 100" that printed
+        // with holes on score-less rows and hardcoded "five" dimensions.
+        // The projection composes the sentence only when the record can say
+        // it (`recommendation.gradedDetailLine`).
+        '{{recommendation.gradedDetailLine}}',
       ),
     ], contentTop()),
   ]), FOOTER));

@@ -1,6 +1,12 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { format, isPast, isToday, formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
+import {
+  REMINDER_TIME_BUCKETS,
+  countByBucket,
+  matchesTimeBucket,
+  type ReminderTimeBucket,
+} from '@/lib/reminders/timeBucket.pure';
 import {
   Bell,
   Plus,
@@ -97,6 +103,10 @@ export function TeamRemindersSection() {
   const [filterSearch, setFilterSearch] = useState('');
   const [filterPriority, setFilterPriority] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
+  // The chip row the client tab leads with. Its absence is what the audit
+  // reported twice: this tab draws "Overdue" in red on its own rows and had no
+  // way to show only those.
+  const [filterTime, setFilterTime] = useState<ReminderTimeBucket>('all');
 
   // Snooze state
   const [snoozeId, setSnoozeId] = useState<string | null>(null);
@@ -161,7 +171,16 @@ export function TeamRemindersSection() {
     );
   };
 
+  // One clock for the whole render, so a chip's count and the list it filters
+  // to cannot be computed a millisecond either side of midnight.
+  const filterNow = useMemo(() => new Date(), [reminders]);
+  const bucketCounts = useMemo(
+    () => countByBucket(reminders.map((r) => new Date(r.due_date)), filterNow),
+    [reminders, filterNow],
+  );
+
   const visibleReminders = reminders.filter((r) => {
+    if (!matchesTimeBucket(new Date(r.due_date), filterTime, filterNow)) return false;
     if (filterPriority !== 'all' && (r.priority || 'medium') !== filterPriority) return false;
     if (filterType !== 'all' && r.reminder_type !== filterType) return false;
     if (filterSearch) {
@@ -337,7 +356,54 @@ export function TeamRemindersSection() {
 
       {/* Filters — mirrors the client tab's bar */}
       {!isLoading && reminders.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-2xl border border-brand-300/15 bg-background/60 p-2.5 dark:bg-black/30 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-2.5 rounded-2xl border border-brand-300/15 bg-background/60 p-2.5 dark:bg-black/30">
+          {/* The time buckets, drawn from the same list and judged by the same
+              predicate as the client tab — see `timeBucket.pure`. A count is
+              shown only where there is something to see, so an empty bucket
+              reads as empty rather than as a nought nobody asked for. */}
+          <div
+            role="group"
+            aria-label="Filter team reminders by when they are due"
+            className="flex min-w-0 flex-wrap items-center gap-1.5"
+          >
+            {REMINDER_TIME_BUCKETS.map((bucket) => {
+              const active = filterTime === bucket.value;
+              const count = bucketCounts[bucket.value];
+              return (
+                <Button
+                  key={bucket.value}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  aria-pressed={active}
+                  onClick={() => setFilterTime(bucket.value)}
+                  className={cn(
+                    'h-9 shrink-0 gap-1.5 rounded-xl border px-3 text-xs font-semibold transition-all',
+                    active
+                      ? 'border-brand-300/45 bg-brand-400/15 text-brand-100'
+                      : 'border-brand-400/15 bg-background/40 text-muted-foreground hover:border-brand-300/30 hover:bg-brand-400/10 hover:text-brand-100 dark:bg-black/30',
+                  )}
+                >
+                  {bucket.label}
+                  {count > 0 && (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        'h-4 rounded-full px-1 text-[9px] font-semibold',
+                        bucket.value === 'overdue'
+                          ? 'border-destructive/35 text-destructive'
+                          : 'border-brand-300/30 text-brand-100',
+                      )}
+                    >
+                      {count}
+                    </Badge>
+                  )}
+                </Button>
+              );
+            })}
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             value={filterSearch}
             onChange={(e) => setFilterSearch(e.target.value)}
@@ -368,6 +434,7 @@ export function TeamRemindersSection() {
               ))}
             </SelectContent>
           </Select>
+          </div>
         </div>
       )}
 

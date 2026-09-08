@@ -177,10 +177,22 @@ const REPO = resolve(__dirname, '../..');
  * fixed page sequence with the report itself absent. Measured on one address at
  * all five tiers, the model writes 9 (snapshot) to 107 (compass) headings every
  * time. See `docs/reports/INVESTMENT.md` and PR #2162.
+ *
+ * ## v12 — the verdict sentence is composed, never interpolated
+ *
+ * The two verdict bodies bound `recommendation.grade`/`.score` inside a
+ * hand-written "Graded … out of 100" literal. On a row with no score the
+ * sentence printed with the holes left in — "Graded  at  out of 100", shipped
+ * on every Due Diligence fork ever produced — and the hardcoded weighting
+ * clause ("growth, location, yield, demand and risk" / "five weighted
+ * dimensions") misstated every variant score. Both bodies now bind
+ * `recommendation.gradedLine` / `.gradedDetailLine`, composed by the
+ * projection from the score's own dimensions and absent when the record
+ * cannot say them (scoreSections.pure.ts).
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20260916100000_seed_template_library_v9_report_part_numbering.sql',
+  'supabase/migrations/20261112000000_seed_template_library_v12_guarded_verdict_line.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

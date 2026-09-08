@@ -12,9 +12,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import { invokeSecureFunction, hasActiveSession } from '@/lib/secureInvoke';
 import { toast } from '@/hooks/use-toast';
-import { Copy, Download, Upload, RotateCcw, Save, RefreshCw, Search } from 'lucide-react';
+import { Copy, Download, Upload, RotateCcw, Save, RefreshCw } from 'lucide-react';
 
 interface PromptRow {
   key: string;
@@ -248,15 +249,14 @@ export default function PromptLibrary() {
             </Button>
           </div>
         </div>
-        <div className="relative mb-2">
-          <Search className="h-3 w-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search prompts…"
-            className="pl-7 h-8 text-xs"
-          />
-        </div>
+        <SearchInput
+          value={filter}
+          onValueChange={setFilter}
+          placeholder="Search prompts…"
+          containerClassName="mb-2"
+          className="h-8 text-xs"
+          iconClassName="h-3 w-3 left-2"
+        />
         <div className="flex flex-wrap gap-1 mb-2">
           <button
             onClick={() => setFamilyFilter('all')}

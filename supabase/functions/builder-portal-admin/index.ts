@@ -166,6 +166,49 @@ const digitsOnly = (value: unknown): string | null => {
   return raw ? raw.replace(/[^0-9]/g, '') || null : null;
 };
 
+/**
+ * A refused organisation write, said in words.
+ *
+ * The organisation create/update path writes the table directly rather than
+ * through a guarded command, so its failures arrived as raw PostgreSQL faults
+ * and the outer catch flattened every one of them into "Internal error" — which
+ * is what an administrator saw when they created an organisation whose legal
+ * name, ABN or ACN already existed, or whose postcode/e-mail the column
+ * refused. Nothing was wrong with the request the operator could not have
+ * fixed; they were simply never told.
+ *
+ * Returns null for a fault that is genuinely ours, so an unrecognised error
+ * stays opaque.
+ */
+const ORG_CONSTRAINT_MESSAGE: Array<[RegExp, string]> = [
+  [/builder_organisations_legal_name_key/, 'An organisation with this legal name already exists.'],
+  [/builder_organisations_abn_key/, 'Another organisation is already recorded against this ABN.'],
+  [/builder_organisations_acn_key/, 'Another organisation is already recorded against this ACN.'],
+  [/builder_organisations_postcode_check|postcode/, 'Postcode must be four digits.'],
+  [/contact_email/, 'Enter a valid contact email address.'],
+  [/builder_organisations_abn_check|abn/, 'ABN must be 11 digits.'],
+  [/builder_organisations_acn_check|acn/, 'ACN must be 9 digits.'],
+  [/legal_name/, 'A legal name is required.'],
+  [/org_type/, 'Choose an organisation type.'],
+  [/state/, 'State must be an Australian state or territory.'],
+];
+
+const organisationWriteFailure = (
+  error: { message?: string; details?: string; code?: string } | null | undefined,
+): { error: string; code: string } | null => {
+  if (!error) return null;
+  const text = `${error.message ?? ''} ${error.details ?? ''}`;
+  const isConstraint = error.code === '23505' || error.code === '23514'
+    || error.code === '23502' || /duplicate key value|violates check constraint|null value in column/.test(text);
+  if (!isConstraint) return null;
+  for (const [pattern, message] of ORG_CONSTRAINT_MESSAGE) {
+    if (pattern.test(text)) {
+      return { error: message, code: error.code === '23505' ? 'duplicate' : 'invalid_field' };
+    }
+  }
+  return { error: 'Some of these organisation details were refused. Check the fields and try again.', code: 'invalid_field' };
+};
+
 /** Column allow-lists. No handler ever selects `*`. */
 const ORG_SELECT = `id, legal_name, trading_name, org_type, abn, acn, contact_email,
   contact_phone, website, address_line1, address_line2, suburb, state, postcode,
@@ -393,23 +436,34 @@ Deno.serve(async (req) => {
           return json({ error: 'state must be an Australian state or territory' }, 400, cors);
         }
         const abn = digitsOnly(body.abn);
-        if (abn && !/^[0-9]{11}$/.test(abn)) return json({ error: 'abn must be 11 digits' }, 400, cors);
+        if (abn && !/^[0-9]{11}$/.test(abn)) return json({ error: 'ABN must be 11 digits', code: 'invalid_field' }, 400, cors);
         const acn = digitsOnly(body.acn);
-        if (acn && !/^[0-9]{9}$/.test(acn)) return json({ error: 'acn must be 9 digits' }, 400, cors);
+        if (acn && !/^[0-9]{9}$/.test(acn)) return json({ error: 'ACN must be 9 digits', code: 'invalid_field' }, 400, cors);
+        // The column refuses these too; refusing them here is what turns a
+        // 500 into a sentence naming the field.
+        const postcode = trimmed(body.postcode);
+        if (postcode && !/^[0-9]{4}$/.test(postcode)) {
+          return json({ error: 'Postcode must be four digits', code: 'invalid_field' }, 400, cors);
+        }
+        const contactEmail = trimmed(body.contact_email)?.toLowerCase() ?? null;
+        if (contactEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(contactEmail)) {
+          return json({ error: 'Enter a valid contact email address', code: 'invalid_field' }, 400, cors);
+        }
+
 
         const payload: Record<string, unknown> = {
           legal_name: legalName,
           trading_name: trimmed(body.trading_name),
           org_type: orgType,
           abn, acn,
-          contact_email: trimmed(body.contact_email)?.toLowerCase() ?? null,
+          contact_email: contactEmail,
           contact_phone: trimmed(body.contact_phone),
           website: trimmed(body.website),
           address_line1: trimmed(body.address_line1),
           address_line2: trimmed(body.address_line2),
           suburb: trimmed(body.suburb),
           state: state ? state.toUpperCase() : null,
-          postcode: trimmed(body.postcode),
+          postcode,
           notes: trimmed(body.notes),
           updated_by: adminUserId,
         };
@@ -421,7 +475,11 @@ Deno.serve(async (req) => {
           const { data, error } = await supabase.from('builder_organisations')
             .insert({ ...payload, status: 'pending_activation', is_active: false, created_by: adminUserId })
             .select(ORG_SELECT).single();
-          if (error) throw error;
+          if (error) {
+            const refused = organisationWriteFailure(error);
+            if (refused) return json(refused, 409, cors);
+            throw error;
+          }
           auditRows.push({ action: 'builder_organisation_created', entity_id: data.id });
           return json({ organisation: data }, 200, cors);
         }
@@ -443,7 +501,11 @@ Deno.serve(async (req) => {
         const { data, error } = await supabase.from('builder_organisations')
           .update(payload).eq('id', organisationId).eq('row_version', expectedVersion)
           .select(ORG_SELECT).maybeSingle();
-        if (error) throw error;
+        if (error) {
+          const refused = organisationWriteFailure(error);
+          if (refused) return json(refused, 409, cors);
+          throw error;
+        }
         if (!data) {
           return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
         }

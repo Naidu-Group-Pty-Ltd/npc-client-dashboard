@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 
 import {
   Search, Users, Loader2, X, ArrowUpDown, UserCheck, Clock, SortAsc,
@@ -675,13 +676,14 @@ export default function FinancePortalClients() {
               )}
             >
               <Search className="absolute left-3 h-4 w-4 text-muted-foreground pointer-events-none" />
-              <Input
+              <SearchInput
+                value={search}
+                onValueChange={setSearch}
                 ref={inputRef}
                 placeholder="Search clients… ⌘K"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
                 onFocus={() => setSearchFocused(true)}
                 onBlur={() => setSearchFocused(false)}
+                hideIcon
                 className="pl-9 pr-8 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
               />
               <AnimatePresence>

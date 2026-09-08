@@ -1,10 +1,16 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl, useMap } from 'react-leaflet';
+import {
+  AttributionControl,
+  Circle,
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  ScaleControl,
+  useMap,
+} from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet.markercluster/dist/MarkerCluster.css';
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import MarkerClusterGroup from 'react-leaflet-cluster';
 import {
   AlertTriangle,
   Bath,
@@ -16,6 +22,7 @@ import {
   Crosshair,
   ExternalLink,
   Flame,
+  HardHat,
   Layers,
   LayoutGrid,
   Loader2,
@@ -48,14 +55,18 @@ import { PropertyListing } from '@/lib/airtable';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
 import { HeatLayer } from './ListingsHeatLayer';
+import { ListingStackPager, type StackPager } from './ListingStackPager';
 import {
+  BASEMAP_CATALOG,
   buildHeatModel,
+  colocationKey,
   computePriceTiers,
   describeHeatLegend,
   escapeHtml,
   formatCompactAud,
   formatFullAud,
   getStoredListingPoint,
+  groupByCoordinate,
   isBasemapId,
   isHeatFocus,
   isHeatMetric,
@@ -63,12 +74,15 @@ import {
   listingSetSignature,
   priceTier,
   propertyGlyph,
+  resolveStack,
+  stepStackIndex,
   PROPERTY_GLYPHS,
+  describeAddressCompleteness,
   describeGeocodePrecision,
-  summariseCluster,
-  tierMixGradientStops,
+  summariseStack,
+  type BasemapDefinition,
   type BasemapId,
-  type ClusterMember,
+  type StackMember,
   type GeoPoint,
   type HeatFocus,
   type HeatMetric,
@@ -78,6 +92,7 @@ import {
   type PropertyGlyph,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
+import { isBuilderStockMapId } from '@/lib/builderStockMapPoint';
 import { displayPrice, formatArea } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
 import { ListingHero } from './ListingHero';
@@ -86,43 +101,12 @@ import { useListingImages } from '@/hooks/useListingImages';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.pure';
 import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPostcodeGeo.pure';
-import { installClusterAnchorPatch } from '@/lib/leafletClusterAnchor';
 import { BUILD_ID } from '@/lib/buildVersion';
 
-/**
- * The cluster plugin's own types are a `declare module 'leaflet'` augmentation
- * that the app's typecheck config does not pull in, so the two shapes this file
- * actually touches are declared locally. Structural, and narrow on purpose: a
- * plugin type this file does not use cannot go stale here.
- */
-type MarkerClusterGroupInstance = L.FeatureGroup & {
-  zoomToShowLayer?: (layer: L.Layer, callback?: () => void) => void;
-};
-type MarkerClusterInstance = L.Marker & {
-  getAllChildMarkers: () => L.Marker[];
-  getChildCount: () => number;
-};
 import type { StoredListingImage } from '@/lib/listingImages';
-
-/**
- * Leaflet copies unknown constructor options straight onto `marker.options`, and
- * react-leaflet forwards every prop it does not consume into that constructor.
- * That is the cheapest channel for handing a marker's price down to the cluster
- * icon factory, which only ever sees `L.Marker` instances — no React state, no
- * side lookup table that could drift out of sync with the rendered markers.
- */
-declare module 'leaflet' {
-  interface MarkerOptions {
-    listingPrice?: number | null;
-    listingTier?: PriceTier;
-    listingSuburb?: string | null;
-  }
-}
 
 export type { GeoPoint } from '@/lib/listingsMap';
 
-// Clusters draw on a real member property, never a mid-ocean average.
-installClusterAnchorPatch();
 
 // Fix default marker icons for bundlers that don't handle Leaflet's asset URLs.
 delete (L.Icon.Default.prototype as { _getIconUrl?: unknown })._getIconUrl;
@@ -170,6 +154,19 @@ interface ListingsMapViewProps {
    * gallery.
    */
   images?: Record<string, StoredListingImage[]>;
+  /**
+   * The builder-stock layer's controls. Absent where the deployment has no
+   * builder stock — the toggle is drawn only when there is something to toggle,
+   * because a control that switches nothing on is worse than no control.
+   */
+  builderStock?: {
+    available: boolean;
+    shown: boolean;
+    onToggle: (next: boolean) => void;
+    count: number;
+    /** The layer could not be read. The map still draws every listing. */
+    failed: boolean;
+  };
 }
 
 interface ListingMarker {
@@ -178,13 +175,10 @@ interface ListingMarker {
   /**
    * The SAME tuple instance across rebuilds while the coordinates are
    * unchanged. react-leaflet compares `position` by reference and answers
-   * every "new" reference with `marker.setLatLng()`; Leaflet fires `move`
-   * even for identical values; and leaflet.markercluster answers every child
-   * move by REMOVING the marker from the cluster tree and re-adding it. An
-   * inline `[lat, lng]` therefore rebuilt the entire clustering, marker by
-   * marker, on every render — cluster bubbles reshuffled "without direction"
-   * on every filter tick, image wave and hover. A stable tuple makes all of
-   * that simply not happen.
+   * every "new" reference with `marker.setLatLng()`, and Leaflet fires `move`
+   * even for identical values — so an inline `[lat, lng]` moves every marker
+   * on the map on every render, on every filter tick, image wave and hover.
+   * A stable tuple makes all of that simply not happen.
    */
   position: [number, number];
   /** Geocoder location_type for the point, when the lookup reported one. */
@@ -197,45 +191,22 @@ type PinVariant = 'chip' | 'pin' | 'ghost';
 /* Basemaps                                                                    */
 /* -------------------------------------------------------------------------- */
 
-interface BasemapDefinition {
-  id: Exclude<BasemapId, 'auto'>;
-  url: string;
-  attribution: string;
-  labelsUrl?: string;
-  maxNativeZoom: number;
-  /** Tiles are dark, so overlays need the inverted treatment. */
-  dark: boolean;
-}
+/**
+ * The catalogue lives in `@/lib/listingsMap` with the reasoning attached: it
+ * is keyless Esri tile services throughout, because CARTO — where Street and
+ * Midnight used to come from — started answering anonymous requests with an
+ * "API KEY REQUIRED" watermark baked into every tile.
+ */
+/**
+ * Leaflet's own credit, minus the Ukrainian flag SVG its default attribution
+ * prefix carries in 1.9.x. The library is still credited, as its licence asks;
+ * the flag is upstream editorial and reads, on a property marketplace, as a
+ * statement about the listings rather than about the mapping library.
+ */
+const LEAFLET_CREDIT =
+  '<a href="https://leafletjs.com" title="A JavaScript library for interactive maps">Leaflet</a>';
 
-const OSM_ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-const CARTO_ATTRIBUTION = '&copy; <a href="https://carto.com/attributions">CARTO</a>';
-
-const BASEMAP_DEFS: Record<Exclude<BasemapId, 'auto'>, BasemapDefinition> = {
-  light: {
-    id: 'light',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    attribution: `${OSM_ATTRIBUTION} ${CARTO_ATTRIBUTION}`,
-    maxNativeZoom: 19,
-    dark: false,
-  },
-  dark: {
-    id: 'dark',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: `${OSM_ATTRIBUTION} ${CARTO_ATTRIBUTION}`,
-    maxNativeZoom: 19,
-    dark: true,
-  },
-  satellite: {
-    id: 'satellite',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    labelsUrl:
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
-    maxNativeZoom: 18,
-    dark: true,
-  },
-};
+const BASEMAP_DEFS = BASEMAP_CATALOG;
 
 const BASEMAP_LABELS: Record<BasemapId, string> = {
   auto: 'Match theme',
@@ -372,76 +343,56 @@ function pinIcon(
   });
 }
 
-function clusterSizeTier(count: number): { tier: string; size: number } {
-  if (count < 10) return { tier: 'sm', size: 36 };
-  if (count < 50) return { tier: 'md', size: 44 };
-  if (count < 250) return { tier: 'lg', size: 52 };
-  return { tier: 'xl', size: 60 };
+/**
+ * The mark for several properties standing on ONE coordinate.
+ *
+ * It is a pin, not a bubble: it points at the coordinate the way every other
+ * pin does, because that coordinate is exactly where these properties are. The
+ * count rides as a badge rather than replacing the pin, so the mark still reads
+ * as "a property here" first and "and there are more of them" second — which is
+ * the truth, and is what the old cluster bubble could never say.
+ */
+function stackIcon(
+  variant: PinVariant,
+  tier: PriceTier,
+  glyph: PropertyGlyph,
+  count: number,
+  pinState: PinState,
+  approx = false,
+): L.DivIcon {
+  const active = pinState === 'active';
+  const state =
+    (pinState === 'active'
+      ? ' listing-pin--active'
+      : pinState === 'peek'
+        ? ' listing-pin--peek'
+        : '') + (approx ? ' listing-pin--approx' : '');
+  const compact = count > 99 ? '99+' : String(count);
+  const badge = `<span class="listing-pin__count">${escapeHtml(compact)}</span>`;
+
+  if (variant === 'ghost') {
+    return cacheIcon(`stack-ghost|${compact}|${pinState}|${approx}`, () =>
+      L.divIcon({
+        className: `listing-pin listing-pin--ghost listing-pin--stack${state}`,
+        html: '<span class="listing-pin__dot"></span>' + badge,
+        iconSize: [GHOST_SIZE, GHOST_SIZE],
+        iconAnchor: [GHOST_SIZE / 2, GHOST_SIZE / 2],
+        popupAnchor: [0, -GHOST_SIZE / 2],
+      }),
+    );
+  }
+
+  return cacheIcon(`stack|${tier}|${glyph}|${compact}|${pinState}|${approx}`, () =>
+    L.divIcon({
+      className: `listing-pin listing-pin--pin listing-pin--stack listing-pin--${tier}${state}`,
+      html: (active ? HALO_HTML : '') + teardropSvg(glyph) + badge,
+      iconSize: [PIN_WIDTH, PIN_HEIGHT],
+      iconAnchor: [PIN_WIDTH / 2, PIN_TIP_Y],
+      popupAnchor: [0, -(PIN_TIP_Y - 2)],
+    }),
+  );
 }
 
-/** Below this a median price label crowds the ring more than it informs. */
-const CLUSTER_PRICE_MIN_COUNT = 4;
-
-interface ClusterLike {
-  getChildCount: () => number;
-  getAllChildMarkers: () => L.Marker[];
-}
-
-function clusterMembers(cluster: ClusterLike): ClusterMember[] {
-  return cluster.getAllChildMarkers().map((marker) => ({
-    price: marker.options.listingPrice ?? null,
-    tier: marker.options.listingTier ?? 'unknown',
-  }));
-}
-
-function makeClusterIconFactory(ghost: boolean) {
-  return (cluster: ClusterLike): L.DivIcon => {
-    const count = cluster.getChildCount();
-    const { tier, size } = clusterSizeTier(count);
-    const compact = count > 999 ? `${Math.round(count / 1000)}k` : String(count);
-
-    if (ghost) {
-      return L.divIcon({
-        className: cn('listings-cluster', `listings-cluster--${tier}`, 'listings-cluster--ghost'),
-        html:
-          '<span class="listings-cluster__ring" aria-hidden="true"></span>' +
-          `<span class="listings-cluster__count">${escapeHtml(compact)}</span>`,
-        iconSize: L.point(size, size),
-        iconAnchor: [size / 2, size / 2],
-      });
-    }
-
-    const summary = summariseCluster(clusterMembers(cluster));
-    const medianLabel = formatCompactAud(summary.median);
-    const showPrice = medianLabel !== null && count >= CLUSTER_PRICE_MIN_COUNT;
-    // Stops are the only thing interpolated: `tierMixGradientStops` emits
-    // `var(--tier-*)` names, so no colour value is ever written from here.
-    const ring =
-      '<span class="listings-cluster__ring" aria-hidden="true" style="background:conic-gradient(from -90deg,' +
-      `${tierMixGradientStops(summary.mix)})"></span>`;
-
-    const parts = [
-      ring,
-      '<span class="listings-cluster__core" aria-hidden="true"></span>',
-      `<span class="listings-cluster__count">${escapeHtml(compact)}</span>`,
-    ];
-    if (showPrice) {
-      parts.push(
-        `<span class="listings-cluster__price listings-cluster__price--${summary.medianTier}">` +
-          `${escapeHtml(medianLabel)}</span>`,
-      );
-    }
-
-    return L.divIcon({
-      className: cn('listings-cluster', `listings-cluster--${tier}`),
-      html: parts.join(''),
-      iconSize: L.point(size, size),
-      iconAnchor: [size / 2, size / 2],
-    });
-  };
-}
-
-const clusterRadius = (zoom: number) => (zoom >= 15 ? 24 : zoom >= 12 ? 42 : 62);
 
 /**
  * "You are here". Deliberately nothing like a listing pin — it is a fact about
@@ -635,7 +586,17 @@ function PinGlyphSwatch({ glyph }: { glyph: PropertyGlyph }) {
   );
 }
 
-function PinLegend({ tiers }: { tiers: PriceTiers | null }) {
+function PinLegend({
+  tiers,
+  hasBuilderStock,
+}: {
+  tiers: PriceTiers | null;
+  /**
+   * The builder line is drawn only when builder stock is actually on the map.
+   * A key to a mark nobody can see is noise, and this legend is already dense.
+   */
+  hasBuilderStock: boolean;
+}) {
   return (
     <div className="space-y-2.5">
       {tiers && (
@@ -666,6 +627,18 @@ function PinLegend({ tiers }: { tiers: PriceTiers | null }) {
           ))}
         </ul>
       </div>
+
+      {hasBuilderStock && (
+        <div className="space-y-1.5">
+          <p className={LEGEND_HEADING}>Pin icon · source</p>
+          <ul className="flex flex-wrap gap-x-3 gap-y-1.5">
+            <li className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <PinGlyphSwatch glyph="builder" />
+              {PIN_GLYPH_LABELS.builder}
+            </li>
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
@@ -758,7 +731,9 @@ function ResultsPanel({
         <ul className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto">
           {sorted.map(({ listing }) => {
             const tier = priceTier(listing.price, tiers);
-            const glyph = propertyGlyph(listing.propertyType);
+            const glyph = isBuilderStockMapId(listing.id)
+              ? 'builder'
+              : propertyGlyph(listing.propertyType);
             const active = listing.id === selectedId;
             const locality = [listing.suburb, listing.state].filter(Boolean).join(' ');
             const beds = listing.beds ?? listing.bedrooms;
@@ -871,40 +846,48 @@ function pinTooltipHtml(
   );
 }
 
-/**
- * What a cluster says on hover, before anyone decides to zoom: how many
- * properties, what they are worth at the median, and where they are — the
- * question a bubble over a whole region begs. Built lazily per hover;
- * clusters are recreated on every re-cluster, so nothing here goes stale.
- */
-function clusterTooltipHtml(cluster: ClusterLike): string {
-  const members = clusterMembers(cluster);
-  const summary = summariseCluster(members);
-  const median = formatCompactAud(summary.median);
 
-  const bySuburb = new Map<string, number>();
-  for (const marker of cluster.getAllChildMarkers()) {
-    const suburb = marker.options.listingSuburb;
-    if (suburb) bySuburb.set(suburb, (bySuburb.get(suburb) ?? 0) + 1);
-  }
-  const top = Array.from(bySuburb.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 2)
-    .map(([name]) => name);
-  const rest = bySuburb.size - top.length;
+/**
+ * What a stack says on hover: how many, what they are worth, and — because
+ * they share a coordinate — what they actually are. Unlike the cluster tooltip
+ * this replaces, it never has to explain WHERE, since every member is at the
+ * pin.
+ */
+function stackTooltipHtml(members: ListingMarker[], tiers: PriceTiers | null): string {
+  const summary = summariseStack(
+    members.map((m) => ({
+      price: typeof m.listing.price === 'number' ? m.listing.price : null,
+      tier: priceTier(m.listing.price, tiers),
+    })),
+  );
+  const median = formatCompactAud(summary.median);
   const where =
-    top.length === 0
-      ? null
-      : rest > 0
-        ? `${top.join(', ')} +${rest} more suburb${rest === 1 ? '' : 's'}`
-        : top.join(', ');
+    members[0].listing.address ||
+    [members[0].listing.suburb, members[0].listing.state].filter(Boolean).join(' ') ||
+    null;
+
+  const lines = members.slice(0, 4).map((m) => {
+    const price = formatCompactAud(m.listing.price) ?? 'Price on request';
+    const what =
+      m.listing.address || m.listing.title || m.listing.propertyType || 'Listing';
+    return `<span class="listings-pin-tip__row">${escapeHtml(price)} · ${escapeHtml(what)}</span>`;
+  });
+  const rest = members.length - lines.length;
 
   return (
     `<span class="listings-pin-tip__price">${escapeHtml(
-      `${summary.count} propert${summary.count === 1 ? 'y' : 'ies'}${median ? ` · median ${median}` : ''}`,
+      `${summary.count} propert${summary.count === 1 ? 'y' : 'ies'} here${median ? ` · median ${median}` : ''}`,
     )}</span>` +
     (where ? `<span class="listings-pin-tip__address">${escapeHtml(where)}</span>` : '') +
-    `<span class="listings-pin-tip__specs">Click to zoom in</span>`
+    lines.join('') +
+    // Say what the click DOES. Without this the reader has no way of knowing
+    // the properties under the top one are reachable at all — which is the
+    // whole job the spiderfy used to do.
+    `<span class="listings-pin-tip__specs">${escapeHtml(
+      rest > 0
+        ? `+${rest} more — click to step through all ${summary.count}`
+        : `Click to step through all ${summary.count}`,
+    )}</span>`
   );
 }
 
@@ -926,7 +909,6 @@ interface ListingMarkersProps {
   onSelect: (id: string) => void;
   /** Keeps a live id → marker index so the results panel can reach a pin. */
   registerMarker: (id: string, marker: L.Marker | null) => void;
-  clusterRef: React.MutableRefObject<MarkerClusterGroupInstance | null>;
 }
 
 const ListingMarkers = memo(function ListingMarkers({
@@ -938,71 +920,99 @@ const ListingMarkers = memo(function ListingMarkers({
   hoveredId,
   onSelect,
   registerMarker,
-  clusterRef,
 }: ListingMarkersProps) {
-  const ghost = variant === 'ghost';
-  const iconFactory = useMemo(() => makeClusterIconFactory(ghost), [ghost]);
+  /**
+   * One mark per COORDINATE, never per neighbourhood.
+   *
+   * Proximity clustering used to sit here. Its bubble is drawn at one member's
+   * position while standing for properties spread over hundreds of kilometres,
+   * so its location carries no meaning — and a mark on a map that carries no
+   * location is indistinguishable from a pin in the wrong place. It was read as
+   * a wrong pin every time it was looked at.
+   *
+   * Grouping by exact coordinate keeps the one case that genuinely needs a
+   * count — the corpus stacks properties on identical points, twenty-six on one
+   * Traralgon address and a whole builder release on one suburb centroid, where
+   * only the top pin was clickable and the rest were invisible — while
+   * guaranteeing that every mark stands exactly where its properties are.
+   */
+  const groups = useMemo(
+    () => groupByCoordinate(markers, (m) => m.point),
+    [markers],
+  );
 
   if (markers.length === 0) return null;
 
   return (
-    <MarkerClusterGroup
-      ref={clusterRef}
-      // The cluster group only reads its options once, so switching between the
-      // solid and ghost cluster styles has to remount it. Chip ↔ dot only
-      // changes the child markers, so it deliberately shares a key.
-      key={ghost ? 'ghost' : 'solid'}
-      chunkedLoading
-      showCoverageOnHover={false}
-      spiderfyOnMaxZoom
-      removeOutsideVisibleBounds
-      maxClusterRadius={clusterRadius}
-      iconCreateFunction={iconFactory}
-      polygonOptions={{ opacity: 0, fillOpacity: 0 }}
-    >
-      {markers.map(({ listing, position, precision }) => {
+    <>
+      {groups.map((group) => {
+        // The representative: the selected or hovered member if this stack
+        // holds one, so a stack lights up when its listing is chosen, and
+        // otherwise the first — which is the caller's own ordering.
+        const active = group.members.find((m) => m.listing.id === selectedId);
+        const peeked = group.members.find((m) => m.listing.id === hoveredId);
+        const lead = active ?? peeked ?? group.members[0];
+        const { listing, position, precision } = lead;
+        const count = group.members.length;
+
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
-        const glyph = propertyGlyph(listing.propertyType);
+        // Builder stock is marked by WHERE IT CAME FROM, not by its type: a
+        // builder's house and an agent's house are the same property type and
+        // a reader needs to tell the two offers apart.
+        const glyph = isBuilderStockMapId(listing.id)
+          ? 'builder'
+          : propertyGlyph(listing.propertyType);
         const approx = describeGeocodePrecision(precision).tier === 'area';
-        const pinState: PinState =
-          listing.id === selectedId ? 'active' : listing.id === hoveredId ? 'peek' : 'idle';
-        const title = [
-          listing.address || listing.suburb || 'Listing',
-          listing.propertyType,
-          formatFullAud(listing.price),
-        ]
-          .filter(Boolean)
-          .join(' · ');
+        const pinState: PinState = active ? 'active' : peeked ? 'peek' : 'idle';
+        const title =
+          count > 1
+            ? `${count} properties at ${listing.address || listing.suburb || 'this location'}`
+            : [
+                listing.address || listing.suburb || 'Listing',
+                listing.propertyType,
+                formatFullAud(listing.price),
+              ]
+                .filter(Boolean)
+                .join(' · ');
+
         return (
           <Marker
-            key={listing.id}
-            ref={(instance) => registerMarker(listing.id, instance)}
+            key={group.key}
+            ref={(instance) => {
+              // Every member resolves to this stack's marker, so the results
+              // panel can reach a listing that is underneath another one.
+              for (const member of group.members) {
+                registerMarker(member.listing.id, instance);
+              }
+            }}
             position={position}
-            icon={pinIcon(variant, tier, glyph, label, pinState, approx)}
+            icon={
+              count > 1
+                ? stackIcon(variant, tier, glyph, count, pinState, approx)
+                : pinIcon(variant, tier, glyph, label, pinState, approx)
+            }
             // Lift the open (or peeked) listing clear of its neighbours so the
             // highlighted pin is never buried under the ones around it.
             zIndexOffset={pinState === 'active' ? 1200 : pinState === 'peek' ? 900 : 0}
-            // Read back by the cluster icon factory — see the `leaflet` module
-            // augmentation above.
-            listingPrice={typeof listing.price === 'number' ? listing.price : null}
-            listingTier={tier}
-            listingSuburb={listing.suburb ?? null}
             alt={title}
             riseOnHover
             keyboard
             eventHandlers={{
-              click: () => onSelect(listing.id),
+              click: () => onSelect(lead.listing.id),
               mouseover: (event) => {
                 // Rebuilt on every hover rather than bound once: the page's
                 // image resolution may have delivered this listing's
                 // photograph since the last look, and the card should show it.
                 const marker = event.target as L.Marker;
-                const html = pinTooltipHtml(
-                  listing,
-                  imagesRef.current?.[listing.id]?.[0]?.url ?? null,
-                  precision,
-                );
+                const html =
+                  count > 1
+                    ? stackTooltipHtml(group.members, tiers)
+                    : pinTooltipHtml(
+                        listing,
+                        imagesRef.current?.[listing.id]?.[0]?.url ?? null,
+                        precision,
+                      );
                 if (marker.getTooltip()) marker.setTooltipContent(html);
                 else {
                   marker.bindTooltip(html, {
@@ -1018,53 +1028,10 @@ const ListingMarkers = memo(function ListingMarkers({
           />
         );
       })}
-    </MarkerClusterGroup>
+    </>
   );
 });
 
-/**
- * Cluster hover intelligence: count, median and where — bound lazily on the
- * group's own event, so a thousand clusters cost nothing until one is under
- * the pointer.
- */
-function ClusterHoverIntel({
-  clusterRef,
-  signature,
-}: {
-  clusterRef: React.MutableRefObject<MarkerClusterGroupInstance | null>;
-  signature: string;
-}) {
-  useEffect(() => {
-    const group = clusterRef.current;
-    if (!group) return;
-    const onOver = (event: L.LeafletEvent) => {
-      const cluster = (event as { propagatedFrom?: unknown; layer?: unknown }).propagatedFrom ??
-        (event as { layer?: unknown }).layer;
-      const marker = cluster as (MarkerClusterInstance & { __npcIntel?: boolean }) | undefined;
-      if (!marker || typeof marker.getAllChildMarkers !== 'function') return;
-      try {
-        if (!marker.__npcIntel) {
-          marker.__npcIntel = true;
-          marker.bindTooltip(clusterTooltipHtml(marker as unknown as ClusterLike), {
-            direction: 'top',
-            offset: L.point(0, -22),
-            opacity: 1,
-            className: 'listings-pin-tip',
-          });
-        }
-        marker.openTooltip();
-      } catch {
-        /* a tooltip is never worth an exception on the map */
-      }
-    };
-    group.on('clustermouseover', onOver);
-    return () => {
-      group.off('clustermouseover', onOver);
-    };
-  }, [clusterRef, signature]);
-
-  return null;
-}
 
 /* -------------------------------------------------------------------------- */
 /* Popup card                                                                  */
@@ -1092,17 +1059,25 @@ function ListingPopupCard({
   listing,
   point,
   precision,
+  pager,
   onOpenDetails,
   onEmailAgent,
 }: {
   listing: PropertyListing;
   point: GeoPoint;
   precision?: string | null;
+  /** Present only where more than one property shares this exact point. */
+  pager?: StackPager | null;
   onOpenDetails: () => void;
   onEmailAgent?: () => void;
 }) {
   const locality = [listing.suburb, listing.state, listing.zipCode].filter(Boolean).join(' ');
-  const precisionNote = describeGeocodePrecision(precision).note;
+  // What the provider managed, else what the record could offer. The second
+  // reading is the actionable one — "nobody has told us the street number" is
+  // a different problem from "we could not find the address we were given".
+  const precisionNote =
+    describeGeocodePrecision(precision).note
+    ?? describeAddressCompleteness(listing.addressPrecision);
   // The same decision the card and the table make, so one listing cannot read
   // "$1,599,000" in the grid and "Price undisclosed" in the popup.
   const price = displayPrice(listing);
@@ -1182,6 +1157,9 @@ function ListingPopupCard({
 
   return (
     <div ref={cardRef} className="min-w-[268px] max-w-[300px] space-y-2.5">
+      {pager ? (
+        <ListingStackPager pager={pager} where={listing.suburb || listing.address} />
+      ) : null}
       {/*
         The whole gallery, with Street View as its last slide.
 
@@ -1317,7 +1295,13 @@ function ListingPopupCard({
 /* Main view                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function ListingsMapView({ listings, onSelectListing, onEmailAgent, images }: ListingsMapViewProps) {
+export function ListingsMapView({
+  listings,
+  onSelectListing,
+  onEmailAgent,
+  images,
+  builderStock,
+}: ListingsMapViewProps) {
   // Stable identity for the marker layer; see ListingMarkersProps.imagesRef.
   const imagesRef = useRef<Record<string, StoredListingImage[]> | undefined>(images);
   imagesRef.current = images;
@@ -1365,7 +1349,6 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   const popupRef = useRef<L.Popup | null>(null);
   const markersRef = useRef<ListingMarker[]>([]);
   const markerIndexRef = useRef(new Map<string, L.Marker>());
-  const clusterRef = useRef<MarkerClusterGroupInstance | null>(null);
   const userMovedRef = useRef(false);
   const programmaticUntilRef = useRef(0);
   const reducedMotion = useMemo(prefersReducedMotion, []);
@@ -1439,6 +1422,34 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   const selected = useMemo(
     () => markers.find((m) => m.listing.id === selectedId) ?? null,
     [markers, selectedId],
+  );
+
+  /**
+   * Everything standing on the open listing's exact point, in the caller's
+   * order, and where the reader is inside it. This is the whole of what makes
+   * the properties under the top pin reachable, so it lives in a tested pure
+   * function rather than inline here.
+   */
+  const stack = useMemo(
+    () => resolveStack(markers, selected, (m) => m.point),
+    [markers, selected],
+  );
+
+  const stepStack = useCallback(
+    (delta: number) => {
+      if (stack.members.length < 2 || stack.index < 0) return;
+      const next = stepStackIndex(stack.index, delta, stack.members.length);
+      setSelectedId(stack.members[next].listing.id);
+    },
+    [stack],
+  );
+
+  const stackPager = useMemo(
+    () =>
+      stack.members.length > 1 && stack.index >= 0
+        ? { index: stack.index, total: stack.members.length, onStep: stepStack }
+        : null,
+    [stack, stepStack],
   );
 
   // By value, not by render: `position={[lat, lng]}` inline hands react-leaflet
@@ -1678,10 +1689,9 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   /**
    * Open a listing chosen from the results panel.
    *
-   * The pin may be swallowed by a cluster, in which case it has no element and
-   * the popup would open over a stack of markers with nothing to attach it to.
-   * `zoomToShowLayer` zooms or spiderfies until the marker is genuinely visible
-   * and only then selects it.
+   * Every pin stands at its own coordinate, so this is a pan and a select.
+   * Where several properties share a coordinate they share one marker, and
+   * selecting any member lights up that marker.
    */
   const revealListing = useCallback(
     (id: string) => {
@@ -1690,16 +1700,9 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
       userMovedRef.current = true;
       markProgrammatic();
 
-      const group = clusterRef.current;
-      const marker = markerIndexRef.current.get(id);
-      if (group && marker && typeof group.zoomToShowLayer === 'function') {
-        try {
-          group.zoomToShowLayer(marker, () => setSelectedId(id));
-          return;
-        } catch {
-          /* falls through to a plain pan — never leave the click unanswered */
-        }
-      }
+      // No cluster to break open any more: every pin is drawn at its own
+      // coordinate, so reaching one is simply a pan to it. A stack shares a
+      // coordinate, so panning reaches all of its members at once.
       map.setView([row.point.lat, row.point.lng], Math.max(map.getZoom(), 15), {
         animate: !reducedMotion,
       });
@@ -1739,6 +1742,14 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
     { value: 'balanced', label: 'Balanced' },
     { value: 'wide', label: 'Wide', title: 'Broad radius, regional patterns' },
   ];
+
+  // Does the plotted set actually contain builder stock? Asked of the
+  // markers rather than of a prop, so the legend cannot claim a mark the
+  // map is not drawing.
+  const hasBuilderStock = useMemo(
+    () => markers.some((m) => isBuilderStockMapId(m.listing.id)),
+    [markers],
+  );
 
   const plottedSummary = `${markers.length} of ${listings.length} plotted`;
   const panelOpen = panelState === 'open' && markers.length > 0;
@@ -1792,7 +1803,20 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
           fadeAnimation={!reducedMotion}
           markerZoomAnimation={!reducedMotion}
           style={{ height: '100%', width: '100%' }}
+          /*
+            Leaflet 1.9 injects a Ukrainian flag SVG of its own into the
+            attribution control, beside the word "Leaflet". It is an upstream
+            solidarity emblem rather than anything about this map's data, and on
+            a property marketplace a national flag in the corner reads as a
+            statement about the listings — it was reported as one. `prefix`
+            replaces the whole built-in string, so the library is still credited
+            (its licence asks for that) and the flag is simply not drawn. The
+            tile providers' own attributions are untouched; they come from each
+            TileLayer.
+          */
+          attributionControl={false}
         >
+          <AttributionControl position="bottomright" prefix={LEAFLET_CREDIT} />
           <TileLayer
             key={basemap.id}
             attribution={basemap.attribution}
@@ -1830,14 +1854,6 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
             hoveredId={hoveredId}
             onSelect={handleSelect}
             registerMarker={registerMarker}
-            clusterRef={clusterRef}
-          />
-          {/* The cluster group remounts when the ghost style toggles, so the
-              signature carries the variant as well as the data size — both
-              re-arm the listeners on the fresh group. */}
-          <ClusterHoverIntel
-            clusterRef={clusterRef}
-            signature={`${markers.length}:${pinVariant === 'ghost'}`}
           />
 
           {userLocation ? (
@@ -1863,7 +1879,11 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
           {selected && popupPosition ? (
             <Popup
-              key={selected.listing.id}
+              // Keyed by the POINT, not the listing. Stepping through a stack
+              // never moves the popup, and remounting it there would tear the
+              // card down and re-run Leaflet's auto-pan for the same
+              // coordinate on every step.
+              key={colocationKey(selected.point.lat, selected.point.lng)}
               ref={popupRef}
               position={popupPosition}
               maxWidth={320}
@@ -1884,9 +1904,13 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
               className="listings-map__popup"
             >
               <ListingPopupCard
+                // The card IS per listing, so its carousel, photo lookup and
+                // auto-find all start again when the reader steps on.
+                key={selected.listing.id}
                 listing={selected.listing}
                 point={selected.point}
                 precision={selected.precision}
+                pager={stackPager}
                 onOpenDetails={openSelectedDetails}
                 onEmailAgent={onEmailAgent ? () => onEmailAgent(selected.listing) : undefined}
               />
@@ -1941,6 +1965,56 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
               )}
               <span className="tabular-nums">{inViewCount}</span> in view
             </button>
+          )}
+
+          {builderStock?.available && (
+            <button
+              type="button"
+              onClick={() => builderStock.onToggle(!builderStock.shown)}
+              aria-pressed={builderStock.shown}
+              title={
+                builderStock.shown
+                  ? `Hide the ${builderStock.count} builder and developer listings from the map`
+                  : `Show ${builderStock.count} builder and developer listings on the map`
+              }
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-md backdrop-blur transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                builderStock.shown
+                  ? 'border-primary/50 bg-primary text-primary-foreground'
+                  : 'border-border/60 bg-background/85 text-foreground hover:bg-muted/60',
+              )}
+            >
+              <HardHat className="h-3.5 w-3.5" aria-hidden="true" />
+              {/*
+                Says what it DOES, not just how many there are. As a bare
+                "91 builder" it read as one of the counters beside it — a
+                statistic, not a switch — so nobody could tell what pressing it
+                would do, and pressing it appeared to delete listings.
+              */}
+              <span className="tabular-nums">{builderStock.count}</span> builder stock
+              <span
+                aria-hidden="true"
+                className={cn(
+                  'ml-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
+                  builderStock.shown
+                    ? 'bg-primary-foreground/20 text-primary-foreground'
+                    : 'bg-muted text-muted-foreground',
+                )}
+              >
+                {builderStock.shown ? 'on' : 'off'}
+              </span>
+            </button>
+          )}
+
+          {builderStock?.failed && (
+            <span
+              className="flex items-center gap-1.5 rounded-full border border-warning/40 bg-background/85 px-3 py-1.5 text-xs font-medium text-muted-foreground shadow-md backdrop-blur"
+              role="status"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 text-warning" aria-hidden="true" />
+              Builder stock unavailable
+            </span>
           )}
 
           {unmapped.length > 0 && !isResolving && (
@@ -2113,7 +2187,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
               {showPins && (
                 <div className="border-t border-border/50 pt-2">
-                  <PinLegend tiers={tiers} />
+                  <PinLegend tiers={tiers} hasBuilderStock={hasBuilderStock} />
                 </div>
               )}
             </div>
@@ -2145,7 +2219,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
 
           {legendOpen && (
             <div className="px-3 pb-3">
-              <PinLegend tiers={tiers} />
+              <PinLegend tiers={tiers} hasBuilderStock={hasBuilderStock} />
             </div>
           )}
         </div>

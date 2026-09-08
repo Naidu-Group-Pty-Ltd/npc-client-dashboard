@@ -11,7 +11,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Check, ChevronDown, Search, Sparkles } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { Check, ChevronDown, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   BUILT_IN_FAMILIES,
@@ -142,16 +143,14 @@ export function FontPicker({ value, weight, template, onChange, onWeightChange, 
             </TabsList>
 
             <TabsContent value="browse" className="p-2 space-y-2 m-0">
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search fonts…"
-                  className="h-8 pl-7 text-xs"
-                  autoFocus
-                />
-              </div>
+              <SearchInput
+                value={query}
+                onValueChange={setQuery}
+                placeholder="Search fonts…"
+                autoFocus
+                className="h-8 text-xs"
+                iconClassName="left-2 h-3.5 w-3.5"
+              />
               <div className="flex flex-wrap gap-1">
                 {(['All', ...FONT_CATEGORIES] as const).map((c) => (
                   <button

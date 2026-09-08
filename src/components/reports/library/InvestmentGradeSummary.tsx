@@ -5,6 +5,14 @@ import { getInvestmentGradeTone, getScoreTone, type ResolvedInvestmentGrade } fr
 interface InvestmentGradeSummaryProps {
   grade: ResolvedInvestmentGrade;
   variant?: 'compact' | 'full';
+  /**
+   * Set where this summary is shown against a report that did not itself
+   * produce the score. The Investment Grade is a judgement about the
+   * PROPERTY, so every report for that property shows it — but a Financial
+   * or Strategic report must not appear to have been graded when the score
+   * came from the Compass assessment beside it.
+   */
+  sourceLabel?: string | null;
 }
 
 const statusContent = (grade: ResolvedInvestmentGrade) => {
@@ -18,7 +26,7 @@ const statusContent = (grade: ResolvedInvestmentGrade) => {
 };
 
 /** Shared presentation for the persisted Investment Grade shown in report and package cards. */
-export function InvestmentGradeSummary({ grade, variant = 'full' }: InvestmentGradeSummaryProps) {
+export function InvestmentGradeSummary({ grade, variant = 'full', sourceLabel = null }: InvestmentGradeSummaryProps) {
   const helpId = useId();
   const status = statusContent(grade);
   const label = `Investment Grade${grade.status === 'calculated' ? ` ${grade.grade || 'available'}${grade.score != null ? `, score ${grade.score} out of 100` : ''}` : ` ${status?.value || 'unavailable'}`}`;
@@ -38,6 +46,9 @@ export function InvestmentGradeSummary({ grade, variant = 'full' }: InvestmentGr
             </div>
             <p className="mt-1 line-clamp-1 text-sm font-semibold text-foreground">{status ? status.value : recommendation}</p>
             <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground">{status ? status.detail : (grade.partialLabel || 'Latest available property scoring assessment')}</p>
+            {sourceLabel && (
+              <p className="mt-0.5 line-clamp-1 text-[11px] text-muted-foreground/80">From the {sourceLabel} assessment for this property</p>
+            )}
           </div>
         </div>
         {grade.status === 'calculated' && grade.score != null ? (

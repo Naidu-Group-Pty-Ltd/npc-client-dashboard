@@ -1181,7 +1181,7 @@ function ReportGenerationProgressInner() {
               )}
             </div>
             {paused && (
-              <div className="border-t border-border bg-warning/10 px-3 py-1.5 text-xs text-warning-foreground dark:text-warning">
+              <div className="border-t border-border bg-warning/10 px-3 py-1.5 text-xs text-warning dark:text-warning">
                 Polling paused • new updates will not appear until you resume
               </div>
             )}

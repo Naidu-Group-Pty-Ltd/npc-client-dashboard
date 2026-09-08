@@ -55,6 +55,18 @@ function walkFiles(dir, out = []) {
   return out;
 }
 
+/**
+ * Source with comments removed, so a rule that asks "is this CALLED?" cannot
+ * be answered by prose. Strings are left alone: a `//` inside one is rare in
+ * these files and dropping the rest of such a line only ever makes a rule
+ * quieter, never louder.
+ */
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
 const sent = new Map();  // header -> file
 const read = new Map();  // header -> file
 
@@ -186,6 +198,13 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
   let src;
   try { src = readFileSync(path, 'utf8'); } catch { continue; } // deployed-only, not in repo
 
+  // A comment-free view, for the rules below that ask whether a helper is
+  // CALLED with no argument. A call never lives in a comment, and prose
+  // explaining the wrong form — which is exactly what a fixed site grows —
+  // must not read as the wrong form. Without this, documenting the defect
+  // re-raises it.
+  const codeSrc = stripComments(src);
+
   // Several functions keep a now-dead wildcard literal but actually build their
   // real headers with createCorsHeaders(origin), or have the origin rewritten
   // per request by withRequestOrigin — those answer an exact origin.
@@ -220,9 +239,44 @@ for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))
   if (
     credentialedVias.length
     && !/withRequestOrigin/.test(src)
-    && /createTokenAuthCorsHeaders\s*\(\s*\)/.test(src)
+    && /createTokenAuthCorsHeaders\s*\(\s*\)/.test(codeSrc)
   ) {
     errors.push(`${path}: calls \`createTokenAuthCorsHeaders()\` with no origin, which answers \`Access-Control-Allow-Origin: *\`, but is called with credentials through ${credentialedVias.join(', ')}. Browsers reject a credentialed response with a wildcard origin. Pass the request origin: \`createTokenAuthCorsHeaders(req.headers.get('origin'))\`.`);
+  }
+
+  // (a4) The same failure again, with no wildcard anywhere to see it by.
+  //
+  //      `createCorsHeaders()` with no origin does not answer `*` — it answers
+  //      `allowedOrigins[0]`, a FIXED origin chosen at import time that has
+  //      nothing to do with who called. Paired with
+  //      `Access-Control-Allow-Credentials: true`, the browser releases the
+  //      response to JS only when the ACAO exactly equals the request's
+  //      Origin. So such a function works from precisely ONE of the origins
+  //      the deployment trusts and fails the preflight from every other, and
+  //      `fetch` rejects opaquely as "Failed to fetch" — which the client
+  //      renders as "Network/CORS error calling <fn>. Please check the
+  //      function deployment and auth/CORS configuration", advice that sends
+  //      the reader to a deployment that is perfectly healthy.
+  //
+  //      Rule (a2) already says exactly this about the sibling helper
+  //      `createTokenAuthCorsHeaders`. It was never said about
+  //      `createCorsHeaders`, and `usesSharedOrigin` above matches
+  //      `createCorsHeaders\s*\(` — the no-argument form included — so calling
+  //      it wrongly SATISFIED the gate. Four browser-reachable functions were
+  //      in that state: `generate-market-intelligence-report` (Audit 4 item
+  //      12, reported as exactly that error message),
+  //      `analyze-meta-ads-phase4`, `security-step-up` (which gates AUSTRAC
+  //      lodgement and AML configuration) and `parse-formara-pdf`.
+  //
+  //      `builder-stock-image-settler` also calls the no-argument form and is
+  //      correct to: pg_cron invokes it, no browser does, so it is not reached
+  //      by any credentialed transport and never enters this loop.
+  if (
+    credentialedVias.length
+    && !/withRequestOrigin/.test(src)
+    && /(?<!TokenAuth)createCorsHeaders\s*\(\s*\)/.test(codeSrc)
+  ) {
+    errors.push(`${path}: calls \`createCorsHeaders()\` with no origin, which answers a FIXED \`Access-Control-Allow-Origin\` (the first allow-listed origin) rather than the caller's, but is called with credentials through ${credentialedVias.join(', ')}. Browsers release a credentialed response only when the origin matches exactly, so every call from any other allow-listed origin fails opaquely as "Failed to fetch". Pass the request origin: \`createCorsHeaders(req.headers.get('origin'))\`.`);
   }
 
   // (a3) Accepting the session cookie means accepting ambient authority, which

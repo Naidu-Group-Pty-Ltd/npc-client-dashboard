@@ -175,10 +175,10 @@ export function CreateReminderForm({ onClose }: { onClose: () => void }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="max-w-[min(92vw,360px)] rounded-xl border-brand-300/20 bg-background dark:bg-background/95 p-1 text-foreground dark:text-foreground shadow-[0_18px_50px_rgba(0,0,0,0.45)] backdrop-blur">
-              <SelectItem value="low" className="rounded-lg focus:bg-success/15 focus:text-success-foreground">Low</SelectItem>
+              <SelectItem value="low" className="rounded-lg focus:bg-success/15 focus:text-success">Low</SelectItem>
               <SelectItem value="medium" className="rounded-lg focus:bg-brand-400/15 focus:text-brand-100">Medium</SelectItem>
-              <SelectItem value="high" className="rounded-lg focus:bg-destructive/15 focus:text-destructive-foreground">High</SelectItem>
-              <SelectItem value="urgent" className="rounded-lg focus:bg-destructive/15 focus:text-destructive-foreground">Urgent</SelectItem>
+              <SelectItem value="high" className="rounded-lg focus:bg-destructive/15 focus:text-destructive">High</SelectItem>
+              <SelectItem value="urgent" className="rounded-lg focus:bg-destructive/15 focus:text-destructive">Urgent</SelectItem>
             </SelectContent>
           </Select>
         </div>

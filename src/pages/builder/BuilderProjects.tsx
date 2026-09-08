@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Building2, ChevronLeft, ChevronRight, HardHat, Loader2, RefreshCw, Search,
-} from 'lucide-react';
+  AlertTriangle, Building2, ChevronLeft, ChevronRight, HardHat, Loader2, RefreshCw, } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +10,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from '@/lib/utils';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
 import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
@@ -76,19 +76,13 @@ export default function BuilderProjects() {
             </CardDescription>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <div className="relative flex-1">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search project name, reference or address"
-                className="pl-9"
-                aria-label="Search projects"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search project name, reference or address"
+              aria-label="Search projects"
+              containerClassName="flex-1"
+            />
             <Select value={status} onValueChange={setStatus}>
               <SelectTrigger className="sm:w-56" aria-label="Filter by status">
                 <SelectValue />

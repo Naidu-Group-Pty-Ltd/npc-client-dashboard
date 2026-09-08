@@ -142,7 +142,7 @@ export const WeeklyReportConfig: React.FC<{ triggerClassName?: string }> = ({ tr
           </div>
 
           {lastSent && (
-            <div className="flex items-center gap-2 rounded-2xl border border-success/20 bg-success/10 p-3 text-xs text-success-foreground shadow-inner shadow-success/30">
+            <div className="flex items-center gap-2 rounded-2xl border border-success/20 bg-success/10 p-3 text-xs text-success shadow-inner shadow-success/30">
               <CheckCircle className="h-3.5 w-3.5 text-success" />
               Last sent: {new Date(lastSent).toLocaleString('en-AU')}
             </div>

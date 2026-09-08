@@ -35,9 +35,16 @@ describe('render-investment-report-pdf authorization contract', () => {
   });
 
   it('escapes watermark text before embedding it in the SVG data URI', () => {
+    // The literal this used to pin was `contact.company_name || brandName ||
+    // "NPC"` — a fallback that tiled another tenant's trading name across every
+    // body page of an unbranded deployment's report. The issuer is resolved
+    // once now (`_shared/reports/issuerIdentity.pure.ts`); what this contract
+    // is actually about — that the name is escaped BEFORE it enters the data
+    // URI — is unchanged and is what the two assertions below check.
     expect(functionSource).toContain(
-      'const wmText = esc(String(contact.company_name || brandName || "NPC").toUpperCase());',
+      'const wmText = esc(issuer.name.toUpperCase());',
     );
+    expect(functionSource).not.toContain('|| "NPC"');
     expect(functionSource).toContain('url("${wmSvg}")');
     expect(functionSource).not.toContain("url('${wmSvg}')");
   });

@@ -19,12 +19,15 @@ async function manageDealData(params: {
   data?: any;
 }) {
   const { data, error } = await invokeSecureFunction('manage-client-data', params);
-  if (error) throw new Error(error.message || 'Operation failed');
+  // Both branches must say the cause. `error` alone is the generic "Failed to
+  // update record" sentence, and a non-2xx takes the FIRST branch — so the
+  // details this file already knew to surface were unreachable for exactly
+  // the failures that most needed them.
+  const withDetail = (message: string, details?: string | null) =>
+    details && details !== message ? `${message} (${details})` : message;
+  if (error) throw new Error(withDetail(error.message || 'Operation failed', error.details));
   if (!data?.success) {
-    // Surface the server's `details` too — `error` alone is the generic
-    // "Failed to update record" sentence, which cannot be acted on.
-    const detail = data?.details && data.details !== data?.error ? ` (${data.details})` : '';
-    throw new Error((data?.error || 'Operation failed') + detail);
+    throw new Error(withDetail(data?.error || 'Operation failed', data?.details));
   }
   return data.result;
 }

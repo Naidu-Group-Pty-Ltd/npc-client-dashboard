@@ -32,6 +32,7 @@
 // unloadable anywhere but Deno. The same reason `repairSourceImages.ts`
 // defers `fetchSource.ts`.
 import type { enrichStockItem, EnrichableStockItem } from './images.ts';
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
 import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 import {
   describeSuppliedEvidence, fallbackMayRun, readStoredRowEvidence,
@@ -296,6 +297,7 @@ export async function settleFallbackImages(
       sourceRow: row.source_row,
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
+      runtimeVersion: RUNTIME_VERSION,
       /*
        * A SUCCESS CLEARS ITS BRANCH RECORD, so without this a property whose
        * brochure just yielded its picture reads `pending` — the branch looks

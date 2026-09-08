@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -12,7 +13,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  FileSignature, Plus, Search, RefreshCw, Loader2, MoreHorizontal, ShieldCheck, AlertTriangle, Trash2,
+  FileSignature, Plus, RefreshCw, Loader2, MoreHorizontal, ShieldCheck, AlertTriangle, Trash2,
 } from 'lucide-react';
 import {
   UNDERTAKING_STATUS_LABELS,
@@ -110,15 +111,12 @@ export default function LoanWriterUndertakings() {
             </TabsList>
           </Tabs>
 
-          <div className="relative w-full sm:w-72">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="pl-9"
-              placeholder="Search writer, licensee, CRN…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search writer, licensee, CRN…"
+            containerClassName="w-full sm:w-72"
+          />
         </div>
 
         <Card>

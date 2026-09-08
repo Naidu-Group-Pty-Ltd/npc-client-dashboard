@@ -269,6 +269,31 @@ jobs:
       - name: Undefined identifiers in src/ (never type debt)
         run: node scripts/security/check-src-missing-names.mjs
 
+      # A search box you cannot empty is a dead end, and it was shipped 90
+      # times. The field is a component now; this stops a raw <Input> search
+      # box being added beside it.
+      - name: Search fields offer a way to clear them
+        run: node scripts/security/check-search-clear.mjs
+
+      # `text-<tone>-foreground` is ink for a SOLID fill and is near-black in
+      # dark mode; on a 10% tint it is invisible. Reported in three
+      # consecutive audits, fixed one instance at a time. 112 more were found.
+      - name: Status ink matches the fill it sits on
+        run: node scripts/security/check-status-ink-contrast.mjs
+
+      # A private bucket refuses the anon browser client, and Supabase Storage
+      # reports that refusal as "Object not found" — indistinguishable from a
+      # document that was never produced. Signing belongs to the server.
+      - name: Signed storage URLs are minted by the server
+        run: node scripts/security/check-client-storage-signing.mjs
+
+      # activity_logs.entity_type is a Postgres enum. An unknown value is a
+      # runtime 22P02 that every audit write in this repo discarded, so the
+      # Integrations page recorded no credential change for the life of the
+      # deployment while answering success: true.
+      - name: Audit rows name an entity type the column accepts
+        run: node scripts/security/check-activity-entity-types.mjs
+
       - name: Build
         run: npm run build
 
@@ -372,6 +397,12 @@ jobs:
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs
+
+      # No invented figures in the report pipeline: Math.random() is
+      # allowlisted per file with a reviewed purpose, and the de-fabricated
+      # data services must keep answering "unavailable" rather than inventing.
+      - name: Fabricated-data gate
+        run: node scripts/security/check-fabricated-data.mjs
 
       # Guards the save below. An EMPTY cache must never be banked: a cache key
       # can be written once, and an exact hit does not consult `restore-keys` —
@@ -477,6 +508,22 @@ jobs:
       # migrations, and Postgres grants EXECUTE to PUBLIC at CREATE time.
       - name: Migration security invariants (WP-17)
         run: node scripts/security/check-migration-security.mjs
+
+      # A migration version is a PRIMARY KEY in supabase_migrations.schema_migrations,
+      # so two files sharing one compete for a single row and the loser can never be
+      # told apart from applied. That is how the agent-fee columns came to be missing
+      # from the prime while the ledger said their version had run.
+      - name: A migration version names exactly one file
+        run: node scripts/security/check-migration-version-collisions.mjs
+
+      # Catalog introspection brings a tenant up and never drops, so an object
+      # these migrations DELETE survives on every existing tenant while every
+      # parity stage — which reconciles on containment — reports a match. The
+      # index is what lets Mission Control tell this repository's leftover from
+      # the tenant's own object, so it has to stay current with the migrations
+      # it describes. Generated, never hand-edited.
+      - name: The migration object index is current
+        run: npm run migrations:index:check
 
       # WP-18: 329 catch blocks across 275 functions returned the caught error
       # to the caller. A Postgres message names tables, columns and constraints;
@@ -893,3 +940,76 @@ jobs:
           name: sbom-cyclonedx
           path: sbom.cdx.json
           if-no-files-found: warn
+
+  # The Builder Stock PDF election worker.
+  #
+  # WHY IT IS NOT UNDER `tsconfig.worker.json`. That gate exists for
+  # `builder-stock-image-worker`, whose stated premise is that it imports
+  # nothing. This worker breaks that premise on purpose — running the SHARED
+  # `electFromPdfBytes` is the whole point of it, and that is what stops the
+  # election drifting into two implementations — so it carries Deno-style `.ts`
+  # specifiers and a remote `esm.sh` import a `moduleResolution: bundler`
+  # compiler cannot resolve. Relaxing that config would weaken the gate for the
+  # worker it was written for, so this worker is excluded there and validated
+  # HERE, by the two toolchains that actually compile it. It is not exempt from
+  # validation; it is validated differently because it is compiled differently.
+  #
+  # ITS OWN JOB, because wrangler 4 refuses to start below Node 22 ("Wrangler
+  # requires at least Node.js v22.0.0") and every job in this file pins 20.
+  # This repo already answers that the same way — the AML loader workflows give
+  # a Node-22 tool its own runner — rather than moving an existing job's floor.
+  builder-stock-pdf-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # RESTORE ONLY, never save: the `security` job owns this key and writes
+      # it. Sharing the read keeps this job off esm.sh on a warm tree — the
+      # outage that took that job down twice in an hour — without two jobs
+      # racing to write one entry.
+      - name: Restore Deno module cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/deno
+          key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/*.ts') }}
+          restore-keys: |
+            deno-${{ runner.os }}-
+
+      # `deno check` walks the worker entry AND every `_shared` module behind
+      # it, so a type error in the shared election fails here too.
+      #
+      # `DENO_NO_PACKAGE_JSON=1` is this repo's own answer to the error this
+      # otherwise dies on, recorded in `check-edge-functions.mjs` under "This
+      # gate was passing by not running": Deno walks up to the root
+      # `package.json`, switches to bring-your-own-node_modules resolution, and
+      # cannot find a declared dependency because no root `npm ci` has run
+      # here. Taking package.json out of scope is also an accurate description
+      # of the target — workerd has no node_modules.
+      #
+      # The wrangler build is the half that resolves the `esm.sh` -> npm alias
+      # and produces the bundle a deploy would upload, so it catches what a
+      # typechecker cannot. Its install is load-bearing: with no `node_modules`
+      # under the worker the build fails. `npm ci` rather than `npm install` so
+      # the tree comes from the committed lockfile, and wrangler is pinned so
+      # this does not go red on somebody else's release.
+      - name: Deno check and wrangler build
+        env:
+          DENO_NO_PACKAGE_JSON: "1"
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          deno check cloudflare/builder-stock-pdf-worker/src/index.ts
+          npm ci --prefix cloudflare/builder-stock-pdf-worker --no-audit --no-fund
+          npx --yes wrangler@4.129.1 deploy --dry-run \
+            -c cloudflare/builder-stock-pdf-worker/wrangler.jsonc

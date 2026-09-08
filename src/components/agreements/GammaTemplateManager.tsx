@@ -227,7 +227,7 @@ export default function GammaTemplateManager() {
           </div>
         ) : isError ? (
           <div className="mx-4 my-5 rounded-2xl border border-destructive/35 bg-[radial-gradient(circle_at_top,hsl(var(--destructive)/0.08),transparent_38%),linear-gradient(180deg,hsl(var(--card)/0.96),hsl(var(--background)/0.88))] px-5 py-10 text-center shadow-sm dark:border-destructive/25 dark:bg-[radial-gradient(circle_at_top,rgba(248,113,113,0.10),transparent_42%),linear-gradient(180deg,rgba(15,23,42,0.78),rgba(2,6,23,0.56))]">
-            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/40 bg-destructive/10 text-destructive dark:border-destructive/25 dark:text-destructive-foreground">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-destructive/40 bg-destructive/10 text-destructive dark:border-destructive/25 dark:text-destructive">
               <AlertCircle className="h-5 w-5" />
             </div>
             <p className="text-base font-semibold text-foreground">Unable to load Gamma templates.</p>

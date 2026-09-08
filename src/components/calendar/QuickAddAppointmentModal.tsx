@@ -8,9 +8,11 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { SearchInput } from '@/components/ui/search-input';
 import { Calendar, Clock, Plus, Loader2, Keyboard, User, Search, Phone, Mail, Video, PhoneCall, Globe, Users, X, UserPlus } from 'lucide-react';
 import { format, addMinutes } from 'date-fns';
 import { toTimezoneISO } from '@/lib/sydneyTime';
+import { describeNotificationPlan, planBookingNotifications } from '@/lib/calendar/bookingNotifications.pure';
 import { getBookingTimezone, AUSTRALIAN_TIMEZONES } from '@/lib/bookingTimezone';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -44,6 +46,17 @@ interface QuickAddAppointmentModalProps {
     assignedUserId?: string;
     secondaryRecipients?: { financeContactId: string; name: string; email: string }[];
     bookingRecipients?: { name: string; email: string }[];
+    /**
+     * The client, by ADDRESS rather than by CRM id.
+     *
+     * The dialog used to hand back a `contactId` and nothing else, so the
+     * client could not be emailed from here even in principle — the CRM was
+     * the only thing that knew how to reach them. Carrying the address makes
+     * the booking announceable with no CRM at all.
+     */
+    client?: { name?: string; email?: string };
+    /** What the operator actually chose: call | zoom | in-person. */
+    appointmentType?: string;
   }) => Promise<boolean>;
   onSearchContacts?: (query: string) => Promise<GHLContact[]>;
 }
@@ -403,12 +416,47 @@ export function QuickAddAppointmentModal({
       assignedUserId: selectedTeamMemberId || undefined,
       secondaryRecipients: secondaryRecipients.length > 0 ? secondaryRecipients : undefined,
       bookingRecipients: bookingRecipientsPayload.length > 0 ? bookingRecipientsPayload : undefined,
+      client: selectedContact
+        ? {
+            name: selectedContact.name
+              || [selectedContact.firstName, selectedContact.lastName].filter(Boolean).join(' ')
+              || undefined,
+            email: selectedContact.email || undefined,
+          }
+        : undefined,
+      appointmentType,
     });
 
     if (success) {
       onOpenChange(false);
     }
   };
+
+  // Who will actually be emailed, shown before the operator commits. The
+  // client used to be invisible here because the CRM sent their confirmation
+  // out of sight; now they are on the list like everyone else, and a client
+  // with no address on file is called out rather than quietly skipped.
+  const notificationPlan = planBookingNotifications({
+    parties: [
+      ...(selectedContact
+        ? [{
+            role: 'client' as const,
+            name: selectedContact.name
+              || [selectedContact.firstName, selectedContact.lastName].filter(Boolean).join(' '),
+            email: selectedContact.email,
+          }]
+        : []),
+      ...bookingRecipients.map((r) => ({
+        role: 'additional_contact' as const, name: r.name, email: r.email,
+      })),
+      ...selectedFinanceContacts.map((fc) => ({
+        role: 'finance_partner' as const, name: fc.name, email: fc.email, financeContactId: fc.id,
+      })),
+    ],
+    // This workspace sends the client's confirmation itself, so a booking
+    // made with no CRM behind it is announced exactly like one that has one.
+    crm: { linked: !!selectedContact?.id, sendsClientConfirmation: false },
+  });
 
   const formContent = (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -480,11 +528,12 @@ export function QuickAddAppointmentModal({
               <div className="relative" ref={dropdownRef}>
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search contacts by name, email, or phone..."
+                  <SearchInput
                     value={contactSearch}
-                    onChange={(e) => setContactSearch(e.target.value)}
+                    onValueChange={setContactSearch}
+                    placeholder="Search contacts by name, email, or phone..."
                     onFocus={() => searchResults.length > 0 && setShowContactDropdown(true)}
+                    hideIcon
                     className="pl-8"
                   />
                   {isSearching && (
@@ -623,14 +672,20 @@ export function QuickAddAppointmentModal({
                 if (nextCalendarId !== selectedCalendarId) setSelectedCalendarId(nextCalendarId);
               }}
             >
-              <SelectTrigger>
-                <Calendar className="h-4 w-4 mr-2 text-muted-foreground" />
+              {/* The trigger must not grow to fit its value. Radix renders the
+                  selected item's own markup inside it, so a long calendar name
+                  ("Mortgage Freedom Consultation") set the trigger's
+                  max-content width, which widened the dialog and pushed the
+                  time picker and the add-recipient button out of frame — the
+                  reported "everything shifted a little to the right". */}
+              <SelectTrigger className="w-full min-w-0 [&>span]:min-w-0 [&>span]:truncate">
+                <Calendar className="h-4 w-4 mr-2 shrink-0 text-muted-foreground" />
                 <SelectValue placeholder="Select calendar" />
               </SelectTrigger>
               <SelectContent>
                 {calendars.map((cal) => (
                   <SelectItem key={cal.id} value={cal.id}>
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <div
                         className="w-3 h-3 rounded-full shrink-0"
                         style={{ backgroundColor: cal.eventColor || '#3b82f6' }}
@@ -658,7 +713,7 @@ export function QuickAddAppointmentModal({
                     Assign Team Member
                   </Label>
                   <Select value={selectedTeamMemberId} onValueChange={setSelectedTeamMemberId}>
-                    <SelectTrigger>
+                    <SelectTrigger className="w-full min-w-0 [&>span]:min-w-0 [&>span]:truncate">
                       <SelectValue placeholder="Auto-assign (round robin)" />
                     </SelectTrigger>
                     <SelectContent>
@@ -916,6 +971,13 @@ export function QuickAddAppointmentModal({
           <span><kbd className="px-1 bg-background rounded">Alt+1-6</kbd> duration</span>
         </div>
       )}
+
+      <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{describeNotificationPlan(notificationPlan)}</span>
+        {notificationPlan.warnings.map((warning) => (
+          <span key={warning} className="mt-1 block text-warning">{warning}</span>
+        ))}
+      </div>
 
       <div className="flex gap-2 pt-2">
         <Button type="button" variant="outline" onClick={() => onOpenChange(false)} className="flex-1">

@@ -1,5 +1,5 @@
 /**
- * Choose the template a report format is generated with.
+ * Choose the template a report format is generated with — by looking at it.
  *
  * ## Why this dialog exists
  *
@@ -10,31 +10,43 @@
  * working copy and hoping the ranking landed on it. This is the chooser that
  * was missing. It navigates nowhere.
  *
+ * ## The design is the picture, so the picture does the choosing
+ *
+ * The first version of this dialog was sixty radio rows of names — ten
+ * families × five layouts, plus the individual designs — and a name is the one
+ * thing a design cannot be ranked by. Every choice now leads with its real
+ * first page (`TemplateDocumentPreview`, the same renderer the customer's PDF
+ * goes through), and the catalogue is arranged the way a person compares:
+ *
+ * - **Families first.** One tile per design family — ten visually different
+ *   documents — never five variants of the same family stacked above the next
+ *   family's first appearance. Opening a family reveals its layout variants
+ *   and its curated colourways, and choosing a colourway repaints every sheet
+ *   in the tray, so "Oxblood or Platinum?" is answered by watching.
+ * - **Then the individual designs**, each with its own face.
+ * - **Active rows with no library lineage** (hand-built templates, the
+ *   Compass pilot) get a face too: their page one is fetched — lazily, page
+ *   one and tokens only, never the whole schema — when the dialog opens.
+ *
  * ## The library IS the choice, not a place the choice points at
  *
- * The catalogue of designs lives in `template_library_entries` — fifty masters
- * per format — and for a long time the only exit from it was "Use template",
- * which creates an *editing draft* in the Builder. Choosing a design for
- * generation is a different act, so this dialog lists the library's
- * production-ready designs for the format directly, grouped by design family
- * with the family's curated colourways beside them. Picking one asks the
- * server for a *selectable* copy (`use_for_reports` — active, approved,
- * user-scoped, idempotent on entry + version + colourway) and stores it as the
- * selection in one flow. The seeded house masters are found by lineage before
- * any copy is made, so adopting the default never mints a private duplicate.
- *
- * An existing selection is followed: the row it descends from is pre-checked
- * and badged, whichever half of the dialog it lives in — and the choice can
- * always be changed or returned to automatic.
+ * Picking a library design asks the server for a *selectable* copy
+ * (`use_for_reports` — active, approved, user-scoped, idempotent on
+ * entry + version + colourway) and stores it as the selection in one flow. The
+ * seeded house masters are found by lineage before any copy is made, so
+ * adopting the default never mints a private duplicate. An existing selection
+ * is followed: its family opens pre-expanded with the design checked and
+ * badged, and the choice can always be changed or returned to automatic.
  *
  * ## What it will and will not claim
  *
- * Active rows with no library lineage (hand-built templates, the Compass
- * pilot) are still listed and still selectable. A template whose engine is not
- * WeasyPrint says on its face that it produces the legacy document — it is
- * selectable because it is what the ranking would have picked anyway.
+ * Active rows with no library lineage are still listed and still selectable.
+ * A template whose engine is not WeasyPrint says on its face that it produces
+ * the legacy document — it is selectable because it is what the ranking would
+ * have picked anyway.
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -43,21 +55,23 @@ import { Badge } from '@/components/ui/badge';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { CheckCircle2, Loader2, TriangleAlert, Wand2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Layers, Loader2, TriangleAlert, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useReportTemplateSelection } from '@/hooks/useReportTemplateSelection';
 import { useAdoptForReports, useTemplateLibraryEntries } from '@/hooks/useTemplateLibrary';
 import {
+  fetchActiveTemplatePreviewPages,
   normaliseReportType,
   templateRendersThroughDesignSystem,
   type SelectableTemplateRow,
 } from '@/lib/reportTemplate/templateSelection';
 import type { TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
 import {
-  axisLabel, entryColourways, entryDefaultColourwayId,
+  axisLabel, colourwayOverridesFor, entryColourways, entryDefaultColourwayId,
 } from '@/lib/templateLibrary/entryDesign';
-import { TemplateColourwayPicker } from '@/components/templateLibrary/TemplateColourwayPicker';
+import { ColourwaySwatch } from '@/components/templateLibrary/TemplateColourwayPicker';
+import { ReportTemplateSheet } from '@/components/reports/ReportTemplateSheet';
 
 /** The sentinel for "no fixed template" — the resolver's ranking decides. */
 const AUTOMATIC = '__automatic__';
@@ -129,74 +143,42 @@ function candidateForEntry(
   }) ?? null;
 }
 
-function TemplateRow({ template, checked }: { template: SelectableTemplateRow; checked: boolean }) {
-  const drawn = templateRendersThroughDesignSystem(template);
-  return (
-    <label
-      className={cn(
-        'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition',
-        checked ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
-      )}
-    >
-      <RadioGroupItem value={template.id} className="mt-1 shrink-0" />
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{template.name || 'Untitled template'}</span>
-          {template.is_default && <Badge variant="secondary" className="text-[10px]">House default</Badge>}
-          {template.scope && template.scope !== 'global' && (
-            <Badge variant="outline" className="text-[10px] capitalize">{template.scope}</Badge>
-          )}
-          {template.variant && (
-            <Badge variant="outline" className="text-[10px] capitalize">{String(template.variant).replace(/_/g, ' ')}</Badge>
-          )}
-        </span>
-        {template.description && (
-          <span className="mt-1 block text-xs text-muted-foreground">{template.description}</span>
-        )}
-        {!drawn && (
-          // Selectable, and honest: this is what the ranking would have picked
-          // too, and it produces the legacy document either way.
-          <span className="mt-1 flex items-start gap-1.5 text-xs text-muted-foreground">
-            <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-warning" aria-hidden="true" />
-            Not set up for design-system rendering — reports using it come out of the
-            standard generator.
-          </span>
-        )}
-      </span>
-    </label>
-  );
-}
-
-function LibraryRow({
-  entry, checked, current, isHouseDefault,
+/**
+ * One choosable design, led by its sheet.
+ *
+ * The tile is a `<label>` around its radio, so the whole face is the hit
+ * target; the radio stays visible in the caption row because it is the only
+ * focus indicator the tile needs and it says "this is a choice" — the family
+ * tiles beside these open a tray instead, and the two must not look
+ * interchangeable.
+ */
+function ChoiceTile({
+  value, checked, sheet, title, meta, badges,
 }: {
-  entry: TemplateLibraryListEntry;
+  value: string;
   checked: boolean;
-  current: boolean;
-  isHouseDefault: boolean;
+  sheet: React.ReactNode;
+  title: string;
+  meta?: React.ReactNode;
+  badges?: React.ReactNode;
 }) {
-  const axis = axisLabel(entry.designMeta?.variantAxis);
   return (
     <label
       className={cn(
-        'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition',
-        checked ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
+        'group flex cursor-pointer flex-col overflow-hidden rounded-lg border transition',
+        checked ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'border-border hover:border-primary/40',
       )}
     >
-      <RadioGroupItem value={libValue(entry.id)} className="mt-1 shrink-0" />
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium">{entry.name}</span>
-          {axis && <Badge variant="outline" className="text-[10px] capitalize">{axis}</Badge>}
-          {isHouseDefault && <Badge variant="secondary" className="text-[10px]">House default</Badge>}
-          {current && <Badge className="text-[10px]">Current</Badge>}
+      {sheet}
+      <span className="flex min-w-0 flex-1 flex-col gap-1 border-t border-border/60 px-2.5 pb-2.5 pt-2">
+        <span className="flex items-start gap-2">
+          <RadioGroupItem value={value} className="mt-0.5 shrink-0" aria-label={title} />
+          <span className="min-w-0 text-[13px] font-medium leading-snug">{title}</span>
         </span>
-        {entry.description && (
-          <span className="mt-1 block text-xs text-muted-foreground">{entry.description}</span>
-        )}
-        {entry.pageCount > 0 && (
-          <span className="mt-1 block text-[11px] text-muted-foreground/80">
-            {entry.pageCount} page{entry.pageCount === 1 ? '' : 's'}
+        {(badges || meta) && (
+          <span className="flex flex-wrap items-center gap-1.5 pl-6">
+            {badges}
+            {meta && <span className="text-[11px] text-muted-foreground">{meta}</span>}
           </span>
         )}
       </span>
@@ -211,6 +193,10 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   const [choice, setChoice] = useState<string>(AUTOMATIC);
   // One colourway per family, keyed by familyKey. Missing key = family default.
   const [colourwayByFamily, setColourwayByFamily] = useState<Record<string, string>>({});
+  // Which family's tray is open. Families are compared as covers first; a
+  // family's five layouts appear only once it is opened, which is the ordering
+  // this dialog exists to fix — variants never crowd out the next family.
+  const [openFamilyKey, setOpenFamilyKey] = useState<string | null>(null);
 
   const format = normaliseReportType(reportType);
 
@@ -242,6 +228,33 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
     [candidates, libraryEntryIds],
   );
 
+  // Standalone rows carry no `preview_schema`, so their faces are fetched —
+  // page one and tokens only, on open, and only when there is a face to fetch.
+  // A failed read degrades those tiles to the empty sheet; it never blocks the
+  // chooser, and the library designs above it keep their previews regardless.
+  const standalonePreviews = useQuery({
+    queryKey: ['report-template-selection', 'active-previews'],
+    queryFn: fetchActiveTemplatePreviewPages,
+    enabled: open && standaloneCandidates.length > 0,
+    staleTime: 5 * 60_000,
+  });
+
+  /** The family holding the house default, drawn first in the gallery. */
+  const houseDefaultFamilyKey = useMemo(() => {
+    const row = candidates.find((c) => c.is_default && c.libraryLineage?.familyKey);
+    const key = row?.libraryLineage?.familyKey ?? null;
+    return key && families.some((g) => g.key === key) ? key : null;
+  }, [candidates, families]);
+
+  const orderedFamilies = useMemo(() => {
+    if (!houseDefaultFamilyKey) return families;
+    return [...families].sort((a, b) => {
+      if (a.key === houseDefaultFamilyKey) return -1;
+      if (b.key === houseDefaultFamilyKey) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [families, houseDefaultFamilyKey]);
+
   /** What the stored selection means in this dialog's vocabulary. */
   const storedChoice = useMemo(() => {
     if (state?.status !== 'selected' || !state.selectedTemplateId) return AUTOMATIC;
@@ -250,18 +263,34 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
     return state.selectedTemplateId;
   }, [state?.status, state?.selectedTemplateId, state?.template, libraryEntryIds]);
 
+  const storedFamilyKey = useMemo(() => {
+    if (state?.status !== 'selected') return null;
+    const key = state.template?.libraryLineage?.familyKey ?? null;
+    return key && families.some((g) => g.key === key) ? key : null;
+  }, [state?.status, state?.template, families]);
+
   // Re-seed from the server every time it opens, so a dialog dismissed without
   // saving never carries a phantom choice into the next viewing. The stored
-  // selection's colourway seeds its family's swatch, so "what you have" is
-  // what the dialog shows before anything is touched.
+  // selection's colourway seeds its family's swatch, and its family opens
+  // pre-expanded, so "what you have" is on screen before anything is touched.
   useEffect(() => {
     if (!open) return;
     setChoice(storedChoice);
+    setOpenFamilyKey(storedFamilyKey);
     const lineage = state?.status === 'selected' ? state.template?.libraryLineage : null;
     if (lineage?.familyKey && lineage.colourway) {
       setColourwayByFamily((prev) => ({ ...prev, [lineage.familyKey!]: lineage.colourway! }));
     }
-  }, [open, storedChoice]);
+  }, [open, storedChoice, storedFamilyKey]);
+
+  // Opening a family from the gallery's second row would otherwise reveal its
+  // tray below the fold — a click that appears to do nothing. `nearest` keeps
+  // the gallery still when the tray is already visible.
+  useEffect(() => {
+    if (!openFamilyKey) return;
+    const el = document.getElementById(`family-tray-${openFamilyKey}`);
+    if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' });
+  }, [openFamilyKey]);
 
   const colourwayFor = (group: FamilyGroup): string | null =>
     colourwayByFamily[group.key] ?? group.defaultColourwayId;
@@ -345,23 +374,26 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
     return (lineage.colourway ?? null) === normalisedColourway(group, entry);
   };
 
+  const openGroup = orderedFamilies.find((g) => g.key === openFamilyKey) ?? null;
+
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>Choose a template</DialogTitle>
           <DialogDescription>
             Pick the design <span className="font-medium text-foreground">{formatLabel}</span>{' '}
-            reports are generated with. Your choice is kept for every report of this format
-            until you change it here.
+            reports are generated with — every tile is that template’s real first page. Your
+            choice is kept for every report of this format until you change it here.
           </DialogDescription>
         </DialogHeader>
 
         {isLoading ? (
-          <div className="space-y-2 py-2">
-            <Skeleton className="h-16" />
-            <Skeleton className="h-16" />
-            <Skeleton className="h-16" />
+          <div className="grid grid-cols-2 gap-3 py-2 sm:grid-cols-4">
+            <Skeleton className="aspect-[3/4]" />
+            <Skeleton className="aspect-[3/4]" />
+            <Skeleton className="hidden aspect-[3/4] sm:block" />
+            <Skeleton className="hidden aspect-[3/4] sm:block" />
           </div>
         ) : error ? (
           <Alert variant="destructive">
@@ -372,7 +404,7 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
             </AlertDescription>
           </Alert>
         ) : (
-          <div className="space-y-3 py-2">
+          <div className="space-y-3 py-1">
             {state?.status === 'unavailable' && (
               // A choice that stopped applying is news, and saying nothing would
               // mean documents quietly changing template under someone.
@@ -386,96 +418,275 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
               </Alert>
             )}
 
-            <div className="max-h-[56vh] space-y-4 overflow-y-auto pr-1">
-              <RadioGroup value={choice} onValueChange={setChoice} className="space-y-4">
-                <div className="space-y-2">
-                  <label
-                    className={cn(
-                      'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition',
-                      choice === AUTOMATIC ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
-                    )}
-                  >
-                    <RadioGroupItem value={AUTOMATIC} className="mt-1 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-2 text-sm font-medium">
-                        <Wand2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                        Choose automatically
-                      </span>
-                      <span className="mt-1 block text-xs text-muted-foreground">
-                        Use whichever active template ranks highest for this format. This is what
-                        happens when nothing is chosen.
-                      </span>
+            <div data-testid="template-picker-scroll" className="max-h-[62vh] space-y-5 overflow-y-auto pr-1">
+              <RadioGroup value={choice} onValueChange={setChoice} className="space-y-5">
+                <label
+                  className={cn(
+                    'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition',
+                    choice === AUTOMATIC ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
+                  )}
+                >
+                  <RadioGroupItem value={AUTOMATIC} className="mt-1 shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      <Wand2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                      Choose automatically
                     </span>
-                  </label>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      Use whichever active template ranks highest for this format. This is what
+                      happens when nothing is chosen.
+                    </span>
+                  </span>
+                </label>
 
-                  {standaloneCandidates.map((template) => (
-                    <TemplateRow key={template.id} template={template} checked={choice === template.id} />
-                  ))}
-                </div>
+                {families.length > 0 && (
+                  <section className="space-y-2.5" aria-label="Design families">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                        Design families
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {orderedFamilies.length} distinct designs from the Template Library.
+                        Open one to choose its layout and colours.
+                      </p>
+                    </div>
 
-                {(families.length > 0 || loose.length > 0) && (
-                  <div className="space-y-4">
-                    <p className="text-xs font-medium uppercase tracking-[0.07em] text-muted-foreground">
-                      From the Template Library
-                    </p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                      {orderedFamilies.map((group) => {
+                        const representative = group.entries[0];
+                        const colourways = entryColourways(representative);
+                        const isOpen = openFamilyKey === group.key;
+                        const holdsCurrent = storedFamilyKey === group.key;
+                        const chosenCw = colourwayFor(group);
+                        return (
+                          <button
+                            key={group.key}
+                            type="button"
+                            aria-expanded={isOpen}
+                            aria-controls={`family-tray-${group.key}`}
+                            onClick={() => setOpenFamilyKey(isOpen ? null : group.key)}
+                            className={cn(
+                              'group flex flex-col overflow-hidden rounded-lg border text-left transition',
+                              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
+                              isOpen ? 'border-primary ring-1 ring-primary' : 'border-border hover:border-primary/40',
+                            )}
+                          >
+                            <ReportTemplateSheet
+                              schema={representative?.previewSchema ?? null}
+                              tokenOverrides={representative
+                                ? colourwayOverridesFor(representative, chosenCw)
+                                : undefined}
+                              pageCount={representative?.pageCount ?? 1}
+                              label={`First page of ${group.name}, its reference layout`}
+                            />
+                            <span className="flex min-w-0 flex-1 flex-col gap-1 border-t border-border/60 px-2.5 pb-2.5 pt-2">
+                              <span className="flex items-start justify-between gap-1.5">
+                                <span className="min-w-0 text-[13px] font-semibold leading-snug">
+                                  {group.name}
+                                </span>
+                                <ChevronDown
+                                  aria-hidden="true"
+                                  className={cn(
+                                    'mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
+                                    isOpen && 'rotate-180',
+                                  )}
+                                />
+                              </span>
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                                  <Layers className="h-3 w-3" aria-hidden="true" />
+                                  {group.entries.length} layout{group.entries.length === 1 ? '' : 's'}
+                                  {colourways.length > 1 ? ` · ${colourways.length} colourways` : ''}
+                                </span>
+                                {group.key === houseDefaultFamilyKey && (
+                                  <Badge variant="secondary" className="text-[10px]">House default</Badge>
+                                )}
+                                {holdsCurrent && <Badge className="text-[10px]">Current</Badge>}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
 
-                    {families.map((group) => (
-                      <section key={group.key} className="space-y-2" aria-label={group.name}>
-                        <div className="flex flex-wrap items-center justify-between gap-2">
+                    {openGroup && (
+                      <div
+                        id={`family-tray-${openGroup.key}`}
+                        className="space-y-3 rounded-lg border border-primary/40 p-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
                           <span className="min-w-0">
-                            <span className="block text-sm font-medium">{group.name}</span>
-                            {group.note && (
-                              <span className="block text-xs text-muted-foreground">{group.note}</span>
+                            <span className="block text-sm font-semibold">{openGroup.name}</span>
+                            {openGroup.note && (
+                              <span className="block text-xs text-muted-foreground">{openGroup.note}</span>
                             )}
                           </span>
-                          <TemplateColourwayPicker
-                            colourways={entryColourways(group.entries[0])}
-                            selectedId={colourwayFor(group) ?? ''}
-                            onSelect={(id) =>
-                              setColourwayByFamily((prev) => ({ ...prev, [group.key]: id }))}
-                            size="sm"
-                            ariaLabel={`Colourway for ${group.name} designs`}
-                          />
+                          {/* The ten colourways, as the catalogue presents them:
+                              paper behind, accent in front. Selecting one repaints
+                              every sheet in this tray rather than opening anything. */}
+                          {entryColourways(openGroup.entries[0]).length > 1 && (
+                            <span
+                              className="flex flex-wrap items-center gap-1"
+                              role="group"
+                              aria-label={`Colourway for ${openGroup.name} designs`}
+                            >
+                              {entryColourways(openGroup.entries[0]).map((c) => {
+                                const active = (colourwayFor(openGroup) ?? '') === c.id;
+                                return (
+                                  <button
+                                    key={c.id}
+                                    type="button"
+                                    onClick={() =>
+                                      setColourwayByFamily((prev) => ({ ...prev, [openGroup.key]: c.id }))}
+                                    title={`${c.name} · ${c.ground}`}
+                                    aria-label={`${c.name}, ${c.ground} ground`}
+                                    aria-pressed={active}
+                                    className={cn(
+                                      'rounded-[2px] p-[1.5px] transition-shadow',
+                                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                                      active ? 'ring-2 ring-foreground' : 'ring-1 ring-border hover:ring-foreground/40',
+                                    )}
+                                  >
+                                    <ColourwaySwatch colourway={c} size={14} />
+                                  </button>
+                                );
+                              })}
+                            </span>
+                          )}
                         </div>
-                        <div className="space-y-2">
-                          {group.entries.map((entry) => (
-                            <LibraryRow
-                              key={entry.id}
-                              entry={entry}
-                              checked={choice === libValue(entry.id)}
-                              current={isSelectedRow(entry, group)}
-                              isHouseDefault={!!candidateForEntry(candidates, entry, null)
-                                ?.is_default}
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ))}
 
-                    {loose.length > 0 && (
-                      <section className="space-y-2" aria-label="More designs">
-                        {families.length > 0 && (
-                          <span className="block text-sm font-medium">More designs</span>
-                        )}
-                        {loose.map((entry) => (
-                          <LibraryRow
-                            key={entry.id}
-                            entry={entry}
-                            checked={choice === libValue(entry.id)}
-                            current={isSelectedRow(entry, null)}
-                            isHouseDefault={!!candidateForEntry(candidates, entry, null)?.is_default}
-                          />
-                        ))}
-                      </section>
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                          {openGroup.entries.map((entry) => {
+                            const axis = axisLabel(entry.designMeta?.variantAxis);
+                            return (
+                              <ChoiceTile
+                                key={entry.id}
+                                value={libValue(entry.id)}
+                                checked={choice === libValue(entry.id)}
+                                title={entry.name}
+                                sheet={(
+                                  <ReportTemplateSheet
+                                    schema={entry.previewSchema ?? null}
+                                    tokenOverrides={colourwayOverridesFor(entry, colourwayFor(openGroup))}
+                                    pageCount={entry.pageCount}
+                                    label={`First page of ${entry.name}`}
+                                  />
+                                )}
+                                meta={`${entry.pageCount} page${entry.pageCount === 1 ? '' : 's'}`}
+                                badges={(
+                                  <>
+                                    {axis && (
+                                      <Badge variant="outline" className="text-[10px] capitalize">{axis}</Badge>
+                                    )}
+                                    {!!candidateForEntry(candidates, entry, null)?.is_default && (
+                                      <Badge variant="secondary" className="text-[10px]">House default</Badge>
+                                    )}
+                                    {isSelectedRow(entry, openGroup) && (
+                                      <Badge className="text-[10px]">Current</Badge>
+                                    )}
+                                  </>
+                                )}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
                     )}
-                  </div>
+                  </section>
+                )}
+
+                {loose.length > 0 && (
+                  <section className="space-y-2.5" aria-label="Individual designs">
+                    <p className="text-xs font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                      Individual designs
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                      {loose.map((entry) => (
+                        <ChoiceTile
+                          key={entry.id}
+                          value={libValue(entry.id)}
+                          checked={choice === libValue(entry.id)}
+                          title={entry.name}
+                          sheet={(
+                            <ReportTemplateSheet
+                              schema={entry.previewSchema ?? null}
+                              pageCount={entry.pageCount}
+                              label={`First page of ${entry.name}`}
+                            />
+                          )}
+                          meta={entry.pageCount > 0
+                            ? `${entry.pageCount} page${entry.pageCount === 1 ? '' : 's'}`
+                            : undefined}
+                          badges={(
+                            <>
+                              {!!candidateForEntry(candidates, entry, null)?.is_default && (
+                                <Badge variant="secondary" className="text-[10px]">House default</Badge>
+                              )}
+                              {isSelectedRow(entry, null) && <Badge className="text-[10px]">Current</Badge>}
+                            </>
+                          )}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {standaloneCandidates.length > 0 && (
+                  <section className="space-y-2.5" aria-label="Other active templates">
+                    <p className="text-xs font-medium uppercase tracking-[0.07em] text-muted-foreground">
+                      Other active templates
+                    </p>
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                      {standaloneCandidates.map((template) => {
+                        const drawn = templateRendersThroughDesignSystem(template);
+                        return (
+                          <ChoiceTile
+                            key={template.id}
+                            value={template.id}
+                            checked={choice === template.id}
+                            title={template.name || 'Untitled template'}
+                            sheet={(
+                              <ReportTemplateSheet
+                                schema={standalonePreviews.data?.get(template.id) ?? null}
+                                label={`First page of ${template.name || 'this template'}`}
+                              />
+                            )}
+                            badges={(
+                              <>
+                                {template.is_default && (
+                                  <Badge variant="secondary" className="text-[10px]">House default</Badge>
+                                )}
+                                {template.scope && template.scope !== 'global' && (
+                                  <Badge variant="outline" className="text-[10px] capitalize">{template.scope}</Badge>
+                                )}
+                                {state?.status === 'selected' && state.selectedTemplateId === template.id && (
+                                  <Badge className="text-[10px]">Current</Badge>
+                                )}
+                                {!drawn && (
+                                  // Selectable, and honest: this is what the ranking
+                                  // would have picked too, and it produces the legacy
+                                  // document either way.
+                                  <span className="flex items-start gap-1 text-[11px] text-muted-foreground">
+                                    <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0 text-warning" aria-hidden="true" />
+                                    Renders through the standard generator.
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          />
+                        );
+                      })}
+                    </div>
+                  </section>
                 )}
               </RadioGroup>
 
               {library.isLoading && (
-                <div className="space-y-2">
-                  <Skeleton className="h-16" />
-                  <Skeleton className="h-16" />
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <Skeleton className="aspect-[3/4]" />
+                  <Skeleton className="aspect-[3/4]" />
+                  <Skeleton className="hidden aspect-[3/4] sm:block" />
+                  <Skeleton className="hidden aspect-[3/4] sm:block" />
                 </div>
               )}
               {library.error != null && (

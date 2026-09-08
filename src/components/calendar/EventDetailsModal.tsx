@@ -18,6 +18,7 @@ import { getBookingTimezone, AUSTRALIAN_TIMEZONES } from '@/lib/bookingTimezone'
 import { GHLEvent, GHLCalendar, GHLContact } from '@/hooks/useGHLCalendar';
 import { useFinanceContacts, FinanceContact } from '@/hooks/useFinanceContacts';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import type { BookingRecipient } from './QuickAddAppointmentModal';
@@ -109,8 +110,56 @@ export function EventDetailsModal({
   const [selectedTeamMemberId, setSelectedTeamMemberId] = useState<string>('');
   const [selectedFinanceContacts, setSelectedFinanceContacts] = useState<FinanceContact[]>([]);
   const [bookingRecipients, setBookingRecipients] = useState<BookingRecipient[]>([]);
+  /**
+   * Who was invited when this appointment was booked.
+   *
+   * The window showed the client and nobody else, so an operator could not
+   * tell whether the additional contact and the finance partner had been
+   * included — and rescheduling made them add everyone again by hand. The
+   * booking already records this; it was simply never read back.
+   */
+  const [invitedRecipients, setInvitedRecipients] = useState<{ name: string; email: string }[]>([]);
   const [manualRecipientName, setManualRecipientName] = useState('');
   const [manualRecipientEmail, setManualRecipientEmail] = useState('');
+
+  useEffect(() => {
+    if (!open || !event?.id) {
+      setInvitedRecipients([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await invokeSecureFunction('get-client-data', {
+          listMode: true,
+          listOptions: {
+            table: 'appointment_secondary_recipients',
+            select: 'contact_name, contact_email',
+            filters: { appointment_ghl_id: event.id },
+          },
+        });
+        if (cancelled) return;
+        const seen = new Set<string>();
+        const rows = (data?.records || [])
+          .map((r: { contact_name?: string | null; contact_email?: string | null }) => ({
+            name: (r.contact_name || '').trim(),
+            email: (r.contact_email || '').trim(),
+          }))
+          .filter((r: { email: string }) => {
+            const key = r.email.toLowerCase();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        setInvitedRecipients(rows);
+      } catch {
+        // A booking whose invitations cannot be read still opens: this is a
+        // record of who was told, not a precondition for viewing the meeting.
+        if (!cancelled) setInvitedRecipients([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, event?.id]);
 
   useEffect(() => {
     if (open && event?.contactId && fetchContact) {
@@ -748,6 +797,28 @@ export function EventDetailsModal({
                   <p className="text-muted-foreground">Contact ID: {event.contactId}</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {invitedRecipients.length > 0 && (
+            <div className="space-y-3">
+              <h4 className="font-medium flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Also invited ({invitedRecipients.length})
+              </h4>
+              <div className="pl-6 space-y-1.5 text-sm">
+                {invitedRecipients.map((r) => (
+                  <div key={r.email} className="flex min-w-0 flex-wrap items-center gap-x-2">
+                    {r.name && <span className="font-medium text-foreground">{r.name}</span>}
+                    <a href={`mailto:${r.email}`} className="min-w-0 truncate text-primary hover:underline">
+                      {r.email}
+                    </a>
+                  </div>
+                ))}
+                <p className="pt-1 text-xs text-muted-foreground">
+                  These people are notified automatically when this appointment is rescheduled or cancelled.
+                </p>
+              </div>
             </div>
           )}
 

@@ -247,8 +247,16 @@ describe('after projection', () => {
     // Weekly is annual/52 — arithmetic, not a forecast.
     expect(data.financials.weeklyRates).toBeCloseTo(1980 / 52, 6);
     expect(data.financials.annualRepayment).toBe(6280 * 12);
-    // Annual rent uses the report's OWN occupancy assumption, not a flat 52.
-    expect(data.financials.annualRent).toBe(920 * 50);
+    // `annualRent` is the CONTRACTUAL rent — 52 weeks — because that is the
+    // basis the stored yields rest on (149 of 153 production reports) and what
+    // a template prints as a bare "p.a." beside the weekly rent. It used to be
+    // `weeklyRent × occupancyWeeks`, which agreed with neither the record's own
+    // `income.annualRent` nor the yield published two keys away: on 62 of 153
+    // reports the tile's annual rent could not produce its own gross yield.
+    expect(data.financials.annualRent).toBe(920 * 52);
+    // The occupancy assumption keeps its figure under its own name.
+    expect(data.financials.annualRentAtOccupancy).toBe(920 * 50);
+    expect(data.financials.annualRentAtOccupancyLabel).toBe('Annual rent at 50 occupied weeks');
     expect(data.assumptions.vacancy).toBeCloseTo((2 / 52) * 100, 6);
   });
 

@@ -12,7 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Search, LayoutTemplate, Plus, Check } from 'lucide-react';
+import { SearchInput } from '@/components/ui/search-input';
+import { LayoutTemplate, Plus, Check } from 'lucide-react';
 import { STARTER_PAGE_PRESETS, type StarterPagePreset } from '@/lib/reportTemplate/starterTemplates';
 import type { Page } from '@/lib/reportTemplate/templateSchema';
 
@@ -108,15 +109,14 @@ export function PageTemplatesMarketplaceDialog({ open, onOpenChange, onInsert }:
             Pick a pre-composed page layout. Click "Insert" to add it to your template; you can edit everything afterwards.
           </DialogDescription>
           <div className="flex items-center gap-2 pt-2">
-            <div className="relative flex-1">
-              <Search className="h-3.5 w-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search layouts…"
-                className="pl-7 h-8 text-xs"
-              />
-            </div>
+            <SearchInput
+              value={q}
+              onValueChange={setQ}
+              placeholder="Search layouts…"
+              containerClassName="flex-1"
+              className="h-8 text-xs"
+              iconClassName="h-3.5 w-3.5 left-2"
+            />
             <div className="flex items-center gap-1">
               {CATEGORIES.map((c) => (
                 <button

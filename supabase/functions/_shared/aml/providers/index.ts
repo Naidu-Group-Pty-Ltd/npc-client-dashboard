@@ -1197,18 +1197,46 @@ export interface StandaloneIdvReadiness {
   api_key_present: boolean;
   liveness_threshold: ThresholdState;
   face_match_threshold: ThresholdState;
+  /**
+   * How this deployment reaches the vendor.
+   *
+   * `direct` holds the Didit key itself — the prime, which IS the account
+   * holder. `broker` holds none and calls through Mission Control, which is
+   * the ordinary state of a tenant: a Didit key can list every session in its
+   * application, so forwarding one would let each tenant read the others'
+   * customers' passport portraits. `none` can verify by neither route.
+   */
+  credential: "direct" | "broker" | "none";
   ready: boolean;
 }
 
 export function standaloneIdvReadiness(): StandaloneIdvReadiness {
   const apiKeyPresent = Boolean(Deno.env.get("DIDIT_API_KEY"));
+  /*
+   * A tenant deliberately holds no Didit key, so "no key" must not mean "not
+   * ready" — it means "reaches the vendor the other way". Readiness is a
+   * question about whether a verification can RUN, and both routes can run
+   * one. Requiring the key here is what would leave every brokered clone
+   * reporting itself unconfigured while working perfectly.
+   */
+  const brokerReachable = Boolean(Deno.env.get("MISSION_CONTROL_URL"))
+    && Boolean(Deno.env.get("MISSION_CONTROL_CLONE_API_KEY"));
+  const credential: StandaloneIdvReadiness["credential"] = apiKeyPresent
+    ? "direct"
+    : brokerReachable
+    ? "broker"
+    : "none";
   const liveness = classifyThreshold(Deno.env.get("DIDIT_LIVENESS_THRESHOLD"));
   const faceMatch = classifyThreshold(Deno.env.get("DIDIT_FACE_MATCH_THRESHOLD"));
   return {
     api_key_present: apiKeyPresent,
     liveness_threshold: liveness,
     face_match_threshold: faceMatch,
-    ready: apiKeyPresent && liveness === "ok" && faceMatch === "ok",
+    credential,
+    // The thresholds are still required on BOTH routes: they are this
+    // deployment's own policy, not the vendor's, and the broker neither
+    // supplies nor overrides them.
+    ready: credential !== "none" && liveness === "ok" && faceMatch === "ok",
   };
 }
 

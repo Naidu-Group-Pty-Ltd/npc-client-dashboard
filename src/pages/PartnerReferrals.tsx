@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select,
   SelectContent,
@@ -23,7 +24,6 @@ import {
 import {
   ArrowLeftRight,
   Plus,
-  Search,
   RefreshCw,
   Loader2,
   Inbox,
@@ -157,15 +157,12 @@ export default function PartnerReferrals() {
               </SelectContent>
             </Select>
 
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                className="pl-9"
-                placeholder="Search reference, client, partner…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search reference, client, partner…"
+              containerClassName="w-full sm:w-64"
+            />
           </div>
         </div>
 

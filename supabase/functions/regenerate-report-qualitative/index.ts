@@ -5,6 +5,18 @@ import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+// The SAME prompt blocks the generator composes. This path used to render
+// its own copies from the pre-2026-09 service shapes — `crime.safetyScore`
+// (vocabulary deleted by the crime rework and banned by test) and
+// `climate.climateZone` (deliberately removed, because naming a zone is
+// exactly what the fabricator did) — so eight labelled rows resolved to
+// "N/A" on every regenerated report. Two renderings of one reading is how
+// they drift; there is one now.
+import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
+import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
+import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
+import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
+import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -93,6 +105,8 @@ interface EnhancedData {
   employmentData?: any;
   climateData?: any;
   schoolData?: any;
+  planningData?: any;
+  regionalTrends?: any;
   validation?: any;
 }
 
@@ -600,7 +614,9 @@ async function fetchEnhancedData(
 
     if (!rbaResponse.ok) return;
     const rbaData = await rbaResponse.json();
-    if (rbaData?.data) {
+    // Attach only a real reading: an honest refusal is {success:false,
+    // data:null} and must leave economics absent, never half-attached.
+    if (rbaData?.success && rbaData?.data) {
       enhancedData.economics = rbaData.data;
     }
   });
@@ -665,27 +681,7 @@ async function fetchEnhancedData(
     }
   });
 
-  // 8. Climate
-  run('Climate', async () => {
-    if (!state) return;
-
-    const climateResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseAnonKey}`
-      },
-      body: JSON.stringify({ suburb, state, postcode })
-    }, 30000);
-
-    if (!climateResponse.ok) return;
-    const climateData = await climateResponse.json();
-    if (climateData?.success && climateData?.data) {
-      enhancedData.climateData = climateData.data;
-    }
-  });
-
-  // 9. Location intelligence (needed by school fetch)
+  // 8. Location intelligence — the coordinate every service below is keyed on
   const locationTask = (async () => {
     try {
       const locationResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/location-intelligence-service`, {
@@ -712,6 +708,75 @@ async function fetchEnhancedData(
   })();
 
   tasks.push(locationTask);
+
+  // 9. The coordinate-keyed services.
+  //
+  // Climate, planning and regional trends all take the property's verified
+  // coordinate as their question — a locality string cannot answer any of
+  // them. This block exists because the regeneration path had drifted out
+  // of parity with the generator: climate was called with
+  // `{suburb, state, postcode}` and no coordinate, so after the SILO
+  // rewrite it refused EVERY regenerated report; planning and regional
+  // were never called at all, so a regenerated report silently lost the
+  // zoning block and the population trends a freshly generated one
+  // carries. Each awaits `locationTask` the way the school fetch does.
+  const coordinateTask = (async () => {
+    await locationTask;
+    const lat = enhancedData.locationIntelligence?.coordinates?.lat;
+    const lng = enhancedData.locationIntelligence?.coordinates?.lng;
+    if (!lat || !lng) return; // no verified coordinate → honest absence, not a locality guess
+
+    // The URL is passed in FULL at each call site rather than assembled from
+    // a name here: the security inventory's call graph is built by scanning
+    // for literal `functions/v1/<name>` strings, so a variable specifier
+    // makes an edge invisible to it — routing these three through a
+    // name-taking helper silently dropped them from the recorded graph.
+    const ask = async (url: string, body: Record<string, unknown>, timeout: number) => {
+      const res = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${supabaseAnonKey}` },
+        body: JSON.stringify(body),
+      }, timeout);
+      if (!res.ok) return null;
+      const parsed = await res.json();
+      return parsed?.success && parsed?.data ? parsed.data : null;
+    };
+
+    await Promise.all([
+      (async () => {
+        try {
+          const data = await ask(`${supabaseUrl}/functions/v1/climate-data-service`, { latitude: lat, longitude: lng, state, suburb, postcode }, 40000);
+          if (data) enhancedData.climateData = data;
+        } catch (error: any) { console.log('⚠️ Climate skipped:', error?.message?.substring(0, 80)); }
+      })(),
+      (async () => {
+        try {
+          const data = await ask(`${supabaseUrl}/functions/v1/planning-data-service`, { latitude: lat, longitude: lng, state, postcode }, 45000);
+          if (data) enhancedData.planningData = data;
+        } catch (error: any) { console.log('⚠️ Planning skipped:', error?.message?.substring(0, 80)); }
+      })(),
+      (async () => {
+        try {
+          const data = await ask(`${supabaseUrl}/functions/v1/abs-regional-service`, { latitude: lat, longitude: lng, state, suburb, postcode }, 30000);
+          if (data) enhancedData.regionalTrends = data;
+        } catch (error: any) { console.log('⚠️ Regional trends skipped:', error?.message?.substring(0, 80)); }
+      })(),
+    ]);
+
+    // QLD's crime register is LGA-keyed, and the crime fetch above ran
+    // before any LGA was known — the generator's second-chance ask, mirrored.
+    const qldLga = enhancedData.planningData?.parcel?.status === 'ok'
+      ? enhancedData.planningData?.parcel?.lga
+      : null;
+    if (!enhancedData.crimeStatistics && state === 'QLD' && qldLga) {
+      try {
+        const data = await ask(`${supabaseUrl}/functions/v1/crime-statistics-service`, { suburb, state, postcode, lga: qldLga }, 20000);
+        if (data) enhancedData.crimeStatistics = data;
+      } catch (error: any) { console.log('⚠️ QLD crime retry skipped:', error?.message?.substring(0, 80)); }
+    }
+  })();
+
+  tasks.push(coordinateTask);
 
   // 10. Schools (waits for location coordinates when available)
   run('School data', async () => {
@@ -886,17 +951,10 @@ function buildEnhancedDataContext(enhancedData: EnhancedData, propertyAddress: s
 `;
   }
 
-  // Economic context
+  // Macro — the shared block, composed from the loaded RBA tables with
+  // each figure's own reference period.
   if (enhancedData.economics) {
-    const econ = enhancedData.economics;
-    context += `
-**ECONOMIC DATA (RBA):**
-- Cash Rate: ${econ.cashRate?.current || '4.35'}%
-- Annual Inflation: ${econ.inflation?.annual || 'N/A'}%
-- GDP Growth: ${econ.indicators?.gdpGrowth || 'N/A'}%
-- Unemployment Rate: ${econ.indicators?.unemploymentRate || 'N/A'}%
-- House Price Growth: ${econ.indicators?.housePriceGrowth || 'N/A'}%
-`;
+    context += `\n**ECONOMIC CONTEXT:**\n${macroEconomicBlock(enhancedData)}\n`;
   }
 
   // Location intelligence
@@ -924,40 +982,43 @@ function buildEnhancedDataContext(enhancedData: EnhancedData, propertyAddress: s
 `;
   }
 
-  // Crime statistics
+  // Crime — the shared block, composed from the loaded registers.
   if (enhancedData.crimeStatistics) {
-    const crime = enhancedData.crimeStatistics;
-    context += `
-**CRIME & SAFETY:**
-- Crime Rate: ${crime.crimeRate || 'N/A'} per 100k
-- Safety Score: ${crime.safetyScore || 'N/A'}/100
-- Trend: ${crime.trend || 'N/A'}
-- Comparison to State: ${crime.comparisonToState || 'N/A'}
-`;
+    context += `\n**CRIME & SAFETY:**\n${crimeStatBlocks(enhancedData)}\n`;
   }
 
-  // Employment data
+  // Employment data — Census structure only. The old block listed 1/3/5-year
+  // job growth here, which no integrated source measures; three "N/A" growth
+  // lines beside real figures read as blanks a model should fill, which is
+  // an invitation to invent. Growth is omitted and expressly forbidden.
   if (enhancedData.employmentData) {
     const emp = enhancedData.employmentData;
+    const industries = (emp.majorIndustries ?? emp.industries)?.slice(0, 3)
+      .map((i: any) => `${i.name} (${i.percentage}%)`).join(', ');
     context += `
-**EMPLOYMENT & JOB GROWTH:**
-- Annual Growth: ${emp.annualGrowth || 'N/A'}%
-- 3-Year Growth: ${emp.threeYearGrowth || 'N/A'}%
-- 5-Year Growth: ${emp.fiveYearGrowth || 'N/A'}%
-- Top Industries: ${emp.industries?.slice(0, 3).map((i: any) => `${i.name} (${i.percentage}%)`).join(', ') || 'N/A'}
+**EMPLOYMENT (${emp.dataSource || 'ABS Census'}):**
+- Employment Rate (of labour force): ${emp.employmentRate ?? 'N/A'}%
+- Unemployment Rate: ${emp.unemploymentRate ?? 'N/A'}%
+- Participation Rate: ${emp.participationRate ?? 'N/A'}%
+- Labour Force Size: ${emp.laborForceSize ?? 'N/A'}
+- Top Industries: ${industries || 'N/A'}
+- No employment time-series is available: do NOT assert job-growth figures.
 `;
   }
 
-  // Climate data
-  if (enhancedData.climateData) {
-    const climate = enhancedData.climateData;
-    context += `
-**CLIMATE & ENVIRONMENT:**
-- Climate Zone: ${climate.climateZone || 'N/A'}
-- Average Summer Temp: ${climate.temperature?.summer || 'N/A'}°C
-- Average Winter Temp: ${climate.temperature?.winter || 'N/A'}°C
-- Annual Rainfall: ${climate.rainfall?.annual || 'N/A'}mm
-`;
+  // Climate & hazards — the shared block (SILO normals with their windows,
+  // hazard rows only where a real level was assessed).
+  if (enhancedData.climateData || enhancedData.riskAssessment) {
+    context += `\n**CLIMATE & ENVIRONMENT:**\n${climateStatBlocks(enhancedData)}\n`;
+  }
+
+  // Planning & zoning, and the measured population trend for the SA2 —
+  // both coordinate-keyed, both previously absent from this path entirely.
+  if (enhancedData.planningData) {
+    context += `\n**PLANNING & DEVELOPMENT:**\n${planningStatBlocks(enhancedData)}\n`;
+  }
+  if (enhancedData.regionalTrends) {
+    context += `\n**POPULATION TREND:**\n${regionalTrendBlocks(enhancedData)}\n`;
   }
 
   // Risk assessment
@@ -1843,34 +1904,49 @@ YOUR DEDICATED PROPERTY PARTNER
       dataSources.push('**Australian Bureau of Statistics (ABS)** - Census 2021 demographic data including population, income, employment, and housing statistics');
     }
     if (enhancedData.economics) {
-      dataSources.push('**Reserve Bank of Australia (RBA)** - Current cash rate, inflation data, GDP growth, and economic indicators');
+      dataSources.push('**Reserve Bank of Australia (RBA)** - Statistical tables F1.1, G1 and F5: cash rate target, consumer price inflation, and housing lending rates');
     }
     if (enhancedData.seifaData) {
       dataSources.push('**SEIFA (Socio-Economic Indexes for Areas)** - ABS socioeconomic advantage/disadvantage indices');
     }
+    // Each line names the register that actually served the block. Five of
+    // these used to name a source the pipeline does not read: climate was
+    // attributed straight to the Bureau of Meteorology (it is SILO, the
+    // Queensland Government's BoM-derived grid, whose CC BY 4.0 licence
+    // asks for its own attribution), schools to ACARA/NAPLAN (a schools
+    // directory and Google Places), employment to the Labour Force Survey
+    // (the Census), market data to "Domain/CoreLogic" (CoreLogic is
+    // deliberately not integrated), and crime to "safety scores" that no
+    // longer exist. A misnamed source is a fabricated citation.
     if (enhancedData.crimeStatistics) {
-      dataSources.push('**State Police/Crime Statistics Agency** - Local crime rates, safety scores, and trend analysis');
+      dataSources.push('**NSW BOCSAR / Queensland Police Service open data** - Recorded criminal incident counts by area and offence, with the register\'s own reference period');
     }
     if (enhancedData.employmentData) {
-      dataSources.push('**ABS Labour Force Survey** - Employment growth, industry composition, and workforce statistics');
+      dataSources.push('**Australian Bureau of Statistics** - Census 2021 employment structure: labour-force status, industry and occupation composition');
     }
     if (enhancedData.climateData) {
-      dataSources.push('**Bureau of Meteorology (BOM)** - Climate data, temperature, rainfall, and extreme weather information');
+      dataSources.push('**SILO Data Drill (Queensland Government)** - Climate normals interpolated from Bureau of Meteorology observations, CC BY 4.0');
+    }
+    if (enhancedData.regionalTrends) {
+      dataSources.push('**ABS Regional population** - Estimated resident population at 30 June by Statistical Area Level 2');
+    }
+    if (enhancedData.planningData) {
+      dataSources.push('**State planning and cadastre services** - Zoning, overlays and parcel detail queried at the property coordinate, plus the council development-application register where published');
     }
     if (enhancedData.locationIntelligence) {
-      dataSources.push('**Location Intelligence APIs** - Walk scores, transport accessibility, commute times, and local amenities');
+      dataSources.push('**Google Places and Distance Matrix** - Amenities, walk score and commute times measured from the property coordinate');
     }
     if (enhancedData.schoolData) {
-      dataSources.push('**ACARA/MySchool** - School performance data, NAPLAN results, and education quality metrics');
+      dataSources.push('**Schools directory and Google Places** - Nearby schools measured from the property coordinate');
     }
     if (enhancedData.financials) {
-      dataSources.push('**State Revenue Office** - Stamp duty calculations and land tax thresholds');
+      dataSources.push('**Legislated state duty schedules** - Stamp duty computed from the schedule in force');
     }
     if (enhancedData.riskAssessment) {
-      dataSources.push('**State Government Planning Data** - Flood mapping, bushfire risk zones, and environmental overlays');
+      dataSources.push('**Geoscience Australia (AFRIP) and state fire authorities** - Flood and bushfire mapping queried at the property coordinate');
     }
     if (enhancedData.domainData) {
-      dataSources.push('**Domain/CoreLogic** - Property market data, median prices, and rental yields');
+      dataSources.push('**Domain** - Property market data, median prices and rental yields');
     }
     
     dataSources.forEach((source, index) => {

@@ -706,3 +706,65 @@ export const DIDIT_FORBIDDEN_KEYS = {
   credentialsAndBiometrics: [...FORBIDDEN_DECISION_KEYS],
   personalData: [...FORBIDDEN_PII_KEYS],
 };
+
+/* ─────────────── A session this deployment did not create ────────────────
+ *
+ * One Didit **application** carries one set of webhook destinations, and those
+ * destinations FAN OUT: every enabled destination receives every event for the
+ * application. There is no per-session routing. So when several deployments
+ * share one application — as the prime and its clones do under the fleet-wide
+ * key decision — each deployment's verifications emit `status.updated`, and
+ * every one of them is delivered to whichever destinations the application
+ * has.
+ *
+ * The receiver therefore has to answer a question it never used to face: is
+ * this event mine at all? Until now everything that failed to correlate landed
+ * in `unknown_session` — a reading that meant "something unexpected arrived".
+ * Under a shared application, a sibling deployment's routine verification
+ * produces exactly that, so the alarm fires on the ordinary case and stops
+ * meaning anything.
+ *
+ * `vendor_data` is what separates them. Every deployment mints the same shape
+ * (`npc:<caseId>:<partyId|primary>[:attempt]`) over ITS OWN case ids, so an
+ * event whose vendor_data parses and names a case this deployment does not
+ * hold is a sibling's — routine, expected, and nothing to act on. An event
+ * whose vendor_data is absent or is not our shape is genuinely unrecognised
+ * and keeps the louder name.
+ *
+ * ## What this is NOT
+ *
+ * It is not authorisation and it cannot settle anything. Both readings end the
+ * same way — acknowledged, identifiers recorded, nothing applied — so a
+ * misclassification costs a log label and never a customer's outcome. That is
+ * deliberate: `vendor_data` is provider-supplied and attacker-influenced in
+ * principle, and the moment a classification derived from it could decide an
+ * outcome it would be a door onto another tenant's case.
+ */
+export type ForeignSessionReading =
+  /** Our vendor_data shape over a case id this deployment does not hold. */
+  | 'sibling_deployment'
+  /** No usable vendor_data, or not a shape this platform mints. */
+  | 'unrecognised';
+
+/**
+ * Read an uncorrelated event, given whether this deployment holds the case its
+ * `vendor_data` names.
+ *
+ * `caseHeldLocally` is passed rather than looked up so the rule stays pure and
+ * the caller owns the one database read. `null` means the caller could not
+ * establish it — which reads as `unrecognised`, because a failed read must
+ * never be reported as a confident "this belongs to somebody else".
+ */
+export function readForeignSession(
+  vendorData: unknown,
+  caseHeldLocally: boolean | null,
+): ForeignSessionReading {
+  const parsed = parseVendorData(vendorData);
+  if (!parsed) return 'unrecognised';
+  return caseHeldLocally === false ? 'sibling_deployment' : 'unrecognised';
+}
+
+/** The case id an uncorrelated event names, or null if it names none we mint. */
+export function caseIdFromVendorData(vendorData: unknown): string | null {
+  return parseVendorData(vendorData)?.caseId ?? null;
+}

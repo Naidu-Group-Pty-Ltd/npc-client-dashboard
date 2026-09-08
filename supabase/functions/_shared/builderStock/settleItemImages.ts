@@ -41,6 +41,7 @@
  * to write down afterwards.
  */
 import { repairSourceImagesForUpload } from './repairSourceImages.ts';
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
 import { settleMarketplaceEligibility } from './settleMarketplaceEligibility.ts';
 import {
   settleImageSanitization, type RepairBudget,
@@ -83,7 +84,14 @@ const NEXT_STAGE: Record<ItemWorkStage, ItemWorkStage> = {
   settled: 'settled',
 };
 
-function readStage(value: unknown): ItemWorkStage {
+/**
+ * The ladder rung a stored value names, or the first rung.
+ *
+ * Exported for the settler, which has to hand a claim BACK at the stage it
+ * came from when there is not enough of the invocation left to finish it —
+ * and `image_work_stage` arrives from the database as a plain string.
+ */
+export function readStage(value: unknown): ItemWorkStage {
   const stage = String(value ?? 'source');
   return (stage in NEXT_STAGE ? stage : 'source') as ItemWorkStage;
 }
@@ -505,6 +513,7 @@ async function readItemSuppliedEvidence(
       sourceRow: row.source_row,
       stored: row.source_provenance_result,
       provenanceVersion: PROVENANCE_VERSION,
+      runtimeVersion: RUNTIME_VERSION,
       builderImageAccepted,
     });
   } catch {

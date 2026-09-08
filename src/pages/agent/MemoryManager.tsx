@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Dialog,
   DialogContent,
@@ -19,7 +20,6 @@ import {
   TrendingUp,
   ThumbsUp,
   ThumbsDown,
-  Search,
   Wand2,
   Flame,
   Tag,
@@ -332,15 +332,13 @@ export default function AgentMemoryManager() {
             ))}
           </div>
 
-          <div className="field-search w-full sm:w-72">
-            <Search />
-            <Input
-              placeholder="Search content, tags, kind…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-9 rounded-full border-border/60 bg-background/40 pl-9"
-            />
-          </div>
+          <SearchInput
+            value={search}
+            onValueChange={setSearch}
+            placeholder="Search content, tags, kind…"
+            containerClassName="field-search w-full sm:w-72"
+            className="h-9 rounded-full border-border/60 bg-background/40"
+          />
         </div>
 
         {/* Memory list */}

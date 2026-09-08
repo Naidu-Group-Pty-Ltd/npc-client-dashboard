@@ -8,7 +8,11 @@
  *   #37  Self-service booking + finance partner availability windows
  *
  * Auth: finance partner via x-finance-session-token (mirrors finance-portal-client-tasks).
- * Cron auth: `reminders_run_due` requires a dedicated cron secret — no partner token.
+ * Cron auth: `reminders_run_due` takes either the dedicated cron secret
+ * (`x-cron-secret` = FINANCE_PORTAL_CRON_SECRET) or the signed internal envelope
+ * from pg_cron — no partner token. The schedule that calls it moved onto
+ * `cron_invoke_signed_function`, which sends the envelope and no secret header,
+ * so a function that accepted only the header answered 401 to every tick.
  *
  * Operations
  *  applicants_list         { purchase_file_id }
@@ -33,12 +37,12 @@
  *  reminders_configure     { instance_id, auto_reminder_enabled, due_date? }
  *  reminders_run_due       (cron) — escalates gentle → firm → broker_notified for stale doc requests
  */
-import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2.55.0";
 import {
   canAccessFinanceClient,
 } from '../_shared/financePortalObjectAuthz.ts';
 import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
-import { constantTimeEqual } from '../_shared/auth_v2.ts';
+import { constantTimeEqual, verifyInternal } from '../_shared/auth_v2.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
@@ -81,12 +85,22 @@ function pick(payload: any, allow: string[]) {
   for (const k of allow) if (k in payload) out[k] = payload[k];
   return out;
 }
-function isCronCall(req: Request) {
+async function isCronCall(req: Request, supabase: SupabaseClient, rawBody: string): Promise<boolean> {
   const configured = Deno.env.get('FINANCE_PORTAL_CRON_SECRET') ?? '';
   const presented = req.headers.get('x-cron-secret') ?? '';
-  return configured.length >= 16
+  if (
+    configured.length >= 16
     && presented.length === configured.length
-    && constantTimeEqual(configured, presented);
+    && constantTimeEqual(configured, presented)
+  ) return true;
+  // The signed envelope, restricted to pg_cron — the same `verifyInternal`
+  // the rest of the platform uses, checked only when the header is present,
+  // so an unsigned request still gets the identical 401 it always did.
+  if (req.headers.get('x-internal-signature')) {
+    const ctx = await verifyInternal(supabase, req, rawBody, { allowedCallers: ['pg_cron'] });
+    return ctx.ok === true && ctx.authType === 'internal_service';
+  }
+  return false;
 }
 
 Deno.serve(async (req) => {
@@ -95,13 +109,17 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const body = await req.json().catch(() => ({}));
+    // Read the body ONCE: the signed envelope is verified over the exact
+    // bytes, so it cannot be re-read after `req.json()`.
+    const rawBody = await req.text();
+    let body: any = {};
+    try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
     const operation = body.operation as string | undefined;
     if (!operation) return json({ error: 'operation required' }, 400);
 
     /* ── reminders cron — no partner session required ── */
     if (operation === 'reminders_run_due') {
-      if (!isCronCall(req)) return json({ error: 'Cron auth required' }, 401);
+      if (!(await isCronCall(req, supabase, rawBody))) return json({ error: 'Cron auth required' }, 401);
       return await runRemindersDue(supabase, json);
     }
 

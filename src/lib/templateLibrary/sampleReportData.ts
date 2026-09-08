@@ -1144,6 +1144,12 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
    */
   report: {
     generatedDate: '2 August 2026',
+    // The document identity the Investment masters bind. The sample previews
+    // the compass tier — the catalogue's own document — and the projection's
+    // `DOCUMENT_IDENTITY` translates the other tiers at render time.
+    tier: 'compass',
+    documentTitle: 'Investment Compass',
+    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
     // The lender profile a Borrowing Capacity run was assessed under. Set on
     // 26 of 143 assessments, so the masters keep the block conditional; the
     // sample shows the named-lender path and matches `loan.lender` below.

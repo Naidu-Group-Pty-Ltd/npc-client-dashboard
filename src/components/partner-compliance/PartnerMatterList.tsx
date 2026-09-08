@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { SearchInput } from '@/components/ui/search-input';
 import { CheckCircle2, Clock, FolderOpen, MinusCircle, RefreshCw, Search } from "lucide-react";
 
 import {
@@ -73,19 +74,14 @@ export function PartnerMatterList({
       </div>
 
       {searchable && (
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by client, reference or role…"
-            aria-label="Search your matters"
-            className="h-8 pl-8 text-xs"
-          />
-        </div>
+        <SearchInput
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Search by client, reference or role…"
+          aria-label="Search your matters"
+          className="h-8 text-xs"
+          iconClassName="left-2.5 h-3.5 w-3.5"
+        />
       )}
 
       {reading.rows.length === 0 ? (

@@ -239,7 +239,7 @@ export function StaffFinancePortalMessagesPanel({ clientId, className }: Props) 
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                     <p className="truncate text-sm font-semibold text-foreground">{selectedThreadLabel}</p>
-                    <Badge variant="outline" className="shrink-0 rounded-full border-info/25 bg-info/10 px-2 text-[10px] text-info-foreground">
+                    <Badge variant="outline" className="shrink-0 rounded-full border-info/25 bg-info/10 px-2 text-[10px] text-info">
                       Finance Portal
                     </Badge>
                     </div>

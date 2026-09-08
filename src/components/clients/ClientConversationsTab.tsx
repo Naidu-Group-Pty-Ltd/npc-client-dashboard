@@ -18,10 +18,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { useBrand } from '@/branding/useBrand';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { SearchInput } from '@/components/ui/search-input';
 import { cn } from '@/lib/utils';
 import {
   MessageSquare,
-  Search,
   Loader2,
   Send,
   ArrowLeft,
@@ -390,15 +390,13 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
 
         {/* Search */}
         {conversations.length > 3 && (
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Search conversations..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 h-8 text-sm"
-            />
-          </div>
+          <SearchInput
+            value={searchTerm}
+            onValueChange={setSearchTerm}
+            placeholder="Search conversations..."
+            className="h-8 text-sm"
+            iconClassName="h-3.5 w-3.5"
+          />
         )}
 
         {/* Loading */}

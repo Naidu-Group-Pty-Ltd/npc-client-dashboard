@@ -43,6 +43,15 @@ export interface PropertyIdentityFields extends StockLabelFields {
   project_name?: string | null;
   /** `numeric` arrives from PostgREST as a string. */
   building_size_sqm?: number | string | null;
+  /**
+   * The house design as its own column, where the file gives it one.
+   *
+   * A stored row carries this inside `source_row` rather than as a column of
+   * its own, so the importer projects it out of the JSON the same way it
+   * projects the anchor. Optional, because most sources state the design only
+   * inside the label and `lotAndDesignFrom` reads it there.
+   */
+  house_design?: string | null;
 }
 
 /**
@@ -124,11 +133,24 @@ export function stockPropertyIdentity(
   // the files that do not.
   const column = (fields.unit_number ?? fields.lot_number ?? '').trim();
 
+  /*
+   * THE SAME RULE FOR THE DESIGN, and it is why 30 packages were invisible.
+   *
+   * The design was read only out of the label's brackets, so a list that
+   * states it in a column of its own — which the live master stocklist does,
+   * for every row — produced an empty design on both sides of the comparison.
+   * Three rows offering three houses on Harlow 801 were then one property,
+   * and the anchor guard could not see the difference either: it compares
+   * this identity, so a row re-used for a different HOUSE on the same land
+   * looked unchanged and would have handed over the other design's brochure.
+   */
+  const designColumn = (fields.house_design ?? '').trim();
+
   return {
     development: normaliseDriveName(fields.development_name ?? fields.project_name ?? ''),
     lot: column ? normaliseDriveName(column) : (labelLot ?? ''),
     street: street ? `${street.number} ${street.street}` : '',
-    design: design ?? '',
+    design: designColumn ? normaliseDriveName(designColumn) : (design ?? ''),
     buildingSize: areaToken(fields.building_size_sqm),
   };
 }

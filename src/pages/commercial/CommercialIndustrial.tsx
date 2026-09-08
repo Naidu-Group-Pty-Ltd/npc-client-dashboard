@@ -21,10 +21,11 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchInput } from '@/components/ui/search-input';
 import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import {
   Archive, Building2, Calculator, ExternalLink, Factory, FileDown, Loader2,
-  Plus, Search, Settings2, FileText,
+  Plus, Settings2, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
@@ -204,16 +205,13 @@ export default function CommercialIndustrial() {
         {/* ---- Assessments -------------------------------------------- */}
         <TabsContent value="assessments" className="mt-4 space-y-4">
           <div className="ci-toolbar">
-            <div className="relative w-full max-w-sm">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search by name or reference"
-                aria-label="Search assessments"
-                className="pl-9"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search by name or reference"
+              aria-label="Search assessments"
+              containerClassName="w-full max-w-sm"
+            />
             <div className="ci-toolbar-filters">
               <Select value={segment} onValueChange={setSegment}>
                 <SelectTrigger className="w-52" aria-label="Filter by segment"><SelectValue /></SelectTrigger>

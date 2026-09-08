@@ -11,6 +11,7 @@ import { RegenerateWithPerplexityButton } from '@/components/reports/RegenerateW
 import { PremiumPdfDesignPanel } from '@/components/reports/PremiumPdfDesignPanel';
 import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { DEFAULT_PDF_DESIGN_OPTIONS } from '@/components/reports/premiumPdfDesign';
+import { REPORT_DESIGN_CONTROLS_VISIBLE } from '@/lib/reports/designControlsVisibility';
 import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
 import type { ExportPanelProps } from './types';
 
@@ -156,24 +157,33 @@ export function InvestmentReportExportPanel({
             </div>
           </section>
 
-          <section className="space-y-3 rounded-xl border bg-background/70 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="flex items-center gap-2 text-sm font-semibold"><Paintbrush className="h-3.5 w-3.5" />Design</h3>
-                <p className="text-xs text-muted-foreground">Tune premium PDF presentation settings.</p>
+          {/* The Design section is hidden product-wide — see
+              `designControlsVisibility.ts`. The heading, the description and
+              the Reset button are inside the guard with the panel, because the
+              panel refusing to draw on its own would leave a bordered box
+              titled "Design" over nothing, which reads as a broken page. The
+              options themselves still travel to the renderer above; they are
+              simply always the defaults. */}
+          {REPORT_DESIGN_CONTROLS_VISIBLE && (
+            <section className="space-y-3 rounded-xl border bg-background/70 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="flex items-center gap-2 text-sm font-semibold"><Paintbrush className="h-3.5 w-3.5" />Design</h3>
+                  <p className="text-xs text-muted-foreground">Tune premium PDF presentation settings.</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 px-2 text-xs"
+                  onClick={() => onPdfDesignOptionsChange(DEFAULT_PDF_DESIGN_OPTIONS)}
+                >
+                  <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                  Reset
+                </Button>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 shrink-0 px-2 text-xs"
-                onClick={() => onPdfDesignOptionsChange(DEFAULT_PDF_DESIGN_OPTIONS)}
-              >
-                <RotateCcw className="h-3.5 w-3.5 mr-1" />
-                Reset
-              </Button>
-            </div>
-            <PremiumPdfDesignPanel value={pdfDesignOptions} onChange={onPdfDesignOptionsChange} />
-          </section>
+              <PremiumPdfDesignPanel value={pdfDesignOptions} onChange={onPdfDesignOptionsChange} />
+            </section>
+          )}
 
           <Button variant="outline" size="sm" className="w-full bg-background/70" onClick={onDownload}>
             <Download className="h-4 w-4 mr-1" />

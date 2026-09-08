@@ -8,10 +8,11 @@
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Search, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import {
   CATEGORY_OPTIONS, INDUSTRY_OPTIONS, ORIENTATION_OPTIONS, STYLE_OPTIONS, reportTypeLabel,
 } from '@/lib/templateLibrary/taxonomy';
@@ -91,20 +92,13 @@ export function TemplateLibraryFilters({
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
-          <Search
-            className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            placeholder="Search templates by name, description or tag..."
-            value={filters.search}
-            onChange={(e) => onChange({ ...filters, search: e.target.value })}
-            className="pl-9"
-            aria-label="Search templates"
-          />
-        </div>
+        <SearchInput
+          value={filters.search}
+          onValueChange={(value) => onChange({ ...filters, search: value })}
+          placeholder="Search templates by name, description or tag..."
+          aria-label="Search templates"
+          containerClassName="flex-1"
+        />
         <Select value={sort} onValueChange={(v) => onSortChange(v as TemplateLibrarySort)}>
           <SelectTrigger className="w-full sm:w-[200px]" aria-label="Sort templates">
             <SelectValue placeholder="Sort by..." />

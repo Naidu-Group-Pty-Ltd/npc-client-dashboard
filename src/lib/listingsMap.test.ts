@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PropertyListing } from '@/lib/airtable';
 import {
+  BASEMAP_CATALOG,
   buildHeatModel,
   calibrateHeatMax,
   computePriceTiers,
@@ -9,18 +10,19 @@ import {
   formatCompactAud,
   formatFullAud,
   getStoredListingPoint,
+  groupByCoordinate,
+  resolveStack,
+  stepStackIndex,
   describeGeocodePrecision,
   heatGeometryForZoom,
-  robustClusterAnchor,
   listingSetSignature,
   listingTimestamp,
   priceTier,
   propertyGlyph,
   PROPERTY_GLYPHS,
   quantile,
-  summariseCluster,
-  tierMixGradientStops,
-  type ClusterMember,
+  summariseStack,
+  type StackMember,
   type PriceTier,
   type WeightedListing,
 } from '@/lib/listingsMap';
@@ -106,11 +108,11 @@ describe('price tiers', () => {
   });
 });
 
-describe('summariseCluster', () => {
-  const member = (price: number | null, tier: PriceTier): ClusterMember => ({ price, tier });
+describe('summariseStack', () => {
+  const member = (price: number | null, tier: PriceTier): StackMember => ({ price, tier });
 
   it('reports the median price and the band the median sits in', () => {
-    const summary = summariseCluster([
+    const summary = summariseStack([
       member(400_000, 'low'),
       member(800_000, 'mid'),
       member(1_200_000, 'high'),
@@ -122,7 +124,7 @@ describe('summariseCluster', () => {
   });
 
   it('takes the cheaper of the two middle members on an even split', () => {
-    const summary = summariseCluster([
+    const summary = summariseStack([
       member(400_000, 'low'),
       member(600_000, 'low'),
       member(1_000_000, 'high'),
@@ -133,7 +135,7 @@ describe('summariseCluster', () => {
   });
 
   it('ignores unpriced members in the median but still counts them', () => {
-    const summary = summariseCluster([
+    const summary = summariseStack([
       member(500_000, 'low'),
       member(null, 'unknown'),
       member(900_000, 'mid'),
@@ -145,14 +147,14 @@ describe('summariseCluster', () => {
   });
 
   it('has no median at all when nothing in the cluster carries a price', () => {
-    const summary = summariseCluster([member(null, 'unknown'), member(null, 'unknown')]);
+    const summary = summariseStack([member(null, 'unknown'), member(null, 'unknown')]);
     expect(summary.median).toBeNull();
     expect(summary.medianTier).toBe('unknown');
     expect(summary.unpriced).toBe(2);
   });
 
   it('returns the band mix in ramp order, omitting empty bands', () => {
-    const summary = summariseCluster([
+    const summary = summariseStack([
       member(1_500_000, 'top'),
       member(400_000, 'low'),
       member(420_000, 'low'),
@@ -163,49 +165,13 @@ describe('summariseCluster', () => {
   });
 
   it('survives an empty cluster', () => {
-    expect(summariseCluster([])).toEqual({
+    expect(summariseStack([])).toEqual({
       count: 0,
       median: null,
       medianTier: 'unknown',
       mix: [],
       unpriced: 0,
     });
-  });
-});
-
-describe('tierMixGradientStops', () => {
-  it('lays the bands out end to end and closes exactly on 100%', () => {
-    const stops = tierMixGradientStops([
-      { tier: 'low', share: 0.25 },
-      { tier: 'mid', share: 0.25 },
-      { tier: 'top', share: 0.5 },
-    ]);
-    expect(stops).toBe(
-      'var(--tier-low) 0% 25%,var(--tier-mid) 25% 50%,var(--tier-top) 50% 100%',
-    );
-  });
-
-  it('pins the final stop to 100% even when the shares do not add up cleanly', () => {
-    const third = 1 / 3;
-    const stops = tierMixGradientStops([
-      { tier: 'low', share: third },
-      { tier: 'mid', share: third },
-      { tier: 'high', share: third },
-    ]);
-    expect(stops.endsWith('100%')).toBe(true);
-    // No gap: each band starts where the previous one ended.
-    const bounds = [...stops.matchAll(/([\d.]+)% ([\d.]+)%/g)].map((m) => [+m[1], +m[2]]);
-    expect(bounds[0][0]).toBe(0);
-    for (let i = 1; i < bounds.length; i += 1) expect(bounds[i][0]).toBe(bounds[i - 1][1]);
-  });
-
-  it('falls back to a single neutral ring for an empty mix', () => {
-    expect(tierMixGradientStops([])).toBe('var(--tier-unknown) 0% 100%');
-  });
-
-  it('never names a colour, so the ring re-themes with the brand', () => {
-    const stops = tierMixGradientStops([{ tier: 'high', share: 1 }]);
-    expect(stops).not.toMatch(/#|hsl|rgb/);
   });
 });
 
@@ -390,38 +356,6 @@ describe('describeGeocodePrecision', () => {
   });
 });
 
-describe('robustClusterAnchor', () => {
-  const melbourne = { lat: -37.81, lng: 144.96 };
-
-  it('lands on a typical member, not the average', () => {
-    const anchor = robustClusterAnchor([
-      { lat: -37.8, lng: 144.9 },
-      { lat: -37.82, lng: 144.97 },
-      { lat: -37.79, lng: 145.02 },
-    ]);
-    expect(anchor).not.toBeNull();
-    expect(anchor!.lat).toBeCloseTo(-37.8, 0);
-  });
-
-  it('cannot be dragged into the sea by one wrong member', () => {
-    // The degenerate case the nearest-to-current-position snap ratified: a
-    // poisoned member in the Southern Ocean that the cluster was anchored on.
-    const members = [
-      ...Array.from({ length: 40 }, (_, i) => ({
-        lat: melbourne.lat + (i % 7) * 0.01,
-        lng: melbourne.lng + (i % 5) * 0.01,
-      })),
-      { lat: -46, lng: 146 },
-    ];
-    const anchor = robustClusterAnchor(members);
-    expect(anchor!.lat).toBeGreaterThan(-38.5);
-  });
-
-  it('handles the trivial sizes', () => {
-    expect(robustClusterAnchor([])).toBeNull();
-    expect(robustClusterAnchor([melbourne])).toEqual(melbourne);
-  });
-});
 
 describe('heatGeometryForZoom', () => {
   it('grows the radius with zoom so the surface stays legible', () => {
@@ -562,5 +496,297 @@ describe('formatting', () => {
     expect(escapeHtml('<img src=x onerror="alert(1)">')).toBe(
       '&lt;img src=x onerror=&quot;alert(1)&quot;&gt;',
     );
+  });
+});
+
+describe('basemap catalogue', () => {
+  const definitions = Object.values(BASEMAP_CATALOG);
+  const allUrls = definitions.flatMap((def) => [def.url, def.labelsUrl ?? '']).filter(Boolean);
+
+  it('never serves a CARTO basemap — anonymous CARTO tiles are "API KEY REQUIRED" watermarks', () => {
+    for (const url of allUrls) {
+      expect(url).not.toContain('cartocdn');
+      expect(url).not.toContain('carto.com');
+    }
+  });
+
+  it('never points at openstreetmap.org tile servers, which block apps by policy', () => {
+    for (const url of allUrls) {
+      expect(url).not.toContain('tile.openstreetmap.org');
+    }
+  });
+
+  it('carries no credential of any kind — every basemap is keyless', () => {
+    // A browser tile token is billable and a VITE_ value is inlined into the
+    // bundle, so a keyed provider here would spend the prime's vendor account
+    // for anyone who reads the page source. The security gate refuses it and
+    // this is the assertion that keeps one from creeping back in.
+    for (const url of allUrls) {
+      expect(url).not.toMatch(/access_token|api_?key|\bkey=|apikey/i);
+    }
+  });
+
+  it('serves every basemap from keyless Esri services over https', () => {
+    for (const def of definitions) {
+      expect(def.url.startsWith('https://server.arcgisonline.com/')).toBe(true);
+      // Esri's scheme is row-before-column; {x}/{y} here fetches the
+      // transpose, which draws the wrong part of the world rather than erroring.
+      expect(def.url).toContain('/tile/{z}/{y}/{x}');
+      // No {s} subdomain shards — Esri serves from the one host.
+      expect(def.url).not.toContain('{s}');
+    }
+  });
+
+  it('pairs the unlabelled dark canvas with its reference layer', () => {
+    expect(BASEMAP_CATALOG.dark.labelsUrl).toContain('World_Dark_Gray_Reference');
+    expect(BASEMAP_CATALOG.dark.dark).toBe(true);
+    expect(BASEMAP_CATALOG.light.dark).toBe(false);
+  });
+
+  it('declares each basemap\u2019s real native ceiling so Leaflet upscales instead of 404ing', () => {
+    expect(BASEMAP_CATALOG.light.maxNativeZoom).toBe(19);
+    expect(BASEMAP_CATALOG.dark.maxNativeZoom).toBe(16);
+    expect(BASEMAP_CATALOG.satellite.maxNativeZoom).toBe(18);
+  });
+
+  it('attributes every provider, which the licences require', () => {
+    for (const def of definitions) {
+      expect(def.attribution).toContain('Esri');
+      expect(def.attribution.length).toBeGreaterThan(10);
+    }
+  });
+});
+
+describe('groupByCoordinate — the only honest aggregation', () => {
+  const at = (r: { lat: number; lng: number }) => r;
+
+  it('puts properties that share a coordinate behind one mark', () => {
+    // 104 Grubb Avenue, Traralgon: twenty-six listings, one point. Before
+    // grouping, twenty-five of them were under the top pin and unclickable.
+    const rows = Array.from({ length: 26 }, () => ({ lat: -38.1837981, lng: 146.5164362 }));
+    const groups = groupByCoordinate(rows, at);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members).toHaveLength(26);
+    expect(groups[0].lat).toBe(-38.1837981);
+  });
+
+  it('never merges properties that are merely NEAR each other', () => {
+    // This is the whole point. Proximity clustering drew one mark for these
+    // two and put it somewhere neither of them is.
+    const groups = groupByCoordinate(
+      [
+        { lat: -37.8136, lng: 144.9631 }, // Melbourne
+        { lat: -42.8821, lng: 147.3272 }, // Hobart
+      ],
+      at,
+    );
+    expect(groups).toHaveLength(2);
+    // Every mark stands on one of the inputs — the property they represent.
+    for (const g of groups) {
+      expect([-37.8136, -42.8821]).toContain(g.lat);
+    }
+  });
+
+  it('groups to about a metre, so one address never splits in two', () => {
+    // Two geocodes of the same address agree far more closely than 1e-5.
+    const groups = groupByCoordinate(
+      [
+        { lat: -37.81360, lng: 144.96310 },
+        { lat: -37.813601, lng: 144.963101 },
+      ],
+      at,
+    );
+    expect(groups).toHaveLength(1);
+  });
+
+  it('keeps genuinely different addresses apart', () => {
+    const groups = groupByCoordinate(
+      [
+        { lat: -37.8136, lng: 144.9631 },
+        { lat: -37.8146, lng: 144.9631 }, // ~110m away
+      ],
+      at,
+    );
+    expect(groups).toHaveLength(2);
+  });
+
+  it('preserves input order inside each group, so the caller sort survives', () => {
+    const rows: Array<{ lat: number; lng: number; id: string }> = [
+      { lat: -37.81, lng: 144.96, id: 'dearest' },
+      { lat: -37.81, lng: 144.96, id: 'cheapest' },
+    ];
+    const groups = groupByCoordinate(rows, (r) => r);
+    expect(groups[0].members.map((m) => m.id)).toEqual(['dearest', 'cheapest']);
+  });
+
+  it('drops non-finite coordinates rather than grouping them together', () => {
+    const groups = groupByCoordinate(
+      [
+        { lat: Number.NaN, lng: 144.96 },
+        { lat: -37.81, lng: Number.POSITIVE_INFINITY },
+        { lat: -37.81, lng: 144.96 },
+      ],
+      at,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].members).toHaveLength(1);
+  });
+
+  it('survives an empty set', () => {
+    expect(groupByCoordinate([], at)).toEqual([]);
+  });
+
+  it('every group sits exactly on one of its own members', () => {
+    // The property the old cluster bubble could never guarantee.
+    const rows = [
+      { lat: -31.9523, lng: 115.8613 },
+      { lat: -27.4698, lng: 153.0251 },
+      { lat: -27.4698, lng: 153.0251 },
+      { lat: -37.8136, lng: 144.9631 },
+    ];
+    for (const g of groupByCoordinate(rows, at)) {
+      expect(rows.some((r) => r.lat === g.lat && r.lng === g.lng)).toBe(true);
+    }
+  });
+});
+
+/**
+ * Twenty-six properties share `104 Grubb Avenue, Traralgon`, and this
+ * arithmetic is the only route to twenty-five of them. An off-by-one at either
+ * end strips a property off a mark that promises twenty-six, silently.
+ */
+describe('stepStackIndex — reaching every property under one mark', () => {
+  it('steps forward', () => {
+    expect(stepStackIndex(0, 1, 26)).toBe(1);
+    expect(stepStackIndex(24, 1, 26)).toBe(25);
+  });
+
+  it('wraps forward off the end', () => {
+    expect(stepStackIndex(25, 1, 26)).toBe(0);
+  });
+
+  it('wraps backward off the start — the sign trap', () => {
+    // `(0 - 1) % 26` is -1 in JavaScript, which indexes nothing. The backwards
+    // arrow at the first member must reach the last one, not an empty slot.
+    expect(stepStackIndex(0, -1, 26)).toBe(25);
+  });
+
+  it('steps backward', () => {
+    expect(stepStackIndex(3, -1, 26)).toBe(2);
+  });
+
+  it('reaches every member exactly once going each way', () => {
+    for (const delta of [1, -1]) {
+      const seen = new Set<number>();
+      let at = 0;
+      for (let i = 0; i < 26; i += 1) {
+        seen.add(at);
+        at = stepStackIndex(at, delta, 26);
+      }
+      expect(seen.size).toBe(26);
+      expect(at).toBe(0);
+    }
+  });
+
+  it('is a no-op on a stack of one', () => {
+    expect(stepStackIndex(0, 1, 1)).toBe(0);
+    expect(stepStackIndex(0, -1, 1)).toBe(0);
+  });
+
+  it('never returns an index that would read past the stack', () => {
+    for (const [index, delta, total] of [
+      [-1, 1, 5],
+      [9, 1, 5],
+      [0, 1, 0],
+      [0, 1, -3],
+      [1.5, 1, 5],
+      [0, Number.NaN, 5],
+    ] as Array<[number, number, number]>) {
+      const next = stepStackIndex(index, delta, total);
+      expect(Number.isInteger(next)).toBe(true);
+      expect(next).toBeGreaterThanOrEqual(0);
+      expect(next).toBeLessThan(Math.max(1, total));
+    }
+  });
+});
+
+/**
+ * The reported corpus, reduced to the shape that matters: twenty-six listings
+ * on `104 Grubb Avenue, Traralgon`, a builder release of sixteen on the Armstrong
+ * Creek suburb centroid, and singles elsewhere.
+ */
+describe('resolveStack — what is standing under the open pin', () => {
+  const at = (r: { id: string; lat: number; lng: number }) => ({ lat: r.lat, lng: r.lng });
+  const traralgon = Array.from({ length: 26 }, (_, i) => ({
+    id: `t${i}`,
+    lat: -38.1838,
+    lng: 146.5164,
+  }));
+  const rows = [
+    ...traralgon,
+    { id: 'armstrong-a', lat: -38.2373, lng: 144.374 },
+    { id: 'armstrong-b', lat: -38.2373, lng: 144.374 },
+    { id: 'solo', lat: -33.9091, lng: 151.2221 },
+  ];
+
+  it('returns every property sharing the point, in input order', () => {
+    const stack = resolveStack(rows, traralgon[7], at);
+    expect(stack.members).toHaveLength(26);
+    expect(stack.index).toBe(7);
+    expect(stack.members.map((m) => m.id)).toEqual(traralgon.map((m) => m.id));
+  });
+
+  it('never reaches across to a different coordinate', () => {
+    const stack = resolveStack(rows, rows[26], at);
+    expect(stack.members.map((m) => m.id)).toEqual(['armstrong-a', 'armstrong-b']);
+  });
+
+  it('returns a stack of one for a property standing alone', () => {
+    const stack = resolveStack(rows, rows[28], at);
+    expect(stack.members).toHaveLength(1);
+    expect(stack.index).toBe(0);
+  });
+
+  it('is empty when nothing is open', () => {
+    expect(resolveStack(rows, null, at)).toEqual({ members: [], index: -1 });
+    expect(resolveStack(rows, undefined, at)).toEqual({ members: [], index: -1 });
+  });
+
+  it('refuses a stack around a point nothing can draw', () => {
+    // NaN cannot be keyed, so a pager built on it would offer steps to
+    // nowhere. An empty stack draws no pager at all, which is correct.
+    const stack = resolveStack(rows, { id: 'x', lat: Number.NaN, lng: 151 }, at);
+    expect(stack.members).toHaveLength(0);
+    expect(stack.index).toBe(-1);
+  });
+
+  it('reports -1 for a record that is not in the list', () => {
+    const stack = resolveStack(rows, { id: 'ghost', lat: -38.1838, lng: 146.5164 }, at);
+    expect(stack.members).toHaveLength(26);
+    expect(stack.index).toBe(-1);
+  });
+
+  it('walks every one of the twenty-six and comes back', () => {
+    // The two functions together are the only route to the twenty-five
+    // properties that are not on top. Exercised as the reader exercises them.
+    const stack = resolveStack(rows, traralgon[0], at);
+    const visited = new Set<string>();
+    let index = stack.index;
+    for (let i = 0; i < stack.members.length; i += 1) {
+      visited.add(stack.members[index].id);
+      index = stepStackIndex(index, 1, stack.members.length);
+    }
+    expect(visited.size).toBe(26);
+    expect(index).toBe(stack.index);
+  });
+
+  it('agrees with the marker layer about which mark holds what', () => {
+    // The pager must offer exactly the members the pin counted, or the badge
+    // says 26 and the pager walks a different set.
+    for (const group of groupByCoordinate(rows, at)) {
+      for (const member of group.members) {
+        expect(resolveStack(rows, member, at).members).toEqual(group.members);
+      }
+    }
   });
 });

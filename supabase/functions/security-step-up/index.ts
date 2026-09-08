@@ -36,7 +36,6 @@ import {
   verifyAssertion,
 } from '../_shared/webauthn.ts';
 
-const corsHeaders = createCorsHeaders();
 const STEP_UP_TTL_MS = 15 * 60 * 1000; // 15 min
 const RECOVERY_CODE_ATTEMPTS_PER_WINDOW = 5;
 const RECOVERY_CODE_WINDOW_SECONDS = 15 * 60;
@@ -57,6 +56,17 @@ function encodeOtpAuthLabel(value: string): string {
 }
 
 Deno.serve(async (req) => {
+  // The CALLER's origin. This was a module-level `createCorsHeaders()` — a
+  // constant computed at import time, when no request exists — so it answered
+  // a FIXED `Access-Control-Allow-Origin` beside
+  // `Access-Control-Allow-Credentials: true`. The browser releases a
+  // credentialed response to JS only when the ACAO exactly equals the
+  // request's Origin, so this function answered for one of the origins the
+  // deployment trusts and failed the preflight for every other, with `fetch`
+  // rejecting opaquely.
+  // Step-up MFA gates AUSTRAC lodgement and AML configuration, so a browser
+  // that cannot reach it cannot perform those acts at all.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).

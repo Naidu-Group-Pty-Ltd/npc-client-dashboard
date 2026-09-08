@@ -169,6 +169,7 @@ describe("secretForUrl", () => {
       ["https://graph.microsoft.com/v1.0/me/messages", "MICROSOFT_CLIENT_SECRET"],
       ["https://maps.googleapis.com/maps/api/geocode/json?address=x", "GOOGLE_MAPS_API_KEY"],
       ["https://services.leadconnectorhq.com/conversations/messages", "GOHIGHLEVEL_API_KEY"],
+      ["https://verification.didit.me/v3/session/", "DIDIT_API_KEY"],
       ["https://api.firecrawl.dev/v1/scrape", "FIRECRAWL_API_KEY"],
       ["https://api.vapi.ai/call", "VAPI_API_KEY"],
       ["https://graph.facebook.com/v19.0/act_1/insights", "META_ADS_ACCESS_TOKEN"],

@@ -30,8 +30,24 @@ const defaultContactDetails: ContactDetails = {
   abn: ''
 };
 
+/**
+ * The disclaimer nobody has written yet.
+ *
+ * This used to hold the prime's own wording verbatim — *"AS A PROFESSIONAL
+ * PROPERTY CONSULTANT & BUYERS AGENT, WE PROVIDE INFORMATION AND ADVICE BASED
+ * ON OUR EXPERTISE…"* — which every deployment inherited whenever this read
+ * failed or the settings row was absent. That put one business's trading
+ * identity, and its description of a licensed service, on another business's
+ * document.
+ *
+ * It is empty now, and the text is resolved where the document is issued:
+ * `_shared/reports/issuerIdentity.pure.ts` picks the wording from WHO is
+ * issuing, because a disclaimer is a statement by the issuer about the issuer.
+ * An unbranded deployment gets the platform's; a named one gets its own, or a
+ * neutral default written for nobody in particular.
+ */
 const defaultDisclaimer: ProfessionalDisclaimer = {
-  text: 'AS A PROFESSIONAL PROPERTY CONSULTANT & BUYERS AGENT, WE PROVIDE INFORMATION AND ADVICE BASED ON OUR EXPERTISE AND EXPERIENCE IN THE REAL ESTATE MARKET. PLEASE BE AWARE THAT THE ADVICE AND INSIGHTS OFFERED ARE FOR GENERAL INFORMATIONAL PURPOSES ONLY AND SHOULD NOT BE CONSIDERED FINANCIAL ADVICE. WHILE WE STRIVE TO ENSURE THE ACCURACY AND RELEVANCE OF THE INFORMATION PROVIDED, REAL ESTATE MARKETS ARE DYNAMIC AND SUBJECT TO CHANGE AND WE CANNOT GUARANTEE THE FUTURE PERFORMANCE OR OUTCOMES OF ANY PROPERTY INVESTMENT.',
+  text: '',
   is_enabled: true,
   font_size: 'small'
 };

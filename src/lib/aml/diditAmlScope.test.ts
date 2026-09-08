@@ -308,7 +308,10 @@ describe('no secret can reach the browser', () => {
   it('no Didit credential appears anywhere under src/', () => {
     const offenders = walk('src')
       .filter((f) => /\.(ts|tsx)$/.test(f))
-      .filter((f) => !f.includes('.test.'))
+      // Both spellings, because this repository uses both: a `.spec.ts` is as
+      // absent from the browser bundle as a `.test.ts`, and excluding only one
+      // of them let a name through on the other.
+      .filter((f) => !f.includes('.test.') && !f.includes('.spec.'))
       .filter((f) => /DIDIT_API_KEY|DIDIT_WEBHOOK_SECRET/.test(read(f)));
     expect(offenders).toEqual([]);
   });
@@ -332,13 +335,24 @@ describe('no secret can reach the browser', () => {
 
   it('the readiness endpoint reports presence, never the credential', () => {
     const verification = read('supabase/functions/aml-verification/index.ts');
-    const reads = verification.split('\n')
-      .filter((line) => /Deno\.env\.get\(['"]DIDIT_[A-Z_]+['"]\)/.test(line));
+    /*
+     * Judged on the EXPRESSION rather than the physical line. The Mission
+     * Control clone key is judged by the same rule as the Didit ones: on a
+     * brokered deployment it is the credential the verification call is
+     * authenticated with, so reporting its VALUE would be the same defect
+     * under a different name — and the formatter wraps a long read onto its
+     * own line, which a line-level rule reads as a bare one.
+     */
+    const flat = verification.replace(/\s+/g, ' ');
+    const READ = /Deno\.env\.get\(['"](?:DIDIT_[A-Z_]+|MISSION_CONTROL_CLONE_API_KEY)['"]\)/g;
+    const reads = [...flat.matchAll(READ)];
     expect(reads.length).toBeGreaterThan(0);
-    for (const line of reads) {
-      // Every read is immediately reduced to a boolean. A bare read assigned
-      // to something that could be serialised is the failure this catches.
-      expect(line).toMatch(/Boolean\(|!!|\.length\s*>\s*0/);
+    for (const match of reads) {
+      // A bare read assigned to something that could be serialised is the
+      // failure this catches.
+      const before = flat.slice(Math.max(0, match.index - 24), match.index);
+      expect(before, `unreduced read: …${before}${match[0]}`)
+        .toMatch(/Boolean\(\s*$|!!\s*$/);
     }
   });
 

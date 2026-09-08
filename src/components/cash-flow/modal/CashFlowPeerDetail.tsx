@@ -31,6 +31,8 @@ import {
   type MetricsUnavailable,
 } from '@/lib/cashFlow/investmentMetrics.pure';
 import { AU_LOCALE } from '@/lib/aml/displayDate';
+import { PropertySeriesMarker } from '@/components/cash-flow/PropertySeriesMarker';
+import type { PropertyLineStyle } from '@/lib/cashFlow/chartTheme';
 
 /** The projection rows this view draws. */
 export interface PeerProjectionRow {
@@ -68,7 +70,7 @@ export interface PeerInputs {
   taxRate: number;
 }
 
-export interface CashFlowPeerDetailProps {
+export interface CashFlowPeerDetailProps extends Partial<PropertyLineStyle> {
   address: string;
   colour: string;
   inputs: PeerInputs;
@@ -91,6 +93,9 @@ const percent = (value: number | null | undefined, digits = 2) =>
 export function CashFlowPeerDetail({
   address,
   colour,
+  dash,
+  linecap,
+  name,
   inputs,
   projections,
   metrics,
@@ -104,7 +109,7 @@ export function CashFlowPeerDetail({
         <CardHeader className="border-b bg-muted/20 pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <span aria-hidden className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: colour }} />
+              <PropertySeriesMarker colour={colour} dash={dash} linecap={linecap} name={name ?? 'solid'} />
               {address}
             </CardTitle>
             <Badge variant="outline" className="gap-1.5 rounded-full text-[11px] font-normal">

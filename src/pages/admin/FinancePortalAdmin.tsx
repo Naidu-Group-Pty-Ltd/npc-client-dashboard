@@ -18,7 +18,7 @@ import {
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
-  Loader2, Search, MoreHorizontal, Mail, Shield, RefreshCw,
+  Loader2, MoreHorizontal, Mail, Shield, RefreshCw,
   Ban, CheckCircle2, History, Settings, Users, Copy,
   BarChart3, FileSpreadsheet, FileText, DollarSign, UserPlus,
   Pencil, Trash2, CircleDot, ShieldCheck,
@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { SearchInput } from '@/components/ui/search-input';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { ClientAssignmentsDialog } from '@/components/admin/finance-portal/ClientAssignmentsDialog';
@@ -330,16 +331,14 @@ export default function FinancePortalAdmin() {
             </CardDescription>
           </div>
           <div className="flex w-full flex-col gap-2 lg:w-auto lg:items-end">
-            <div className="relative w-full lg:w-72">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search name or email..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                aria-label="Search finance contacts"
-                className="h-10 w-full min-w-0 rounded-xl border-border/70 bg-background/75 pl-9 shadow-inner transition-all focus-visible:ring-primary/35"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search name or email..."
+              aria-label="Search finance contacts"
+              containerClassName="w-full lg:w-72"
+              className="h-10 w-full min-w-0 rounded-xl border-border/70 bg-background/75 shadow-inner transition-all focus-visible:ring-primary/35"
+            />
             <div className="flex w-full flex-wrap gap-1.5 lg:justify-end">
               {(['all', 'active', 'invited', 'no_access', 'revoked'] as const).map(s => (
                 <Button

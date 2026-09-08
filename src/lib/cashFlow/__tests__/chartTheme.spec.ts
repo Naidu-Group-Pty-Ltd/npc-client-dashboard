@@ -18,13 +18,16 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PROPERTY_LINE_STYLES,
   PROPERTY_TOKENS,
   SERIES_TOKENS,
   TREND_SERIES,
   YIELD_SERIES,
+  propertySeriesStyle,
   resolveChartTheme,
   toCssColor,
 } from '../chartTheme';
+import { COMPARISON_TOTAL_REPORTS } from '../comparisonCandidates.pure';
 
 const TOKENS = readFileSync(
   path.resolve(__dirname, '../../../styles/tokens.css'),
@@ -146,5 +149,76 @@ describe('with no document to read', () => {
       series.rentalIncome, series.cashFlow,
     ]);
     expect(distinct.size).toBe(5);
+  });
+});
+
+/**
+ * A comparison's five properties must be tellable apart WITHOUT the colour.
+ *
+ * The chart drew one solid line and four identical `5 5` dashes, so hue was
+ * the only thing separating four of the five series — and the audit's
+ * screenshot is what that looks like when the hues are close: five properties,
+ * three readable indicators. Colour is the first thing a chart loses (a
+ * projector, a greyscale print, the PNG pasted into a report, a reader with a
+ * colour vision deficiency), so the pattern has to carry the identity on its
+ * own.
+ */
+describe('property comparison line styles', () => {
+  it('has one style per property a comparison can hold', () => {
+    expect(PROPERTY_LINE_STYLES).toHaveLength(COMPARISON_TOTAL_REPORTS);
+    expect(PROPERTY_TOKENS).toHaveLength(COMPARISON_TOTAL_REPORTS);
+  });
+
+  it('gives every property a different pattern', () => {
+    // `undefined` is the solid line and is a pattern like any other, so it is
+    // counted rather than filtered — two solid lines would be the same defect.
+    const patterns = PROPERTY_LINE_STYLES.map((style) => `${style.dash ?? 'solid'}|${style.linecap ?? 'butt'}`);
+    expect(new Set(patterns).size).toBe(PROPERTY_LINE_STYLES.length);
+  });
+
+  it('leaves exactly one solid line, for the report the adviser opened', () => {
+    const solid = PROPERTY_LINE_STYLES.filter((style) => !style.dash);
+    expect(solid).toHaveLength(1);
+    expect(PROPERTY_LINE_STYLES[0].dash).toBeUndefined();
+  });
+
+  it('names every pattern, because a marker has to be readable without colour', () => {
+    for (const style of PROPERTY_LINE_STYLES) {
+      expect(style.name.trim()).not.toBe('');
+    }
+    expect(new Set(PROPERTY_LINE_STYLES.map((s) => s.name)).size).toBe(PROPERTY_LINE_STYLES.length);
+  });
+
+  it('keeps every period short enough to repeat inside a legend swatch', () => {
+    // Recharts draws the `plainline` icon in a 32-unit viewBox and scales it
+    // down. A dash array is in those units, so a pattern whose period exceeds
+    // 32 draws as one unbroken segment in the key — the swatch would then say
+    // "solid" for a line the chart draws dashed, which is worse than no key.
+    for (const style of PROPERTY_LINE_STYLES) {
+      if (!style.dash) continue;
+      const period = style.dash.split(/\s+/).map(Number).reduce((sum, n) => sum + n, 0);
+      expect(Number.isFinite(period)).toBe(true);
+      expect(period).toBeGreaterThan(0);
+      expect(period).toBeLessThanOrEqual(32);
+    }
+  });
+
+  it('pairs each pattern with its own colour', () => {
+    const theme = resolveChartTheme(null);
+    const styles = Array.from({ length: COMPARISON_TOTAL_REPORTS }, (_, i) => propertySeriesStyle(theme, i));
+    expect(new Set(styles.map((s) => s.colour)).size).toBe(COMPARISON_TOTAL_REPORTS);
+    expect(styles.every((s) => Boolean(s.colour))).toBe(true);
+  });
+
+  it('wraps rather than running out', () => {
+    // The chart used to fall back to the muted tick colour past the fifth
+    // slot, which draws a line the reader cannot attribute to anything. The
+    // cap is five, so this is defence rather than a live path — but a
+    // silently unattributable line is exactly the defect being fixed.
+    const theme = resolveChartTheme(null);
+    const sixth = propertySeriesStyle(theme, COMPARISON_TOTAL_REPORTS);
+    expect(sixth.colour).toBe(propertySeriesStyle(theme, 0).colour);
+    expect(sixth.name).toBe(propertySeriesStyle(theme, 0).name);
+    expect(propertySeriesStyle(theme, -1).colour).toBeTruthy();
   });
 });

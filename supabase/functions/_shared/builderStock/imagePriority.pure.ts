@@ -247,7 +247,25 @@ export function rankImage<T extends DisplayableImage>(image: T): RankedImage<T> 
     };
   }
   if (isVerifiedWebImage(image)) return { image, rank: 3, provenance: 'web_sourced' };
-  if (isStreetViewImage(image)) return { image, rank: 4, provenance: 'street_view' };
+  /*
+   * STREET VIEW IS NO LONGER A CARD IMAGE, AND THAT REVERSES A DECISION MADE
+   * HERE DELIBERATELY.
+   *
+   * Rank 4 existed because "the builder's own image, or nothing" left a
+   * marketplace of empty frames, and a Street View still of the property's own
+   * address is at least a photograph of somewhere real. What it is not is a
+   * photograph of the PROPERTY. These lots are house-and-land packages in
+   * estates under construction, so the still is of bare dirt or, on Lot 502
+   * Mambourin, a roundabout — reported as "street views that make no sense",
+   * beside a repeated instruction that a card's picture comes from the
+   * builder's uploaded stock.
+   *
+   * `isStreetViewImage` stays, and so does every row: this changes what may be
+   * DRAWN, not what may be stored or recorded. A property whose only picture is
+   * a Street View now reads as having none, which this marketplace already
+   * says out loud and can act on — and which is the programme's own rule, that
+   * a correct blank beats a wrong property's photograph.
+   */
   return null;
 }
 

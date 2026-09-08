@@ -62,7 +62,7 @@ Deno.serve(async (req) => {
     };
 
     // Determine sync mode
-    const { client_id, ghl_contact_id, clientId: camelClientId, ghlContactId: camelGhlContactId, mode = 'incremental' } = body;
+    const { client_id, ghl_contact_id, clientId: camelClientId, ghlContactId: camelGhlContactId, mode = 'incremental', cursor = 0 } = body;
     const resolvedClientId = client_id || camelClientId;
     const resolvedGhlContactId = ghl_contact_id || camelGhlContactId;
 
@@ -117,7 +117,29 @@ Deno.serve(async (req) => {
     let totalMessages = 0;
     let errors: Array<{ contactId: string; error: string }> = [];
 
-    for (const { clientId, ghlContactId } of targetContactIds) {
+    /**
+     * A wall-clock budget, because this walk cannot be made to fit.
+     *
+     * The sync paces itself — 500ms between contacts, 300ms between message
+     * pages — because GoHighLevel rate-limits, and it walks EVERY client with
+     * a contact id. At a few hundred clients that is minutes of deliberate
+     * waiting, so no request timeout is ever large enough: the client's budget
+     * was raised from 60s to the declared 120s once already and the same
+     * "Request timed out" came back as the tenant grew.
+     *
+     * So the run stops while it still has time to answer, reports how far it
+     * got, and is called again from where it left off. `config.toml` declares
+     * `request_timeout = 120`; 95s leaves room to write the response.
+     */
+    const BUDGET_MS = 95_000;
+    const startedAt = Date.now();
+    const startIndex = Math.max(0, Number(cursor) || 0);
+    const queue = targetContactIds.slice(startIndex);
+    let processed = 0;
+
+    for (const { clientId, ghlContactId } of queue) {
+      if (Date.now() - startedAt > BUDGET_MS) break;
+      processed++;
       try {
         // Rate limit: 500ms between contacts
         await delay(500);
@@ -204,13 +226,20 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[sync-ghl-conversations] Complete: ${totalConversations} conversations, ${totalMessages} messages synced`);
+    const nextCursor = startIndex + processed;
+    const done = nextCursor >= targetContactIds.length;
+    console.log(`[sync-ghl-conversations] ${done ? 'Complete' : 'Paused at ' + nextCursor + '/' + targetContactIds.length}: ${totalConversations} conversations, ${totalMessages} messages synced`);
 
     return new Response(JSON.stringify({
       success: true,
       conversations_synced: totalConversations,
       messages_synced: totalMessages,
-      contacts_processed: targetContactIds.length,
+      contacts_processed: processed,
+      // How far this run got, so the caller can resume rather than restart.
+      // `done: false` is a healthy answer, not a failure.
+      done,
+      cursor: done ? null : nextCursor,
+      total_contacts: targetContactIds.length,
       errors: errors.length > 0 ? errors : undefined,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

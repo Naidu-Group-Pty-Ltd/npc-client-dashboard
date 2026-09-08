@@ -14,8 +14,10 @@
 import { Building2, Home, Lock } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { PropertySeriesMarker } from '@/components/cash-flow/PropertySeriesMarker';
+import type { PropertyLineStyle } from '@/lib/cashFlow/chartTheme';
 
-export interface SwitcherProperty {
+export interface SwitcherProperty extends Partial<PropertyLineStyle> {
   id: string;
   address: string;
   /** The colour this property is drawn in on every chart above. */
@@ -80,10 +82,14 @@ export function CashFlowPropertySwitcher({
                   : 'border-border/60 bg-background/60 hover:-translate-y-0.5 hover:border-primary/40 hover:bg-muted/40'
               }`}
             >
-              <span
-                aria-hidden
-                className="h-2.5 w-2.5 shrink-0 rounded-full"
-                style={{ backgroundColor: property.colour }}
+              {/* The key is the line, not a dot: the charts above separate
+                  five properties by pattern as well as by hue, and a dot can
+                  only ever repeat half of that. */}
+              <PropertySeriesMarker
+                colour={property.colour}
+                dash={property.dash}
+                linecap={property.linecap}
+                name={property.name ?? 'solid'}
               />
               {property.isPrimary
                 ? <Home className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />

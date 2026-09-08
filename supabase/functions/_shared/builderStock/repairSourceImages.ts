@@ -27,14 +27,16 @@
  *   another builder's stock even if two rows happen to read alike.
  */
 import { classifyFetchedSource, classifyStockFile } from './fileTypes.pure.ts';
+import { RUNTIME_VERSION } from './runtimeVersion.pure.ts';
 import { PROCESSED_LIFECYCLE } from './stockLifecycle.pure.ts';
 import { detectDocumentMime } from '../immutableDocuments.ts';
 import { extractStockFile } from './extract.ts';
 import { keyRowsByHeader } from './table.pure.ts';
 import { isNotionUrl } from './urlSource.pure.ts';
 import {
-  emptyStockRecord, identifiesAProperty, normaliseStockRow, stockIdentityHints,
-  stockMatchKeys, stockRecordLabel, stockRowFingerprint,
+  developmentUnitMatchKey, emptyStockRecord, identifiesAProperty,
+  normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel, stockRowFingerprint, storedRowDevelopmentUnitKey,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -63,27 +65,39 @@ import {
   DriveListingCache, recoverPackageImage, type PackageFetcher, type PackageOutcome,
 } from './packageImages.ts';
 import { attachDocumentMedia } from './importStock.ts';
+import { designOfRecordOrRow } from './builderSuppliedImage.pure.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
 import { chooseAndStorePrimaryImage } from './primaryImage.ts';
 import { readAllRows } from './pagedRead.ts';
 
 /**
- * The house design a stored row states, or null.
+ * The house design a row states, or null — WHICHEVER SHAPE THE CALLER HOLDS.
  *
- * READ FROM `source_row`, WHICH IS WHERE THE NORMALISED RECORD LIVES. The
- * import writes the whole `NormalisedStockRecord` into that jsonb column, so a
- * canonical field added to the record is persisted and read back without a
- * migration and without a second place to keep it in step. Older rows,
- * imported before `house_design` existed, simply answer null and take the
- * lot-specific path exactly as they do today.
+ * THE TWO READERS DIFFER IN WHICH THEY HAVE, and this function used to know
+ * only one of them. It read `record.source_row.house_design`, which is the
+ * shape of a DATABASE ROW: the import writes the whole
+ * `NormalisedStockRecord` into that jsonb column. But the caller here is the
+ * repair path, and it holds the normalised record ITSELF — `storedSourceRows`
+ * returns `readStoredRecord(row.source_row)`, so `house_design` sits at the
+ * top level and there is no `source_row` key to descend into. Every call
+ * therefore answered null.
+ *
+ * MEASURED, 6 SEPTEMBER 2026. The design fallback exists because a builder
+ * sells fewer designs than lots and files one brochure per design; it was
+ * built, tested, documented and shipped, and across the whole live database
+ * it had produced ZERO images: 438 primary images at evidence levels 1, 2 and
+ * 3, and not one at level 4. It could not have produced any, because the
+ * design never reached the election. Lots 502 Mambourin and 1004 Five Farms
+ * are the two rows whose only imagery is a design render, and both were told
+ * their own brochures name no image for them.
+ *
+ * `storedRowDevelopmentUnitKey` learned this same lesson — its header says it
+ * outright: "the two readers differ in which they have ... Looking in both is
+ * what lets one function serve both." This now looks in both, through
+ * `designOfStoredRow`, which is the shared reader the other three callers
+ * already use and which also recovers a design from `unmapped.HOUSE`.
  */
-function designOf(record: unknown): string | null {
-  const row = (record as { source_row?: unknown })?.source_row;
-  if (!row || typeof row !== 'object') return null;
-  const value = (row as { house_design?: unknown }).house_design;
-  const text = typeof value === 'string' ? value.trim() : '';
-  return text || null;
-}
+const designOf = designOfRecordOrRow;
 import type { ExtractedMedia } from './extract.ts';
 
 export interface RepairOutcome {
@@ -272,16 +286,46 @@ async function readStage1Images(
   return byItem;
 }
 
+/**
+ * Which image row each item is pointing at RIGHT NOW — read after the
+ * re-point so the demote below can spare exactly the row still drawing the
+ * card. See the comment above the demote loop for why the order matters.
+ */
+async function readPrimaryImageIds(
+  db: any,
+  stockItemIds: string[],
+): Promise<Map<string, string | null>> {
+  const pointed = new Map<string, string | null>();
+  const ids = [...new Set(stockItemIds)];
+  for (let index = 0; index < ids.length; index += STAGE1_CHUNK) {
+    const { data } = await db
+      .from('builder_stock_items')
+      .select('id, primary_image_id')
+      .in('id', ids.slice(index, index + STAGE1_CHUNK));
+    for (const row of (data ?? []) as Array<{ id: string; primary_image_id: string | null }>) {
+      pointed.set(row.id, row.primary_image_id ?? null);
+    }
+  }
+  return pointed;
+}
+
 function referenceKey(item: ExistingItem): string | null {
   const value = item.external_reference?.trim().toLowerCase();
   return value || null;
 }
 
-function developmentUnitKey(item: ExistingItem): string | null {
-  const development = (item.development_name ?? item.project_name ?? '').trim().toLowerCase();
-  const unit = (item.unit_number ?? item.lot_number ?? '').trim().toLowerCase();
-  return development && unit ? `${development}|${unit}` : null;
-}
+/**
+ * THE SAME KEY THE IMPORTER USES — the same function, not a copy of it.
+ *
+ * This is the module that decides which property a document's photograph
+ * belongs to, so a key coarser than the importer's is the worst kind of
+ * drift: with three packages on Harlow 801 the map would hold whichever row
+ * was read last and hand every Harlow 801 brochure to it, badged "Builder
+ * supplied", on the wrong house. It was a second copy of the importer's
+ * function until the design had to go into it, which is how a copy announces
+ * itself.
+ */
+const developmentUnitKey = storedRowDevelopmentUnitKey;
 
 /**
  * Re-read one source and attach the imagery it states.
@@ -759,7 +803,7 @@ export async function repairSourceImagesForUpload(
     const keys = stockMatchKeys(record);
     const itemId = (keys.reference ? byReference.get(keys.reference) : undefined)
       ?? (keys.developmentUnit
-        ? byDevelopmentUnit.get(`${keys.developmentUnit.development}|${keys.developmentUnit.unit}`)
+        ? byDevelopmentUnit.get(developmentUnitMatchKey(keys.developmentUnit))
         : undefined)
       ?? byFingerprint.get(stockRowFingerprint(record))?.shift();
 
@@ -1024,6 +1068,10 @@ export async function repairSourceImagesForUpload(
     const packageUrl = branch.url;
     const question = {
       provenanceVersion: PROVENANCE_VERSION,
+      // What the extractor understands, and — separately — how reliably this
+      // worker can open a document at all. See `runtimeVersion.pure.ts`: only
+      // records of OUR OWN failures compare the second one.
+      runtimeVersion: RUNTIME_VERSION,
       packageReference: packageUrl,
       sourceAnchor: anchor ?? null,
     };
@@ -1499,11 +1547,41 @@ export async function repairSourceImagesForUpload(
     ? new Map<string, Array<{ id: string; processing_status: string;
       source_reference: string | null; source_detail: Record<string, unknown> | null }>>()
     : await readStage1Images(db, itemIdsInOrder);
+  /*
+   * THE CARD'S STANDING IMAGE OUTLIVES ITS OWN RE-DERIVATION.
+   *
+   * The demote used to run BEFORE the primary was re-chosen, and a freshly
+   * stored replacement is not displayable until its eligibility and
+   * sanitization stamps exist — so for the whole of that window the item had
+   * no primary at all and the live card read "Finding a picture…" about a
+   * property whose picture was fine minutes earlier. Measured, 6 September
+   * 2026: every version bump rolls a re-derivation across the settled fleet
+   * one row at a time, and each row's turn blanked its card for minutes (Lot
+   * 516 Winterset was the one caught on screen).
+   *
+   * So the pointer moves FIRST, and the demote then skips whichever row is
+   * still being pointed at: a stale-version primary keeps drawing the card
+   * until the pass whose replacement is actually displayable takes over, at
+   * which point the old row stops being the pointer and is demoted exactly
+   * as before. A background re-derivation becomes invisible — the swap is
+   * the only observable event. The deliberate trade, stated: an image this
+   * run could not re-prove now stands until its replacement lands rather
+   * than vanishing immediately; withdrawal-with-nothing-better still happens
+   * the moment the pointer row itself stops being chosen for any other
+   * reason, and every non-pointer stale row is demoted exactly as it always
+   * was.
+   */
+  for (const itemId of touched) {
+    const primary = await chooseAndStorePrimaryImage(db, itemId);
+    if (primary && primary !== (primaryBefore.get(itemId) ?? null)) outcome.primaryUpdated += 1;
+  }
+  const pointedNow = await readPrimaryImageIds(db, [...new Set(itemIdsInOrder)]);
   for (const itemId of new Set(itemIdsInOrder)) {
     const proven = provenByItem.get(itemId) ?? new Set<string>();
 
     for (const row of stage1ByItem.get(itemId) ?? []) {
       if (row.processing_status !== 'ready') continue;
+      if (row.id === pointedNow.get(itemId)) continue;
       const reference = String(row.source_reference ?? '');
       if (proven.has(reference)) continue;
       const version = Number((row.source_detail ?? {}).provenance_version ?? 0);
@@ -1517,11 +1595,6 @@ export async function repairSourceImagesForUpload(
       });
       outcome.demoted += 1;
     }
-  }
-
-  for (const itemId of touched) {
-    const primary = await chooseAndStorePrimaryImage(db, itemId);
-    if (primary && primary !== (primaryBefore.get(itemId) ?? null)) outcome.primaryUpdated += 1;
   }
 
   /**
@@ -1709,8 +1782,17 @@ async function repairPdfUpload(
     }
     const proven = provenByItem.get(item.id) ?? new Set<string>();
 
+    // Re-point FIRST, then spare the row still drawing the card — the same
+    // order as the row path above, for the same measured reason: demoting
+    // the standing primary before its replacement is displayable blanks the
+    // live card for the whole eligibility-and-sanitization window.
+    const primary = await chooseAndStorePrimaryImage(db, item.id);
+    if (primary && primary !== (item.primary_image_id ?? null)) outcome.primaryUpdated += 1;
+    const pointedRow = primary ?? item.primary_image_id ?? null;
+
     for (const row of stage1ByItem.get(item.id) ?? []) {
       if (row.processing_status !== 'ready') continue;
+      if (row.id === pointedRow) continue;
       if (proven.has(String(row.source_reference ?? ''))) continue;
       if (Number((row.source_detail ?? {}).provenance_version ?? 0) >= PROVENANCE_VERSION) continue;
       await demoteUnprovenSourceImage(db, {
@@ -1720,9 +1802,6 @@ async function repairPdfUpload(
       });
       outcome.demoted += 1;
     }
-
-    const primary = await chooseAndStorePrimaryImage(db, item.id);
-    if (primary && primary !== (item.primary_image_id ?? null)) outcome.primaryUpdated += 1;
   }
 
   return outcome;

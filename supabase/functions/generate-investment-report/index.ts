@@ -8,12 +8,26 @@ import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shar
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import { postProcessReportMarkdown } from '../_shared/compassPostProcessor.ts';
+import { demographicsStatBlocks } from '../_shared/reports/censusPromptBlocks.pure.ts';
+import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure.ts';
+import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
+import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
+import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
+import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
-import { applyDisplayOverrides, buildAnnualCostOverrides, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
+import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
+import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
 import { reconcileFacts, factFindingToFlag } from '../_shared/reports/investment/factReconciliation.pure.ts';
+import { financeIdentityBreaches } from '../_shared/reports/metrics/propertyMetrics.pure.ts';
+import {
+  absentRentDirective,
+  resolveRentalEvidence,
+  statedYield,
+} from '../_shared/reports/investment/rentalEvidence.pure.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -1378,7 +1392,8 @@ Council rezoning to MU3 was gazetted March 2026, lifting permissible density.
 {{heatmap: 5.2,6.1,7.4 / 4.8,5.9,6.7 / 3.1,4.0,5.2 | rows=2024,2025,2026 | cols=Q1,Q2,Q3 | title=Suburb Growth %}}
 \`\`\`
 
-6. SCORE WHEEL — multi-dimensional radar (3+ scores).
+6. SCORECARD — named dimensions each scored out of 100 (2+ scores). Drawn as
+   horizontal bars on a common baseline; never as a radar or spider chart.
    Format: \`{{wheel: s1,s2,s3,… | labels=L1,L2,L3,… | max=100 | title=…}}\`
 \`\`\`
 {{wheel: 78,64,82,71,55 | labels=Yield,Growth,Risk,Demand,Infra | title=Score Breakdown}}
@@ -2274,6 +2289,25 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const effectiveInterestRate = mergedOverrides.interestRate || propertyDetails?.interestRate || 6.5;
     const effectiveLoanTerm = mergedOverrides.loanTermYears || propertyDetails?.loanTermYears || 30;
     const effectiveIsFirstHomeBuyer = mergedOverrides.isFirstHomeBuyer || false;
+    // ONE property-type answer for every service on this request.
+    //
+    // Three call sites sent `propertyDetails?.propertyType || 'house'` — the
+    // raw string, with a silent fallback — while `overrides.pure.ts`
+    // normalised separately. `apartment` therefore never matched the only
+    // test the engine and the validation service make (`=== 'unit'`), so
+    // neither drew the strata estimate nor validated it; 264 of 1,071 stored
+    // reports carry a type outside the engine's vocabulary.
+    //
+    // `?? raw` rather than `?? 'house'` is the point. A type that will not
+    // resolve stays unresolved: `residential property` matches no branch and
+    // draws no adjustment, which is the honest neutral. Defaulting it to a
+    // house would award the scoring service's +3 house bonus to 145 reports
+    // nobody has classified.
+    const sourcePropertyType = (propertyDetails?.propertyType ?? mergedOverrides.propertyType) as unknown;
+    const effectivePropertyType = normalisePropertyType(sourcePropertyType)
+      ?? (typeof sourcePropertyType === 'string' && sourcePropertyType.trim()
+        ? sourcePropertyType.trim().toLowerCase()
+        : undefined);
     const effectiveBuildType = mergedOverrides.buildType || (propertyDetails?.isNewBuild ? 'new_build' : 'existing_property');
     const effectiveIsNewBuild = effectiveBuildType === 'new_build';
     const effectiveIsLandOnly = effectiveBuildType === 'land_only';
@@ -2416,6 +2450,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       employmentData?: any;
       climateData?: any;
       schoolData?: any;
+      planningData?: any;
+      regionalTrends?: any;
     }
     
     let enhancedData: EnhancedData = {};
@@ -2556,19 +2592,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           return null;
         }) : Promise.resolve({ success: false, serviceName: 'abs-employment-service', error: 'Missing state' }),
 
-        // 7. Climate data
-        state ? fetchServiceWithFallback('climate-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ suburb, state, postcode })
-          }, 25000, 'climate-data-service');
-          if (response.ok) {
-            const data = await response.json();
-            return data.success ? data.data : null;
-          }
-          return null;
-        }) : Promise.resolve({ success: false, serviceName: 'climate-data-service', error: 'Missing state' }),
+        // 7. Climate data is coordinate-keyed (SILO grid) and the verified
+        // coordinate does not exist yet in phase 1 — it is fetched after
+        // location intelligence below. This slot keeps the results array
+        // aligned with serviceNames.
+        Promise.resolve({ success: false, serviceName: 'climate-data-service', error: 'Missing coordinates (fetched after location intelligence)' }),
       ];
 
       // Execute all Phase 1 fetches in parallel
@@ -2658,6 +2686,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               suburb: suburb.replace(/-/g, ' '),
               state: state,
               postcode: postcode || '',
+              // Deliberately NOT `effectivePropertyType`. This selects a
+              // published rent SERIES, so its vocabulary is the market data's
+              // rather than the engine's — mapping `villa` onto `townhouse`
+              // here would change which rent is looked up, which is a
+              // different question from what the duty and cost engines model.
               propertyType: propertyDetails?.propertyType?.toLowerCase() || 'house',
               bedrooms: modelledBeds
             })
@@ -2709,9 +2742,21 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               weeklyRent: calcWeeklyRent,
               weeklyRentSource: rentSource,
               state: state,
-              propertyType: propertyDetails?.propertyType || 'house',
+              // ONE property-type vocabulary. This used to send the raw string
+              // with a silent `|| 'house'`, while `overrides.pure.ts`
+              // normalised separately — so `apartment` reached the engine as
+              // `apartment`, never matched its only test (`=== 'unit'`) and
+              // never drew the strata estimate. `undefined` for an
+              // unrecognised type is deliberate: an unresolved type is not a
+              // house, and the engine already treats a non-unit as no strata.
+              propertyType: normalisePropertyType(sourcePropertyType),
               isFirstHomeBuyer: effectiveIsFirstHomeBuyer,
               isNewBuild: effectiveIsNewBuild,
+              // WHAT is being bought, so the duty engine can reach its
+              // vacant-land schedules. Until now the build type reached only
+              // the model, as prose telling it to skip the rental sections,
+              // while the engine assessed residential duty regardless.
+              buildType: effectiveBuildType,
               // Reviewed figures go INTO the engine so the totals, series,
               // sensitivity and metrics all describe them; splatting them
               // over the response afterwards (the old way) left every
@@ -2771,7 +2816,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                   councilRates: financialData.data.annualCosts.councilRates,
                   annualCosts: financialData.data.annualCosts,
                   state: state,
-                  propertyType: propertyDetails?.propertyType || 'house'
+                  propertyType: effectivePropertyType
                 })
               });
               
@@ -2836,6 +2881,119 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
       }
 
+      // Planning & development intelligence — zoning, parcel, state
+      // development instruments and DA activity from the jurisdiction's own
+      // planning services. It keys on the verified coordinate the location
+      // step just resolved, so a report with no trustworthy coordinate gets
+      // an honest absence rather than another jurisdiction's zone.
+      const planningCoords = enhancedData.locationIntelligence?.coordinates;
+      if (planningCoords?.lat && planningCoords?.lng) {
+        try {
+          const planningResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/planning-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: planningCoords.lat,
+              longitude: planningCoords.lng,
+              state: state,
+              postcode: postcode
+            })
+          }, 45000, 'planning-data-service');
+          if (planningResponse.ok) {
+            const planningBody = await planningResponse.json();
+            if (planningBody.success && planningBody.data) {
+              enhancedData = { ...enhancedData, planningData: planningBody.data };
+              console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ Planning data skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
+      // Climate is read from SILO at the verified coordinate, which exists
+      // only now — the phase-1 slot above deliberately skipped.
+      const climateCoords = enhancedData.locationIntelligence?.coordinates;
+      if (climateCoords?.lat && climateCoords?.lng) {
+        try {
+          const climateResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: climateCoords.lat,
+              longitude: climateCoords.lng,
+              state: state,
+              suburb: suburb,
+              postcode: postcode
+            })
+          }, 40000, 'climate-data-service');
+          if (climateResponse.ok) {
+            const climateBody = await climateResponse.json();
+            if (climateBody.success && climateBody.data) {
+              enhancedData = { ...enhancedData, climateData: climateBody.data };
+              console.log('✓ Climate reading fetched (SILO grid cell)');
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ Climate reading skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
+      // Regional trends (the SA2's measured population series and growth)
+      // are likewise coordinate-keyed: the service resolves the containing
+      // SA2 and serves its own ERP series.
+      const regionalCoords = enhancedData.locationIntelligence?.coordinates;
+      if (regionalCoords?.lat && regionalCoords?.lng) {
+        try {
+          const regionalResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-regional-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              latitude: regionalCoords.lat,
+              longitude: regionalCoords.lng,
+              state: state,
+              suburb: suburb,
+              postcode: postcode
+            })
+          }, 30000, 'abs-regional-service');
+          if (regionalResponse.ok) {
+            const regionalBody = await regionalResponse.json();
+            if (regionalBody.success && regionalBody.data) {
+              enhancedData = { ...enhancedData, regionalTrends: regionalBody.data };
+              console.log('✓ Regional trends fetched (SA2):', regionalBody.data?.sa2?.name);
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ Regional trends skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
+      // QLD's crime register is LGA-keyed and the phase-1 crime call ran
+      // before any LGA was known — so once the cadastre has named the shire,
+      // ask again with it. NSW resolves in phase 1 by postcode; this second
+      // ask exists only for the LGA-keyed register.
+      const qldLga = enhancedData.planningData?.parcel?.status === 'ok'
+        ? enhancedData.planningData?.parcel?.lga
+        : null;
+      if (!enhancedData.crimeStatistics && state === 'QLD' && qldLga) {
+        try {
+          const crimeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ suburb, state, postcode, lga: qldLga })
+          }, 20000, 'crime-statistics-service');
+          if (crimeResponse.ok) {
+            const crimeBody = await crimeResponse.json();
+            if (crimeBody.success && crimeBody.data) {
+              enhancedData = { ...enhancedData, crimeStatistics: crimeBody.data };
+              console.log('✓ QLD crime statistics fetched via cadastre LGA:', qldLga);
+            }
+          }
+        } catch (error: any) {
+          console.log('⚠️ QLD crime retry skipped:', error?.message?.substring(0, 80));
+        }
+      }
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -2854,8 +3012,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             body: JSON.stringify({
               property: {
                 price: effectivePurchasePrice,
-                weeklyRent: effectiveWeeklyRent || 0,
-                propertyType: propertyDetails?.propertyType || 'house',
+                // The scorer derives a yield from this, so handing it 0 for a
+                // property whose rent came from the market lookup scored it as
+                // earning nothing. Same resolution the calculator used —
+                // `financials.income.weeklyRent` is the exact rental input
+                // every projection describes. (Declared inline rather than
+                // hoisting `rentalEvidence` up here: this handler already has
+                // a documented TDZ trap from a const declared further down.)
+                weeklyRent: effectiveWeeklyRent
+                  || toFiniteNumber(enhancedData.financials?.income?.weeklyRent)
+                  || 0,
+                propertyType: effectivePropertyType,
                 bedrooms: modelledBeds,
                 bathrooms: modelledBaths
               },
@@ -3160,32 +3327,10 @@ Suburb Investment Snapshot: [SUBURB NAME], [STATE]
 [Include market cycle analysis and trends]
 
 # 4. Demographics
-**Population Statistics:**
-| Metric | Value | State Average | National Average |
-|--------|-------|---------------|------------------|
-| Total Population | XX,XXX | - | - |
-| Population Density | XX per km² | XX per km² | XX per km² |
-| Population Growth (5yr) | +/-X.X% | +/-X.X% | +/-X.X% |
-| Median Age | XX years | XX years | XX years |
-| Families with Children | XX.X% | XX.X% | XX.X% |
-| Couples without Children | XX.X% | XX.X% | XX.X% |
-| Single Occupants | XX.X% | XX.X% | XX.X% |
 
-**Income & Employment:**
-| Metric | Value | State Average |
-|--------|-------|---------------|
-| Median Household Income | $X,XXX/week | $X,XXX/week |
-| Median Annual Income | $XX,XXX | $XX,XXX |
-| Employment Rate | XX.X% | XX.X% |
-| Unemployment Rate | X.X% | X.X% |
-| SEIFA Index (IRSAD) | XXX (Decile X) | - |
+${demographicsStatBlocks(enhancedData)}
 
-**Top Industries:**
-1. [Industry] - XX.X%
-2. [Industry] - XX.X%
-3. [Industry] - XX.X%
-4. [Industry] - XX.X%
-5. [Industry] - XX.X%
+${regionalTrendBlocks(enhancedData)}
 
 # 5. Infrastructure & Amenities
 **Education:**
@@ -3245,25 +3390,12 @@ Suburb Investment Snapshot: [SUBURB NAME], [STATE]
 [Income potential and rental growth expectations]
 
 # 7. Environmental & Risk Factors
-| Risk Type | Assessment | Details |
-|-----------|-----------|---------|
-| Flood Risk | [Low/Medium/High] | [explanation] |
-| Bushfire Risk | [Low/Medium/High] | [explanation] |
-| Coastal Erosion | [Low/Medium/High] | [explanation if applicable] |
-| Climate Risks | [assessment] | [heatwaves, storms, etc.] |
+
+${climateStatBlocks(enhancedData)}
 
 # 8. Crime & Safety
-| Metric | Value | Comparison to State |
-|--------|-------|-------------------|
-| Crime Rate per 100k | XXX | [above/below average] |
-| Safety Score | XX/100 | - |
-| Trend (3-year) | [Improving/Stable/Worsening] | - |
 
-**Crime Breakdown:**
-| Category | Percentage | Trend |
-|----------|-----------|-------|
-
-[Include safety commentary]
+${crimeStatBlocks(enhancedData)}
 
 ---
 
@@ -3556,8 +3688,28 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // PRE-CALCULATED YIELD VALUES - Recalculated using OVERRIDDEN expense values
     // These values MUST be used exactly in the report, not recalculated by AI
     // ============================================================================
-    const effectiveOccupancyRate = mergedOverrides.occupancyRate || 52; // weeks per year
-    const annualRentIncome = effectiveWeeklyRent * effectiveOccupancyRate;
+    // ONE rent, resolved once. `effectiveWeeklyRent` knows only what a person
+    // typed; the market lookup lands in `financials.income.weeklyRent`, which
+    // is the exact rental input every projection describes. Those were two
+    // different rents in two different scopes, and the lookup could never
+    // reach the document — which is how 83 stored reports came to print a
+    // `0.00%` yield beside projections built on a real rent. See
+    // `_shared/reports/investment/rentalEvidence.pure.ts`.
+    const rentalEvidence = resolveRentalEvidence({
+      overrideWeeklyRent: mergedOverrides.weeklyRent,
+      listingWeeklyRent: propertyDetails?.weeklyRent,
+      calculatedWeeklyRent: enhancedData.financials?.income?.weeklyRent,
+      occupancyWeeks: mergedOverrides.occupancyRate,
+    });
+    const effectiveOccupancyRate = rentalEvidence.occupancyWeeks; // weeks per year
+    // The rent every line quotes. Identical to the old `effectiveWeeklyRent`
+    // wherever one was typed or carried, so a report with rental evidence is
+    // unchanged to the digit.
+    const quotedWeeklyRent = rentalEvidence.weeklyRent;
+    // Arithmetic still needs a number: management fees are a percentage OF the
+    // rent, so no rent means no fee, exactly as before. Only the figures a
+    // reader is shown become absent rather than zero.
+    const annualRentIncome = rentalEvidence.annualRent ?? 0;
 
     // Coerce potentially string-based overrides to numbers (prevents incorrect totals like "1000" + "1500")
     const toNumberOr = (value: any, fallback: number): number => {
@@ -3566,10 +3718,26 @@ Produce a comprehensive statewide investment analysis following the structure ab
       return Number.isFinite(n) ? n : fallback;
     };
     
-    // Calculate Gross Yield from overridden values
-    const preCalculatedGrossYield = effectivePurchasePrice > 0 
+    // A yield is a fact about rent. With no rent established there is no
+    // yield, and `0.00%` is not that — it is the claim that the property earns
+    // nothing, which then travelled into the prompt under an order to use it
+    // exactly. `null` here means the figure is omitted and said to be
+    // unavailable; the record's own figure is still accepted as a fallback,
+    // but only when it is a real one.
+    //
+    // The `.toFixed(2)` is deliberate and must stay. Routing this through
+    // `propertyMetrics.grossYield` would be the tidier call, but its
+    // `Math.round(x * 100) / 100` disagrees with `toFixed` on half-way values
+    // — measured, 2,763 of 2,207,223 realistic (rent, price) pairs, e.g.
+    // 1.105 printing as 1.10 here and 1.11 there. That is 0.125% of documents
+    // shifted by a hundredth for no reader's benefit.
+    const recordedYield = (v: unknown): string | null => {
+      const n = toFiniteNumber(v);
+      return n !== undefined && n > 0 ? n.toFixed(2) : null;
+    };
+    const preCalculatedGrossYield = rentalEvidence.established && effectivePurchasePrice > 0
       ? ((annualRentIncome / effectivePurchasePrice) * 100).toFixed(2)
-      : enhancedData.financials?.keyMetrics?.grossRentalYield || '0.00';
+      : recordedYield(enhancedData.financials?.keyMetrics?.grossRentalYield);
     
     // CRITICAL FIX: Recalculate Net Yield using OVERRIDDEN expense values
     // Net Yield = (Annual Rent - Total Annual Costs) / Purchase Price * 100
@@ -3587,11 +3755,14 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const totalAnnualCostsForNetYield = effectiveCouncilRates + effectiveWaterRates + effectiveStrataFees + 
       effectiveLandlordInsurance + effectiveMaintenance + effectivePmDollar;
     
-    const preCalculatedNetYield = effectivePurchasePrice > 0
+    // Same rule, and it bites harder here: with no rent, rent-less-costs is
+    // just the costs, so the old code printed a CONFIDENT NEGATIVE yield —
+    // a number that looks like analysis and is an artefact of a missing input.
+    const preCalculatedNetYield = rentalEvidence.established && effectivePurchasePrice > 0
       ? (((annualRentIncome - totalAnnualCostsForNetYield) / effectivePurchasePrice) * 100).toFixed(2)
-      : enhancedData.financials?.keyMetrics?.netRentalYield || '0.00';
+      : recordedYield(enhancedData.financials?.keyMetrics?.netRentalYield);
     
-    console.log(`📊 Pre-calculated Yields: Gross=${preCalculatedGrossYield}%, Net=${preCalculatedNetYield}%`);
+    console.log(`📊 Pre-calculated Yields: Gross=${statedYield(preCalculatedGrossYield)}, Net=${statedYield(preCalculatedNetYield)} (rent source: ${rentalEvidence.source})`);
     console.log(`📊 Net Yield Calculation: ($${annualRentIncome} rent - $${totalAnnualCostsForNetYield} costs) / $${effectivePurchasePrice} = ${preCalculatedNetYield}%`);
     console.log(`📊 Annual Costs Breakdown: Council=$${effectiveCouncilRates}, Water=$${effectiveWaterRates}, Strata=$${effectiveStrataFees}, Insurance=$${effectiveLandlordInsurance}, Maintenance=$${effectiveMaintenance}, PM=$${effectivePmDollar}`);
     console.log(`📅 Occupancy: ${effectiveOccupancyRate} weeks/year (${((effectiveOccupancyRate/52)*100).toFixed(0)}%)`);
@@ -3613,6 +3784,13 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const cumOptimistic = cumulativeCashFlow(enhancedData.financials?.projections?.optimistic);
     const allScenariosCashNegative = cumConservative < 0 && cumModerate < 0 && cumOptimistic < 0;
 
+    // The distances the RECORD will keep. `location-intelligence-service` and
+    // `school-data-service` each measure their own, and both used to reach the
+    // report — the prompt quoted the second while every stored, projected and
+    // rendered surface reads the first, so a client read "0.29 km" from a
+    // record holding 0.21. See `_shared/reports/schoolDistance.pure.ts`.
+    const storedSchools = enhancedData.locationIntelligence?.schools?.topSchools;
+
     const _brandPp = await getBrandConfig();
     const propertyPrompt = `You are an expert Australian property investment analyst for ${_brandPp.companyName}.
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
@@ -3623,10 +3801,13 @@ Your role is to produce comprehensive, professional-grade investment reports fol
 3. PROPERTY TYPE: Use the standardized property type "${standardizedPropertyType}" consistently throughout the report - never switch terminology.
 
 **PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO NOT RECALCULATE):**
-- Gross Rental Yield: ${preCalculatedGrossYield}%
-- Net Rental Yield: ${preCalculatedNetYield}%
-- Annual Rental Income: $${annualRentIncome.toLocaleString()} (based on ${effectiveOccupancyRate} weeks @ $${effectiveWeeklyRent}/week)
+- Gross Rental Yield: ${statedYield(preCalculatedGrossYield)}
+- Net Rental Yield: ${statedYield(preCalculatedNetYield)}
+- Annual Rental Income: ${rentalEvidence.established
+  ? `$${annualRentIncome.toLocaleString()} (based on ${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/week)`
+  : 'Not established — no rental evidence for this property'}
 - Occupancy Rate: ${effectiveOccupancyRate} weeks per year (${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy)
+${absentRentDirective(rentalEvidence)}
 
 **PRE-CALCULATED ANNUAL COSTS (USE THESE EXACTLY - DO NOT SUBSTITUTE WITH DEFAULTS):**
 - Council Rates: $${effectiveCouncilRates.toLocaleString()}/year
@@ -3678,9 +3859,9 @@ This executive summary provides a high-level overview of the investment opportun
 | Property Address | ${formattedInput} |
 | Property Type | ${standardizedPropertyType} |
 | Purchase Price | $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} |
-| Estimated Weekly Rent | $${effectiveWeeklyRent || 'XXX'} |
-| Gross Rental Yield | ${preCalculatedGrossYield}% |
-| Net Rental Yield | ${preCalculatedNetYield}% |
+| Estimated Weekly Rent | ${quotedWeeklyRent ? `$${quotedWeeklyRent}` : 'Not established'} |
+| Gross Rental Yield | ${statedYield(preCalculatedGrossYield)} |
+| Net Rental Yield | ${statedYield(preCalculatedNetYield)} |
 
 **Investment Highlights:**
 
@@ -3713,6 +3894,10 @@ Based on our comprehensive analysis, this property is [suitable/moderately suita
 - Local Government Area (LGA): [Name] Council
 - Statistical Areas: [Suburb] falls within the broader [Area] Statistical Area Level 2 (SA2)
 
+**Planning & Development (measured at this property's coordinate):**
+
+${planningStatBlocks(enhancedData)}
+
 **Suburb Character & Lifestyle:**
 
 [Suburb] presents [description of blend/character]. The suburb features [specific details about streets, properties, land parcels][citation]. A diversity level of [XX.X]% reflects the [description of composition][citation].
@@ -3739,7 +3924,9 @@ The suburb benefits from excellent service frequency, with peak hour services op
 
 **Population & Development Trends:**
 
-[Suburb] is experiencing [description of growth]. The suburb's future prospects are described as [assessment], with planned infrastructure and residential developments set to [impact]. Population growth is being driven by [factors][citation].
+${regionalTrendBlocks(enhancedData)}
+
+Write this from the population-trend table above, the Planning & Development block and the demographics tables only. Where the development-application figures are present, discuss what they show — volume, stated investment, dwellings proposed, the largest projects — attributed to the DA register and its period. Where they are absent, state the absence in one sentence. Do NOT name planned infrastructure, projects or developments that do not appear in the data above.
 
 ---
 
@@ -3760,64 +3947,15 @@ Current market conditions are influenced by the National House Price Growth Rate
 
 # Current Economic Context
 
-**VERIFIED ECONOMIC DATA (use these exact figures — sourced ${enhancedData.economics?.retrievedAt ? `on ${new Date(enhancedData.economics.retrievedAt).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}` : 'from latest available data'}):**
-
-| Indicator | Current Value | Source |
-|-----------|--------------|--------|
-| RBA Cash Rate | ${enhancedData.economics?.cashRate?.current || '4.10'}% | ${enhancedData.economics?.cashRate?.source || 'RBA'} |
-| Annual Inflation (CPI) | ${enhancedData.economics?.inflation?.annual || '2.4'}% | ${enhancedData.economics?.inflation?.source || 'ABS'} |
-| Core Inflation (Trimmed Mean) | ${enhancedData.economics?.inflation?.core || '2.9'}% | ABS |
-| GDP Growth | ${enhancedData.economics?.indicators?.gdpGrowth || '1.3'}% | ABS |
-| National Unemployment | ${enhancedData.economics?.indicators?.unemploymentRate || '4.1'}% | ABS Labour Force |
-
-Write 2-3 paragraphs in plain English explaining how the current cash rate of ${enhancedData.economics?.cashRate?.current || '4.10'}% and inflation at ${enhancedData.economics?.inflation?.annual || '2.4'}% affect mortgage costs, borrowing capacity, and property demand in practical terms. Avoid jargon — explain as you would to a client sitting across the table. Connect these macro conditions specifically to the property's local market. Do NOT put a "What This Means" heading or any other commentary label above them.
+${macroEconomicBlock(enhancedData)}
 
 ---
 
 # Demographics & Demand Drivers
 
-**Population & Employment Statistics:**
+${demographicsStatBlocks(enhancedData)}
 
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Labor Force Size | ${enhancedData.demographics?.employment?.laborForce || 'XX,XXX'} | ABS Employment Data |
-| Employment Rate | ${enhancedData.demographics?.employment?.employmentRate || 'XX.X'}% | ABS (2025) |
-| Unemployment Rate | ${enhancedData.demographics?.income?.unemploymentRate || 'X.X'}% | ABS (2025) |
-| Participation Rate | ${enhancedData.demographics?.employment?.laborForceParticipation || 'XX.X'}% | ABS (2025) |
-| Median Weekly Income | $${enhancedData.demographics?.income?.medianWeeklyIncome || 'X,XXX'} | ABS (2025) |
-| Median Annual Income | $${enhancedData.demographics?.income?.medianHouseholdIncome || 'XX,XXX'} | ABS (2025) |
-| Annual Income Growth (last 12 months) | +${enhancedData.demographics?.income?.incomeGrowth || 'X.X'}% | ABS (2025) |
-
-**Socioeconomic Profile (SEIFA Indices):**
-
-| Index | Score | Decile | Rating |
-|-------|-------|--------|--------|
-| IRSAD | ${enhancedData.seifaData?.irsad?.score || 'XXX'} | ${enhancedData.seifaData?.irsad?.decile || 'X'}/10 | ${enhancedData.seifaData?.irsad?.rating || 'Moderate Advantage'} |
-| IRSD | ${enhancedData.seifaData?.irsd?.score || 'XXX'} | ${enhancedData.seifaData?.irsd?.decile || 'X'}/10 | ${enhancedData.seifaData?.irsd?.rating || 'Moderate Disadvantage'} |
-| IER | ${enhancedData.seifaData?.ier?.score || 'XXX'} | ${enhancedData.seifaData?.ier?.decile || 'X'}/10 | ${enhancedData.seifaData?.ier?.rating || 'Moderate Education/Occupation'} |
-| IEO | ${enhancedData.seifaData?.ieo?.score || 'XXX'} | ${enhancedData.seifaData?.ieo?.decile || 'X'}/10 | ${enhancedData.seifaData?.ieo?.rating || 'Moderate Economic Resources'} |
-
-[Suburb] demonstrates [socioeconomic assessment], positioning the area at [comparative level] across income, education, and occupation dimensions. The IRSAD score of [XXX] (Decile [X]/10) indicates [interpretation]. This socioeconomic profile supports [demand implications].
-
-**Employment & Industry Breakdown:**
-
-| Industry | Workforce % | Growth Rate |
-|----------|-------------|-------------|
-| Professional Services | ${enhancedData.employmentData?.industries?.[0]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[0]?.growth || 'X.X'}% |
-| Healthcare & Social Assistance | ${enhancedData.employmentData?.industries?.[1]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[1]?.growth || 'X.X'}% |
-| Retail Trade | ${enhancedData.employmentData?.industries?.[2]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[2]?.growth || 'X.X'}% |
-| Education & Training | ${enhancedData.employmentData?.industries?.[3]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[3]?.growth || 'X.X'}% |
-| Construction | ${enhancedData.employmentData?.industries?.[4]?.percentage || 'XX.X'}% | +${enhancedData.employmentData?.industries?.[4]?.growth || 'X.X'}% |
-
-**Job Growth Trends:**
-
-| Time Period | Growth Rate | Data Source |
-|-------------|-------------|-------------|
-| Annual Growth | +${enhancedData.employmentData?.annualGrowth || 'X.X'}% | ABS (2025) |
-| 3-Year Growth | +${enhancedData.employmentData?.threeYearGrowth || 'X.X'}% | ABS (2025) |
-| 5-Year Growth | +${enhancedData.employmentData?.fiveYearGrowth || 'XX.X'}% | ABS (2025) |
-
-Employment growth has been [assessment], with [XX.X]% cumulative growth over five years. [Leading industry] leads job creation at [X.X]% annual growth, followed by [secondary industry] at [X.X]%. This employment dynamism reflects structural shifts toward [sector types], directly supporting rental demand from workers employed at [nearby employment hubs][citation].
+Interpret the socioeconomic profile in one short paragraph: what the SEIFA deciles above indicate about the area's position across income, education and occupation, and what that implies for demand. Discuss only indexes that appear in the table.
 
 **Demand Drivers (150+ words required):**
 
@@ -3839,19 +3977,19 @@ The combination of [employment factor], [income factor], and [unemployment facto
 
 | School Name | Distance | Type |
 |-------------|----------|------|
-| ${enhancedData.schoolData?.nearestSchool?.name || '[School Name]'} | ${enhancedData.schoolData?.nearestSchool?.distance || 'X.XX'} km | ${enhancedData.schoolData?.nearestSchool?.type || 'Early Learning'} |
+| ${reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools)?.name || '[School Name]'} | ${reconcileNearestSchool(enhancedData.schoolData?.nearestSchool, storedSchools)?.distance || 'X.XX'} km | ${enhancedData.schoolData?.nearestSchool?.type || 'Early Learning'} |
 
 **Top-Rated Schools in Local Area:**
 
 | School Name | Distance | Type |
 |-------------|----------|------|
-${enhancedData.schoolData?.topSchools?.slice(0, 5).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | Nearby | Government |'}
+${reconcileSchoolDistances(enhancedData.schoolData?.topSchools, storedSchools).slice(0, 5).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | Nearby | Government |'}
 
 **Education Facilities (Extended List):**
 
 | School Name | Distance | Type |
 |-------------|----------|------|
-${enhancedData.schoolData?.allSchools?.slice(0, 7).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | X.XX km | Government |'}
+${reconcileSchoolDistances(enhancedData.schoolData?.allSchools, storedSchools).slice(0, 7).map((s: any) => `| ${s.name} | ${s.distance} km | ${s.type} |`).join('\n') || '| [School 1] | X.XX km | Government |'}
 
 **Secondary Education:**
 
@@ -3949,61 +4087,13 @@ The opening of [Station] in [Year] fundamentally transformed the suburb's transp
 
 # Environmental Risks & Climate
 
-**Climate Profile:**
-
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Climate Zone | ${enhancedData.climateData?.climateZone || 'Temperate'} | Bureau of Meteorology |
-| Annual Average Temperature | ${enhancedData.climateData?.temperature?.annual || 'XX.X'}°C | BoM |
-| Summer Temperature | ${enhancedData.climateData?.temperature?.summer || 'XX.X'}°C | BoM |
-| Winter Temperature | ${enhancedData.climateData?.temperature?.winter || 'XX.X'}°C | BoM |
-| Annual Rainfall | ${enhancedData.climateData?.rainfall?.annual || 'X,XXX'} mm | BoM |
-| Humidity | ${enhancedData.climateData?.humidity?.annual || 'XX'}% | BoM |
-
-**Extreme Weather Risk Assessment:**
-
-| Risk Type | Assessment | Details |
-|-----------|------------|---------|
-| Heatwaves | ${enhancedData.riskAssessment?.heatwaveRisk?.level || 'Moderate to High'} | ${enhancedData.riskAssessment?.heatwaveRisk?.description || 'Typical for region; increasing frequency due to climate change'} |
-| Bushfire | ${enhancedData.riskAssessment?.bushfireRisk?.level || 'High'} | ${enhancedData.riskAssessment?.bushfireRisk?.description || 'Requires verification with state Rural Fire Service for specific property rating'} |
-| Flooding | ${enhancedData.riskAssessment?.floodRisk?.level || 'Moderate'} | ${enhancedData.riskAssessment?.floodRisk?.description || 'General flood information available through council and AFRIP'} |
-| Storms | ${enhancedData.riskAssessment?.stormRisk?.level || 'Moderate'} | Thunderstorms and severe weather typical in summer months |
-| Cyclones | ${enhancedData.riskAssessment?.cycloneRisk?.level || 'Low'} | Not applicable to inland locations |
-
-**Climate Risk Commentary (150+ words required):**
-
-[Suburb] experiences a [climate zone] climate with [rainfall level] rainfall ([X,XXX] mm annually), concentrated in the [peak months] period. Heatwaves represent a [risk level] risk, consistent with [region description], with potential for increasing frequency due to climate change. Bushfire risk is rated as [level] for [State], though specific property-level risk assessment requires verification with the [State] Rural Fire Service (RFS). Flooding risk is [level]; property-specific flood assessment requires property coordinates and consultation with [Council] or AFRIP.
-
-Long-term climate considerations include potential increases in cooling costs during summer months, possible insurance premium adjustments reflecting bushfire risk, and maintenance implications for properties in high-risk bushfire zones. These factors should be incorporated into long-term ownership cost projections and risk management strategies.
+${climateStatBlocks(enhancedData)}
 
 ---
 
 # Crime & Safety
 
-**Crime Statistics:**
-
-| Metric | Value | Comparison |
-|--------|-------|------------|
-| Overall Crime Rating | ${enhancedData.crimeStatistics?.overallRating || 'Medium'} | ${enhancedData.crimeStatistics?.comparedToStateAverage || 'X% higher/lower than state average'} |
-| Rate per 100,000 people | ${enhancedData.crimeStatistics?.ratePer100k || 'X,XXX'} | Latest 12 months |
-| Safety Score | ${enhancedData.crimeStatistics?.safetyScore || 'XX'}/100 | - |
-| Year-on-Year Change | ${enhancedData.crimeStatistics?.yoyChange || '-X.X'}% | - |
-| 3-Year Trend | ${enhancedData.crimeStatistics?.threeYearTrend || '-X.X'}% | [Improving/Stable/Worsening] |
-
-**Crime Profile Analysis:**
-
-| Offence Category | Incidents | Percentage |
-|-----------------|-----------|------------|
-| Property Offences | ${enhancedData.crimeStatistics?.breakdown?.property?.incidents || 'X,XXX'} | ${enhancedData.crimeStatistics?.breakdown?.property?.percentage || 'XX'}% |
-| Violent Offences | ${enhancedData.crimeStatistics?.breakdown?.violent?.incidents || 'XXX'} | ${enhancedData.crimeStatistics?.breakdown?.violent?.percentage || 'XX'}% |
-| Drug Offences | ${enhancedData.crimeStatistics?.breakdown?.drug?.incidents || 'XXX'} | ${enhancedData.crimeStatistics?.breakdown?.drug?.percentage || 'XX'}% |
-| Public Order Offences | ${enhancedData.crimeStatistics?.breakdown?.publicOrder?.incidents || 'X,XXX'} | ${enhancedData.crimeStatistics?.breakdown?.publicOrder?.percentage || 'XX'}% |
-
-[Suburb]'s crime profile reflects typical suburban characteristics, with property offences ([XX]%) representing the largest category, primarily comprising theft, break-and-enter, and motor vehicle theft incidents. Violent offences account for [XX]% of incidents, [comparison to property crimes]. The overall crime rate of [X,XXX] per 100,000 population is approximately [X]% [higher/lower] than the [State] state average; however, the critical positive indicator is the 3-year [direction] trend of [X.X]%, indicating [interpretation].
-
-The year-on-year change of [X.X]% suggests [trend assessment]. The safety score of [XX]/100 positions [Suburb] as a [safety assessment] suburb, consistent with [suburb type] areas. For investment purposes, the [declining/stable/increasing] crime trend is [significance assessment].
-
-**Data Source:** [State] Bureau of Crime Statistics and Research (BOCSAR), [URL]
+${crimeStatBlocks(enhancedData)}
 
 ---
 
@@ -4018,13 +4108,41 @@ Based on ${documentContent ? 'the provided property listing data' : 'location in
 | Property Characteristic | ${documentContent ? 'Value' : 'Estimated Value'} |
 |------------------------|-------|
 | Property Type | ${standardizedPropertyType} |
-| Land Size | ${effectiveLandSizeSqm ? effectiveLandSizeSqm + ' m²' : 'Estimated XXX-XXX m² (typical for suburb)'} |
-| Bedrooms | ${effectiveBeds || 'X (typical for property type)'} |
-| Bathrooms | ${effectiveBaths || 'X-X (typical modern standard)'} |
-| Parking | ${propertyDetails?.carSpaces || 'X-X spaces'} |
-| Year Built | ${propertyDetails?.yearBuilt || 'Estimated XXXX-XXXX'} |
-| Condition | ${propertyDetails?.condition || 'Good to excellent'} |
+${[
+  // A specification table states facts. Where the record holds none, the row
+  // is OMITTED — it is not filled with an instruction to estimate one.
+  //
+  // Each of these rows used to carry a placeholder the model was asked to
+  // expand: `'Estimated XXX-XXX m² (typical for suburb)'`,
+  // `'X (typical for property type)'`, `'X-X spaces'`, `'Estimated XXXX-XXXX'`
+  // and, for condition, the flat assertion `'Good to excellent'` about a
+  // property nobody had inspected. Measured across the corpus: 169 documents
+  // print an "Estimated N–N m²" land size and 201 assert
+  // `| Condition | Good to excellent |`. On three sampled reports the stated
+  // range is roughly DOUBLE the land size the operator had recorded, and the
+  // council rates, land tax and rent comparables are then reasoned from it —
+  // `38 Larcom Crescent` says ~500 m² throughout against a recorded 255.
+  //
+  // Nothing here reaches a current document (the Compass-40 overlay does not
+  // draw this section), but a dormant instruction to fabricate is one routing
+  // change away from firing, which is why it goes rather than being left.
+  ['Land Size', effectiveLandSizeSqm ? `${effectiveLandSizeSqm} m²` : null],
+  ['Bedrooms', effectiveBeds || null],
+  ['Bathrooms', effectiveBaths || null],
+  ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
+  ['Year Built', mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt ?? null],
+  ['Condition', propertyDetails?.condition ?? null],
+].filter(([, v]) => v !== null && v !== undefined && v !== '')
+ .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
 ${isStrataProperty ? `| Strata Type | ${standardizedPropertyType} within strata scheme |` : ''}
+
+The table above contains every physical attribute on record for this property.
+Do not add a row to it, and do not state a land size, floor area, bedroom or
+bathroom count, parking count, year built or condition that is not in it — not
+as an estimate, not as a range, and not as what is "typical for the suburb".
+Where an attribute is absent you may say it is not recorded, and you may
+discuss the suburb's housing stock in general terms provided you do not
+attribute any of it to this property.
 
 **${documentContent ? 'Property Price' : 'Estimated Property Value'}:** $${effectivePurchasePrice?.toLocaleString() || 'X,XXX,XXX'} AUD
 
@@ -4189,9 +4307,9 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Property Type | Estimated Weekly Rent | Annual Rental Income |
 |--------------|----------------------|---------------------|
-| ${effectiveBeds || 'X'}-Bed ${standardizedPropertyType} | $${effectiveWeeklyRent || (enhancedData.financials?.income?.weeklyRent) || 'XXX'} - $${(effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 0) + 50 || 'XXX'} | $${annualRentIncome.toLocaleString() || 'XX,XXX'} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString() || 'XX,XXX'} |
+| ${effectiveBeds || 'X'}-Bed ${standardizedPropertyType} | ${quotedWeeklyRent ? `$${quotedWeeklyRent} - $${quotedWeeklyRent + 50}` : 'Not established'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()} - $${(annualRentIncome + (50 * effectiveOccupancyRate)).toLocaleString()}` : 'Not established'} |
 
-**Selected Rental Assumption:** $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString() || 'XX,XXX'} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})
+**Selected Rental Assumption:** ${rentalEvidence.established ? `$${quotedWeeklyRent}/week × ${effectiveOccupancyRate} weeks = $${annualRentIncome.toLocaleString()} annually (${effectiveOccupancyRate === 52 ? '100% occupancy' : `${((effectiveOccupancyRate/52)*100).toFixed(0)}% occupancy`})` : 'No rental evidence was available for this property, so no rental income is assumed and no yield is stated.'}
 
 **IMPORTANT: All calculations use ${effectiveOccupancyRate} weeks/year occupancy (${((effectiveOccupancyRate/52)*100).toFixed(0)}%). Do NOT interpret this as ${effectiveOccupancyRate}% occupancy - it is ${effectiveOccupancyRate} WEEKS per year.**
 
@@ -4199,24 +4317,24 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 | Metric | Calculation | Value |
 |--------|-------------|-------|
-| Annual Rental Income | $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'} × ${effectiveOccupancyRate} weeks | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Annual Rental Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Property Price | Reference value | $${effectivePurchasePrice?.toLocaleString() || (enhancedData.financials?.initialCosts?.propertyValue?.toLocaleString()) || 'X,XXX,XXX'} |
-| **Gross Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${preCalculatedGrossYield}%** |
+| **Gross Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedGrossYield)}** |
 
 **Net Rental Yield Calculation (USE THESE EXACT VALUES):**
 
 | Metric | Calculation | Value |
 |--------|-------------|-------|
-| Annual Income | $${effectiveWeeklyRent || enhancedData.financials?.income?.weeklyRent || 'XXX'} × ${effectiveOccupancyRate} weeks | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Annual Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Annual Expenses | Mgmt + Maintenance + Rates + Insurance${effectiveStrataFees ? ' + Strata' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
-| Net Annual Return | Income - Expenses | $${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()} |
-| **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${preCalculatedNetYield}%** |
+| Net Annual Return | Income - Expenses | ${rentalEvidence.established ? `$${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()}` : 'Not established'} |
+| **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
 
 **Yield Comparison to Benchmarks:**
 
 | Benchmark | Gross Yield | Net Yield | Comparison |
 |-----------|-------------|-----------|------------|
-| This Property | ${preCalculatedGrossYield}% | ${preCalculatedNetYield}% | - |
+| This Property | ${statedYield(preCalculatedGrossYield)} | ${statedYield(preCalculatedNetYield)} | - |
 | ${suburb || 'Suburb'} Median | [X.XX]% | [X.XX]% | [Above/Below] |
 | LGA Average | [X.XX]% | [X.XX]% | [Above/Below] |
 | ${state || 'State'} Average | [X.XX]% | [X.XX]% | [Above/Below] |
@@ -4224,7 +4342,9 @@ The rental analysis below is based on suburb-level median rental data and the sp
 
 **Yield Commentary:**
 
-The gross rental yield of ${preCalculatedGrossYield}% and net yield of ${preCalculatedNetYield}% reflect typical [Suburb] residential rental returns. These yields are [comparison to other areas]. The [modest/strong] rental yield positioning suggests this property is primarily suitable for investors prioritizing [capital growth/rental income], typical of [suburb characteristics].
+${rentalEvidence.established
+  ? `The gross rental yield of ${statedYield(preCalculatedGrossYield)} and net yield of ${statedYield(preCalculatedNetYield)} reflect typical [Suburb] residential rental returns. These yields are [comparison to other areas]. The [modest/strong] rental yield positioning suggests this property is primarily suitable for investors prioritizing [capital growth/rental income], typical of [suburb characteristics].`
+  : 'No rental evidence was available for this property, so no gross or net yield can be stated. Describe the suburb\'s rental market qualitatively and state plainly that a yield for this property could not be established. Do NOT estimate one.'}
 
 ---
 
@@ -4267,7 +4387,7 @@ Note: Blended calculation for annual presentation; actual P&I repayments decline
 
 | Item | Amount (AUD) |
 |------|--------------|
-| Gross Rental Income (${effectiveOccupancyRate} weeks @ $${effectiveWeeklyRent}/wk) | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Gross Rental Income ${rentalEvidence.established ? `(${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/wk)` : '(no rental evidence)'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Less: P&I Loan Repayment | ($${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'}) |
 | Less: Council Rates | ($${effectiveCouncilRates?.toLocaleString() || enhancedData.financials?.annualCosts?.councilRates?.toLocaleString() || 'X,XXX'}) |
 | Less: Water Rates | ($${effectiveWaterRates?.toLocaleString() || enhancedData.financials?.annualCosts?.waterRates?.toLocaleString() || 'XXX'}) |
@@ -4281,7 +4401,7 @@ ${isStrataProperty ? `| Less: Body Corporate/Strata | ($${effectiveStrataFees?.t
 
 | Item | Amount (AUD) |
 |------|--------------|
-| Gross Rental Income (${effectiveOccupancyRate} weeks @ $${effectiveWeeklyRent}/wk) | $${annualRentIncome.toLocaleString() || 'XX,XXX'} |
+| Gross Rental Income ${rentalEvidence.established ? `(${effectiveOccupancyRate} weeks @ $${quotedWeeklyRent}/wk)` : '(no rental evidence)'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
 | Less: Interest-Only Repayment | ($${(enhancedData.financials?.loanDetails?.interestOnlyPayment ? enhancedData.financials.loanDetails.interestOnlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'}) |
 | Less: Council Rates | ($${effectiveCouncilRates?.toLocaleString() || enhancedData.financials?.annualCosts?.councilRates?.toLocaleString() || 'X,XXX'}) |
 | Less: Water Rates | ($${effectiveWaterRates?.toLocaleString() || enhancedData.financials?.annualCosts?.waterRates?.toLocaleString() || 'XXX'}) |
@@ -4511,9 +4631,9 @@ Base case scenario projects Property Value of $[X,XXX,XXX] at Year 10, represent
 
 Over 10 years, principal repayment reduces loan balance from $[X,XXX,XXX] to approximately $[XXX,XXX], building equity of $[XXX,XXX] independent of property appreciation. Combined with capital appreciation, total wealth accumulation reaches $[XXX,XXX]-$[X,XXX,XXX] across projection scenarios. This debt reduction is automatic and inevitable, creating forced savings discipline. Accumulated equity provides optionality for future portfolio expansion, home renovation, or accessing capital during market stress periods.
 
-### Sustained Employment Growth Driving Rental Demand (+[X.X]% annually, +[XX.X]% over 5 years)
+### Population and Employment Base Driving Rental Demand
 
-Strong local job growth across professional services (+[X.X]%), healthcare (+[X.X]%), and education (+[X.X]%) creates sustained demand for rental properties from employed professionals. Labor force participation rate of [XX.X]% and unemployment rate of [X.X]% indicate tight labor market supporting wage growth and rental affordability. Median income of $[XX,XXX] annually positions renters comfortably within serviceability parameters for $[XXX]/week rental commitments. Continued population growth driven by employment expansion supports rental demand resilience, reducing vacancy risk and providing uplift potential as rents normalize toward market levels.
+Write this from the measured population-trend table (the SA2's ERP levels and growth windows) and the Census demographics/employment tables above — the population change, the area's employment profile, incomes and rental serviceability. Use ONLY figures those tables carry, with their stated windows and sources. Do NOT assert an annual job-growth percentage, a current unemployment rate, or a participation rate — none is measured here — and do NOT extrapolate the population trend beyond its measured windows.
 
 ### Structural Cashflow Deficit Requiring Ongoing Investor Capital Support
 
@@ -6106,17 +6226,26 @@ YOUR DEDICATED PROPERTY PARTNER
       // to read `.landSize` / `.buildingSize` / `.parking` while every caller
       // sent `landSizeSqm` / `buildSizeSqm` / `carSpaces`, so three of the
       // nine specs were null on every row whatever the caller knew.
-      const propertySpecs = {
-        land_size_sqm: propertyDetails?.landSizeSqm || null,
-        building_size_sqm: propertyDetails?.buildSizeSqm || null,
-        bedrooms: propertyDetails?.beds || null,
-        bathrooms: propertyDetails?.baths || null,
-        parking: propertyDetails?.carSpaces || null,
-        year_built: propertyDetails?.yearBuilt || null,
-        property_type: standardizedPropertyType || propertyDetails?.propertyType || 'Residential Property',
-        zoning: propertyDetails?.zoning || null,
-        council_area: propertyDetails?.councilArea || null
-      };
+      // The MERGED facts, not the listing's alone. Every value below was
+      // already resolved above by merging `manual_overrides` over
+      // `propertyDetails` — and this block used to persist the un-merged half,
+      // so the answer was computed, used to build the prompt and the duty
+      // assessment, and then discarded at the moment of writing it down: 127
+      // land sizes, 122 build sizes and 144 car-space counts an operator had
+      // supplied were stored as null, and `property_type` was the literal
+      // `'Residential Property'` on 84. See
+      // `_shared/reports/investment/propertyRecord.pure.ts`.
+      const propertySpecs = composePropertySpecs({
+        propertyType: effectivePropertyType ?? standardizedPropertyType,
+        landSizeSqm: effectiveLandSizeSqm,
+        buildSizeSqm: effectiveBuildSizeSqm,
+        beds: effectiveBeds,
+        baths: effectiveBaths,
+        carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
+        yearBuilt: mergedOverrides.yearBuilt ?? propertyDetails?.yearBuilt,
+        zoning: effectiveZoningCode ?? propertyDetails?.zoning,
+        councilArea: mergedOverrides.councilArea ?? propertyDetails?.councilArea,
+      });
       
       // Prepare data sources tracking. Every source the generation ATTEMPTED
       // is recorded — present with its provenance, or null — so the viewer's
@@ -6164,8 +6293,44 @@ YOUR DEDICATED PROPERTY PARTNER
           purchasePrice: factNum(mergedOverrides.purchasePrice) ?? factNum(propertyDetails?.price),
           weeklyRent: factNum(mergedOverrides.weeklyRent) ?? factNum(propertyDetails?.weeklyRent),
           landSizeSqm: factNum(mergedOverrides.landSizeSqm) ?? factNum(propertyDetails?.landSize),
+          // The three figures the prompt does not merely supply but ORDERS the
+          // use of — "PRE-CALCULATED FINANCIAL VALUES (USE THESE EXACTLY - DO
+          // NOT RECALCULATE)". These exact variables are what the prompt
+          // interpolates, so the reconciliation reads the same number the
+          // model was handed rather than a second computation of it, which is
+          // the whole point: a second computation would only prove that two
+          // formulas agree.
+          grossYieldPct: toFiniteNumber(preCalculatedGrossYield),
+          netYieldPct: toFiniteNumber(preCalculatedNetYield),
+          lvrPct: toFiniteNumber(effectiveLvr),
         });
         factFlags = factFindings.map(factFindingToFlag);
+
+        // The other half of the same question. Above asks whether the prose
+        // agrees with the record; this asks whether the record agrees with
+        // ITSELF — a deposit and a loan that do not add to the purchase price,
+        // or two different LVRs for one loan. Measured on 2026-09-07: 14 of
+        // 143 stored reports break at least one of those, and on those reports
+        // the model wrote the loan block's LVR rather than the key metrics',
+        // which is how a contradiction inside the record becomes a wrong
+        // number on a client's page.
+        const identity = financeIdentityBreaches({
+          purchasePrice: enhancedData.financials?.initialCosts?.propertyValue ?? effectivePurchasePrice,
+          deposit: enhancedData.financials?.initialCosts?.deposit,
+          loanAmount: enhancedData.financials?.initialCosts?.loanAmount,
+          keyMetricsLvr: enhancedData.financials?.keyMetrics?.lvr,
+          loanDetailsLvr: enhancedData.financials?.loanDetails?.lvr,
+        });
+        for (const breach of identity) {
+          factFlags.push({
+            type: 'fact',
+            severity: 'warning',
+            field: `finance_identity.${breach.rule}`,
+            message: breach.message,
+            value: { expected: breach.expected, found: breach.found, occurrences: 1, snippet: '' },
+          });
+        }
+
         if (factFlags.length) {
           console.warn(`⚠️ Fact reconciliation: ${factFlags.length} contradiction(s) — ${factFlags.map((f) => f.field).join(', ')}`);
         }

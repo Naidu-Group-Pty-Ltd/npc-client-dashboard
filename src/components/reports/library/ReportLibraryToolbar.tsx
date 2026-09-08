@@ -14,7 +14,6 @@ import {
   Home,
   ListFilter,
   Map,
-  Search,
   SlidersHorizontal,
   Star,
   Table2,
@@ -29,6 +28,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/co
 import { Slider } from '@/components/ui/slider';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { SearchInput } from '@/components/ui/search-input';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import type { InvestmentReport } from './types';
 
@@ -205,19 +205,16 @@ export function ReportLibraryToolbar(props: Props) {
   return (
     <div className="space-y-3">
       <DashboardThemeFrame variant="toolbar" className="items-stretch p-3">
-        <div className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder="Search by property address..."
-            value={investmentSearchQuery}
-            onChange={(e) => {
-              setInvestmentSearchQuery(e.target.value);
+        <SearchInput
+          value={investmentSearchQuery}
+          onValueChange={(value) => {
+              setInvestmentSearchQuery(value);
               setInvestmentPage(1);
             }}
-            className="h-10 rounded-xl bg-background/80 pl-9"
-          />
-        </div>
+          placeholder="Search by property address..."
+          containerClassName="min-w-[220px] flex-1"
+          className="h-10 rounded-xl bg-background/80"
+        />
 
         <div className="hidden items-center rounded-xl border border-border/60 bg-background/65 p-1 shadow-sm md:flex">
           <Button variant={viewMode === 'cards' ? 'secondary' : 'ghost'} size="sm" className="h-8 gap-1.5 rounded-lg" onClick={() => setViewMode('cards')} aria-pressed={viewMode === 'cards'}>

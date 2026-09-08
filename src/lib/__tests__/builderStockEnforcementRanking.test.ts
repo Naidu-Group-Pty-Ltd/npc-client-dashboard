@@ -184,17 +184,25 @@ const streetView = (id: string, stockItemId: string): Row => ({
 // ---------------------------------------------------------------------------
 
 describe('the sweep settles to the ladder, not to the repealed builder-only rule', () => {
-  it('keeps a Street View pointer the ladder itself chose', async () => {
+  it('CLEARS a Street View pointer, because it is no longer a card image', async () => {
     const image = streetView('image-sv', 'item-sv');
     const db = fakeDb([item('item-sv', 'image-sv')], [image]);
 
-    // The ladder put it there: tier 4 is a real answer, not an absence.
-    expect(chooseCardImage([image as unknown as DisplayableImage])?.image.id).toBe('image-sv');
+    // Tier 4 is gone: a still of the street a house-and-land lot sits on is
+    // not a photograph of the property.
+    expect(chooseCardImage([image as unknown as DisplayableImage])).toBeNull();
 
     const enforced = await enforceStrictPrimaryImages(db as never, ORG);
 
-    expect(enforced.cleared).toBe(0);
-    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('image-sv');
+    /*
+     * AND THIS IS HOW THE LIVE CARDS REPAIR THEMSELVES. The sweep settles every
+     * pointer to whatever the ranking now says, so the properties already
+     * drawing a Street View lose it on the next pass without anybody editing a
+     * row by hand. The image row is untouched — only the pointer moves.
+     */
+    expect(enforced.cleared).toBe(1);
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
+    expect(db.tables.builder_stock_item_images).toHaveLength(1);
   });
 
   it('keeps a verified web pointer the ladder itself chose', async () => {
@@ -209,7 +217,7 @@ describe('the sweep settles to the ladder, not to the repealed builder-only rule
     expect(db.tables.builder_stock_items[0].primary_image_id).toBe('image-web');
   });
 
-  it('clears nothing across the four shapes production holds', async () => {
+  it('clears only the Street View pointer across the shapes production holds', async () => {
     const images = [
       builderClean('image-clean', 'item-clean'),
       verifiedWeb('image-web', 'item-web'),
@@ -224,10 +232,13 @@ describe('the sweep settles to the ladder, not to the repealed builder-only rule
     const enforced = await enforceStrictPrimaryImages(db as never, ORG);
 
     expect(enforced.inspected).toBe(3);
-    expect(enforced.cleared).toBe(0);
+    // The builder's own file and the verified web photograph are untouched;
+    // the Street View pointer goes, because tier 4 no longer draws.
+    expect(enforced.cleared).toBe(1);
     expect(enforced.corrected).toBe(0);
-    // Not one write attempted: the pointers already say what the ladder says.
-    expect(db.updates).toHaveLength(0);
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('image-clean');
+    expect(db.tables.builder_stock_items[1].primary_image_id).toBe('image-web');
+    expect(db.tables.builder_stock_items[2].primary_image_id).toBeNull();
   });
 });
 
@@ -247,7 +258,7 @@ describe('what it must still clear, and what it must still prefer', () => {
     expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
   });
 
-  it('but demotes that same property to Street View where one exists', async () => {
+  it('and does NOT rescue it with a Street View, which no longer draws', async () => {
     const images = [
       builderNoRole('image-legacy', 'item-legacy'),
       streetView('image-sv', 'item-legacy'),
@@ -256,9 +267,12 @@ describe('what it must still clear, and what it must still prefer', () => {
 
     const enforced = await enforceStrictPrimaryImages(db as never, ORG);
 
-    expect(enforced.cleared).toBe(0);
-    expect(enforced.corrected).toBe(1);
-    expect(db.tables.builder_stock_items[0].primary_image_id).toBe('image-sv');
+    // The unroled builder row is still refused — that rule is untouched — and
+    // there is now nothing below it to fall to, so the property reads as
+    // having no picture rather than showing the street it sits on.
+    expect(enforced.cleared).toBe(1);
+    expect(enforced.corrected).toBe(0);
+    expect(db.tables.builder_stock_items[0].primary_image_id).toBeNull();
   });
 
   it('and a builder photograph still outranks both fallbacks', async () => {

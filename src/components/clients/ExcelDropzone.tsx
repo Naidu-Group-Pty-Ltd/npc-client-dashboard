@@ -442,7 +442,7 @@ export function ExcelDropzone({ onImportComplete }: ExcelDropzoneProps) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="font-semibold text-success-foreground">Import Complete</p>
-                <span className="inline-flex w-fit items-center gap-2 rounded-full border border-success/25 bg-success/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-success-foreground">
+                <span className="inline-flex w-fit items-center gap-2 rounded-full border border-success/25 bg-success/10 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-success">
                   Complete
                 </span>
               </div>
@@ -451,10 +451,10 @@ export function ExcelDropzone({ onImportComplete }: ExcelDropzoneProps) {
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <Badge variant="secondary" className="justify-center rounded-2xl border border-success/20 bg-success/10 px-4 py-3 text-sm font-bold text-success-foreground">
+            <Badge variant="secondary" className="justify-center rounded-2xl border border-success/20 bg-success/10 px-4 py-3 text-sm font-bold text-success">
               {importResult.clientsCreated} Client(s)
             </Badge>
-            <Badge variant="secondary" className="justify-center rounded-2xl border border-success/20 bg-success/10 px-4 py-3 text-sm font-bold text-success-foreground">
+            <Badge variant="secondary" className="justify-center rounded-2xl border border-success/20 bg-success/10 px-4 py-3 text-sm font-bold text-success">
               {importResult.propertiesCreated} Properties
             </Badge>
           </div>
@@ -476,7 +476,7 @@ export function ExcelDropzone({ onImportComplete }: ExcelDropzoneProps) {
             </div>
           )}
 
-          <Button onClick={resetState} variant="outline" className="mt-5 h-11 w-full rounded-2xl border-success/20 bg-white/[0.03] text-success-foreground hover:bg-success/10">
+          <Button onClick={resetState} variant="outline" className="mt-5 h-11 w-full rounded-2xl border-success/20 bg-white/[0.03] text-success hover:bg-success/10">
             <Upload className="h-4 w-4 mr-2" />
             Import Another File
           </Button>

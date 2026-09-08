@@ -28,7 +28,7 @@ export function PinnedAnswersStrip({ pinned, onJump }: PinnedAnswersStripProps) 
           <span>Pinned</span>
           <span className="opacity-60">({pinned.length})</span>
         </div>
-        <ScrollArea className="flex-1 max-w-full">
+        <ScrollArea horizontal className="flex-1 max-w-full">
           <div className="flex gap-1.5">
             {pinned.map((m) => {
               const preview = m.content

@@ -1093,9 +1093,9 @@ export function GstCalculatorCard() {
   const priorityWarnings = gstWarnings.slice(0, 3);
   const statusBadgeClass =
     readinessStatus === "GST Treatment Verified"
-      ? "border-success/40 bg-success/10 text-success-foreground"
+      ? "border-success/40 bg-success/10 text-success"
       : readinessStatus === "GST Treatment Review Required"
-        ? "border-destructive/40 bg-destructive/10 text-destructive-foreground"
+        ? "border-destructive/40 bg-destructive/10 text-destructive"
         : readinessStatus === "Preliminary GST Estimate" ||
             sources.treatment === "AI Estimate"
           ? "border-brand-500/40 bg-brand-500/10 text-brand-100"
@@ -1379,7 +1379,7 @@ export function GstCalculatorCard() {
       </CardHeader>
       <CardContent className="space-y-6">
         {saveNotice && (
-          <div className="rounded-xl border border-success/30 bg-success/10 p-3 text-sm text-success-foreground">
+          <div className="rounded-xl border border-success/30 bg-success/10 p-3 text-sm text-success">
             {saveNotice}
           </div>
         )}
@@ -2190,7 +2190,7 @@ function TreatmentHero({
           className={
             reviewTriggered
               ? "border-brand-500/40 bg-brand-500/10 text-brand-100"
-              : "border-success/40 bg-success/10 text-success-foreground"
+              : "border-success/40 bg-success/10 text-success"
           }
         >
           {reviewTriggered ? "Review required" : readinessStatus}

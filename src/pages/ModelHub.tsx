@@ -17,6 +17,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { getRecommendedUpgrade, isModelDeprecated } from '@/lib/agentUpgradeRecommendations';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { SearchInput } from '@/components/ui/search-input';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { cn } from '@/lib/utils';
 import { useSearchParams } from 'react-router-dom';
@@ -673,16 +674,15 @@ function OpenRouterCatalog({ models, lastProbedAt }: { models: CatalogModel[]; l
 
       {/* Command bar */}
       <div className="aurixa-glass mb-4 flex flex-wrap items-center gap-2 rounded-[18px] p-2.5">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            aria-label="Search OpenRouter models"
-            placeholder="Search by name, ID, or provider…"
-            value={search}
-            onChange={(e) => patch({ or_q: e.target.value || null })}
-            className="h-9 rounded-xl bg-background/60 pl-9 pr-3 focus-visible:ring-ring"
-          />
-        </div>
+        <SearchInput
+          value={search}
+          onValueChange={(value) => patch({ or_q: value || null })}
+          aria-label="Search OpenRouter models"
+          placeholder="Search by name, ID, or provider…"
+          containerClassName="flex-1 min-w-[220px]"
+          className="h-9 rounded-xl bg-background/60 pr-3 focus-visible:ring-ring"
+          iconClassName="h-3.5 w-3.5"
+        />
         <Select value={family} onValueChange={(v) => patch({ or_family: v === 'all' ? null : v })}>
           <SelectTrigger aria-label="Filter family" className="h-9 w-[180px] rounded-xl bg-background/60"><SelectValue /></SelectTrigger>
           <SelectContent>

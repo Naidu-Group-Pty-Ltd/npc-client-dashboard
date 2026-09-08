@@ -19,7 +19,8 @@
  *   to `unknown`.
  */
 import {
-  normaliseStockRow, stockIdentityHints, stockMatchKeys, stockRecordLabel,
+  developmentUnitMatchKey, normaliseStockRow, stockIdentityHints,
+  stockMatchKeys, stockRecordLabel, storedRowDevelopmentUnitKey,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
 import {
@@ -45,7 +46,7 @@ import {
   type SourceImageFetcher,
 } from './sourceImages.ts';
 import { anchorPdfRowsToPages, pdfAnchorPage } from './pdfRowAnchors.pure.ts';
-import { eligibilityDetailFor } from './assessSourceImage.ts';
+import { documentVisualKinds, eligibilityDetailFor } from './assessSourceImage.ts';
 
 /** What `attachDocumentMedia` did with one picture, for a caller that counts. */
 export interface AttachedMedia {
@@ -154,6 +155,13 @@ interface ExistingItem {
   primary_image_id: string | null;
   /** `source_row->>source_anchor`, projected under this alias. */
   source_anchor: string | null;
+  /**
+   * `source_row->>house_design`, projected the same way and for the same
+   * reason: it is part of both the match key and the identity, and it is not
+   * a column of its own. A scalar out of the JSON costs what the anchor
+   * costs, which is why the blob itself still stays unread.
+   */
+  house_design: string | null;
 }
 
 /**
@@ -182,7 +190,8 @@ interface AnchoredProperty {
 const EXISTING_ITEM_SELECT = 'id, external_reference, development_name, project_name, '
   + 'unit_number, lot_number, address_line, suburb, building_size_sqm, '
   + 'lifecycle_status, upload_id, primary_image_id, '
-  + 'source_anchor:source_row->>source_anchor';
+  + 'source_anchor:source_row->>source_anchor, '
+  + 'house_design:source_row->>house_design';
 
 /**
  * Lend a property's settled imagery to the row a re-import just created.
@@ -250,11 +259,7 @@ function referenceKey(item: ExistingItem): string | null {
   return value || null;
 }
 
-function developmentUnitKey(item: ExistingItem): string | null {
-  const development = (item.development_name ?? item.project_name ?? '').trim().toLowerCase();
-  const unit = (item.unit_number ?? item.lot_number ?? '').trim().toLowerCase();
-  return development && unit ? `${development}|${unit}` : null;
-}
+const developmentUnitKey = storedRowDevelopmentUnitKey;
 
 /** Only the fields the record actually carries. Null means "the file was silent". */
 function writablePatch(record: NormalisedStockRecord): Record<string, unknown> {
@@ -677,7 +682,7 @@ export async function importStockRecords(
       const existingId = (anchored && !anchorDifferences.length ? anchored.id : undefined)
         ?? (keys.reference ? byReference.get(keys.reference) : undefined)
         ?? (keys.developmentUnit
-          ? byDevelopmentUnit.get(`${keys.developmentUnit.development}|${keys.developmentUnit.unit}`)
+          ? byDevelopmentUnit.get(developmentUnitMatchKey(keys.developmentUnit))
           : undefined);
 
       const patch = writablePatch(record);
@@ -844,8 +849,7 @@ export async function importStockRecords(
         const reference = keys.reference;
         if (reference) byReference.set(reference, itemId);
         if (keys.developmentUnit) {
-          byDevelopmentUnit.set(
-            `${keys.developmentUnit.development}|${keys.developmentUnit.unit}`, itemId);
+          byDevelopmentUnit.set(developmentUnitMatchKey(keys.developmentUnit), itemId);
         }
       }
 
@@ -1143,10 +1147,24 @@ export async function attachDocumentMedia(
    * image as THIS property's listing image? Without it, "source_supplied" was
    * read as "safe to show", and a bedroom render reached a client's card.
    */
+  /*
+   * WHAT EACH PICTURE IS, before anything decides which one leads a card.
+   *
+   * Only the PDF path asks: it is the one that elects a hero from several
+   * pictures on a page using the document's own emphasis, and a brochure that
+   * leads with its floor plan states the plan exactly as emphatically as one
+   * that leads with the house. Two live Palomino cards drew a green line
+   * drawing badged "Builder supplied" for that reason.
+   */
+  const visualKinds = paginated
+    ? await documentVisualKinds(input.media)
+    : [];
+
   const roles = paginated
     ? assignPdfMediaRolesPerProperty({
       media: input.media,
       stockItemIds: attributions.map((attribution) => attribution.stockItemId),
+      visualKinds,
       ...paginated,
     })
     : settleContainerMediaRoles({

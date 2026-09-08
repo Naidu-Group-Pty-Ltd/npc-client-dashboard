@@ -56,7 +56,7 @@ import type { ResolvedReportPalette } from '../../reportDesign/roles.pure.ts';
 import type { ReportDesignOptions } from '../../reportDesign/options.pure.ts';
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
-import { renderMarkdown } from '../markdown.pure.ts';
+import { contentLosses, renderMarkdown } from '../markdown.pure.ts';
 import { vizDirectiveRenderer } from '../vizFigures.pure.ts';
 import { chartHasData, investmentChartContext, renderNamedChart } from './charts.pure.ts';
 import type { InvestmentReport, SectionChart } from './payload.pure.ts';
@@ -225,7 +225,7 @@ function chapterBody(
   report: InvestmentReport,
   ctx: ReturnType<typeof investmentChartContext>,
   projectionsRaw: unknown,
-  counters: { drawn: number; skipped: number },
+  counters: { drawn: number; skipped: number; losses: string[] },
 ): string {
   const scenarios = (field: 'propertyValue' | 'cumulativeCashFlow' | 'annualRent') =>
     scenarioSeries(projectionsRaw, field);
@@ -279,6 +279,14 @@ function chapterBody(
       prose = md.html;
       counters.drawn += md.notices.figuresDrawn;
       counters.skipped += md.notices.figuresDropped;
+      // Two of the twenty-four notices were read here and the rest discarded —
+      // including every one that means a client's content did not reach the
+      // page. `contentLosses` draws that line once; the losses join the same
+      // `problems` list the spine validation uses, prefixed with the part they
+      // happened in so a reader can find them.
+      for (const loss of contentLosses(md.notices)) {
+        counters.losses.push(`${part.title || chapter.id}: ${loss}`);
+      }
     }
     // Charts after the prose that introduces them, not before it. The section's
     // own first sentence says what the reader is about to look at.
@@ -290,7 +298,7 @@ export function renderInvestmentBody(input: RenderInvestmentInput): InvestmentRe
   const report = input.report;
   const { chapters, dropped, charsOmitted } = planChapters(report);
   const ctx = investmentChartContext(input.palette);
-  const counters = { drawn: 0, skipped: 0 };
+  const counters = { drawn: 0, skipped: 0, losses: [] as string[] };
 
   const spine = buildSpine({
     archetype: 'investment-compass',
@@ -407,8 +415,11 @@ export function renderInvestmentBody(input: RenderInvestmentInput): InvestmentRe
     charsOmitted,
     chartsSkipped: counters.skipped,
     chartsDrawn: counters.drawn,
-    degraded: dropped.length > 0 || charsOmitted > 0,
-    problems,
+    // A chapter dropped for budget, prose cut for length, or content the
+    // markdown renderer could not carry — all three are the document not
+    // saying what the record holds, so all three degrade it.
+    degraded: dropped.length > 0 || charsOmitted > 0 || counters.losses.length > 0,
+    problems: [...problems, ...counters.losses],
   };
 }
 

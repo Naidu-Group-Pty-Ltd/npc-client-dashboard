@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowUpRight, ArrowDownRight, Minus, CalendarRange, Loader2, TrendingUp, TrendingDown } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
+import { chartTooltipContentStyle } from '@/lib/charts/tooltipStyle';
 import { format, subDays, subMonths, startOfMonth, endOfMonth, startOfWeek, endOfWeek, subWeeks } from 'date-fns';
 
 const PERIOD_OPTIONS = [
@@ -255,7 +256,7 @@ export function PeriodOverPeriodPanel() {
                   <XAxis dataKey="metric" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} className="text-muted-foreground" />
                   <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} className="text-muted-foreground" />
                   <RechartsTooltip
-                    contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: 14, boxShadow: '0 18px 50px hsl(var(--foreground) / 0.12)', color: 'hsl(var(--popover-foreground))', fontSize: 12 }}
+                    contentStyle={chartTooltipContentStyle}
                   />
                   <Legend wrapperStyle={{ fontSize: 11, color: 'hsl(var(--muted-foreground))' }} />
                   <Line type="monotone" dataKey={ranges.currentLabel} stroke="hsl(var(--primary))" strokeWidth={2.5} dot={{ r: 5 }} />

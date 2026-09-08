@@ -37,6 +37,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
+import { SearchInput } from '@/components/ui/search-input';
 import { ExcelDropzone } from '@/components/clients/ExcelDropzone';
 import { ResetClientJourneyDialog } from '@/components/aml/ResetClientJourneyDialog';
 import { amlCasesApi } from '@/lib/aml/amlCasesApi';
@@ -844,19 +845,17 @@ export default function ClientManagement() {
 
           {/* Search & Filters */}
           <DashboardThemeFrame variant="toolbar" className="gap-2 p-2">
-            <div className="relative min-w-full flex-1 sm:min-w-[240px] md:max-w-md">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input
-                placeholder="Search clients…"
-                aria-label="Search clients"
-                type="search"
-                autoComplete="off"
-                spellCheck={false}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-10 rounded-xl pl-10 pr-4 text-sm"
-              />
-            </div>
+            <SearchInput
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              placeholder="Search clients…"
+              aria-label="Search clients"
+              autoComplete="off"
+              spellCheck={false}
+              containerClassName="min-w-full flex-1 sm:min-w-[240px] md:max-w-md"
+              className="h-10 rounded-xl pr-4 text-sm"
+              iconClassName="left-3.5"
+            />
             <Button
               variant={showStarredOnly ? 'default' : 'outline'}
               onClick={() => setShowStarredOnly(!showStarredOnly)}

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { SearchInput } from '@/components/ui/search-input';
 import {
   MessageSquare, Inbox, ChevronRight, Search, Phone, Mail, Globe, StickyNote,
   Activity, AlertCircle, RefreshCcw, Filter, UserRound, Clock, Layers,
@@ -188,10 +189,11 @@ export default function FinancePortalClientInbox() {
             <Search className="h-4 w-4 text-muted-foreground" /> Find communication
           </CardTitle>
           <div className="grid gap-2 md:grid-cols-[1fr_220px_180px]">
-            <Input
-              placeholder="Search by client name, email, phone, partner, or message preview…"
+            <SearchInput
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onValueChange={setSearch}
+              placeholder="Search by client name, email, phone, partner, or message preview…"
+              hideIcon
             />
             <Select value={sourceFilter} onValueChange={(value) => setSourceFilter(value as SourceType)}>
               <SelectTrigger><SelectValue /></SelectTrigger>

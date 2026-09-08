@@ -52,6 +52,7 @@ import {
   ShoppingCart,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { SearchInput } from '@/components/ui/search-input';
 import { PlannedIntegrations } from '@/components/integrations/PlannedIntegrations';
 import { BrandMark } from '@/components/integrations/BrandMark';
 import { getBrandProfile } from '@/lib/integrations/brandProfiles';
@@ -829,17 +830,14 @@ export default function Integrations() {
               </TabsList>
             </div>
 
-            <div className="relative min-w-0 lg:w-80">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search integrations, services or keys…"
-                aria-label="Search integrations"
-                className="min-h-11 rounded-2xl border-border/70 bg-card/80 pl-9 pr-3 shadow-inner transition-all placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/35"
-              />
-            </div>
+            <SearchInput
+              value={search}
+              onValueChange={setSearch}
+              placeholder="Search integrations, services or keys…"
+              aria-label="Search integrations"
+              containerClassName="min-w-0 lg:w-80"
+              className="min-h-11 rounded-2xl border-border/70 bg-card/80 pr-3 shadow-inner transition-all placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/35"
+            />
           </div>
 
           {statusTab !== 'planned' && (

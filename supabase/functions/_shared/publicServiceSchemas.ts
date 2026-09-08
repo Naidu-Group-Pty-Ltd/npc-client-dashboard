@@ -83,6 +83,56 @@ export const PublicTransportRequest = z.object({
 }).strict();
 
 /**
+ * `climate-data-service` — the coordinate is the question (SILO's grid is
+ * point-keyed); the locality fields remain accepted for the legacy callers
+ * and for the honest no-coordinate refusal.
+ */
+export const ClimateDataRequest = z.object({
+  suburb: optionalField(localityField),
+  state: optionalField(stateField),
+  postcode: optionalField(postcodeField),
+  latitude: optionalField(z.number().min(-90).max(90)),
+  longitude: optionalField(z.number().min(-180).max(180)),
+}).strict();
+
+/**
+ * `crime-statistics-service` — the locality, plus the LGA where the state's
+ * register is LGA-keyed (QLD): the generator passes the cadastre's own
+ * shire name once planning data has resolved it.
+ */
+export const CrimeStatisticsRequest = z.object({
+  suburb: optionalField(localityField),
+  state: stateField,
+  postcode: optionalField(postcodeField),
+  lga: optionalField(localityField),
+}).strict();
+
+/**
+ * `abs-regional-service` — the coordinate is the question (the SA2 that
+ * contains it is resolved server-side); the locality fields remain accepted
+ * for the honest no-coordinate refusal and the Australia gate.
+ */
+export const RegionalTrendsRequest = z.object({
+  suburb: optionalField(localityField),
+  state: optionalField(stateField),
+  postcode: optionalField(postcodeField),
+  latitude: optionalField(z.number().min(-90).max(90)),
+  longitude: optionalField(z.number().min(-180).max(180)),
+}).strict();
+
+/**
+ * `planning-data-service` — the coordinate is the question; the locality
+ * fields only order which jurisdiction's layers are preferred when two
+ * boundary polygons both claim a point.
+ */
+export const PlanningDataRequest = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  state: optionalField(stateField),
+  postcode: optionalField(postcodeField),
+}).strict();
+
+/**
  * 8 KiB. A locality lookup that needs more than this is not a locality lookup,
  * and on an endpoint with no authentication the ceiling should be the smallest
  * one that cannot inconvenience a real caller.

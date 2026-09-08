@@ -532,25 +532,54 @@ export function renderHeatmap(
     || grid.some((row) => row.length !== cols)
   ) return '';
 
-  const rowLabels = opts.rowLabels ?? [];
-  const colLabels = opts.colLabels ?? [];
+  // A label beyond the grid is a promise with no figure under it: a real
+  // render drew "5=High)" as a second row label below a one-row grid after
+  // the directive parser split a parenthesised label. The parser is fixed;
+  // the renderer still refuses to draw a label for a row or column that
+  // does not exist.
+  const rowLabels = (opts.rowLabels ?? []).slice(0, rows);
+  const colLabels = (opts.colLabels ?? []).slice(0, cols);
   const flat = grid.flat();
   const lo = Math.min(...flat), hi = Math.max(...flat);
   const span = (hi - lo) || 1;
 
-  // Approximate advance width per character at the label size.
-  const charPx = 5.4;
   const maxRowLabel = rowLabels.reduce((m, l) => Math.max(m, String(l ?? '').length), 0);
   const maxColLabel = colLabels.reduce((m, l) => Math.max(m, String(l ?? '').length), 0);
   const cellText = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
   const maxCellLen = Math.max(...flat.map((v) => cellText(v).length), 3);
 
-  const padL = Math.max(110, Math.ceil(maxRowLabel * charPx) + 24);
-  const padT = opts.title ? 56 : 36;
+  // The label column and cells are sized from the type's own advance (0.58em
+  // of micro, the measured mixed-case worst; the old 5.4-unit guess clipped a
+  // 26-character row label by three characters). The advance is in viewBox
+  // units, which scale with the total width, which is the sum of what the
+  // labels need — a fixed point, iterated to convergence. It converges
+  // whenever the labels, printed at micro size, are physically narrower than
+  // the measure; when they are not, no box width fits (the type scales with
+  // the box), and the chart refuses rather than clipping — the module's rule.
   const padR = 22, padB = 28;
-  const cellW = Math.max(64, Math.ceil(maxColLabel * charPx) + 18, Math.ceil(maxCellLen * charPx) + 22);
-  const cellH = 38;
-  const w = padL + padR + cols * cellW;
+  const advMm = CHART_TEXT_PT.micro * MM_PER_PT * 0.58;
+  const inkFraction = (maxRowLabel + cols * Math.max(maxColLabel, maxCellLen)) * advMm / ctx.widthMm;
+  if (inkFraction >= 0.98) return '';
+  let padL = Math.max(110, maxRowLabel * 6 + 24);
+  let cellW = Math.max(64, maxColLabel * 6 + 18, maxCellLen * 6 + 22);
+  let w = padL + padR + cols * cellW;
+  for (let i = 0; i < 40; i += 1) {
+    const charU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm) * 0.58;
+    padL = Math.max(110, Math.ceil(maxRowLabel * charU) + 24);
+    cellW = Math.max(64, Math.ceil(maxColLabel * charU) + 18, Math.ceil(maxCellLen * charU) + 22);
+    const next = padL + padR + cols * cellW;
+    if (Math.abs(next - w) < 0.5) { w = next; break; }
+    w = next;
+  }
+  // The vertical metrics ride the type for the same reason: at a converged
+  // width the units-per-mm grow, and the fixed header band (title at y=22,
+  // padT=56) would set the title through the column labels, while a fixed
+  // 38-unit cell would pinch the cell text it exists to hold.
+  const microU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm);
+  const titleU = ptToUnits(CHART_TEXT_PT.title, w, ctx.widthMm);
+  const titleY = Math.ceil(titleU + 6);
+  const padT = Math.ceil((opts.title ? titleY + microU * 0.4 : 0) + (colLabels.length ? microU + 14 : microU + 8));
+  const cellH = Math.max(38, Math.ceil(microU * 1.7));
   const h = padT + padB + rows * cellH;
 
   let cells = '';
@@ -573,61 +602,69 @@ export function renderHeatmap(
     { x: padL + c * cellW + cellW / 2, y: padT - 10, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' },
     svgEscape(lbl))).join('');
   const title = opts.title
-    ? text(ctx, w, { x: padL, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+    ? text(ctx, w, { x: padL, y: titleY, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
     : '';
 
   return `${svgOpen(w, h)}<rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>`
     + `${title}${colL}${rowL}${cells}</svg>`;
 }
 
-/** Score wheel — a radar over three or more dimensions. */
-export function renderScoreWheel(
+/**
+ * A scorecard is bars on a common baseline. It used to be a radar, and the
+ * radar is gone.
+ *
+ * ## Why the shape changed
+ *
+ * The Executive Verdict drew five named dimensions — location strength,
+ * infrastructure & amenity, property fit, tenant appeal, risk profile — as a
+ * filled pentagon. Four things are wrong with that, and the first two are
+ * wrong about the DATA rather than about taste:
+ *
+ *  1. **The polygon's area depends on the order of the axes.** The same five
+ *     scores arranged differently enclose a different area and read as a
+ *     different result. Nothing in the record says what the order should be,
+ *     so the most visually dominant property of the chart carries no
+ *     information at all.
+ *  2. **Area scales with the square of the values.** A dimension scoring 86
+ *     against one scoring 64 contributes not 1.34× but ~1.8× the area, so the
+ *     picture overstates every gap it shows.
+ *  3. **The space between two spokes means nothing.** There is no continuum
+ *     between "tenant appeal" and "risk profile", and filling it implies one.
+ *  4. **Radial labels have nowhere to go.** Comparing lengths along five
+ *     spokes at five angles is measurably harder than comparing them against
+ *     one baseline, and the corner labels crowd — `INFRASTRUCTURE & AMENITY`
+ *     printed as `ASTRUCTURE` on a real client render. That was fixed with a
+ *     label gutter and a wrap; the crowding is a property of the form.
+ *
+ * Bars fix all four at once: one baseline, length proportional to value,
+ * nothing enclosed, and labels set horizontally in a column that sizes itself.
+ *
+ * ## Why one colour and not a traffic light
+ *
+ * `renderBars` colours by magnitude when no tone is given — above 0.66 reads
+ * positive, below 0.2 negative. Over a real scorecard that is a distortion:
+ * the measured spread on `6 Acer Court` is 64 to 86, and a red-to-green ramp
+ * across 22 points of a 100-point scale paints an ordinary dimension as a
+ * failure. The bars are one accent, and their lengths carry the comparison.
+ */
+export function renderScoreBars(
   ctx: ChartContext,
   scores: number[],
   opts: { labels?: string[]; max?: number } = {},
 ): string {
-  if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return '';
+  if (scores.length < 2 || scores.length > MAX_WHEEL_SCORES) return '';
   const max = opts.max ?? 100;
-  const labels = opts.labels ?? [];
-  const w = CHART_WIDTH.compact, h = 360;
-  const cx = w / 2, cy = h / 2 + 8, R = 130;
-  const n = scores.length;
-  const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
-  const pt = (i: number, r: number) =>
-    `${(cx + r * Math.cos(angle(i))).toFixed(1)},${(cy + r * Math.sin(angle(i))).toFixed(1)}`;
-
-  const rings = [0.25, 0.5, 0.75, 1].map((t) =>
-    `<polygon points="${Array.from({ length: n }, (_, i) => pt(i, R * t)).join(' ')}" fill="none" `
-    + `stroke="${ctx.palette.rule}" stroke-opacity="${(0.4 + t * 0.2).toFixed(2)}" stroke-width="0.6"/>`).join('');
-  const spokes = Array.from({ length: n }, (_, i) =>
-    `<line x1="${cx}" y1="${cy}" x2="${(cx + R * Math.cos(angle(i))).toFixed(1)}" `
-    + `y2="${(cy + R * Math.sin(angle(i))).toFixed(1)}" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`).join('');
-
-  const clamp01 = (s: number) => Math.max(0, Math.min(1, (Number(s) || 0) / max));
-  const polyPts = scores.map((s, i) => pt(i, R * clamp01(s))).join(' ');
-  const dots = scores.map((s, i) => {
-    const r = R * clamp01(s);
-    return `<circle cx="${(cx + r * Math.cos(angle(i))).toFixed(1)}" cy="${(cy + r * Math.sin(angle(i))).toFixed(1)}" `
-      + `r="3" fill="${ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="1"/>`;
-  }).join('');
-
-  const lbls = (labels.length ? labels : scores.map((_, i) => `D${i + 1}`)).map((lbl, i) => {
-    const a = angle(i);
-    const lx = cx + (R + 22) * Math.cos(a);
-    const ly = cy + (R + 22) * Math.sin(a);
-    const anchor = Math.abs(Math.cos(a)) < 0.2 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end';
-    return text(ctx, w, { x: lx, y: ly + 3.5, pt: 'micro', fill: ctx.palette.inkMuted, anchor, tracking: 0.3 },
-      svgEscape(lbl.toUpperCase()))
-      + text(ctx, w, { x: lx, y: ly + 16, pt: 'caption', fill: ctx.palette.ink, anchor, stack: 'display', weight: 700, tabular: true },
-        String(Math.round(Number(scores[i]) || 0)));
-  }).join('');
-
-  return `${svgOpen(w, h)}
-    <rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>
-    ${rings}${spokes}
-    <polygon points="${polyPts}" fill="${withAlpha(ctx.palette.accent, 0.18)}" stroke="${ctx.palette.accentDeep}" stroke-width="1.6" stroke-linejoin="round"/>
-    ${dots}${lbls}
-  </svg>`;
+  const labels = opts.labels?.length ? opts.labels : scores.map((_, i) => `D${i + 1}`);
+  return renderBars(
+    ctx,
+    scores.map((value, i) => ({
+      label: String(labels[i] ?? `D${i + 1}`).trim(),
+      value: Number(value) || 0,
+      display: String(Math.round(Number(value) || 0)),
+      tone: 'accent' as const,
+    })),
+    { max },
+  );
 }
 
 /** Bullet — a KPI against a target and qualitative bands. */
@@ -797,7 +834,18 @@ export function renderBars(
   const rowH = 28;
   const padT = opts.title ? 36 : 14;
   const padB = 14;
-  const labelW = 180, valueW = 76;
+  // The label column sizes to the longest label, the heatmap's own treatment.
+  // Fixed at 180 it clipped at the SVG's left edge: "Property-specific
+  // verification need" lost its first letters on a real render, which in a
+  // right-anchored column is the START of the words — the worst place. The
+  // per-character advance is derived from the type's own size in units
+  // (0.58em: the measured mixed-case worst was 0.55, digits included), so it
+  // stays honest whatever width the chart prints across. Capped at 45% of
+  // the measure so the bars keep room to differ.
+  const charU = ptToUnits(CHART_TEXT_PT.micro, w, ctx.widthMm) * 0.58;
+  const longestLabel = items.reduce((m, it) => Math.max(m, String(it.label ?? '').length), 0);
+  const labelW = Math.min(Math.max(180, Math.ceil(longestLabel * charU) + 8), Math.floor(w * 0.45));
+  const valueW = 76;
   const barX = labelW + 12;
   const barW = w - barX - valueW - 16;
   const h = padT + items.length * rowH + padB;

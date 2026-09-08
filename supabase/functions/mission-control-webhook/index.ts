@@ -90,6 +90,60 @@ Deno.serve(async (req) => {
 
   const client = adminClient();
 
+  /*
+   * Can this deployment actually REACH the identity provider?
+   *
+   * Mission Control's door to the same probe the Command Centre offers a
+   * reviewer. The question cannot be answered from Mission Control's side
+   * alone: on the brokered route the clone's own Mission Control key, its
+   * scopes, Mission Control's Didit credential and the vendor all sit between
+   * this function and an answer, and only a call made HERE crosses all four.
+   * Every readiness reading either end holds was green on three tenants that
+   * had never completed a verification, which is why this is a call rather
+   * than a flag.
+   *
+   * ANSWERED BEFORE THE DE-DUPE, deliberately. Everything below this line is
+   * an event to be applied exactly once; a probe is a question asked NOW, and
+   * asking it twice must ask it twice. Keyed like an event it would answer
+   * the second caller from a table without making the call — which is
+   * precisely the stale reading it exists to replace.
+   *
+   * It spends nothing (the request is deliberately incomplete, so the vendor
+   * rejects it at validation), writes no record, and is never metered. The
+   * result travels in the RESPONSE and is stored nowhere.
+   */
+  if (event === "verification.selftest") {
+    const { probeStandaloneRoute } = await import(
+      "../_shared/aml/providers/diditStandaloneClient.ts"
+    );
+    const probe = await probeStandaloneRoute();
+    return new Response(JSON.stringify({ ok: true, event, probe }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
+  /*
+   * The full loop, with real image parts.
+   *
+   * Separate from the probe on purpose. The probe's guarantee is that it
+   * spends nothing; this one sends real captures and a 2xx from any of the
+   * three calls is a billable unit, so folding them into one event would make
+   * a free diagnostic quietly start billing. A caller has to ask for this by
+   * name.
+   *
+   * Answered before the de-dupe for the same reason the probe is: it is a
+   * question asked now, not an event to be applied once.
+   */
+  if (event === "verification.loopcheck") {
+    const { runStandaloneLoopCheck } = await import(
+      "../_shared/aml/providers/diditStandaloneLoopCheck.ts"
+    );
+    const report = await runStandaloneLoopCheck();
+    return new Response(JSON.stringify({ ok: true, event, report }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
   // De-dupe on (event, idempotency-key), falling back to a digest of the raw
   // body. NEVER key on tenant id alone: that made the FIRST balance event for
   // a tenant permanently block every later one, freezing token_balance_cache.
@@ -124,6 +178,7 @@ Deno.serve(async (req) => {
       case "tokens.test":
         // MC dashboard "Test" button — no-op success.
         break;
+
       case "tokens.balance.updated": {
         if (client) {
           const tenant = data?.tenant ?? {};

@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   VERIFICATION_ATTEMPT_TOKENS,
+  VERIFICATION_METERING_KIND,
   VERIFICATION_RESERVE_TOKENS,
-  VERIFICATION_SUCCESS_TOKENS,
   VERIFIED_OUTCOMES,
   WORKSPACE_OUT_OF_TOKENS,
   describeVerificationCharge,
   isVerifiedOutcome,
+  verificationReserveTokens,
   verificationTokenCharge,
 } from '../../../supabase/functions/_shared/aml/verificationTokenPrice.pure.ts';
 import {
@@ -29,19 +30,61 @@ const legacy = read('supabase/functions/aml-verification/index.ts');
 const estimator = read('supabase/functions/_shared/tokenEstimator.ts');
 
 describe('the price', () => {
-  it('is 5 for an attempt and 5 more for a success', () => {
+  it('falls back to 5 for an attempt, and a verified identity costs it twice', () => {
     expect(VERIFICATION_ATTEMPT_TOKENS).toBe(5);
-    expect(VERIFICATION_SUCCESS_TOKENS).toBe(5);
+    expect(verificationTokenCharge({ attemptConsumed: true, outcome: 'passed' })).toBe(10);
   });
 
-  it('reserves the worst case, derived from the two rather than typed a third time', () => {
-    expect(VERIFICATION_RESERVE_TOKENS)
-      .toBe(VERIFICATION_ATTEMPT_TOKENS + VERIFICATION_SUCCESS_TOKENS);
+  it('reserves the worst case, derived rather than typed a second time', () => {
+    expect(VERIFICATION_RESERVE_TOKENS).toBe(verificationReserveTokens());
     // A reservation smaller than the maximum charge would let a success land
     // that the workspace could not pay for — it fails only for a workspace
     // near its balance, which is the worst possible way to find out.
-    expect(VERIFICATION_RESERVE_TOKENS).toBeGreaterThanOrEqual(
-      verificationTokenCharge({ attemptConsumed: true, outcome: 'passed' }));
+    for (const attempt of [1, 5, 7, 12, 40]) {
+      expect(verificationReserveTokens(attempt)).toBeGreaterThanOrEqual(
+        verificationTokenCharge({ attemptConsumed: true, outcome: 'passed' }, attempt));
+    }
+  });
+
+  /*
+   * The rule that keeps this from becoming a second price list. Mission
+   * Control's `report_credit_costs` already carries a row for this kind, it
+   * is what the Aurixa Systems pricing page publishes to customers, and
+   * `getCreditCostForKind` exists so an operator repricing there reaches
+   * every workspace without a deploy. A literal here would disagree with the
+   * published number and nothing would say so.
+   */
+  it('meters under the kind the cost index prices', () => {
+    expect(VERIFICATION_METERING_KIND).toBe('aml_identity_check');
+  });
+
+  it('takes the live price and never a literal, on both routes', () => {
+    for (const src of [standalone, legacy]) {
+      expect(src).toContain('getCreditCostForKind(VERIFICATION_METERING_KIND)');
+      expect(src).toContain('?? VERIFICATION_ATTEMPT_TOKENS');
+    }
+    expect(standalone).toContain('verificationReserveTokens(attemptTokens)');
+    expect(legacy).toContain('verificationReserveTokens(attemptTokens)');
+  });
+
+  it('settles at the price the hold was taken at, not one re-read later', () => {
+    // The catalog is cached for minutes; a reprice between the reserve and
+    // the commit would charge more than was held.
+    expect(standalone).toContain('readonly attemptTokens: number;');
+    expect(standalone).toContain('verificationTokenCharge(charge, hold.attemptTokens)');
+    expect(legacy).toContain('verificationTokenCharge(charge, attemptTokens)');
+  });
+
+  it('refuses a price the index cannot mean', () => {
+    // A negative or non-numeric cost is a data problem, not a free
+    // verification. Fractional rounds up: a token is an integer.
+    for (const bad of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(verificationTokenCharge({ attemptConsumed: true, outcome: 'failed' }, bad))
+        .toBe(VERIFICATION_ATTEMPT_TOKENS);
+    }
+    expect(verificationTokenCharge({ attemptConsumed: true, outcome: 'failed' }, 2.4)).toBe(3);
+    // Zero is a real price — a deployment may give verification away.
+    expect(verificationTokenCharge({ attemptConsumed: true, outcome: 'passed' }, 0)).toBe(0);
   });
 });
 
@@ -55,6 +98,7 @@ describe('what is charged', () => {
   it('charges the attempt alone for every decline', () => {
     for (const outcome of ['failed', 'referred', 'exhausted', 'manual_review', 'pending']) {
       expect(verificationTokenCharge({ attemptConsumed: true, outcome })).toBe(5);
+      expect(verificationTokenCharge({ attemptConsumed: true, outcome }, 8)).toBe(8);
     }
   });
 
@@ -114,7 +158,7 @@ describe('the reservation is taken before anything is spent', () => {
 
   it('refuses without calling the vendor when Mission Control says no', () => {
     const refusal = standalone.slice(
-      standalone.indexOf('const hold = await holdVerificationTokens'),
+      standalone.indexOf('const holdResult = await holdVerificationTokens'),
       standalone.indexOf("const vendorData = buildVendorData"));
     // The imported constant, never the literal re-typed at the call site.
     expect(refusal).toContain('WORKSPACE_OUT_OF_TOKENS');
@@ -130,7 +174,8 @@ describe('the reservation is taken before anything is spent', () => {
       standalone.indexOf('async function holdVerificationTokens'),
       standalone.indexOf('export async function runStandaloneVerification'));
     // Only an explicit refusal returns null (which is what blocks the run).
-    expect(helper).toContain('if (err instanceof InsufficientTokensError) return null;');
+    expect(helper).toContain(
+      'if (err instanceof InsufficientTokensError) return { held: null, reserve };');
     expect(helper).toContain('unmeteredHold(');
   });
 });
@@ -139,7 +184,8 @@ describe('the charge is settled from the row, once', () => {
   it('reads the same attempt_consumed the row is about to carry', () => {
     expect(standalone).toContain(
       'const charge = { attemptConsumed: outcome.attemptConsumed, outcome: outcome.status };');
-    expect(standalone).toContain('hold.settle(verificationTokenCharge(charge)');
+    expect(standalone).toContain(
+      'hold.settle(verificationTokenCharge(charge, hold.attemptTokens)');
   });
 
   it('gives the whole hold back on a retake and on a provider failure', () => {
@@ -150,7 +196,7 @@ describe('the charge is settled from the row, once', () => {
   it('never turns a settle failure into a verification failure', () => {
     const settle = standalone.slice(
       standalone.indexOf('const settle = async ('),
-      standalone.indexOf('return {\n    jobId,'));
+      standalone.indexOf('  return {\n    held: {'));
     expect(settle).toContain('settle_failed: true');
     expect(settle).not.toMatch(/\bthrow\b/);
   });
@@ -158,10 +204,10 @@ describe('the charge is settled from the row, once', () => {
 
 describe('one price list', () => {
   it('the legacy route reserves the shared amount rather than a literal', () => {
-    expect(legacy).toContain('const IDV_ESTIMATED_TOKENS = VERIFICATION_RESERVE_TOKENS;');
-    expect(legacy).not.toContain('IDV_ESTIMATED_TOKENS = 400');
+    expect(legacy).not.toContain('IDV_ESTIMATED_TOKENS');
     // …and commits what was actually earned, not the reservation.
-    expect(legacy).toContain('const chargedTokens = verificationTokenCharge(charge);');
+    expect(legacy).toContain(
+      'const chargedTokens = verificationTokenCharge(charge, attemptTokens);');
     expect(legacy).toContain('await commitTokens(reservation.jobId, chargedTokens,');
   });
 

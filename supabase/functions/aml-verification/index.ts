@@ -90,8 +90,10 @@ async function hasCaseAccess(
 }
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
 import {
-  VERIFICATION_RESERVE_TOKENS, describeVerificationCharge, verificationTokenCharge,
+  VERIFICATION_ATTEMPT_TOKENS, VERIFICATION_METERING_KIND,
+  describeVerificationCharge, verificationReserveTokens, verificationTokenCharge,
 } from "../_shared/aml/verificationTokenPrice.pure.ts";
+import { getCreditCostForKind } from "../_shared/missionControlCatalog.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 
@@ -128,14 +130,18 @@ async function consumedAttempts(
 /**
  * What one identity verification costs a workspace, in tokens.
  *
- * Imported rather than written here. It used to be `400` — against a
- * `tokenEstimator` price list that says an `aml_identity_check` is worth 4 —
- * and the standalone path that actually runs in production reserved nothing at
- * all, so the two live verification routes disagreed by two orders of
- * magnitude and one of them charged nobody. The price is stated once, in
- * `_shared/aml/verificationTokenPrice.pure.ts`, with the reasoning for it.
+ * Resolved from Mission Control's cost index, never written here. It used to
+ * be `400` — against a `tokenEstimator` price list saying 4 — and the
+ * standalone path that actually runs in production reserved nothing at all,
+ * so the two live verification routes disagreed by two orders of magnitude
+ * and one of them charged nobody. The rule is stated once, in
+ * `_shared/aml/verificationTokenPrice.pure.ts`: the index carries the ATTEMPT
+ * price and a verified identity costs it twice.
  */
-const IDV_ESTIMATED_TOKENS = VERIFICATION_RESERVE_TOKENS;
+async function idvAttemptTokens(): Promise<number> {
+  return (await getCreditCostForKind(VERIFICATION_METERING_KIND))
+    ?? VERIFICATION_ATTEMPT_TOKENS;
+}
 const SCREENING_ESTIMATED_TOKENS = 250;
 
 const jr = (data: unknown, status = 200) =>
@@ -229,11 +235,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         const idempotencyKey = `aml-idv-${caseId}-${Date.now()}`;
+        // Read once, before the reserve, and used again at the commit: the
+        // catalog is cached for minutes and a reprice between the two would
+        // settle a charge at a price the reservation was not taken at.
+        const attemptTokens = await idvAttemptTokens();
         let reservation: { jobId: string } | null = null;
         try {
           reservation = await reserveTokens({
-            kind: "aml_identity_check",
-            estimatedTokens: IDV_ESTIMATED_TOKENS,
+            kind: VERIFICATION_METERING_KIND,
+            estimatedTokens: verificationReserveTokens(attemptTokens),
             idempotencyKey,
             userId,
             requestPayload: { case_id: caseId, method, provider: provider.name },
@@ -285,9 +295,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             provider_reference: result.providerReference,
             result_payload: stripImagePayloads(result.raw),
             completed_at: new Date().toISOString(),
-            mc_tokens_committed: verificationTokenCharge({
-              attemptConsumed: true, outcome: result.status,
-            }),
+            mc_tokens_committed: verificationTokenCharge(
+              { attemptConsumed: true, outcome: result.status }, attemptTokens,
+            ),
           }).eq("id", inserted.id).select().single();
 
           /* The provider examined the subject, so the attempt is spent
@@ -296,11 +306,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
              here at all is what "attempt consumed" means on this route: the
              catch below is every condition in which nothing was examined. */
           const charge = { attemptConsumed: true, outcome: result.status };
-          const chargedTokens = verificationTokenCharge(charge);
+          const chargedTokens = verificationTokenCharge(charge, attemptTokens);
           if (reservation) {
             await commitTokens(reservation.jobId, chargedTokens, {
               provider: provider.name, provider_reference: result.providerReference, status: result.status,
-              charge: describeVerificationCharge(charge),
+              charge: describeVerificationCharge(charge, attemptTokens),
             });
           }
 

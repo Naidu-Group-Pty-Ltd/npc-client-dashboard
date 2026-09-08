@@ -85,12 +85,13 @@ import {
   type IdentityDocumentChoice,
 } from './identityDocuments.pure.ts';
 import {
-  VERIFICATION_RESERVE_TOKENS, WORKSPACE_OUT_OF_TOKENS,
-  describeVerificationCharge, verificationTokenCharge,
+  VERIFICATION_ATTEMPT_TOKENS, VERIFICATION_METERING_KIND, WORKSPACE_OUT_OF_TOKENS,
+  describeVerificationCharge, verificationReserveTokens, verificationTokenCharge,
 } from './verificationTokenPrice.pure.ts';
 import {
   cancelTokens, commitTokens, reserveTokens, InsufficientTokensError,
 } from '../missionControl.ts';
+import { getCreditCostForKind } from '../missionControlCatalog.ts';
 
 /** Matches MAX_VERIFICATION_ATTEMPTS in aml-client-portal and the DB counter. */
 export const MAX_VERIFICATION_ATTEMPTS = 3;
@@ -304,6 +305,16 @@ export interface StandaloneRunResult {
  */
 interface TokenHold {
   readonly jobId: string | null;
+  /**
+   * The attempt price this hold was taken at.
+   *
+   * Carried rather than re-read at settle time. Mission Control's cost index
+   * can be repriced between the reserve and the commit — the catalog is
+   * cached for minutes, not for the length of a run — and settling at a price
+   * the reservation was not taken at is how a workspace comes to be asked for
+   * more than was held.
+   */
+  readonly attemptTokens: number;
   /** What the ledger reads back on the row. */
   readonly note: Record<string, unknown>;
   /** Settle at what the run actually owes; 0 gives the whole hold back. */
@@ -330,30 +341,48 @@ function withTokenCharge(
 }
 
 /** A hold that reserved nothing, so settling and releasing are both no-ops. */
-function unmeteredHold(reason: string): TokenHold {
+function unmeteredHold(reason: string, attemptTokens: number): TokenHold {
   const note = { metered: false, reason };
   return {
     jobId: null,
+    attemptTokens,
     note,
     settle: async () => note,
     release: async () => note,
   };
 }
 
+/** A hold, or the refusal that stops the run before anything is spent. */
+type HoldResult =
+  | { held: TokenHold }
+  /** Mission Control said no. `reserve` is what it was asked for. */
+  | { held: null; reserve: number };
+
 /**
  * Take the reservation, or say why the run may not proceed.
  *
- * Returns a hold on success, and `null` only where Mission Control REFUSED —
- * every other failure yields an unmetered hold and lets the verification run.
+ * Answers a refusal ONLY where Mission Control refused explicitly — every
+ * other failure yields an unmetered hold and lets the verification run.
  */
 async function holdVerificationTokens(
   check: any, checkId: string,
-): Promise<TokenHold | null> {
+): Promise<HoldResult> {
+  /* Mission Control's cost index is the price list — the same one the Aurixa
+     Systems pricing page publishes — so an operator repricing an identity
+     check there reaches every workspace without a deploy here. A literal in
+     this repo would be a second price list disagreeing with the published
+     one. `getCreditCostForKind` never throws and answers null when the
+     catalog is unreachable or the kind is unlisted; the fallback is what a
+     reachable Mission Control would have said today. */
+  const attemptTokens =
+    (await getCreditCostForKind(VERIFICATION_METERING_KIND)) ?? VERIFICATION_ATTEMPT_TOKENS;
+  const reserve = verificationReserveTokens(attemptTokens);
+
   let reservation: { jobId: string; reserved: number };
   try {
     reservation = await reserveTokens({
-      kind: 'aml_identity_check',
-      estimatedTokens: VERIFICATION_RESERVE_TOKENS,
+      kind: VERIFICATION_METERING_KIND,
+      estimatedTokens: reserve,
       // Per CHECK, not per case or per customer: a re-run of the same row is
       // the same reservation, and a fresh attempt is a fresh row.
       idempotencyKey: `aml-idv-standalone-${checkId}`,
@@ -369,19 +398,21 @@ async function holdVerificationTokens(
       },
     });
   } catch (err: any) {
-    if (err instanceof InsufficientTokensError) return null;
+    if (err instanceof InsufficientTokensError) return { held: null, reserve };
     // Unreachable, timed out, rate limited, or answered something we could not
     // read. Verify the customer and record that nothing was held.
     console.warn('[aml-verification] token reserve unavailable', JSON.stringify({
       check_id: checkId, error: String(err?.code ?? err?.message ?? err),
     }));
-    return unmeteredHold(String(err?.code ?? 'reserve_unavailable'));
+    return { held: unmeteredHold(String(err?.code ?? 'reserve_unavailable'), attemptTokens) };
   }
 
   const jobId = reservation.jobId;
-  if (!jobId) return unmeteredHold('reserve_returned_no_job');
+  if (!jobId) return { held: unmeteredHold('reserve_returned_no_job', attemptTokens) };
 
-  const base = { metered: true, job_id: jobId, reserved: VERIFICATION_RESERVE_TOKENS };
+  const base = {
+    metered: true, job_id: jobId, reserved: reserve, attempt_tokens: attemptTokens,
+  };
 
   const settle = async (
     tokens: number, meta: Record<string, unknown>,
@@ -410,10 +441,13 @@ async function holdVerificationTokens(
   };
 
   return {
-    jobId,
-    note: base,
-    settle,
-    release: (reason: string) => settle(0, { reason }),
+    held: {
+      jobId,
+      attemptTokens,
+      note: base,
+      settle,
+      release: (reason: string) => settle(0, { reason }),
+    },
   };
 }
 
@@ -508,17 +542,23 @@ export async function runStandaloneVerification(
    * object), so none of it holds a workspace's balance; everything below
    * spends money.
    */
-  const hold = await holdVerificationTokens(check, checkId);
-  if (!hold) {
+  const holdResult = await holdVerificationTokens(check, checkId);
+  if (!holdResult.held) {
     // Mission Control refused explicitly. Nothing was called, no attempt was
     // consumed and no customer outcome is written — see
     // `verificationTokenPrice.pure.ts` for why this is its own category and
     // not the provider's `insufficient_credits`.
     await recordTechnical(db, check, WORKSPACE_OUT_OF_TOKENS,
-      `workspace has fewer than ${VERIFICATION_RESERVE_TOKENS} tokens available`,
-      { token_charge: { metered: true, charged: 0, refused: 'insufficient_funds' } });
+      `workspace has fewer than ${holdResult.reserve} tokens available`,
+      {
+        token_charge: {
+          metered: true, charged: 0, reserve: holdResult.reserve,
+          refused: 'insufficient_funds',
+        },
+      });
     return { checkId, outcome: 'technical_failure' };
   }
+  const hold = holdResult.held;
 
   /**
    * The correlation handle sent to the provider.
@@ -789,8 +829,8 @@ export async function runStandaloneVerification(
      this request (the portal polls the row), so the extra round trip costs a
      customer nothing. */
   const charge = { attemptConsumed: outcome.attemptConsumed, outcome: outcome.status };
-  const tokenCharge = await hold.settle(verificationTokenCharge(charge), {
-    reason: describeVerificationCharge(charge),
+  const tokenCharge = await hold.settle(verificationTokenCharge(charge, hold.attemptTokens), {
+    reason: describeVerificationCharge(charge, hold.attemptTokens),
     check_id: checkId,
     status: outcome.status,
     attempt_consumed: outcome.attemptConsumed,

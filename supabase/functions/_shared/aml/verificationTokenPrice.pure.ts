@@ -38,23 +38,70 @@
  * ordering is what stops a workspace with an empty balance spending the
  * platform's USD 0.30; reserving the attempt alone would let a success land
  * that nobody could pay for.
+ *
+ * ## ONE number, and it is Mission Control's
+ *
+ * Mission Control's report cost index (`report_credit_costs`) is the
+ * platform's price list, it already carries a row for
+ * `aml_identity_check`, and it is what the Aurixa Systems pricing page
+ * publishes to customers — so an operator repricing there must reach every
+ * workspace without a deploy, which is the whole design of
+ * `getCreditCostForKind`. A literal in this file would be a SECOND price
+ * list, silently disagreeing with the published one.
+ *
+ * So the index carries the ATTEMPT price and a verified identity costs it
+ * TWICE. One number to reprice, both halves moving together, no second row
+ * to forget. Everything below takes that price as a parameter; the constant
+ * is the fallback for a Mission Control that cannot be reached, which is the
+ * same contract `tokenEstimator.ts` already has for reports.
  */
-
-/** Charged whenever an attempt is consumed, whatever the outcome. */
-export const VERIFICATION_ATTEMPT_TOKENS = 5;
-
-/** Charged IN ADDITION, only where the identity was actually verified. */
-export const VERIFICATION_SUCCESS_TOKENS = 5;
 
 /**
- * What is held before the first vendor call.
+ * The metering kind, which is also the cost index's slug.
  *
- * Derived, never a third number: a literal here could drift from the two
- * above and would do so silently, because a reservation that is too small
- * fails only for the workspace that happens to be near its balance.
+ * Named once. `getCreditCostForKind` matches `metadata.token_kind` first and
+ * the slug second, and both are this string on the live row.
  */
-export const VERIFICATION_RESERVE_TOKENS =
-  VERIFICATION_ATTEMPT_TOKENS + VERIFICATION_SUCCESS_TOKENS;
+export const VERIFICATION_METERING_KIND = 'aml_identity_check';
+
+/**
+ * Charged whenever an attempt is consumed, whatever the outcome.
+ *
+ * FALLBACK ONLY — the live price comes from Mission Control's cost index.
+ * It equals the index's current value (5) so an unreachable Mission Control
+ * charges what a reachable one would, rather than something a customer was
+ * never quoted.
+ */
+export const VERIFICATION_ATTEMPT_TOKENS = 5;
+
+/** The attempt price, doubled: what is held before the first vendor call. */
+export function verificationReserveTokens(
+  attemptTokens: number = VERIFICATION_ATTEMPT_TOKENS,
+): number {
+  return sane(attemptTokens) * 2;
+}
+
+/**
+ * The fallback reserve.
+ *
+ * Derived, never a third literal: a number typed here could drift from the
+ * attempt price and would do so silently, because a reservation that is too
+ * small fails only for the workspace that happens to be near its balance.
+ */
+export const VERIFICATION_RESERVE_TOKENS = verificationReserveTokens();
+
+/**
+ * A price that can actually be charged.
+ *
+ * A negative, fractional or non-numeric cost is a data problem in the index,
+ * not a free verification — the same judgement `getCreditCostForKind` makes,
+ * repeated here because this module is also called with a hand-passed value.
+ */
+function sane(tokens: number): number {
+  return Number.isFinite(tokens) && tokens >= 0
+    ? Math.ceil(tokens)
+    : VERIFICATION_ATTEMPT_TOKENS;
+}
 
 /**
  * Every spelling of "the identity was verified", because there are two.
@@ -98,20 +145,26 @@ export interface VerificationChargeInput {
  * Total: 0 where no attempt was consumed, 5 for a consumed attempt, 10 where
  * that attempt also verified the customer.
  */
-export function verificationTokenCharge(input: VerificationChargeInput): number {
+export function verificationTokenCharge(
+  input: VerificationChargeInput,
+  attemptTokens: number = VERIFICATION_ATTEMPT_TOKENS,
+): number {
   if (!input.attemptConsumed) return 0;
-  return isVerifiedOutcome(input.outcome)
-    ? VERIFICATION_ATTEMPT_TOKENS + VERIFICATION_SUCCESS_TOKENS
-    : VERIFICATION_ATTEMPT_TOKENS;
+  const attempt = sane(attemptTokens);
+  return isVerifiedOutcome(input.outcome) ? attempt * 2 : attempt;
 }
 
 /** How the charge is described on the ledger and in the case event. */
-export function describeVerificationCharge(input: VerificationChargeInput): string {
-  const total = verificationTokenCharge(input);
+export function describeVerificationCharge(
+  input: VerificationChargeInput,
+  attemptTokens: number = VERIFICATION_ATTEMPT_TOKENS,
+): string {
+  const total = verificationTokenCharge(input, attemptTokens);
   if (total === 0) return 'no attempt consumed — nothing charged';
+  const attempt = sane(attemptTokens);
   return isVerifiedOutcome(input.outcome)
-    ? `${VERIFICATION_ATTEMPT_TOKENS} attempt + ${VERIFICATION_SUCCESS_TOKENS} verified = ${total} tokens`
-    : `${VERIFICATION_ATTEMPT_TOKENS} attempt (${input.outcome ?? 'unsettled'}) = ${total} tokens`;
+    ? `${attempt} attempt + ${attempt} verified = ${total} tokens`
+    : `${attempt} attempt (${input.outcome ?? 'unsettled'}) = ${total} tokens`;
 }
 
 /**

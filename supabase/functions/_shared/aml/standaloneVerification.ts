@@ -371,11 +371,25 @@ async function holdVerificationTokens(
      Systems pricing page publishes — so an operator repricing an identity
      check there reaches every workspace without a deploy here. A literal in
      this repo would be a second price list disagreeing with the published
-     one. `getCreditCostForKind` never throws and answers null when the
-     catalog is unreachable or the kind is unlisted; the fallback is what a
-     reachable Mission Control would have said today. */
-  const attemptTokens =
-    (await getCreditCostForKind(VERIFICATION_METERING_KIND)) ?? VERIFICATION_ATTEMPT_TOKENS;
+     one. It answers null when the catalog is unreachable or the kind is
+     unlisted, and the fallback is what a reachable Mission Control would have
+     said today.
+
+     Guarded even though `safeFetchCatalog` promises never to throw. That
+     promise is another module's, this call sits before the try that owns the
+     reservation, and an exception here would leave the check CLAIMED, at
+     `processing`, with nothing to settle it — the shape of the stall a
+     customer sits in on "Checking your identity". Looking up a price must
+     never be able to cost somebody their verification. */
+  let attemptTokens = VERIFICATION_ATTEMPT_TOKENS;
+  try {
+    attemptTokens = (await getCreditCostForKind(VERIFICATION_METERING_KIND))
+      ?? VERIFICATION_ATTEMPT_TOKENS;
+  } catch (err: any) {
+    console.warn('[aml-verification] token price unreadable', JSON.stringify({
+      check_id: checkId, error: String(err?.code ?? err?.message ?? err),
+    }));
+  }
   const reserve = verificationReserveTokens(attemptTokens);
 
   let reservation: { jobId: string; reserved: number };

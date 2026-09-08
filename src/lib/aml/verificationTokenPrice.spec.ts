@@ -169,6 +169,22 @@ describe('the reservation is taken before anything is spent', () => {
     expect(refusal).not.toContain('status:');
   });
 
+  it('never lets looking up a price cost somebody their verification', () => {
+    /*
+     * The price read sits BEFORE the try that owns the reservation, on a path
+     * that has already claimed the check. An exception there would leave the
+     * row at `processing` with nothing to settle it — the stall a customer
+     * sits in on "Checking your identity". `safeFetchCatalog` promises never
+     * to throw, but that promise belongs to another module.
+     */
+    const helper = standalone.slice(
+      standalone.indexOf('async function holdVerificationTokens'),
+      standalone.indexOf('export async function runStandaloneVerification'));
+    const priceRead = helper.slice(0, helper.indexOf('const reserve ='));
+    expect(priceRead).toContain('getCreditCostForKind');
+    expect(priceRead).toMatch(/try\s*\{[\s\S]*getCreditCostForKind[\s\S]*\}\s*catch/);
+  });
+
   it('proceeds unmetered when Mission Control is merely unreachable', () => {
     const helper = standalone.slice(
       standalone.indexOf('async function holdVerificationTokens'),

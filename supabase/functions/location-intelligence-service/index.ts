@@ -1,6 +1,12 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import {
+  COMMUTE_DESTINATION_UNKNOWN,
+  COMMUTE_NO_ROUTE,
+  resolveCbdDestination,
+} from '../_shared/reports/location/cbdDestination.pure.ts';
+import { projectTransportForLocationIntelligence } from '../_shared/transportReading.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
@@ -238,9 +244,15 @@ async function fetchLocationIntelligence(
         // results. An honest refusal must leave the real fallback standing.
         if (isSourceUnavailable(transportBody)) {
           console.log('Public transport service unavailable, will use Google transit data');
-        } else {
-          publicTransportData = transportBody;
+        } else if (transportBody?.success === true && transportBody.data) {
+          // The service answers `{ success, data: { ... } }`. This used to take
+          // the ENVELOPE, so `publicTransportData.stopsWithin1km.length` below
+          // dereferenced undefined and threw for every location a loaded GTFS
+          // feed covers — Sydney, south-east Queensland, Darwin, Alice Springs.
+          publicTransportData = transportBody.data;
           console.log('✓ Public transport data fetched successfully');
+        } else {
+          console.warn('Public transport service returned an unrecognised body; using Google data');
         }
       } else {
         console.warn('Public transport service returned error, will use Google data');
@@ -267,9 +279,12 @@ async function fetchLocationIntelligence(
     fetchNearbyPlaces(coordinates, 'restaurant', apiKey)
   ]);
 
-  // Calculate CBD commute time (using Sydney as default)
-  const cbdCoordinates = getCBDCoordinates(input.state || 'NSW');
-  const commuteData = await calculateCommuteTime(coordinates, cbdCoordinates, apiKey);
+  // Calculate CBD commute time. No state means no known destination, and a
+  // guessed destination is what put a Perth property 82 hours from "the CBD".
+  const cbdCoordinates = resolveCbdDestination(input.state);
+  const commuteData = cbdCoordinates
+    ? await calculateCommuteTime(coordinates, cbdCoordinates, apiKey)
+    : COMMUTE_DESTINATION_UNKNOWN;
 
   // Calculate walk score and lifestyle score - enhanced with real transport data
   const walkScore = calculateWalkScore({
@@ -279,7 +294,7 @@ async function fetchLocationIntelligence(
     shopping: shoppingData,
     recreation: recreationData,
     restaurants: restaurantsData
-  }, publicTransportData);
+  });
 
   const amenityScores = calculateAmenityScores({
     transit: transitData,
@@ -290,23 +305,32 @@ async function fetchLocationIntelligence(
     restaurants: restaurantsData
   });
 
-  // Use enhanced public transport data if available, otherwise fall back to Google data
+  // Use the GTFS reading where a loaded feed covers the location, otherwise the
+  // coordinate-measured Google Places result.
+  //
+  // What is deliberately NOT written here any more: `qualityScore`,
+  // `serviceFrequency`, `routeCoverage`, `transportTypes`, `accessibility` and
+  // `summary`. Those were the per-state template — five constants that ignored
+  // the coordinate, 822 of them naming Sydney's Central Station across all
+  // eight states — and the GTFS service publishes none of them, because a
+  // stops file carries no mode, no frequency and no rating. Naming a field the
+  // source cannot fill is how the template got written in the first place.
   const transportInfo = publicTransportData ? {
-    nearestStop: publicTransportData.nearestStop,
-    distanceToStop: publicTransportData.distanceToStop,
-    stopsWithin1km: publicTransportData.stopsWithin1km.length,
-    transportTypes: publicTransportData.transportTypes,
-    routeCoverage: publicTransportData.routeCoverage,
-    serviceFrequency: publicTransportData.serviceFrequency,
-    accessibility: publicTransportData.accessibility,
-    realTimeAlerts: publicTransportData.realTimeAlerts,
-    qualityScore: publicTransportData.qualityScore,
-    summary: publicTransportData.summary,
-    detailedStops: publicTransportData.stopsWithin1km
+    ...projectTransportForLocationIntelligence({
+      verdict: publicTransportData.verdict,
+      stops: publicTransportData.stops ?? [],
+      countWithinRadius: publicTransportData.stopsWithinRadius ?? 0,
+      radiusMetres: publicTransportData.radiusMetres ?? 0,
+      nearest: publicTransportData.nearest ?? null,
+      feeds: publicTransportData.feeds ?? [],
+      sources: publicTransportData.sources ?? [],
+      notMeasured: publicTransportData.notMeasured ?? [],
+    }),
   } : {
     nearestStation: transitData.results[0]?.name || 'N/A',
-    distanceToStation: transitData.results[0]?.distance || 0,
-    stationsWithin2km: transitData.count
+    distanceToStation: transitData.results[0]?.distance ?? null,
+    stationsWithin2km: transitData.count,
+    source: 'google_places',
   };
 
   const data = {
@@ -520,13 +544,14 @@ async function calculateCommuteTime(
     console.error('Commute calculation error:', error);
   }
 
-  // Return estimated data based on distance
-  const distance = calculateDistance(origin.lat, origin.lng, destination.lat, destination.lng);
-  return {
-    durationMinutes: Math.round(distance * 1.5), // Rough estimate
-    distanceKm: Math.round(distance * 10) / 10,
-    mode: 'estimated'
-  };
+  // No route was returned, so there is no commute to report.
+  //
+  // This used to fall through to `distance * 1.5` minutes of straight line and
+  // store it as `mode: 'estimated'`: 438 of the 1,114 stored objects carry one,
+  // averaging 10,125 minutes. A figure shaped like a journey with no journey
+  // behind it is worse than none, because every reader downstream treats
+  // `durationMinutes` as measured. Absent, not estimated.
+  return COMMUTE_NO_ROUTE;
 }
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -544,29 +569,19 @@ function toRad(degrees: number): number {
   return degrees * (Math.PI / 180);
 }
 
-function getCBDCoordinates(state: string) {
-  const cbdLocations: { [key: string]: { lat: number; lng: number } } = {
-    'NSW': { lat: -33.8688, lng: 151.2093 }, // Sydney
-    'VIC': { lat: -37.8136, lng: 144.9631 }, // Melbourne
-    'QLD': { lat: -27.4698, lng: 153.0251 }, // Brisbane
-    'WA': { lat: -31.9505, lng: 115.8605 }, // Perth
-    'SA': { lat: -34.9285, lng: 138.6007 }, // Adelaide
-    'TAS': { lat: -42.8821, lng: 147.3272 }, // Hobart
-    'NT': { lat: -12.4634, lng: 130.8456 }, // Darwin
-    'ACT': { lat: -35.2809, lng: 149.1300 }  // Canberra
-  };
 
-  return cbdLocations[state.toUpperCase()] || cbdLocations['NSW'];
-}
 
-function calculateWalkScore(amenities: any, publicTransportData?: any): number {
+function calculateWalkScore(amenities: any): number {
   let score = 0;
   
-  // Transit accessibility (max 30 points) - enhanced with real transport data
-  if (publicTransportData && publicTransportData.qualityScore) {
-    // Use the detailed transport quality score for more accurate walk score
-    score += (publicTransportData.qualityScore / 100) * 30;
-  } else if (amenities.transit.count > 0) {
+  // Transit accessibility (max 30 points), measured from the coordinate.
+  //
+  // This used to spend the whole 30 on `publicTransportData.qualityScore` — an
+  // invented per-state constant taking five values across 1,108 stored reports.
+  // The transport service no longer publishes one, and the branch is gone
+  // rather than left dormant: a rating is not something a stops file can
+  // support, so the only honest transit signal here is distance.
+  if (amenities.transit.count > 0) {
     const nearestDistance = amenities.transit.results[0]?.distance || 999;
     if (nearestDistance < 0.5) score += 30;
     else if (nearestDistance < 1) score += 20;

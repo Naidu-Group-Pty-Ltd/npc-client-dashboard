@@ -1977,19 +1977,19 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "market-source-probe": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "reporting-engine-program",
+      "reviewed": true
+    },
     "market-source-relay": {
       "verify_jwt": false,
       "exposure_class": "internal-service",
       "owner": "market-intelligence",
       "reviewed": true
     },
-    "market-source-probe": {
-    "verify_jwt": true,
-    "exposure_class": "human-authenticated",
-    "owner": "reporting-engine-program",
-    "reviewed": true
-  },
-  "market-updates-archive": {
+    "market-updates-archive": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "market-intelligence",
@@ -2597,6 +2597,12 @@
       "verify_jwt": false,
       "exposure_class": "module-gated",
       "owner": "security-remediation-program",
+      "reviewed": true
+    },
+    "resolve-report-geography": {
+      "verify_jwt": true,
+      "exposure_class": "cron-worker",
+      "owner": "reporting-engine-audit",
       "reviewed": true
     },
     "resume-bulk-generation": {

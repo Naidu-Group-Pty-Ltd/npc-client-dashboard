@@ -297,3 +297,114 @@ export function readTransport(
     notMeasured,
   };
 }
+
+/**
+ * ME-5 items 14–15 — what a stored `location_intelligence.transport` may hold.
+ *
+ * The block used to be written from a per-state template: five constants that
+ * ignored the coordinate, 822 of them naming Sydney's "Central Station" 450 m
+ * away across all eight states and territories. Its keys — `qualityScore`,
+ * `serviceFrequency`, `routeCoverage`, `transportTypes`, `accessibility`,
+ * `summary` — are the fields a GTFS stops file cannot fill, which is exactly
+ * why they came to be invented. **Naming a field the source cannot answer is
+ * how a template gets written**, so this projection does not name them.
+ *
+ * The consuming edge function also read the transport service's whole
+ * `{ success, data }` envelope as if it were the payload, so
+ * `publicTransportData.stopsWithin1km.length` dereferenced undefined and threw
+ * for every location a loaded feed covers. Taking a `TransportReading` rather
+ * than an untyped body is what stops that recurring.
+ */
+export interface StoredTransportBlock {
+  readonly nearestStation: string;
+  /** Kilometres to the nearest boardable stop, or null when none was found. */
+  readonly distanceToStation: number | null;
+  readonly stopsWithin1km: number;
+  readonly radiusMetres: number;
+  readonly detailedStops: NearbyStop[];
+  readonly verdict: TransportVerdict;
+  readonly feeds: string[];
+  readonly sources: string[];
+  readonly notMeasured: string[];
+  readonly source: 'gtfs';
+}
+
+/** Field names the template wrote that no stops feed can support. */
+export const TEMPLATE_ONLY_TRANSPORT_FIELDS: readonly string[] = [
+  'qualityScore', 'serviceFrequency', 'routeCoverage', 'transportTypes',
+  'accessibility', 'realTimeAlerts', 'summary', 'distanceToStop', 'nearestStop',
+];
+
+/** Project a measured reading onto the block a report stores. */
+export function projectTransportForLocationIntelligence(
+  reading: TransportReading,
+): StoredTransportBlock {
+  return {
+    nearestStation: reading.nearest?.name ?? 'N/A',
+    distanceToStation: typeof reading.nearest?.metres === 'number'
+      ? Math.round(reading.nearest.metres / 100) / 10
+      : null,
+    stopsWithin1km: reading.countWithinRadius,
+    radiusMetres: reading.radiusMetres,
+    detailedStops: reading.stops,
+    verdict: reading.verdict,
+    feeds: reading.feeds,
+    sources: reading.sources,
+    notMeasured: reading.notMeasured,
+    source: 'gtfs',
+  };
+}
+
+/**
+ * ME-5 item 8 — a stop from another jurisdiction's feed is not local service.
+ *
+ * Reconstructing the transport reading for all 931 placed historical reports
+ * against the 185,177 loaded stops turned up a trap that the verdict alone
+ * cannot express. `nsw_sydney` is Transport for NSW's WHOLE bundle, not
+ * Sydney's, and it carries the interstate rail and coach network — so a
+ * Docklands property finds "Melbourne (Southern Cross) Station" 225 m away,
+ * a Wodonga property finds NSW border-town buses, and a Lyneham property
+ * finds NSW school services in Canberra.
+ *
+ * Every one of those is a real stop at a real distance. None of them measures
+ * the network the property's residents actually use, because Victoria's and
+ * the ACT's own feeds are not loaded. Measured:
+ *
+ * | state | reports with a stop within 1.6 km | in-jurisdiction | interstate only |
+ * | --- | ---: | ---: | ---: |
+ * | QLD | 221 | 221 | 0 |
+ * | NSW | 123 | 123 | 0 |
+ * | VIC | 6 | **0** | **6** |
+ * | ACT | 4 | **0** | **4** |
+ * | SA | 1 | **0** | **1** |
+ *
+ * So 344 of 931 carry a genuine local reading, and 11 would have been given a
+ * misleading one — worse than the honest `outside_loaded_networks`, because a
+ * Docklands property with trams every three minutes would have been reported
+ * as having a single stop nearby.
+ *
+ * **A reading counts only where the feed's own jurisdiction contains the
+ * property.** The rule lives here rather than at a call site because both the
+ * live service and any backtest have to apply it identically.
+ */
+export const FEED_JURISDICTION: Readonly<Record<string, string>> = {
+  nsw_sydney: 'NSW',
+  qld_seq: 'QLD',
+  nt_darwin: 'NT',
+  nt_alice: 'NT',
+};
+
+/**
+ * Do the feeds behind a reading actually cover the property's own jurisdiction?
+ *
+ * `null` for an unknown state — not knowing where a property is is a reason to
+ * withhold the reading, never a reason to accept it.
+ */
+export function readingIsInJurisdiction(
+  feeds: readonly string[],
+  state: string | null | undefined,
+): boolean {
+  if (!state || !state.trim()) return false;
+  const st = state.trim().toUpperCase();
+  return feeds.some((feed) => FEED_JURISDICTION[feed] === st);
+}

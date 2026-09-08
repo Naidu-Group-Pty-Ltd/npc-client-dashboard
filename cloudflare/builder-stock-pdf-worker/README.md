@@ -18,6 +18,38 @@ brochure and electing its image is indivisible and costs about 2.4 s against an
 Edge Function's 2,000 ms ceiling. It does not fit, and no scheduling rule makes
 it fit. So that one unit runs here and nothing else moves.
 
+## Shape: a thin ingress and a heavy Durable Object
+
+```
+Supabase settler
+   ↓ raw PDF + election context
+builder-stock-pdf-worker          ← health, bearer, route, hand-off. Nothing else.
+   ↓ the original Request, streamed
+PdfElection Durable Object        ← readPdfPageTextResult + electFromPdfBytes
+   ↓ deterministic result
+Supabase                          ← the only writer: image, provenance, settlement
+```
+
+**Why the split.** Every millisecond in the outer Worker is charged against
+the account's Workers plan, so the ingress does four cheap things and hands
+over. It never reads the request body: the original `Request` is passed to the
+Durable Object stub, so a 14 MB brochure **streams through** — not buffered at
+the edge, not copied, never base64-encoded there.
+
+**One lane, on purpose.** `idFromName('builder-stock-pdf-election')` resolves
+to the same object for every election, and inside it a promise chain runs one
+document at a time. A Durable Object runs one callback at a time but still
+interleaves at every `await`, so two elections entering together would both be
+resident in one 128 MB isolate. This is the deliberate opposite of the usual
+sharding advice: the point is a bottleneck, not throughput. Memory is the
+ceiling that does not move with the plan.
+
+**SQLite-backed, storing nothing.** The class is declared with
+`new_sqlite_classes` because that is the only Durable Object backend the
+Workers Free plan offers — not because there is state. It never touches
+`ctx.storage`; a test drives a real election through a `ctx.storage` proxy that
+throws on any access, so a single touch would fail it.
+
 ## What crosses the boundary
 
 **Request** — `POST /v1/elect`, `Authorization: Bearer <token>`
@@ -28,13 +60,14 @@ it fit. So that one unit runs here and nothing else moves.
   `identifiedBy`, `design`, `identityHints`, `documentName`, `url`.
 
 That is the whole of it. **No row id, no organisation id, no upload id, no
-credential.** The worker is never told which property row it is looking at, so
-it could not act on one even in principle.
+credential.** Neither the Worker nor the Durable Object is ever told which
+property row it is looking at, so neither could act on one even in principle.
 
 **Response** — `200` with `{ protocol, status, image?, detail? }`, where
 `status` is the election's own `recovered` / `not_identified` / `unreachable`
 and `image` carries `bytes` (base64), `contentType`, `reference`, `provenance`
-and `role`.
+and `role`. Unchanged from the pre-Durable-Object version: `pdfElectionClient.ts`
+did not have to change.
 
 `401` unauthorised · `400` bad context · `413` bad document · `503` no token
 configured · `404` anything else.
@@ -43,12 +76,10 @@ configured · `404` anything else.
 
 No database client, no Supabase key, no service-role key, no storage
 credential, no storage write, no property mutation. `wrangler.jsonc` declares
-**no bindings at all** — one bearer secret is its entire configuration.
-Everything that persists — the image, provenance, work stage, settlement,
-availability — stays in the Supabase path exactly where it already is.
-
-This mirrors `builder-stock-image-worker`: narrowly scoped Cloudflare compute,
-with Supabase authoritative for orchestration and storage.
+**no binding that reaches data** — the single binding is the internal Durable
+Object, which is unreachable from the internet. The Durable Object's own
+environment is empty: it is entered only through an already-authenticated
+request.
 
 ## Failure is always operational
 
@@ -77,9 +108,14 @@ and `BUILDER_STOCK_PDF_WORKER_TOKEN` — and only then advance
 `RUNTIME_VERSION` to 3. Until that bump every route resolves in process and
 production behaves exactly as it does today.
 
-**Workers Paid is required.** CPU time per request is 10 ms on Workers Free and
-30 s on Paid; the election needs ~1.2 s, so on a free account every run dies
-`exceededCpu`.
+**Plan.** The heavy work is inside a Durable Object precisely so it is not
+charged against an ordinary Worker request. SQLite-backed Durable Objects are
+available on the Workers Free plan and Free accounts are not billed for their
+storage; this deployment declares no `limits.cpu_ms` block, because raising a
+CPU ceiling is a Workers Paid feature and asking for one risks a deploy that
+demands an upgrade. Whether the election completes inside whatever CPU the
+account's plan allows a Durable Object is settled by the production canary, not
+by this file.
 
 ## Validation
 

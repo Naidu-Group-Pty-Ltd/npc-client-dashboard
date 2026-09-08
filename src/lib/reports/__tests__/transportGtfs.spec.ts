@@ -36,6 +36,9 @@ import {
   haversineMetres,
   readTransport,
   type StoredStop,
+  projectTransportForLocationIntelligence,
+  TEMPLATE_ONLY_TRANSPORT_FIELDS,
+  type TransportReading,
 } from '../../../../supabase/functions/_shared/transportReading.pure';
 
 // ---------------------------------------------------------------------------
@@ -482,5 +485,63 @@ describe('reading a publisher page for an archive address', () => {
   it('is bounded, so a hostile page cannot return an unbounded list', () => {
     const many = Array.from({ length: 50 }, (_, i) => `<a href="/f${i}.zip">n</a>`).join('');
     expect(zipLinksIn(many).length).toBeLessThanOrEqual(12);
+  });
+});
+
+/**
+ * ME-5 items 14–15 — the block a report is allowed to store.
+ *
+ * `location-intelligence-service` used to compose this block by hand from an
+ * untyped body, which is how it came to read the transport service's whole
+ * `{ success, data }` envelope as the payload and dereference undefined, and
+ * how it came to store six fields no stops feed can answer.
+ */
+describe('the transport block stored on a report', () => {
+  const reading: TransportReading = {
+    verdict: 'stops_nearby',
+    stops: [
+      { stopId: '215020', name: 'Parramatta Station', metres: 340, feed: 'nsw_sydney', routeType: null },
+      { stopId: '215021', name: 'Argyle St at Parramatta', metres: 820, feed: 'nsw_sydney', routeType: null },
+    ],
+    countWithinRadius: 2,
+    radiusMetres: 1600,
+    nearest: { stopId: '215020', name: 'Parramatta Station', metres: 340, feed: 'nsw_sydney', routeType: null },
+    feeds: ['nsw_sydney'],
+    sources: ['Transport for NSW'],
+    notMeasured: ['mode', 'service frequency'],
+  };
+
+  it('carries the measured stop, in kilometres, from the coordinate', () => {
+    const block = projectTransportForLocationIntelligence(reading);
+    expect(block.nearestStation).toBe('Parramatta Station');
+    expect(block.distanceToStation).toBe(0.3);
+    expect(block.stopsWithin1km).toBe(2);
+    expect(block.source).toBe('gtfs');
+  });
+
+  it('names no field a stops feed cannot answer', () => {
+    const block = projectTransportForLocationIntelligence(reading) as unknown as Record<string, unknown>;
+    for (const field of TEMPLATE_ONLY_TRANSPORT_FIELDS) {
+      expect(block).not.toHaveProperty(field);
+    }
+    // The one that mattered most: it drove up to 30 of the walk score's 100 points.
+    expect(TEMPLATE_ONLY_TRANSPORT_FIELDS).toContain('qualityScore');
+    expect(TEMPLATE_ONLY_TRANSPORT_FIELDS).toContain('nearestStop');
+  });
+
+  it('carries what the reading could not measure, rather than dropping it', () => {
+    expect(projectTransportForLocationIntelligence(reading).notMeasured)
+      .toEqual(['mode', 'service frequency']);
+  });
+
+  it('reports no distance rather than zero when nothing was found', () => {
+    const block = projectTransportForLocationIntelligence({
+      ...reading,
+      verdict: 'outside_loaded_networks',
+      stops: [], countWithinRadius: 0, nearest: null, feeds: [], sources: [],
+    });
+    expect(block.distanceToStation).toBeNull();
+    expect(block.nearestStation).toBe('N/A');
+    expect(block.verdict).toBe('outside_loaded_networks');
   });
 });

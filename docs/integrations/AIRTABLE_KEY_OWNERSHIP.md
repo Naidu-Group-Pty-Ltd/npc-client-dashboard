@@ -5,8 +5,9 @@ they shared one secret name by accident.
 
 ## The Listings & Overview pipeline
 
-`airtable-proxy`, `listings-cache`, `listing-images` and `listing-enrichment`
-read the **Property Intake Master** table through six environment names:
+`airtable-proxy`, `listings-cache`, `listing-images`, `listing-enrichment` and
+`auto-report-sync` read the **Property Intake Master** table through six
+environment names:
 
 | Name | What it is |
 |---|---|
@@ -17,13 +18,95 @@ read the **Property Intake Master** table through six environment names:
 | `AIRTABLE_TABLE_ALIASES` | Alias overrides for table names |
 | `AIRTABLE_IMAGE_LIBRARY_FIELD` | The attachment field `listing-images` harvests |
 
-By the owner's decision these are **one value across the prime and every
-clone**: every deployment reads the same intake. Mission Control holds the
-values, forwards them at provisioning and on request (`prime_secret_forwards`
-carries all six as `inherit = true`), and its clone-secrets sweep keeps them.
-Nothing on a deployment's own pages sets them.
+By the owner's decision every deployment reads the same intake. Nothing on a
+deployment's own pages sets any of these names.
+
+**But two of the six no longer travel, and that is the point of the arrangement
+below.** `AIRTABLE_TOKEN` and `AIRTABLE_BASE_ID` are held by Mission Control and
+never forwarded — their ledger status on every clone is `withheld`, and the
+`brokered` secret class refuses them ahead of fleet policy and any per-clone
+row, so a clone provisioned tomorrow cannot be given them either. The other four
+are configuration rather than credentials and forward as before
+(`prime_secret_forwards` still carries all six as `inherit = true`; the class
+check is what stops two of them).
 
 The names live once, in `supabase/functions/_shared/listingsPipelineSecrets.pure.ts`.
+
+## Reading it: the credential stops, the call travels
+
+An Airtable personal access token carries its **whole scope** — a set of bases
+and a set of permissions, fixed when it was minted — and nothing in the
+credential narrows it to one table. A forwarded token on a tenant's Supabase
+project therefore reaches every base its scope admits, and if that scope
+includes `data.records:write` it can rewrite the shared intake table every other
+deployment reads. Airtable publishes no per-tenant sub-credential. Two more
+reasons that are not about secrecy: one base has one rate limit (5 req/s) and a
+cold Listings read is sequential pages, so forwarded, one clone refreshing
+starves the others against a budget none of them can see; and a forwarded token
+is rotated by re-forwarding to every clone and hoping.
+
+So Mission Control runs the read: `GET /api/public/listings/{tables|records|selftest}`,
+authenticated by the Mission Control key the clone already holds.
+`_shared/airtableListingsRoute.pure.ts` is the one module that decides where a
+read goes — `direct` where the token is held (the prime), `broker` where the
+Mission Control pair is, and `unconfigured` otherwise, named rather than silent.
+
+Four rules carry it.
+
+- **The base is Mission Control's and a caller never names one.** A broker that
+  accepted a caller's base would let any tenant read every base the token
+  reaches — the identical leak, through the thing built to close it. The
+  `broker` branch of `ListingsRoute` has no `baseId` field at all.
+- **A token with no base id is `unconfigured`, never brokered.** Brokering it
+  would read a different base from the one the deployment was set up for and
+  produce a plausible marketplace of somebody else's listings.
+- **A brokered read is not metered at the clone.** Mission Control writes the
+  usage row because Mission Control made the vendor call; `meter` is `true`
+  only on the direct route, and both ends billing is worse than neither.
+- **Who refused is read from a header.** `x-mission-control-refusal` is set on
+  Mission Control's own refusals and never on what it relays, because both ends
+  answer 401/403/429 with similar JSON and send an operator to opposite
+  remedies.
+
+## Writing to it: the write-back never leaves the account holder
+
+`listing-images` writes the durable image URLs into the enrichment column and
+`listing-enrichment` writes resolved field values. Both are correct on the prime,
+which owns the base, and wrong from a clone for a reason that has nothing to do
+with secrecy: every deployment reads the **same** table, and what a clone would
+write are signed URLs into **its own** bucket. Publishing those into the shared
+record hands every other tenant links that are useless to them.
+
+So the broker is **read-only by construction** — a write operation would hand a
+tenant the ability to rewrite the table every other tenant reads, which is the
+leak the whole arrangement exists to close. `resolveWritebackRoute` is the other
+half: it answers `direct` where the token is held and `refused` everywhere else,
+and the refusal names the RULE rather than a missing setting, because a clone
+will never hold this token and "not configured" would send an operator looking
+for something to fix that must not exist. Both sweeps report `skipped` rather
+than failing, since nothing failed.
+
+## The one read that needs a query language, and how it is admitted
+
+`listing-images` asks for the photograph columns of the listings it has claimed
+— which is what puts pictures on a listing card — and Airtable spells that
+`filterByFormula=OR(RECORD_ID()='rec…',…)`. A query language reaching a shared
+table through a credential the caller does not hold is an exfiltration primitive
+with a friendly name, so the formula is never sent.
+
+The caller sends **ids**; each is checked against `rec` plus fourteen
+alphanumerics; Mission Control composes the formula itself. An id matching that
+pattern can hold no quote, no parenthesis, no comma and no operator, so a
+formula built from checked ids can only be the OR of record handles it was meant
+to be. That is the difference between *the caller may name rows* and *the caller
+may ask questions*, and only the first is safe to broker. The check is a
+character allow-list — never an escape, never a blocklist — and it is read twice
+on purpose: once where the caller can learn about it, and once in the function
+that actually reaches the vendor.
+
+Refusing beats filtering: a caller that asked for twelve listings and silently
+received eleven would fingerprint the twelfth as having no photographs and
+re-arm its schedule having done nothing.
 
 ## The Integrations page's Airtable card
 
@@ -58,5 +141,9 @@ allowlist" reads as a typo and this is a decision.
    different names**, even where an operator would use the same Airtable
    account for both. Sharing a name is how one page came to overwrite the other.
 3. **The list is the contract.** `listingsPipelineSecrets.test.ts` reads the
-   four pipeline functions and fails if any of them reads an `AIRTABLE_*` name
+   pipeline functions and fails if any of them reads an `AIRTABLE_*` name
    the list does not carry, or if any Integrations field resolves to one it does.
+4. **No pipeline function names `api.airtable.com` itself.** Every read and
+   every write goes through `airtableListingsRoute.pure.ts`, asserted by
+   `src/lib/listings/airtableListingsRoute.spec.ts` over all five functions —
+   which is what stops a new call site quietly re-acquiring the direct path.

@@ -2,9 +2,10 @@
  * BUILDER STOCK — the PDF election worker.
  *
  * Narrow by design. No AI binding, no KV, no D1, no R2, no queue, no database,
- * no Supabase secret, no storage. One bearer token is the entire configuration,
- * following `builder-stock-image-worker`, the Builder Stock boundary this
- * mirrors: Cloudflare provides the compute, Supabase stays authoritative for
+ * no Supabase secret, no storage bucket. One bearer secret and one internal
+ * Durable Object binding are the entire configuration, following
+ * `builder-stock-image-worker`, the Builder Stock boundary this mirrors:
+ * Cloudflare provides the compute, Supabase stays authoritative for
  * orchestration, storage, provenance and settlement.
  */
 {
@@ -19,9 +20,30 @@
   // `readPdfPageTextResult` — including its AcroForm field-text pass — runs
   // unchanged. A packaging alias, not a substitute reader.
   "alias": { "https://esm.sh/unpdf@0.12.1": "unpdf" },
-  // The election is CPU-heavy by definition — it is here BECAUSE it exceeds an
-  // Edge Function's 2,000 ms. The Workers Paid default is 30 s; this states the
-  // intent rather than relying on it.
-  "limits": { "cpu_ms": 30000 },
+
+  // The heavy election runs in here, not in the Worker above it. Internal
+  // only: a Durable Object binding is reachable from this Worker's code and
+  // from nowhere on the internet, so the bearer the Worker enforces is the
+  // only door.
+  "durable_objects": {
+    "bindings": [{ "name": "PDF_ELECTION", "class_name": "PdfElection" }]
+  },
+
+  // SQLITE-BACKED, WHICH IS WHAT THE WORKERS FREE PLAN OFFERS.
+  //
+  // Cloudflare's pricing page: "Workers Free plan: Only Durable Objects with
+  // SQLite storage backend are available", and `new_sqlite_classes` is the
+  // documented way to declare one. Free-plan accounts are not charged for
+  // SQLite storage — and this object stores nothing anyway. It is declared
+  // this way because a new class must pick a backend, not because there is
+  // state: the object never touches `ctx.storage`, and a test asserts it.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PdfElection"] }
+  ],
+
+  // NO `limits.cpu_ms` BLOCK. Raising the CPU ceiling is a Workers PAID
+  // feature ("On the Workers Paid plan, you can raise the limit from the
+  // default 30 seconds"), so declaring one here risks a deploy that asks for
+  // an upgrade. This deployment takes whatever the account's plan allows.
   "observability": { "enabled": true }
 }

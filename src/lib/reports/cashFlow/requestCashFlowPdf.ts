@@ -45,6 +45,14 @@ export interface WireProjectionYear {
   afterTaxAnnual: number;
   depreciation: number;
   taxRefund: number;
+  /**
+   * `taxRefund - taxPayable`: the SIGNED amount tax adds to cash flow. Optional
+   * so a client that predates the fix still renders; the server falls back to
+   * `taxRefund`, which is what it always used. A profitable year has a zero
+   * refund and a real payable, so a renderer reading `taxRefund` alone shows a
+   * dash while after-tax cash flow drops with nothing to explain it.
+   */
+  taxEffect?: number;
   landTax: number;
   capitalGrowth: number;
   cpiGrowth: number;

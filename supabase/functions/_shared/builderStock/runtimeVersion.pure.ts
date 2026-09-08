@@ -85,4 +85,53 @@
  * nothing that answered is touched, because only our own failures carry a
  * stamp at all.
  */
-export const RUNTIME_VERSION = 2;
+/**
+ * 3 — the heavy election leaves the Edge Function entirely.
+ *
+ * Versions 1 and 2 both counted the same allowance in different units —
+ * documents per invocation, memory per isolate — and both were the wrong
+ * ceiling. Per-execution platform telemetry, 8 September 2026, on the upload
+ * the operator had just made: THIRTEEN settler kills in one cold start, and
+ * every one of them `reason: CPUTime`. Successes ended at 1,828 ms of CPU or
+ * less; kills at 2,031 ms or more, against a 2,000 ms limit. Memory peaked at
+ * 108 MB of 256 and was never close.
+ *
+ * So the thing that does not fit is CPU, and reading one heavy brochure and
+ * electing its image is indivisible: about 2.4 s of it, in one uninterruptible
+ * stretch. No scheduling rule, no per-invocation budget and no memory
+ * discipline makes 2.4 s fit inside 2.0 s. Versions 1 and 2 were not wrong
+ * about the pressure they measured; they were measuring the wrong wall.
+ *
+ * The election therefore moves to `builder-stock-pdf-worker` — a Cloudflare
+ * Worker whose whole job is to run the SAME `readPdfPageTextResult` and
+ * `electFromPdfBytes` this repository already had, inside a Durable Object
+ * that has CPU for them. Nothing about which page is a cover, which picture is
+ * the house, or what counts as evidence moves an inch: the shared modules are
+ * imported and executed, not reimplemented. Measured on the two documents that
+ * killed the settler: Lot 516 elects `l516.pdf#page2:Im0` in 3,149 ms and Lot
+ * 6706 elects `l6706.pdf#page2:Im0` in 2,765 ms, byte-identical across
+ * repeated and concurrent runs, with Cloudflare's own analytics recording
+ * 3.34 s of Durable Object CPU on a request that was not killed.
+ *
+ * THIS IS A RUNTIME NUMBER AND NOT A PROVENANCE ONE, and the distinction has
+ * never been sharper: the extractor understands exactly what it understood
+ * yesterday. Only where it runs has changed.
+ *
+ * WHAT ELSE IT SWITCHES. `WORKER_RUNTIME_VERSION` in `pdfElectionRoute.pure.ts`
+ * is 3, so this constant reaching 3 is also what routes the election off this
+ * process. Below it every branch resolved to `in_process` and the worker could
+ * not be reached even by accident. At it, the election runs on the worker or
+ * it does not run at all — there is deliberately no in-process fallback,
+ * because falling back would re-run the thing measured to die and re-create
+ * the exact `CPUTime` failure this exists to end.
+ *
+ * WHAT IT REOPENS, measured against production immediately before the
+ * migration: NOTHING, and that is the honest answer rather than a
+ * disappointing one. The two properties the thirteen kills cost — Lots 516 and
+ * 6706 of upload `4736c1c6` — sit on rows the operator deleted at 05:32 the
+ * same morning, and the live upload `85f2b0bf` carries all thirteen with their
+ * facades elected from the brochures. There is no backlog to re-ask. The value
+ * of this number is entirely forward: the NEXT upload carrying a heavy
+ * brochure is the one it saves, and every one after it.
+ */
+export const RUNTIME_VERSION = 3;

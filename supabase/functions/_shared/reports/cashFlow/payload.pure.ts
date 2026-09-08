@@ -60,6 +60,8 @@ export interface ProjectionYear {
   // Tax
   depreciation: Measure;
   taxRefund: Measure;
+  /** `taxRefund - taxPayable`. Negative in a year the rental profit is taxed. */
+  taxEffect: Measure;
   landTax: Measure;
 
   // Growth applied this year
@@ -100,6 +102,8 @@ export interface YearOneBlock {
   grossYield: Measure;
   netYield: Measure;
   taxRefund: Measure;
+  /** `taxRefund - taxPayable`. Negative where year one's rental profit is taxed. */
+  taxEffect: Measure;
 }
 
 /** What the ten years add up to. */

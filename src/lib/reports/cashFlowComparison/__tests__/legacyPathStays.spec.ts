@@ -233,32 +233,45 @@ describe('one implementation reads a report\'s position', () => {
   });
 
   /**
-   * The peer *projection* engine still reads the same fields for itself.
+   * The peer *projection* engine reads through the shared reader too.
    *
-   * `allComparisonProjections` resolves purchase price, loan amount, rent and
-   * the growth rates inline before it starts compounding, and extracting that
-   * means extracting the hundred-line cascade around it — well beyond a report
-   * migration, and recorded in `docs/reports/CASH_FLOW_COMPARISON.md` rather
-   * than done here.
+   * This assertion used to compare the peer engine's INLINE `purchasePrice`
+   * and `marketValueNow` expressions against `readBaseFinancials`, character
+   * for character, and its own note said extracting that cascade was "well
+   * beyond a report migration". The cash-flow audit did the extraction: the
+   * peer engine now calls `readBaseFinancials(compReport, ...)` and builds its
+   * years with the same `buildProjection` the subject uses, so there are no
+   * two expressions left to drift apart.
    *
-   * What matters for this document is that the acquisition block it prints and
-   * the years it prints beside that block were resolved the same way. They are
-   * today, expression for expression. This is what notices the day they are not.
+   * So the guard is the stronger one the old one was approximating — one
+   * reader and one engine, with nothing resolved beside them.
    */
-  it('the peer projection engine resolves the same fields identically', () => {
-    const expression = (source: string, name: string) =>
-      new RegExp(`const ${name} = ([^;]+);`).exec(source)?.[1]?.replace(/\s+/g, ' ');
-
+  it('the peer projection engine reads and projects through the shared modules', () => {
     const modal = read(MODAL);
-    const reader = read('src/lib/reports/cashFlow/readBaseFinancials.ts');
 
-    for (const name of ['purchasePrice', 'marketValueNow']) {
-      const inModal = expression(modal, name);
-      expect(inModal, `the modal no longer resolves ${name}`).toBeTruthy();
-      expect(
-        inModal,
-        `the peer engine's ${name} has drifted from readBaseFinancials`,
-      ).toBe(expression(reader, name));
+    const peerBlock = modal.slice(
+      modal.indexOf('const allComparisonProjections = useMemo'),
+      modal.indexOf('}, [comparisonReports]);'),
+    );
+    expect(peerBlock).toBeTruthy();
+
+    // One reader, and one engine, for the peers as well as the subject.
+    expect(peerBlock).toContain('readBaseFinancials(compReport, new Date().getFullYear())');
+    expect(peerBlock).toContain('buildProjection(');
+    expect(peerBlock).toContain('fixedExpenseBase(compBase)');
+
+    // A peer's loan amortises. It used to be held flat for ten years under a
+    // comment reading "no amortization engine", so every peer was ranked on
+    // debt that never reduced while the subject's did.
+    expect(peerBlock).toContain('buildLoanSchedule(compBase');
+    // Comments are stripped: this rule is about what the file DOES, and the
+    // block above it names the removed behaviour in order to explain it.
+    const code = modal.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    expect(code).not.toContain('no amortization engine');
+
+    // And the inline cascade this test used to police is gone, not unused.
+    for (const inlined of ['mo.purchasePrice ??', 'mo.weeklyRent ??', 'mo.capitalGrowth ??']) {
+      expect(peerBlock, `the peer engine still inlines ${inlined}`).not.toContain(inlined);
     }
   });
 

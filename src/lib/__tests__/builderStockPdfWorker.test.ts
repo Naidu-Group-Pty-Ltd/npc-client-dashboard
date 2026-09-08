@@ -625,19 +625,46 @@ describe('every boundary failure stays operational', () => {
   });
 });
 
-describe('runtime 2 behaves exactly as production does today', () => {
-  it('is still runtime 2, so nothing has moved yet', () => {
-    expect(RUNTIME_VERSION).toBe(2);
+describe('the runtime the deployment actually runs at', () => {
+  /*
+   * This block asserted the OPPOSITE until the activation: that nothing had
+   * moved, so the worker could not be reached even by accident while it was
+   * being built. It is the same rule read from the other side now — the
+   * deployment is at or past the worker runtime, so the heavy election is off
+   * this process — and it is deliberately still a single place to look.
+   */
+  it('is at or past the runtime that moves the election off this process', () => {
     expect(WORKER_RUNTIME_VERSION).toBe(3);
-    expect(RUNTIME_VERSION).toBeLessThan(WORKER_RUNTIME_VERSION);
+    expect(RUNTIME_VERSION).toBeGreaterThanOrEqual(WORKER_RUNTIME_VERSION);
   });
 
-  it('routes in process at runtime 2 even with a worker fully configured', () => {
-    expect(electionRoute({ runtimeVersion: 2, endpoint: ENDPOINT, token: TOKEN }))
-      .toEqual({ kind: 'in_process' });
+  it('routes to the worker when it is configured, and never in process', () => {
+    expect(electionRoute({
+      runtimeVersion: RUNTIME_VERSION, endpoint: ENDPOINT, token: TOKEN,
+    })).toEqual({ kind: 'worker', endpoint: ENDPOINT, token: TOKEN });
   });
 
-  it('and at every runtime below the worker runtime', () => {
+  it('and answers no capacity rather than falling back when it is not', () => {
+    /*
+     * THE RULE THE WHOLE CHANGE RESTS ON. Falling back to the in-process
+     * election here would re-run the thing measured to die — 2.4 s of
+     * indivisible CPU against a 2,000 ms limit — and re-create the exact
+     * `CPUTime` kill this exists to end. A missing endpoint, a missing token
+     * or both is `no_capacity`, which the caller reports as `unreachable`.
+     */
+    for (const half of [
+      { endpoint: '', token: TOKEN },
+      { endpoint: ENDPOINT, token: '' },
+      { endpoint: '', token: '' },
+    ]) {
+      expect(electionRoute({ runtimeVersion: RUNTIME_VERSION, ...half }).kind)
+        .toBe('no_capacity');
+    }
+  });
+
+  it('still routes in process at every runtime below the worker runtime', () => {
+    // Untouched by the activation: a deployment that has not advanced behaves
+    // exactly as it did, which is what makes the bump revertible.
     for (const version of [0, 1, 2]) {
       expect(electionRoute({ runtimeVersion: version, endpoint: ENDPOINT, token: TOKEN }).kind)
         .toBe('in_process');
@@ -651,9 +678,18 @@ describe('runtime 2 behaves exactly as production does today', () => {
     expect(outcome).toEqual(direct);
   });
 
-  it('and no migration in this change advances the runtime', () => {
+  it('and the migration that advanced it says so in the database too', () => {
+    /*
+     * The constant gates the ROUTE; the column gates the REOPEN, and they are
+     * compared by `builderStockRuntimeReopen`. Named here as well because a
+     * bump that moves one and forgets the other is inert in one direction and
+     * re-retires work in the other.
+     */
     const runtime = read('supabase/functions/_shared/builderStock/runtimeVersion.pure.ts');
-    expect(runtime).toContain('export const RUNTIME_VERSION = 2;');
+    expect(runtime).toContain(`export const RUNTIME_VERSION = ${RUNTIME_VERSION};`);
+    const migration = read(
+      'supabase/migrations/20261115100000_builder_stock_runtime_version_3.sql');
+    expect(migration).toContain(`SET image_runtime_version = ${RUNTIME_VERSION};`);
   });
 });
 
@@ -750,5 +786,118 @@ describe('the existing image worker keeps its gate', () => {
     expect(job).toContain('DENO_NO_PACKAGE_JSON: "1"');
     // wrangler 4 refuses to start below Node 22.
     expect(job).toContain('node-version: 22');
+  });
+});
+
+// ── Configuring the bearer, without carrying it anywhere ────────────────────
+/*
+ * One bearer has to be byte-identical in two stores that will neither of them
+ * read a value back. That is a distribution problem, not a bug, and this
+ * repository has already answered it once: `rotate-internal-edge-secret.yml`
+ * ISSUES a new value inside the runner and writes both halves in one job,
+ * because the alternative — carrying a live credential across by hand — is
+ * the thing secret management exists to prevent.
+ *
+ * These assert the properties that make that safe, rather than the strings
+ * that happen to express them today.
+ */
+describe('the workflow that sets the bearer', () => {
+  const workflow = read('.github/workflows/set-builder-stock-pdf-worker-secrets.yml');
+  const NAMES = ['BUILDER_STOCK_PDF_WORKER_TOKEN', 'BUILDER_STOCK_PDF_WORKER_URL'];
+
+  it('writes exactly the names the settler reads', () => {
+    // Tied to the code rather than to a memory of it: renaming one end without
+    // the other fails here instead of at 2am against a production upload.
+    const client = read('supabase/functions/_shared/builderStock/pdfElectionClient.ts');
+    for (const name of NAMES) {
+      expect(client).toContain(`env('${name}')`);
+      expect(workflow).toContain(name);
+    }
+  });
+
+  it('mints the token in the runner and masks it before anything else uses it', () => {
+    const minted = workflow.indexOf('NEW_TOKEN="$(openssl rand -hex 32)"');
+    const masked = workflow.indexOf('::add-mask::$NEW_TOKEN');
+    expect(minted).toBeGreaterThan(-1);
+    expect(masked).toBeGreaterThan(minted);
+    // Every later mention is a use, and every use is after the mask.
+    const uses = [...workflow.matchAll(/\$NEW_TOKEN/g)].map((m) => m.index ?? -1);
+    expect(uses.every((at) => at >= masked)).toBe(true);
+  });
+
+  it('never prints it, and takes it from no caller', () => {
+    for (const forbidden of [
+      /echo\s+"?\$NEW_TOKEN/,
+      /echo\s+"?\$BEARER/,
+      /inputs\.\w*token/i,
+      /inputs\.\w*secret/i,
+    ]) {
+      expect(`${forbidden}: ${forbidden.test(workflow)}`).toBe(`${forbidden}: false`);
+    }
+  });
+
+  it('lets a caller choose neither the secret name nor its value', () => {
+    /*
+     * `set-builder-stock-link-secrets.yml` records why: a workflow that can
+     * write ANY Edge Function secret is a privilege escalation surface —
+     * anyone able to dispatch it could overwrite INTERNAL_EDGE_SECRET or a
+     * vendor credential. The names are literals in the file.
+     */
+    const block = workflow.slice(
+      workflow.indexOf('  workflow_dispatch:'), workflow.indexOf('\npermissions:'));
+    const inputs = [...block.matchAll(/^ {6}(\w+):$/gm)].map((m) => m[1]);
+    expect(inputs.sort()).toEqual(['confirm', 'worker_url']);
+    for (const name of NAMES) {
+      expect(workflow).toContain(`"${name}=$`);
+    }
+  });
+
+  it('judges the destination host rather than globbing the whole URL', () => {
+    /*
+     * `*` in a shell `case` pattern matches a slash, so `https://*.workers.dev`
+     * also accepts `https://elsewhere.example/x.workers.dev`. The settler sends
+     * multi-megabyte brochures to whatever this stores, so the host is
+     * isolated before its suffix is judged.
+     */
+    expect(workflow).toContain('REST="${WORKER_URL#https://}"');
+    const hostCheck = workflow.indexOf('*[/?#@]*');
+    const suffixCheck = workflow.indexOf('*.workers.dev) : ;;');
+    expect(hostCheck).toBeGreaterThan(-1);
+    expect(suffixCheck).toBeGreaterThan(hostCheck);
+  });
+
+  it('proves the halves agree by being refused in the right way', () => {
+    /*
+     * GET on the election path: authentication runs first and routing second,
+     * so 404 means the bearer was accepted and nothing was decoded. Same shape
+     * as `verification_selftest` — a deliberately incomplete call where being
+     * rejected correctly is the pass, costing no CPU and sending no document.
+     */
+    const proof = workflow.slice(workflow.indexOf('Prove the two halves agree'));
+    expect(proof).toContain('/v1/elect');
+    expect(proof).toMatch(/CODE" = '401'[\s\S]*?exit 1/);
+    expect(proof).toMatch(/CODE" != '404'[\s\S]*?exit 1/);
+    // And a check that only proves acceptance would pass on an open worker.
+    expect(proof).toMatch(/WRONG" != '401'[\s\S]*?exit 1/);
+  });
+
+  it('deploys nothing and moves no property', () => {
+    /*
+     * Comments stripped first. This repository has already had a check that
+     * prose satisfied — a kill detector asserting the file merely CONTAINED a
+     * word — and a header explaining what a workflow does not do would pass
+     * this one the same way.
+     */
+    const acts = workflow.split('\n')
+      .filter((line) => !/^\s*#/.test(line)).join('\n');
+    for (const forbidden of [
+      'supabase functions deploy',
+      'supabase db push',
+      'wrangler deploy',
+      'reopen_builder_stock_runtime_failures',
+      'RUNTIME_VERSION',
+    ]) {
+      expect(`${forbidden}: ${acts.includes(forbidden)}`).toBe(`${forbidden}: false`);
+    }
   });
 });

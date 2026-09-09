@@ -93,14 +93,47 @@ jobs:
           # business solving. Deploy everything instead: the operation is
           # idempotent, and under-deploying is what caused the bug this file
           # exists to prevent.
-          if git diff --name-only HEAD^ HEAD | grep -qE '^supabase/functions/_shared/'; then
+          # No parent commit is the first push to a fresh repository. There
+          # is nothing to diff against, and the safe direction is the one the
+          # paragraph above names: deploy everything rather than nothing.
+          if git rev-parse --verify --quiet 'HEAD^' >/dev/null; then
+            everything=0
+          else
+            echo 'no parent commit — deploying every function' >&2
+            everything=1
+          fi
+
+          if [ "$everything" = 0 ] \
+             && git diff --name-only HEAD^ HEAD | grep -qE '^supabase/functions/_shared/'; then
             echo 'shared code changed — deploying every function' >&2
+            everything=1
+          fi
+
+          if [ "$everything" = 1 ]; then
             list=$(find supabase/functions -mindepth 1 -maxdepth 1 -type d \
               ! -name '_shared' -printf '%f\n' | sort | tr '\n' ' ')
           else
+            # `grep -v` exits 1 when it prints NOTHING, and nothing is the
+            # ordinary answer for a push that touched `supabase/config.toml`
+            # and no function directory. Under the `set -o pipefail` above,
+            # that status became the assignment's; `set -e` then killed the
+            # step, and the job died at exit 1 having printed not one line —
+            # indistinguishable from a runner fault. Measured twice in
+            # production, both on a config-only push: preflight-property-group
+            # 3 Sep 2026, npc-test-76b3b3 9 Sep 2026.
+            #
+            # It also silently defeated the block immediately below it.
+            # `verify-jwt-changed.mjs` exists SO THAT a config-only push
+            # redeploys the functions whose declaration changed — and the step
+            # died before ever reaching that line, so on a config-only push it
+            # had never once run, in any repository in the fleet.
+            #
+            # An exit of 1 is "no lines" and is fine here. Two or more is a
+            # real error and still fails, which is why this is not `|| true`.
             list=$(git diff --name-only HEAD^ HEAD \
               | sed -n 's|^supabase/functions/\([^/]*\)/.*|\1|p' \
-              | grep -v '^_shared$' | sort -u | tr '\n' ' ')
+              | { grep -v '^_shared$' || [ $? -eq 1 ]; } \
+              | sort -u | tr '\n' ' ')
           fi
 
           # A `verify_jwt` change in config.toml only reaches production if the
@@ -151,6 +184,53 @@ jobs:
             echo 'elsewhere=false' >> "$GITHUB_OUTPUT"
           fi
 
+      # Which Supabase project THIS repository deploys to, decided once and
+      # read by everything below.
+      #
+      # In order of authority: the repository variable an operator set, then
+      # this repository's own `supabase/config.toml`. Never a literal.
+      #
+      # What used to be here was `${{ vars.SUPABASE_PROJECT_REF ||
+      # '<the prime's ref>' }}`, written twice, and a default is not a
+      # fallback when the thing being defaulted is an IDENTITY. A fork of this
+      # repository that acquired its own deploy token and no variable would
+      # have deployed ITS functions into the prime's production, on every push
+      # to main — and the summary printed by the no-credential branch told an
+      # operator to do exactly that by hand. Mission Control has to rewrite
+      # that line out of every clone it provisions (`clone-repo-retarget`),
+      # which is a repair for a hazard this file should not create.
+      #
+      # `config.toml` is the right second answer because it is the one file in
+      # the tree that already NAMES this deployment's project, is withheld
+      # from the cascade for exactly that reason, and is read back after every
+      # write. A repository can therefore only ever resolve to its own project.
+      #
+      # Read from the PREAMBLE only: `project_id` is a top-level key, and a
+      # same-named key under some future `[table]` is a different setting.
+      - name: Resolve this deployment's project
+        id: project
+        env:
+          PROJECT_REF_VAR: ${{ vars.SUPABASE_PROJECT_REF }}
+        run: |
+          set -uo pipefail
+          ref="${PROJECT_REF_VAR:-}"
+          source='the SUPABASE_PROJECT_REF repository variable'
+          if [ -z "$ref" ] && [ -f supabase/config.toml ]; then
+            ref=$(sed -n '/^\[/q; s/^[[:space:]]*project_id[[:space:]]*=[[:space:]]*"\([a-z]\{20\}\)".*/\1/p' \
+              supabase/config.toml | head -1)
+            source='supabase/config.toml'
+          fi
+          if [ -n "$ref" ]; then
+            echo "this deployment deploys to $ref (from $source)"
+          else
+            echo 'no project ref could be resolved for this repository' >&2
+          fi
+          # Deliberately never fails HERE. Standing down is legitimate on a
+          # repository that deploys nothing, and refusing it for want of a
+          # project would turn a truthful green report into a red one. The
+          # step that actually sends something refuses instead.
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
       - name: Report that Mission Control deploys this project
         if: >-
           ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true'
@@ -182,7 +262,19 @@ jobs:
         if: >-
           ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready != 'true'
               && steps.gate.outputs.elsewhere != 'true' }}
+        env:
+          PROJECT_REF: ${{ steps.project.outputs.ref }}
         run: |
+          # The hand-deploy line below used to carry a literal project ref, so
+          # on any repository but the one it was written for it was an
+          # instruction to overwrite somebody else's production by hand.
+          #
+          # No apostrophe in the placeholder: bash parses the word of a
+          # `${var:-word}` for quoting even inside double quotes, so one there
+          # opens a quote that never closes and the step dies on a syntax
+          # error — in the branch that only ever runs on a repository nobody
+          # has finished configuring.
+          ref="${PROJECT_REF:-<the project ref for THIS deployment>}"
           echo "::warning title=Supabase functions NOT deployed::No SUPABASE_ACCESS_TOKEN secret is set. ${{ steps.changed.outputs.list }} changed on main but production still runs the previous version. Add the secret in Settings → Secrets → Actions."
           {
             echo '### Supabase functions NOT deployed'
@@ -203,7 +295,7 @@ jobs:
             echo '   ```sh'
             echo '   supabase login'
             for fn in ${{ steps.changed.outputs.list }}; do
-              echo "   supabase functions deploy $fn --project-ref \$SUPABASE_PROJECT_REF"
+              echo "   supabase functions deploy $fn --project-ref $ref"
             done
             echo '   ```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -219,16 +311,13 @@ jobs:
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+          PROJECT_REF: ${{ steps.project.outputs.ref }}
         run: |
           set -euo pipefail
-          # Fail closed. This variable used to default to the prime's project
-          # ref, which meant a mirror of this repo deployed ITS functions into
-          # the prime's production on every push to main. There is no safe
-          # default for "which project" — an unset variable is a question, not
-          # a licence to guess.
+          # Fail closed. An unresolved project is a question, not a licence to
+          # guess: this is the one step that sends code somewhere.
           if [ -z "${PROJECT_REF:-}" ]; then
-            echo '::error title=No target project::Repository variable SUPABASE_PROJECT_REF is not set, so there is no project to deploy to. Set it in Settings → Secrets and variables → Actions → Variables to THIS deployment'"'"'s own project ref. It must never be another deployment'"'"'s.'
+            echo '::error title=No target project::Neither the SUPABASE_PROJECT_REF repository variable nor supabase/config.toml names a Supabase project, so there is nowhere to deploy to. Set the variable in Settings → Secrets and variables → Actions → Variables to THIS deployment'"'"'s own project ref. It must never be another deployment'"'"'s.'
             exit 1
           fi
           failed=''
@@ -305,35 +394,99 @@ jobs:
       - name: Verify the deployed CORS contract
         if: ${{ steps.changed.outputs.list != '' && steps.gate.outputs.ready == 'true' }}
         env:
-          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
-          ORIGIN: ${{ vars.CORS_VERIFY_ORIGIN || 'https://command-centre.npcservices.com.au' }}
+          PROJECT_REF: ${{ steps.project.outputs.ref }}
+          ORIGIN_VAR: ${{ vars.CORS_VERIFY_ORIGIN }}
+          # The built-in origin belongs to ONE deployment, so it is used only
+          # while the build is talking to that deployment's project — the same
+          # pairing rule `src/lib/turnstileSiteKey.ts` and
+          # `src/integrations/supabase/env.ts` already apply to a site key and
+          # an anon key, and the reason a built-in is safe to inherit at all.
+          # A tenant that brings its own deploy token and sets no origin skips
+          # this check and says so, rather than probing its own functions with
+          # somebody else's origin and reporting every one of them broken.
+          BUILTIN_ORIGIN: https://command-centre.npcservices.com.au
+          BUILTIN_ORIGIN_PROJECT: dduzbchuswwbefdunfct
         run: |
           set -uo pipefail
           if [ -z "${PROJECT_REF:-}" ]; then
-            echo '::error title=No target project::SUPABASE_PROJECT_REF is not set — nothing to verify against.'
+            echo '::error title=No target project::No project ref resolved, so there is nothing to verify against.'
             exit 1
           fi
+          ORIGIN="${ORIGIN_VAR:-}"
+          if [ -z "$ORIGIN" ] && [ "$PROJECT_REF" = "$BUILTIN_ORIGIN_PROJECT" ]; then
+            ORIGIN="$BUILTIN_ORIGIN"
+          fi
+          if [ -z "$ORIGIN" ]; then
+            echo "::warning title=CORS contract not verified::No CORS_VERIFY_ORIGIN repository variable is set for project $PROJECT_REF, so the deployed preflights were not checked. Set it to this deployment's own site origin."
+            exit 0
+          fi
+
+          # An answer is judged. A NON-ANSWER is reported and never fails.
+          #
+          # This step used to take one `curl -m 30` per function as final, so
+          # every transient became a verdict about CORS. It failed 25 of the
+          # prime's last 100 runs AFTER a successful deploy, and the functions
+          # it named were different every time and alphabetically contiguous —
+          # 7 Sep 2026 `aml-launch-ops … analytics-query`, 8 Sep
+          # `estimate-property-expenses … finance-portal-saved-views`. A
+          # per-function fault names the same functions twice; a window inside
+          # a 358-probe sweep names whatever the sweep had reached. The two
+          # sweeps took 81s and 4m24s for the same work, which is the shape of
+          # probes spending the full 30s timeout. Three of the "refused" were
+          # probed by hand on 9 Sep and answered the exact origin with
+          # credentials.
+          #
+          # So a status line means the function replied, and a wrong policy is
+          # a real defect that still fails the build. No status line at all
+          # means this probe learned nothing — and a probe that learned nothing
+          # must never be the reason a deployed, working release goes red.
+          #
+          # The one exception is the whole sweep going silent: a window is a
+          # transient, but every function unreachable is a fact about the
+          # project, and passing that would be the confident-green failure this
+          # file exists to prevent.
+          probe() {
+            curl -sS -m 30 -D - -o /dev/null -X OPTIONS \
+              "https://$PROJECT_REF.supabase.co/functions/v1/$1" \
+              -H "Origin: $ORIGIN" \
+              -H 'Access-Control-Request-Method: POST' \
+              -H 'Access-Control-Request-Headers: content-type,authorization,apikey' \
+              2>/dev/null | tr -d '\r'
+          }
+
           bad=''
+          silent=''
           checked=0
+          silent_count=0
           for fn in ${{ steps.changed.outputs.list }}; do
             src="supabase/functions/$fn/index.ts"
             [ -f "$src" ] || continue
             # Exact-origin by construction: createCorsHeaders(...), the
             # withRequestOrigin wrapper, or createTokenAuthCorsHeaders(<origin>).
+            # Only functions whose source says they must answer an exact origin
+            # are checked, so the rule is read from the code rather than
+            # restated here and cannot go stale.
             grep -qE 'createCorsHeaders\(|withRequestOrigin|createTokenAuthCorsHeaders\([^)[:space:]]' "$src" || continue
 
             checked=$((checked + 1))
-            headers=$(curl -sS -m 30 -D - -o /dev/null -X OPTIONS \
-              "https://$PROJECT_REF.supabase.co/functions/v1/$fn" \
-              -H "Origin: $ORIGIN" \
-              -H 'Access-Control-Request-Method: POST' \
-              -H 'Access-Control-Request-Headers: content-type,authorization,apikey' \
-              | tr -d '\r' || true)
-            status=$(printf '%s\n' "$headers" | awk '/^HTTP/{print $2}' | tail -1)
-            acao=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
-            acac=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-credentials"{print tolower($2)}' | tail -1)
+            attempt=1
+            while :; do
+              headers=$(probe "$fn")
+              status=$(printf '%s\n' "$headers" | awk '/^HTTP/{print $2}' | tail -1)
+              acao=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
+              acac=$(printf '%s\n' "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-credentials"{print tolower($2)}' | tail -1)
+              { [ "$acao" = "$ORIGIN" ] && [ "$acac" = "true" ]; } && break
+              [ "$attempt" -ge 2 ] && break
+              attempt=2
+              sleep 3
+            done
+
             if [ "$acao" = "$ORIGIN" ] && [ "$acac" = "true" ]; then
               echo "- \`$fn\` CORS verified (exact origin + credentials)" >> "$GITHUB_STEP_SUMMARY"
+            elif [ -z "$status" ]; then
+              silent="$silent $fn"
+              silent_count=$((silent_count + 1))
+              echo "- \`$fn\` not verified — no reply to either preflight" >> "$GITHUB_STEP_SUMMARY"
             # NOT excused for declaring `verify_jwt = true`.
             #
             # This branch used to excuse exactly that, on the reasoning that a
@@ -341,23 +494,30 @@ jobs:
             # therefore refuse it. The gateway does not: it exempts preflights
             # and enforces the JWT on the real request, which is the only way a
             # guarded function can be callable from a browser at all. Measured
-            # 15 Aug 2026 — all 86 functions deployed `verify_jwt = true` answer
-            # their preflight, `sqm-rent-service` among them, with their own
-            # exact-origin headers; it refuses the POST, not the OPTIONS.
+            # 15 Aug 2026 — all 86 functions deployed `verify_jwt = true`
+            # answer their preflight, `sqm-rent-service` among them, with their
+            # own exact-origin headers; it refuses the POST, not the OPTIONS.
             #
             # So a wrong CORS policy is a real fault on a guarded function too,
             # and excusing it hid one class of defect behind another. The
             # excuse also mis-attributed the failure that introduced it:
             # `legal-matters-admin`'s 503 was a BOOT_ERROR, not a gateway
-            # refusal. Removing it fails nothing today — all 425 deployed
-            # functions were probed and every one that this step would check
-            # answers the exact origin with credentials.
+            # refusal. A preflight is not a `verify_jwt` probe in either
+            # direction.
             else
               bad="$bad $fn"
-              echo "- \`$fn\` **PREFLIGHT REFUSED** — status=\`${status:-<none>}\` origin=\`${acao:-<none>}\` credentials=\`${acac:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "- \`$fn\` **PREFLIGHT REFUSED** — status=\`${status}\` origin=\`${acao:-<none>}\` credentials=\`${acac:-<none>}\`" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
-          echo "verified $checked function(s)"
+          echo "verified $checked function(s) against $ORIGIN"
+
+          if [ -n "$silent" ]; then
+            if [ "$checked" -gt 0 ] && [ "$silent_count" -eq "$checked" ]; then
+              echo "::error::not one of the $checked checked function(s) answered a preflight at https://$PROJECT_REF.supabase.co — that is the project, not a transient. The deploy itself succeeded; check the project is running before re-running this job."
+              exit 1
+            fi
+            echo "::warning title=CORS contract not fully verified::no reply to either preflight for:$silent — these were deployed and are NOT known to be broken; the probe got no answer. Re-run this job to re-check them."
+          fi
           if [ -n "$bad" ]; then
             echo "::error::preflight refused for:$bad"
             echo "::error::Two different causes look identical here, so check which one it is before editing any CORS code."

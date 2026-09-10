@@ -14,9 +14,9 @@
   }
 
   .builder-stock-list-page {
-    /* Set this to url('/path/to/an-approved-existing-photo') when a tracked
-       architectural photograph is supplied. `none` avoids a broken request. */
-    --builder-stock-list-hero-image: none;
+    /* The public asset is supplied separately from this code-only change.
+       The navy header beneath it is the deliberate loading/error fallback. */
+    --builder-stock-list-hero-image: url('/images/builder/stock-list-architecture.webp');
     gap: clamp(1.125rem, 1.35vw, 1.5rem);
   }
 
@@ -25,14 +25,13 @@
     min-height: 12.5rem;
     padding: 1.75rem 2rem;
     border-color: hsl(var(--primary) / 0.5);
-    background-color: hsl(var(--card));
+    background-color: hsl(var(--surface-2));
     background-image:
-      linear-gradient(90deg, hsl(var(--background)) 0%, hsl(var(--background) / 0.98) 35%, hsl(var(--background) / 0.76) 53%, hsl(var(--background) / 0.16) 76%),
-      linear-gradient(180deg, hsl(var(--primary) / 0.12), hsl(var(--background) / 0.26)),
-      var(--builder-stock-list-hero-image);
-    background-position: center, center, right center;
+      radial-gradient(circle at 78% 35%, hsl(var(--primary) / 0.2), transparent 30rem),
+      linear-gradient(115deg, hsl(var(--surface-2)), hsl(var(--background)));
+    background-position: center;
     background-repeat: no-repeat;
-    background-size: cover, cover, auto 100%;
+    background-size: cover;
     box-shadow:
       0 1.5rem 4rem -2rem hsl(var(--primary) / 0.38),
       inset 0 1px 0 hsl(var(--primary) / 0.34),
@@ -44,10 +43,14 @@
     position: absolute;
     z-index: -1;
     pointer-events: none;
-    inset: 0;
-    background:
-      linear-gradient(90deg, hsl(var(--primary) / 0.13), transparent 38%),
-      radial-gradient(circle at 77% 46%, hsl(var(--primary) / 0.15), transparent 26%);
+    inset: 0 0 0 auto;
+    width: 56%;
+    background-image: var(--builder-stock-list-hero-image);
+    background-position: 58% center;
+    background-repeat: no-repeat;
+    background-size: cover;
+    mask-image: linear-gradient(90deg, transparent 0%, hsl(var(--foreground) / 0.28) 16%, hsl(var(--foreground)) 42%);
+    -webkit-mask-image: linear-gradient(90deg, transparent 0%, hsl(var(--foreground) / 0.28) 16%, hsl(var(--foreground)) 42%);
   }
 
   .builder-stock-list-page > .builder-portal-page-header::after {
@@ -55,11 +58,14 @@
     position: absolute;
     z-index: -1;
     pointer-events: none;
-    inset: auto 0 0 0;
+    inset: 0;
     width: auto;
-    height: 1px;
+    height: auto;
     border-radius: 0;
-    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.8) 62%, transparent);
+    background:
+      linear-gradient(90deg, hsl(var(--surface-2) / 0.98) 0%, hsl(var(--surface-2) / 0.84) 34%, hsl(var(--background) / 0.28) 63%, hsl(var(--background) / 0.12) 100%),
+      linear-gradient(180deg, hsl(var(--primary) / 0.12), transparent 52%, hsl(var(--background) / 0.38)),
+      linear-gradient(0deg, hsl(var(--primary) / 0.72) 0 1px, transparent 1px);
     filter: none;
     transform: none;
   }
@@ -126,11 +132,12 @@
     border: 1px solid hsl(var(--primary) / 0.2);
     border-radius: var(--radius-lg);
     background:
-      radial-gradient(circle at 12% 30%, hsl(var(--primary) / 0.15), transparent 38%),
-      linear-gradient(135deg, hsl(var(--surface-2) / 0.96), hsl(var(--card) / 0.88));
+      radial-gradient(circle at 12% 30%, hsl(var(--primary) / 0.23), transparent 42%),
+      linear-gradient(135deg, hsl(var(--surface-3) / 0.72), hsl(var(--surface-2) / 0.96));
     box-shadow:
-      0 1rem 2.8rem -2rem hsl(var(--primary) / 0.44),
-      inset 0 1px 0 hsl(var(--foreground) / 0.08);
+      0 1.1rem 2.8rem -1.8rem hsl(var(--background) / 0.78),
+      0 0.75rem 2rem -1.5rem hsl(var(--primary) / 0.42),
+      inset 0 1px 0 hsl(var(--foreground) / 0.12);
   }
 
   .builder-stock-list-metric::after {
@@ -153,7 +160,7 @@
     color: hsl(var(--primary));
     box-shadow:
       inset 0 1px 0 hsl(var(--primary-foreground) / 0.16),
-      0 0.8rem 2.2rem -1rem hsl(var(--primary) / 0.7);
+      0 0.8rem 2.2rem -0.8rem hsl(var(--primary) / 0.78);
   }
 
   .builder-stock-list-metric-icon {
@@ -248,7 +255,14 @@
   }
 
   .builder-stock-list-workspace {
-    background-image: linear-gradient(180deg, hsl(var(--primary) / 0.055), transparent 13rem);
+    border-color: hsl(var(--primary) / 0.25);
+    background-color: hsl(var(--surface-2) / 0.88);
+    background-image:
+      radial-gradient(circle at 88% 0%, hsl(var(--primary) / 0.1), transparent 30rem),
+      linear-gradient(180deg, hsl(var(--primary) / 0.075), transparent 13rem);
+    box-shadow:
+      0 1.5rem 3.5rem -2rem hsl(var(--background) / 0.82),
+      inset 0 1px 0 hsl(var(--foreground) / 0.09);
   }
 
   .builder-stock-list-workspace-header {
@@ -305,8 +319,11 @@
 
   .builder-stock-list-table thead {
     background:
-      linear-gradient(90deg, hsl(var(--primary) / 0.1), transparent 60%),
-      hsl(var(--surface-3) / 0.8);
+      linear-gradient(90deg, hsl(var(--primary) / 0.18), transparent 68%),
+      hsl(var(--surface-3) / 0.96);
+    box-shadow:
+      inset 0 1px 0 hsl(var(--foreground) / 0.08),
+      inset 0 -1px 0 hsl(var(--primary) / 0.18);
   }
 
   .builder-stock-list-table th {
@@ -325,7 +342,7 @@
   }
 
   .builder-stock-list-table tbody tr:hover {
-    background-color: hsl(var(--primary) / 0.07);
+    background-color: hsl(var(--primary) / 0.095);
   }
 
   .builder-stock-list-table td {
@@ -463,11 +480,26 @@
       min-height: 18.25rem;
       padding: 1.35rem;
       background-image:
-        linear-gradient(180deg, hsl(var(--background) / 0.84) 0%, hsl(var(--background) / 0.94) 62%, hsl(var(--background)) 100%),
-        linear-gradient(180deg, hsl(var(--primary) / 0.08), transparent),
-        var(--builder-stock-list-hero-image);
-      background-position: center, center, 62% center;
-      background-size: cover, cover, auto 100%;
+        radial-gradient(circle at 68% 22%, hsl(var(--primary) / 0.16), transparent 24rem),
+        linear-gradient(155deg, hsl(var(--surface-2)), hsl(var(--background)));
+      background-position: center;
+      background-size: cover;
+    }
+
+    .builder-stock-list-page > .builder-portal-page-header::before {
+      inset: 0;
+      width: 100%;
+      background-position: 64% center;
+      mask-image: linear-gradient(180deg, hsl(var(--foreground) / 0.72), transparent 84%);
+      -webkit-mask-image: linear-gradient(180deg, hsl(var(--foreground) / 0.72), transparent 84%);
+      opacity: 0.56;
+    }
+
+    .builder-stock-list-page > .builder-portal-page-header::after {
+      background:
+        linear-gradient(180deg, hsl(var(--background) / 0.48), hsl(var(--background) / 0.9) 72%, hsl(var(--background))),
+        linear-gradient(90deg, hsl(var(--surface-2) / 0.72), transparent),
+        linear-gradient(0deg, hsl(var(--primary) / 0.62) 0 1px, transparent 1px);
     }
 
     .builder-stock-list-page > .builder-portal-page-header > div {

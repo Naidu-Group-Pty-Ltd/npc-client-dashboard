@@ -29,7 +29,6 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import {
   BuilderPropertyImageButton,
 } from '@/components/builder-portal/BuilderPropertyImage';
-import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
   importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
@@ -430,9 +429,8 @@ export default function BuilderStockList() {
 
       <div className="builder-stock-list-metrics grid gap-3 md:grid-cols-3">
         {summary.map(({ label, value, icon }) => (
-          <BuilderPortalMetricCard
+          <StockListMetricCard
             key={label}
-            className="builder-stock-list-metric"
             icon={icon}
             label={label}
             value={value}
@@ -1151,6 +1149,24 @@ function ImportSummaryCard(
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function StockListMetricCard({ icon: Icon, label, value }: {
+  icon: LucideIcon;
+  label: string;
+  value: number | string;
+}) {
+  return (
+    <div className="builder-stock-list-metric">
+      <span className="builder-stock-list-metric-icon" aria-hidden>
+        <Icon className="h-6 w-6" />
+      </span>
+      <span className="min-w-0">
+        <span className="builder-stock-list-metric-label">{label}</span>
+        <strong className="builder-stock-list-metric-value">{value}</strong>
+      </span>
+    </div>
   );
 }
 

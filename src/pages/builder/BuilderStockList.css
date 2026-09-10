@@ -1,0 +1,347 @@
+/* Stock List is intentionally isolated from the shared Builder shell. */
+@layer components {
+  .builder-stock-list-page {
+    --stock-list-section-gap: clamp(1rem, 1.8vw, 1.5rem);
+    gap: var(--stock-list-section-gap);
+  }
+
+  .builder-stock-list-page > .builder-portal-page-header {
+    isolation: isolate;
+    min-height: clamp(13.5rem, 21vw, 17rem);
+    padding: clamp(1.5rem, 3vw, 2.5rem);
+    border-color: hsl(var(--primary) / 0.42);
+    background-color: hsl(var(--card) / 0.9);
+    background-image:
+      linear-gradient(90deg, hsl(var(--card)) 0%, hsl(var(--card) / 0.97) 39%, hsl(var(--card) / 0.44) 70%, hsl(var(--card) / 0.76) 100%),
+      radial-gradient(circle at 78% 20%, hsl(var(--primary) / 0.23), transparent 43%),
+      linear-gradient(135deg, hsl(var(--surface-2)), hsl(var(--background)));
+    box-shadow: var(--glass-shadow-lg), inset 0 1px 0 hsl(var(--primary) / 0.22);
+  }
+
+  /* A token-driven architectural elevation: stepped rooflines, window bays,
+     and a perspective floor. It stays decorative and never borrows inventory imagery. */
+  .builder-stock-list-page > .builder-portal-page-header::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    right: -3%;
+    bottom: -22%;
+    width: min(58%, 48rem);
+    height: 118%;
+    opacity: 0.72;
+    clip-path: polygon(10% 41%, 34% 20%, 55% 31%, 76% 9%, 100% 23%, 100% 100%, 0 100%, 0 58%);
+    background:
+      repeating-linear-gradient(90deg, transparent 0 9%, hsl(var(--primary) / 0.18) 9.3% 9.8%, transparent 10% 18%),
+      repeating-linear-gradient(0deg, hsl(var(--foreground) / 0.04) 0 12%, hsl(var(--primary) / 0.15) 12.5% 13.2%, transparent 13.5% 25%),
+      linear-gradient(120deg, hsl(var(--surface-3) / 0.2), hsl(var(--background) / 0.96));
+    border: 1px solid hsl(var(--primary) / 0.24);
+    transform: perspective(46rem) rotateY(-7deg);
+    transform-origin: bottom right;
+  }
+
+  .builder-stock-list-page > .builder-portal-page-header::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    pointer-events: none;
+    inset: auto -8% -45% 36%;
+    width: auto;
+    height: 80%;
+    border-radius: 0;
+    background-image:
+      linear-gradient(90deg, hsl(var(--primary) / 0.16) 1px, transparent 1px),
+      linear-gradient(0deg, hsl(var(--primary) / 0.12) 1px, transparent 1px);
+    background-size: 2.5rem 2.5rem;
+    filter: none;
+    transform: perspective(24rem) rotateX(58deg) rotateZ(-7deg);
+    mask-image: linear-gradient(to right, transparent, hsl(var(--foreground)) 22%, transparent 92%);
+    opacity: 0.5;
+  }
+
+  .builder-stock-list-page > .builder-portal-page-header > div {
+    z-index: 1;
+    min-height: calc(clamp(13.5rem, 21vw, 17rem) - clamp(3rem, 6vw, 5rem));
+  }
+
+  .builder-stock-list-page > .builder-portal-page-header h1 {
+    max-width: 13ch;
+    font-size: clamp(2.25rem, 4.5vw, 4rem);
+    line-height: 0.98;
+    letter-spacing: -0.045em;
+    text-wrap: balance;
+  }
+
+  .builder-stock-list-page > .builder-portal-page-header p {
+    max-width: 46rem;
+    margin-top: 0.75rem;
+    font-size: clamp(0.875rem, 1.2vw, 1rem);
+    line-height: 1.6;
+    color: hsl(var(--foreground) / 0.74);
+  }
+
+  .builder-stock-list-page .builder-stock-list-hero-action {
+    min-height: 2.75rem;
+    padding-inline: 1.125rem;
+  }
+
+  .builder-stock-list-metric {
+    overflow: hidden;
+    min-height: 8.5rem;
+    border-color: hsl(var(--border) / 0.72);
+    background-image: linear-gradient(145deg, hsl(var(--primary) / 0.075), transparent 52%);
+    box-shadow: var(--glass-shadow-sm), inset 0 1px 0 var(--glass-specular-soft);
+  }
+
+  .builder-stock-list-metric > div {
+    align-items: center;
+    gap: 1rem;
+    padding: 1.25rem;
+  }
+
+  .builder-stock-list-metric > div > span:first-child {
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: var(--radius-lg);
+    border-color: hsl(var(--primary) / 0.32);
+    background: linear-gradient(145deg, hsl(var(--primary) / 0.24), hsl(var(--primary) / 0.08));
+    box-shadow: inset 0 1px 0 hsl(var(--primary-foreground) / 0.16), 0 0.75rem 2rem hsl(var(--primary) / 0.11);
+  }
+
+  .builder-stock-list-metric > div > span:last-child > span:first-child {
+    overflow: visible;
+    white-space: normal;
+    text-overflow: clip;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    letter-spacing: 0.025em;
+  }
+
+  .builder-stock-list-metric > div > span:last-child > span:nth-child(2) {
+    margin-top: 0.35rem;
+    font-size: clamp(1.8rem, 3vw, 2.4rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+  }
+
+  .builder-stock-list-section,
+  .builder-stock-list-import,
+  .builder-stock-list-progress {
+    overflow: hidden;
+    border-color: hsl(var(--border) / 0.75);
+    box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-specular-soft);
+  }
+
+  .builder-stock-list-import {
+    border-color: hsl(var(--primary) / 0.24);
+    background-image: linear-gradient(110deg, hsl(var(--primary) / 0.1), transparent 46%);
+  }
+
+  .builder-stock-list-import-summary {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .builder-stock-list-import-icon {
+    display: inline-flex;
+    width: 3rem;
+    height: 3rem;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid hsl(var(--primary) / 0.3);
+    border-radius: var(--radius-lg);
+    background-color: hsl(var(--primary) / 0.13);
+    color: hsl(var(--primary));
+  }
+
+  .builder-stock-list-import-counts {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+
+  .builder-stock-list-import-count {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: baseline;
+    gap: 0.35rem;
+    padding: 0.55rem 0.8rem;
+    border: 1px solid hsl(var(--border) / 0.65);
+    border-radius: var(--radius-md);
+    background-color: hsl(var(--muted) / 0.34);
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  .builder-stock-list-import-count strong {
+    font-size: 1.15rem;
+    color: hsl(var(--foreground));
+  }
+
+  .builder-stock-list-import-count-new {
+    border-color: hsl(var(--primary) / 0.3);
+    background-color: hsl(var(--primary) / 0.1);
+  }
+
+  .builder-stock-list-selection,
+  .builder-stock-list-processing {
+    background-color: hsl(var(--muted) / 0.24);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.04);
+  }
+
+  .builder-stock-list-workspace-header {
+    padding: 1.5rem 1.5rem 1.125rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.55);
+  }
+
+  .builder-stock-list-workspace-header h3,
+  .builder-stock-list-sources h3,
+  .builder-stock-list-selections h3 {
+    font-size: 1.05rem;
+    letter-spacing: -0.02em;
+  }
+
+  .builder-stock-list-toolbar {
+    border-color: hsl(var(--border) / 0.72);
+  }
+
+  .builder-stock-list-workspace-content {
+    padding: 1.125rem 1.5rem 1.5rem;
+  }
+
+  .builder-stock-list-table {
+    overflow: hidden;
+    border: 1px solid hsl(var(--border) / 0.62);
+    border-radius: var(--radius-lg);
+  }
+
+  .builder-stock-list-table thead {
+    background-color: hsl(var(--muted) / 0.48);
+  }
+
+  .builder-stock-list-table th {
+    height: 3rem;
+    color: hsl(var(--foreground) / 0.72);
+    font-size: 0.68rem;
+    font-weight: 650;
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+  }
+
+  .builder-stock-list-table tbody tr {
+    transition: background-color var(--motion-fast) var(--motion-ease-out);
+  }
+
+  .builder-stock-list-table tbody tr:hover {
+    background-color: hsl(var(--primary) / 0.045);
+  }
+
+  .builder-stock-list-table td {
+    padding-block: 1rem;
+    border-color: hsl(var(--border) / 0.52);
+  }
+
+  .builder-stock-list-cards > li {
+    overflow: hidden;
+    border-color: hsl(var(--border) / 0.68);
+    border-radius: var(--radius-lg);
+    background-image: linear-gradient(140deg, hsl(var(--primary) / 0.055), transparent 42%);
+    box-shadow: var(--glass-shadow-sm), inset 0 1px 0 var(--glass-specular-soft);
+  }
+
+  .builder-stock-list-pagination {
+    padding-top: 1rem;
+    border-top: 1px solid hsl(var(--border) / 0.55);
+  }
+
+  .builder-stock-list-sources > div:first-child {
+    padding: 1.5rem;
+    border-bottom: 1px solid hsl(var(--border) / 0.55);
+  }
+
+  .builder-stock-list-sources > div:last-child {
+    padding: 1.125rem 1.5rem 1.5rem;
+  }
+
+  .builder-stock-list-sources thead {
+    background-color: hsl(var(--muted) / 0.4);
+  }
+
+  .builder-stock-list-sources tbody tr:hover {
+    background-color: hsl(var(--primary) / 0.04);
+  }
+
+  .builder-stock-list-dialog {
+    border-color: hsl(var(--primary) / 0.24);
+    box-shadow: var(--glass-shadow-lg);
+  }
+
+  @media (max-width: 767px) {
+    .builder-stock-list-page > .builder-portal-page-header {
+      min-height: 19rem;
+      padding: 1.35rem;
+    }
+
+    .builder-stock-list-page > .builder-portal-page-header::before {
+      right: -35%;
+      width: 100%;
+      height: 78%;
+      opacity: 0.38;
+    }
+
+    .builder-stock-list-page > .builder-portal-page-header > div {
+      min-height: 16.3rem;
+    }
+
+    .builder-stock-list-page > .builder-portal-page-header p {
+      max-width: 29rem;
+      padding-right: 0.5rem;
+    }
+
+    .builder-stock-list-import-summary {
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    .builder-stock-list-import-counts {
+      width: 100%;
+      justify-content: flex-start;
+      padding-left: 4rem;
+    }
+
+    .builder-stock-list-workspace-header,
+    .builder-stock-list-workspace-content,
+    .builder-stock-list-sources > div:first-child,
+    .builder-stock-list-sources > div:last-child {
+      padding-inline: 1rem;
+    }
+  }
+
+  @media (max-width: 479px) {
+    .builder-stock-list-page > .builder-portal-page-header h1 {
+      font-size: 2.35rem;
+    }
+
+    .builder-stock-list-import-counts {
+      padding-left: 0;
+    }
+
+    .builder-stock-list-import-count {
+      flex: 1 1 auto;
+      justify-content: center;
+    }
+
+    .builder-stock-list-toolbar > * {
+      flex-basis: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .builder-stock-list-table tbody tr {
+      transition: none;
+    }
+  }
+}

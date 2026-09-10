@@ -49,6 +49,7 @@ import {
   countArrivingUploads, countWorkingImages, stockImageProgress,
   STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
 } from '../../../supabase/functions/_shared/builderStock/imageProgress.pure';
+import './BuilderStockList.css';
 
 /**
  * Builder Portal — Stock List.
@@ -392,11 +393,13 @@ export default function BuilderStockList() {
 
   return (
     <BuilderPortalShell
+      className="builder-stock-list-page"
       title="Stock List"
       description="Upload your available stock in whatever format you keep it, and see which properties have been selected for a buyer."
       actions={
         <>
           <Button
+            className="builder-stock-list-hero-action"
             variant="outline"
             size="sm"
             onClick={refreshAll}
@@ -405,7 +408,7 @@ export default function BuilderStockList() {
             <RefreshCw className={cn('mr-2 h-4 w-4', itemsQuery.isFetching && 'animate-spin')} aria-hidden />
             Refresh
           </Button>
-          <Button size="sm" onClick={() => setAddOpen(true)} disabled={busy}>
+          <Button className="builder-stock-list-hero-action" size="sm" onClick={() => setAddOpen(true)} disabled={busy}>
             {busy
               ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
               : <Plus className="mr-2 h-4 w-4" aria-hidden />}
@@ -425,14 +428,20 @@ export default function BuilderStockList() {
         }}
       />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="builder-stock-list-metrics grid gap-3 md:grid-cols-3">
         {summary.map(({ label, value, icon }) => (
-          <BuilderPortalMetricCard key={label} icon={icon} label={label} value={value} />
+          <BuilderPortalMetricCard
+            key={label}
+            className="builder-stock-list-metric"
+            icon={icon}
+            label={label}
+            value={value}
+          />
         ))}
       </div>
 
       {progress ? (
-        <Card>
+        <Card className="builder-stock-list-progress">
           <CardContent className="space-y-3 p-4">
             <div className="text-sm font-medium">{PHASE_LABEL[progress.phase]}</div>
             <Progress value={PHASE_PERCENT[progress.phase]} />
@@ -448,7 +457,7 @@ export default function BuilderStockList() {
         : null}
 
       {pendingSelections.length ? (
-        <Card>
+        <Card className="builder-stock-list-section builder-stock-list-selections">
           <CardHeader>
             <CardTitle className="text-base">Selected for a buyer</CardTitle>
             <CardDescription>
@@ -460,7 +469,7 @@ export default function BuilderStockList() {
             {pendingSelections.map((selection) => (
               <div
                 key={selection.id}
-                className="flex flex-col gap-2 rounded-lg border border-border/60 p-3 sm:flex-row sm:items-center sm:justify-between"
+                className="builder-stock-list-selection flex flex-col gap-3 rounded-xl border border-border/60 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">
@@ -496,8 +505,8 @@ export default function BuilderStockList() {
         </Card>
       ) : null}
 
-      <Card>
-        <CardHeader className="gap-4">
+      <Card className="builder-stock-list-section builder-stock-list-workspace">
+        <CardHeader className="builder-stock-list-workspace-header gap-5">
           <div className="min-w-0">
             <CardTitle className="text-base">Your stock</CardTitle>
             <CardDescription>
@@ -510,18 +519,18 @@ export default function BuilderStockList() {
             fixed compact width, so at narrow widths they wrap onto their own
             line instead of forcing the card wider than the column.
           */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="builder-stock-list-toolbar glass-rail flex flex-wrap items-center gap-2 rounded-xl p-2">
             <SearchInput
               value={search}
               onValueChange={setSearch}
               placeholder="Search address, suburb, development or reference"
               aria-label="Search stock"
-              containerClassName="min-w-0 flex-1 basis-64"
-              className="h-9 w-full"
+              containerClassName="min-w-0 flex-1 basis-72"
+              className="h-11 w-full"
             />
             <Select value={availability} onValueChange={setAvailability}>
               <SelectTrigger
-                className="h-9 w-full min-w-0 sm:w-44"
+                className="h-11 w-full min-w-0 sm:w-48"
                 aria-label="Filter by availability"
               >
                 <SelectValue />
@@ -534,7 +543,7 @@ export default function BuilderStockList() {
             </Select>
             <Select value={uploadFilter} onValueChange={setUploadFilter}>
               <SelectTrigger
-                className="h-9 w-full min-w-0 sm:w-56"
+                className="h-11 w-full min-w-0 sm:w-60"
                 aria-label="Filter by stock list"
               >
                 <SelectValue className="truncate" />
@@ -550,7 +559,7 @@ export default function BuilderStockList() {
             </Select>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="builder-stock-list-workspace-content">
           {itemsQuery.isLoading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -589,7 +598,7 @@ export default function BuilderStockList() {
               {workingImages > 0 || arrivingUploads > 0 ? (
                 <div
                   role="status"
-                  className="mb-4 flex items-start gap-2.5 rounded-lg border border-border/70 bg-muted/40 px-3 py-2.5"
+                  className="builder-stock-list-processing mb-5 flex items-start gap-3 rounded-xl border border-border/70 px-4 py-3"
                 >
                   <Loader2
                     className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none"
@@ -631,7 +640,7 @@ export default function BuilderStockList() {
                 fields stack into cards — a complete card beats a squeezed row,
                 and neither presentation needs a scroller.
               */}
-              <div className="hidden min-[1400px]:block">
+              <div className="builder-stock-list-table hidden min-[1400px]:block">
                 <Table className="table-fixed">
                   <TableHeader>
                     {/* Percentages, not rem: the columns divide whatever the
@@ -670,7 +679,7 @@ export default function BuilderStockList() {
                 </Table>
               </div>
 
-              <ul className="space-y-3 min-[1400px]:hidden">
+              <ul className="builder-stock-list-cards space-y-3 min-[1400px]:hidden">
                 {records.map((item) => (
                   <StockCard
                     key={item.id}
@@ -693,7 +702,7 @@ export default function BuilderStockList() {
               </ul>
 
               {pagination && pagination.total_pages > 1 ? (
-                <div className="mt-4 flex items-center justify-between">
+                <div className="builder-stock-list-pagination mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-muted-foreground">
                     Page {pagination.page} of {pagination.total_pages} · {pagination.total} properties
                   </p>
@@ -721,7 +730,7 @@ export default function BuilderStockList() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className="builder-stock-list-section builder-stock-list-sources">
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
           <div>
             <CardTitle className="text-base">Stock list sources</CardTitle>
@@ -934,7 +943,7 @@ export default function BuilderStockList() {
 
       {/* Add a source: a file from this computer, or an address to fetch. */}
       <Dialog open={addOpen} onOpenChange={(open) => { if (!busy) setAddOpen(open); }}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="builder-stock-list-dialog sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Add a stock list</DialogTitle>
             <DialogDescription>
@@ -1024,7 +1033,7 @@ export default function BuilderStockList() {
         open={!!pendingDelete}
         onOpenChange={(open) => { if (!open) setPendingDelete(null); }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent className="builder-stock-list-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle>
               Delete “{pendingDelete ? stockSourceLabel(pendingDelete) : ''}”?
@@ -1081,23 +1090,33 @@ function ImportSummaryCard(
   { summary, imageWorkPending }: { summary: StockImportSummary; imageWorkPending: number },
 ) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Last import</CardTitle>
-        <CardDescription>
-          {summary.detected} propert{summary.detected === 1 ? 'y was' : 'ies were'} read from the file.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <div className="flex flex-wrap gap-4">
-          <span><strong className="tabular-nums">{summary.imported}</strong> new</span>
-          <span><strong className="tabular-nums">{summary.updated}</strong> updated</span>
-          {summary.failed ? (
-            <span className="text-warning">
-              <strong className="tabular-nums">{summary.failed}</strong> not saved
+    <Card className="builder-stock-list-import">
+      <CardContent className="p-5 md:p-6">
+        <div className="builder-stock-list-import-summary">
+          <span className="builder-stock-list-import-icon" aria-hidden>
+            <Upload className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <CardTitle className="text-base">Last import</CardTitle>
+            <CardDescription className="mt-1">
+              {summary.detected} propert{summary.detected === 1 ? 'y was' : 'ies were'} read from the file.
+            </CardDescription>
+          </div>
+          <div className="builder-stock-list-import-counts">
+            <span className="builder-stock-list-import-count builder-stock-list-import-count-new">
+              <strong className="tabular-nums">{summary.imported}</strong> new
             </span>
-          ) : null}
+            <span className="builder-stock-list-import-count">
+              <strong className="tabular-nums">{summary.updated}</strong> updated
+            </span>
+            {summary.failed ? (
+              <span className="builder-stock-list-import-count text-warning">
+                <strong className="tabular-nums">{summary.failed}</strong> not saved
+              </span>
+            ) : null}
+          </div>
         </div>
+        <div className="mt-4 space-y-3 border-t border-border/60 pt-4 text-sm">
         {/*
           * SAID PLAINLY, BECAUSE A FINISHED IMPORT IS NOT A FINISHED PICTURE.
           *
@@ -1107,28 +1126,29 @@ function ImportSummaryCard(
           * coming". Claiming otherwise by saying nothing is what a summary of
           * a completed import would otherwise imply.
           */}
-        {imageWorkPending ? (
-          <p className="flex items-start gap-2 text-xs text-muted-foreground">
-            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            Images are still being found for {imageWorkPending} propert{imageWorkPending === 1 ? 'y' : 'ies'}. This continues on our
-            servers — you do not need to keep this page open.
-          </p>
-        ) : null}
-        {summary.warnings.map((warning) => (
-          <p key={warning} className="flex items-start gap-2 text-xs text-muted-foreground">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            {warning}
-          </p>
-        ))}
-        {summary.failures.length ? (
-          <ul className="space-y-1 text-xs text-muted-foreground">
-            {summary.failures.map((failure, index) => (
-              <li key={`${failure.label}-${index}`}>
-                <span className="font-medium text-foreground">{failure.label}</span> — {failure.reason}
-              </li>
-            ))}
-          </ul>
-        ) : null}
+          {imageWorkPending ? (
+            <p className="flex items-start gap-2 text-xs text-muted-foreground">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              Images are still being found for {imageWorkPending} propert{imageWorkPending === 1 ? 'y' : 'ies'}. This continues on our
+              servers — you do not need to keep this page open.
+            </p>
+          ) : null}
+          {summary.warnings.map((warning) => (
+            <p key={warning} className="flex items-start gap-2 text-xs text-muted-foreground">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              {warning}
+            </p>
+          ))}
+          {summary.failures.length ? (
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {summary.failures.map((failure, index) => (
+                <li key={`${failure.label}-${index}`}>
+                  <span className="font-medium text-foreground">{failure.label}</span> — {failure.reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       </CardContent>
     </Card>
   );

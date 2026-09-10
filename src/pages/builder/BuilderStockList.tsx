@@ -1228,7 +1228,7 @@ function PropertyIdentity({ item }: { item: BuilderStockItem }) {
   const title = stockItemTitle(item);
   const locality = stockItemLocality(item);
   return (
-    <div className="min-w-0">
+    <div className="builder-stock-list-property min-w-0">
       {/* Wraps to a second line rather than truncating: an address is what
           identifies the property, and half of one identifies nothing. */}
       <p className="break-words text-sm font-medium leading-snug text-foreground">{title}</p>
@@ -1270,11 +1270,11 @@ function ConfigurationChips({ item, hideWhenEmpty = false }: {
   }
 
   return (
-    <ul className="flex flex-wrap items-center gap-1" title={configuration}>
+    <ul className="builder-stock-list-configuration flex flex-wrap items-center gap-1.5" title={configuration}>
       {parts.map(({ icon: Icon, value, label }) => (
         <li
           key={label}
-          className="inline-flex items-center gap-0.5 rounded-md border border-border/60 bg-muted/30 px-1 py-0.5 text-xs leading-none text-foreground"
+          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-1.5 py-1 text-xs leading-none text-foreground"
         >
           <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <span className="tabular-nums">{value}</span>
@@ -1289,7 +1289,7 @@ function PriceBlock({ item }: { item: BuilderStockItem }) {
   const price = stockItemPrice(item);
   const { amount, qualifier } = splitPriceLine(price);
   return (
-    <div className="min-w-0" title={price ?? undefined}>
+    <div className="builder-stock-list-price min-w-0" title={price ?? undefined}>
       <p className="break-words text-sm font-semibold tabular-nums leading-snug text-foreground">
         {amount}
       </p>
@@ -1333,7 +1333,7 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
   const working = progress === 'working';
 
   return (
-    <div className="flex min-w-0 flex-col items-start gap-1.5">
+    <div className="builder-stock-list-images flex min-w-0 flex-col items-start gap-1.5">
       <Badge
         variant="outline"
         title={image
@@ -1375,7 +1375,7 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
         hasImage={!!image}
       />
 
-      <ul className="flex flex-wrap items-center gap-1">
+      <ul className="builder-stock-list-image-stages flex flex-wrap items-center gap-1">
         {stages.map((stage) => {
           const Icon = STOCK_IMAGE_STAGE_ICONS[stage.stage];
           const found = stage.ready > 0;

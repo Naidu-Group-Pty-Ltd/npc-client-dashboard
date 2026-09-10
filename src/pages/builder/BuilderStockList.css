@@ -14,6 +14,9 @@
   }
 
   .builder-stock-list-page {
+    /* Set this to url('/path/to/an-approved-existing-photo') when a tracked
+       architectural photograph is supplied. `none` avoids a broken request. */
+    --builder-stock-list-hero-image: none;
     gap: clamp(1.125rem, 1.35vw, 1.5rem);
   }
 
@@ -26,7 +29,7 @@
     background-image:
       linear-gradient(90deg, hsl(var(--background)) 0%, hsl(var(--background) / 0.98) 35%, hsl(var(--background) / 0.76) 53%, hsl(var(--background) / 0.16) 76%),
       linear-gradient(180deg, hsl(var(--primary) / 0.12), hsl(var(--background) / 0.26)),
-      url('/images/builder/stock-list-architecture.svg');
+      var(--builder-stock-list-hero-image);
     background-position: center, center, right center;
     background-repeat: no-repeat;
     background-size: cover, cover, auto 100%;
@@ -68,7 +71,8 @@
 
   .builder-stock-list-page > .builder-portal-page-header h1 {
     max-width: 13ch;
-    font-size: clamp(2.3rem, 3.2vw, 3.35rem);
+    font-size: clamp(2.3rem, 2.65vw, 2.75rem);
+    font-weight: 700;
     line-height: 1;
     letter-spacing: -0.045em;
     text-wrap: balance;
@@ -86,6 +90,24 @@
     min-height: 2.75rem;
     padding-inline: 1.15rem;
     box-shadow: 0 0.75rem 2rem -1rem hsl(var(--primary) / 0.6);
+  }
+
+  .builder-stock-list-page > .builder-portal-page-header > div > div:last-child {
+    padding: 0.35rem;
+    border: 1px solid hsl(var(--primary) / 0.14);
+    border-radius: var(--radius-lg);
+    background-color: hsl(var(--background) / 0.34);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.05);
+  }
+
+  .builder-stock-list-page .builder-stock-list-hero-action:first-child {
+    border-color: hsl(var(--foreground) / 0.2);
+    background-color: hsl(var(--background) / 0.48);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.06);
+  }
+
+  .builder-stock-list-page .builder-stock-list-hero-action:last-child {
+    padding-inline: 1.35rem;
   }
 
   .builder-stock-list-metrics {
@@ -154,7 +176,7 @@
   .builder-stock-list-metric-value {
     margin-top: 0.22rem;
     color: hsl(var(--foreground));
-    font-size: clamp(1.9rem, 2.5vw, 2.4rem);
+    font-size: clamp(1.8rem, 2.15vw, 2rem);
     font-weight: 720;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.045em;
@@ -327,6 +349,60 @@
     background-color: hsl(var(--background) / 0.38);
   }
 
+  .builder-stock-list-toolbar input,
+  .builder-stock-list-toolbar [role='combobox'] {
+    border-color: transparent;
+    background-color: hsl(var(--surface-3) / 0.42);
+  }
+
+  .builder-stock-list-toolbar input:focus-visible,
+  .builder-stock-list-toolbar [role='combobox']:focus-visible,
+  .builder-stock-list-table td [role='combobox']:focus-visible {
+    position: relative;
+    z-index: 2;
+    border-color: hsl(var(--primary) / 0.62);
+    box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.3), 0 0 0 3px hsl(var(--primary) / 0.13);
+  }
+
+  .builder-stock-list-configuration li {
+    min-height: 1.7rem;
+    border-color: hsl(var(--primary) / 0.16);
+    background-color: hsl(var(--primary) / 0.055);
+    box-shadow: inset 0 1px 0 hsl(var(--foreground) / 0.045);
+  }
+
+  .builder-stock-list-configuration svg {
+    color: hsl(var(--foreground) / 0.62);
+  }
+
+  .builder-stock-list-property > p:first-child {
+    color: hsl(var(--foreground));
+    font-weight: 650;
+  }
+
+  .builder-stock-list-property > p:last-child {
+    color: hsl(var(--foreground) / 0.56);
+  }
+
+  .builder-stock-list-price > p:first-child {
+    color: hsl(var(--foreground));
+    font-weight: 720;
+  }
+
+  .builder-stock-list-images > span:first-child {
+    min-height: 1.45rem;
+    padding-inline: 0.45rem;
+  }
+
+  .builder-stock-list-images > button {
+    min-height: 1.8rem;
+    color: hsl(var(--foreground) / 0.7);
+  }
+
+  .builder-stock-list-image-stages {
+    opacity: 0.68;
+  }
+
   .builder-stock-list-cards {
     padding-top: 0.9rem;
   }
@@ -389,7 +465,7 @@
       background-image:
         linear-gradient(180deg, hsl(var(--background) / 0.84) 0%, hsl(var(--background) / 0.94) 62%, hsl(var(--background)) 100%),
         linear-gradient(180deg, hsl(var(--primary) / 0.08), transparent),
-        url('/images/builder/stock-list-architecture.svg');
+        var(--builder-stock-list-hero-image);
       background-position: center, center, 62% center;
       background-size: cover, cover, auto 100%;
     }

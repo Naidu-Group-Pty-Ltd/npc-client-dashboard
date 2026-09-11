@@ -92,9 +92,52 @@ export function dimensionWasScored(raw: unknown): boolean {
   return !(weight !== undefined && weight <= 0);
 }
 
-/** The dimensions that actually carried data, in stored order. */
+/**
+ * Whether this score's own run authorised what it is about to be asked for.
+ *
+ * These read the stamp the scoring service wrote (`policy.*`) rather than
+ * re-deriving the decision from the authority rules. Two reasons. The stamp
+ * records what THAT run decided, and re-deriving it later is how a stored
+ * result and a renderer come to disagree. And the investment composers may not
+ * import from `market/` — a boundary `investmentSourceOfTruth.spec.ts`
+ * enforces — which is the right boundary: a renderer consumes a decision, it
+ * does not participate in making one.
+ *
+ * **Absent means historical.** A score issued before the policy carries no
+ * stamp and renders exactly as it always did; withholding there would rewrite
+ * what a client was already sent.
+ */
+function scorePolicy(score: Record<string, unknown>): Record<string, unknown> | null {
+  return isRecord(score.policy) ? score.policy : null;
+}
+
+function dimensionScoresMayBeShown(score: Record<string, unknown>): boolean {
+  const policy = scorePolicy(score);
+  return policy === null || policy.dimensionScoresAuthoritative !== false;
+}
+
+function overallGradeMayBeShown(score: Record<string, unknown>): boolean {
+  const policy = scorePolicy(score);
+  return policy === null || policy.gradeIssued !== false;
+}
+
+/**
+ * The dimensions that actually carried data, in stored order.
+ *
+ * Empty when the score's authority may not publish dimension scores. A
+ * dimension score is an ASSESSMENT produced by a methodology, and a new report
+ * scored under `unavailable` has no authorised methodology — so presenting
+ * V1's per-dimension numbers there would be publishing a legacy assessment
+ * under the current product's name. A legacy snapshot keeps its own, because
+ * that is what the client was sent.
+ *
+ * This says nothing about deterministic metrics: a gross yield percentage is a
+ * calculation over verified inputs, it comes from the finance block rather than
+ * from here, and it is published whenever it is supported.
+ */
 function breakdownEntries(score: unknown): BreakdownEntry[] {
   if (!isRecord(score) || !isRecord(score.breakdown)) return [];
+  if (!dimensionScoresMayBeShown(score)) return [];
   const out: BreakdownEntry[] = [];
   for (const [key, raw] of Object.entries(score.breakdown)) {
     if (!isRecord(raw)) continue;
@@ -113,6 +156,8 @@ function breakdownEntries(score: unknown): BreakdownEntry[] {
  */
 export function gradedLine(score: unknown): string | undefined {
   if (!isRecord(score)) return undefined;
+  // An unauthorised engine states no verdict, whatever it computed.
+  if (!overallGradeMayBeShown(score)) return undefined;
   const grade = str(score.grade);
   const total = num(score.totalScore);
   if (!grade || total === undefined) return undefined;

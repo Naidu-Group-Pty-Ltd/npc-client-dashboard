@@ -27,7 +27,7 @@ import {
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
 import {
-  cardPictureNeedsGround, homeSizeDisplay,
+  cardPictureFit, homeSizeDisplay, type CardPictureFit,
   primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
@@ -411,17 +411,20 @@ function StockCardImage({ image, onSupply, supplying }: {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [broken, setBroken] = useState(false);
   /*
-   * Whether this picture leaves enough of the box bare to be worth filling —
-   * ASKED OF THE PICTURE THAT LOADED, never predicted from the record. The
-   * stored `source_width`/`source_height` describe the PAGE for a page-crop
-   * extraction rather than the crop that was kept, so the record is the wrong
-   * witness; `naturalWidth` is the thing actually being drawn. Null until it
-   * loads, which is also the answer for a picture that never does.
+   * HOW THIS PICTURE SITS IN THE FRAME — ASKED OF THE PICTURE THAT LOADED.
+   *
+   * The stored `source_width`/`source_height` describe the PAGE for a
+   * page-crop extraction rather than the crop that was kept, so the record is
+   * the wrong witness; `naturalWidth` is the thing actually being drawn.
+   *
+   * `contain` until it loads, which is also the answer for a picture that
+   * never does: showing a picture whole is the choice that cannot cut a house
+   * in half, so the unmeasured case takes the safe one.
    */
-  const [needsGround, setNeedsGround] = useState(false);
+  const [fit, setFit] = useState<CardPictureFit>('contain');
 
   const measure = useCallback((drawn: HTMLImageElement) => {
-    setNeedsGround(cardPictureNeedsGround(drawn.naturalWidth, drawn.naturalHeight));
+    setFit(cardPictureFit(drawn.naturalWidth, drawn.naturalHeight));
   }, []);
 
   /*
@@ -440,7 +443,7 @@ function StockCardImage({ image, onSupply, supplying }: {
     let alive = true;
     setBroken(false);
     setSignedUrl(null);
-    setNeedsGround(false);
+    setFit('contain');
     if (!image) return () => { alive = false; };
     if (image.external_url && !image.storage_path) {
       setSignedUrl(image.external_url);
@@ -455,7 +458,7 @@ function StockCardImage({ image, onSupply, supplying }: {
   if (!image) {
     return (
       <div
-        className="flex aspect-[16/10] w-full items-center justify-center border-b border-border/60 bg-muted/30"
+        className="flex aspect-[16/9] w-full items-center justify-center border-b border-border/60 bg-muted/30"
       >
         <div className="text-center">
           <ImageIcon className="mx-auto h-6 w-6 text-muted-foreground/50" aria-hidden />
@@ -495,80 +498,77 @@ function StockCardImage({ image, onSupply, supplying }: {
   const fallback = provenance === 'web_sourced' || provenance === 'street_view';
 
   /**
-   * THE WHOLE PICTURE THE ELECTION CHOSE, NEVER A SLICE OF IT.
+   * THE PICTURE FILLS THE FRAME, AND THE FRAME IS THE SHAPE A RENDER IS.
    *
-   * This was a 160px strip with `object-cover`, and what reaches it is a
-   * PDF extract whose shape nobody controls. Measured on the 10 September
-   * 2026 list: the Russula Street package is a page crop 2481 x 1208 (2.05
-   * wide), the Cloverton render is an embedded raster 2500 x 2800 — TALLER
-   * than it is wide. `object-cover` fills a 2.8:1 strip from a 0.89:1 image
-   * by discarding 68% of it and keeping the middle band, which on a facade
-   * render is sky and a roofline. Two of three cards on screen showed no
-   * house at all.
+   * This began as a 160px strip with `object-cover`, which discarded 68% of a
+   * portrait render and kept a band of sky. The repair was to CONTAIN every
+   * picture in a 16:10 frame — nothing cropped, ever — and that bought the
+   * defect that replaced it: a grey band above and below almost every card,
+   * with the provenance badge floating in it, reported as looking broken.
    *
-   * A card that hides the house is the same defect as a card that leads with
-   * a floor plan: the ranking did its work and the frame threw it away. So
-   * the image is CONTAINED — every elected picture is shown whole, and what
-   * is left over is ground rather than a crop.
+   * Both were the same mistake, which is treating the frame and the fit as
+   * one decision. Measured over the 94 properties live on 11 September 2026,
+   * SIXTY-SIX carry a 16:9 render — the modal shape by a factor of six, and
+   * the shape the builders' rendering software emits. Sixty-four are 16:9 to
+   * the bit and fill the frame with nothing cropped at all; the other two
+   * are 1.7780 and lose a hundredth of a percent.
    *
-   * THE BOX IS SIZED FROM THE WHOLE CORPUS, NOT FROM THE WORST CASE. Sizing
-   * it 4:3 fixed the crop and bought a second defect: 4:3 is taller than
-   * almost everything that arrives, so nearly every card drew a band of empty
-   * ground above and below its photograph, with the provenance badge floating
-   * in it. Measured over the twenty-seven cards live on 11 September 2026:
+   * For the rest, `cardPictureFit` decides on the AXIS the crop would run.
+   * Taller than the frame and covering discards sky and foreground planting;
+   * that was checked by eye against the three worst live images, where a 43%
+   * crop removed nothing but sky and shrubs and improved the composition. So
+   * the vertical allowance is generous. Wider than the frame and covering
+   * discards the sides, which is where a house extends and where a brochure
+   * banner can put the building; that allowance is tight, and past it the
+   * picture is contained whole with its own ground behind it.
    *
-   *     1.600  11 cards   embedded raster, the modal shape
-   *     1.778   7 cards   embedded raster
-   *     2.054   3 cards   page crop
-   *     1.416   2 cards   embedded raster
-   *     3.584   2 cards   page crop
-   *     0.893   2 cards   embedded raster, the only portrait left
-   *
-   * Twenty-three of twenty-seven are landscape and the median is 1.6, so
-   * 16:10 is the box that leaves no band at all on the 41% that are exactly
-   * that shape and a tenth of one on the 26% at 16:9. The two portraits and
-   * the two 3.58 strips still letterbox, and still show every pixel, which is
-   * the rule this box exists to keep.
+   * On the live list every one of the 94 is 1.778 or taller-than-wide, so all
+   * 94 fill the frame and not one is contained. The ground below is kept for
+   * the shapes that will arrive tomorrow.
    */
   return (
     <div
-      className="relative aspect-[16/10] w-full overflow-hidden border-b border-border/60 bg-muted/30"
+      className="relative aspect-[16/9] w-full overflow-hidden border-b border-border/60 bg-muted/30"
     >
       {/*
-        THE GROUND UNDER A PICTURE THAT DOES NOT FILL THE BOX.
-        A contained picture of any shape but 16:10 leaves ground, and on the
-        two 0.893 portraits that is 44% of the card's picture area — read, and
-        reported, as a hole in the card rather than as a frame. Filling it
-        with the picture's own surround, blurred and dimmed, makes the card one
-        image again WITHOUT cropping the photograph, which is the whole reason
-        the box contains rather than covers.
+        THE GROUND UNDER A PICTURE THAT IS SHOWN WHOLE.
+
+        Reached only where `cardPictureFit` said `contain` — a portrait taller
+        than 1:1.25, or a banner wider than 2.22:1, neither of which is on the
+        live list today. Nothing there is drawn over a bare card: the surround
+        is the picture's own, blurred and lifted, so a contained photograph
+        sits on a field of its own colour rather than in a grey slot. The
+        scrim is light (30%, down from 45%) because the fault it used to have
+        was washing that colour out into exactly the grey it was meant to
+        replace.
 
         It is the same `src`, so it is already decoded and costs no request,
-        and it is mounted only once the picture has been MEASURED and found to
-        band — the eleven cards at 1.600 never draw it, and nor does a card
-        whose picture never loaded. This is a
-        `filter`, not a `backdrop-filter`: the material rules in `glass.css`
-        forbid a backdrop filter on anything that repeats, and a grid of
-        twenty-four cards repeats.
+        and it is mounted only once the picture has been MEASURED — never for
+        one that failed to load, where a blur of nothing is a grey slab.
+
+        This is a `filter`, not a `backdrop-filter`: the material rules in
+        `glass.css` forbid a backdrop filter on anything that repeats, and a
+        grid of twenty-four cards repeats.
       */}
-      {signedUrl && !broken && needsGround ? (
+      {signedUrl && !broken && fit === 'contain' ? (
         <img
           src={signedUrl}
           alt=""
           aria-hidden
-          className="absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-2xl"
+          className="absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-3xl saturate-150"
           loading="lazy"
           referrerPolicy="no-referrer"
         />
       ) : null}
-      {signedUrl && !broken && needsGround ? (
-        <div className="absolute inset-0 z-0 bg-background/45" aria-hidden />
+      {signedUrl && !broken && fit === 'contain' ? (
+        <div className="absolute inset-0 z-0 bg-background/30" aria-hidden />
       ) : null}
       {signedUrl && !broken ? (
         <img
           src={signedUrl}
           alt={STOCK_IMAGE_STAGE_LABELS[image.source_stage]}
-          className="relative z-10 h-full w-full object-contain"
+          className={cn('relative z-10 h-full w-full',
+            fit === 'cover' ? 'object-cover' : 'object-contain')}
           loading="lazy"
           referrerPolicy="no-referrer"
           ref={measureOnMount}

@@ -322,41 +322,81 @@ export const STOCK_SELECTION_STATUS_LABELS: Record<StockSelectionStatus, string>
 // ---------------------------------------------------------------------------
 
 /**
- * THE PICTURE BOX'S SHAPE, AS A NUMBER THE ARITHMETIC CAN USE.
+ * THE PICTURE FRAME'S SHAPE, AS A NUMBER THE ARITHMETIC CAN USE.
  *
- * `BuilderStockTab` draws the box with the Tailwind literal `aspect-[16/10]`,
+ * `BuilderStockTab` draws the frame with the Tailwind literal `aspect-[16/9]`,
  * which cannot be composed from a variable without defeating the class
  * extractor — so the two are written separately and pinned together by
  * `builderStockCardPicture.test.ts` rather than trusted to stay in step.
+ *
+ * SIXTEEN BY NINE BECAUSE THAT IS WHAT A FACADE RENDER IS. Measured over the
+ * 94 properties live on 11 September 2026:
+ *
+ *     1.778   66 cards   the modal shape, by a factor of six
+ *                        (64 exactly 16:9, 2 at 1.7780)
+ *     1.600   11 cards
+ *     1.258    7 cards
+ *     1.400    3 cards
+ *     1.019    3 cards
+ *     1.416    2 cards
+ *     1.717    2 cards
+ *
+ * The previous frame was 16:10, fitted to a corpus of twenty-seven that a
+ * later stock list replaced entirely — which is the lesson: a frame fitted to
+ * one upload is wrong for the next. 16:9 is not fitted, it is what the
+ * builders' rendering software emits, and 70% of the live list matches it
+ * exactly.
  */
-export const CARD_PICTURE_ASPECT = 16 / 10;
+export const CARD_PICTURE_ASPECT = 16 / 9;
 
 /**
- * Below this share of the box left bare, the ground is not worth filling.
+ * HOW MUCH MAY BE CROPPED DEPENDS ON WHICH WAY THE CROP RUNS.
  *
- * An elected picture is contained rather than cropped, so anything that is
- * not exactly the box's shape leaves ground. Measured over the 27 cards live
- * on 11 September 2026, that ranges from nothing to more than half the area:
+ * This is the rule, and it is about what a facade photograph IS rather than
+ * about a percentage fitted to one upload. A picture TALLER than the frame is
+ * cropped top and bottom, and on a facade render that is sky and foreground
+ * planting — verified by eye on the three worst-case live images, where a
+ * 43% crop removed nothing but sky and shrubs and improved the composition.
+ * A picture WIDER than the frame is cropped left and right, which is where a
+ * house extends, and a page crop of a brochure banner can put the building
+ * anywhere along it.
  *
- *     1.600  11 cards    0.0%   fills the box exactly
- *     1.778   7 cards   10.0%
- *     1.416   2 cards   11.5%
- *     2.054   3 cards   22.1%   page crop
- *     0.893   2 cards   44.2%   portrait render
- *     3.584   2 cards   55.4%   page crop, a strip
- *
- * A tenth of the box is a sliver either side and reads as a border; near half
- * of it reads as a hole in the card, which is what was reported. The floor is
- * set under the 1.778 group so the eleven cards that already fill the box pay
- * nothing at all, and the sixteen that do not get their ground filled.
+ * So the vertical allowance is generous and the horizontal one is tight. Past
+ * either, the picture is contained whole rather than cut.
  */
-export const CARD_PICTURE_GROUND_FLOOR = 0.08;
+export const CARD_PICTURE_MAX_VERTICAL_CROP = 0.5;
+export const CARD_PICTURE_MAX_HORIZONTAL_CROP = 0.2;
+
+export type CardPictureFit = 'cover' | 'contain';
 
 /**
- * How much of the box a picture of this shape would leave bare, contained.
+ * How a picture of this shape should sit in the frame.
  *
- * Symmetric in the two ratios, because a portrait in a landscape box and a
- * strip in one are the same problem seen from either side.
+ * A picture whose dimensions cannot be read answers `contain`: showing it
+ * whole is the choice that cannot cut a house in half, so the unmeasured case
+ * takes the safe one.
+ */
+export function cardPictureFit(width: number, height: number): CardPictureFit {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return 'contain';
+  if (width <= 0 || height <= 0) return 'contain';
+  const ratio = width / height;
+  if (ratio === CARD_PICTURE_ASPECT) return 'cover';
+  // Taller than the frame: covering discards HEIGHT — sky and planting.
+  if (ratio < CARD_PICTURE_ASPECT) {
+    return 1 - ratio / CARD_PICTURE_ASPECT <= CARD_PICTURE_MAX_VERTICAL_CROP
+      ? 'cover' : 'contain';
+  }
+  // Wider than the frame: covering discards WIDTH — where a house extends.
+  return 1 - CARD_PICTURE_ASPECT / ratio <= CARD_PICTURE_MAX_HORIZONTAL_CROP
+    ? 'cover' : 'contain';
+}
+
+/**
+ * What share of the frame a CONTAINED picture leaves bare.
+ *
+ * Only meaningful where `cardPictureFit` said `contain`; a covered picture
+ * leaves none. The ground is drawn whenever a contained picture leaves any
+ * worth filling.
  */
 export function cardPictureGroundShare(width: number, height: number): number {
   if (!Number.isFinite(width) || !Number.isFinite(height)) return 0;
@@ -365,15 +405,10 @@ export function cardPictureGroundShare(width: number, height: number): number {
   return 1 - Math.min(ratio, CARD_PICTURE_ASPECT) / Math.max(ratio, CARD_PICTURE_ASPECT);
 }
 
-/**
- * Whether this picture's ground is worth filling.
- *
- * A picture whose dimensions cannot be read answers NO: the fill is a
- * cosmetic improvement on a sound card, so the unmeasured case keeps the
- * plain box rather than painting a blur nobody asked for.
- */
+/** Whether a contained picture needs ground drawn behind it. */
 export function cardPictureNeedsGround(width: number, height: number): boolean {
-  return cardPictureGroundShare(width, height) >= CARD_PICTURE_GROUND_FLOOR;
+  return cardPictureFit(width, height) === 'contain'
+    && cardPictureGroundShare(width, height) > 0;
 }
 
 /*

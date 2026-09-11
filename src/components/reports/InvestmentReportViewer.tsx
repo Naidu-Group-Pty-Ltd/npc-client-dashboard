@@ -6,6 +6,7 @@ import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { OVERALL_GRADE_UNAVAILABLE } from '@/lib/reports/market/scoringInputPolicy.pure';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
@@ -52,6 +53,20 @@ interface InvestmentReportViewerProps {
   onReportUpdate?: () => void;
   onOpenOverride?: () => void;
   onTierSwitch?: (newReportId: string, newTier: ReportTier) => void;
+}
+
+/**
+ * Did this run publish an overall grade?
+ *
+ * New scores carry the answer (`policy.gradeIssued`) because whether a grade
+ * was published is a fact about that run — re-deriving it is how two surfaces
+ * come to disagree. Scores issued before the policy carry no stamp, so they
+ * fall back to the reading this page has always used and render exactly as
+ * they always did: historical reports are preserved, not reinterpreted.
+ */
+function gradeWasIssued(score: { policy?: { gradeIssued?: boolean }; coverage?: { dataInsufficient?: boolean }; totalScore?: number | null }): boolean {
+  if (typeof score?.policy?.gradeIssued === 'boolean') return score.policy.gradeIssued;
+  return !(score?.coverage?.dataInsufficient || score?.totalScore == null);
 }
 
 export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate, onOpenOverride, onTierSwitch }: InvestmentReportViewerProps) {
@@ -432,7 +447,16 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                 </div>
 
                 {/* Investment Score Display - all tiers */}
-                {report.investment_score && (
+                {report.investment_score && !gradeWasIssued(report.investment_score) && (
+                  <div className="mt-4 p-4 rounded-lg bg-muted/50 border">
+                    <span className="text-sm font-semibold">{OVERALL_GRADE_UNAVAILABLE.heading}</span>
+                    <p className="text-sm text-foreground mt-1">{OVERALL_GRADE_UNAVAILABLE.value}</p>
+                    <p className="text-xs text-muted-foreground mt-2 max-w-prose">
+                      {OVERALL_GRADE_UNAVAILABLE.explanation}
+                    </p>
+                  </div>
+                )}
+                {report.investment_score && gradeWasIssued(report.investment_score) && (
                   <div className="mt-4 flex items-center justify-between p-4 rounded-lg bg-muted/50 border">
                     <div className="flex items-center gap-4">
                       <div className={`w-14 h-14 rounded-xl font-bold text-xl flex items-center justify-center shadow-sm ${

@@ -1,25 +1,34 @@
 /**
- * Builder stock — the ground under a card's picture, and the fact in its title.
+ * Builder stock — how a photograph sits in a card, and the fact in its title.
  *
- * MEASURED, 11 SEPTEMBER 2026, over every card live on the marketplace. The
- * box is one fixed 16:10 shape and the elected pictures are not:
+ * TWO DEFECTS, ONE MISTAKE. The card began as a 160px strip with
+ * `object-cover`, which discarded 68% of a portrait render and kept a band of
+ * sky — no house. The repair was to CONTAIN every picture in a 16:10 frame,
+ * nothing cropped ever, and that bought the defect that replaced it: a grey
+ * band above and below almost every card, reported as looking broken.
  *
- *     1.600  11 cards    0.0% bare   fills the box exactly
- *     1.778   7 cards   10.0%
- *     1.416   2 cards   11.5%
- *     2.054   3 cards   22.1%        page crop
- *     0.893   2 cards   44.2%        portrait render
- *     3.584   2 cards   55.4%        page crop, a strip
+ * Both treated the frame and the fit as one decision. MEASURED over the 94
+ * properties live on 11 September 2026:
  *
- * The two portraits were reported as looking "funny" — 44% of the card's
- * picture area was bare ground with the provenance badge floating in it. The
- * picture is CONTAINED and must stay contained, because covering the box is
- * what threw the house away the time before; so the ground is filled instead.
+ *     1.778   66 cards   the modal shape, by a factor of six
+ *                        (64 exactly 16:9, 2 at 1.7780)
+ *     1.600   11 cards
+ *     1.258    7 cards
+ *     1.400    3 cards
+ *     1.019    3 cards
+ *     1.416    2 cards
+ *     1.717    2 cards
  *
- * The title half is the same list disagreeing with itself: where two packages
- * share a lot the source says so in the address (`[3 Bed · 140 m²]`), and
- * printed verbatim that put the bed count on a card that already draws it as
- * an icon and an unlabelled `140 m²` two lines above `286 m² land`.
+ * The 16:10 frame had been fitted to a corpus of twenty-seven that a later
+ * stock list replaced entirely — the lesson being that a frame fitted to one
+ * upload is wrong for the next. 16:9 is not fitted: it is what the builders'
+ * rendering software emits, and 70% of the live list matches it exactly.
+ *
+ * The fit then turns on WHICH WAY the crop would run. Taller than the frame
+ * and covering takes sky and foreground planting; checked by eye against the
+ * three worst live images, where a 43% crop removed nothing but sky and
+ * shrubs. Wider than the frame and covering takes the sides, which is where a
+ * house extends. Generous allowance one way, tight the other.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,84 +36,115 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  CARD_PICTURE_ASPECT, CARD_PICTURE_GROUND_FLOOR,
-  cardPictureGroundShare, cardPictureNeedsGround,
+  CARD_PICTURE_ASPECT, CARD_PICTURE_MAX_HORIZONTAL_CROP, CARD_PICTURE_MAX_VERTICAL_CROP,
+  cardPictureFit, cardPictureGroundShare, cardPictureNeedsGround,
   describesConfigurationOnly, homeSizeDisplay, homeSizeLabel, sizeFromConfiguration,
   stockItemTitle,
 } from '../builderStock';
 
-/** The shapes actually live, with the share of the box each leaves bare. */
-const LIVE_SHAPES: Array<{ w: number; h: number; cards: number; bare: number }> = [
-  { w: 3000, h: 1875, cards: 6, bare: 0 },
-  { w: 2000, h: 1250, cards: 3, bare: 0 },
-  { w: 1000, h: 625, cards: 2, bare: 0 },
-  { w: 1700, h: 956, cards: 7, bare: 0.1 },
-  { w: 480, h: 339, cards: 2, bare: 0.115 },
-  { w: 2481, h: 1208, cards: 3, bare: 0.221 },
-  { w: 2500, h: 2800, cards: 2, bare: 0.442 },
-  { w: 2480, h: 692, cards: 2, bare: 0.554 },
+/** Every shape live on the marketplace, with how many cards carry it. */
+const LIVE_SHAPES: Array<{ w: number; h: number; cards: number }> = [
+  { w: 1920, h: 1080, cards: 48 },
+  { w: 1280, h: 720, cards: 16 },
+  { w: 3556, h: 2000, cards: 2 },
+  { w: 3000, h: 1875, cards: 6 },
+  { w: 2000, h: 1250, cards: 3 },
+  { w: 1000, h: 625, cards: 2 },
+  { w: 1359, h: 1080, cards: 7 },
+  { w: 1249, h: 892, cards: 3 },
+  { w: 1078, h: 1058, cards: 3 },
+  { w: 480, h: 339, cards: 2 },
+  { w: 881, h: 513, cards: 2 },
 ];
 
-describe('cardPictureGroundShare', () => {
-  it('reproduces the measured share for every shape live on the marketplace', () => {
+describe('cardPictureFit — every live card fills its frame', () => {
+  it('leaves not one of the 94 with a band', () => {
+    let filling = 0;
     for (const shape of LIVE_SHAPES) {
-      expect(cardPictureGroundShare(shape.w, shape.h)).toBeCloseTo(shape.bare, 3);
+      expect(cardPictureFit(shape.w, shape.h)).toBe('cover');
+      filling += shape.cards;
     }
+    expect(filling).toBe(94);
   });
 
-  it('is symmetric: a portrait and a strip are one problem seen from either side', () => {
-    // A shape at ratio r leaves what the shape at BOX² / r leaves — so the
-    // 0.893 portrait and the 2.866 strip are the same 44% of bare ground.
-    const mirror = (ratio: number) => (CARD_PICTURE_ASPECT * CARD_PICTURE_ASPECT) / ratio;
-    for (const ratio of [0.625, 0.893, 1.416, 2.054, 3.584]) {
-      expect(cardPictureGroundShare(mirror(ratio) * 1000, 1000))
-        .toBeCloseTo(cardPictureGroundShare(ratio * 1000, 1000), 6);
-    }
+  it('crops nothing at all from the sixty-four that are exactly 16:9', () => {
+    const exact = LIVE_SHAPES.filter((s) => s.w / s.h === CARD_PICTURE_ASPECT);
+    expect(exact.reduce((n, s) => n + s.cards, 0)).toBe(64);
+    for (const s of exact) expect(cardPictureGroundShare(s.w, s.h)).toBe(0);
   });
 
-  it('reads zero for a picture whose dimensions cannot be measured', () => {
-    for (const [w, h] of [[0, 0], [1600, 0], [0, 1000], [-4, 3], [NaN, 10], [10, Infinity]]) {
-      expect(cardPictureGroundShare(w, h)).toBe(0);
+  it('crops a hundredth of a percent from the pair that is 1.7780', () => {
+    // 3556×2000 is 16:9 to the eye and not to the bit. It covers like the
+    // rest; the point is that the fit is measured, not matched.
+    const near = LIVE_SHAPES.find((s) => s.w === 3556)!;
+    expect(near.w / near.h).not.toBe(CARD_PICTURE_ASPECT);
+    expect(cardPictureGroundShare(near.w, near.h)).toBeLessThan(0.001);
+    expect(cardPictureFit(near.w, near.h)).toBe('cover');
+  });
+});
+
+describe('cardPictureFit — the crop axis is the rule', () => {
+  /*
+   * A picture taller than the frame loses sky and planting; one wider than it
+   * loses the sides, where a house extends and where a brochure banner can put
+   * the building. The allowance differs by an order of magnitude for that
+   * reason alone.
+   */
+  it('is generous downward, where the crop takes sky and ground', () => {
+    expect(cardPictureFit(1019, 1000)).toBe('cover');   // 42.7% of height
+    expect(cardPictureFit(893, 1000)).toBe('cover');    // 49.8%, just inside
+    expect(cardPictureFit(800, 1000)).toBe('contain');  // 55%, a real portrait
+    expect(cardPictureFit(600, 1000)).toBe('contain');  // a brochure page
+  });
+
+  it('is tight sideways, where the crop takes the house', () => {
+    // The edge sits at 16/9 ÷ 0.8 = 2.2222…
+    expect(cardPictureFit(2054, 1000)).toBe('cover');   // 13.4% of width
+    expect(cardPictureFit(2222, 1000)).toBe('cover');   // 19.99%, just inside
+    expect(cardPictureFit(2223, 1000)).toBe('contain'); // 20.02%, just outside
+    expect(cardPictureFit(2300, 1000)).toBe('contain'); // 22.7%
+    expect(cardPictureFit(3584, 1000)).toBe('contain'); // 50.4%, a strip
+  });
+
+  it('allows far more vertically than horizontally, deliberately', () => {
+    expect(CARD_PICTURE_MAX_VERTICAL_CROP)
+      .toBeGreaterThan(CARD_PICTURE_MAX_HORIZONTAL_CROP);
+  });
+
+  it('contains a picture it could not measure, because that cannot cut a house', () => {
+    for (const [w, h] of [[0, 0], [1600, 0], [0, 900], [-4, 3], [NaN, 10], [10, Infinity]]) {
+      expect(cardPictureFit(w, h)).toBe('contain');
     }
   });
 });
 
 describe('cardPictureNeedsGround', () => {
-  it('leaves the eleven cards that already fill the box alone', () => {
-    const filling = LIVE_SHAPES.filter((shape) => shape.bare === 0);
-    expect(filling.reduce((sum, shape) => sum + shape.cards, 0)).toBe(11);
-    for (const shape of filling) expect(cardPictureNeedsGround(shape.w, shape.h)).toBe(false);
+  it('draws no ground behind a picture that fills the frame', () => {
+    for (const shape of LIVE_SHAPES) {
+      expect(cardPictureNeedsGround(shape.w, shape.h)).toBe(false);
+    }
   });
 
-  it('fills the ground on the sixteen that do not', () => {
-    const banding = LIVE_SHAPES.filter((shape) => shape.bare > 0);
-    expect(banding.reduce((sum, shape) => sum + shape.cards, 0)).toBe(16);
-    for (const shape of banding) expect(cardPictureNeedsGround(shape.w, shape.h)).toBe(true);
+  it('draws it behind the shapes that are contained', () => {
+    expect(cardPictureNeedsGround(600, 1000)).toBe(true);
+    expect(cardPictureNeedsGround(3584, 1000)).toBe(true);
   });
 
-  it('keeps the plain box for a picture it could not measure', () => {
-    // Never a blur nobody asked for: the fill improves a sound card, so the
-    // unmeasured case has to fail to the card as it was.
+  it('draws none for a picture it could not measure', () => {
+    // Contained, but there is no picture to blur — a blur of nothing is a
+    // grey slab, which is the defect this whole change removes.
     expect(cardPictureNeedsGround(0, 0)).toBe(false);
     expect(cardPictureNeedsGround(NaN, NaN)).toBe(false);
   });
-
-  it('sets the floor under the 1.778 group and above nothing at all', () => {
-    expect(CARD_PICTURE_GROUND_FLOOR).toBeLessThanOrEqual(0.1);
-    expect(CARD_PICTURE_GROUND_FLOOR).toBeGreaterThan(0);
-  });
 });
 
-describe('the box the arithmetic assumes is the box the card draws', () => {
-  /*
-   * `aspect-[16/10]` cannot be composed from a variable without defeating
-   * Tailwind's class extractor, so the number and the class are written
-   * separately. This is the only thing holding them together.
-   */
+describe('the frame the arithmetic assumes is the frame the card draws', () => {
+  const component = () => readFileSync(
+    join(process.cwd(), 'src/components/listings/BuilderStockTab.tsx'), 'utf8',
+  );
+
   it('pins CARD_PICTURE_ASPECT to the class BuilderStockTab renders', () => {
-    const source = readFileSync(
-      join(process.cwd(), 'src/components/listings/BuilderStockTab.tsx'), 'utf8',
-    );
+    const source = component();
     const classes = source.match(/aspect-\[(\d+)\/(\d+)\]/g) ?? [];
     expect(classes.length).toBeGreaterThan(0);
     for (const drawn of classes) {
@@ -113,28 +153,18 @@ describe('the box the arithmetic assumes is the box the card draws', () => {
     }
   });
 
-  it('unmounts the ground with the picture it belongs to', () => {
-    /*
-     * The dim layer and the blurred picture under it are one treatment. Gated
-     * separately, a picture that BROKE after being measured took the blur away
-     * and left the scrim dimming an empty box.
-     */
-    const source = readFileSync(
-      join(process.cwd(), 'src/components/listings/BuilderStockTab.tsx'), 'utf8',
-    );
-    const guard = 'signedUrl && !broken && needsGround';
-    expect(source.split(guard).length - 1).toBe(2);
+  it('lets the measured fit decide, never a hardcoded object-fit', () => {
+    const source = component();
+    // The photograph's fit comes from `cardPictureFit`; only the decorative
+    // ground is allowed a fixed `object-cover`, because it must always fill.
+    expect(source).toContain("fit === 'cover' ? 'object-cover' : 'object-contain'");
+    expect(source).toContain('cardPictureFit(drawn.naturalWidth, drawn.naturalHeight)');
   });
 
-  it('keeps the photograph contained, never covered', () => {
-    const source = readFileSync(
-      join(process.cwd(), 'src/components/listings/BuilderStockTab.tsx'), 'utf8',
-    );
-    // The ground layer covers deliberately — it is decorative and must fill.
-    // The photograph itself never may: covering is what cropped the house.
-    const photograph = source.slice(source.indexOf('alt={STOCK_IMAGE_STAGE_LABELS'));
-    expect(photograph.slice(0, 400)).toContain('object-contain');
-    expect(photograph.slice(0, 400)).not.toContain('object-cover');
+  it('unmounts the ground with the picture it belongs to', () => {
+    const source = component();
+    const guard = "signedUrl && !broken && fit === 'contain'";
+    expect(source.split(guard).length - 1).toBe(2);
   });
 });
 

@@ -11,6 +11,7 @@
  * would reject.
  */
 import { addressWithoutLeadingDesignation } from '../../supabase/functions/_shared/builderStock/normalise.pure';
+import { parseBuilderAddressLine } from '../../supabase/functions/_shared/builderStockAddress.pure';
 import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
@@ -312,9 +313,27 @@ export const STOCK_SELECTION_STATUS_LABELS: Record<StockSelectionStatus, string>
 export function stockItemTitle(item: Pick<BuilderStockItem,
   'unit_number' | 'lot_number' | 'address_line' | 'development_name'
   | 'project_name' | 'external_reference'>): string {
+  /*
+   * The column first, then the line. A Notion list has no Lot column — it
+   * states the lot inside the title — and that lot is deliberately not
+   * written to `lot_number`, because the column is half of the duplicate
+   * match key and two packages on one lot would collide there. Reading it
+   * here costs nothing and decides nothing.
+   */
+  const parsed = parseBuilderAddressLine(item.address_line);
+  /*
+   * THE DESIGNATION THE LINE OPENED WITH, not whichever field the parse
+   * happened to fill. `Lot 1 - 13/15 Rose Street` carries BOTH — lot 1 is the
+   * row, and 13 is a unit over street number 15 — and reading the unit made
+   * the two dual-key halves of that address, Lot 1 and Lot 2, render as one
+   * title: `Unit 13, 15 Rose Street`, twice.
+   */
+  const leading = /^\s*(lot|unit)\s*\.?\s*([0-9]+[a-z]?)\b/i.exec(item.address_line ?? '');
   const designation: { word: 'Lot' | 'Unit'; value: string } | null = item.unit_number
     ? { word: 'Unit', value: String(item.unit_number) }
-    : item.lot_number ? { word: 'Lot', value: String(item.lot_number) } : null;
+    : item.lot_number ? { word: 'Lot', value: String(item.lot_number) }
+    : leading ? { word: leading[1].toLowerCase() === 'unit' ? 'Unit' : 'Lot', value: leading[2] }
+    : null;
   const prefix = designation ? `${designation.word} ${designation.value}` : '';
   /*
    * The address without the designation the prefix is about to repeat — the
@@ -325,10 +344,54 @@ export function stockItemTitle(item: Pick<BuilderStockItem,
   const address = designation
     ? addressWithoutLeadingDesignation(item.address_line, designation.word, designation.value)
     : (item.address_line ?? '');
-  const body = address
+
+  /*
+   * AND NOT THE LOCALITY THE CARD PRINTS DIRECTLY UNDERNEATH.
+   *
+   * `stockItemLocality` already renders the suburb, state and postcode on
+   * their own line, so a title carrying them again spends its width twice on
+   * one fact — and the width is finite. Measured on the 10 September 2026
+   * list, `Lot 60941 - Cloverton Estate, Kalkallo VIC 3064 [4 Bed · 154 m²]`
+   * truncated at `[4 B…`, which is where the two packages offered on that one
+   * lot differ; the cards for a 3-bed and a 4-bed house read identically.
+   *
+   * The parts come from `parseBuilderAddressLine`, the same reading the map
+   * and the geocoder take, so what a card calls a property and what a pin is
+   * placed by cannot drift apart.
+   *
+   * ONLY WHERE THE PARSE DID NOT HAVE TO GUESS, for the reason it always
+   * carries: a line opening with a bare number is ambiguous and the parser
+   * resolves it as a lot, so composing from its parts would turn the supplied
+   * `12 Hornsea Street` into `Hornsea Street`. The parts are used where the
+   * line NAMED its lot or a street number was positively identified, and
+   * every other line is titled exactly as it was before.
+   */
+  // `13/15 Rose Street` is one address and stays one: a unit over a street
+  // number says which door, and dropping it names the building instead.
+  const houseNumber = parsed.unitNumber && parsed.streetNumber
+    ? `${parsed.unitNumber}/${parsed.streetNumber}`
+    : parsed.streetNumber;
+  const street = (leading || parsed.streetNumber)
+    ? [houseNumber, parsed.streetName, parsed.streetType]
+      .filter(Boolean).join(' ').trim()
+    : '';
+  const place = street || (leading ? (parsed.estate ?? '') : '');
+
+  const body = place || address
     || item.development_name || item.project_name || item.external_reference || '';
-  if (prefix && body) return `${prefix}, ${body}`;
-  return prefix || body || 'Unnamed property';
+
+  /*
+   * The house, where the line named one. Two packages on one lot are two
+   * different things to sell — different price, different bedrooms, different
+   * brochure — and the design is the only part of the line that says which.
+   */
+  const design = parsed.designName && !body.includes(parsed.designName)
+    ? parsed.designName
+    : '';
+  const titled = design ? `${body} · ${design}` : body;
+
+  if (prefix && titled) return `${prefix}, ${titled}`;
+  return prefix || titled || 'Unnamed property';
 }
 
 export function stockItemLocality(item: Pick<BuilderStockItem,

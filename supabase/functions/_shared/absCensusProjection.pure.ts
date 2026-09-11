@@ -64,6 +64,22 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
 
 const sourceFor = (row: AbsCensusPoaTableRow) => `ABS Census ${row.reference_period} (POA ${row.poa})`;
 
+/**
+ * Does this provenance string have the exact shape `sourceFor` produces?
+ *
+ * Exported beside the producer on purpose. The Client-Safe Gate has to tell a
+ * retrieved Census figure from a generated one, and both spell themselves
+ * "ABS Census 2021" — the generated corpus wrote `ABS Census 2021 estimates`
+ * and several other variants. Only the postal-area form this projection emits
+ * is recognised, and recognition is required rather than assumed: a recogniser
+ * written separately from its producer is how the two come to disagree.
+ */
+export const CENSUS_PROJECTION_SOURCE_RE = /^ABS Census \d{4} \(POA \d{4}\)$/;
+
+export function isCensusProjectionSource(source: unknown): boolean {
+  return typeof source === 'string' && CENSUS_PROJECTION_SOURCE_RE.test(source.trim());
+}
+
 /** Employed ÷ labour force, as a percentage — the rate the label promises. */
 export function employmentRateOfLabourForce(row: AbsCensusPoaTableRow): number | null {
   if (row.employed == null || row.labour_force == null || row.labour_force <= 0) return null;

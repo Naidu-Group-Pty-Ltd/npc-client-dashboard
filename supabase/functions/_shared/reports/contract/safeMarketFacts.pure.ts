@@ -281,6 +281,165 @@ export function safeCashRate(reading: RbaCashRateReading | null): SafeFact<numbe
   });
 }
 
+/** The daily target series and the RBA's own announced-change column. */
+export const CASH_RATE_TARGET_SERIES_ID = 'FIRMMCRTD';
+
+/** The in-force target, as `cashRateTargetOf` derived it from F1. */
+export interface CashRateTargetReading {
+  readonly percent: unknown;
+  readonly effectiveDate: unknown;
+  readonly effectiveLabel: unknown;
+  readonly lastChangedDate: unknown;
+  readonly lastChangedLabel: unknown;
+  readonly lastChangePoints: unknown;
+  readonly decisionsSinceChange?: unknown;
+  readonly asAtLabel: unknown;
+  readonly seriesId: unknown;
+  readonly tableCode: unknown;
+  readonly publicationDate: unknown;
+  readonly effectiveDateSource?: unknown;
+}
+
+/**
+ * The cash rate target in force, with the date the Reserve Bank set it.
+ *
+ * This is the fact a reader acts on, and the one the product could not state:
+ * the only series held was a monthly AVERAGE, so "the current cash rate" was
+ * either a month-old average or a constant nobody refreshed. Absent means
+ * absent — `safeCashRate` is NOT a fallback for this, because presenting a
+ * monthly average as the rate in force is the misstatement being closed.
+ */
+export function safeCashRateTarget(reading: CashRateTargetReading | null): SafeFact<number> {
+  const unavailable = (why: string) => gateFact<number>({
+    name: 'market.cashRateTargetCurrent',
+    value: null,
+    safety: 'unavailable',
+    material: true,
+    absenceReason: why,
+  });
+
+  if (reading === null) {
+    return unavailable(
+      'No Reserve Bank cash-rate target is currently held, so no current rate is quoted. '
+      + 'The monthly average is not used in its place.',
+    );
+  }
+  // `seriesId` is F1's, and F1 is a cross-check rather than the authority: the
+  // decision history alone is sufficient and leaves it null. What is refused is
+  // a reading claiming to be the target while naming some OTHER series.
+  const seriesId = str(reading.seriesId);
+  if (seriesId !== null && seriesId !== CASH_RATE_TARGET_SERIES_ID) {
+    return unavailable(
+      'The available interest-rate series is not the Reserve Bank cash rate target on date, '
+      + 'so it is not quoted as the current target.',
+    );
+  }
+
+  const value = num(reading.percent);
+  const effective = str(reading.effectiveLabel);
+  if (value === null || effective === null) {
+    return unavailable(
+      'The Reserve Bank series does not carry both a target and the date it took effect, '
+      + 'so no current rate is quoted.',
+    );
+  }
+
+  const asAt = str(reading.asAtLabel);
+  return gateFact<number>({
+    name: 'market.cashRateTargetCurrent',
+    value,
+    safety: 'authoritative',
+    source: 'rba_observations',
+    material: true,
+    context: {
+      grain: 'national',
+      referencePeriod: `effective ${effective}`
+        + (asAt ? `, in force as at ${asAt}` : ''),
+      dataset: str(reading.effectiveDateSource)
+        ?? 'RBA Cash Rate Target decision history',
+      asOf: str(reading.publicationDate),
+    },
+  });
+}
+
+/**
+ * The three dates and amounts that sit beside the target, each its own fact.
+ *
+ * Separate rather than folded into the target's label because they answer
+ * different questions and were being conflated: the EFFECTIVE date is the most
+ * recent Board decision (12 August 2026 on the reported case) while the LAST
+ * CHANGED date is when the rate moved (6 May 2026). A snapshot that recorded
+ * only "effective 6 May" would preserve the error rather than the facts.
+ */
+export function cashRateTargetDetailFacts(
+  reading: CashRateTargetReading | null,
+): SafeFact<unknown>[] {
+  if (reading === null) return [];
+  const source = str(reading.effectiveDateSource)
+    ?? 'RBA Cash Rate Target decision history';
+  const context = {
+    grain: 'national' as const,
+    referencePeriod: 'RBA Board decision',
+    dataset: source,
+    asOf: str(reading.publicationDate),
+  };
+  const facts: SafeFact<unknown>[] = [];
+  const effectiveDate = str(reading.effectiveDate);
+  if (effectiveDate !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetEffectiveDate',
+      value: effectiveDate,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  const lastChanged = str(reading.lastChangedDate);
+  if (lastChanged !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetLastChangedDate',
+      value: lastChanged,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  const points = num(reading.lastChangePoints);
+  if (points !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetLastChangePoints',
+      value: points,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  // The macro table prints this — "unchanged at 2 Board decisions since" — so
+  // it is a client-visible figure and must be reconstructable from the stored
+  // snapshot like any other. Found by the §C5 coverage probe, which exists
+  // precisely because a figure can reach a prompt without reaching the record.
+  const held = num(reading.decisionsSinceChange);
+  if (held !== null) {
+    facts.push(gateFact({
+      name: 'market.cashRateTargetDecisionsSinceChange',
+      value: held,
+      safety: 'authoritative',
+      source: 'rba_cash_rate_decisions',
+      context,
+    }));
+  }
+  return facts;
+}
+
+/** The client sentence for the in-force target. One spelling, shared. */
+export function cashRateTargetStatement(fact: SafeFact<number>): string {
+  if (fact.status !== 'present' || fact.value === null || fact.context === null) {
+    return fact.absence?.reason ?? 'No current Reserve Bank cash rate target is quoted.';
+  }
+  return `RBA Cash Rate Target: ${fact.value}% — ${fact.context.referencePeriod}`
+    + (fact.context.asOf ? `, published ${fact.context.asOf}.` : '.');
+}
+
 /** `2026-08-31` → `August 2026`. Null rather than a guess on anything else. */
 export function monthLabel(obsDate: unknown): string | null {
   const s = str(obsDate);

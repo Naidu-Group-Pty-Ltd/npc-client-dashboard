@@ -82,7 +82,27 @@ Deno.serve(async (req) => {
       obs_date: r.obs_date,
       value: Number(r.value),
     }));
-    const reading = buildMacroReading((metaRows ?? []) as RbaMetaRow[], obs);
+    // The decision history — 401 rows, tiny — is the authority for the current
+    // target's EFFECTIVE date. F1's change column records only non-zero moves,
+    // so without this the service can say when the rate last changed but not
+    // when the rate in force took effect, and those differ whenever the Board
+    // meets and holds.
+    const { data: decisionRows, error: decisionError } = await supabase
+      .from('rba_cash_rate_decisions')
+      .select('effective_date, change_points, target_percent')
+      .order('effective_date', { ascending: false })
+      .limit(600);
+    if (decisionError) throw new Error(`rba_cash_rate_decisions read failed: ${decisionError.message}`);
+
+    const reading = buildMacroReading(
+      (metaRows ?? []) as RbaMetaRow[],
+      obs,
+      (decisionRows ?? []).map((d: { effective_date: string; change_points: unknown; target_percent: unknown }) => ({
+        effective_date: d.effective_date,
+        change_points: d.change_points === null ? null : Number(d.change_points),
+        target_percent: d.target_percent === null ? null : Number(d.target_percent),
+      })),
+    );
 
     if (!reading) {
       // Nothing loaded. The old `getFallbackData()` answered here with a

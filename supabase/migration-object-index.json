@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1034,
+  "migration_files": 1035,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -461,6 +461,7 @@
     "function:public.set_bc_scenarios_updated_at",
     "function:public.set_builder_stock_eligibility_target",
     "function:public.set_builder_stock_sanitization_target",
+    "function:public.set_builder_stock_source_images_target",
     "function:public.set_cross_portal_firm_rollout",
     "function:public.set_cross_portal_rollout_for",
     "function:public.set_document_access_grant",
@@ -659,6 +660,7 @@
     "index:builder_stock_uploads_org_idx",
     "index:builder_stock_uploads_org_sha_key",
     "index:builder_stock_uploads_sanitization_marker_idx",
+    "index:builder_stock_uploads_source_images_marker_idx",
     "index:builder_stock_uploads_status_idx",
     "index:builder_stock_uploads_unjudged_images_idx",
     "index:builder_stock_uploads_unsettled_images_idx",

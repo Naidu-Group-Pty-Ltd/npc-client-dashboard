@@ -418,7 +418,7 @@ function StockCardImage({ image, onSupply, supplying }: {
   if (!image) {
     return (
       <div
-        className="flex aspect-[4/3] w-full items-center justify-center border-b border-border/60 bg-muted/30"
+        className="flex aspect-[16/10] w-full items-center justify-center border-b border-border/60 bg-muted/30"
       >
         <div className="text-center">
           <ImageIcon className="mx-auto h-6 w-6 text-muted-foreground/50" aria-hidden />
@@ -474,13 +474,28 @@ function StockCardImage({ image, onSupply, supplying }: {
    * the image is CONTAINED — every elected picture is shown whole, and what
    * is left over is ground rather than a crop.
    *
-   * 4:3 is the geometric middle of the two shapes above, which is what makes
-   * it the box that wastes least on both: a 0.89 portrait keeps its full
-   * height, a 2.05 landscape its full width, and neither loses a pixel.
+   * THE BOX IS SIZED FROM THE WHOLE CORPUS, NOT FROM THE WORST CASE. Sizing
+   * it 4:3 fixed the crop and bought a second defect: 4:3 is taller than
+   * almost everything that arrives, so nearly every card drew a band of empty
+   * ground above and below its photograph, with the provenance badge floating
+   * in it. Measured over the twenty-seven cards live on 11 September 2026:
+   *
+   *     1.600  11 cards   embedded raster, the modal shape
+   *     1.778   7 cards   embedded raster
+   *     2.054   3 cards   page crop
+   *     1.416   2 cards   embedded raster
+   *     3.584   2 cards   page crop
+   *     0.893   2 cards   embedded raster, the only portrait left
+   *
+   * Twenty-three of twenty-seven are landscape and the median is 1.6, so
+   * 16:10 is the box that leaves no band at all on the 41% that are exactly
+   * that shape and a tenth of one on the 26% at 16:9. The two portraits and
+   * the two 3.58 strips still letterbox, and still show every pixel, which is
+   * the rule this box exists to keep.
    */
   return (
     <div
-      className="relative aspect-[4/3] w-full overflow-hidden border-b border-border/60 bg-muted/30"
+      className="relative aspect-[16/10] w-full overflow-hidden border-b border-border/60 bg-muted/30"
     >
       {signedUrl && !broken ? (
         <img

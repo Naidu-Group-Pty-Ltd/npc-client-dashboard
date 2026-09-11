@@ -7541,3 +7541,101 @@ terms. The moment either lands: record the acquisition footing, build that
 one adapter, ingest QLD + WA, normalise into `MarketEvidence`, seal the first
 genuine snapshot, evaluate the gate, and if it opens, run the backtest.
 
+## §68 Scoring V2 Core frozen — shadow only (2026-09-11)
+
+**SCORING V2 CORE FROZEN — SHADOW ONLY.** PR #2588 was merged into `main`
+(merge commit `db59a8056`, PR head `846db6f2b`) after a final adversarial
+closure review run against that exact head, and the core is now a settled
+structure: changes to anything in §68.2 require a demonstrated defect, a
+version bump and a re-run of whatever backtest has run by then — never a
+silent edit.
+
+### 68.1 The closure review, and what it found
+
+A closure audit, not a new methodology exercise. Method: the composition path
+was traced through the callers (not the type definitions), the repository was
+swept for the engine's markers, and the mandated invariants were re-proved by
+execution in a new closure spec (`scoringV2Closure.spec.ts`, 14 checks) run
+beside the full suite — **155 files, 3,687 tests, all passing** on the merged
+head.
+
+What the review confirmed, each item measured rather than trusted:
+
+- **Risk ownership.** `scoreInvestmentV2Shadow` calls
+  `scorePropertyRisk(input.propertyRisk, 'D2_requires_a_peer')` — Model D is
+  the composition's Risk, not merely a module beside it. `PropertyRiskInputs`
+  cannot express a buyer fact, so LVR, cash flow, serviceability, borrowing
+  capacity, deposit and affordability have no path into the dimension at the
+  type level, and the body reads none of them. The asset class appears in
+  schema selection and the result, and in no arithmetic. One answered
+  category cannot compose (`MINIMUM_INDEPENDENT_CATEGORIES = 2`); overheating
+  only ever deducts (max 25), only beside an eligible peer, floored at 0.
+- **Finance Suitability isolation.** `assessFinanceSuitability` returns a
+  band, readings and prose — no field a composite can read. End to end, two
+  scenarios at 60%/95% LVR and +$50/−$900 weekly produce byte-identical
+  score-side results and different suitability bands.
+- **Missing evidence never improves the printed grade.** Proved at the
+  boundaries (`gradeFor` and `applyEligibility` at 74.99/75/75.01 and
+  84.99/85/85.01) and pairwise on every dimension removal — weak removed,
+  strong removed, two removed, sparse-strong, sparse-weak, single-dimension.
+  A = 75 and A+ = 85, unchanged; A+ reachable uncapped on the exceptional
+  fixture. The construction argument: the composite always ≥ the delivered
+  points (renormalising divides by ≤ 1), and the printed grade ≤
+  `gradeFor(delivered points)`, so removing a measured dimension can raise
+  the composite but never the badge.
+- **Absent is not zero.** A measured terrible yield scores 0, carries weight
+  and drags the composite; an unknown rent scores null, carries zero weight
+  and leaves the composite, with the reason printable. Risk distinguishes
+  no-schema / nothing-answered / one-category, each with its own sentence.
+- **Output contract.** Every mandated field present on
+  `scoreOutputContract.pure.ts` (`1.0.0`); contributions reconcile to the
+  composite within rounding; no consumer needs to recompute anything.
+- **Shadow isolation.** Repo-wide marker sweep: the engine's modules, their
+  `src` bridges and the test suites are the only references. **No edge
+  function entrypoint imports anything from `_shared/reports/market` or
+  `_shared/reports/risk` at all**, so the transitive route to the engine is
+  empty, not merely unused. The one non-test `src` importer of the bridges is
+  `MarketSourceProbePanel` importing `sourceProbeReading.pure` — operator
+  diagnostics for the probe, not a scoring consumer. The CI guard in
+  `scoringMethodology.spec.ts` continues to assert entrypoint cleanliness on
+  every run.
+- **Determinism and numeric integrity.** Same input → byte-identical output
+  (scorer and contract). An adversarial battery (zero/negative rents and
+  bases, absurd yields, ±50% growth, scored Risk under maximum overheating,
+  buyer at −$50k/week, nothing at all) produced no NaN, no Infinity, no
+  negative weight, no dimension outside 0–100, effective weights summing to
+  1 where a composite exists, and a stated reason wherever there is none.
+  Rounding sits at the publication boundaries only (dimension scores,
+  composite, 4-dp weights, 2-dp points).
+
+**No genuine defect was found.** The two defects of this release — the
+composition still calling the ME-4 interim Risk, and renormalisation buying a
+badge — were found and fixed before this review (§67); the review confirms
+their fixes hold under adversarial input.
+
+### 68.2 Structurally complete (the frozen set)
+
+Scoring architecture and composition; dimension ownership; Growth, Yield,
+Demand and Location methodologies; Risk Model D; Finance Suitability
+separation; missing-evidence behaviour; grade eligibility (both ceilings);
+A = 75 / A+ = 85; the score output contract; the scenario suite; the
+invariant suite; the closure suite.
+
+### 68.3 Explicitly incomplete — the programme is NOT production complete
+
+- **ME-7**: the real historical evidence backtest has **not run** — the
+  sealed population (`me7.pop.1`, 665 ready of 867 considered) is a
+  denominator, not a result.
+- **Real-world grade-distribution and empirical calibration**: none has
+  happened; every threshold is calibrated against fixtures and the corpus's
+  own stored figures only, and `RISK_METHODOLOGY_STATUS` still reads
+  `provisional / uncalibrated`.
+- **Production activation (ME-8)**: not authorised. The engine is unwired and
+  the guard asserts it.
+- **Migration of production reports to Scoring V2**: not begun, and no mass
+  backfill of historical reports will occur.
+
+Reporting work (RF-7) may build against the score output contract — shape
+compatibility, developer-only shadow comparison — without any of the above
+moving. Trial-footed evidence stays shadow-only throughout.
+

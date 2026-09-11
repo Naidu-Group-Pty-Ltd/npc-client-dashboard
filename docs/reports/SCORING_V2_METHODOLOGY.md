@@ -19,6 +19,12 @@ backtest (ME-7) waits on real QLD + WA Growth evidence; every threshold here
 is subject to evidence-based calibration under the calibration rules (defects
 only, never grade-distribution targets), and any change bumps a version.
 
+**SCORING V2 CORE FROZEN — SHADOW ONLY (2026-09-11, audit §68).** The
+structure this document describes survived its closure review and is settled;
+edits now require a demonstrated defect and a version bump. Frozen is not
+finished: ME-7, empirical calibration and activation (ME-8) remain open, and
+nothing here is production authoritative.
+
 ---
 
 ## 1. The composite

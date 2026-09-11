@@ -292,7 +292,19 @@ evidence.
 
 ---
 
-### 4.5 Scoring V2 is finalised for synthetic proof, and stays unwired
+### 4.5 Scoring V2 Core is FROZEN — shadow only
+
+**Frozen 11 Sep 2026 (audit §68), merged to `main` in PR #2588 (merge commit
+`db59a8056`).** The core — composition, ownership, the five dimension
+methodologies, Finance Suitability separation, missing-evidence behaviour,
+both eligibility ceilings, A 75 / A+ 85, the output contract, and the three
+test suites (invariants, scenarios, closure) — is structurally complete.
+Changing any of it now requires a demonstrated defect, a version bump and a
+backtest re-run. Explicitly NOT complete: the ME-7 real backtest, empirical
+calibration, production activation (ME-8) and any migration of production
+reports — the programme is not "production complete" and must not be called
+that. Reporting work builds against `scoreOutputContract` without making the
+engine authoritative.
 
 As of 11 Sep (audit §67): the composition is `2.1.0-shadow` — Risk is Model D
 (property type selects the schema and scores nothing; buyer LVR and cash flow

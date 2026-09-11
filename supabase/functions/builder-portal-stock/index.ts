@@ -25,6 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import {
   stockDocumentNotes, unreadDocumentCount,
+  stockPackageDocuments, MAX_STOCK_DOCUMENT_NOTES,
 } from '../_shared/builderStock/imageProgress.pure.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
@@ -1923,6 +1924,19 @@ async function decorateItems(
   }
 
   /*
+   * What each property's own images say they were extracted from. Read from
+   * the images rather than from the row, because that record proves the
+   * document was READ.
+   */
+  const packagesByItem = new Map<string, ReturnType<typeof stockPackageDocuments>>();
+  for (const item of items) {
+    packagesByItem.set(
+      String(item.id),
+      stockPackageDocuments(imagesByItem.get(item.id) ?? []),
+    );
+  }
+
+  /*
    * Counted with `rowSourceBranches` — the same function the image pipeline
    * uses to decide what it will try — so the page cannot say a property has a
    * document the pipeline would not read, or none where it would find five.
@@ -1950,7 +1964,23 @@ async function decorateItems(
      * one reason for a missing picture that the builder can fix, and it is a
      * count rather than a list because an address is not needed to say so.
      */
-    source_documents: documentsByItem.get(String(item.id)) ?? 0,
+    /*
+     * AND THE PACKAGE THE STOCK LIST ITSELF WAS, which the count above cannot
+     * see: `rowSourceBranches` reads the LINKS a spreadsheet row carries, and
+     * a stock list uploaded AS a package PDF carries none — `unmapped` is
+     * `{}`. So a property built out of a 10 MB brochure, with that brochure's
+     * page-1 rasters in its images table, was told "No brochure on this row".
+     * The builder re-uploaded the same file twice; the second upload was
+     * byte-identical to the first. See `stockPackageDocuments`.
+     *
+     * EITHER/OR, NEVER A SUM. Where a row DOES attach links, those links are
+     * its documents and the images were extracted from them — so adding the
+     * package reading would count the same brochure twice. The package count
+     * answers only the case the link count cannot see: a row with no links at
+     * all, whose document is the file the whole list arrived as.
+     */
+    source_documents: (documentsByItem.get(String(item.id)) ?? 0)
+      || (packagesByItem.get(String(item.id))?.documents.length ?? 0),
     /*
      * And how many we could not read, split by WHOSE failure it was. Counts,
      * never reasons — see `unreadDocumentCount`: the mechanism stays on this
@@ -1975,9 +2005,16 @@ async function decorateItems(
      * `stockDocumentNotes` is the gate: `operational` reasons never leave
      * this side.
      */
-    source_document_notes: stockDocumentNotes(
-      documentProvenanceByItem.get(String(item.id)) ?? null,
-    ),
+    source_document_notes: [
+      ...stockDocumentNotes(documentProvenanceByItem.get(String(item.id)) ?? null),
+      /*
+       * The same finding for an uploaded package. It is recorded in a
+       * different place — `selection_reason` on the image rows rather than a
+       * branch record — because nothing fetched a link, and reading only the
+       * branches is why the one row that needed this sentence never got it.
+       */
+      ...(packagesByItem.get(String(item.id))?.notes ?? []),
+    ].slice(0, MAX_STOCK_DOCUMENT_NOTES),
     // The builder's activation signal: how many Command Centre selections this
     // property has, and where the most recent one is up to.
     selection_count: (selectionsByItem.get(item.id) ?? []).length,

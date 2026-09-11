@@ -314,6 +314,19 @@ export interface FinancePosition {
   readonly annualOutgoings: Fact<number>;
   readonly stampDuty: Fact<number>;
   readonly totalUpfront: Fact<number>;
+  /**
+   * What KIND of rent `weeklyRent` is — RF-7.2B §6.
+   *
+   * A current lease, an agent's appraisal and a market estimate are three
+   * different facts, and every yield in the report is built on whichever it
+   * was. The record has never captured which, so this reads a forward-only
+   * optional field and reports `unknown` for every historical row rather than
+   * inferring one from the value. Inferring would be a guess about evidence,
+   * which is the whole class of defect this programme exists to remove.
+   */
+  readonly rentBasis: Fact<string>;
+  /** When that rent was observed, appraised or the lease signed. */
+  readonly rentAsOf: Fact<string>;
 }
 
 /** Ratios the platform derives. Every one carries the basis it was taken on. */
@@ -742,6 +755,35 @@ export function buildReportFactContract(input: ReportFactInput): ReportFactContr
         'snapshot',
       )
       : present<number>(stampDutyValue, 'stampDuty/engine.pure.ts', 'financial_calculations.initialCosts.stampDuty', 'derived', 'snapshot'),
+    rentBasis: (() => {
+      // Forward-only and optional: a historical row carries none of these keys
+      // and must read `unknown` rather than being given a basis it never had.
+      const raw = str(at(row.manual_overrides, ['rentBasis']))
+        ?? str(at(fin, ['income', 'rentBasis']));
+      const basis = raw === null ? null : normaliseRentBasis(raw);
+      return basis === null
+        ? absent<string>(
+          weeklyRent.status === 'present'
+            ? 'The rent on this report was recorded before its basis was captured, so '
+              + 'whether it is a current lease, an appraisal or an estimate is unknown.'
+            : 'No rent is recorded, so it has no basis.',
+          'investment/overrides.pure.ts',
+          'snapshot',
+          /* neverCaptured */ true,
+        )
+        : present<string>(basis, 'investment/overrides.pure.ts', 'manual_overrides.rentBasis', 'observed', 'snapshot');
+    })(),
+    rentAsOf: (() => {
+      const raw = str(at(row.manual_overrides, ['rentAsOf']))
+        ?? str(at(fin, ['income', 'rentAsOf']));
+      return raw === null
+        ? absent<string>(
+          'No date is recorded for the rent figure.',
+          'investment/overrides.pure.ts',
+          'snapshot',
+        )
+        : present<string>(raw, 'investment/overrides.pure.ts', 'manual_overrides.rentAsOf', 'observed', 'snapshot');
+    })(),
     totalUpfront: totalUpfront === null
       ? absent<number>('No upfront total is recorded in the finance block.', 'investment/financialEngine.pure.ts', 'snapshot')
       : present<number>(totalUpfront, 'investment/financialEngine.pure.ts', 'financial_calculations.initialCosts.totalUpfront', 'derived', 'snapshot'),
@@ -856,6 +898,22 @@ export function buildReportFactContract(input: ReportFactInput): ReportFactContr
   };
 }
 
+
+/**
+ * The rent-basis vocabulary. Anything unrecognised reads as absent rather than
+ * being coerced into the nearest-looking value — a wrong basis is worse than no
+ * basis, because it makes an estimate look like a signed lease.
+ */
+export const RENT_BASIS_VALUES: readonly string[] = [
+  'current_lease', 'rental_appraisal', 'operator_supplied', 'market_estimate', 'other',
+];
+
+/** Normalise a stored basis, or null where it is not one this contract knows. */
+export function normaliseRentBasis(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const v = raw.trim().toLowerCase().replace(/[\s-]+/g, '_');
+  return RENT_BASIS_VALUES.includes(v) ? v : null;
+}
 
 /**
  * Lift one of `readPropertyFacts`' already-resolved numbers into a fact.

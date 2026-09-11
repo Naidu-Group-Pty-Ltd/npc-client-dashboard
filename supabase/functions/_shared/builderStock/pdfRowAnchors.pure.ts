@@ -25,7 +25,9 @@
  *
  * Pure: no IO and no clock.
  */
-import { findPropertyCoverPages } from './pdfPrimaryImage.pure.ts';
+import {
+  findPropertyCoverPages, resolvePropertyCover,
+} from './pdfPrimaryImage.pure.ts';
 
 /** The anchor vocabulary. Minted here so both halves cannot drift. */
 export const pdfPageAnchor = (page: number): string => `pdf:page${page}`;
@@ -102,9 +104,38 @@ export function anchorPdfRowsToPages(
   if (labels.length === 1) {
     const covers = findPropertyCoverPages(pageTexts, labels[0]);
     if (covers.length === 1) return [pdfPageAnchor(covers[0].page)];
-    // No cover, or two: the document has not said which page is this
-    // property's record, so its pictures stay against the upload.
-    if (covers.length > 1) return [null];
+    /*
+     * SEVERAL COVERS, ONE PROPERTY — WHICH IS NOT AMBIGUITY.
+     *
+     * This used to `return [null]`, and it cost a whole brochure. MEASURED
+     * 11 SEPTEMBER 2026 on `LOT 717 - ENZO 10.5 MODERN - BROCHURE V002.pdf`:
+     * pages 1 AND 2 both state "Lot 717, Serenity Road" with package facts —
+     * page 1 is the cover carrying the 1920x1080 render, page 2 is the floor
+     * plan carrying the same address block. Two covers, so no anchor; no
+     * anchor, so `repairSourceImages` asked `assetsByAnchor` for nothing and
+     * the property stored ZERO images out of its own seven-page brochure. It
+     * then fell through to an internet search, which returned two dead
+     * realestate.com.au URLs, and the card was blank.
+     *
+     * The refusal is right for a document listing MANY properties: two pages
+     * naming one lot is the document declining to say which is its record,
+     * and guessing puts somebody else's house on a card. With exactly ONE
+     * property there is nothing else in the document to confuse it with — the
+     * question is not "whose page is this" but "which of this property's
+     * pages leads", and that question already has an answer.
+     *
+     * `resolvePropertyCover` is that answer, and it is the SAME function the
+     * election runs (`pdfPrimaryImage.pure.ts` opens with
+     * `resolvePropertyCover(covers) ?? structural`). Deferring to it is what
+     * stops the anchor refusing a document the election would have read: run
+     * against the live file it elects page 1 with full cover evidence in
+     * 944 ms. A genuine tie still returns null, because that is what the
+     * resolver itself answers.
+     */
+    if (covers.length > 1) {
+      const chosen = resolvePropertyCover(covers);
+      return [chosen ? pdfPageAnchor(chosen.page) : null];
+    }
     if (photoPages.length >= 1) return [pdfPageAnchor(photoPages[0])];
     return [null];
   }

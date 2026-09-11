@@ -293,7 +293,12 @@ describe('macro prompt block', () => {
 
   it('renders measured rows with their periods and publication dates', () => {
     const block = macroEconomicBlock({ economics });
-    expect(block).toContain('| RBA cash rate target | 4.35% (monthly average, August 2026) |');
+    // RF-7.2B.1 renamed this row. `FIRMMCRT` is a MONTHLY AVERAGE, and the
+    // label now says so on the row itself rather than only in the value cell,
+    // because the row title is what a reader quotes. The in-force target has
+    // its own row, from F1, and is asserted separately below.
+    expect(block).toContain('| Cash Rate Target — Monthly Average | 4.35% (monthly average, August 2026) |');
+    expect(block).not.toContain('| RBA cash rate target |');
     expect(block).toContain('published 01-Sep-2026');
     expect(block).toContain('| Inflation — headline CPI, year-ended | 3.9% (June quarter 2026) |');
     expect(block).toContain('| Standard variable housing rate (investor, banks) | 9.03% (July 2026) |');
@@ -319,8 +324,22 @@ describe('macro prompt block', () => {
   it('renders only the components that exist', () => {
     const partial = buildMacroReading(meta, obs.filter((o) => o.series_id === 'FIRMMCRT'));
     const block = macroEconomicBlock({ economics: partial as unknown as Record<string, unknown> });
-    expect(block).toContain('RBA cash rate target');
+    expect(block).toContain('Cash Rate Target — Monthly Average');
     expect(block).not.toContain('Inflation');
+  });
+
+  // RF-7.2B.1: with F1.1 alone the block must FAIL CLOSED. The monthly
+  // average still renders — it is a real figure — but nothing may present it
+  // as the rate in force, which is what a silent substitution would do.
+  it('fails closed on the current target when only the monthly average is held', () => {
+    const partial = buildMacroReading(meta, obs.filter((o) => o.series_id === 'FIRMMCRT'));
+    const block = macroEconomicBlock({ economics: partial as unknown as Record<string, unknown> });
+    expect(block).toContain('NO CURRENT CASH RATE TARGET IS AVAILABLE');
+    expect(block).not.toContain('cash rate target (current)');
+    // No row may carry an effective date — the refusal sentence mentions the
+    // words 'effective date' to forbid them, so assert on the TABLE.
+    const table = block.split('\n').filter((l) => l.startsWith('|'));
+    expect(table.some((l) => /effective/i.test(l))).toBe(false);
   });
 });
 

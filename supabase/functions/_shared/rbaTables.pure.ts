@@ -27,10 +27,11 @@
 
 import { splitCsvLine } from './crimeIngest.pure.ts';
 
-export type RbaTableCode = 'f1.1' | 'g1' | 'f5';
+export type RbaTableCode = 'f1' | 'f1.1' | 'g1' | 'f5';
 
 /** First line of each file, verbatim (F5 carries two spaces — measured). */
 export const RBA_TABLE_TITLES: Record<RbaTableCode, string> = {
+  'f1': 'F1 INTEREST RATES AND YIELDS – MONEY MARKET',
   'f1.1': 'F1.1 INTEREST RATES AND YIELDS – MONEY MARKET',
   'g1': 'G1 CONSUMER PRICE INFLATION',
   'f5': 'F5  INDICATOR LENDING RATES',
@@ -41,6 +42,11 @@ export const RBA_TABLE_TITLES: Record<RbaTableCode, string> = {
  * Series ID row. Anything else in the file is left unread deliberately.
  */
 export const RBA_WANTED_SERIES: Record<RbaTableCode, readonly string[]> = {
+  // Cash Rate Target ON DATE (daily), and the RBA's own announced change in
+  // it. These two answer "what is the target today, and when did it take
+  // effect" — a different fact from F1.1's monthly average, which is what
+  // the report used to present as the current rate.
+  'f1': ['FIRMMCRTD', 'FIRMMCCRT'],
   // Cash Rate Target; monthly average.
   'f1.1': ['FIRMMCRT'],
   // CPI index (base named by its Units row), year-ended headline, year-ended
@@ -58,6 +64,7 @@ export const RBA_WANTED_SERIES: Record<RbaTableCode, readonly string[]> = {
  * F5 811 (from 1959).
  */
 export const RBA_MIN_DATA_ROWS: Record<RbaTableCode, number> = {
+  'f1': 3500,
   'f1.1': 600,
   'g1': 380,
   'f5': 700,
@@ -89,14 +96,39 @@ export interface RbaParsedTable {
 
 const DATE_RE = /^(\d{2})\/(\d{2})\/(\d{4})$/;
 
+/**
+ * The daily tables date their rows `04-Jan-2011` while the monthly and
+ * quarterly ones use `30/06/1969` — same publisher, same directory, two
+ * formats (measured on F1 and F1.1, 11 Sep 2026). Both are recognised
+ * here; the two patterns are disjoint, so nothing that parsed before
+ * parses differently now.
+ */
+const DATE_MON_RE = /^(\d{2})-([A-Za-z]{3})-(\d{4})$/;
+
+const MONTH_ABBR: Readonly<Record<string, string>> = {
+  jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+  jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
+
 const isoDate = (cell: string): string | null => {
   const m = DATE_RE.exec(cell);
-  if (!m) return null;
-  const [, dd, mm, yyyy] = m;
-  const month = Number(mm);
-  const day = Number(dd);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return `${yyyy}-${mm}-${dd}`;
+  if (m) {
+    const [, dd, mm, yyyy] = m;
+    const month = Number(mm);
+    const day = Number(dd);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  const n = DATE_MON_RE.exec(cell);
+  if (n) {
+    const [, dd, mon, yyyy] = n;
+    const mm = MONTH_ABBR[mon.toLowerCase()];
+    if (!mm) return null;
+    const day = Number(dd);
+    if (day < 1 || day > 31) return null;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  return null;
 };
 
 /**
@@ -215,5 +247,73 @@ export function parseRbaCsv(text: string, expected: RbaTableCode): RbaParsedTabl
     tableTitle,
     publicationDate: cellAt(meta.get('Publication date'), 1) || null,
     series,
+  };
+}
+
+/**
+ * How much of a parsed table is persisted.
+ *
+ * `all` stores every observation the file carries, which is what the three
+ * monthly/quarterly tables want. F1 is DAILY — 3,972 dated rows since 2011,
+ * two wanted series — and `rba-data-service` reads a four-year window capped
+ * at PostgREST's 1,000 rows, ordered by date descending. Storing F1 whole
+ * would push every monthly and quarterly observation out of that window and
+ * silently empty the cash-rate, inflation and lending-rate readings, because
+ * daily rows occupy every recent date. Nothing would report an error: the
+ * reading would simply go quiet.
+ *
+ * So F1 is stored at the grain of the fact the report needs. The cash rate
+ * target is a step function — it holds a value until the Board changes it —
+ * and the file names each change in its own `FIRMMCCRT` column ("as
+ * announced"). Keeping the announced-change dates plus the latest observation
+ * reproduces the whole series exactly, in ~75 rows rather than ~7,900.
+ */
+export const RBA_PERSIST_POLICY: Record<RbaTableCode, 'all' | 'target-changes-and-latest'> = {
+  'f1': 'target-changes-and-latest',
+  'f1.1': 'all',
+  'g1': 'all',
+  'f5': 'all',
+};
+
+/** F1's own series identifiers, named once. */
+export const CASH_RATE_TARGET_DAILY_SERIES = 'FIRMMCRTD';
+export const CASH_RATE_TARGET_CHANGE_SERIES = 'FIRMMCCRT';
+
+/**
+ * Narrow a parsed table to what is persisted, per `RBA_PERSIST_POLICY`.
+ *
+ * Pure and total: the returned series are the same objects in the same order
+ * with a possibly shorter `observations` array. A table whose policy is `all`
+ * is returned unchanged, so this cannot alter what the existing three tables
+ * store.
+ */
+export function observationsToPersist(parsed: RbaParsedTable): RbaParsedTable {
+  if (RBA_PERSIST_POLICY[parsed.tableCode] === 'all') return parsed;
+
+  const changes = parsed.series.find((s) => s.id === CASH_RATE_TARGET_CHANGE_SERIES);
+  const daily = parsed.series.find((s) => s.id === CASH_RATE_TARGET_DAILY_SERIES);
+  if (!changes || !daily) {
+    throw new Error(
+      `${parsed.tableCode}: both ${CASH_RATE_TARGET_DAILY_SERIES} and ` +
+      `${CASH_RATE_TARGET_CHANGE_SERIES} are required to narrow it — the file's layout has moved`,
+    );
+  }
+
+  const keep = new Set(changes.observations.map((o) => o.date));
+  // The latest dated target, so a reading can say the target is still in
+  // force AS AT a date rather than only that it once changed.
+  const latest = daily.observations.reduce<string | null>(
+    (acc, o) => (acc === null || o.date > acc ? o.date : acc),
+    null,
+  );
+  if (latest !== null) keep.add(latest);
+
+  return {
+    ...parsed,
+    series: parsed.series.map((s) =>
+      s.id === CASH_RATE_TARGET_DAILY_SERIES
+        ? { ...s, observations: s.observations.filter((o) => keep.has(o.date)) }
+        : s,
+    ),
   };
 }

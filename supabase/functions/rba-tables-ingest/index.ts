@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { internalError } from '../_shared/errorResponse.ts';
-import { parseRbaCsv, RBA_WANTED_SERIES, type RbaTableCode } from '../_shared/rbaTables.pure.ts';
+import { parseRbaCsv, RBA_WANTED_SERIES, type RbaTableCode, observationsToPersist } from '../_shared/rbaTables.pure.ts';
+import { parseCashRateDecisions } from '../_shared/rbaCashRateDecisions.pure.ts';
 
 /**
  * Ingest the RBA statistical tables into `rba_observations` /
@@ -53,12 +54,19 @@ Deno.serve(async (req) => {
   let body: { table?: unknown; csv?: unknown } = {};
   try { body = JSON.parse(rawBody); } catch { /* refused below as bad table */ }
 
-  const table = String(body?.table ?? '') as RbaTableCode;
-  if (!(table in RBA_WANTED_SERIES)) {
-    return json({ success: false, error: 'table must be "f1.1", "g1" or "f5"' }, 400);
+  const table = String(body?.table ?? '') as RbaTableCode | 'cash-rate';
+  // `cash-rate` is the RBA's own decision-history PAGE rather than a
+  // statistical-table CSV. It rides this function because the auth arm, the
+  // CORS handling and the sync record are the same; only the parse and the
+  // destination differ.
+  const isDecisions = table === 'cash-rate';
+  if (!isDecisions && !(table in RBA_WANTED_SERIES)) {
+    return json({ success: false, error: 'table must be "f1", "f1.1", "g1", "f5" or "cash-rate"' }, 400);
   }
   const csv = typeof body?.csv === 'string' ? body.csv : '';
-  if (csv.trim() === '') return json({ success: false, error: 'csv text is required' }, 400);
+  if (csv.trim() === '') {
+    return json({ success: false, error: isDecisions ? 'page text is required' : 'csv text is required' }, 400);
+  }
 
   // Per-table bootstrap arm (the crime ingest's per-state lesson: a
   // whole-store emptiness gate seals after the first table loads and locks
@@ -73,10 +81,14 @@ Deno.serve(async (req) => {
   let authorised = internalSecret !== '' &&
     (bearer === internalSecret || req.headers.get('x-cron-secret') === internalSecret);
   if (!authorised) {
-    const { count, error } = await supabase
-      .from('rba_series_meta')
-      .select('series_id', { count: 'exact', head: true })
-      .eq('table_code', table);
+    const { count, error } = isDecisions
+      ? await supabase
+        .from('rba_cash_rate_decisions')
+        .select('effective_date', { count: 'exact', head: true })
+      : await supabase
+        .from('rba_series_meta')
+        .select('series_id', { count: 'exact', head: true })
+        .eq('table_code', table);
     if (!error && (count ?? 0) === 0) {
       console.log(`[rba-tables-ingest] bootstrap arm: no ${table} series yet, first load permitted`);
       authorised = true;
@@ -85,7 +97,49 @@ Deno.serve(async (req) => {
   if (!authorised) return json({ success: false, error: 'forbidden' }, 403);
 
   try {
-    const parsed = parseRbaCsv(csv, table); // throws → nothing written
+    const chunkAll = <T,>(arr: T[], n: number): T[][] =>
+      Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));
+
+    if (isDecisions) {
+      // The decision history, including the Board's unchanged decisions — the
+      // only source that can say when the CURRENT target took effect. Parsing
+      // throws before anything is written, so a moved layout writes nothing.
+      const { decisions, source } = parseCashRateDecisions(csv);
+      const loadedAt = new Date().toISOString();
+      let written = 0;
+      for (const batch of chunkAll([...decisions], 500)) {
+        const { error } = await supabase.from('rba_cash_rate_decisions').upsert(
+          batch.map((d) => ({
+            effective_date: d.effectiveDate,
+            change_points: d.changePoints,
+            target_percent: d.targetPercent,
+            target_text: d.targetText,
+            source,
+            loaded_at: loadedAt,
+          })),
+          { onConflict: 'effective_date' },
+        );
+        if (error) throw new Error(`rba_cash_rate_decisions upsert failed: ${error.message}`);
+        written += batch.length;
+      }
+      const newest = decisions[0];
+      const detail = {
+        table: 'cash-rate',
+        source,
+        decisions_written: written,
+        unchanged_decisions: decisions.filter((d) => d.changePoints === 0).length,
+        newest_effective_date: newest?.effectiveDate ?? null,
+        newest_target_percent: newest?.targetPercent ?? null,
+      };
+      await supabase.from('rba_sync').insert({ detail });
+      return json({ success: true, ...detail });
+    }
+
+    // Parse the file whole (so truncation and layout drift are still caught
+    // against the real row count), then narrow to what this table persists.
+    // F1 is daily: storing it whole would evict every monthly and quarterly
+    // observation from the reader's bounded window. See RBA_PERSIST_POLICY.
+    const parsed = observationsToPersist(parseRbaCsv(csv, table as RbaTableCode)); // throws → nothing written
 
     const chunk = <T,>(arr: T[], n: number): T[][] =>
       Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, (i + 1) * n));

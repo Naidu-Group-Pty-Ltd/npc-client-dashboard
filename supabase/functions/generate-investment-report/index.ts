@@ -13,6 +13,9 @@ import { planningStatBlocks } from '../_shared/reports/planningPromptBlocks.pure
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
+import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
+import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
+import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
@@ -1501,7 +1504,7 @@ Median values have climbed steadily ~~[820,860,910,980,1050,1180]~~ over six yea
     a single supporting datum without breaking prose flow. Keep \`note\` to one line.
     Format: \`{{margin: Title | spark=v1,v2,v3,… | note=One-line context | label=Context}}\`
 \`\`\`
-{{margin: RBA cash-rate trajectory | spark=4.35,4.35,4.10,3.85,3.60,3.35 | note=Six-month decline supports the refinancing window in Q3. | label=Macro watch}}
+{{margin: Median rent, last six quarters | spark=v1,v2,v3,v4,v5,v6 | note=One line of context, from the figures in this report. | label=Rental watch}}
 \`\`\`
 
 20. TIMELINE RIBBON — infrastructure / delivery pipeline. Use instead of a list
@@ -2455,7 +2458,19 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     }
     
     let enhancedData: EnhancedData = {};
-    
+
+    /**
+     * RF-7.2B.1 §2 — the subject's TRUSTED geography, resolved from the
+     * verified coordinate during this run rather than read back from a sweep
+     * that has not visited this report yet. Declared out here because the
+     * Client-Safe Gate below the data block is what consumes it.
+     */
+    let subjectGeography: Record<string, unknown> | null = null;
+    /** How it was obtained, for the ledger and the run log. */
+    let geographyResolution: { source: string; status: string; requeried: boolean } = {
+      source: 'none', status: 'unresolved', requeried: false,
+    };
+
     // Declare suburb/state/postcode OUTSIDE try block so they're accessible in reportContent
     let postcode = detectedPostcode;
     let state = detectedState || 'NSW';
@@ -2881,6 +2896,137 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
       }
 
+      // ======================================================================
+      // RF-7.2B.1 §2 — PRE-GENERATION GEOGRAPHY RESOLUTION
+      // ======================================================================
+      // The order this establishes:
+      //
+      //   trusted coordinate → GEOGRAPHY → trusted POA → ABS → gate → snapshot
+      //
+      // The verified coordinate is the first trustworthy thing this function
+      // holds about WHERE the property is. Everything before it is the
+      // customer's typed address, which is exactly what produced the untrusted
+      // postcode the phase-1 ABS calls were keyed on: `propertyAddress.match(
+      // /\b(\d{4})\b/)` takes the first four digits in a free-text string.
+      //
+      // Until now the Client-Safe Gate's postal-area cross-check read
+      // `report_geography`, which is written by a sweep that self-selects
+      // reports whose `location_intelligence` is ALREADY PERSISTED — so a
+      // first generation never had a row and its demographics failed closed,
+      // while a regeneration of the same property got area statistics. Same
+      // property, two different documents, decided by whether a batch job had
+      // been past. That is the inconsistency this closes.
+      //
+      // There is no second geography algorithm: `resolveOneReportGeography` is
+      // the sweep's own per-report body, and the sweep now calls it too.
+      //
+      // What it does NOT do: restore data by trusting something weaker. An
+      // unresolved coordinate leaves `subjectGeography` null and the gate
+      // withholds, exactly as it does today. Nothing here reads the free-text
+      // suburb or postcode, borrows a neighbour's geography, or invents a
+      // demographic figure.
+      const subjectCoords = enhancedData.locationIntelligence?.coordinates;
+      const subjectLat = Number(subjectCoords?.lat);
+      const subjectLng = Number(subjectCoords?.lng);
+      if (reportId && supabaseClient) {
+        try {
+          const geoOutcome = await resolveOneReportGeography({
+            supabase: supabaseClient,
+            reportId,
+            latitude: Number.isFinite(subjectLat) ? subjectLat : null,
+            longitude: Number.isFinite(subjectLng) ? subjectLng : null,
+          });
+          geographyResolution = {
+            source: 'pre_generation', status: geoOutcome.status, requeried: false,
+          };
+          if (geoOutcome.writeError) {
+            // The row could not be persisted. The RESOLUTION is still sound —
+            // it came from the same point-in-polygon — so this run uses it and
+            // the sweep will write it later. Storage is not authority.
+            console.warn(
+              `⚠️ report_geography write failed (${geoOutcome.writeError}) — `
+              + 'resolution used for this run; the sweep will persist it.',
+            );
+          }
+          subjectGeography = geoOutcome.row === null ? null : {
+            postcode: geoOutcome.row.postcode,
+            status: geoOutcome.row.status,
+            suburb: geoOutcome.row.suburb,
+            state: geoOutcome.row.state,
+          };
+          console.log(
+            `🗺️ Geography resolved before the gate: ${geoOutcome.status}`
+            + (geoOutcome.row?.postcode ? ` (POA ${geoOutcome.row.postcode})` : ''),
+          );
+        } catch (error: any) {
+          // Total: a resolution that cannot be made is an absence, never a
+          // failed report. The gate withholds and the document says so.
+          console.warn(
+            '⚠️ Pre-generation geography resolution failed:',
+            error?.message || 'Unknown error',
+          );
+        }
+      }
+
+      // Where the boundary service disagrees with the typed address, the ABS
+      // payloads fetched in phase 1 describe SOMEBODY ELSE'S postal area. They
+      // are re-fetched for the subject's own POA — and where that cannot be
+      // done, the wrong-area payload is DROPPED rather than kept: the gate
+      // would refuse it on the POA cross-check anyway, and carrying it forward
+      // into the snapshot would store a figure about the wrong place.
+      //
+      // All THREE postal-area payloads move together. `abs-employment-service`
+      // projects the same `abs_census_poa` row as the demographics, and
+      // `industryTable` prints from it independently, so re-keying two of the
+      // three would put a 3024 population table beside a 3338 industry mix on
+      // one page. The gate withholds them as one for the same reason.
+      const trustedPostcode = subjectPostcodeOf(subjectGeography);
+      if (trustedPostcode && trustedPostcode !== postcode) {
+        const trustedState = typeof subjectGeography?.state === 'string' && subjectGeography.state
+          ? subjectGeography.state as string
+          : state;
+        console.log(
+          `📍 Trusted POA ${trustedPostcode} differs from the address-derived `
+          + `${postcode ?? '(none)'} — re-querying ABS demographics, SEIFA and employment.`,
+        );
+        const requery = async (fn: string, payload: Record<string, unknown>) => {
+          try {
+            const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify(payload),
+            }, 30000, fn);
+            if (!res.ok) return null;
+            const body = await res.json();
+            return body?.success ? body.data : null;
+          } catch (_e) {
+            return null;
+          }
+        };
+        const [absAgain, seifaAgain, employmentAgain] = await Promise.all([
+          requery('abs-data-service', { postcode: trustedPostcode, state: trustedState }),
+          requery('abs-seifa-service', { postcode: trustedPostcode, state: trustedState }),
+          // This one also takes a suburb. The TRUSTED suburb, from the same
+          // boundary answer — never the free-text one, which belongs to the
+          // postcode we have just stopped believing.
+          requery('abs-employment-service', {
+            suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : null,
+            state: trustedState,
+            postcode: trustedPostcode,
+          }),
+        ]);
+        enhancedData.demographics = absAgain ?? undefined;
+        enhancedData.seifaData = seifaAgain ?? undefined;
+        enhancedData.employmentData = employmentAgain ?? undefined;
+        geographyResolution = { ...geographyResolution, requeried: true };
+        console.log(
+          `↻ ABS re-query for POA ${trustedPostcode}: demographics `
+          + `${absAgain ? 'retrieved' : 'unavailable (withheld)'}, SEIFA `
+          + `${seifaAgain ? 'retrieved' : 'unavailable (withheld)'}, employment `
+          + `${employmentAgain ? 'retrieved' : 'unavailable (withheld)'}.`,
+        );
+      }
+
       // Planning & development intelligence — zoning, parcel, state
       // development instruments and DA activity from the jurisdiction's own
       // planning services. It keys on the verified coordinate the location
@@ -3220,6 +3366,73 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       console.log('Enhanced data fetch failed, proceeding with basic analysis:', error?.message || 'Unknown error');
     }
 
+    // ========================================================================
+    // RF-7.2B.1 — CLIENT-SAFE GATE ACTIVATION
+    // ========================================================================
+    // Everything below this line reads gated facts. The gate sits HERE, on the
+    // object, rather than at each of the four base prompts, because a fact that
+    // is not on `enhancedData` cannot reach a prompt that interpolates
+    // `enhancedData` — whichever prompt it is, and however it is written later.
+    //
+    // It is deliberately placed AFTER the scoring calls above: the investment
+    // score engine reads `walkScore`, `commute.durationMinutes` and
+    // `schools.schoolsWithin3km`, and re-pointing it would silently move every
+    // new report's score. That belongs to the scoring programme, not here.
+    //
+    // From this point the sanitised object is what the prompts compose from AND
+    // what is persisted, so the stored report snapshot carries no disowned fact
+    // either.
+    //
+    // The subject's TRUSTED geography, for the postal-area cross-check: a real
+    // ABS retrieval for POA 3338 is authoritative about somebody else's suburb
+    // if this property sits in 3024. The point-in-polygon resolution is the
+    // platform's authority on that; the address-derived postcode this function
+    // computed is not, which is the whole reason the check exists.
+    //
+    // `subjectGeography` is normally resolved during THIS run, from the
+    // verified coordinate, immediately after location intelligence — see the
+    // pre-generation block above. The stored-row read below is the fallback for
+    // the one case that block cannot cover: a run where the resolution itself
+    // failed (transport, or a coordinate that was never verified). Reading a
+    // row an earlier sweep wrote is the behaviour this function already had, so
+    // the fallback cannot make a report worse than it was.
+    if (subjectGeography === null && reportId && supabaseClient) {
+      const { data: geoRow, error: geoError } = await supabaseClient
+        .from('report_geography')
+        .select('postcode, status, suburb, state')
+        .eq('report_id', reportId)
+        .maybeSingle();
+      if (geoError) {
+        console.log(`⚠️ report_geography read failed (${geoError.message}) — area statistics will fail closed.`);
+      } else if (geoRow) {
+        subjectGeography = geoRow as Record<string, unknown>;
+        geographyResolution = {
+          ...geographyResolution, source: 'stored_row', status: String(geoRow.status ?? 'unknown'),
+        };
+      }
+    }
+
+    const safeGeneration = activateSafeGenerationInputs({
+      enhancedData,
+      geography: subjectGeography,
+      geographyProvenance: {
+        source: geographyResolution.source,
+        status: geographyResolution.status,
+        absRequeried: geographyResolution.requeried,
+      },
+      cashRateTarget: (enhancedData as any)?.economics?.cashRateTarget ?? null,
+      cashRateMonthlyAverage: null,
+      capturedAt: new Date().toISOString(),
+    });
+    enhancedData = safeGeneration.enhancedData as typeof enhancedData;
+    const removedForNarrative = safeGeneration.removed.filter((r) => r.hadValue);
+    console.log(
+      `🛡️ Client-Safe Gate active (${safeGeneration.snapshot.assuranceVersion}) — `
+      + `${removedForNarrative.length} disowned fact(s) withheld from the narrative`
+      + (removedForNarrative.length ? `: ${removedForNarrative.map((r) => r.path).join(', ')}` : '')
+      + `; demographics ${safeGeneration.demographicsKept ? 'retained' : 'withheld'}.`,
+    );
+
     // ============================================================================
     // DATA AVAILABILITY SUMMARY - Graceful Degradation Report
     // ============================================================================
@@ -3338,13 +3551,16 @@ ${regionalTrendBlocks(enhancedData)}
 |------------|------|-------|----------|--------------|
 
 **Transport:**
-| Mode | Details | Access Score |
-|------|---------|--------------|
-| Train Stations | [names] (XXkm) | XX/100 |
-| Bus Routes | XX routes | XX/100 |
-| Major Roads | [list] | - |
-| CBD Commute | XX mins by [mode] | - |
-| Walk Score | XX/100 | - |
+| Mode | Details |
+|------|---------|
+| Train Stations | [names, from the measured stops above] |
+| Bus Routes | [from the measured stops above] |
+| Major Roads | [list] |
+
+Do NOT state a Walk Score, an "access score", a CBD commute time or a service
+frequency here. None of them is measured for this area — the walk score and
+transport score were withdrawn because they described the state rather than the
+address — and a scored row with no source is an invitation to invent one.
 
 **Shopping & Services:**
 | Facility Type | Nearest | Distance | Details |
@@ -3930,12 +4146,8 @@ The suburb's lifestyle is characterised by:
 A major infrastructure advancement occurred with the opening of [Station Name] in [Year], located at [specific location][citation]. This development has dramatically improved accessibility, providing commuters with access to the [Line Name] through [Connection Station]. The station includes [facilities - car park, bus connections] serving [list of destinations][citation].
 
 **Commute Performance:**
-| Metric | Value |
-|--------|-------|
-| CBD Commute | ${enhancedData.locationIntelligence?.commute?.durationMinutes || 'XX'} minutes via public transit (${enhancedData.locationIntelligence?.commute?.distanceKm || 'XX'} km distance) |
-| Public Transport Quality Score | ${enhancedData.locationIntelligence?.transport?.qualityScore || 'XX'}/100 |
 
-The suburb benefits from excellent service frequency, with peak hour services operating at [XX] services per hour and off-peak services at [XX] services per hour across multiple transport modes[citation].
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
 
 **Population & Development Trends:**
 
@@ -3947,14 +4159,11 @@ Write this from the population-trend table above, the Planning & Development blo
 
 # Current Market Performance
 
-| Metric | Value | Data Source |
-|--------|-------|-------------|
-| Walk Score | ${enhancedData.locationIntelligence?.walkScore || 'XX'}/100 | Location Intelligence Data |
-| Public Transport Score | ${enhancedData.locationIntelligence?.transport?.qualityScore || 'XX'}/100 | Location Intelligence Data |
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
 
 **Market Commentary (150+ words required):**
 
-[Suburb]'s [exceptionally high/moderate/etc.] walk score of [XX]/100 reflects [assessment of pedestrian accessibility]. The [XX]/100 public transport score demonstrates [connectivity assessment]. These metrics underscore the suburb's appeal to [target demographics].
+Write about the suburb's accessibility from the named stations, counted stops and amenities measured above. Do NOT quote a walk score or a transport score — neither is measured — and do NOT characterise walkability or connectivity with a number of any kind.
 
 Current market conditions are influenced by the National House Price Growth Rate of [X.X]% (as of [Date]), with [Suburb] positioned to benefit from [demand drivers]. The suburb's inventory includes [property mix description][citation].
 
@@ -4075,15 +4284,9 @@ Additional parks include [Park 1] and [Park 2], both offering picnic areas, walk
 
 | Metric | Value | Details |
 |--------|-------|---------|
-| Walk Score | ${enhancedData.locationIntelligence?.walkScore || 'XX'}/100 | ${enhancedData.locationIntelligence?.walkScore >= 70 ? 'Excellent' : 'Moderate'} pedestrian accessibility |
-| Public Transport Score | ${enhancedData.locationIntelligence?.transport?.qualityScore || 'XX'}/100 | ${enhancedData.locationIntelligence?.transport?.qualityScore >= 70 ? 'Excellent' : 'Moderate'} service coverage and frequency |
-| CBD Commute Time | ${enhancedData.locationIntelligence?.commute?.durationMinutes || 'XX'} minutes | Via public transit (${enhancedData.locationIntelligence?.commute?.distanceKm || 'XX'} km) |
 | Nearest Station | ${enhancedData.locationIntelligence?.transport?.nearestStation || '[Station Name]'} | [Location details] |
-| Station Opening | [Year] | Multi-storey car park included |
 
-**Service Frequency & Routes:**
-- Peak Hour Service: ${enhancedData.locationIntelligence?.transport?.serviceFrequency?.peak || 'XX'} services/hour
-- Off-Peak Service: ${enhancedData.locationIntelligence?.transport?.serviceFrequency?.offPeak || 'XX'} services/hour
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available. Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
 - Transport Types: ${enhancedData.locationIntelligence?.transport?.transportTypes?.join(', ') || 'Train, Bus, Light Rail'}
 - Primary Lines: [Line names]
 - Bus Connections: Services to [destinations list]
@@ -5503,6 +5706,10 @@ YOUR DEDICATED PROPERTY PARTNER
         if (!existingEnhancedFields.locationIntelligence && enhancedData?.locationIntelligence) {
           earlyUpdate.location_intelligence = enhancedData.locationIntelligence;
         }
+        // The snapshot goes down with the first enhanced write, so a run that is
+        // killed at the wall-clock budget still leaves the provenance of what it
+        // had already put in front of a reader.
+        earlyUpdate.market_fact_snapshot = safeGeneration.snapshot;
 
         const hasAnyEnhancedField = Object.keys(earlyUpdate).length > 1;
         const alreadyHasAnyEnhancedField = !!(
@@ -5803,6 +6010,10 @@ YOUR DEDICATED PROPERTY PARTNER
                 console.log('  ✓ Saving location_intelligence');
                 didAttachEnhancedData = true;
               }
+              // Every write that attaches enhanced data attaches its provenance
+              // with it, so the snapshot and the blobs can never describe
+              // different runs.
+              progressiveUpdatePayload.market_fact_snapshot = safeGeneration.snapshot;
             }
             
             await supabaseClient
@@ -6296,6 +6507,9 @@ YOUR DEDICATED PROPERTY PARTNER
       // finishes is worse than one carrying a named warning. Report-level
       // rule, so comparative prose about other properties cannot trip it.
       let factFlags: Array<ReturnType<typeof factFindingToFlag>> = [];
+      // Kept separate from `factFlags` because it answers a different question
+      // and carries its own flag type; both land in `allValidationFlags`.
+      let claimFlags: Array<ReturnType<typeof claimFaultToFlag>> = [];
       try {
         const factNum = (v: unknown): number | undefined => {
           const n = toFiniteNumber(v);
@@ -6320,6 +6534,19 @@ YOUR DEDICATED PROPERTY PARTNER
           lvrPct: toFiniteNumber(effectiveLvr),
         });
         factFlags = factFindings.map(factFindingToFlag);
+
+        // RF-7.2B.1 §7 — the other question the reconciliation above does not
+        // ask. That one checks whether the prose agrees with the record; this
+        // checks whether a figure it agrees with has been given a label the
+        // source does not support: a postal-area count called a suburb's, a
+        // 2021 Census figure called current, a monthly average called the rate
+        // in force. It discloses; nothing here fails a report.
+        const claimFaults = auditMarketClaims(reportContent, safeGeneration.snapshot.facts);
+        if (claimFaults.length > 0) {
+          console.log(`🔍 Market-claim audit: ${claimFaults.length} finding(s) — `
+            + claimFaults.map((f) => `${f.fact}/${f.kind}`).join(', '));
+        }
+        claimFlags = claimFaults.map(claimFaultToFlag);
 
         // The other half of the same question. Above asks whether the prose
         // agrees with the record; this asks whether the record agrees with
@@ -6359,6 +6586,8 @@ YOUR DEDICATED PROPERTY PARTNER
         ...schemaValidationFlags,
         // Prose-vs-record contradictions, from the reconciliation above.
         ...factFlags,
+        // Right number, wrong label — grain, period or source (RF-7.2B.1 §7).
+        ...claimFlags,
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',
@@ -6396,6 +6625,10 @@ YOUR DEDICATED PROPERTY PARTNER
         financial_calculations: enhancedData.financials || null,
         investment_score: enhancedData.investmentScore || null,
         location_intelligence: enhancedData.locationIntelligence || null,
+        // RF-7.2B.1 — what this report was shown, frozen at generation. Reopening
+        // it must never re-read today's ABS or RBA tables and quietly restate the
+        // document; the snapshot is what a later reader reconciles against.
+        market_fact_snapshot: safeGeneration.snapshot,
         property_specs: propertySpecs,
         validation_flags: allValidationFlags,
         calculation_version: '1.0.0',

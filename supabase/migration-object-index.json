@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1031,
+  "migration_files": 1033,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -2430,6 +2430,7 @@
     "table:public.purchase_files",
     "table:public.push_delivery_log",
     "table:public.push_subscriptions",
+    "table:public.rba_cash_rate_decisions",
     "table:public.rba_observations",
     "table:public.rba_series_meta",
     "table:public.rba_sync",

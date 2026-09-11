@@ -144,6 +144,37 @@ Deno.serve(async (req) => {
     });
   }
 
+  /*
+   * Can this deployment actually reach ANTHROPIC?
+   *
+   * The same question as the verification probe above and the same reason for
+   * asking it here: on the federated route this clone's own Mission Control
+   * key, that key's scope, Mission Control's signing key, whether Anthropic
+   * can fetch the published key set and whether the federation rule still
+   * matches this clone's subject all sit between an edge function and an
+   * answer — and only a call made HERE crosses all five. Every one of them
+   * fails silently, at inference time, on a report somebody is waiting for.
+   *
+   * Answered before the de-dupe for the reason the verification probe is: a
+   * probe is a question asked NOW, and keyed like an event it would answer the
+   * second caller out of a table without making the call.
+   *
+   * It spends nothing — a federated exchange is not billable and the model
+   * list is metadata, so no tokens are consumed — and it is deliberately not a
+   * message, which would cost money on every click. It takes a FRESH
+   * credential rather than the cached one, because a cached token outlives the
+   * chain that minted it by up to an hour and would answer green for that hour
+   * after federation broke. Nothing is written and no credential value ever
+   * leaves this function.
+   */
+  if (event === "anthropic.selftest") {
+    const { describeAnthropicReach } = await import("../_shared/anthropicCredential.ts");
+    const { reach } = await describeAnthropicReach({ freshCredential: true });
+    return new Response(JSON.stringify({ ok: true, event, reach }), {
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
+  }
+
   // De-dupe on (event, idempotency-key), falling back to a digest of the raw
   // body. NEVER key on tenant id alone: that made the FIRST balance event for
   // a tenant permanently block every later one, freezing token_balance_cache.

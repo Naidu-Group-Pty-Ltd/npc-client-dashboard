@@ -59,6 +59,12 @@ import {
   parseBrandRequest,
   readBrandSystemSummary,
 } from '../_shared/brandDesign/route.pure.ts';
+import {
+  ANTHROPIC_MESSAGES_URL,
+  type AnthropicCredential,
+  anthropicJsonHeaders,
+} from '../_shared/anthropicRoute.pure.ts';
+import { resolveAnthropicCredential } from '../_shared/anthropicCredential.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,7 +80,6 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-opus-4-8';
 const MODEL_TIMEOUT_MS = 90_000;
 
@@ -87,7 +92,7 @@ const MODEL_TIMEOUT_MS = 90_000;
  * JSON" integration that keeps its prompt in the route.
  */
 async function draftSystem(
-  apiKey: string,
+  credential: AnthropicCredential,
   brief: string,
   companyName: string,
 ): Promise<{ ok: true; raw: unknown } | { ok: false; error: string }> {
@@ -96,13 +101,9 @@ async function draftSystem(
 
   let response: Response;
   try {
-    response = await fetch(ANTHROPIC_URL, {
+    response = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: anthropicJsonHeaders(credential),
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 1_500,
@@ -338,12 +339,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // ── generate ────────────────────────────────────────────────────────────
 
     if (request.action === 'generate') {
-      const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-      if (!apiKey) {
-        return json({ error: 'the design service is not configured (ANTHROPIC_API_KEY)' }, 503);
+      const resolved = await resolveAnthropicCredential();
+      if (!resolved.ok) {
+        return json({ error: `the design service is not configured: ${resolved.why}` }, 503);
       }
 
-      const drafted = await draftSystem(apiKey, request.brief, request.companyName);
+      const drafted = await draftSystem(resolved.credential, request.brief, request.companyName);
       if (!drafted.ok) return json({ error: drafted.error }, 502);
 
       // The model's answer goes through the same reader as a form submission.

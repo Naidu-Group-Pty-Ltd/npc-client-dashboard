@@ -15,6 +15,8 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { convertContent, anthropicRejectsSampling } from './claudeReconstruct.pure.ts';
+import { ANTHROPIC_MESSAGES_URL, anthropicJsonHeaders } from './anthropicRoute.pure.ts';
+import { resolveAnthropicCredential } from './anthropicCredential.ts';
 import { logApiUsage } from './logApiUsage.ts';
 import { extractUsageTokens, resolveLlmCredential, resolveModelUsed } from './llmUsageBinding.pure.ts';
 
@@ -396,8 +398,11 @@ function openAiFinishReason(native: unknown): string | undefined {
 }
 
 async function callAnthropicNative(model: string, messages: LLMMessage[], opts: any) {
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return { ok: false, error: 'ANTHROPIC_API_KEY not configured' };
+  // How this deployment reaches Anthropic is one decision, taken in
+  // `anthropicCredential.ts` — a forwarded key, a tenant's own, or a
+  // short-lived federated token bound to this clone's workspace.
+  const resolved = await resolveAnthropicCredential();
+  if (!resolved.ok) return { ok: false, error: resolved.why };
   // Anthropic API takes system separately
   const systemMsg = messages.filter((m) => m.role === 'system').map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n\n');
   const userMsgs = messages.filter((m) => m.role !== 'system').map((m) => ({
@@ -417,13 +422,9 @@ async function callAnthropicNative(model: string, messages: LLMMessage[], opts: 
   if (opts.temperature !== undefined && !anthropicRejectsSampling(model)) body.temperature = opts.temperature;
   applyProviderExtras(body, opts.extras);
 
-  const r = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
+  const r = await fetchWithTimeout(ANTHROPIC_MESSAGES_URL, {
     method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
+    headers: anthropicJsonHeaders(resolved.credential),
     body: JSON.stringify(body),
   }, opts.timeoutMs);
   if (!r.ok) return { ok: false, status: r.status, error: await r.text() };

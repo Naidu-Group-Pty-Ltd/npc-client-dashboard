@@ -98,6 +98,21 @@ export const DEPLOYMENT_IDENTITY_SECRETS: ReadonlySet<string> = new Set([
   // The platform's payment account, not the workspace's.
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
+  /*
+   * Which Anthropic workspace this deployment's model spend is attributed to.
+   *
+   * Not a credential, and refused for a reason none of the others share: a
+   * tenant who could write it would name ANOTHER tenant's workspace and have
+   * their model calls billed to that line. Nothing would fail — the calls
+   * succeed, the answers are correct, and the only evidence is a figure on
+   * somebody else's invoice.
+   *
+   * It is not on the page's generated allow-list today, because that list is
+   * built from the integrations registry rather than from what the runtime
+   * reads. This is the rule rather than the accident, so a future card that
+   * happens to name the field cannot open it.
+   */
+  'ANTHROPIC_WORKSPACE_ID',
 ]);
 
 /**

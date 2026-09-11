@@ -32,7 +32,11 @@ import type { ReportArchetypeId } from '../../reportDesign/structure.pure.ts';
 import type { ExtractedStructure } from './structure.pure.ts';
 import type { BindingSource } from './route.pure.ts';
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+import {
+  ANTHROPIC_MESSAGES_URL,
+  type AnthropicCredential,
+  anthropicJsonHeaders,
+} from '../../anthropicRoute.pure.ts';
 
 export const BINDING_MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-opus-4-8';
 
@@ -54,7 +58,7 @@ export interface ProposedBinding {
  * is a correct answer.
  */
 export async function proposeBindingWithModel(
-  apiKey: string | null | undefined,
+  credential: AnthropicCredential | null | undefined,
   format: ReportArchetypeId,
   structure: ExtractedStructure,
 ): Promise<ProposedBinding> {
@@ -67,7 +71,7 @@ export async function proposeBindingWithModel(
   if (isPassthroughFormat(format)) {
     return { plan: scored, source: 'scorer', note: 'this format takes its chapters from the template' };
   }
-  if (!apiKey) {
+  if (!credential) {
     return { plan: scored, source: 'scorer', note: 'matched on wording — no model is configured' };
   }
   if (!chapters.length || !structure.sections.length) return { plan: scored, source: 'scorer', note: '' };
@@ -77,13 +81,9 @@ export async function proposeBindingWithModel(
 
   let response: Response;
   try {
-    response = await fetch(ANTHROPIC_URL, {
+    response = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: anthropicJsonHeaders(credential),
       body: JSON.stringify({
         model: BINDING_MODEL,
         max_tokens: 2_000,

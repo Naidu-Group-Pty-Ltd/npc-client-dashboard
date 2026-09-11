@@ -22,10 +22,19 @@ import { CRITIQUE_TOOL_SCHEMA, VISUAL_CRITIQUE_VERSION } from '../_shared/visual
 // without the import — so this file has not type-checked on `main` since, and
 // `check-edge-functions.mjs` has been failing the `security` job on it.
 import { internalError } from '../_shared/errorResponse.ts';
+import { resolveAnthropicCredential } from '../_shared/anthropicCredential.ts';
 
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
-const USE_CLAUDE = !!ANTHROPIC_API_KEY;
+/*
+ * Whether this deployment can reach Claude is resolved PER REQUEST, below.
+ *
+ * It used to be `const USE_CLAUDE = !!Deno.env.get('ANTHROPIC_API_KEY')` read
+ * once at module load, which gates this agent's entire Claude path — visual
+ * critique, native PDF reconstruction and brief synthesis. A clone that
+ * reaches Anthropic by federation holds no key, so all three answered
+ * "requires Claude (set ANTHROPIC_API_KEY)": a 400 telling an operator to set
+ * a credential that must NOT be set on that deployment.
+ */
 const GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions';
 const DEFAULT_MODEL = 'openai/gpt-5.5';
 // Synthesis model — strong reasoning + tool calling. Vision lives in designBrief.ts.
@@ -550,7 +559,12 @@ Deno.serve(async (req) => {
   const csrf = enforceCsrf(req);
   if (!csrf.ok) return csrfDenied(cors, csrf);
 
-  if (!LOVABLE_API_KEY && !ANTHROPIC_API_KEY) return json({ error: 'No AI provider configured (set LOVABLE_API_KEY or ANTHROPIC_API_KEY).' }, 500);
+  const anthropic = await resolveAnthropicCredential();
+  const anthropicCredential = anthropic.ok ? anthropic.credential : null;
+  const USE_CLAUDE = anthropicCredential !== null;
+  if (!LOVABLE_API_KEY && !USE_CLAUDE) {
+    return json({ error: `No AI provider configured: ${anthropic.ok ? '' : anthropic.why}` }, 500);
+  }
 
   try {
     const body = await req.json();
@@ -650,7 +664,7 @@ Deno.serve(async (req) => {
     if (body.mode === 'visual_critique') {
       const pageId = typeof body.pageId === 'string' ? body.pageId : '';
       if (!pageId) return json({ error: 'visual_critique requires a pageId' }, 400);
-      if (!USE_CLAUDE) return json({ error: 'Visual critique requires Claude (set ANTHROPIC_API_KEY).' }, 400);
+      if (!USE_CLAUDE) return json({ error: `Visual critique requires Claude, which this deployment cannot reach: ${anthropic.ok ? '' : anthropic.why}` }, 400);
 
       const sourceImage = validateVisionImageDataUrl(body.sourceImageDataUrl, MAX_VISION_IMAGE_BYTES);
       const renderedImage = validateVisionImageDataUrl(body.renderedImageDataUrl, MAX_VISION_IMAGE_BYTES);
@@ -691,7 +705,7 @@ ELEMENT INVENTORY (ids you may reference):
 ${inventoryText}`;
 
       const critique = await callClaudeReconstruct({
-        apiKey: ANTHROPIC_API_KEY!,
+        credential: anthropicCredential!,
         messages: [
           { role: 'system', content: critiqueSystem },
           {
@@ -929,7 +943,7 @@ ACTIVE SELECTION:
     // §7a — native PDF reconstruction: send the document straight to Claude.
     const usePdfDocument = mode === 'pdf_document' && !!pdfBase64;
     if (usePdfDocument && !USE_CLAUDE) {
-      return json({ error: 'PDF document reconstruction requires Claude (set ANTHROPIC_API_KEY).' }, 400);
+      return json({ error: `PDF document reconstruction requires Claude, which this deployment cannot reach: ${anthropic.ok ? '' : anthropic.why}` }, 400);
     }
     if (usePdfDocument && activePageId) {
       // When the deterministic importer has already parsed this document, its
@@ -979,8 +993,8 @@ A PDF is attached. ${pageInstruction} FIRST emit a 'clear_page' for ${activePage
     }
 
     const callGateway = async (toolChoice: any, modelOverride?: string) => {
-      // Route through Claude for brief-synthesis & vision flows when the
-      // ANTHROPIC_API_KEY is configured. Other modes still use the Lovable AI Gateway.
+      // Route through Claude for brief-synthesis & vision flows when
+      // this deployment can reach Anthropic. Other modes still use the Lovable AI Gateway.
       const preferClaude = USE_CLAUDE && (useBriefPipeline || useVision || usePdfDocument);
       if (preferClaude) {
         // Faithful reconstructions emit one op per measured element — a dense page
@@ -989,7 +1003,7 @@ A PDF is attached. ${pageInstruction} FIRST emit a 'clear_page' for ${activePage
         // reconstruction modes real headroom.
         const reconstructing = usePdfDocument || mode === 'screenshot_to_block';
         const r = await callClaudeReconstruct({
-          apiKey: ANTHROPIC_API_KEY!,
+          credential: anthropicCredential!,
           model: CLAUDE_MODEL,
           messages: messages as any,
           tools: [TOOL as any],

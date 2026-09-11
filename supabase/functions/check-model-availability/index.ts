@@ -6,6 +6,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { internalError } from '../_shared/errorResponse.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
+import { describeAnthropicReach } from '../_shared/anthropicCredential.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -112,19 +113,28 @@ async function probeOpenAI(): Promise<{ result: ProviderResult; models: ProbedMo
 }
 
 async function probeAnthropic(): Promise<{ result: ProviderResult; models: ProbedModel[] }> {
-  const probedAt = new Date().toISOString();
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
-  try {
-    const r = await fetchWithTimeout('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
-    if (!r.ok) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: true, modelCount: 0, error: `${r.status}`, probedAt }, models: [] };
-    const data = await r.json();
-    const list: any[] = data?.data ?? [];
-    const models: ProbedModel[] = list.map((m) => ({ provider: 'anthropic', route: 'native', model_id: m.id, display_name: m.display_name ?? m.id, status: inferStatus(m.id, m), capabilities: ['text', 'vision', 'reasoning'], raw_metadata: m }));
-    return { result: { provider: 'anthropic', route: 'native', ok: true, keyConfigured: true, modelCount: models.length, probedAt }, models };
-  } catch (e: any) {
-    return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: true, modelCount: 0, error: e.message, probedAt }, models: [] };
+  /*
+   * The catalog and the self-test ask the SAME question, so they run the same
+   * probe. `keyConfigured` is a reading about whether this deployment can
+   * reach Anthropic AT ALL — which since federation is no longer the same
+   * question as whether a key is set, and reading the environment directly
+   * reported a correctly federated clone as unconfigured.
+   *
+   * No `freshCredential` here: this is a scheduled sweep rather than an
+   * operator's question, and a cached token is exactly what inference will be
+   * spending anyway.
+   */
+  const { reach, models: list } = await describeAnthropicReach();
+  const probedAt = reach.probedAt;
+  // `unconfigured` is the only reading that means no credential was found; a
+  // route that resolved and was then refused HAS one, and reporting that as
+  // an unset key sends an operator to add a credential that is already there.
+  const keyConfigured = reach.route !== 'unconfigured';
+  if (!reach.ok) {
+    return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured, modelCount: 0, error: reach.why ?? undefined, probedAt }, models: [] };
   }
+  const models: ProbedModel[] = (list as any[]).map((m) => ({ provider: 'anthropic', route: 'native', model_id: m.id, display_name: m.display_name ?? m.id, status: inferStatus(m.id, m), capabilities: ['text', 'vision', 'reasoning'], raw_metadata: m }));
+  return { result: { provider: 'anthropic', route: 'native', ok: true, keyConfigured: true, modelCount: models.length, probedAt }, models };
 }
 
 async function probeGemini(): Promise<{ result: ProviderResult; models: ProbedModel[] }> {

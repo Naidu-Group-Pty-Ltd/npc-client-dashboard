@@ -18,13 +18,20 @@ export interface OAMessage {
   content: any;
 }
 
+import type { AnthropicCredential } from './anthropicRoute.pure.ts';
+
 export interface OATool {
   type: 'function';
   function: { name: string; description?: string; parameters: any };
 }
 
 export interface ClaudeReconstructArgs {
-  apiKey: string;
+  /**
+   * Resolved by `anthropicCredential.ts`. Not a raw key string: a deployment
+   * may reach Anthropic on a short-lived federated token, and on a workspace
+   * of its own.
+   */
+  credential: AnthropicCredential;
   model?: string;
   messages: OAMessage[];
   tools?: OATool[];

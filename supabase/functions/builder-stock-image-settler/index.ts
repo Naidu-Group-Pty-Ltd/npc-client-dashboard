@@ -448,13 +448,89 @@ Deno.serve(async (req: Request) => {
      * which is exactly the shape of the four kills that document collected.
      *
      * Three, so the invocation stops two documents before the crossing rather
-     * than at it. Light stages are not counted: eligibility, sanitization and
-     * fallback decode nothing, and it is decoding that accumulates — counting
-     * them would give back the throughput this loop exists to win.
+     * than at it. Only `source` is counted, because only `source` opens a
+     * PACKAGE: a multi-megabyte PDF, its page tree, and every raster on the
+     * pages it flattens.
+     *
+     * THE LIGHT STAGES ARE NOT FREE, and this comment used to say they were
+     * ("eligibility, sanitization and fallback decode nothing"). They do:
+     * eligibility downloads a stored photograph and decodes it to judge it,
+     * and sanitization runs a full-resolution decode, a reconstruction and a
+     * re-decode. They are cheap RELATIVE to a package — one photograph rather
+     * than a document — which is why they are not counted against the
+     * allowance, and why the invocation's walk past a spent allowance is
+     * bounded rather than unlimited. See `LIGHT_ITEMS_AFTER_DOCUMENTS`.
      */
     const HEAVY_DOCUMENTS_PER_INVOCATION = 3;
     const isHeavy = (stage: string): boolean => stage === 'source';
     let heavyDocuments = 0;
+
+    /*
+     * HOW MUCH LIGHT WORK MAY RIDE ALONG BEHIND THE DOCUMENTS.
+     *
+     * The invocation used to END when it reached its document allowance, and
+     * that is the largest measured waste in this engine: over a real
+     * eighteen-property import the settler used 524 s of the 2,100 s its
+     * twenty-one invocations were given, because
+     *
+     *   item tick { settled: 3, claimable: 17, ms: 19360 }
+     *
+     * happens every time — three documents opened, seventeen properties ready
+     * to go, eighty seconds of budget in hand, worker exits. Each property is
+     * claimed four times (source, eligibility, sanitization, fallback), so
+     * three of every four claims are light, and ending the invocation made
+     * every one of them wait for a fresh minute of its own.
+     *
+     * So the allowance now refuses the DOCUMENT rather than ending the walk.
+     * The bound on what follows is the envelope production has already
+     * demonstrated: mixed invocations of eleven items are ordinary in the
+     * live log (`settled: 11 … stage: "source"`), and light-only invocations
+     * reach thirty-six. Eight keeps documents-then-light at eleven — inside
+     * what has run for months without a kill — rather than inventing a new
+     * combination on the strength of an argument.
+     */
+    const LIGHT_ITEMS_AFTER_DOCUMENTS = 8;
+    let lightItemsAfterDocuments = 0;
+
+    /*
+     * WHAT THIS INVOCATION HAS ALREADY DONE, AND WHAT IT GAVE BACK.
+     *
+     * MEASURED 11 SEPTEMBER 2026, one production invocation:
+     *
+     *   item tick { settled: 126, stage: "fallback", next_stage: "fallback",
+     *               progressed: true, primary_set: false, ms: 80565 }
+     *
+     * One property, one stage, a hundred and twenty-six times, resolving
+     * nothing — then 102 more on the next tick. The cause was a stage that
+     * could never advance (see `sourceVerdictOutstanding`) and it is fixed at
+     * the cause. This is the guard that makes the SHAPE impossible whatever a
+     * future stage returns: a stage reports progress, the completion clears
+     * the backoff, `retryAfterSeconds: 0` makes the row claimable in the same
+     * millisecond, and the loop takes it straight back. Nothing in the claim
+     * or the completion can see that the property is where it started.
+     *
+     * So the invocation remembers. One property at one stage is worked at most
+     * ONCE per invocation; a second offer of the same pair is handed back with
+     * a real delay and the loop moves on to somebody else. That turns an
+     * unbounded spin into a single wasted claim, and — because the handback
+     * does not reset the attempt counter — the claim's own exponential backoff
+     * then walks a genuinely stuck property out of the way of the queue.
+     */
+    const workedThisInvocation = new Set<string>();
+    const handedBack = new Set<string>();
+    const STALLED_RETRY_SECONDS = 60;
+    /*
+     * How many unworkable offers to walk past before giving up on this
+     * invocation. The claim orders by `image_work_next_attempt_at`, and a
+     * handback moves a row to the BACK of that order, so probing cannot
+     * revisit the same row until the whole claimable set has been offered —
+     * which is what `handedBack` detects exactly. This is the cheap outer
+     * bound for the case where the set is very large and uniformly
+     * unworkable (every candidate a document, the document allowance spent):
+     * a dozen index reads, not two hundred.
+     */
+    const MAX_HANDBACKS_PER_INVOCATION = 12;
+    let handbacks = 0;
 
     let claimed = itemClaim.item;
     let settledCount = 0;
@@ -510,6 +586,7 @@ Deno.serve(async (req: Request) => {
 
     settledCount += 1;
     lastSettlement = settlement;
+    workedThisInvocation.add(`${claimed.id}:${settlement.stage}`);
 
     /*
      * AND ASK WHETHER THIS PROPERTY'S UPLOAD CAN NOW BE PUBLISHED.
@@ -550,46 +627,137 @@ Deno.serve(async (req: Request) => {
      * nothing is held, nothing is lost.
      */
     if (Date.now() > startedAt + BUDGET_MS - LIGHT_STAGE_RESERVE_MS) break;
-    const next = await claimOneImageWorkItem(supabase, {
-      leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
-    });
-    if (!next.available || !next.item) break;
 
     /*
-     * THE STAGE IS ONLY KNOWN ONCE CLAIMED, so a claim that turns out to be
-     * too expensive for the time left is HANDED BACK rather than started.
-     * Released at the same stage with no progress, so the next tick takes it
-     * with a full budget; the recovery never begins, so no branch attempt is
-     * spent and nothing is recorded about the document. Doing the work with
-     * too little clock would either kill the worker or bank a timeout as if
-     * it were an answer about the link.
+     * LOOK FOR THE NEXT PROPERTY THIS INVOCATION MAY ACTUALLY WORK — rather
+     * than ending because the first one offered was the wrong kind.
+     *
+     * MEASURED 11 SEPTEMBER 2026 over a real eighteen-property import: the
+     * settler ran twenty-one invocations and used 524 s of the 2,100 s they
+     * were given. The import took 12 min 30 s and contained about two minutes
+     * of work. The single largest waste is here — an invocation that reached
+     * its document allowance ended:
+     *
+     *   item tick { settled: 3, claimable: 17, ms: 19360 }
+     *
+     * Three documents opened, seventeen properties ready to go, EIGHTY
+     * SECONDS of budget in hand, and the worker exits. The allowance exists
+     * because decoding accumulates memory and the fifth document in one
+     * isolate crosses the ceiling — that is measured and it stands. But it
+     * bounds PACKAGES, and there are three light claims for every document
+     * claim. Ending the invocation spent the allowance's cost on those too,
+     * and they are precisely the ones that could have filled the rest of the
+     * budget — bounded, because they are cheaper than a package rather than
+     * free. See `LIGHT_ITEMS_AFTER_DOCUMENTS`.
+     *
+     * So a refusal skips the property instead of ending the loop. A handback
+     * is recorded, and seeing the same property offered twice means the
+     * claimable set has been all the way round — there is genuinely nothing
+     * else — which is the exact moment to stop.
      */
-    const remaining = startedAt + BUDGET_MS - Date.now();
-    const spentOnDocuments = isHeavy(next.item.image_work_stage)
-      && heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION;
-    if (spentOnDocuments || remaining < reserveFor(next.item.image_work_stage)) {
-      await completeItemWork(supabase, next.item.id, {
-        nextStage: readStage(next.item.image_work_stage),
-        result: spentOnDocuments
-          ? 'deferred: this invocation has opened its allowance of documents'
-          : 'deferred: not enough of this invocation left to finish it',
-        error: null,
-        retryAfterSeconds: 0,
-        // Nothing advanced — the stage was never entered.
-        progressed: false,
-        /*
-         * But the CLAIM already incremented the backoff counter, and this
-         * property did nothing to earn it: the invocation ran short, which is
-         * our scheduling and not its document. Left standing, a handful of
-         * these would push a perfectly healthy row to a 32-minute backoff and
-         * slow the very queue this loop exists to speed up. So the row goes
-         * back exactly as it was found.
-         */
-        resetAttempts: true,
+    let nextItem: (typeof claimed) | null = null;
+    for (;;) {
+      if (Date.now() > startedAt + BUDGET_MS - LIGHT_STAGE_RESERVE_MS) break;
+      const next = await claimOneImageWorkItem(supabase, {
+        leaseSeconds: Math.ceil(BUDGET_MS / 1000) + 20,
       });
+      if (!next.available || !next.item) break;
+      const candidate = next.item;
+      const stage = readStage(candidate.image_work_stage);
+
+      /*
+       * ALREADY DONE, THIS INVOCATION, AT THIS STAGE. The stage ran, reported
+       * progress and left the property exactly where it was. Doing it again
+       * inside the same invocation cannot produce a different answer — the
+       * inputs have not changed — so it is handed back with a real delay and
+       * WITHOUT clearing the attempt counter, which is what lets the claim's
+       * own backoff carry a genuinely stuck property out of the queue's way.
+       * This is a symptom worth seeing in the logs: it means a stage is
+       * reporting progress it did not make.
+       */
+      if (workedThisInvocation.has(`${candidate.id}:${stage}`)) {
+        console.warn('[builder-stock-image-settler] stage reported progress and did not move', {
+          phase: 'item_work_stalled',
+          stock_item_id: candidate.id,
+          stage,
+          retry_after_seconds: STALLED_RETRY_SECONDS,
+        });
+        await completeItemWork(supabase, candidate.id, {
+          nextStage: stage,
+          result: `stalled: ${stage} reported progress without leaving the stage`,
+          error: null,
+          retryAfterSeconds: STALLED_RETRY_SECONDS,
+          progressed: false,
+          resetAttempts: false,
+        });
+        continue;
+      }
+
+      /*
+       * THE STAGE IS ONLY KNOWN ONCE CLAIMED, so a claim that turns out to be
+       * too expensive for the time left is HANDED BACK rather than started.
+       * Released at the same stage with no progress, so the next tick takes it
+       * with a full budget; the recovery never begins, so no branch attempt is
+       * spent and nothing is recorded about the document. Doing the work with
+       * too little clock would either kill the worker or bank a timeout as if
+       * it were an answer about the link.
+       */
+      const remaining = startedAt + BUDGET_MS - Date.now();
+      const spentOnDocuments = isHeavy(stage)
+        && heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION;
+      if (spentOnDocuments || remaining < reserveFor(stage)) {
+        const seenBefore = handedBack.has(candidate.id);
+        await completeItemWork(supabase, candidate.id, {
+          nextStage: stage,
+          result: spentOnDocuments
+            ? 'deferred: this invocation has opened its allowance of documents'
+            : 'deferred: not enough of this invocation left to finish it',
+          error: null,
+          retryAfterSeconds: 0,
+          // Nothing advanced — the stage was never entered.
+          progressed: false,
+          /*
+           * But the CLAIM already incremented the backoff counter, and this
+           * property did nothing to earn it: the invocation ran short, which is
+           * our scheduling and not its document. Left standing, a handful of
+           * these would push a perfectly healthy row to a 32-minute backoff and
+           * slow the very queue this loop exists to speed up. So the row goes
+           * back exactly as it was found.
+           */
+          resetAttempts: true,
+        });
+        handbacks += 1;
+        // Round the whole claimable set with nothing workable in it.
+        if (seenBefore || handbacks >= MAX_HANDBACKS_PER_INVOCATION) break;
+        handedBack.add(candidate.id);
+        continue;
+      }
+      /*
+       * A light property behind a spent allowance rides along, up to the
+       * bound above. Reaching it ends the invocation rather than deferring:
+       * there is nothing wrong with the property, and a handback would cost
+       * it a claim to say so.
+       */
+      if (heavyDocuments > 0 && !isHeavy(stage)) {
+        if (lightItemsAfterDocuments >= LIGHT_ITEMS_AFTER_DOCUMENTS) {
+          await completeItemWork(supabase, candidate.id, {
+            nextStage: stage,
+            result: 'deferred: this invocation has spent its allowance',
+            error: null,
+            retryAfterSeconds: 0,
+            progressed: false,
+            resetAttempts: true,
+          });
+          break;
+        }
+        lightItemsAfterDocuments += 1;
+      }
+
+      nextItem = candidate;
       break;
     }
-    claimed = next.item;
+    if (!nextItem) break;
+    claimed = nextItem;
     }
 
     const pending = await readItemWorkPending(supabase);

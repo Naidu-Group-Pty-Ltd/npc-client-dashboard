@@ -48,8 +48,7 @@ import {
   chooseDisplayableImage, isDisplayableSourceImage, servesCleanOriginal,
   type DisplayableImage,
 } from './primaryImage.ts';
-import { needsEligibilityAssessment } from './marketplaceEligibility.pure.ts';
-import { sanitizationSettled, storedOriginalSha } from './sanitizedDerivative.pure.ts';
+import { sourceVerdictOutstanding } from './marketplaceEligibility.pure.ts';
 
 /**
  * The reference a SKIPPED stage row carries, and the message it carries.
@@ -354,12 +353,17 @@ export function nextImageStage(
    * claimed. It is the only answer here with no exit, which is what made it
    * the dangerous one to get wrong.
    *
-   * Both halves of "on its way" are now asked directly. The eligibility
-   * verdict is outstanding while `needsEligibilityAssessment` says the stored
-   * decision predates the current version — the same test the eligibility
-   * sweep itself uses, so the two cannot disagree about what is owed. The
-   * repair is outstanding while `sanitizationSettled` finds no derivative, no
-   * clearance and no recorded failure bound to these exact bytes.
+   * ASKED OF THE SWEEPS, NOT OF THE COLUMN. This used to test the version and
+   * the derivative directly — "the same test the eligibility sweep itself
+   * uses", the comment said — and it was half of it. Both sweeps also skip any
+   * row the source did not designate as the property's hero, so a row of any
+   * other role reads unjudged for ever and this answered `wait` for ever:
+   * measured, one property re-claimed 126 times inside a single invocation,
+   * and its card said "Finding a picture…" indefinitely.
+   * `sourceVerdictOutstanding` is the one place that says what is genuinely
+   * owed, over `sweepWillJudge` — which both sweeps and `awaitingVerdict` now
+   * call too, so no reader can drift from another. See its header for the
+   * failure in full.
    *
    * A convicted image with both questions closed is a finished stage 1 with a
    * negative answer, and the ladder moves down — which is precisely what the
@@ -371,9 +375,7 @@ export function nextImageStage(
     if (image.verification_status !== SOURCE_SUPPLIED_VERIFICATION) return false;
     if (image.processing_status === 'failed') return false;
     if (isDisplayableSourceImage(image)) return false;
-    const detail = image.source_detail ?? {};
-    return needsEligibilityAssessment(detail)
-      || !sanitizationSettled(detail, storedOriginalSha(detail));
+    return sourceVerdictOutstanding(image.source_detail);
   });
   if (sourcePending || !options.sourceSettlementComplete) return 'wait';
 

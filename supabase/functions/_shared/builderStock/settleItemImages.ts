@@ -296,9 +296,26 @@ export async function settleClaimedItem(
         const fallback = await settleFallback(db, {
           limit: 1, deadlineAt: input.deadlineAt, stockItemId: item.id,
         });
-        settlement.progressed = fallback.attempted > 0;
+        /*
+         * PROGRESS IS A RUNG CLIMBED, NOT A PROPERTY OFFERED.
+         *
+         * This used to be `fallback.attempted > 0`, and `attempted` rises for
+         * a property the ladder looked at and could not move — `nextImageStage`
+         * answering `none` or `wait` runs nothing at all. Reported as progress
+         * it clears the claim's backoff and sets `retryAfterSeconds: 0`, so the
+         * row is claimable again in the same millisecond and the settler's
+         * serial loop takes it straight back: measured, 126 iterations of one
+         * property at one stage inside a single 80-second invocation, and a
+         * card reading "Finding a picture…" indefinitely.
+         *
+         * A stage that genuinely ran, or a picture that genuinely landed, is
+         * progress. Anything else leaves the attempt counter standing so the
+         * claim's own exponential backoff carries the property out of the
+         * queue's way instead of it being asked the same question for ever.
+         */
+        settlement.progressed = fallback.resolved > 0 || fallback.laddered > 0;
         settlement.result = `fallback: attempted ${fallback.attempted}, `
-          + `resolved ${fallback.resolved}`;
+          + `climbed ${fallback.laddered}, resolved ${fallback.resolved}`;
         /*
          * The ladder is climbed one rung per claim. `remaining` counts THIS
          * property's outstanding rungs, so a property still owed a stage comes

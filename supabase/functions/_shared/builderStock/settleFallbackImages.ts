@@ -92,6 +92,18 @@ export interface FallbackOutcome {
   attempted: number;
   /** Of those, the ones that ended holding a displayable picture. */
   resolved: number;
+  /**
+   * Of those, the ones where a paid stage ACTUALLY RAN.
+   *
+   * `attempted` counts properties put through the ladder, which is not the
+   * same as work done: a pass whose `nextImageStage` answers `none` or `wait`
+   * runs nothing, and both were being reported to the caller as an attempt.
+   * `settleClaimedItem` turns that into `progressed: true`, which clears the
+   * backoff and makes the row claimable in the same millisecond — so a
+   * property the ladder could never move was re-claimed 126 times inside one
+   * invocation. A rung climbed is the honest unit of progress here.
+   */
+  laddered: number;
   /** Properties still owed the ladder AFTER this tick. */
   remaining: number;
   /** True when the queue could not be read — never confused with an empty one. */
@@ -231,7 +243,7 @@ export async function settleFallbackImages(
   deps: { enrich?: typeof enrichStockItem } = {},
 ): Promise<FallbackOutcome> {
   const outcome: FallbackOutcome = {
-    attempted: 0, resolved: 0, remaining: 0, withheld: 0, problems: [],
+    attempted: 0, resolved: 0, laddered: 0, remaining: 0, withheld: 0, problems: [],
   };
   const batchLimit = Math.max(1, input.limit ?? MAX_FALLBACK_ITEMS_PER_TICK);
 
@@ -327,6 +339,7 @@ export async function settleFallbackImages(
     const item = { ...row, sourceSettlementComplete: true } as unknown as EnrichableStockItem;
 
     outcome.attempted += 1;
+    let climbed = false;
     try {
       for (let pass = 0; pass < MAX_STAGES_PER_ITEM; pass += 1) {
         const result = await enrich(db, item, builderName);
@@ -340,6 +353,7 @@ export async function settleFallbackImages(
         const ranAStage = (result?.outcomes ?? [])
           .some((stageOutcome) => stageOutcome?.status !== 'skipped');
         if (!ranAStage) break;
+        climbed = true;
 
         // The rung is climbed only while the property still has no picture: a
         // verified web photograph ends the item here, with no Street View call.
@@ -358,6 +372,7 @@ export async function settleFallbackImages(
       });
     }
 
+    if (climbed) outcome.laddered += 1;
     if (await primaryOf(db, itemId)) outcome.resolved += 1;
   }
 

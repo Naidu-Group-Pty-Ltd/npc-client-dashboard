@@ -71,8 +71,7 @@ import {
   oversizedRepairRegionShare, readRepairRegion, MAX_REPAIRED_SHARE,
   type RepairRegionBox,
 } from './repairRegion.pure.ts';
-import { readMarketplaceState } from './marketplaceEligibility.pure.ts';
-import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
+import { readMarketplaceState, sweepWillJudge } from './marketplaceEligibility.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
 import { PROVENANCE_VERSION, readPrimaryImageStanding } from './sourceImages.ts';
 
@@ -740,7 +739,7 @@ export async function settleImageSanitization(
       after = row.id;
 
       const detail = row.source_detail ?? {};
-      if (!isPrimaryRole(readStoredRole(detail))) continue;
+      if (!sweepWillJudge(detail)) continue;
 
       /*
        * A RECTANGLE SOMEBODY WROTE DOWN AGAINST THESE EXACT BYTES.

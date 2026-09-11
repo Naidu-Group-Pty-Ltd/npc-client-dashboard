@@ -13,9 +13,12 @@
  * something else entirely — and neither may ever expose a crash, a memory
  * error, a CPU limit or a retry count to the front end.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 import {
-  STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
+  STOCK_IMAGE_PROGRESS_BADGE, STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
   stockImageProgress, unreadDocumentCount,
 } from '../../../supabase/functions/_shared/builderStock/imageProgress.pure';
 
@@ -110,6 +113,55 @@ describe('what those states are allowed to say out loud', () => {
     for (const state of ['unreadable', 'source_unavailable'] as const) {
       expect(STOCK_IMAGE_PROGRESS_LABEL[state]).not.toMatch(/no picture in/i);
     }
+  });
+
+  /*
+   * REPORTED, 11 SEPTEMBER 2026: the Images column drew `No picture in the s…`
+   * — a status that states nothing. The column is 15% of a table that renders
+   * only at 1400px and up, which leaves 154px of text; that label wants 207px
+   * and the dead-link one wants 220px.
+   */
+  it('says every state in a width the chip actually has', () => {
+    // Measured in a browser against the built stylesheet at 154px. Held as a
+    // character budget because a test cannot lay out text, and because the
+    // two that overran did so by 35% and 43% — not by a rounding error.
+    const BUDGET = 26;
+    for (const [state, text] of Object.entries(STOCK_IMAGE_PROGRESS_BADGE)) {
+      expect(text.length, `${state} badge is too long for the column`)
+        .toBeLessThanOrEqual(BUDGET);
+    }
+  });
+
+  it('shortens only the two that could not fit, and keeps the other four', () => {
+    const shortened = (Object.keys(STOCK_IMAGE_PROGRESS_BADGE) as Array<
+      keyof typeof STOCK_IMAGE_PROGRESS_BADGE>)
+      .filter((state) => STOCK_IMAGE_PROGRESS_BADGE[state] !== STOCK_IMAGE_PROGRESS_LABEL[state]);
+    expect(shortened.sort()).toEqual(['none_found', 'source_unavailable']);
+  });
+
+  it('keeps the six states tellable apart in the short form too', () => {
+    const spoken = Object.values(STOCK_IMAGE_PROGRESS_BADGE);
+    expect(new Set(spoken).size).toBe(spoken.length);
+  });
+
+  it('holds the short form to the same rules as the long one', () => {
+    // A chip is not a licence to say something the sentence may not.
+    expect(STOCK_IMAGE_PROGRESS_BADGE.unreadable).not.toMatch(/no picture/i);
+    for (const state of ['unreadable', 'source_unavailable'] as const) {
+      expect(STOCK_IMAGE_PROGRESS_BADGE[state]).not.toMatch(/no picture in/i);
+    }
+    // The dead link still points at the link; the inspected state still reads
+    // as a finding. Shortening may not collapse them into one another.
+    expect(STOCK_IMAGE_PROGRESS_BADGE.source_unavailable).toMatch(/link/i);
+    expect(STOCK_IMAGE_PROGRESS_BADGE.none_found).toMatch(/no picture/i);
+  });
+
+  it('never loses the full sentence — the chip carries it as its name', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'src/pages/builder/BuilderStockList.tsx'), 'utf8',
+    );
+    expect(source).toContain('STOCK_IMAGE_PROGRESS_BADGE[progress]');
+    expect(source).toContain('<span className="sr-only">{STOCK_IMAGE_PROGRESS_LABEL[progress]}</span>');
   });
 
   it('the inspected state keeps its claim, because there it is true', () => {

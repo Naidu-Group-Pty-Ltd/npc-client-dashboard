@@ -46,7 +46,7 @@ import {
 import { isNonBlockingSourceNotice } from '../../../supabase/functions/_shared/builderStock/sourceAccessNotice.pure';
 import {
   countArrivingUploads, countWorkingImages, stockImageProgress,
-  STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
+  STOCK_IMAGE_PROGRESS_BADGE, STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
 } from '../../../supabase/functions/_shared/builderStock/imageProgress.pure';
 import './BuilderStockList.css';
 
@@ -1356,11 +1356,20 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
           : working
             ? <Loader2 className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-none" aria-hidden />
             : <ImageOff className="h-3 w-3 shrink-0" aria-hidden />}
-        <span className="truncate">
+        {/*
+          The chip says the short form; the full sentence is the accessible
+          name, exactly as the stage chips below do it. Two of the six states
+          are longer than this column has ever been able to draw, and a status
+          clipped to "No picture in the s…" states nothing.
+        */}
+        <span className="truncate" aria-hidden={!image}>
           {image
             ? STOCK_IMAGE_STAGE_BADGES[image.source_stage]
-            : STOCK_IMAGE_PROGRESS_LABEL[progress]}
+            : STOCK_IMAGE_PROGRESS_BADGE[progress]}
         </span>
+        {image ? null : (
+          <span className="sr-only">{STOCK_IMAGE_PROGRESS_LABEL[progress]}</span>
+        )}
       </Badge>
 
       {/*

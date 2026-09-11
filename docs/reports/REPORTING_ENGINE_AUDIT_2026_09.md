@@ -7639,3 +7639,173 @@ Reporting work (RF-7) may build against the score output contract — shape
 compatibility, developer-only shadow comparison — without any of the above
 moving. Trial-footed evidence stays shadow-only throughout.
 
+
+## §69 SCORING ACCURACY $0 PROGRAMME — CLOSED (2026-09-11)
+
+Merged into `main` as `11920f1e7` (PR #2596, head `0759bbf4b`), after
+`1695fab74` (#2594, the trusted-input gate) and `db59a8056` (#2588, the V2
+freeze). **The programme is closed.** Scoring is not reopened unless a genuine
+defect is discovered, or actual V2 activation is separately authorised.
+
+### 69.1 What the replays established
+
+Read-only, over the live corpus, no production write at any point.
+
+| Reading | Measurement |
+| --- | --- |
+| Growth scored exactly `50` | **1,005 of 1,006** reports, `hasData: false` on all 1,006 |
+| Demand scored exactly `50` | **1,005 of 1,006** reports, `hasData: false` on all 1,006 |
+| Share of every issued grade that was a placeholder | **55%** (Growth 0.40 + Demand 0.15) |
+| Grade-eligible under frozen V2 (≥3 measured dimensions) | **0 of 1,006** |
+| Location coverage before the trust gate / after | **975 → 0** |
+| Yield coverage before / after (operator-entry recovery) | **164 → 188** |
+| Walk score reproducing a per-state constant | **1,109 of 1,114** |
+| Commute mean, with 494 non-NSW reports routed to Sydney | **10,125 minutes** |
+| Schools at the ceiling | **851 of 1,114** |
+| Risk narratives citing buyer LVR / buyer cash flow / a type bonus | **235 / 167 / 418** |
+
+No V2 defect was found by any replay. The corpus is not grade-eligible because
+the evidence does not exist, not because the methodology is wrong.
+
+### 69.2 The closing state — what is authoritative and what is not
+
+| Item | State |
+| --- | --- |
+| Historical V1 snapshots | **PRESERVED.** No rewrite, recompute, migration or backfill. A score carrying no policy stamp is a legacy snapshot and renders exactly as it always did. |
+| New V1 overall score | **NOT AUTHORITATIVE.** `totalScore` is null when no engine holds authority. |
+| New V1 letter grade | **NOT AUTHORITATIVE.** Withheld with a client sentence, never a letter, never a zero. |
+| New V1 dimension assessments | **NOT AUTHORITATIVE** under `unavailable` authority. |
+| New V1 score-derived qualitative verdicts | **NOT AUTHORITATIVE.** `claimPermits` gates every SWOT push; a sentence is an assessment. |
+| Trusted deterministic metrics | **AVAILABLE.** Price, rent, the finance block, stamp duty, demographics, crime, climate, transport — unchanged and fully rendered. |
+| Buyer finance (LVR, holding cash flow) | **FINANCE SUITABILITY ONLY.** Owned by `finance`, admitted to no dimension under any authority. A borrowing position is not a property weakness. |
+| Scoring V2 | **FROZEN / UNWIRED.** §68.2 is the frozen set; the CI guard asserts no entrypoint reaches it. |
+| Future V2 activation | **MUST WIRE THE ACTUAL V2 ENGINE** and consume its published score output contract. It is structurally NOT a constant edit: `LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>` makes `PRODUCTION_SCORING_AUTHORITY = 'v2'` a `TS2322` and passing `'v2'` to `policyStamp` a `TS2345`. |
+| Empirical calibration | **DEFERRED.** ME-7 has not run; `RISK_METHODOLOGY_STATUS` stays `provisional / uncalibrated`. |
+| Historical rewrite | **NONE.** Zero rows written by this programme. |
+
+### 69.3 The two independent questions, kept apart
+
+**Evidence** — may a dimension *count* this input? `scoringInputPolicy.pure.ts`
+rules on **ownership** first (does this dimension own the input at all?) then on
+**trust** (is the value believable?). The order matters: ownership is why V1's
+Risk has no admissible input left even where the buyer's figures are perfectly
+trustworthy.
+
+**Authority** — which engine may *speak*? Separate and prior. Gating inputs
+alone left a trapdoor: verify three inputs later and the legacy methodology
+silently becomes the production grade engine. A grade issues only when
+**authority and evidence both hold**.
+
+### 69.4 Deliberately not done
+
+- No historical report rewritten, recomputed or migrated.
+- V1 not deleted; the area scorer untouched; `verify_jwt` untouched.
+- No new feature-flag framework.
+- `verifiedInputs` is **not propagated by the live request path** —
+  `transformInputData` rebuilds the nested request field by field and no caller
+  sets it. Internal and test use only, and a test forbids the overstated
+  wording returning.
+- No data purchased, no prohibited source scraped, no LLM asked to determine
+  geography or to supply a missing figure.
+
+### 69.5 The successor's rule
+
+Absent is absent. A withheld grade is a statement about the **evidence**, never
+about the **asset** — and the client wording, the viewer block and the PDF
+projection all read the one shared module so no surface can print a grade
+another withholds.
+
+## §70 RF-7.1 — the Report Fact Contract, added beside the engine (2026-09-11)
+
+`REPORT_FACT_CONTRACT_V1.md` is the specification;
+`RF71_CAPABILITY_INVENTORY.md` is the characterisation it rests on. This
+section records only what a successor needs to know without opening either.
+
+**The shape of the stage.** A strangler, not a replacement:
+`existing system + contract`. Forty-eight Investment Report capabilities were
+inventoried by tracing ACTUAL callers, the contract was built as an adapter over
+owners that were not touched, and **zero production consumers were switched**.
+
+### 70.1 What the caller census corrected
+
+Two readings that a naive search gets wrong, recorded because both would have
+justified deleting something live:
+
+- **The frontend does not call `supabase.functions.invoke`.** It calls
+  `invokeSecureFunction`. A census on the first form reports **0 callers** for
+  `generate-investment-report`, which has six.
+- **A function with no frontend caller may be the most important one.**
+  `resume-investment-reports` has none and runs every two minutes under pg_cron
+  (`investment-report-resume-2min`) — it is the watchdog that finishes a report
+  the browser abandoned.
+
+### 70.2 The finding that shaped the design
+
+`facts/historicalFactAuthority.pure.ts` — a complete, tested, measured
+precedence layer for eight fields (140/140, 150/150, 153/153 exact agreement
+across 443 paired rows) — has **zero production consumers**. Its only non-test
+reference in the repository is a doc comment.
+
+So the contract ADAPTS it rather than becoming a third implementation of the
+same ordering. That is the difference between a truth layer and a second
+opinion, and it is why this stage adds one file family rather than editing five.
+
+### 70.3 Parity, measured
+
+Thirty-two real production rows across twenty strata (overrides, sentinel and
+missing coordinates, finance with and without rent, house-and-land, land,
+attached, placeholder types, high LVR, metro, regional, forked, derived,
+multi-version, and each of the five variants):
+
+```
+comparisons  896
+matched      896
+mismatches   0
+non-null     504 of 896  (56.2%)
+```
+
+Every material fact — price, rent, LVR, deposit, loan, cash flow, outgoings,
+duty, upfront, gross and net yield, origination LVR, type, beds, baths, parking,
+land, building, year built, suburb, postcode, state, coordinates, variant, tier,
+version, grade issuance — reproduces the current path exactly, on the first run.
+
+### 70.4 Three deliberate refusals
+
+Each would be a plausible figure and each would be a new one:
+
+- **LVR at settlement is not reconstructed** as `price − deposit`. That identity
+  breaks on 21 stored reports, so a reconstruction is most confident exactly
+  where the record is least reliable.
+- **Stamp duty is read, never re-run.** Duty needs a purchase intent and a
+  concession status the report does not record.
+- **Current LVR is absent**, because it is a different quantity from origination
+  LVR and they coincide only at settlement.
+
+### 70.5 Surfaced, deliberately not changed
+
+`annualOutgoings`' second authority path (`annualCosts.total`) is **inert on the
+whole live corpus**: measured across 1,207 rows, `total` exists on **0**,
+`totalAnnual` on 208, `totalAnnualExcludingLandTax` on 173. The engine has never
+emitted `total`. On the 35 rows carrying only `totalAnnual`, `annualOutgoings`
+therefore resolves as absent — which is the CORRECT outcome reached by accident,
+because `totalAnnual` includes land tax and the other excludes it. Pointing the
+fallback at `totalAnnual` would silently change a published figure's basis, so
+it is recorded rather than repaired: the remedy is a labelled `BasedMetric`, in a
+later stage.
+
+### 70.6 The preservation guarantees, and how each is proved
+
+| Guarantee | Proof |
+| --- | --- |
+| No production consumer switched | a test walks `src` and `supabase/functions` and fails on any non-test file naming `buildReportFactContract` |
+| No owner edited | a test asserts no owner module names the contract |
+| The arrow points one way | a test walks three roots for reverse imports |
+| Pure — no clock, network, database, write or `await` | the module's own source is read and asserted |
+| Absent never becomes 0 / '' / false / a default | asserted per leaf, on fixtures and on all 32 real rows |
+| Every historical shape tolerated | nine adversarial shapes plus the real corpus; nothing throws |
+| Nothing mutated | input rows are JSON-compared before and after |
+| Capabilities intact | 65 characterisation tests over 22 edge functions, 17 surfaces, the routes, the cron schedule and the delivery fallback chain |
+
+`rf71Preservation.spec.ts` is deliberately the inverse of the rest of the suite:
+a failure there does not mean the code is wrong, it means **a capability that
+existed has changed** — which must then be deliberate, named and approved.

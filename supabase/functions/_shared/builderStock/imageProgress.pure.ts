@@ -143,6 +143,38 @@ export const STOCK_IMAGE_PROGRESS_LABEL: Record<StockImageProgress, string> = {
   none_found: 'No picture in the supplied documents',
 };
 
+/**
+ * THE SAME STATES, IN THE WIDTH A CHIP ACTUALLY HAS.
+ *
+ * The builder's Stock List gives its Images column 15% of a table that only
+ * renders at 1400px and up, which is 154px of text after the chip's icon and
+ * padding. MEASURED in a browser against the built stylesheet, four of these
+ * six fit that and two do not: `A linked document could not be opened` wants
+ * 220px and `No picture in the supplied documents` wants 207px, so both were
+ * drawn clipped — the second reading `No picture in the s…`, which states
+ * nothing at all and is the defect this fixes.
+ *
+ * The four that fit KEEP THEIR WORDS. Only the two that cannot are shortened,
+ * and they are shortened rather than truncated so the chip still says which
+ * of the three no-picture states this is: nothing attached, not read yet, a
+ * link that would not open, or read and no photograph in it. The full
+ * sentence is not lost — it stays on the chip as its accessible name and the
+ * detail below it is still the `title`.
+ *
+ * This mirrors `STOCK_IMAGE_STAGE_SHORT_LABELS` in the page that draws it,
+ * which exists for the same reason.
+ */
+export const STOCK_IMAGE_PROGRESS_BADGE: Record<StockImageProgress, string> = {
+  drawn: 'Image ready',
+  working: 'Finding a picture…',
+  no_document: 'No brochure on this row',
+  unreadable: 'Picture not available yet',
+  // Still points at the link, because that failure is the link's.
+  source_unavailable: 'Link unavailable',
+  // Still a finding about the documents, because here one was reached.
+  none_found: 'No picture found',
+};
+
 export const STOCK_IMAGE_PROGRESS_DETAIL: Record<StockImageProgress, string> = {
   drawn: 'This property has a picture on its card.',
   working: 'The documents on this row are being read now. '

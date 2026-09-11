@@ -87,6 +87,12 @@ import {
   SIGNED_URL_TTL_SECONDS,
   STORAGE_BUCKET,
 } from '../_shared/reports/converted/route.pure.ts';
+import {
+  ANTHROPIC_MESSAGES_URL,
+  type AnthropicCredential,
+  anthropicJsonHeaders,
+} from '../_shared/anthropicRoute.pure.ts';
+import { resolveAnthropicCredential } from '../_shared/anthropicCredential.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -102,7 +108,6 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-opus-4-8';
 /** A forty-page template through vision extraction is not a quick call. */
 const MODEL_TIMEOUT_MS = 240_000;
@@ -175,7 +180,7 @@ function decodeBase64(b64: string): Uint8Array {
  * same path as a native one rather than needing an OCR branch.
  */
 async function pdfToMarkdown(
-  apiKey: string,
+  credential: AnthropicCredential,
   base64: string,
   fileName: string,
 ): Promise<{ ok: true; markdown: string } | { ok: false; error: string }> {
@@ -184,13 +189,9 @@ async function pdfToMarkdown(
 
   let response: Response;
   try {
-    response = await fetch(ANTHROPIC_URL, {
+    response = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: anthropicJsonHeaders(credential),
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 16_000,
@@ -378,14 +379,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       if (request.kind === 'text') {
         markdown = new TextDecoder().decode(decodeBase64(request.sourceBase64));
       } else {
-        const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
-        if (!apiKey) {
+        const resolved = await resolveAnthropicCredential();
+        if (!resolved.ok) {
           return json({
-            error: 'PDF extraction is not configured (ANTHROPIC_API_KEY). '
+            error: `PDF extraction is not configured: ${resolved.why}. `
               + 'A Markdown or text source converts without it.',
           }, 503);
         }
-        const read = await pdfToMarkdown(apiKey, request.sourceBase64, request.fileName);
+        const read = await pdfToMarkdown(resolved.credential, request.sourceBase64, request.fileName);
         if (!read.ok) return json({ error: read.error }, 502);
         markdown = read.markdown;
       }
@@ -397,8 +398,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }, 400);
       }
 
-      const apiKeyForBinding = Deno.env.get('ANTHROPIC_API_KEY');
-      const proposed = await proposeBindingWithModel(apiKeyForBinding, request.format, structure);
+      const bindingCredential = await resolveAnthropicCredential();
+      const proposed = await proposeBindingWithModel(
+        bindingCredential.ok ? bindingCredential.credential : null, request.format, structure,
+      );
       const plan = proposed.plan;
       if (proposed.note) console.info(`[convert-template-document] binding: ${proposed.note}`);
 
@@ -531,8 +534,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
 
     if (request.action === 'propose') {
+      const proposeCredential = await resolveAnthropicCredential();
       const proposed = await proposeBindingWithModel(
-        Deno.env.get('ANTHROPIC_API_KEY'), request.format, structure,
+        proposeCredential.ok ? proposeCredential.credential : null, request.format, structure,
       );
       const plan = proposed.plan;
       if (proposed.note) console.info(`[convert-template-document] binding: ${proposed.note}`);
@@ -705,8 +709,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // back as one prose block simply has no entry in `enriched`, and
     // `planConvertedChapters` renders it exactly as before.
     const planned = planConvertedChapters(renderStructure, renderPlan);
+    const enrichCredential = await resolveAnthropicCredential();
     const enrichment = await enrichChapters(
-      Deno.env.get('ANTHROPIC_API_KEY'),
+      enrichCredential.ok ? enrichCredential.credential : null,
       planned
         .filter((c) => c.kind !== 'unfilled')
         .map((c) => ({ id: c.id, title: c.title, markdown: c.markdown })),

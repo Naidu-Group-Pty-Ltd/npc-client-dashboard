@@ -51,7 +51,11 @@ import {
 } from './composeHtml.pure.ts';
 
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+import {
+  ANTHROPIC_MESSAGES_URL,
+  type AnthropicCredential,
+  anthropicJsonHeaders,
+} from '../../anthropicRoute.pure.ts';
 
 /** The repo-wide standard. Overridable per deploy, as everywhere else. */
 export const ENRICHMENT_MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-opus-4-8';
@@ -119,7 +123,7 @@ interface ToolAnswer {
  * now two model calls in this feature and they should fail identically.
  */
 async function askForBlocks(
-  apiKey: string,
+  credential: AnthropicCredential,
   prompt: string,
   tool: { name: string; description: string; schema: unknown } = {
     name: 'chapter_blocks',
@@ -132,13 +136,9 @@ async function askForBlocks(
 
   let response: Response;
   try {
-    response = await fetch(ANTHROPIC_URL, {
+    response = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: anthropicJsonHeaders(credential),
       body: JSON.stringify({
         model: ENRICHMENT_MODEL,
         max_tokens: 8_000,
@@ -182,7 +182,7 @@ async function askForBlocks(
  * a chapter of nothing but prose is honest and useless.
  */
 async function enrichChapter(
-  apiKey: string,
+  credential: AnthropicCredential,
   chapter: ChapterToEnrich,
   fidelity: ConversionFidelity,
 ): Promise<ChapterEnrichment> {
@@ -190,7 +190,7 @@ async function enrichChapter(
   let prompt = enrichmentPrompt(chapter.title, chapter.markdown, fidelity);
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const answer = await askForBlocks(apiKey, prompt);
+    const answer = await askForBlocks(credential, prompt);
     if (!answer.ok) {
       notes.push(answer.error ?? 'the design service failed');
       return { id: chapter.id, blocks: [], notes, attempts: attempt };
@@ -247,7 +247,7 @@ async function enrichChapter(
  * every word that reaches the page.
  */
 async function composeChapter(
-  apiKey: string,
+  credential: AnthropicCredential,
   chapter: ChapterToEnrich,
   fidelity: ConversionFidelity,
 ): Promise<ChapterEnrichment> {
@@ -258,7 +258,7 @@ async function composeChapter(
   let prompt = base;
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const answer = await askForBlocks(apiKey, prompt, {
+    const answer = await askForBlocks(credential, prompt, {
       name: 'chapter_sheets',
       description: 'The chapter, composed as printed pages.',
       schema: COMPOSE_JSON_SCHEMA,
@@ -326,7 +326,7 @@ async function composeChapter(
  * `enriched`, which the render path reads as "print this one as Markdown".
  */
 export async function enrichChapters(
-  apiKey: string | null | undefined,
+  credential: AnthropicCredential | null | undefined,
   chapters: readonly ChapterToEnrich[],
   fidelity: ConversionFidelity,
   /** Ask for composed pages instead of typed blocks. See `composeHtml.pure.ts`. */
@@ -338,11 +338,11 @@ export async function enrichChapters(
   // attempted rather than assume they failed.
   const { work, skipped } = partitionForEnrichment(chapters);
 
-  if (!apiKey || !work.length) {
+  if (!credential || !work.length) {
     return {
       enriched: {},
       composed: {},
-      notes: apiKey
+      notes: credential
         ? skipped.map(tooShortNote)
         : ['ANTHROPIC_API_KEY is not configured, so no chapter was designed'],
       model: null,
@@ -357,8 +357,8 @@ export async function enrichChapters(
     const done = await Promise.all(batch.map(async (c) => {
       try {
         return compose
-          ? await composeChapter(apiKey, c, fidelity)
-          : await enrichChapter(apiKey, c, fidelity);
+          ? await composeChapter(credential, c, fidelity)
+          : await enrichChapter(credential, c, fidelity);
       } catch (e) {
         // The catch that makes the promise above unable to reject. Enrichment
         // throwing must not take a render with it.

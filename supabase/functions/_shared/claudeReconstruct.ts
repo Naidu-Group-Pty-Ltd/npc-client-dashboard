@@ -19,6 +19,7 @@ import {
   type ClaudeReconstructResult,
 } from './claudeReconstruct.pure.ts';
 import { logApiUsage } from './logApiUsage.ts';
+import { ANTHROPIC_MESSAGES_URL, anthropicJsonHeaders } from './anthropicRoute.pure.ts';
 import {
   CLAUDE_RECONSTRUCT_BINDING,
   extractUsageTokens,
@@ -33,8 +34,6 @@ export type {
   OATool,
   Effort,
 } from './claudeReconstruct.pure.ts';
-
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
 /** Latest model. Override per-deploy via env; falls back through the legacy var. */
 export const RECONSTRUCT_MODEL =
@@ -145,13 +144,9 @@ export async function callClaudeReconstruct(args: ClaudeReconstructArgs): Promis
   const controller = args.timeoutMs ? new AbortController() : undefined;
   const timer = controller ? setTimeout(() => controller.abort(), args.timeoutMs) : undefined;
   try {
-    resp = await fetch(ANTHROPIC_URL, {
+    resp = await fetch(ANTHROPIC_MESSAGES_URL, {
       method: 'POST',
-      headers: {
-        'x-api-key': args.apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
+      headers: anthropicJsonHeaders(args.credential),
       body: JSON.stringify(body),
       signal: controller?.signal,
     });

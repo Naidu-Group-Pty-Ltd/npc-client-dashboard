@@ -10,9 +10,18 @@
  *  - tool_choice "required" or { type:'function', function:{ name } }
  *
  * Default model: claude-sonnet-4-5-20250929 (override via ANTHROPIC_MODEL env or arg).
+ *
+ * The credential arrives as a resolved `AnthropicCredential` rather than a raw
+ * key string, because a deployment may reach Anthropic with a short-lived
+ * federated token and on a workspace of its own — see `anthropicRoute.pure.ts`.
  */
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+import {
+  ANTHROPIC_MESSAGES_URL,
+  type AnthropicCredential,
+  anthropicJsonHeaders,
+} from './anthropicRoute.pure.ts';
+
 const DEFAULT_MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-opus-4-8';
 
 type Role = 'system' | 'user' | 'assistant';
@@ -31,7 +40,7 @@ interface OATool {
 }
 
 interface CallArgs {
-  apiKey: string;
+  credential: AnthropicCredential;
   model?: string;
   messages: OAMessage[];
   tools?: OATool[];
@@ -61,7 +70,7 @@ function convertContent(content: any): any {
 }
 
 export async function callAnthropic({
-  apiKey,
+  credential,
   model,
   messages,
   tools,
@@ -102,13 +111,9 @@ export async function callAnthropic({
     }
   }
 
-  const resp = await fetch(ANTHROPIC_URL, {
+  const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
     method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
+    headers: anthropicJsonHeaders(credential),
     body: JSON.stringify(body),
   });
 

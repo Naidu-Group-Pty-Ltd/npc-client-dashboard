@@ -11,11 +11,21 @@
 
 import { hexToRgb, contrastRatioHex, pickContrastingFg, nearestHex } from './colorScience.ts';
 import { callAnthropic } from './anthropicAdapter.ts';
+import { resolveAnthropicCredential } from './anthropicCredential.ts';
 
 const GATEWAY_URL = 'https://ai.gateway.lovable.dev/v1/chat/completions';
 const VISION_MODEL = 'openai/gpt-5';
-const ANTHROPIC_KEY = Deno.env.get('ANTHROPIC_API_KEY');
-const USE_CLAUDE = !!ANTHROPIC_KEY;
+/*
+ * Whether Claude draws the brief is asked AT CALL TIME, never at module load.
+ *
+ * This was `const USE_CLAUDE = !!Deno.env.get('ANTHROPIC_API_KEY')`, evaluated
+ * once when the module was imported — which is wrong twice over. A deployment
+ * that reaches Anthropic by federation holds no key at all, so the constant
+ * resolved false and the whole brief silently fell through to the Lovable
+ * gateway: a different vendor, a different model, a different answer, and
+ * nothing anywhere reporting that it had happened. And even on a key, a value
+ * read at import is a value that cannot be refreshed.
+ */
 
 
 export type BriefPaletteRole = 'bg' | 'surface' | 'text' | 'accent' | 'muted';
@@ -141,9 +151,10 @@ export async function analyzeReferenceImage(
   ];
 
   let data: any;
-  if (USE_CLAUDE) {
+  const anthropic = await resolveAnthropicCredential();
+  if (anthropic.ok) {
     const r = await callAnthropic({
-      apiKey: ANTHROPIC_KEY!,
+      credential: anthropic.credential,
       messages: messages as any,
       tools: [BRIEF_TOOL as any],
       tool_choice: { type: 'function', function: { name: 'emit_design_brief' } },

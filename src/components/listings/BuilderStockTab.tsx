@@ -417,7 +417,9 @@ function StockCardImage({ image, onSupply, supplying }: {
 
   if (!image) {
     return (
-      <div className="flex h-40 items-center justify-center border-b border-border/60 bg-muted/30">
+      <div
+        className="flex aspect-[4/3] w-full items-center justify-center border-b border-border/60 bg-muted/30"
+      >
         <div className="text-center">
           <ImageIcon className="mx-auto h-6 w-6 text-muted-foreground/50" aria-hidden />
           <p className="mt-1 text-[11px] text-muted-foreground">No image found</p>
@@ -455,13 +457,36 @@ function StockCardImage({ image, onSupply, supplying }: {
   const provenance = stockImageProvenance(image);
   const fallback = provenance === 'web_sourced' || provenance === 'street_view';
 
+  /**
+   * THE WHOLE PICTURE THE ELECTION CHOSE, NEVER A SLICE OF IT.
+   *
+   * This was a 160px strip with `object-cover`, and what reaches it is a
+   * PDF extract whose shape nobody controls. Measured on the 10 September
+   * 2026 list: the Russula Street package is a page crop 2481 x 1208 (2.05
+   * wide), the Cloverton render is an embedded raster 2500 x 2800 — TALLER
+   * than it is wide. `object-cover` fills a 2.8:1 strip from a 0.89:1 image
+   * by discarding 68% of it and keeping the middle band, which on a facade
+   * render is sky and a roofline. Two of three cards on screen showed no
+   * house at all.
+   *
+   * A card that hides the house is the same defect as a card that leads with
+   * a floor plan: the ranking did its work and the frame threw it away. So
+   * the image is CONTAINED — every elected picture is shown whole, and what
+   * is left over is ground rather than a crop.
+   *
+   * 4:3 is the geometric middle of the two shapes above, which is what makes
+   * it the box that wastes least on both: a 0.89 portrait keeps its full
+   * height, a 2.05 landscape its full width, and neither loses a pixel.
+   */
   return (
-    <div className="relative h-40 overflow-hidden border-b border-border/60 bg-muted/30">
+    <div
+      className="relative aspect-[4/3] w-full overflow-hidden border-b border-border/60 bg-muted/30"
+    >
       {signedUrl && !broken ? (
         <img
           src={signedUrl}
           alt={STOCK_IMAGE_STAGE_LABELS[image.source_stage]}
-          className="h-full w-full object-cover"
+          className="h-full w-full object-contain"
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setBroken(true)}

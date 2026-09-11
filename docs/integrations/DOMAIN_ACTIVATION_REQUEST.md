@@ -4,19 +4,24 @@ One message, ready to send, plus the evidence behind it. Nothing here is
 speculative: every technical statement was measured, and the questions are the
 ones whose answers change what this platform may do with the data.
 
-**Do not send this until the probe has established WHY the 403 happened.** The
-status alone does not carry it: Domain documents a missing scope, a plan that
-does not include the API, an environment restriction, an access restriction, an
-invalid or expired key, and other internal denials as causes of the same 403 —
-and they do not share an owner or a remedy.
+**The probe has run — once, on 2026-09-08 at 15:42 UTC — and it selected the
+both-403 branch below.** Both `domain_address_suggest` and
+`domain_v2_suburb_performance` answered **HTTP 403**, and **no
+`X-Domain-Security-Reason` was returned** on either. The status alone does not
+carry the cause: Domain documents a missing scope, a plan that does not
+include the API, an environment restriction, an access restriction, an invalid
+or expired key, and other internal denials as causes of the same 403 — and
+they do not share an owner or a remedy. So the message to send is the
+**both-403 message** below; do not re-run the probe first (audit §66 — one run
+settles the state until Domain configuration changes).
 
-Two readings decide which version of this message is correct, and both come
-from the probe rather than from inference (audit §62.3):
+The readings that decide which message is correct come from the probe rather
+than from inference (audit §62.3):
 
 | probe result | what to send |
 | --- | --- |
 | **Address Suggestion 200 + Suburb Performance 403**, with `X-Domain-Security-Reason` naming a scope, package or plan | the message below, **as written** — the key works, and the ask is the smallest activation that discharges that exact reason |
-| **Both 403** | **do not send the message below.** Quote Domain's stated reason verbatim and ask them to confirm the project or access restriction it names. Both-403 is ambiguous — it is equally consistent with a project configuration, a missing scope, an environment or plan restriction, the key's own state, and a WAF refusal that never reached Domain's gateway |
+| **Both 403** ← **the 8 Sep 2026 result** | **send the both-403 message below**, not the activation message. Where `X-Domain-Security-Reason` was returned, quote it verbatim; where it was absent — as on the 8 Sep run — there is nothing to quote, so the message asks Domain to state which restriction produces the 403. Both-403 is ambiguous — it is equally consistent with a project configuration, a missing scope, an environment or plan restriction, the key's own state, and a WAF refusal that never reached Domain's gateway |
 | **Both 401** | not a commercial matter yet — an authentication or key question for the operator |
 
 An earlier version of this document said that both-403 meant "the key holds no
@@ -28,7 +33,44 @@ conversation than the evidence supports, on a premise nobody had established.
 
 ---
 
-## The message
+## The message — both-403 branch (the branch the 8 Sep 2026 run selected)
+
+> Subject: HTTP 403 on two products for an active API key — please identify the restriction
+>
+> Hello,
+>
+> We hold an active Domain API key and are building suburb-level market
+> analysis for Australian residential property. As of 8 September 2026 that
+> key returns **HTTP 403** on both:
+>
+> - `GET /v1/addressSuggestion` (Address Suggestion), and
+> - `GET /v2/suburbPerformanceStatistics/{state}/{suburb}/{postcode}`
+>   (Suburb Performance Statistics),
+>
+> and no `X-Domain-Security-Reason` header is returned on either response, so
+> we cannot tell from our side which restriction applies.
+>
+> Could you please:
+>
+> **1. Identify what produces the 403** for this key on those two endpoints —
+> for example a project or account configuration, a missing scope, a plan or
+> environment restriction, the key's own state, or a gateway/WAF rule. We are
+> deliberately not guessing among these.
+>
+> **2. Confirm whether `api_properties_read` and `api_suburbperformance_read`
+> can be enabled on our existing application at no additional charge**, or
+> tell us what their activation involves.
+>
+> Once access is clarified we have a short follow-up on response content,
+> history depth, caching/persistence/display rights and attribution, so we can
+> configure our use to match your terms exactly.
+>
+> Thank you,
+> Aurixa / NPC Services
+
+---
+
+## The message — Address Suggestion 200 + Suburb Performance 403 branch (send only if a future reading selects it)
 
 > Subject: API package activation — Suburb Performance access for an existing key
 >
@@ -81,8 +123,10 @@ conversation than the evidence supports, on a premise nobody had established.
 > **5. Rate limits and quota** for the plan attached to this package, and whether
 > the limits are per key or per account.
 >
-> For scale: our first extraction is approximately **245 requests** covering 637
-> properties across 225 suburbs, and ongoing use is a similar order per refresh.
+> For scale: our first extraction is **248 requests** (one per suburb ×
+> dwelling class, measured against the sealed `me7.pop.1` population) covering
+> 665 properties across 228 suburbs, and ongoing use is a similar order per
+> refresh.
 >
 > Thank you,
 > Aurixa / NPC Services
@@ -107,3 +151,64 @@ larger conversation than the evidence requires. And no request for pre-computed
 growth figures: Aurixa owns that arithmetic
 (`growth/growthPeriods.pure.ts`), which is what lets a report show its working
 rather than assert a number.
+
+## Zero-cost addendum (ME-6, 2026-09-08)
+
+A commercial constraint now governs this: **Aurixa is not purchasing additional
+property-data subscriptions at this stage.** That changes what is being asked
+for, not the standard of evidence.
+
+### The one question that now leads
+
+**Can `api_properties_read` and `api_suburbperformance_read` be enabled on the
+EXISTING Aurixa application at no additional charge?**
+
+Everything else in the message above still stands and still needs answering.
+But this question is now first, because its answer decides whether Domain is a
+switch-on or a purchase — and a purchase is out of scope.
+
+### What was established from Domain's published material
+
+Measured 2026-09-08 against `developer.domain.com.au`:
+
+- The two scopes belong to the **Properties & Locations** package, which the
+  portal describes as *"Explore auction results and property datasets. Access
+  market performance and demographic stats."* Its endpoint list carries
+  `GET /v2/suburbPerformanceStatistics/{state}/{suburb}`,
+  `/v2/suburbPerformanceStatistics/{state}/{suburb}/{postcode}`,
+  `GET /v2/demographics/{state}/{suburb}/{postcode}` and `GET /v1/properties/{id}`.
+- Address Suggestion is a **different package** (`pkg_address_suggestion`),
+  which is why the probe tests both on the one key: it separates *is the key
+  recognised* from *is this product on the project*.
+- **Domain publishes no pricing or plan material on the developer portal.**
+  `/pricing`, `/plans` and `/docs/latest/packages` all answer 404, and the
+  package pages carry no cost, plan or tier language. Package entitlement is
+  therefore an account question, not a documented one — the same shape as
+  PropTrack's trial.
+
+### How the answer is recorded
+
+| Domain's answer | recorded as | consequence |
+| --- | --- | --- |
+| both scopes enabled on the existing key, no charge | `existing_licensed` | Domain becomes the primary Growth source; may become production evidence |
+| enabled but requires a paid package | `commercial_upgrade_required` | **no purchase is made.** The integration is NOT removed — it stays wired, and the gap is recorded so it is visible rather than looking like an absent source |
+| key not recognised at all | operator-side remedy, not an entitlement finding | re-issue the credential; this is not a commercial conversation |
+
+**The integration stays.** `domain-data-service`, the six `DOMAIN_*` credential
+names, the probe targets and the registry card are all untouched by a
+`commercial_upgrade_required` answer. Recording a gap is not the same as
+removing a route, and a removed route is one nobody can switch back on.
+
+### Why this matters more than it did last week
+
+The zero-cost open-data inventory
+(`_shared/reports/market/zeroCostSources.pure.ts`) measured the alternative and
+it does not cover the corpus. **Queensland is 53.7% of the Growth-addressable
+corpus and publishes no open suburb-level median sale price series; Western
+Australia is 20.8% and its only candidate is `Custom (Other)` licensed.**
+Victoria publishes exactly the right dataset under CC BY and its host refuses
+scripted clients from both egresses.
+
+So Domain's existing entitlement is not one option among many. It is, with the
+PropTrack trial, one of only two routes to suburb-level Growth evidence for
+three quarters of the properties Aurixa actually reports on.

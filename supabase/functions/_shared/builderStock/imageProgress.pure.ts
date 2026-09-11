@@ -31,6 +31,7 @@
  *
  * Pure: no IO, no clock.
  */
+import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 
 /** The ladder's last rung. Everything before it is work outstanding. */
 export const SETTLED_WORK_STAGE = 'settled';
@@ -373,4 +374,108 @@ function documentLabel(reference: string): string {
   const last = path.split('/').filter(Boolean).pop() ?? '';
   if (/\.(pdf|png|jpe?g|webp|docx?|xlsx?)$/i.test(last)) return last;
   return host ? `A document on ${host}` : 'A linked document';
+}
+
+// ---------------------------------------------------------------------------
+// WHEN THE STOCK LIST *IS* THE DOCUMENT
+// ---------------------------------------------------------------------------
+
+/**
+ * The package documents this property's own IMAGES came out of, and why any
+ * of them named no picture.
+ *
+ * MEASURED 11 SEPTEMBER 2026, and it is the reason a builder uploaded the
+ * same 10 MB brochure twice. `source_documents` is counted with
+ * `rowSourceBranches(row.source_row.unmapped)` — the LINKS a spreadsheet row
+ * carries in its cells. A stock list that IS a package PDF has no such link:
+ * `unmapped` is `{}`. So the count is zero, `stockImageProgress` answers
+ * `no_document`, and the page says
+ *
+ *     "No brochure on this row"
+ *     "This stock list attaches no brochure or plan to this property."
+ *
+ * about a property built out of a brochure, whose two page-1 rasters are
+ * sitting in the images table. It is not merely unhelpful, it is FALSE, and
+ * it tells the one person who could fix the real problem to go and do the one
+ * thing that cannot help. They did it twice; the second upload was
+ * byte-identical to the first (`sha256 be95c902…`, 10,239,959 bytes both
+ * times), so nothing could possibly have changed.
+ *
+ * The same blindness hides the reason. `stockDocumentNotes` reads the branch
+ * records, and branches exist only for LINKED documents — so the election's
+ * recorded refusal, which for an uploaded package lives on the image rows as
+ * `selection_reason`, reached no screen at all. On the live row it reads
+ * "no page states this property's identity together with its package
+ * information": the row is `Lot 1037 Fuchsia Street` (taken from the file's
+ * NAME) while the document's own cover states a different lot. One sentence
+ * on screen turns that into a thirty-second correction.
+ *
+ * So a document is a document however it arrived. This reads the images'
+ * own provenance — `origin: "document_media"` and the filename each was
+ * extracted from — because that is the record that proves the document was
+ * READ, rather than a second opinion about what the row attaches.
+ */
+export interface StockPackageDocuments {
+  /** Distinct package documents this property's images were extracted from. */
+  documents: string[];
+  /** Why each one named no picture. Empty for a document that yielded one. */
+  notes: StockDocumentNote[];
+}
+
+/** Provenance said the image came out of a document rather than off the web. */
+const DOCUMENT_MEDIA_ORIGIN = 'document_media';
+
+export function stockPackageDocuments(
+  images: unknown,
+  limit = MAX_STOCK_DOCUMENT_NOTES,
+): StockPackageDocuments {
+  const empty: StockPackageDocuments = { documents: [], notes: [] };
+  if (!Array.isArray(images)) return empty;
+
+  /** filename → did any image from it become this property's designated hero. */
+  const elected = new Map<string, boolean>();
+  /** filename → the refusal the election recorded against it. */
+  const refusal = new Map<string, string>();
+
+  for (const image of images) {
+    const detail = (image as { source_detail?: unknown } | null)?.source_detail;
+    if (!detail || typeof detail !== 'object') continue;
+    const record = detail as Record<string, unknown>;
+    if (record.origin !== DOCUMENT_MEDIA_ORIGIN) continue;
+    const name = String(record.filename ?? '').trim();
+    if (!name) continue;
+
+    if (!elected.has(name)) elected.set(name, false);
+    if (isPrimaryRole(readStoredRole(record))) elected.set(name, true);
+
+    /*
+     * The FIRST reason recorded for a document, not the last. Every image the
+     * election declined carries the same sentence — it is a statement about
+     * the document, written once per run — so any of them is the answer and
+     * overwriting it would only churn.
+     */
+    const reason = String(record.selection_reason ?? '').trim();
+    if (reason && !refusal.has(name)) refusal.set(name, reason);
+  }
+
+  const documents = [...elected.keys()];
+  const bounded = Math.max(0, Math.trunc(limit));
+  const notes: StockDocumentNote[] = [];
+  for (const name of documents) {
+    if (notes.length >= bounded) break;
+    if (elected.get(name)) continue;
+    const reason = refusal.get(name);
+    if (!reason) continue;
+    notes.push({
+      document: name,
+      /*
+       * The recorded clause, in a sentence. `pdfPrimaryImage.pure.ts` composes
+       * it "in the source's own terms" — what the document does or does not
+       * say — and never in ours, which is what makes it safe to surface under
+       * the same rule the branch notes travel by.
+       */
+      detail: `Nothing in that document is presented as this property’s picture: ${reason}.`,
+    });
+  }
+  return { documents, notes };
 }

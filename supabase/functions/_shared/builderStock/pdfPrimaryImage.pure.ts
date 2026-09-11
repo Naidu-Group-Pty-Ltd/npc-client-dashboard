@@ -898,7 +898,8 @@ export function assignPdfMediaRoles(input: {
           : outcome?.kind === 'none'
             ? outcome.reason
             : !covers.length
-              ? 'no page states this property\'s identity together with its package information'
+              ? 'no page states this property\'s identity together with its package '
+                + 'information' + coverSays(input.pageTexts)
               : 'the source does not designate a primary image for this property';
 
   return media.map((entry, index) => {
@@ -987,4 +988,56 @@ export function assignPdfMediaRolesPerProperty(input: {
     indexes.forEach((index, position) => { out[index] = assignments[position]; });
   }
   return out;
+}
+
+/**
+ * The most identifying-looking few lines of a cover, for a refusal to quote.
+ *
+ * Lines that carry a lot, a street, an estate or a design code are what tell
+ * one package from another, so those are preferred; failing that the first
+ * substantial lines, so the note still says something. Bounded hard, because
+ * this lands in a status line rather than a log, and stripped of control
+ * characters because it is somebody else's file.
+ */
+export function coverIdentityQuote(pageText: string | null | undefined): string {
+  const lines = String(pageText ?? '')
+    .split('\n')
+    .map((line) => line.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter((line) => line.length >= 3 && line.length <= 90);
+  if (!lines.length) return '';
+  /*
+   * NO WORD BOUNDARY BEFORE `lot`. Text pulled out of a designed PDF arrives
+   * with its runs glued together — the live cover's line is literally
+   * `PACKAGE PRICELot 1307 Fuchsia Street,` — so a `\b` here matches nothing
+   * on exactly the documents this exists for. A stray `ballot 5` costs a
+   * less apt quote and never a decision.
+   */
+  const IDENTIFYING =
+    /(?:lot|unit)\s*\.?\s*\d|\d+\s*(?:street|road|drive|avenue|way|court|crescent|parade|boulevard)|estate\b/i;
+  const picked = lines.filter((line) => IDENTIFYING.test(line)).slice(0, 2);
+  const chosen = picked.length ? picked : lines.slice(0, 2);
+  const quote = chosen.join(' — ');
+  return quote.length > 120 ? `${quote.slice(0, 117).trimEnd()}…` : quote;
+}
+
+/**
+ * " — its first page reads “…”", or nothing.
+ *
+ * WHY THE REFUSAL QUOTES THE DOCUMENT. "No page states this property's
+ * identity" is correct and useless on its own: it cannot tell a builder
+ * whether their brochure has no photograph in it or is simply about a
+ * different property, so the only move it leaves them is to upload the same
+ * file again. Measured: that is exactly what happened, twice, to the same
+ * 10 MB package — the row reads `Lot 1037 Fuchsia Street`, taken from the
+ * file's NAME, while the document's own cover states a different lot. Seeing
+ * the two side by side is a thirty-second correction.
+ *
+ * A QUOTE, NEVER A CONCLUSION. It reports what the first page reads and draws
+ * no inference about which property the document belongs to — asserting that
+ * would be a second identity judgement made with less evidence than the one
+ * that just declined.
+ */
+function coverSays(pageTexts: readonly string[] | undefined): string {
+  const quote = coverIdentityQuote((pageTexts ?? [])[0]);
+  return quote ? ` — its first page reads “${quote}”` : '';
 }

@@ -45,6 +45,9 @@ import {
 } from '@/lib/builderStock';
 import { isNonBlockingSourceNotice } from '../../../supabase/functions/_shared/builderStock/sourceAccessNotice.pure';
 import {
+  describeSourceDeletion,
+} from '../../../supabase/functions/_shared/builderStock/sourceDeletion.pure';
+import {
   countArrivingUploads, countWorkingImages, stockImageProgress,
   STOCK_IMAGE_PROGRESS_BADGE, STOCK_IMAGE_PROGRESS_DETAIL, STOCK_IMAGE_PROGRESS_LABEL,
 } from '../../../supabase/functions/_shared/builderStock/imageProgress.pure';
@@ -1055,11 +1058,23 @@ export default function BuilderStockList() {
                 deleteSource.mutate(pendingDelete.id, {
                   onSuccess: (result) => {
                     const removed = result.removed;
+                    /*
+                     * THROUGH THE RULE, NOT BESIDE IT. This was composed here
+                     * and reported `archived` alone, so deleting a list whose
+                     * stock a newer list still supplies said "0 properties
+                     * were removed" while the properties stayed on the page —
+                     * which reads as a delete that did not work.
+                     * `describeSourceDeletion` is the one place that says what
+                     * a deletion did, and it already knew about the retained
+                     * ones; it simply had no caller.
+                     */
                     toast({
                       title: 'Stock list deleted',
-                      description: removed.archived === 1
-                        ? '1 property was removed from the marketplace.'
-                        : `${removed.archived} properties were removed from the marketplace.`,
+                      description: describeSourceDeletion({
+                        archived: removed.archived,
+                        retainedBecauseResupplied: removed.retainedBecauseResupplied,
+                        affectedSelections: removed.affectedSelections,
+                      }, 'past'),
                     });
                     setPendingDelete(null);
                     refreshAll();

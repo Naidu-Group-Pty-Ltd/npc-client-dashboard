@@ -242,19 +242,66 @@ alias('house_design',
 alias('land_size_sqm',
   'land', 'land size', 'land area', 'land size sqm', 'land size m2',
   'land size m²', 'land m2', 'land m²', 'land sqm', 'land sq m',
-  'block size', 'block size m2', 'lot size', 'lot size m2', 'land area sqm',
-  'land area m2', 'land area m²');
+  'land area sqm', 'land area m2', 'land area m²',
+  // `block size` and `lot size` had the bare form and `m2` only — the same
+  // half-a-list this file's build side was found with. The cross-product in
+  // `builderStockSizeHeaders.test.ts` is what turned that up.
+  'block size', 'block size m2', 'block size m²', 'block size sqm',
+  'block m2', 'block m²', 'block sqm',
+  'lot size', 'lot size m2', 'lot size m²', 'lot size sqm');
 
+/*
+ * THE HOUSE'S AREA IS WRITTEN AS MANY WAYS AS THE LAND'S, AND THIS LIST HAD
+ * HALF OF THEM.
+ *
+ * MEASURED 11 SEPTEMBER 2026 over twenty header spellings a real builder's
+ * spreadsheet uses: every one of eleven LAND spellings mapped, and TEN OF
+ * TWENTY build spellings did not. The plainest one is the one that bit —
+ * `Build (sqm)` normalises to `buildsqm`, and while `land sqm` was listed,
+ * `build sqm` never was. So a sheet with `Land (sqm)` beside `Build (sqm)`
+ * imported the land and silently dropped the house, into `unmapped` where
+ * nothing reads it.
+ *
+ * In production that is 244 of 1,007 properties carrying a land size and no
+ * building size — 24% — and `building_size_sqm` is the field the card prints
+ * as "180 m² home", so those cards simply lost a line.
+ *
+ * THE UNIT IS THE TRAP. `normaliseHeader` strips punctuation but keeps
+ * letters, so `m²` collapses to `m` while `m2` stays `m2` and `sq m` becomes
+ * `sqm` — three distinct keys for one unit. Every base word therefore needs
+ * every unit spelled out, which is why this list is long rather than clever.
+ * `builderStockSizeHeaders.test.ts` generates the land × build cross-product
+ * and fails on any asymmetry, so the two can never drift apart again.
+ *
+ * `living` on its own is deliberately NOT here. It appears on 39 live rows and
+ * means the living-area size on some sheets and a room count on others; the
+ * `HOUSE $` collapse in the header above is what this table costs when it
+ * guesses.
+ */
 alias('building_size_sqm',
-  'build size', 'build size m2', 'building size', 'building size sqm',
-  'building size m2', 'house size', 'house size m2', 'floor area',
-  'floor area m2', 'floor area sqm', 'internal area', 'internal area sqm',
-  'living area', 'build area', 'home size', 'building area sqm',
-  'building area m2', 'house area',
+  // build …
+  'build size', 'build size m2', 'build size m²', 'build size sqm',
+  'build area', 'build area m2', 'build area m²', 'build area sqm',
+  'build m2', 'build m²', 'build sqm', 'build sq m',
+  // building …
+  'building size', 'building size sqm', 'building size m2', 'building size m²',
+  'building area', 'building area sqm', 'building area m2', 'building area m²',
+  'building m2', 'building m²', 'building sqm',
+  // house …
+  'house size', 'house size m2', 'house size m²', 'house size sqm',
+  'house area', 'house area m2', 'house area m²', 'house area sqm',
   // A stock list writes the house's own area as bare "HOUSE m2", beside
   // "LAND M2". Distinct keys from `house` and `house $` only since the
   // normaliser stopped deleting the marker — see `normaliseHeader`.
-  'house m2', 'house m²', 'house sqm', 'home m2', 'build m2', 'build m²');
+  'house m2', 'house m²', 'house sqm',
+  // home …
+  'home size', 'home size m2', 'home size m²', 'home size sqm',
+  'home area', 'home area m2', 'home area m²', 'home area sqm',
+  'home m2', 'home m²', 'home sqm',
+  // floor / internal / living area …
+  'floor area', 'floor area m2', 'floor area m²', 'floor area sqm',
+  'internal area', 'internal area m2', 'internal area m²', 'internal area sqm',
+  'living area', 'living area m2', 'living area m²', 'living area sqm');
 
 /**
  * THE PRICE IS WHAT THE PROPERTY COSTS, which for a house-and-land package is

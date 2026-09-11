@@ -65,21 +65,49 @@ export interface SourceDeletionSummary {
 }
 
 /**
- * What the builder is told before they confirm.
+ * What the builder is told about a deletion — before it, or after it.
  *
  * Deliberately counts rather than lists: the builder is entitled to know that
  * advisers have selected some of this stock, and to nothing else about those
  * selections.
+ *
+ * THE RETAINED COUNT IS THE HALF THAT MATTERS, and it had no caller. This
+ * function was written for the confirmation and nothing ever called it; the
+ * toast that reports the outcome was composed inline and said ONLY how many
+ * properties were archived. So a builder deleting a list whose stock a newer
+ * list still supplies was told
+ *
+ *     "Stock list deleted — 0 properties were removed from the marketplace."
+ *
+ * while thirteen properties stayed on the page with no explanation offered.
+ * Measured on the live deployment: Kopi Jantan's thirteen active properties
+ * are supplied by one list and were first imported by another, so deleting
+ * the older one archives nothing and retains all thirteen. That is the rule
+ * working exactly as designed and reading, to the person who pressed the
+ * button, as a delete that did not happen.
+ *
+ * `tense` exists so one rule serves both surfaces rather than the outcome
+ * message being written a second time somewhere else — which is how it came
+ * to disagree in the first place.
  */
-export function describeSourceDeletion(summary: SourceDeletionSummary): string {
+export function describeSourceDeletion(
+  summary: SourceDeletionSummary,
+  tense: 'future' | 'past' = 'future',
+): string {
+  const past = tense === 'past';
+  const removed = past ? 'was removed' : 'will be removed';
+  const removedPlural = past ? 'were removed' : 'will be removed';
+  const stays = past ? 'stayed' : 'stays';
+  const stayPlural = past ? 'stayed' : 'stay';
+
   const parts: string[] = [];
   parts.push(summary.archived === 1
-    ? '1 property will be removed from the marketplace'
-    : `${summary.archived} properties will be removed from the marketplace`);
+    ? `1 property ${removed} from the marketplace`
+    : `${summary.archived} properties ${removedPlural} from the marketplace`);
   if (summary.retainedBecauseResupplied > 0) {
     parts.push(summary.retainedBecauseResupplied === 1
-      ? '1 property stays because a newer stock list supplies it'
-      : `${summary.retainedBecauseResupplied} properties stay because a newer stock list supplies them`);
+      ? `1 property ${stays} because a newer stock list supplies it`
+      : `${summary.retainedBecauseResupplied} properties ${stayPlural} because a newer stock list supplies them`);
   }
   if (summary.affectedSelections > 0) {
     parts.push(summary.affectedSelections === 1

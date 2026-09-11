@@ -465,7 +465,13 @@ Deno.serve(async (req) => {
         });
         await supabase.from('builder_stock_uploads')
           .update({ status: 'failed', error_code: 'storage_unavailable', error_message: 'Storage could not accept the file.' })
-          .eq('id', uploadId);
+          .eq('id', uploadId)
+          // Scoped like every other write here. `uploadId` is this handler's
+          // own and cannot be another organisation's — but a write that
+          // identifies a row by id ALONE is one refactor away from being a
+          // cross-tenant write, and this file's rule is that there is no such
+          // write. `builderStockTenantIsolation.test.ts` enforces it.
+          .eq('organisation_id', activeOrganisationId);
         return json({ error: 'Storage could not accept the file.' }, 502);
       }
 
@@ -1327,7 +1333,10 @@ Deno.serve(async (req) => {
           });
           await supabase.from('builder_stock_items')
             .update({ enrichment_status: 'failed', enriched_at: new Date().toISOString() })
-            .eq('id', (item as { id: string }).id);
+            .eq('id', (item as { id: string }).id)
+            // Same rule: the row came from an organisation-scoped read, and
+            // the write says so too rather than relying on that.
+            .eq('organisation_id', activeOrganisationId);
         }
         processed += 1;
       }

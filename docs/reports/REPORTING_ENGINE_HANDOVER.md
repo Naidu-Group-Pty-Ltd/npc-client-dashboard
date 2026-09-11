@@ -292,6 +292,24 @@ evidence.
 
 ---
 
+### 4.5 Scoring V2 is finalised for synthetic proof, and stays unwired
+
+As of 11 Sep (audit §67): the composition is `2.1.0-shadow` — Risk is Model D
+(property type selects the schema and scores nothing; buyer LVR and cash flow
+score nothing anywhere; one observation never becomes the dimension; Risk is
+therefore structurally null until property-risk evidence exists), the buyer's
+position is the separate Finance Suitability reading, and eligibility `2.0.0`
+adds the delivered-points ceiling so a missing dimension can never lift the
+printed grade (found and fixed by fixture — audit §67.2 has the calibration
+record). `SCORING_V2_METHODOLOGY.md` is the one authoritative spec, pinned to
+the code by `scoringMethodology.spec.ts`, which also asserts the engine is
+unwired from every production entrypoint. The canonical consumer object is
+`scoreOutputContract.pure.ts` (`1.0.0`); no renderer recalculates. Measured
+ceilings: max deliverable ≈ 89 of 100 nominal points today, so A+ (85) is
+reachable only on genuinely exceptional evidence across Growth, Location,
+Yield and Demand. **Do not re-litigate these; extend them through their
+versions.**
+
 ## 5. ME-7 entry gate — the go/no-go
 
 `me7EntryGate.pure.ts`. ME-7 may begin only when **all** hold:

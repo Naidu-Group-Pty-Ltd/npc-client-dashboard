@@ -48,7 +48,7 @@ export type Dimension = 'growth' | 'demand' | 'yield' | 'location' | 'risk';
  * all. Naming them beats deleting the row, because a reader asking "why isn't
  * the median price scored?" gets an answer.
  */
-export type NonDimensionOwner = 'valuation' | 'economic' | 'none';
+export type NonDimensionOwner = 'valuation' | 'economic' | 'finance' | 'none';
 
 export interface OwnershipEntry {
   /** The input, named as `MarketEvidence` names it where it exists there. */
@@ -120,12 +120,27 @@ export const DIMENSION_OWNERSHIP: ReadonlyArray<OwnershipEntry> = [
       + 'is audit §48’s failure in miniature.' },
 
   // --- Risk: what could go wrong that nothing else has counted ------------
-  { input: 'lvr', owner: 'risk', forbiddenTo: [],
-    rationale: 'Leverage. A property fact only in combination with this buyer’s financing.' },
-  { input: 'weeklyCashFlow', owner: 'risk', forbiddenTo: ['yield'],
-    rationale: 'Serviceability. A fact about the loan, the deposit and the tax position — never about the property.' },
-  { input: 'propertyType', owner: 'risk', forbiddenTo: [],
-    rationale: 'Property-specific risk (strata exposure, land content, liquidity).' },
+  //
+  // Model D (ME-5.1, adopted into the composition at shadow 2.1.0): Risk owns
+  // property-level risk observations (hazard, planning, condition, strata,
+  // supply concentration, delivery), read through the per-class schema in
+  // `../risk/propertyRiskSchema.pure.ts`. The three rows below moved OUT of
+  // the dimension:
+  { input: 'lvr', owner: 'finance', forbiddenTo: ['growth', 'demand', 'yield', 'location', 'risk'],
+    rationale:
+      'Leverage is the BUYER’s position, not the property’s. 1 Boxer Drive, Wyndham Vale carries two '
+      + 'same-day reports at the same price, one at 80% LVR and one at 90% — under the old model that was '
+      + '12.8 points of Risk for a number an operator typed. Read only by the Finance Suitability reading, '
+      + 'which is structurally unable to reach the composite.' },
+  { input: 'weeklyCashFlow', owner: 'finance', forbiddenTo: ['growth', 'demand', 'yield', 'location', 'risk'],
+    rationale:
+      'Serviceability. A fact about the loan, the deposit and the tax position — never about the property. '
+      + 'Disclosed twice, scored nowhere: the Finance Suitability band, and Yield’s holding-cash-flow signal.' },
+  { input: 'propertyType', owner: 'risk', forbiddenTo: ['growth', 'demand', 'yield', 'location'],
+    rationale:
+      'SELECTS the property-risk schema (which questions apply to a house, a unit, a land purchase) and '
+      + 'contributes zero points — Model D’s first rule. An asset-type score was a type bonus wearing a '
+      + 'risk label, and the placeholder "Residential Property" was collecting the house reading.' },
 
   // --- Owned by nothing this composite scores -----------------------------
   { input: 'medianPrice', owner: 'valuation', forbiddenTo: ['demand', 'growth'],

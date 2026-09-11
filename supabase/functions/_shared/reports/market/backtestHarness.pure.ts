@@ -144,11 +144,18 @@ export function scoreCase(c: BacktestCase, now: Date): { row: BacktestRow; resul
       commuteTimeCBD: i.commuteTimeCBD.value,
       schoolsNearby: i.schoolsNearby.value,
     },
-    riskInputs: {
+    propertyRisk: {
+      // The stored type SELECTS the risk schema; the record holds no answered
+      // property-risk questions, so Model D reports observations (none) and
+      // withholds the dimension rather than renormalising.
+      propertyType: i.dwellingType.value,
+      answers: {},
+      growth1Year: c.evidence.growth1Year?.value ?? null,
+    },
+    finance: {
       lvr: i.lvr.value,
       weeklyCashFlow: i.weeklyCashFlow.value,
-      propertyType: i.dwellingType.value,
-      growth1Year: c.evidence.growth1Year?.value ?? null,
+      purchasePrice: i.purchasePrice.value,
     },
     audience: 'internal',
     now,

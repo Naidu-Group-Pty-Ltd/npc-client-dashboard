@@ -25,10 +25,11 @@ import {
 } from '../market/shadowScorer.pure';
 import { scoreGrowth } from '../market/growthScoring.pure';
 import { scoreDemand } from '../market/demandScoring.pure';
-import { scoreRisk } from '../market/riskScoring.pure';
+import { scorePropertyRisk } from '../risk/riskModelD.pure';
+import { assessFinanceSuitability, type SuitabilityBand } from '../risk/financeSuitability.pure';
 import { scoreLocation } from '../market/locationScoring.pure';
 import { scoreYield } from '../market/yieldScoring.pure';
-import { DIMENSION_OWNERSHIP, DECLARED_EXCEPTIONS, mayRead } from '../market/dimensionOwnership.pure';
+import { DIMENSION_OWNERSHIP, DECLARED_EXCEPTIONS, mayRead, ownerOf } from '../market/dimensionOwnership.pure';
 import {
   emptyEvidence,
   type EvidencePoint,
@@ -69,7 +70,8 @@ const BASE: ShadowScoreInput = {
   }),
   yieldInputs: { basis: 'purchase', basisAmount: 800_000, weeklyRent: 670 },
   locationInputs: { walkScore: 72, commuteTimeCBD: 35, schoolsNearby: 4 },
-  riskInputs: { lvr: 75, weeklyCashFlow: -220, propertyType: 'House', growth1Year: 4.8 },
+  propertyRisk: { propertyType: 'House', answers: {}, growth1Year: 4.8 },
+  finance: { lvr: 75, weeklyCashFlow: -220 },
   now: NOW,
 };
 
@@ -112,21 +114,27 @@ describe('monotonicity', () => {
     }
   });
 
-  it('more leverage never improves Risk', () => {
-    let previous = 101;
+  it('more leverage worsens the Finance Suitability reading and nothing else', () => {
+    const severity: Record<SuitabilityBand, number> = {
+      comfortable: 0, manageable: 1, stretched: 2, under_pressure: 3,
+    };
+    let previous = -1;
     for (const lvr of [40, 55, 65, 75, 82, 88, 93, 99]) {
-      const r = scoreRisk({ lvr });
-      expect(r.score!).toBeLessThanOrEqual(previous);
-      previous = r.score!;
+      const band = assessFinanceSuitability({ lvr }).band!;
+      expect(severity[band]).toBeGreaterThanOrEqual(previous);
+      previous = severity[band];
     }
   });
 
-  it('a worse cash-flow position never improves Risk', () => {
-    let previous = 101;
+  it('a worse cash-flow position worsens Finance Suitability and nothing else', () => {
+    const severity: Record<SuitabilityBand, number> = {
+      comfortable: 0, manageable: 1, stretched: 2, under_pressure: 3,
+    };
+    let previous = -1;
     for (const cf of [200, 50, 0, -100, -250, -400, -600]) {
-      const r = scoreRisk({ weeklyCashFlow: cf });
-      expect(r.score!).toBeLessThanOrEqual(previous);
-      previous = r.score!;
+      const band = assessFinanceSuitability({ weeklyCashFlow: cf }).band!;
+      expect(severity[band]).toBeGreaterThanOrEqual(previous);
+      previous = severity[band];
     }
   });
 
@@ -160,11 +168,67 @@ describe('one characteristic is rewarded once', () => {
     expect(fast.risk.score).toBe(slow.risk.score);
   });
 
-  it('holding cash flow moves Risk and leaves Yield untouched', () => {
+  it('holding cash flow is disclosed and scores nowhere', () => {
     const geared = run({ yieldInputs: { ...BASE.yieldInputs, weeklyCashFlow: -600 } });
     const neutral = run({ yieldInputs: { ...BASE.yieldInputs, weeklyCashFlow: 50 } });
     expect(geared.yieldResult.score).toBe(neutral.yieldResult.score);
+    expect(geared.risk.score).toBe(neutral.risk.score);
+    expect(geared.compositeScore).toBe(neutral.compositeScore);
     expect(geared.holdingCashFlow.reading).not.toBe(neutral.holdingCashFlow.reading);
+  });
+
+  it('the buyer never scores into the property: same asset, 80% vs 90% LVR', () => {
+    // 1 Boxer Drive, Wyndham Vale — two same-day reports at the same price.
+    const at80 = run({ finance: { lvr: 80, weeklyCashFlow: -562 } });
+    const at90 = run({ finance: { lvr: 90, weeklyCashFlow: -562 } });
+    expect(at80.compositeScore).toBe(at90.compositeScore);
+    expect(at80.grade).toBe(at90.grade);
+    for (const [i, d] of at80.dimensions.entries()) {
+      expect(d.score).toBe(at90.dimensions[i].score);
+    }
+    // At -$562/week the cash-flow band dominates both (worst band wins), so
+    // the difference the reader sees is in the leverage reading itself.
+    const lvrLine = (r: typeof at80) =>
+      r.financeSuitability.readings.find((x) => x.key === 'lvr')!.reading;
+    expect(lvrLine(at80)).not.toBe(lvrLine(at90));
+    // Where cash flow does not dominate, the band itself moves with leverage.
+    expect(assessFinanceSuitability({ lvr: 80 }).band)
+      .not.toBe(assessFinanceSuitability({ lvr: 95 }).band);
+  });
+
+  it('the property type selects the risk schema and moves no score', () => {
+    const house = run({ propertyRisk: { ...BASE.propertyRisk, propertyType: 'House' } });
+    const unit = run({ propertyRisk: { ...BASE.propertyRisk, propertyType: 'Unit' } });
+    const placeholder = run({ propertyRisk: { ...BASE.propertyRisk, propertyType: 'Residential Property' } });
+    for (const [i, d] of house.dimensions.entries()) {
+      expect(d.score).toBe(unit.dimensions[i].score);
+      expect(d.score).toBe(placeholder.dimensions[i].score);
+    }
+    expect(house.compositeScore).toBe(unit.compositeScore);
+    expect(house.compositeScore).toBe(placeholder.compositeScore);
+    // The type still did its one permitted job: selecting the schema.
+    expect(house.risk.assetClass).not.toBeNull();
+    expect(placeholder.risk.assetClass).toBeNull();
+  });
+
+  it('one Risk observation cannot become the dimension', () => {
+    const one = scorePropertyRisk({
+      propertyType: 'house',
+      answers: { site_hazard_exposure: 40 },
+      growth1Year: 25,
+    });
+    expect(one.observations.length).toBe(1);
+    expect(one.eligibility.eligible).toBe(false);
+    expect(one.score).toBeNull();
+    // A second INDEPENDENT category unlocks composition; a second answer in
+    // the same category would not.
+    const two = scorePropertyRisk({
+      propertyType: 'house',
+      answers: { site_hazard_exposure: 40, condition_and_maintenance: 70 },
+      growth1Year: 25,
+    });
+    expect(two.eligibility.eligible).toBe(true);
+    expect(two.score).not.toBeNull();
   });
 
   it('population growth moves Demand and never Growth', () => {
@@ -175,17 +239,28 @@ describe('one characteristic is rewarded once', () => {
   });
 
   it('the only shared input is a declared exception, moving the two in opposite directions', () => {
-    // growth1Year: Growth rewards it, Risk prices its reversal.
+    // growth1Year: Growth rewards it; Risk prices its reversal — but under
+    // Model D only BESIDE a measured property-risk peer, so overheating can
+    // never become the whole dimension by renormalisation.
     const hot = run({
       evidence: { ...BASE.evidence, growth1Year: pt(24) },
-      riskInputs: { ...BASE.riskInputs, growth1Year: 24 },
+      propertyRisk: { ...BASE.propertyRisk, growth1Year: 24 },
     });
     const calm = run({
       evidence: { ...BASE.evidence, growth1Year: pt(4) },
-      riskInputs: { ...BASE.riskInputs, growth1Year: 4 },
+      propertyRisk: { ...BASE.propertyRisk, growth1Year: 4 },
     });
     expect(hot.growth.score!).toBeGreaterThan(calm.growth.score!);   // rewarded
-    expect(hot.risk.score!).toBeLessThan(calm.risk.score!);          // and charged
+    // With no property-risk peer measured, Risk is withheld in BOTH — the
+    // caution is disclosed, not renormalised into a score.
+    expect(hot.risk.score).toBeNull();
+    expect(calm.risk.score).toBeNull();
+    expect(hot.risk.overheating!.scored).toBe(false);
+    // Beside a measured peer, the charge lands and opposes Growth.
+    const peers = { site_hazard_exposure: 70, condition_and_maintenance: 70 };
+    const hotRisk = scorePropertyRisk({ propertyType: 'house', answers: peers, growth1Year: 24 });
+    const calmRisk = scorePropertyRisk({ propertyType: 'house', answers: peers, growth1Year: 4 });
+    expect(hotRisk.score!).toBeLessThan(calmRisk.score!);
     expect(DECLARED_EXCEPTIONS.some((x) => x.input === 'growth1Year' && x.direction === 'opposes')).toBe(true);
   });
 
@@ -203,6 +278,11 @@ describe('one characteristic is rewarded once', () => {
     expect(mayRead('risk', 'vacancyRate')).toBe(false);
     expect(mayRead('yield', 'weeklyCashFlow')).toBe(false);
     expect(mayRead('growth', 'populationGrowth')).toBe(false);
+    // The buyer's facts belong to Finance Suitability and to no dimension.
+    expect(ownerOf('lvr')).toBe('finance');
+    expect(ownerOf('weeklyCashFlow')).toBe('finance');
+    expect(mayRead('risk', 'lvr')).toBe(false);
+    expect(mayRead('risk', 'weeklyCashFlow')).toBe(false);
     // …and the one exception is permitted, because it is declared.
     expect(mayRead('risk', 'growth1Year')).toBe(true);
   });
@@ -228,7 +308,8 @@ describe('missing evidence is absent, never 0, 50, average or favourable', () =>
       evidence: emptyEvidence(SUBJECT),
       yieldInputs: { basis: 'purchase', basisAmount: null, weeklyRent: null },
       locationInputs: {},
-      riskInputs: {},
+      propertyRisk: {},
+      finance: {},
     });
     for (const d of bare.dimensions) expect(d.score).toBeNull();
     expect(bare.compositeScore).toBeNull();
@@ -241,7 +322,8 @@ describe('missing evidence is absent, never 0, 50, average or favourable', () =>
       evidence: emptyEvidence(SUBJECT),                       // no Growth, no Demand
       yieldInputs: { basis: 'purchase', basisAmount: 800_000, weeklyRent: null }, // no Yield
       locationInputs: { walkScore: 90, commuteTimeCBD: 15, schoolsNearby: 8 },
-      riskInputs: { lvr: 50, weeklyCashFlow: 300, propertyType: 'house' },
+      propertyRisk: { propertyType: 'house' },
+      finance: { lvr: 50, weeklyCashFlow: 300 },
     });
     expect(twoOnly.measured.length).toBeLessThan(MIN_DIMENSIONS_FOR_GRADE);
     expect(twoOnly.grade).toBeNull();
@@ -309,7 +391,8 @@ describe('grade integrity', () => {
         growth1Year: pt(19, { level: 'gccsa', sampleSize: 5, periodsAvailable: 2, dwellingTypeMatched: false }),
       }),
       locationInputs: { walkScore: 99, commuteTimeCBD: 10, schoolsNearby: 10 },
-      riskInputs: { lvr: 45, weeklyCashFlow: 400, propertyType: 'house' },
+      propertyRisk: { propertyType: 'house' },
+      finance: { lvr: 45, weeklyCashFlow: 400 },
       yieldInputs: { basis: 'purchase', basisAmount: 500_000, weeklyRent: 900 },
     });
     expect(thin.compositeScore).not.toBeNull();
@@ -350,8 +433,13 @@ describe('a region cannot promote every property in it', () => {
     });
     // The subject's own evidence is identical, so only `relative` may move.
     const delta = Math.abs(weakRegion.compositeScore! - strongRegion.compositeScore!);
-    // relative is 0.15 of growth, growth is 0.40 of the composite → 6 points max.
-    expect(delta).toBeLessThanOrEqual(Math.ceil(100 * 0.15 * COMPOSITE_WEIGHTS.growth));
+    // relative is 0.15 of growth; growth carries its EFFECTIVE weight in the
+    // composite (nominal 0.40, renormalised upward when a dimension such as
+    // Risk is unmeasured — the renormalisation is published, so the bound
+    // reads it rather than assuming the nominal figure).
+    const growthEffective = strongRegion.dimensions.find((d) => d.key === 'growth')!.effectiveWeight;
+    expect(growthEffective).toBeGreaterThanOrEqual(COMPOSITE_WEIGHTS.growth);
+    expect(delta).toBeLessThanOrEqual(Math.ceil(100 * 0.15 * growthEffective) + 1);
   });
 
   it('a booming region does not turn an ordinary property into an A', () => {

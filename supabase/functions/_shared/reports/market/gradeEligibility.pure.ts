@@ -30,12 +30,36 @@
  * evidenced property is not blocked by one absent minor metric, and a property
  * with no credible suburb growth evidence cannot reach A+ on Yield and
  * Location alone.
+ *
+ * ## The second ceiling (2.0.0): absence never lifts a grade
+ *
+ * The composite renormalises over measured dimensions, which is right for the
+ * SCORE — three strong dimensions are a claim about those three. But the
+ * arithmetic has a reward hiding in it: drop the WEAKEST dimension and the
+ * renormalised composite rises, and with the coverage floor at 0.70 a strong
+ * property missing a mediocre Demand could cross the A+ line it would not
+ * cross with Demand measured. Found by fixture before any real evidence was
+ * scored: growth 90 / location 80 / yield 85 / demand 55 composites to ~81
+ * with Demand and ~86 without it.
+ *
+ * So the printed grade also answers to the **nominal-weight sum of what was
+ * measured**: the points the evidence actually delivered, over the full 100.
+ * Missing evidence still never scores — the composite, the coverage and the
+ * disclosure are untouched — but it can no longer LIFT the badge, because a
+ * dimension that was not measured contributes nothing toward the higher
+ * grade's floor. Adding evidence can only raise this ceiling (a measured
+ * score is ≥ 0), so the property the mandate demands holds by construction:
+ * **missing data never improves the grade, and arriving data never lowers
+ * this ceiling.** With Risk structurally unavailable today the ceiling's
+ * maximum is 95 of 100, so A+ (85) remains mathematically reachable — on
+ * genuinely exceptional evidence across the four live dimensions, which is
+ * what an A+ is supposed to mean.
  */
 
 import type { GrowthResult } from './growthScoring.pure.ts';
 
 /** Bumped whenever a threshold changes. Persisted beside the grade. */
-export const ELIGIBILITY_VERSION = '1.0.0';
+export const ELIGIBILITY_VERSION = '2.0.0';
 
 /** The grade thresholds. Unchanged, and not this module's to move. */
 export const GRADE_THRESHOLDS: ReadonlyArray<readonly [number, string]> = [
@@ -67,6 +91,13 @@ export interface EligibilityInput {
   growth: GrowthResult;
   /** Share of the composite's nominal weight that was measured, 0-1. */
   overallCoverage: number;
+  /**
+   * Σ (measured dimension score × nominal weight) — the points the evidence
+   * actually delivered over the full 100. The renormalised composite answers
+   * "how strong is what we measured"; this answers "how much did the evidence
+   * deliver", and the printed grade may not exceed what was delivered.
+   */
+  nominalMeasuredScore: number;
 }
 
 export interface EligibilityResult {
@@ -90,7 +121,7 @@ export interface EligibilityResult {
  * over-claim, not a second opinion on the arithmetic.
  */
 export function applyEligibility(input: EligibilityInput): EligibilityResult {
-  const { compositeScore, growth, overallCoverage } = input;
+  const { compositeScore, growth, overallCoverage, nominalMeasuredScore } = input;
   const scoreGrade = gradeFor(compositeScore);
   const reasons: string[] = [];
   const r = ELIGIBILITY_RULES;
@@ -113,7 +144,15 @@ export function applyEligibility(input: EligibilityInput): EligibilityResult {
     && gCover >= r.aMinGrowthCoverage
     && overallCoverage >= r.aMinOverallCoverage;
 
-  const ceiling = aPlusOk ? 'A+' : aOk ? 'A' : 'B+';
+  const growthCeiling = aPlusOk ? 'A+' : aOk ? 'A' : 'B+';
+
+  // The second ceiling: the grade the DELIVERED points support. Unmeasured
+  // weight contributes nothing toward a higher badge — it is not scored, and
+  // it does not lift.
+  const nominalCeiling = gradeFor(nominalMeasuredScore);
+
+  const order = ['F', 'D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
+  const ceiling = order[Math.min(order.indexOf(growthCeiling), order.indexOf(nominalCeiling))];
 
   // Only explain the constraint that actually binds.
   const wanted = scoreGrade === 'A+' ? 'A+' : scoreGrade === 'A' ? 'A' : null;
@@ -163,10 +202,17 @@ export function applyEligibility(input: EligibilityInput): EligibilityResult {
     }
   }
 
-  // The ceiling only bites on A and A+; everything below is unrestricted.
-  const order = ['F', 'D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
+  // Say when the delivered-points ceiling is the binding one.
   const capIndex = order.indexOf(ceiling);
   const scoreIndex = order.indexOf(scoreGrade);
+  if (scoreIndex > capIndex && order.indexOf(nominalCeiling) < order.indexOf(growthCeiling)) {
+    reasons.push(
+      `The measured evidence delivers ${Math.round(nominalMeasuredScore)} of the composite's 100 `
+        + `nominal points, which supports at most ${nominalCeiling}. A dimension that was not `
+        + 'measured is never scored — and never lifts the grade.',
+    );
+  }
+
   const grade = scoreIndex > capIndex ? ceiling : scoreGrade;
 
   return {

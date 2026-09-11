@@ -227,3 +227,78 @@ describe('builderStockAddress', () => {
     }
   });
 });
+
+/**
+ * The shapes a Notion stock list writes, copied verbatim from the nineteen
+ * rows of upload `10c71488` (10 September 2026). Every one of them defeated
+ * the annotation rule, which was anchored to a square bracket at the very end
+ * of the line, and the annotation became the suburb.
+ */
+describe('an annotation the list wrote after the address', () => {
+  it('takes a parenthesised floor area off, and keeps the place', () => {
+    // The one property of nineteen with no photograph: this line reached the
+    // geocoder whole and it answered "that address could not be located".
+    const p = parseBuilderAddressLine('Lot 60913 Basalt St, Beveridge, VIC 3753 (178 m2)');
+    expect(p).toMatchObject({
+      lotNumber: '60913',
+      streetName: 'Basalt',
+      streetType: 'Street',
+      suburb: 'Beveridge',
+      state: 'VIC',
+      postcode: '3753',
+    });
+    // A round bracket is a measurement. Calling it a design would put a number
+    // where a reader expects the name of a house.
+    expect(p.designName).toBeNull();
+  });
+
+  it('takes one off that sits mid-segment, with the words trailing it', () => {
+    const p = parseBuilderAddressLine('Lot 1482 - Coridale Estate, Lara 3212 VIC [184 m2] Remi 20');
+    expect(p).toMatchObject({
+      lotNumber: '1482',
+      estate: 'Coridale Estate',
+      suburb: 'Lara',
+      state: 'VIC',
+      postcode: '3212',
+      // The design is the words OUTSIDE the bracket on this list; the bracket
+      // holds the floor area.
+      designName: 'Remi 20',
+    });
+  });
+
+  it('finds a postcode written before the state', () => {
+    // `Lara 3212 VIC` is `Redbank Plains QLD 4301` the other way round, and
+    // refusing it left the digits inside the suburb.
+    const p = parseBuilderAddressLine('Lot 60416 Russula St, Beveridge VIC 3753 (141 m2)');
+    expect(p).toMatchObject({ suburb: 'Beveridge', state: 'VIC', postcode: '3753' });
+  });
+
+  it('still refuses to read a house number as a postcode', () => {
+    const p = parseBuilderAddressLine('4301 Smith Street, Redbank Plains QLD');
+    expect(p.postcode).toBeNull();
+  });
+
+  it('strips nothing where no address precedes the annotation', () => {
+    /*
+     * THE RULE THAT MAKES THE REST SAFE. The words trailing a bracket are
+     * taken with it, which is how `[184 m2] Remi 20` gives up its design —
+     * and it must never become a way to lose the line itself. An annotation
+     * FOLLOWS an address, so it is stripped only where one precedes it.
+     */
+    const p = parseBuilderAddressLine('[Something] 44 Satinwood Crescent Donnybrook VIC');
+    expect(p).toMatchObject({
+      streetNumber: null,
+      streetName: expect.stringContaining('Satinwood'),
+      suburb: 'Donnybrook',
+      state: 'VIC',
+    });
+  });
+
+  it('leaves a line carrying no annotation exactly as it was', () => {
+    const p = parseBuilderAddressLine('Lot 209 - 44 Satinwood Crescent Donnybrook VIC');
+    expect(p).toMatchObject({
+      lotNumber: '209', streetNumber: '44', streetName: 'Satinwood',
+      streetType: 'Crescent', suburb: 'Donnybrook', state: 'VIC', postcode: null,
+    });
+  });
+});

@@ -134,6 +134,62 @@ function tidy(value: string | null | undefined): string | null {
 }
 
 /**
+ * Everything a list writes AFTER the address, taken off before it is read.
+ *
+ * This was one square-bracketed group anchored to the very end of the line,
+ * which is the shape the first stock lists used — `… NSW 2486 [Stradbroke
+ * 180]`. A Notion list measured 10 September 2026 writes three other shapes,
+ * and every one of them defeated the anchor, so the annotation stayed in the
+ * line and became the suburb:
+ *
+ *   Lot 60913 Basalt St, Beveridge, VIC 3753 (178 m2)      suburb `3753 (178 m2)`
+ *   Lot 60416 Russula St, Beveridge VIC 3753 (141 m2)      suburb `Beveridge 3753 (141 m2)`
+ *   Lot 1482 - Coridale Estate, Lara 3212 VIC [178 m2] Aura 19
+ *                                                          suburb `Lara 3212 [178 m2] Aura 19`
+ *
+ * The postcode went with it in all three — `\d{4}` is taken only at the end of
+ * a segment, so `3753 (178 m2)` carries no postcode at all — and the composed
+ * line handed to the geocoder was `Basalt Street, 3753 (178 m2) VIC`, which is
+ * why that property answered "that address could not be located" and the only
+ * one of nineteen with no photograph.
+ *
+ * TWO RULES, AND THE SECOND IS WHAT MAKES THE FIRST SAFE.
+ *
+ * **A round bracket is a measurement, never a design.** `(178 m2)` is the
+ * building's size on every row that carries one; reading it as a house design
+ * would put a number where a reader expects a name.
+ *
+ * **An annotation FOLLOWS the address, so it is only stripped where an address
+ * precedes it** — the text before it has to carry a state or a postcode.
+ * Without that test `[Something] 44 Satinwood Crescent Donnybrook VIC` strips
+ * to nothing, because the words trailing a bracket are taken with it: that is
+ * how `[178 m2] Aura 19` loses the design name sitting outside the bracket,
+ * and it must not become a way to lose the whole line.
+ */
+function stripTrailingAnnotations(line: string, out: ParsedBuilderAddress): string {
+  let rest = line;
+  // A group, then whatever trails it as far as the end — no comma and no
+  // second opener, so only the LAST annotation is ever in play.
+  const ANNOTATION = /\s*([[(])([^\])]*)[\])]\s*([^,[(]*)$/;
+
+  for (let guard = 0; guard < 4; guard += 1) {
+    const match = rest.match(ANNOTATION);
+    if (!match || match.index === undefined) break;
+
+    const head = rest.slice(0, match.index);
+    // The address has to be in front of it. See the second rule above.
+    if (!AU_STATE.test(head) && !/\b\d{4}\b/.test(head)) break;
+
+    const [, opener, inside, trailing] = match;
+    const named = tidy(trailing) ?? (opener === '[' ? tidy(inside) : null);
+    out.designName ??= named;
+
+    rest = tidy(head) ?? '';
+  }
+  return rest;
+}
+
+/**
  * Pull a free-text builder line apart.
  *
  * Everything is optional and nothing is guessed: a segment that cannot be
@@ -153,12 +209,8 @@ export function parseBuilderAddressLine(line: string | null | undefined): Parsed
 
   const out: ParsedBuilderAddress = { ...empty };
 
-  // 1. The house design, in trailing brackets.
-  const design = rest.match(/\[([^\]]+)\]\s*$/);
-  if (design) {
-    out.designName = tidy(design[1]);
-    rest = tidy(rest.slice(0, design.index)) ?? '';
-  }
+  // 1. The trailing annotations.
+  rest = stripTrailingAnnotations(rest, out);
 
   // 2. The leading lot or unit designation.
   const lot = rest.match(/^lot\s*\.?\s*([0-9]+[a-z]?)\s*[-–:,]?\s*/i);
@@ -172,9 +224,16 @@ export function parseBuilderAddressLine(line: string | null | undefined): Parsed
     rest = tidy(rest.slice(unit[0].length)) ?? '';
   }
 
-  // 3. The postcode: four digits, and only at the end of a segment, so a house
-  //    number like `4301 Smith Street` cannot be mistaken for one.
-  const postcode = rest.match(/\b(\d{4})\b(?=\s*(?:,|$))/);
+  // 3. The postcode: four digits, and only where a segment ENDS after them —
+  //    at a comma, at the end of the line, or at the state, so a house number
+  //    like `4301 Smith Street` cannot be mistaken for one.
+  //
+  //    The state belongs in that list because a list writes the pair in either
+  //    order. `Redbank Plains QLD 4301` is the common one and ends the line;
+  //    `Lara 3212 VIC` is the same fact the other way round, and refusing it
+  //    left the digits inside the suburb — `Lara 3212`, which is a suburb no
+  //    register holds and which this now stores in a column a card reads.
+  const postcode = rest.match(/\b(\d{4})\b(?=\s*(?:,|$|\b(?:NSW|VIC|QLD|WA|SA|TAS|ACT|NT)\b))/i);
   if (postcode) {
     out.postcode = postcode[1];
     rest = tidy(rest.slice(0, postcode.index) + ' ' + rest.slice(postcode.index! + 4)) ?? '';
@@ -192,7 +251,7 @@ export function parseBuilderAddressLine(line: string | null | undefined): Parsed
   //    `Greenfern Habitat`, `Coridale`. Position settles it rather than a
   //    keyword list, because half the estates here are not called "Estate".
   const segments = rest.split(',').map((seg) => tidy(seg)).filter((seg): seg is string => Boolean(seg));
-  let head = segments[0] ?? null;
+  let head: string | null = segments[0] ?? null;
   if (segments.length > 1) {
     out.suburb = segments[segments.length - 1];
     const middle = segments.slice(1, -1).filter(Boolean);

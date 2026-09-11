@@ -407,3 +407,45 @@ describe('storage paths are treated as hostile', () => {
     expect(safeObjectName('list.csv')).toBe('list.csv');
   });
 });
+
+describe('the geocoder is never handed the line whole', () => {
+  it('drops the lot prefix and the floor area a Notion list writes', () => {
+    /*
+     * PRODUCTION, 10 SEPTEMBER 2026. This is the one property of nineteen
+     * that answered "that address could not be located", and the question it
+     * was asked was the whole line with `Lot 60913` still on the front and
+     * `(178 m2)` still on the back.
+     */
+    expect(geocodableAddress({
+      address_line: 'Lot 60913 Basalt St, Beveridge, VIC 3753 (178 m2)',
+      suburb: null, state: 'VIC', postcode: null,
+    })).toBe('Basalt Street, Beveridge, VIC, 3753, Australia');
+  });
+
+  it('keeps a supplied street number that opens the line', () => {
+    /*
+     * THE GUARD ON THE ABOVE. A bare leading number is ambiguous and the
+     * parser resolves it as a LOT on measured evidence, because for a PIN
+     * that is the safe direction. Composing from its parts here would turn a
+     * supplied `12 Wattle St` into `Wattle Street` and throw away a rooftop
+     * this function already had, so an unprefixed line is asked as supplied.
+     */
+    expect(geocodableAddress({
+      address_line: '12 Wattle St', suburb: 'Tarneit', state: 'VIC', postcode: '3029',
+    })).toBe('12 Wattle St, Tarneit, VIC, 3029, Australia');
+  });
+
+  it('takes the suburb and postcode off the line when no column holds them', () => {
+    expect(geocodableAddress({
+      address_line: 'Lot 36 - Tringa Street, Sandpiper Estate, Tweed Heads South NSW 2486 [Stradbroke 180]',
+      suburb: null, state: null, postcode: null,
+    })).toBe('Tringa Street, Tweed Heads South, NSW, 2486, Australia');
+  });
+
+  it('lets a column the builder typed win over the line', () => {
+    expect(geocodableAddress({
+      address_line: 'Lot 60913 Basalt St, Beveridge, VIC 3753 (178 m2)',
+      suburb: 'Wallan', state: 'VIC', postcode: '3756',
+    })).toBe('Basalt Street, Wallan, VIC, 3756, Australia');
+  });
+});

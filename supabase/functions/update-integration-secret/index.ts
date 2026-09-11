@@ -4,6 +4,13 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireStepUp } from '../_shared/stepUp.ts';
 import { ALLOWED_INTEGRATION_SECRETS } from '../_shared/integrationSecrets.ts';
 import { listingsPipelineRefusal } from '../_shared/listingsPipelineSecrets.pure.ts';
+import { deploymentIdentityRefusal } from '../_shared/deploymentIdentitySecrets.pure.ts';
+import {
+  describeSecretWriteFailure,
+  integrationSecretBrokerUrl,
+  resolveIntegrationSecretRoute,
+  type IntegrationSecretRoute,
+} from '../_shared/integrationSecretRoute.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { recordActivity } from '../_shared/activityAudit.ts';
 
@@ -27,6 +34,87 @@ interface UpdateSecretRequest {
   secrets: { name: string; value: string }[];
 }
 
+/**
+ * Perform one write on the resolved route.
+ *
+ * Both branches speak the same shape — a POST of `[{name, value}]` — because
+ * Mission Control's broker deliberately takes the Management API's own body
+ * rather than inventing a second vocabulary for the same act.
+ */
+async function writeSecrets(
+  route: IntegrationSecretRoute,
+  secrets: { name: string; value: string }[],
+): Promise<Response> {
+  if (route.via === 'unconfigured') {
+    throw new Error(`writeSecrets called on an unconfigured route: ${route.why}`);
+  }
+  if (route.via === 'broker') {
+    return await fetch(integrationSecretBrokerUrl(route), {
+      method: 'POST',
+      headers: route.headers,
+      body: JSON.stringify({ secrets }),
+    });
+  }
+  return await fetch(`https://api.supabase.com/v1/projects/${route.projectRef}/secrets`, {
+    method: 'POST',
+    headers: route.headers,
+    body: JSON.stringify(secrets),
+  });
+}
+
+/**
+ * What a brokered write actually did — which names landed, and which Mission
+ * Control declined on its own account.
+ *
+ * Mission Control applies an INDEPENDENT deny-list, because a broker that
+ * trusts its caller's validation is not a broker. So a 200 does not mean
+ * everything sent was written, and reporting the names we SENT would print a
+ * green toast over a name that was refused.
+ *
+ * A parse failure falls back to the names sent rather than throwing: the
+ * secrets that did land are already written at this point, and failing the
+ * request over the shape of a report would tell the operator nothing landed
+ * when something did. It is reported as a warning so the fallback is never
+ * silent.
+ */
+async function brokerOutcome(
+  response: Response,
+  sent: string[],
+): Promise<{ updated: string[]; refused: string[] }> {
+  try {
+    const body = (await response.clone().json()) as { updated?: unknown; refused?: unknown };
+    const updated = Array.isArray(body.updated)
+      ? body.updated.filter((n): n is string => typeof n === 'string')
+      : sent;
+    const refused = Array.isArray(body.refused)
+      ? body.refused.map((r) => {
+          const row = r as { name?: unknown; reason?: unknown };
+          const name = typeof row.name === 'string' ? row.name : 'a secret';
+          const reason = typeof row.reason === 'string' ? row.reason : 'refused by Mission Control';
+          return `${name}: ${reason}`;
+        })
+      : [];
+    return { updated, refused };
+  } catch {
+    return {
+      updated: sent,
+      refused: ['Mission Control accepted the write but its report could not be read, so which ' +
+        'names landed is this deployment\'s assumption rather than its answer.'],
+    };
+  }
+}
+
+/**
+ * Keep the credential out of relayed error text.
+ *
+ * A vendor is entitled to echo what it was sent, and this handler puts a
+ * response body straight into its own JSON and its own logs.
+ */
+function redact(text: string, secret: string): string {
+  const body = text.slice(0, 500);
+  return secret ? body.split(secret).join('[redacted]') : body;
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -41,30 +129,18 @@ Deno.serve(async (req) => {
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
   try {
+    /*
+     * Where this write goes is resolved AFTER authentication, not before it.
+     *
+     * It used to be the first thing the handler did, and it answered 400
+     * `setupRequired` to any caller at all when no management token was set —
+     * which on a clone is the ordinary, correct state. Two things follow from
+     * moving it: an unauthenticated caller no longer learns anything about how
+     * this deployment is wired, and the brokered route can be reached at all,
+     * because the old bail returned before there was any route to resolve.
+     */
     const sbMgmt = Deno.env.get('SB_MANAGEMENT_ACCESS_TOKEN');
     const legacyMgmt = Deno.env.get('SUPABASE_ACCESS_TOKEN');
-    const supabaseAccessToken = sbMgmt ?? legacyMgmt;
-    const projectRef = Deno.env.get('SUPABASE_URL')?.match(/https:\/\/([^.]+)/)?.[1];
-
-    if (!supabaseAccessToken) {
-      console.error('Management access token not configured');
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: 'SB_MANAGEMENT_ACCESS_TOKEN not configured. Please add your Supabase personal access token to the secrets.',
-          setupRequired: true
-        }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    if (!projectRef) {
-      console.error('Could not determine project reference');
-      return new Response(
-        JSON.stringify({ success: false, error: 'Could not determine project reference' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
 
     // SECURITY: Verify authentication and superadmin role
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -130,6 +206,19 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // The names that decide who this deployment IS are refused before the
+      // allowlist too, and for a reason that got sharper the moment this
+      // endpoint learned to broker: the allowlist is GENERATED from the
+      // Integrations registry, so it already carries eleven of them, and a
+      // tenant reaching this endpoint through Mission Control would otherwise
+      // be able to set its own MISSION_CONTROL_URL or a Supabase personal
+      // access token. See deploymentIdentitySecrets.pure.ts.
+      const identity = deploymentIdentityRefusal(secret.name);
+      if (identity) {
+        validationErrors.push(identity);
+        continue;
+      }
+
       // Check if secret is in allowlist
       if (!ALLOWED_SECRETS.has(secret.name)) {
         validationErrors.push(`Secret not in allowlist: ${secret.name}`);
@@ -162,41 +251,87 @@ Deno.serve(async (req) => {
       );
     }
 
-    const tokenSource = sbMgmt ? 'SB_MANAGEMENT_ACCESS_TOKEN' : 'SUPABASE_ACCESS_TOKEN';
-    console.log(`[update-integration-secret] Calling Management API`, {
-      projectRef,
-      names: validSecrets.map(s => s.name),
-      tokenSource,
+    /*
+     * Resolve where this write goes. The prime holds a management token and
+     * writes its own project; a clone has a Mission Control link instead and
+     * the CALL travels. `integrationSecretRoute.pure.ts` carries the reasoning
+     * — including why a clone must never hold the management token that would
+     * make the direct route work.
+     */
+    const route = resolveIntegrationSecretRoute({
+      managementToken: sbMgmt ?? legacyMgmt,
+      managementTokenSource: sbMgmt ? 'SB_MANAGEMENT_ACCESS_TOKEN' : 'SUPABASE_ACCESS_TOKEN',
+      supabaseUrl,
+      missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+      cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
     });
 
-    // Call Supabase Management API to update secrets
-    const response = await fetch(
-      `https://api.supabase.com/v1/projects/${projectRef}/secrets`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${supabaseAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(validSecrets),
-      }
-    );
+    if (route.via === 'unconfigured') {
+      console.error('[update-integration-secret] no route', { why: route.why });
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: route.why,
+          // Kept so the page still raises its banner, but the REMEDY travels
+          // with it now. The banner used to be hard-coded to "add a
+          // SUPABASE_ACCESS_TOKEN", which on a clone sends an operator to
+          // fetch the one credential this arrangement exists to keep off
+          // their project.
+          setupRequired: true,
+          setupHint: route.why,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log('[update-integration-secret] writing', {
+      via: route.via,
+      target: route.via === 'direct' ? route.projectRef : route.missionControlUrl,
+      names: validSecrets.map(s => s.name),
+      ...(route.via === 'direct' ? { tokenSource: route.tokenSource } : {}),
+    });
+
+    const response = await writeSecrets(route, validSecrets);
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('[update-integration-secret] Management API error', {
+      const errorText = redact(await response.text(), route.secret);
+      const failure = describeSecretWriteFailure(route, response);
+      console.error('[update-integration-secret] write refused', {
         status: response.status,
+        code: failure.code,
+        end: failure.end,
         body: errorText,
-        tokenSource,
         names: validSecrets.map(s => s.name),
       });
 
+      /*
+       * A 401 means two different things and they have opposite remedies.
+       *
+       * On the direct route the management token this deployment holds is
+       * invalid and an operator rotates it. On the brokered route it is this
+       * workspace's Mission Control key that was refused, and rotating a
+       * Supabase token would achieve nothing — which is exactly the wrong
+       * turn the old single message sent everybody down.
+       */
       if (response.status === 401) {
         return new Response(
           JSON.stringify({
             success: false,
-            error: `Invalid management token (source: ${tokenSource}). Rotate at https://supabase.com/dashboard/account/tokens and re-save via the Secrets form.`,
+            error:
+              route.via === 'direct'
+                ? `Invalid management token (source: ${route.tokenSource}). Rotate it at ` +
+                  'https://supabase.com/dashboard/account/tokens and re-save via the Secrets form.'
+                : 'Mission Control refused this workspace\'s key. It is unknown, revoked, or does ' +
+                  'not carry the integrations:write scope. Nothing on this deployment needs ' +
+                  'changing — ask for the key to be re-issued from Mission Control.',
             setupRequired: true,
+            setupHint:
+              route.via === 'direct'
+                ? `Rotate ${route.tokenSource} at https://supabase.com/dashboard/account/tokens.`
+                : 'Ask Mission Control to re-issue this workspace\'s key with the ' +
+                  'integrations:write scope.',
+            failingEnd: failure.end,
+            failureCode: failure.code,
             managementApiStatus: response.status,
             managementApiBody: errorText,
           }),
@@ -207,12 +342,43 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({
           success: false,
-          error: `Management API ${response.status}: ${errorText}`,
+          error: `${failure.service} answered ${response.status}: ${errorText}`,
+          failingEnd: failure.end,
+          failureCode: failure.code,
+          ...(failure.detail ? { failureDetail: failure.detail } : {}),
           managementApiStatus: response.status,
           managementApiBody: errorText,
           attemptedNames: validSecrets.map(s => s.name),
         }),
         { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    /*
+     * Mission Control applies its OWN deny-list — a broker that trusts its
+     * caller's validation is not a broker — so a brokered write can succeed
+     * having refused some of what it was sent. Those refusals join the local
+     * ones rather than being discarded, or an operator watches a name they
+     * typed vanish with a green toast over it.
+     */
+    let writtenNames = validSecrets.map(s => s.name);
+    if (route.via === 'broker') {
+      const outcome = await brokerOutcome(response, writtenNames);
+      writtenNames = outcome.updated;
+      for (const r of outcome.refused) validationErrors.push(r);
+    }
+
+    if (writtenNames.length === 0) {
+      // Every name we sent was refused at the far end. A 200 with an empty
+      // list is not a success from where the operator is standing.
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Mission Control accepted the request and wrote none of the secrets in it.',
+          validationErrors,
+          attemptedNames: validSecrets.map(s => s.name),
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -231,12 +397,13 @@ Deno.serve(async (req) => {
       entity_type: 'system',
       entity_name: 'Integration Secrets',
       metadata: {
-        updated_secrets: validSecrets.map(s => s.name),
+        updated_secrets: writtenNames,
+        write_route: route.via,
         validation_warnings: validationErrors.length > 0 ? validationErrors : undefined
       }
     });
 
-    console.log(`Successfully updated ${validSecrets.length} secrets`);
+    console.log(`Successfully updated ${writtenNames.length} secrets via ${route.via}`);
 
     // The secrets ARE written at this point, so a failed audit row must not
     // fail the request — but it must not be invisible either. The operator is
@@ -244,8 +411,14 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: `Successfully updated ${validSecrets.length} secret(s)`,
-        updatedSecrets: validSecrets.map(s => s.name),
+        message: `Successfully updated ${writtenNames.length} secret(s)`,
+        updatedSecrets: writtenNames,
+        // Which road the write took. The page says it, because "saved" means
+        // two different things — written onto this project by this deployment,
+        // or written onto it by Mission Control on this workspace's behalf —
+        // and an operator debugging a key that is not taking effect needs to
+        // know which one to ask about.
+        via: route.via,
         validationWarnings: validationErrors.length > 0 ? validationErrors : undefined,
         auditLogged: audit.ok,
         ...(audit.ok ? {} : { auditError: audit.reason })

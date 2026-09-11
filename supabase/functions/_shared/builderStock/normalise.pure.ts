@@ -17,6 +17,7 @@
  * anywhere.
  */
 import { SOURCE_ANCHOR_HEADER } from './sourceAssets.pure.ts';
+import { parseBuilderAddressLine } from '../builderStockAddress.pure.ts';
 import { composeAddressLine } from './canonicalIdentity.pure.ts';
 
 export type StockPropertyType =
@@ -596,6 +597,7 @@ export function normaliseStockRow(
   for (const url of Object.keys(record.image_url_fields)) {
     if (!record.image_urls.includes(url)) delete record.image_url_fields[url];
   }
+
   return record;
 }
 
@@ -1062,12 +1064,63 @@ export function geocodableAddress(record: {
    * nothing a geocoder can find, so a composition needs a NAMED PLACE — an
    * estate or a project — and a row with only a number still returns null.
    */
-  const line = record.address_line?.trim()
+  /*
+   * AND IT IS TAKEN APART BEFORE IT IS ASKED OF ANYONE.
+   *
+   * `address_line` used to be handed over whole. It carries the lot prefix
+   * that opens nearly every builder line and whatever the list writes after
+   * the address — a design name, a floor area — so the question put to the
+   * provider was `Lot 60913 Basalt St, Beveridge, VIC 3753 (178 m2), VIC,
+   * Australia`, which is not a question it can answer at street level. Of the
+   * nineteen properties on the 10 September 2026 list the one that answered
+   * "that address could not be located" is the one whose whole line reached
+   * the geocoder in that state, and it is the only one with no photograph.
+   *
+   * `parseBuilderAddressLine` is where that line is already pulled apart for
+   * the map, so the street it found is the street asked for here.
+   *
+   * ONLY WHERE THE PARSE DID NOT HAVE TO GUESS, which is the whole of the
+   * care needed here. A line opening with a bare number is ambiguous, and the
+   * parser resolves it as a LOT on measured evidence — 44 of 44 — because for
+   * a PIN calling a lot a street number is the dangerous direction. Composing
+   * from its parts would therefore turn the supplied address `12 Wattle St`
+   * into `Wattle Street` and throw away a rooftop this function already had.
+   * So the parts are used where the line NAMED its lot (`Lot 60913 Basalt
+   * St`, where what follows is a street by construction) or where a street
+   * number was positively identified; anything else is asked exactly as it
+   * was supplied, as it always has been.
+   *
+   * `address_line` itself is untouched either way, so property identity,
+   * duplicate matching and the label a package document is searched for all
+   * stand.
+   */
+  const parsed = parseBuilderAddressLine(record.address_line);
+  const lotWasNamed = /^\s*lot\b/i.test(record.address_line ?? '');
+  const street = (lotWasNamed || parsed.streetNumber)
+    ? ([parsed.streetNumber, parsed.streetName, parsed.streetType]
+      .filter((part) => !!part && !!String(part).trim())
+      .join(' ')
+      .trim() || null)
+    : null;
+
+  const line = street
+    || record.address_line?.trim()
     || composeAddressLine(record as never)?.line
     || null;
   if (!line) return null;
 
-  const parts = [line, record.suburb, record.state, record.postcode]
+  /*
+   * The structured columns win where the source stated them, and the parsed
+   * line fills the rest — the same precedence `builderStockAddress` applies
+   * on the read path, because a builder who typed a suburb into the field
+   * meant it and a Notion list types nothing into any field at all.
+   */
+  const parts = [
+    line,
+    record.suburb ?? parsed.suburb,
+    record.state ?? parsed.state,
+    record.postcode ?? parsed.postcode,
+  ]
     .filter((part): part is string => !!part && !!part.trim());
   // Still two parts: a place on its own is a suburb, and a picture of "the
   // suburb" is a picture of somewhere else.

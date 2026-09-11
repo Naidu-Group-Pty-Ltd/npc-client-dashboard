@@ -18,6 +18,29 @@
 
 /** Stock item columns. The same set serves both audiences — a property is not
  *  private, and the organisation boundary is applied by the query, not here. */
+/*
+ * `house_design` IS NOT A COLUMN, AND IT IS WHAT NAMES A PACKAGE.
+ *
+ * A house-and-land list sells several houses on one piece of land, and the
+ * design is the only thing that says which — the lot, the suburb, the land
+ * size and often the bed count are shared by every sibling. Measured on the
+ * 95 properties live on 11 September 2026: 75 lots, and 15 of them carry more
+ * than one package, so 35 cards (37%) were indistinguishable from a sibling.
+ * On every one of those 15 the design tells them apart, and there is no lot
+ * where it would not.
+ *
+ * It lives in `source_row` rather than in a column of its own, and the
+ * importer already reads it exactly like this (`EXISTING_ITEM_SELECT` in
+ * `importStock.ts`) because it is half of the match key, while the package
+ * uniqueness constraint keys on the same expression. This projection is the
+ * one both the Marketplace and the builder's Stock List render from, and it
+ * was the only reader that did not ask for it — so the database distinguished
+ * two packages that both screens then drew identically.
+ *
+ * PostgREST validates a select list before permissions, so a mistyped path
+ * here fails loudly with 42703 rather than arriving as `undefined`, which is
+ * the one thing that must not happen to an identity field.
+ */
 export const STOCK_ITEM_SELECT = `
   id, organisation_id, upload_id, first_upload_id, created_by_builder_user_id,
   builder_project_id, builder_unit_id, external_reference,
@@ -27,7 +50,8 @@ export const STOCK_ITEM_SELECT = `
   availability_status, expected_completion, description,
   lifecycle_status, enrichment_status, enriched_at, primary_image_id,
   created_at, updated_at, last_seen_at,
-  image_work_stage
+  image_work_stage,
+  house_design:source_row->>house_design
 `;
 
 /**

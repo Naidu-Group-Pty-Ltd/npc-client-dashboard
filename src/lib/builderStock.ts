@@ -128,6 +128,17 @@ export interface BuilderStockItem {
   property_type: string | null;
   land_size_sqm: number | null;
   building_size_sqm: number | null;
+  /**
+   * The house on the land — `Vanta 20`, `Nex 20`, `Cura 20B`.
+   *
+   * Projected out of `source_row` by `STOCK_ITEM_SELECT`, because it is not a
+   * column of its own. It is what NAMES a package: a lot sells several houses
+   * and they share the lot, the suburb, the land size and often the bed count,
+   * so without this two siblings are one card drawn twice. Optional because a
+   * deployment whose server predates the projection sends no such field, and
+   * every reader must treat its absence as "not stated" rather than invent one.
+   */
+  house_design?: string | null;
   price: number | null;
   price_display: string | null;
   availability_status: StockAvailability;
@@ -442,7 +453,8 @@ export function homeSizeLabel(sqm: number | null | undefined): string | null {
 
 export function stockItemTitle(item: Pick<BuilderStockItem,
   'unit_number' | 'lot_number' | 'address_line' | 'development_name'
-  | 'project_name' | 'external_reference' | 'building_size_sqm'>): string {
+  | 'project_name' | 'external_reference' | 'building_size_sqm'
+  | 'house_design'>): string {
   /*
    * The column first, then the line. A Notion list has no Lot column — it
    * states the lot inside the title — and that lot is deliberately not
@@ -523,7 +535,17 @@ export function stockItemTitle(item: Pick<BuilderStockItem,
    * not otherwise carry, so that is what survives — labelled, and read from
    * the column rather than from the text wherever the column has it.
    */
-  const annotation = parsed.designName ?? '';
+  /*
+   * THE RECORD'S OWN FIELD FIRST, THEN THE ADDRESS LINE.
+   *
+   * A Notion list states the design inside the address (`… [Ilya 15]`); a
+   * spreadsheet gives it a column of its own, which arrives here as
+   * `house_design` and never touches `address_line` at all. Measured on the
+   * 95 properties live on 11 September 2026, 35 cards across 15 lots shared
+   * every other visible fact with a sibling, and the design separated all 35.
+   * Reading only the address line left every one of those a card drawn twice.
+   */
+  const annotation = (item.house_design ?? '').trim() || (parsed.designName ?? '');
   const suffix = !annotation ? ''
     : describesConfigurationOnly(annotation)
       ? (homeSizeLabel(item.building_size_sqm)

@@ -243,10 +243,141 @@ function item(over: Partial<Parameters<typeof stockItemTitle>[0]>) {
   return {
     unit_number: null, lot_number: null, address_line: null,
     development_name: null, project_name: null, external_reference: null,
-    building_size_sqm: null,
+    building_size_sqm: null, house_design: null,
     ...over,
   } as Parameters<typeof stockItemTitle>[0];
 }
+
+describe('stockItemTitle — several houses on one lot', () => {
+  /*
+   * MEASURED, 11 SEPTEMBER 2026: 95 live packages across 75 lots. Fifteen
+   * lots carry more than one, so 35 cards (37%) shared the lot, the estate,
+   * the suburb, the land size and usually the bed count with a sibling and
+   * were drawn identically. The design separates all 35, and there is no lot
+   * where it would not.
+   *
+   * It reaches the card through `STOCK_ITEM_SELECT`, not the address line:
+   * a spreadsheet gives the design its own column and leaves `address_line`
+   * null entirely, which is why reading the line alone fixed none of these.
+   */
+  const lot1730 = (design: string) => item({
+    lot_number: '1730', development_name: 'Austin Estate', house_design: design,
+  });
+
+  it('names the three packages on Austin Estate lot 1730', () => {
+    expect(stockItemTitle(lot1730('Vanta 23'))).toBe('Lot 1730, Austin Estate · Vanta 23');
+    expect(stockItemTitle(lot1730('Vanta 20'))).toBe('Lot 1730, Austin Estate · Vanta 20');
+    expect(stockItemTitle(lot1730('Cura 20B'))).toBe('Lot 1730, Austin Estate · Cura 20B');
+    // The point of the exercise: no two of them read alike.
+    const titles = ['Vanta 23', 'Vanta 20', 'Cura 20B'].map((d) => stockItemTitle(lot1730(d)));
+    expect(new Set(titles).size).toBe(3);
+  });
+
+  it('names the two packages on Wollert Rise lot 1037', () => {
+    const at1037 = (design: string) => item({
+      lot_number: '1037', development_name: 'Wollert Rise', house_design: design,
+    });
+    expect(stockItemTitle(at1037('Nex 20'))).toBe('Lot 1037, Wollert Rise · Nex 20');
+    expect(stockItemTitle(at1037('Vanta 20'))).toBe('Lot 1037, Wollert Rise · Vanta 20');
+  });
+
+  it('takes the record’s own field over the address line', () => {
+    // Both present and disagreeing: the column is the record, the bracket is
+    // a parse of prose. A list that states it twice states it once properly.
+    expect(stockItemTitle(item({
+      address_line: 'Lot 22 - Aria Estate, Tarneit VIC 3029 [Ilya 15]',
+      house_design: 'Ilya 15 MkII',
+    }))).toBe('Lot 22, Aria Estate · Ilya 15 MkII');
+  });
+
+  it('still reads the address line where the record states no design', () => {
+    expect(stockItemTitle(item({
+      address_line: 'Lot 22 - Aria Estate, Tarneit VIC 3029 [Ilya 15]',
+    }))).toBe('Lot 22, Aria Estate · Ilya 15');
+  });
+
+  it('treats a blank or whitespace design as not stated', () => {
+    expect(stockItemTitle(item({
+      lot_number: '9', development_name: 'Some Estate', house_design: '   ',
+    }))).toBe('Lot 9, Some Estate');
+    expect(stockItemTitle(item({
+      lot_number: '9', development_name: 'Some Estate', house_design: null,
+    }))).toBe('Lot 9, Some Estate');
+  });
+
+  it('never says the design twice', () => {
+    // Where the body already names it, the suffix is dropped rather than
+    // echoed — the same rule the address-line annotation has always had.
+    expect(stockItemTitle(item({
+      lot_number: '4', development_name: 'Vanta Park', house_design: 'Vanta Park',
+    }))).toBe('Lot 4, Vanta Park');
+  });
+
+  /*
+   * THE FIFTEEN LOTS, AS PRODUCTION HELD THEM ON 11 SEPTEMBER 2026.
+   *
+   * Every one of the 95 live rows has a NULL `address_line` — a spreadsheet
+   * gives the lot, the estate and the design their own columns — so the
+   * address-line annotation could not have separated a single one of these.
+   * 35 cards across these 15 lots were one card drawn two or three times.
+   */
+  const MULTI_PACKAGE_LOTS: Array<[string, string, string[]]> = [
+    ['Austin Estate', '1730', ['Vanta 20', 'Vanta 23', 'Cura 20B']],
+    ['Five Farms', '1002', ['VG18E', 'Enzo 10.5']],
+    ['Harlow', '801', ['Cura 20B', 'Nex 20', 'Elara 18']],
+    ['Harlow', '805', ['Elara 18', 'Nex 20']],
+    ['Harlow', '809', ['Elara 18', 'VG18', 'Nex 20']],
+    ['Harlow', '810', ['VG18', 'Nex 20', 'Elara 18']],
+    ['Lumina Estate', '55', ['Enzo 10.5', 'VGU19']],
+    ['Lumina Estate', '56', ['Enzo 10.5', 'VGU19']],
+    ['Lumina Estate', '57', ['VGU19', 'Enzo 10.5']],
+    ['Lumina Estate', '58', ['Enzo 10.5', 'VGU19']],
+    ['Oaklands Estate', '117', ['Nex 20', 'Cura 20B', 'Elara 18']],
+    ['Palomino', '116', ['Nex 20', 'Vanta 23']],
+    ['Seventh Bend', '2031', ['Vanta 23', 'Cura 20B']],
+    ['Watsons Reach', '324', ['Enzo 10.5', 'Nex 20']],
+    ['Wollert Rise', '1037', ['Vanta 20', 'Nex 20']],
+  ];
+
+  it('gives all 35 siblings a title of their own', () => {
+    let cards = 0;
+    for (const [development_name, lot_number, designs] of MULTI_PACKAGE_LOTS) {
+      const titles = designs.map((house_design) =>
+        stockItemTitle(item({ development_name, lot_number, house_design })));
+      cards += titles.length;
+      expect(new Set(titles).size).toBe(designs.length);
+      for (const title of titles) expect(title).toMatch(/^Lot \d+, .+ · .+$/);
+    }
+    expect(MULTI_PACKAGE_LOTS.length).toBe(15);
+    expect(cards).toBe(35);
+  });
+
+  it('reads every design the live list carries as a NAME, not as data', () => {
+    // A design misread as configuration would be replaced by a house size —
+    // and these rows have none, so it would vanish and the siblings collapse
+    // back into one card. `Enzo 10.5` and `Form 19 B` are the near misses.
+    const LIVE_DESIGNS = [
+      'Enzo 10.5', 'Enzo 8.5', 'Vanta 20', 'Vanta 23', 'Cura 20B', 'Elara 18',
+      'VG-U-19', 'VG18E', 'VG18', 'VGU19', 'Nex 20', 'Form 19 B', 'Pico 8',
+      'LX -M 18', 'LX -M 19', 'LX 18E', 'LX M18', 'LX U19', 'Domain 17',
+      'Neo 13', 'Neo 15', 'Urban 19', 'Metro 19',
+    ];
+    for (const design of LIVE_DESIGNS) {
+      expect(describesConfigurationOnly(design)).toBe(false);
+      expect(stockItemTitle(item({
+        lot_number: '1', development_name: 'E', house_design: design,
+      }))).toBe(`Lot 1, E · ${design}`);
+    }
+  });
+
+  it('restates a design field that is really configuration data', () => {
+    // One rule for both routes: a "design" of `3 Bed · 140 m²` names nothing.
+    expect(stockItemTitle(item({
+      lot_number: '7', development_name: 'Some Estate',
+      house_design: '3 Bed · 140 m²', building_size_sqm: 140,
+    }))).toBe('Lot 7, Some Estate · 140 m² home');
+  });
+});
 
 describe('stockItemTitle — the reported cards', () => {
   it('tells two packages on one lot apart by the house, labelled', () => {

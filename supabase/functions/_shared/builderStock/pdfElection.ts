@@ -173,10 +173,28 @@ export async function electFromPdfBytes(
           + 'presents no single photograph, so it could not be read.',
       };
     }
+    /*
+     * AND IT SAYS WHAT THE DOCUMENT IS INSTEAD, BECAUSE THAT IS THE FIX.
+     *
+     * The refusal on its own is correct and useless: "this is not that
+     * property's cover" cannot tell a builder whether their brochure has no
+     * photograph in it or is simply the wrong file. Measured on the live list,
+     * it was the second — `Lot 1037 · Vanta 20` links a document whose cover
+     * reads `NEX 20 — Lot 1307 Fuchsia Street`, a duplicate of the sibling
+     * row's brochure. Quoting the cover turns an opaque refusal into an
+     * obvious data error the person holding the sheet can correct in a minute.
+     *
+     * A QUOTE, NEVER A CONCLUSION. It reports what the first page reads and
+     * draws no inference about which property the document belongs to —
+     * asserting that would be a second identity judgement, made with less
+     * evidence than the one that just declined.
+     */
+    const says = coverIdentityQuote(pageTexts[0]);
     return {
       status: 'not_identified',
       detail: 'That document does not present a page as this property\'s package cover, '
-        + 'so it names no image for it.',
+        + 'so it names no image for it.'
+        + (says ? ` Its first page reads “${says}”.` : ''),
     };
   }
 
@@ -196,4 +214,34 @@ export async function electFromPdfBytes(
     },
   };
   });
+}
+
+/**
+ * The most identifying-looking few lines of a cover, for a refusal to quote.
+ *
+ * Lines that carry a lot, a street, an estate or a design code are what tell
+ * one package from another, so those are preferred; failing that the first
+ * substantial lines, so the note still says something. Bounded hard, because
+ * this lands in a status line rather than a log, and stripped of control
+ * characters because it is somebody else's file.
+ */
+export function coverIdentityQuote(pageText: string | null | undefined): string {
+  const lines = String(pageText ?? '')
+    .split('\n')
+    .map((line) => line.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter((line) => line.length >= 3 && line.length <= 90);
+  if (!lines.length) return '';
+  /*
+   * NO WORD BOUNDARY BEFORE `lot`. Text pulled out of a designed PDF arrives
+   * with its runs glued together — the live cover's line is literally
+   * `PACKAGE PRICELot 1307 Fuchsia Street,` — so a `\b` here matches nothing
+   * on exactly the documents this exists for. A stray `ballot 5` costs a
+   * less apt quote and never a decision.
+   */
+  const IDENTIFYING =
+    /(?:lot|unit)\s*\.?\s*\d|\d+\s*(?:street|road|drive|avenue|way|court|crescent|parade|boulevard)|estate\b/i;
+  const picked = lines.filter((line) => IDENTIFYING.test(line)).slice(0, 2);
+  const chosen = picked.length ? picked : lines.slice(0, 2);
+  const quote = chosen.join(' — ');
+  return quote.length > 120 ? `${quote.slice(0, 117).trimEnd()}…` : quote;
 }

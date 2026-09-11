@@ -289,3 +289,88 @@ export function unreadDocumentCount(storedProvenance: unknown): {
   }
   return { unprocessed, unreachable };
 }
+
+/**
+ * WHAT A READ DOCUMENT ACTUALLY SAID, FOR THE BUILDER WHO CAN FIX IT.
+ *
+ * Every refusal already records a `detail`, and `negativeProvenance.pure.ts`
+ * documents that field as "safe to surface: why the package named nothing".
+ * Nothing ever surfaced it. So a row whose brochure is for a DIFFERENT
+ * property read exactly like a row whose brochure has no photograph in it —
+ * both said "No picture found" — and the only person who could correct the
+ * sheet was the one person never told anything was wrong with it.
+ *
+ * MEASURED, 11 SEPTEMBER 2026: `Lot 1037 Wollert Rise · Vanta 20` links a
+ * document whose own cover reads `NEX 20 — Lot 1307 Fuchsia Street`. It is a
+ * second copy of the sibling row's brochure, and the facade render inside the
+ * two is byte-identical. The election read it, refused it because the cover
+ * names another property, and recorded precisely that. The builder saw a
+ * shrug.
+ *
+ * ONLY `inspected` REFUSALS TRAVEL. That is the whole safety rule and it is
+ * the same one `unreadDocumentCount` keeps: an `inspected` answer is
+ * knowledge about the BUILDER'S DOCUMENT and theirs to act on, while an
+ * `operational` one is knowledge about US — a kill, a ceiling, a timeout —
+ * and a builder can do nothing with it except distrust a file that is fine.
+ * A count is all that has ever been allowed to leave for those, and that does
+ * not change here.
+ *
+ * Bounded because a row can link many documents and a status line is not a
+ * log: the first few are what a person acts on, and the rest would be scroll.
+ */
+export interface StockDocumentNote {
+  /** The document this is about, as the builder's own sheet names it. */
+  document: string;
+  /** The recorded reason, verbatim. Never composed here. */
+  detail: string;
+}
+
+/** At most this many notes reach a row. A status line, not a log. */
+export const MAX_STOCK_DOCUMENT_NOTES = 4;
+
+export function stockDocumentNotes(
+  storedProvenance: unknown,
+  limit: number = MAX_STOCK_DOCUMENT_NOTES,
+): StockDocumentNote[] {
+  const root = storedProvenance as { branches?: Record<string, unknown> } | null;
+  const branches = root && typeof root === 'object' ? root.branches : null;
+  if (!branches || typeof branches !== 'object') return [];
+  const notes: StockDocumentNote[] = [];
+  for (const [key, value] of Object.entries(branches)) {
+    if (notes.length >= Math.max(0, limit)) break;
+    if (!value || typeof value !== 'object') continue;
+    const record = value as { result?: unknown; exhaustion?: unknown; detail?: unknown };
+    if (record.result !== 'no_deterministic_image') continue;
+    // The one gate. `operational` is ours and never leaves this side.
+    if (record.exhaustion !== 'inspected') continue;
+    const detail = typeof record.detail === 'string' ? record.detail.trim() : '';
+    if (!detail) continue;
+    notes.push({ document: documentLabel(key), detail });
+  }
+  return notes;
+}
+
+/**
+ * The document, as a person would name it.
+ *
+ * A branch key is the link the builder's own sheet carried, and a Drive URL
+ * says nothing to anybody. Where the link has a readable file name it is
+ * used; otherwise the host, so the note still points at something. No id is
+ * printed: `1rE8rvWHNN1KDtJvO_0bP2i8-TZyeS3O0` is not a document to a reader.
+ */
+function documentLabel(reference: string): string {
+  const raw = String(reference ?? '').trim();
+  if (!raw) return 'A linked document';
+  let host = '';
+  let path = raw;
+  try {
+    const url = new URL(raw);
+    host = url.hostname.replace(/^www\./, '');
+    path = decodeURIComponent(url.pathname);
+  } catch {
+    // Not a URL. Whatever it is, it is still what the sheet said.
+  }
+  const last = path.split('/').filter(Boolean).pop() ?? '';
+  if (/\.(pdf|png|jpe?g|webp|docx?|xlsx?)$/i.test(last)) return last;
+  return host ? `A document on ${host}` : 'A linked document';
+}

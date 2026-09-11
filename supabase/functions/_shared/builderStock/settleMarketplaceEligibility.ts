@@ -49,8 +49,8 @@ import { sha256Hex } from './rasterPng.ts';
 import { assessMarketplaceEligibility } from './assessSourceImage.ts';
 import {
   marketplaceEligibilityDetail, needsEligibilityAssessment,
+  sweepWillJudge,
 } from './marketplaceEligibility.pure.ts';
-import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
 
 export interface EligibilitySettlement {
@@ -164,7 +164,7 @@ export async function settleMarketplaceEligibility(
       // The cursor advances on EVERY row, settled or not. See the header.
       after = row.id;
 
-      if (!isPrimaryRole(readStoredRole(row.source_detail))) continue;
+      if (!sweepWillJudge(row.source_detail)) continue;
       if (!needsEligibilityAssessment(row.source_detail)) continue;
       outcome.outstanding += 1;
 

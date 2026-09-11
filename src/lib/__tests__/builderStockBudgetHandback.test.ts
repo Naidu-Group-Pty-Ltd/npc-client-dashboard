@@ -89,17 +89,44 @@ describe('the deferral path in the settler asks for exactly that', () => {
   });
 
   it('returns it at its OWN stage, so the ladder does not skip a rung', () => {
-    expect(handback).toMatch(/nextStage: readStage\(next\.item\.image_work_stage\)/);
+    // Read once into `stage` at the top of the probe, because the repeat guard
+    // beside it needs the same value; the rung returned is still the rung the
+    // claim arrived on.
+    expect(loop).toMatch(/const stage = readStage\(candidate\.image_work_stage\);/);
+    expect(handback).toMatch(/nextStage: stage,/);
   });
 
   it('asks for no retry delay — the next tick may take it immediately', () => {
     expect(handback).toMatch(/retryAfterSeconds: 0/);
   });
 
-  it('and stops the loop rather than working the property it just released', () => {
+  it('never works the property it just released', () => {
+    /*
+     * THIS USED TO READ "and STOPS THE LOOP", and stopping was the defect.
+     * Measured over a real eighteen-property import, the settler used 524 s of
+     * the 2,100 s its invocations were given: `item tick { settled: 3,
+     * claimable: 17, ms: 19360 }` — three documents opened, seventeen
+     * properties ready, eighty seconds in hand, and the worker exited. The
+     * document allowance bounds DECODING, and three of every four claims
+     * decode nothing.
+     *
+     * What must not happen is unchanged and is what this now asserts: the
+     * released property is not the one worked next. The loop `continue`s to
+     * claim somebody else, and `nextItem` — the only way out of the probe —
+     * is never assigned on this path.
+     */
     const release = handback.indexOf('resetAttempts: true');
-    const brk = handback.indexOf('break;', release);
-    expect(brk).toBeGreaterThan(release);
+    const next = handback.indexOf('continue;', release);
+    expect(next).toBeGreaterThan(release);
+    const released = handback.slice(release, next);
+    expect(released).not.toContain('nextItem = candidate');
+  });
+
+  it('and it does end, rather than walking a queue that has nothing for it', () => {
+    // Two bounds, either of which ends the probe: the same property offered
+    // twice means the whole claimable set has been round, and the counter caps
+    // the walk on a very large one.
+    expect(handback).toContain('if (seenBefore || handbacks >= MAX_HANDBACKS_PER_INVOCATION) break;');
   });
 });
 

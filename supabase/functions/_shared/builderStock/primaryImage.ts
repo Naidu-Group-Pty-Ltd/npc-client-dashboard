@@ -31,7 +31,7 @@ import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from './sourceImageRole.pure.ts';
 import {
-  isMarketplaceEligible, needsEligibilityAssessment, readMarketplaceState,
+  isMarketplaceEligible, needsEligibilityAssessment, readMarketplaceState, sweepWillJudge,
 } from './marketplaceEligibility.pure.ts';
 import {
   servableClearanceFor, servableDerivativeFor, type SanitizedDerivative,
@@ -340,12 +340,18 @@ export async function chooseAndStorePrimaryImage(
  * Only asked of images that could BE a card's picture. Anything else has no
  * verdict by design, and treating its absence as "unassessed" would freeze
  * every item that happens to hold a floorplan.
+ *
+ * THIS MODULE HAD IT RIGHT AND `nextImageStage` DID NOT, which is how one
+ * property came to say "Finding a picture…" indefinitely — the same question,
+ * answered two ways, thirty lines apart in the same package. The role half is
+ * `sweepWillJudge` now, in the module that owns it, so a third copy of the
+ * right answer cannot drift away from the other two either.
  */
 function awaitingVerdict(image: DisplayableImage): boolean {
   if (image.source_stage !== SOURCE_SUPPLIED_STAGE) return false;
   if (image.verification_status !== SOURCE_SUPPLIED_VERIFICATION) return false;
   if (image.processing_status !== 'ready') return false;
-  if (!isPrimaryRole(readStoredRole(image.source_detail))) return false;
+  if (!sweepWillJudge(image.source_detail)) return false;
   return needsEligibilityAssessment(image.source_detail);
 }
 

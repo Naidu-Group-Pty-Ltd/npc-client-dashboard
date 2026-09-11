@@ -89,10 +89,11 @@ describe('the settler claims serially and never pre-claims a batch', () => {
     const loop = settler.slice(settler.indexOf('for (;;) {'));
     // The reserve is still what decides whether the work may START; the
     // document allowance was added beside it and must not displace it.
-    expect(loop).toMatch(/remaining < reserveFor\(next\.item\.image_work_stage\)/);
+    expect(loop).toMatch(/const stage = readStage\(candidate\.image_work_stage\);/);
+    expect(loop).toMatch(/remaining < reserveFor\(stage\)/);
     expect(loop).toMatch(/const remaining = startedAt \+ BUDGET_MS - Date\.now\(\);/);
     expect(loop).toMatch(/progressed: false/);
-    expect(loop).toMatch(/nextStage: readStage\(next\.item\.image_work_stage\)/);
+    expect(loop).toMatch(/nextStage: stage,/);
   });
 });
 
@@ -180,7 +181,7 @@ describe('one isolate opens a bounded number of documents', () => {
     // Counted where the property is actually taken, both for the first claim
     // and for every one the loop takes after it.
     expect(settler).toMatch(/if \(isHeavy\(claimed\.image_work_stage\)\) heavyDocuments \+= 1;/);
-    expect(settler).toMatch(/isHeavy\(next\.item\.image_work_stage\)\s*\n?\s*&& heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION/);
+    expect(settler).toMatch(/isHeavy\(stage\)\s*\n?\s*&& heavyDocuments >= HEAVY_DOCUMENTS_PER_INVOCATION/);
   });
 
   it('hands the claim back untouched, exactly as the short-clock path does', () => {
@@ -190,7 +191,7 @@ describe('one isolate opens a bounded number of documents', () => {
     // The row goes back at its own stage, having done nothing, and must not
     // carry the backoff its claim incremented: the invocation ran out of
     // allowance, which is our scheduling and not the property's document.
-    expect(block).toContain('nextStage: readStage(next.item.image_work_stage)');
+    expect(block).toContain('nextStage: stage,');
     expect(block).toContain('progressed: false');
     expect(block).toContain('resetAttempts: true');
   });

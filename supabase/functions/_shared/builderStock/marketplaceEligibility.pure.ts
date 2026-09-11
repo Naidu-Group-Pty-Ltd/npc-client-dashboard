@@ -49,8 +49,12 @@
  * not a location map, not another lot's facade, and none of the location or
  * search stages. Where there is no such image, the card shows nothing.
  *
- * Pure: no imports, no IO, no clock.
+ * Pure: no IO, no clock, no database. The two imports are sibling pure
+ * modules, and they are here so that what a sweep WILL judge is stated
+ * once rather than agreed twice — see `sweepWillJudge`.
  */
+import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
+import { sanitizationSettled, storedOriginalSha } from './sanitizedDerivative.pure.ts';
 
 /**
  * Bumped when the decision would change for bytes already assessed.
@@ -345,4 +349,65 @@ export function needsEligibilityAssessment(
    * bump, which re-judges everything under the current rules once.
    */
   return readEligibilityVersion(sourceDetail) < MARKETPLACE_ELIGIBILITY_VERSION;
+}
+
+// ---------------------------------------------------------------------------
+// WILL ANY SWEEP EVER JUDGE THIS ROW?
+// ---------------------------------------------------------------------------
+
+/**
+ * The row filter BOTH verdict sweeps apply before they spend anything.
+ *
+ * MEASURED 11 SEPTEMBER 2026, and it is the whole of why a property can sit on
+ * "Finding a picture…" for ever. `settleMarketplaceEligibility` and
+ * `settleImageSanitization` each open their loop with
+ * `if (!isPrimaryRole(readStoredRole(detail))) continue;` — only the image a
+ * source DESIGNATED as the property's hero is worth a decode. That is right,
+ * and it means a row of any other role is owed nothing by either sweep: its
+ * eligibility version stays 0 and its sanitization stays unsettled, for ever,
+ * BY DESIGN.
+ *
+ * `nextImageStage` asked the second half of that question and not the first.
+ * It read "eligibility version 0" as EVIDENCE THAT HAS NOT ARRIVED and
+ * answered `wait` — the one answer in that function with no exit — so the
+ * fallback ladder was never entered, `enrichment_status` stayed `pending`,
+ * the row never left `readFallbackQueue`, and the settler re-claimed it at
+ * `fallback` immediately because a tick that attempted something reports
+ * progress. Production, one 80-second invocation: 126 iterations of the same
+ * property at the same stage, resolving nothing.
+ *
+ * The shape that reaches it is ordinary and will recur for every builder:
+ * a package document whose pages store fine but which the election REFUSES,
+ * because no page states this property's identity. Every image it left behind
+ * carries `role: "unknown"`. `Lot 1037 Wollert Rise · Vanta 20` is one, and
+ * the next wrong brochure anybody links is the next one.
+ *
+ * So the filter is named ONCE, here, and imported by all three readers. Two
+ * modules deciding separately what is owed is what produced a question that
+ * could never be answered.
+ */
+export function sweepWillJudge(
+  sourceDetail: Record<string, unknown> | null | undefined,
+): boolean {
+  return isPrimaryRole(readStoredRole(sourceDetail));
+}
+
+/**
+ * Is a verdict about this stored image still genuinely on its way?
+ *
+ * TRUE means a sweep will write something here and the ladder must wait for
+ * it. FALSE means the question is CLOSED — either judged, or never going to
+ * be — and a caller deciding what to do next may proceed.
+ *
+ * The asymmetry is the point: "not yet judged" and "will never be judged"
+ * look identical in the column and mean opposite things to anybody choosing
+ * whether to spend money on a search.
+ */
+export function sourceVerdictOutstanding(
+  sourceDetail: Record<string, unknown> | null | undefined,
+): boolean {
+  if (!sweepWillJudge(sourceDetail)) return false;
+  const detail = sourceDetail ?? {};
+  return needsEligibilityAssessment(detail)
+    || !sanitizationSettled(detail, storedOriginalSha(detail));
 }

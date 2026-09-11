@@ -1,6 +1,15 @@
 /**
  * ME-4 — the Risk dimension, and the finding that it is thin.
  *
+ * > **SUPERSEDED IN THE COMPOSITION (shadow 2.1.0).** The composite's Risk
+ * > dimension is Model D (`../risk/riskModelD.pure.ts`): property type selects
+ * > the schema and scores nothing, buyer LVR and buyer cash flow score
+ * > nothing anywhere (they are the separate Finance Suitability reading), and
+ * > one observation cannot become the dimension. This module is retained as
+ * > the ME-4 record and as the component definitions the A/B/C model
+ * > comparison (`riskModels.pure.ts`) is expressed over. Nothing composes it
+ * > into a grade any more, and nothing new should.
+ *
  * ## What Risk currently double-counts
  *
  * `calculateRiskScore` reads six inputs. Three of them belong to other

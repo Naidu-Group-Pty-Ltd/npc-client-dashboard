@@ -7441,3 +7441,103 @@ Three consequences:
    no additional charge.
 3. **Nothing upstream of the gate moves.** The ME-7 entry gate (§65) still
    waits on evidence, and a 403 whose cause is unresolved contributes none.
+
+---
+
+## §67 Scoring V2 finalisation — the buyer leaves the composite, and absence stops buying badges (2026-09-11)
+
+The owner's mandate for this phase: finish Scoring V2 completely — final
+specification, independence, missing-data contract, A/A+ eligibility,
+adversarial synthetic proof, one canonical output — before any report-family
+refinement, with the real backtest still gated on real QLD + WA evidence.
+Everything below is synthetic-proof work; **no market evidence was fabricated
+and no real corpus was scored.**
+
+### 67.1 The drift finding: the composition never adopted its own decision
+
+§59–60 decided Risk Model D — property type selects the schema and scores
+nothing; buyer LVR and buyer cash flow score nothing; finance is the separate
+Finance Suitability reading; one observation is never the dimension. The
+report-side modules were built then (`riskModelD.pure.ts`,
+`financeSuitability.pure.ts`). **The shadow composition was not moved onto
+them**: `scoreInvestmentV2Shadow` still called the ME-4 interim scorer, whose
+components were 40% buyer leverage, 30% buyer serviceability, 20% asset type,
+10% overheating. Under it, 1 Boxer Drive's two same-day reports at 80% and
+90% LVR would have carried different property Risk — the exact defect Model D
+was designed against, alive in the engine that will run ME-7.
+
+**Corrected**: `2.1.0-shadow` composes `scorePropertyRisk(…, 'D2')`; the
+buyer's position rides beside the score as `financeSuitability`;
+`RiskInputs`/`FinanceInputs` make the separation type-level; the ownership
+matrix moves `lvr` and `weeklyCashFlow` to a non-dimension `finance` owner
+with every dimension forbidden. The ME-4 scorer is retained, marked
+superseded, solely as the component record the A/B/C model comparison is
+expressed over. Consequence stated plainly: with no property-risk question
+answerable from today's record, **Risk is structurally null platform-wide**
+and the composite renormalises over four dimensions with that fact published
+— which is the honest state, not a regression.
+
+### 67.2 A calibration, in the required form
+
+- **Before**: eligibility `1.0.0` — Growth-centred ceilings plus an overall
+  coverage floor of 0.70 for A+.
+- **Defect (measured by fixture, before any real evidence)**: the composite
+  renormalises over measured dimensions, so removing a WEAK dimension raises
+  it. Growth 90 / Location 80 / Yield 85 / Demand 55 composites to ~81 with
+  Demand measured and ~86 without it — absence crossing the A+ line that
+  presence could not. "Do not reward missing evidence through
+  renormalisation" was a stated rule with no mechanism.
+- **Correction**: eligibility `2.0.0` adds a second ceiling —
+  `gradeFor(nominalMeasuredScore)`, the points the evidence actually
+  delivered at nominal weights over the full 100. The score, the coverage and
+  every disclosure are untouched (absence still never punishes); the printed
+  grade simply cannot exceed what was delivered, and adding a measured score
+  (≥ 0) can only raise the ceiling — the anti-reward property holds by
+  construction, not by threshold.
+- **After, measured**: dimension ceilings — Growth saturates at 91, Location
+  reaches 95, Yield 100, Demand 93 — so the maximum deliverable with Risk
+  structurally null is ≈ 89.1 of 100. **A+ (85) remains mathematically
+  reachable**, on genuinely exceptional evidence across all four live
+  dimensions; A (75) needs a ~79 average. The renormalisation-reward fixture
+  now shows the badge holding while the renormalised score rises, with the
+  mechanism on the record in `gradeCapReason`.
+- **Distribution manipulation**: none possible — no real property has been
+  scored under either version; the first distribution ME-7 produces will be
+  the first ever read.
+
+### 67.3 What is now pinned, and where
+
+- `SCORING_V2_METHODOLOGY.md` — the one authoritative specification;
+  `scoringMethodology.spec.ts` pins every load-bearing number and version in
+  it to the modules, and asserts **no production edge-function entrypoint
+  imports the engine** (the unwired guard — checked, not promised).
+- `scoringInvariants.spec.ts` (29) — renegotiated to Model D: buyer leverage
+  and cash flow move Finance Suitability and nothing else; the property type
+  selects the schema and moves no score; one Risk observation cannot become
+  the dimension; the declared exception charges overheating only beside a
+  measured peer; the Boxer Drive rule as a test.
+- `scoringScenarios.spec.ts` (17) — the mandate's adversarial matrix:
+  sustained vs surge vs declining growth, the yield/growth and
+  demand/location trade-offs, regional-excellent vs metro-weak (commute
+  measured to the NEAREST centre per §58 — a 95-minute figure describes a
+  remote property, not a regional hub), house/attached and state parity,
+  missing-Growth and missing-Demand behaviour, the renormalisation-reward
+  regression, capped-grade-states-a-reason.
+- `scoreOutputContract.pure.ts` (`1.0.0`) — the canonical object no renderer
+  recalculates: versions, score, both grades, cap reasons, per-dimension
+  performance/confidence/effective weight/contribution/reason, provenance
+  rows with acquisition footing, unavailable dimensions, Finance Suitability
+  separately. Contributions reconcile to the composite by test.
+  `overallConfidence` is deliberately null until methodology lock, and the
+  field says where the definition will be made.
+- Suite state at the finding of record: **154 files, 3,673 tests, all
+  passing** under `src/lib/reports/`.
+
+### 67.4 What still gates ME-7, exactly
+
+Unchanged and outside this repository: real QLD + WA subject-Growth evidence
+at $0 — Domain's answer to the both-403 letter (§66) or PropTrack's trial
+terms. The moment either lands: record the acquisition footing, build that
+one adapter, ingest QLD + WA, normalise into `MarketEvidence`, seal the first
+genuine snapshot, evaluate the gate, and if it opens, run the backtest.
+

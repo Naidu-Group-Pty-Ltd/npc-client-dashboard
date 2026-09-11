@@ -323,7 +323,7 @@ describe('Yield measures rental return once', () => {
 
 describe('a grade is capped by the evidence behind it, never raised', () => {
   const eligible = (composite: number, k: keyof typeof FIXTURES, overall: number) =>
-    applyEligibility({ compositeScore: composite, growth: run(k), overallCoverage: overall });
+    applyEligibility({ compositeScore: composite, growth: run(k), overallCoverage: overall, nominalMeasuredScore: composite });
 
   it('refuses A+ to a high score built on thin growth evidence', () => {
     // Growth 93 on 10% coverage, low confidence, regional level, six sales,
@@ -532,7 +532,7 @@ describe('the evidence statement states, and never derives', () => {
     const g = scoreGrowth(ev, NOW);
     const d = scoreDemand(ev, NOW);
     const y = scoreYield({ basis: 'purchase', basisAmount: 800_000, weeklyRent: 692 });
-    const e = applyEligibility({ compositeScore: 87, growth: g, overallCoverage: 1 });
+    const e = applyEligibility({ compositeScore: 87, growth: g, overallCoverage: 1, nominalMeasuredScore: 87 });
     return buildEvidenceStatement({
       growth: g, demand: d, yieldResult: y, eligibility: e, evidence: ev, audience,
     });
@@ -594,7 +594,7 @@ describe('the evidence statement states, and never derives', () => {
 
   it('explains a cap where the grade is stated, not in a footnote', () => {
     const g = scoreGrowth(FIXTURES.thinButStrong, NOW);
-    const e = applyEligibility({ compositeScore: 91, growth: g, overallCoverage: 0.4 });
+    const e = applyEligibility({ compositeScore: 91, growth: g, overallCoverage: 0.4, nominalMeasuredScore: 91 });
     const s = buildEvidenceStatement({
       growth: g,
       demand: scoreDemand(FIXTURES.thinButStrong, NOW),

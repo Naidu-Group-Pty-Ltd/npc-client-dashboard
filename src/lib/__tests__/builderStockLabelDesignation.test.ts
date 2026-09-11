@@ -87,9 +87,10 @@ describe('the label and the card title give one answer', () => {
  * — which is exactly where the two packages offered on that lot differ.
  */
 describe('the title says what the locality line does not', () => {
-  const card = (address_line: string) => ({
+  const card = (address_line: string, building_size_sqm: number | null = null) => ({
     address_line, unit_number: null, lot_number: null,
     development_name: null, project_name: null, external_reference: null,
+    building_size_sqm,
   }) as never;
 
   it('drops the suburb, state and postcode the card repeats beneath it', () => {
@@ -97,16 +98,29 @@ describe('the title says what the locality line does not', () => {
       .toBe('Lot 60416, Russula Street');
   });
 
-  it('keeps the design, because it is what tells two packages on one lot apart', () => {
+  it('keeps what tells two packages on one lot apart — as ONE labelled fact', () => {
     /*
      * A house-and-land list offers one piece of land with several houses on
-     * it, and those rows are different things to sell. Without the design both
+     * it, and those rows are different things to sell. Without a suffix both
      * cards read `Lot 60941, Cloverton Estate`.
+     *
+     * REPORTED, 11 SEPTEMBER 2026: printed verbatim, the list's own
+     * disambiguator made the card say one thing twice and another ambiguously.
+     * `3 Bed` is already drawn as an icon two lines below, and `140 m²` is the
+     * HOUSE sitting directly above a row reading `286 m² land` — two unlike
+     * square-metre figures on one card, neither labelled. The house size is
+     * the one fact there the card does not otherwise carry, so it is what
+     * survives, labelled, and the bed count goes.
      */
-    expect(stockItemTitle(card('Lot 60941 - Cloverton Estate, Kalkallo VIC 3064 [3 Bed · 140 m²]')))
-      .toBe('Lot 60941, Cloverton Estate · 3 Bed · 140 m²');
-    expect(stockItemTitle(card('Lot 60941 - Cloverton Estate, Kalkallo VIC 3064 [4 Bed · 154 m²]')))
-      .toBe('Lot 60941, Cloverton Estate · 4 Bed · 154 m²');
+    expect(stockItemTitle(card('Lot 60941 - Cloverton Estate, Kalkallo VIC 3064 [3 Bed · 140 m²]', 140)))
+      .toBe('Lot 60941, Cloverton Estate · 140 m² home');
+    expect(stockItemTitle(card('Lot 60941 - Cloverton Estate, Kalkallo VIC 3064 [4 Bed · 154 m²]', 154)))
+      .toBe('Lot 60941, Cloverton Estate · 154 m² home');
+  });
+
+  it('keeps a real design name whole, because a name beats a measurement', () => {
+    expect(stockItemTitle(card('Lot 22 - Aria Estate, Tarneit VIC 3029 [Ilya 15]', 141)))
+      .toBe('Lot 22, Aria Estate · Ilya 15');
   });
 
   it('takes the designation the line OPENED with, not whichever field parsed', () => {

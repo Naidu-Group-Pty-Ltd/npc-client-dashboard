@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertTriangle, Bed, Bath, Building2, Car, CheckCircle2, ChevronLeft, ChevronRight,
   ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, UserPlus,
@@ -27,6 +27,7 @@ import {
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
 import {
+  cardPictureNeedsGround, homeSizeDisplay,
   primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
@@ -277,6 +278,8 @@ function StockCard({
   const image = primaryStockImage(item);
   const price = stockItemPrice(item);
   const configuration = stockItemConfiguration(item);
+  // Whole square metres on the card; the column keeps every digit it was given.
+  const homeSize = homeSizeDisplay(item.building_size_sqm);
   const locality = stockItemLocality(item);
   const builder = item.builder_organisation;
   const availabilityStatus = item.availability_status as StockAvailability;
@@ -348,6 +351,14 @@ function StockCard({
               {item.car_spaces !== null && item.car_spaces !== undefined ? (
                 <span className="inline-flex items-center gap-1"><Car className="h-3.5 w-3.5" aria-hidden />{item.car_spaces}</span>
               ) : null}
+              {/*
+                The house and the land are both square metres and they are not
+                the same number: two packages on one lot differ by the house
+                and share the land, which is why the title used to carry an
+                unlabelled `140 m²` while this row read `286 m² land`. Both
+                are labelled now, and the title carries neither.
+              */}
+              {homeSize !== null ? <span>{homeSize} m² home</span> : null}
               {item.land_size_sqm ? <span>{item.land_size_sqm} m² land</span> : null}
             </p>
           ) : null}
@@ -399,11 +410,37 @@ function StockCardImage({ image, onSupply, supplying }: {
 }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [broken, setBroken] = useState(false);
+  /*
+   * Whether this picture leaves enough of the box bare to be worth filling —
+   * ASKED OF THE PICTURE THAT LOADED, never predicted from the record. The
+   * stored `source_width`/`source_height` describe the PAGE for a page-crop
+   * extraction rather than the crop that was kept, so the record is the wrong
+   * witness; `naturalWidth` is the thing actually being drawn. Null until it
+   * loads, which is also the answer for a picture that never does.
+   */
+  const [needsGround, setNeedsGround] = useState(false);
+
+  const measure = useCallback((drawn: HTMLImageElement) => {
+    setNeedsGround(cardPictureNeedsGround(drawn.naturalWidth, drawn.naturalHeight));
+  }, []);
+
+  /*
+   * Measured on mount as well as on load, because a picture already in the
+   * browser's cache can complete BEFORE React attaches `onLoad` and would
+   * then never be measured at all — which fails to the plain box rather than
+   * to a wrong one, but fails silently and only on a revisit, which is the
+   * hardest kind of gap to notice. Stable, so a re-render does not detach and
+   * reattach the ref on every card in the grid.
+   */
+  const measureOnMount = useCallback((drawn: HTMLImageElement | null) => {
+    if (drawn?.complete && drawn.naturalWidth) measure(drawn);
+  }, [measure]);
 
   useEffect(() => {
     let alive = true;
     setBroken(false);
     setSignedUrl(null);
+    setNeedsGround(false);
     if (!image) return () => { alive = false; };
     if (image.external_url && !image.storage_path) {
       setSignedUrl(image.external_url);
@@ -497,13 +534,45 @@ function StockCardImage({ image, onSupply, supplying }: {
     <div
       className="relative aspect-[16/10] w-full overflow-hidden border-b border-border/60 bg-muted/30"
     >
+      {/*
+        THE GROUND UNDER A PICTURE THAT DOES NOT FILL THE BOX.
+        A contained picture of any shape but 16:10 leaves ground, and on the
+        two 0.893 portraits that is 44% of the card's picture area — read, and
+        reported, as a hole in the card rather than as a frame. Filling it
+        with the picture's own surround, blurred and dimmed, makes the card one
+        image again WITHOUT cropping the photograph, which is the whole reason
+        the box contains rather than covers.
+
+        It is the same `src`, so it is already decoded and costs no request,
+        and it is mounted only once the picture has been MEASURED and found to
+        band — the eleven cards at 1.600 never draw it, and nor does a card
+        whose picture never loaded. This is a
+        `filter`, not a `backdrop-filter`: the material rules in `glass.css`
+        forbid a backdrop filter on anything that repeats, and a grid of
+        twenty-four cards repeats.
+      */}
+      {signedUrl && !broken && needsGround ? (
+        <img
+          src={signedUrl}
+          alt=""
+          aria-hidden
+          className="absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-2xl"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
+      {signedUrl && !broken && needsGround ? (
+        <div className="absolute inset-0 z-0 bg-background/45" aria-hidden />
+      ) : null}
       {signedUrl && !broken ? (
         <img
           src={signedUrl}
           alt={STOCK_IMAGE_STAGE_LABELS[image.source_stage]}
-          className="h-full w-full object-contain"
+          className="relative z-10 h-full w-full object-contain"
           loading="lazy"
           referrerPolicy="no-referrer"
+          ref={measureOnMount}
+          onLoad={(event) => measure(event.currentTarget)}
           onError={() => setBroken(true)}
         />
       ) : (
@@ -515,7 +584,7 @@ function StockCardImage({ image, onSupply, supplying }: {
       )}
       <span
         className={cn(
-          'absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[10px] font-semibold backdrop-blur',
+          'absolute left-2 top-2 z-20 rounded-full border px-2 py-0.5 text-[10px] font-semibold backdrop-blur',
           fallback
             ? 'border-warning/40 bg-warning/15 text-warning'
             : 'border-border/60 bg-background/80 text-foreground',
@@ -530,7 +599,7 @@ function StockCardImage({ image, onSupply, supplying }: {
           href={image.source_page_url}
           target="_blank"
           rel="noopener noreferrer nofollow"
-          className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[10px] font-medium backdrop-blur hover:bg-background"
+          className="absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[10px] font-medium backdrop-blur hover:bg-background"
         >
           Source
           <ExternalLink className="h-3 w-3" aria-hidden />

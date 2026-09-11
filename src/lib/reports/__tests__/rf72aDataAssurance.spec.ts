@@ -126,7 +126,20 @@ describe('`put()` is the absent-stays-absent guarantee and must keep refusing th
 // CHARACTERISATIONS — true today, NOT ideal, pinned so a change is deliberate
 // ---------------------------------------------------------------------------
 
-describe('CHARACTERISATION: a formatter turns an absent value into zero', () => {
+/**
+ * RESOLVED BY RF-7.2B.
+ *
+ * These two assertions previously pinned the hazard as it stood: a formatter
+ * ran BEFORE the null check, `Number(null)` is `0`, and an unknown LVR rendered
+ * `0%`. They were written as characterisations precisely so that changing the
+ * behaviour would have to be deliberate — and RF-7.2B §18 changed it under an
+ * explicit instruction to.
+ *
+ * They are kept, inverted, rather than deleted: the defect they describe is the
+ * kind that returns, and the record of what it looked like is worth more than a
+ * clean file. `REPORT_NULL_AND_VISIBILITY_POLICY.md` carries the full table.
+ */
+describe('RESOLVED (was a characterisation): a formatter no longer turns absence into zero', () => {
   const ctx = (financials: Record<string, unknown>) =>
     ({ data: { financials }, tokens: { colors: {}, fonts: {}, spacing: {} } }) as never;
 
@@ -135,17 +148,18 @@ describe('CHARACTERISATION: a formatter turns an absent value into zero', () => 
     expect(resolveBindable('{{financials.weeklyRent | currency}}', ctx({}))).toBe('');
   });
 
-  it('renders an explicit null as "0%" and "$0" — the hazard `put()` masks', () => {
-    // `applyFilters` runs BEFORE the null check and `Number(null)` is 0.
-    // Any adapter that writes a null re-opens "absent becomes zero".
-    expect(resolveBindable('{{financials.lvr | percent:0}}', ctx({ lvr: null }))).toBe('0%');
-    expect(resolveBindable('{{financials.weeklyRent | currency}}', ctx({ weeklyRent: null }))).toBe('$0');
+  it('now renders an explicit null as empty, where it used to render "0%" and "$0"', () => {
+    expect(resolveBindable('{{financials.lvr | percent:0}}', ctx({ lvr: null }))).toBe('');
+    expect(resolveBindable('{{financials.weeklyRent | currency}}', ctx({ weeklyRent: null }))).toBe('');
+    expect(resolveBindable('{{financials.lvr | percent:0}}', ctx({ lvr: '' }))).toBe('');
   });
 
-  it('cannot distinguish a genuine zero from an absence', () => {
+  it('now distinguishes a genuine zero from an absence', () => {
     const absent = resolveBindable('{{financials.weeklyRent | currency}}', ctx({ weeklyRent: null }));
     const real = resolveBindable('{{financials.weeklyRent | currency}}', ctx({ weeklyRent: 0 }));
-    expect(absent).toBe(real);
+    expect(absent).toBe('');
+    expect(real).toBe('$0');
+    expect(absent).not.toBe(real);
   });
 });
 

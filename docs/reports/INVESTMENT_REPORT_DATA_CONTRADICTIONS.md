@@ -98,10 +98,59 @@ Measured against the RBA's own published figure on each report's generation date
 | Worst error | **0.75 percentage points** |
 | **Print the wrong rate in the report body** | **422** |
 
-The RBA moved 4.35 → 4.31 → 4.10 → 3.96 → 3.85 → 3.83 → 3.70 → 3.60 across the
-period; the constant was right only at the start. (`rba_observations` is a
-monthly series, so transition months are averages — that nuance does not touch
-the headline: stored 4.35 against a published 3.60.)
+### Correction to the first reading of this finding
+
+RF-7.2A's first write-up said the rate "moved 4.35 → … → 3.60; the constant was
+right only at the start." **That was backwards**, and RF-7.2B's semantic check of
+the series established the true shape. The counts above are measured and stand;
+the direction did not.
+
+What actually happened, by report generation month:
+
+| Month | Reports | Stored | RBA target | Signed error |
+| --- | ---: | ---: | ---: | ---: |
+| 2025-10 | 9 | 4.35 | 3.60 | **+0.75** |
+| 2025-11 | 96 | 4.35 | 3.60 | **+0.75** |
+| 2025-12 | **695** | 4.35 | 3.60 | **+0.75** |
+| 2026-01 | 235 | 4.35 | 3.60 | **+0.75** |
+| 2026-04 | 7 | 4.10–4.35 | 3.96 | +0.21 |
+| 2026-05 | 28 | 4.35 | 4.10 | +0.25 |
+| 2026-06 | 14 | 4.35 | 4.31 | +0.04 |
+| 2026-07 | 6 | 4.35 | 4.35 | **0.00** |
+| 2026-08 | 12 | 4.35 | 4.35 | **0.00** |
+| 2026-09 | 19 | 4.35 | 4.35 | **0.00** |
+
+The target was **3.60** through the months that produced 1,035 of these reports,
+and rose back to 4.35 by mid-2026. So the constant **overstated** the cash rate
+by 75 basis points on the bulk of the corpus, and is **accidentally correct
+today**.
+
+That makes the finding worse rather than better. A hardcoded constant that
+happens to be right is the most dangerous kind: nothing in the product will
+reveal it, and it becomes wrong again silently at the next RBA move.
+
+### The series semantics, established before any wiring
+
+`rba_series_meta` for `FIRMMCRT`:
+
+| field | value |
+| --- | --- |
+| title | **Cash Rate Target** |
+| description | **"Cash Rate Target; monthly average"** |
+| frequency | Monthly |
+| table_code | f1.1 |
+| last_observation | 2026-08-31 |
+| publication_date | 01-Sep-2026 |
+
+It is a **monthly average of the target**, not a spot rate. In a month with no
+change the average equals the target (3.60, 3.85, 4.10, 4.35 are on the 25bp
+ladder); in a month containing a change it does not (4.31, 3.96, 3.83, 3.70 are
+transition-month averages).
+
+So the honest label is *"RBA cash rate target, monthly average for &lt;month&gt;,
+published &lt;date&gt;"* — **not** "the current cash rate". A change in the
+current month is not yet in this series, which is precisely the kind of
+substitution §4 of the RF-7.2B mandate forbids.
 
 | | |
 | --- | --- |

@@ -16,6 +16,7 @@
  */
 import type { Tokens, ComputedField } from './templateSchema';
 import { expressionComputesOverData } from '../../../supabase/functions/_shared/templateLibraryCore.pure';
+import { presenceOf } from '../../../supabase/functions/_shared/reports/contract/visibilityPolicy.pure';
 
 export interface ResolveContext {
   data: Record<string, any>;
@@ -354,6 +355,27 @@ function applyFilters(value: any, filterParts: string[]): any {
   return value;
 }
 
+/**
+ * Filters whose whole purpose is to answer an absence.
+ *
+ * The presence gate above must not run in front of these, or the author's own
+ * answer to "what if this is missing" never gets asked. `fallback`/`default`
+ * supply a replacement; `if`, `eq`/`neq` and `exists` BRANCH on emptiness, so
+ * short-circuiting them would silently take the wrong branch rather than
+ * printing nothing.
+ *
+ * Everything else — `currency`, `percent`, `number`, `fixed` — is a FORMATTER,
+ * and a formatter must never see an absence, because `Number(null)` is `0`.
+ */
+const ABSENCE_AWARE_FILTERS = new Set([
+  'fallback', 'default', 'if', 'eq', 'neq', 'exists', 'empty', 'unless',
+]);
+
+function handlesAbsence(filterParts: readonly string[]): boolean {
+  return filterParts.some((part) =>
+    ABSENCE_AWARE_FILTERS.has(part.split(':')[0]!.trim().toLowerCase()));
+}
+
 export function resolveBindable(
   input: unknown,
   ctx: ResolveContext,
@@ -394,6 +416,27 @@ export function resolveBindable(
     } else {
       value = getByPath(ctx.data, headRaw);
     }
+
+    /*
+     * RF-7.2B — presence is established BEFORE formatting, never after.
+     *
+     * `applyFilters` used to run first and the null check second, which meant
+     * the formatters decided what an absence looked like. They decided badly:
+     * `currency`/`percent`/`number` all begin `Number(v)`, and `Number(null)`
+     * and `Number('')` are both `0` — a finite number — so an unknown LVR
+     * rendered `0%` and an unknown rent rendered `$0`. Proved by execution in
+     * RF-7.2A and recorded in `INVESTMENT_REPORT_DATA_CONTRADICTIONS.md` §10.
+     *
+     * That was masked in production only because `reportBindingProjection.put()`
+     * refuses `undefined`, `null` and `''`, so an absent fact arrived as a
+     * MISSING KEY rather than a null. The guarantee rested on one line in one
+     * projection; any adapter writing a null re-opened it.
+     *
+     * A genuine `0` is untouched — it is a measured finding and still formats
+     * as `$0` / `0%` / `0`. That distinction is the whole point, and it is why
+     * this is an explicit presence test rather than `if (!value)`.
+     */
+    if (presenceOf(value) === 'absent' && !handlesAbsence(filterParts)) return '';
 
     value = applyFilters(value, filterParts);
     if (value == null) return '';

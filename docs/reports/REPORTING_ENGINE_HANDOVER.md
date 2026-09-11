@@ -322,6 +322,49 @@ reachable only on genuinely exceptional evidence across Growth, Location,
 Yield and Demand. **Do not re-litigate these; extend them through their
 versions.**
 
+### 4.6 The Scoring Accuracy $0 programme is CLOSED
+
+**Closed 11 Sep 2026 (audit §69), merged to `main` as `11920f1e7`** (PR #2596,
+after #2594 and #2588). Do not reopen scoring unless a genuine defect is
+discovered or actual V2 activation is separately authorised.
+
+What the corpus replays measured, read-only: Growth and Demand scored a
+constant **50 on 1,005 of 1,006** reports with `hasData: false` on all 1,006,
+so **55% of every grade this platform ever issued was a placeholder**; under
+the trusted-input gate Location collapses from 975 to **0** (walk score
+reproduces a per-state constant on 1,109 of 1,114, commute averages 10,125
+minutes with 494 non-NSW reports routed to Sydney, schools sit at the ceiling
+on 851 of 1,114) while Yield rises to 188 through operator-entry recovery;
+**0 of 1,006** reports are grade-eligible under frozen V2. No V2 defect was
+found by any replay.
+
+The closing state, which a successor must not quietly move:
+
+| Item | State |
+| --- | --- |
+| Historical V1 snapshots | PRESERVED — no rewrite, recompute, migration or backfill |
+| New V1 overall score / grade | NOT AUTHORITATIVE — withheld, never a letter and never a zero |
+| New V1 dimension assessments | NOT AUTHORITATIVE under `unavailable` authority |
+| New V1 score-derived qualitative verdicts | NOT AUTHORITATIVE — `claimPermits` gates every SWOT claim |
+| Trusted deterministic metrics | AVAILABLE and unchanged |
+| Buyer finance (LVR, holding cash flow) | FINANCE SUITABILITY ONLY — admitted to no dimension |
+| Scoring V2 | FROZEN / UNWIRED (§4.5) |
+| Future V2 activation | MUST WIRE THE ACTUAL V2 ENGINE and consume its output contract |
+| Empirical calibration | DEFERRED — ME-7 has not run |
+| Historical rewrite | NONE |
+
+**Activation is structurally not a constant edit.**
+`LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>` types both
+`PRODUCTION_SCORING_AUTHORITY` and `policyStamp`'s parameter, so relabelling
+the legacy service is `TS2322`/`TS2345` rather than a config change. That is
+deliberate: relabelling V1 would authorise V1's arithmetic under V2's name,
+which is worse than the unsupported grade this programme removed.
+
+Two questions stay apart and in this order — **ownership** (does the dimension
+own this input at all?) then **trust** (is the value believable?), and, prior
+to both, **authority** (which engine may speak?). A grade issues only when
+authority and evidence both hold.
+
 ## 5. ME-7 entry gate — the go/no-go
 
 `me7EntryGate.pure.ts`. ME-7 may begin only when **all** hold:
@@ -430,16 +473,18 @@ Edge checks need Deno on PATH: `export PATH="$PATH:/root/.deno/bin"`.
 
 ## 9. Immediate next actions
 
-1. **Mark PR #2578 ready** and merge (§3.2). Nothing else blocks it — CI is
-   green and there is no merge conflict.
-2. **Send the Domain and PropTrack requests** (§3.3). The probe has already
-   answered everything a run can answer (§3.4): both Domain products 403 with
-   no stated reason, so the Domain message goes out under the letter's
-   both-403 branch. Do not re-run the probe unless Domain configuration
-   changes.
-3. When either vendor answers at $0: record the footing, build **only** that
-   one adapter, normalise into `MarketEvidence`, seal the first genuine
-   evidence snapshot, and re-evaluate the ME-7 gate.
+1. **RF-7.1 — the Report Fact Contract** (Investment Property Report only) is
+   the live workstream. It is a **strangler**: the contract is added *beside*
+   the working Reporting Engine, no production consumer is switched to it, and
+   reverting the PR must leave Reporting behaving exactly as before. Preserve →
+   Observe → Canonicalise → Prove → Adopt later.
+2. **Do not reopen Scoring** (§4.6). Not to widen `verifiedInputs`, not to
+   relabel the authority constant, not to reinstate a grade "while the
+   evidence is being sourced".
+3. **The vendor questions remain the only route to ME-7** (§3.3–§3.4). When
+   either answers at $0: record the footing, build **only** that one adapter,
+   normalise into `MarketEvidence`, seal the first genuine evidence snapshot,
+   and re-evaluate the ME-7 gate.
 
 Do not begin ME-7 before the gate opens. Do not change scoring weights, grade
 thresholds or evidence methodology to make it open sooner — **evidence scarcity

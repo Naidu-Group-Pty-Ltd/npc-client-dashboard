@@ -194,6 +194,21 @@ export interface BuilderStockItem {
    */
   source_documents_unprocessed?: number;
   source_documents_unreachable?: number;
+  /**
+   * What the documents we DID read said about themselves, where they named no
+   * picture for this property.
+   *
+   * The opposite case to the two counts above, and the reason it is text
+   * rather than a number: those cover OUR failures and a builder can do
+   * nothing with the mechanism, while this is a finding about the builder's
+   * own document and is the only thing that tells a brochure with no
+   * photograph apart from a brochure for the wrong property. Only `inspected`
+   * refusals reach it — `stockDocumentNotes` is the gate, server-side.
+   *
+   * Optional because a deployment whose server predates the projection sends
+   * none, and a row with none reads exactly as it did before.
+   */
+  source_document_notes?: Array<{ document: string; detail: string }>;
   builder_organisation?: { id: string; legal_name: string; trading_name: string | null } | null;
   selection_count?: number;
   latest_selection?: {

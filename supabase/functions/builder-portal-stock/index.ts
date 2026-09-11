@@ -23,7 +23,9 @@
  *   list_selections | acknowledge_selection
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { unreadDocumentCount } from '../_shared/builderStock/imageProgress.pure.ts';
+import {
+  stockDocumentNotes, unreadDocumentCount,
+} from '../_shared/builderStock/imageProgress.pure.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
@@ -1927,17 +1929,17 @@ async function decorateItems(
    */
   const documentsByItem = new Map<string, number>();
   const unreadByItem = new Map<string, { unprocessed: number; unreachable: number }>();
+  const documentProvenanceByItem = new Map<string, unknown>();
   for (const row of rows ?? []) {
     const unmapped = (row?.source_row as { unmapped?: Record<string, string> } | null)?.unmapped;
     documentsByItem.set(
       String(row.id),
       rowSourceBranches(unmapped).filter(isTraversableBranch).length,
     );
-    unreadByItem.set(
-      String(row.id),
-      unreadDocumentCount((row as { source_provenance_result?: unknown })
-        ?.source_provenance_result ?? null),
-    );
+    const storedProvenance = (row as { source_provenance_result?: unknown })
+      ?.source_provenance_result ?? null;
+    unreadByItem.set(String(row.id), unreadDocumentCount(storedProvenance));
+    documentProvenanceByItem.set(String(row.id), storedProvenance);
   }
 
   return items.map((item) => ({
@@ -1959,6 +1961,23 @@ async function decorateItems(
       unreadByItem.get(String(item.id))?.unprocessed ?? 0,
     source_documents_unreachable:
       unreadByItem.get(String(item.id))?.unreachable ?? 0,
+    /*
+     * AND WHAT THE DOCUMENTS WE DID READ ACTUALLY SAID.
+     *
+     * The counts above are deliberately reasonless because they cover OUR
+     * failures. These are the opposite case: an `inspected` refusal is a
+     * finding about the builder's own document, recorded with a `detail` that
+     * `negativeProvenance.pure.ts` has always marked safe to surface — and
+     * which no screen has ever shown. Without it, a brochure for the wrong
+     * property is indistinguishable from a brochure with no photograph, and
+     * the one person who can correct the sheet is told nothing.
+     *
+     * `stockDocumentNotes` is the gate: `operational` reasons never leave
+     * this side.
+     */
+    source_document_notes: stockDocumentNotes(
+      documentProvenanceByItem.get(String(item.id)) ?? null,
+    ),
     // The builder's activation signal: how many Command Centre selections this
     // property has, and where the most recent one is up to.
     selection_count: (selectionsByItem.get(item.id) ?? []).length,

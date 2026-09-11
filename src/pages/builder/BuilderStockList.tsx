@@ -31,7 +31,7 @@ import {
 } from '@/components/builder-portal/BuilderPropertyImage';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
-  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
+  importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useArchiveBuilderStockItem, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
   useSetBuilderStockAvailability,
 } from '@/lib/builderStockQueries';
 import {
@@ -671,6 +671,7 @@ export default function BuilderStockList() {
                             },
                           );
                         }}
+                        onRemoved={refreshAll}
                       />
                     ))}
                   </TableBody>
@@ -695,6 +696,7 @@ export default function BuilderStockList() {
                         },
                       );
                     }}
+                    onRemoved={refreshAll}
                   />
                 ))}
               </ul>
@@ -1331,6 +1333,9 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
     workStage: item.image_work_stage,
   });
   const working = progress === 'working';
+  // Recorded by the server when it read the document. Absent on a deployment
+  // whose projection predates this, which reads exactly as it did before.
+  const notes = showLabels ? (item.source_document_notes ?? []) : [];
 
   return (
     <div className="builder-stock-list-images flex min-w-0 flex-col items-start gap-1.5">
@@ -1371,6 +1376,28 @@ function ImageSources({ item, showLabels = false }: { item: BuilderStockItem; sh
           <span className="sr-only">{STOCK_IMAGE_PROGRESS_LABEL[progress]}</span>
         )}
       </Badge>
+
+      {/*
+        WHAT THE DOCUMENTS THEMSELVES SAID, WHERE THEY NAMED NO PICTURE.
+        The chip above can only say a picture is missing; this says why, in
+        the words the election recorded when it read the file. It is the
+        difference between a brochure with no photograph in it and a brochure
+        for a different property — which read identically until now, and only
+        the second is a mistake the person holding the sheet can correct.
+        Server-gated to `inspected` findings: nothing about our own failures
+        reaches here.
+      */}
+      {!image && notes.length ? (
+        <ul className="w-full space-y-0.5 text-[11px] leading-snug text-muted-foreground">
+          {notes.map((note) => (
+            <li key={`${note.document}-${note.detail}`} className="min-w-0">
+              <span className="font-medium text-foreground/80">{note.document}</span>
+              {': '}
+              {note.detail}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {/*
         Whatever else went wrong, somebody can fix this one card. The picture a
@@ -1481,10 +1508,96 @@ interface StockPresentationProps {
   item: BuilderStockItem;
   saving: boolean;
   onAvailabilityChange: (next: string) => void;
+  onRemoved: () => void;
+}
+
+/**
+ * REMOVING ONE PROPERTY, WHICH IS PUTTING IT AWAY RATHER THAN DESTROYING IT.
+ *
+ * The server operation has existed since the portal shipped — permission
+ * gated, activity logged, and it sets `lifecycle_status` to `archived` rather
+ * than deleting a row. Nothing ever called it. A builder whose list carried a
+ * property they no longer sell could remove the whole stock list or nothing.
+ *
+ * The word is REMOVE, not delete, because that is what happens: the property
+ * leaves their list and the Builder Stock marketplace, and the record — with
+ * any selection a Command Centre user already made against it — is kept. A
+ * button that promised deletion would be promising something the server
+ * deliberately does not do.
+ */
+function RemoveProperty({ item, onRemoved }: {
+  item: BuilderStockItem;
+  onRemoved: () => void;
+}) {
+  const { toast } = useToast();
+  const archive = useArchiveBuilderStockItem();
+  const [confirming, setConfirming] = useState(false);
+  const label = stockItemTitle(item);
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-destructive"
+        disabled={archive.isPending}
+        onClick={() => setConfirming(true)}
+      >
+        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+        Remove
+        <span className="sr-only">{` ${label} from your stock list`}</span>
+      </Button>
+
+      <AlertDialog open={confirming} onOpenChange={(open) => { if (!open) setConfirming(false); }}>
+        <AlertDialogContent className="builder-stock-list-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove “{label}”?</AlertDialogTitle>
+            {/* Says what actually happens, in the order it happens. */}
+            <AlertDialogDescription>
+              It comes off your stock list and out of the Builder Stock marketplace
+              straight away. The record is kept, along with any selection a Command
+              Centre user has already made against it. Re-uploading a stock list that
+              still contains this property brings it back.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={archive.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={archive.isPending}
+              onClick={(event) => {
+                event.preventDefault();
+                archive.mutate(item.id, {
+                  onSuccess: () => {
+                    toast({
+                      title: 'Property removed',
+                      description: `${label} is no longer on your stock list.`,
+                    });
+                    setConfirming(false);
+                    onRemoved();
+                  },
+                  // The row stays put on failure — the page never pretends a
+                  // removal happened. A permission refusal arrives here too,
+                  // in the server's own words.
+                  onError: (error) => toast({
+                    title: 'The property could not be removed',
+                    description: (error as Error).message,
+                    variant: 'destructive',
+                  }),
+                });
+              }}
+            >
+              {archive.isPending ? 'Removing…' : 'Remove property'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
 }
 
 /** xl and up: the six-column table row. */
-function StockRow({ item, saving, onAvailabilityChange }: StockPresentationProps) {
+function StockRow({ item, saving, onAvailabilityChange, onRemoved }: StockPresentationProps) {
   return (
     <TableRow>
       <TableCell className="px-3 py-3 align-top">
@@ -1505,6 +1618,12 @@ function StockRow({ item, saving, onAvailabilityChange }: StockPresentationProps
           saving={saving}
           onAvailabilityChange={onAvailabilityChange}
         />
+        {/* Under the control that changes this property, not in a column of
+            its own: six columns already divide the width and a seventh would
+            take it from the address. */}
+        <div className="mt-1.5">
+          <RemoveProperty item={item} onRemoved={onRemoved} />
+        </div>
       </TableCell>
       <TableCell className="px-3 py-3 align-top">
         <SelectionStatus item={item} />
@@ -1514,7 +1633,7 @@ function StockRow({ item, saving, onAvailabilityChange }: StockPresentationProps
 }
 
 /** Below xl: the same fields stacked, so nothing has to be scrolled to. */
-function StockCard({ item, saving, onAvailabilityChange }: StockPresentationProps) {
+function StockCard({ item, saving, onAvailabilityChange, onRemoved }: StockPresentationProps) {
   return (
     <li className="builder-portal-soft-panel p-4 transition-colors hover:bg-muted/30">
       {/* The badge drops to its own line rather than squeezing the address into
@@ -1539,6 +1658,7 @@ function StockCard({ item, saving, onAvailabilityChange }: StockPresentationProp
             onAvailabilityChange={onAvailabilityChange}
             className="sm:w-48"
           />
+          <RemoveProperty item={item} onRemoved={onRemoved} />
         </div>
       </div>
     </li>

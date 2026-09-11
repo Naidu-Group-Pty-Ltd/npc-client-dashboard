@@ -16,6 +16,11 @@ through the real projections and templates, and a page-by-page review of the
 result. Every load-bearing number below is a fresh measurement dated
 2026-09-02, not a quotation of an earlier doc.
 
+**Picking this up cold?** Read
+[`REPORTING_ENGINE_HANDOVER.md`](./REPORTING_ENGINE_HANDOVER.md) first. This
+file records what was measured; that one records where the work stands, what
+is blocked, and which facts must not be re-derived.
+
 ---
 
 ## 1 · Architecture census
@@ -4561,7 +4566,8 @@ unauthenticated call.
 
 ### The probe
 
-`market-source-probe` is a read-only diagnostic added here and **not yet run**:
+`market-source-probe` is a read-only diagnostic added here and, as of this
+section, not yet run (it has since run exactly once, on 8 Sep 2026 — §66):
 it deploys on merge to `main`, and its own `verifyAuth` means it needs an
 authenticated administrator session rather than a session key this work holds.
 It reports which credential NAMES are set — never a value, never a length,
@@ -6412,7 +6418,9 @@ scorer. Three standing rules hold throughout:
 
 ### 60.9 The probe had no door, and now has one
 
-The probe was written in §51 and has **never been run**. Not because it is
+The probe was written in §51 and, when this section was written, had **never
+been run** (its one production run came 28 minutes after this work deployed —
+§66). Not because it is
 broken: `verify_jwt = true` at the gateway *and* its own `verifyAuth` mean it
 needs an authenticated administrator session, and **no surface in the product
 invoked it** — a grep of `src/` returns nothing. The only ways to reach it were
@@ -7081,3 +7089,355 @@ deployment's data access will be used, and **no secondary provider is added
 unless a measured evidence gap remains** after that inspection.
 
 ---
+
+## §64 ME-6 zero-cost evidence strategy — how far $0 actually goes
+
+A commercial constraint arrived mid-phase: **no additional property-data
+subscriptions.** The instruction was to continue ME-6 on authoritative open
+data, entitlements already held, and legitimate free trials — without lowering
+the evidence standard and without scraping commercial sites.
+
+This section is the measurement. Every reachability reading was taken on
+2026-09-08 from two networks: this repository's development container, and the
+**production Supabase egress** through `pg_net`, which is the network a
+scheduled ingestion would actually run on. The inventory is code
+(`_shared/reports/market/zeroCostSources.pure.ts`), not prose, because a
+markdown table cannot be executed and therefore cannot be wrong out loud — the
+failure mode this programme has hit repeatedly.
+
+### 64.1 The finding that reframes the strategy
+
+The open data is **not where the properties are.**
+
+Measured over `report_geography` joined to `investment_reports`, resolving
+dwelling type exactly as §62.4 did:
+
+| state | geo reports | Growth-addressable | share | open suburb × type median sale price |
+| --- | ---: | ---: | ---: | --- |
+| QLD | 404 | **356** | 53.7% | **none** |
+| WA | 179 | **138** | 20.8% | **none openly licensed** |
+| VIC | 201 | **114** | 17.2% | yes, CC BY — **unreachable** |
+| NSW | 59 | 36 | 5.4% | raw bulk sales only |
+| SA | 11 | 7 | 1.1% | partial, file host 403 |
+| TAS | 7 | 6 | 0.9% | rental bonds only |
+| ACT | 4 | 4 | 0.6% | not established |
+| NT | 2 | 2 | 0.3% | not established |
+| **total** | **867** | **663** | | |
+
+*(663 on this resolution against §62.4's 641; the two differ because §62.4 also
+required the sibling-recovery pass. The distribution is what matters here and it
+is unaffected.)*
+
+**Three quarters of the corpus sits in the two states with the least usable open
+data.** Queensland's Government Statistician publishes building approvals under
+its housing theme and no median sale price series at all; Western Australia's
+only candidate is Landgate's *Residential Property Attributes Data*, licensed
+`Custom (Other)`. Neither is a suburb-level median residential sale price.
+
+ABS does not close the gap either. All **1,227** published dataflows were
+enumerated: `RES_DWELL_ST` is *state* grain, `RPPI` is *capital city* grain, and
+**none** carries suburb-level price.
+
+### 64.2 Licence and reachability are independent, and both were measured
+
+The finest-grained open dataset in the country is Victoria's **Property Sales
+Report — Median House / Unit by Suburb, Time Series**: CC BY 3.0 Australia,
+quarterly, dwelling-segmented, published as XLSX for exactly this use.
+
+It cannot be fetched. `land.vic.gov.au` answers **403** with a Cloudflare
+*"Just a moment…"* interstitial — to curl with no User-Agent, to curl with the
+repository's own identifying User-Agent convention, and to the **production**
+egress via `pg_net` (requests 126902, 126922). Two independent networks, the
+same refusal: it is the host's bot protection, not our address.
+`www.dffh.vic.gov.au` (Moving Annual Rents by Suburb, also CC BY) failed
+separately — an Akamai block from development citing volume from our network,
+and *"Stream error in the HTTP/2 framing layer"* from production.
+
+So the inventory records `licence` and `reachability` as **separate fields that
+are never inferred from one another**, and `blockedByTransport()` is its own
+reading — because a licensing gap needs a commercial conversation and a
+transport gap needs the publisher contacted about their bot rules, and
+reporting one as the other sends somebody to the wrong door.
+
+What *is* reachable from production, verified by execution: `data.gov.au`
+(206, real XLSX payload), `catalogue.data.wa.gov.au` (206),
+`valuation.property.nsw.gov.au` (200), `data.api.abs.gov.au` (200), and
+`data.melbourne.vic.gov.au` — whose CSV export answered 200 with the header
+`sale_year;small_area;type;median_price;transaction_count`, exactly the Growth
+shape, for exactly one local government area.
+
+### 64.3 The acquisition footing — so a trial can never become production
+
+`EvidencePoint` now carries `acquisition`, orthogonal to `licensingStatus`.
+Licensing asks *may this be printed for a client*. Acquisition asks *on what
+footing do we hold it at all* — and the footing decides whether a number may
+become production evidence, which no rendering rule decides.
+
+`open_public` · `existing_licensed` · `trial_shadow_only` ·
+`commercial_upgrade_required` · `licensing_unverified` (the default).
+
+The failure this closes is specific and quiet: **a trial measure silently
+becoming production evidence.** Nothing about a number's shape reveals its
+footing — a PropTrack trial median and a licensed one are the same float — so
+the footing travels on the point and `acquisitionLicensingConflict` refuses the
+contradictory combinations outright.
+
+Three rules. **The default is conservative** — an undeclared footing is not
+production evidence. **A trial may be shadow-scored and never rendered**, which
+is what makes `trial_shadow_only` genuinely useful for ME-7 rather than merely
+blocked. And **the addition is additive**: `mayReachClientReport` keeps its
+exact meaning and all four existing callers
+(`evidenceStatement`, `growthScoring`, `demandScoring`, its spec) are untouched,
+with a test pinning that.
+
+### 64.4 SQM — recorded, not automated
+
+SQM Research publishes free property charts, and its terms prohibit automated
+and systematic retrieval without permission; its historical series is sold
+commercially. **No scraping, no hidden endpoints, no browser automation, no
+systematic ingestion, no client-report use.** SQM is
+`manual/context only — automated commercial ingestion not authorised`, and that
+stands unless SQM gives explicit written permission or offers a free commercial
+API. This is the one source where the block is a considered policy rather than
+a generic WAF rule, and the distinction is why land.vic was retried and SQM was
+not.
+
+### 64.5 The strongest $0 stack, and what it cannot do
+
+In the brief's own preference order:
+
+1. **Authoritative open government data** — real, and it serves *Demand and
+   context*, not Growth: Tasmanian rental bonds (CC BY 4.0, reachable), NSW
+   bulk sales (CC BY, reachable, medians must be derived and dwelling type is
+   not a column), QLD land valuations (CC BY, and a land valuation is not a
+   sale price), ABS `RES_DWELL_ST` / `RPPI` / Census / SEIFA as benchmark.
+2. **Domain's existing entitlement, if it costs nothing** — the pending probe.
+3. **The official PropTrack trial** — Market API supply & demand, rent
+   insights, sale insights, per suburb; qualification request drafted.
+4. **ABS benchmark** — already loaded.
+5. **SQM manual/context only.**
+
+**Growth coverage attainable for $0 today: effectively none of the corpus.**
+Not one zero-cost source can serve suburb-level, dwelling-segmented median sale
+price for QLD or WA, and a test asserts that no row in the inventory claims
+otherwise. Victoria's would reach 17.2% if the host admitted a scripted client.
+NSW's 5.4% is reachable but requires deriving medians from individual sales
+without a dwelling-type column.
+
+**Demand coverage attainable for $0: partial and real** — rental evidence in
+VIC (blocked), TAS (reachable), SA (blocked at the file host), plus ABS
+population and household context nationally.
+
+### 64.6 Is the free stack strong enough to begin ME-7?
+
+**No — not on open data alone.** A historical shadow backtest needs Growth for
+the properties the corpus actually contains, and the zero-cost open stack
+reaches almost none of them. Proceeding on it would mean scoring three quarters
+of the corpus with Growth absent, which the methodology correctly renders as
+absent rather than as a number — a backtest with no signal in its principal
+dimension.
+
+**It becomes strong enough the moment either commercial lever lands at $0**:
+Domain's two scopes enabled on the existing key, or a PropTrack trial that
+permits internal evaluation. Either supplies suburb-level, dwelling-segmented
+Growth across QLD, WA and VIC together.
+
+So ME-7 is not blocked on a purchase — it is blocked on two questions that cost
+nothing to ask, both of which are now drafted
+(`DOMAIN_ACTIVATION_REQUEST.md` §Zero-cost addendum, `PROPTRACK_TRIAL_REQUEST.md`).
+
+### 64.7 How the ME-7 shadow stack would differ from a production stack
+
+If ME-7 runs on `trial_shadow_only` evidence, the difference is not cosmetic and
+is enforced rather than remembered:
+
+| | ME-7 shadow stack | production-authorised stack |
+| --- | --- | --- |
+| Growth source | PropTrack trial (`trial_shadow_only`) | a source classified `existing_licensed` or `open_public` |
+| may be rendered to a client | **no** — `acquisitionLicensingConflict` refuses the combination | yes |
+| may be sealed as production evidence | **no** — `mayEnterProductionEvidence` returns false | yes |
+| may be scored in a backtest | yes | yes |
+| what the calibration proves | that the **methodology** is sound | that the **deployment** is sound |
+
+A methodology validated on trial evidence is a validated methodology. It is not
+a licence to ship, and the two must never be conflated — which is exactly why
+the footing is a field on the point rather than a note in a document.
+
+## §65 ME-6 closure — one denominator, and a frozen ME-7 population
+
+ME-6 reported two Growth-addressable counts for the same idea — **641** and
+**663** — and an ambiguous denominator makes every coverage percentage that
+follows unfalsifiable. This section settles it by arithmetic and freezes the
+result, so that ME-7 has a subject population that cannot move under it.
+
+### 65.1 Why the two numbers differed — measured, not inferred
+
+Both were computed over the same 867 trusted-geography reports. They are the
+same predicate with and without one exclusion:
+
+| step | count |
+| --- | ---: |
+| trusted geography (suburb AND state present) | 867 |
+| `property_specs.property_type` present and not a placeholder | **663** |
+| less `land` (26) | **637** |
+| plus §62.4's sibling recovery (4) | **641** |
+
+Neither was wrong about what it measured. They measured different things while
+both being called "Growth-addressable".
+
+**663 was too loose** — it counted 26 vacant-land reports. A land parcel has no
+dwelling, so no house/unit median series describes it: Domain segments
+`suburbPerformanceStatistics` by house and unit, and PropTrack's sale insights
+do the same. Counting land inflates the denominator with rows no provider can
+ever answer for.
+
+**641 was too narrow** — it read one field. Two further deterministic routes to
+the same fact were already in the record and unused.
+
+### 65.2 The canonical answer is 665, and it is not "the bigger one"
+
+`_shared/reports/market/growthPopulation.pure.ts`, predicate `me7.pop.1`:
+
+| route | reports |
+| --- | ---: |
+| `property_specs.property_type` | 663 |
+| `financial_calculations.propertySpecs.propertyType` | +15 |
+| unambiguous sibling on the same `canonical_property_key` | +13 |
+| any type resolved | 691 |
+| less `land` | −26 |
+| **canonical Growth-ready** | **665** |
+
+It is simultaneously **stricter** than 663 (land excluded) and **more complete**
+than 641 (three routes instead of one). Landing two above 663 is a coincidence
+of two independent corrections, not a preference for a larger number.
+
+The 15 the financial block adds are **all `house`** — specific, and stated by
+the operator rather than derived, which `historicalFactAuthority.pure.ts`
+already established: `financial_calculations.propertySpecs` is the calculator's
+INPUT record. The sibling route yields 13 against §62.4's 4 because its pool is
+enriched by the financial route, which §62.4 did not consult.
+
+A measurement bug of my own is fixed here too: coalescing the raw values and
+*then* testing for a placeholder never consults the second source, because
+`'Residential Property'` is non-null. Each route is now tested for specificity
+before the fall-through, and a test pins it.
+
+### 65.3 What Growth readiness requires — and what it must never require
+
+**Required**: trusted geography (suburb AND state), and a dwelling type
+resolvable by one of the three routes that maps to a class a provider
+publishes.
+
+**Not required, deliberately**: LVR, cash flow, rent, Risk, composite scoring
+readiness — none is an input to a suburb median series. **Postcode is not
+required either**: measured, 0 of the 663 lack one, so it discriminates nothing
+today, and Domain's route is `/{state}/{suburb}` with postcode an optional
+refinement.
+
+**Sibling recovery is a ROUTE, never a REQUIREMENT.** §62.4 introduced it while
+measuring what could be recovered. It belongs in the definition as one of three
+ways the type may be established, not as a condition — requiring one would
+exclude 663 reports to gain 13.
+
+### 65.4 The frozen population
+
+`me7_backtest_populations` / `me7_backtest_population_members`, sealed under
+`me7.pop.1`: **867 considered, 665 ready**, one row per considered report
+carrying canonical geography, dwelling type and class, resolution route, and
+inclusion or an exclusion reason.
+
+| state | Growth-ready | houses | attached |
+| --- | ---: | ---: | ---: |
+| QLD | 338 | 278 | 60 |
+| WA | 137 | 89 | 48 |
+| VIC | 131 | 120 | 11 |
+| NSW | 40 | 31 | 9 |
+| SA / TAS / ACT / NT | 19 | 18 | 1 |
+| **total** | **665** | **536** | **129** |
+
+228 distinct suburbs. Excluded: 176 `dwelling_type_unresolved`, 26
+`dwelling_type_not_segmentable`.
+
+The rule the table exists to enforce: **provider coverage is measured AGAINST
+the population and never defines it.** Without that, a provider outage shrinks
+the denominator and the coverage percentage *improves* — the metric moves the
+wrong way under exactly the fault it should reveal. Membership is therefore
+settled before any provider is called, and immutability mirrors
+`market_evidence_snapshots`: draft → sealed once, no unseal, UPDATE and DELETE
+refused on a sealed row and on its members. Both refusals were proven by
+execution against the sealed row.
+
+### 65.5 Precedence, and the ME-7 entry gate
+
+`me7EntryGate.pure.ts` carries both as code. Subject Growth resolves
+Domain-at-$0 → PropTrack trial → open state suburb series → **unavailable**;
+Demand resolves provider/open → government context → **unavailable**. There is
+no benchmark tier in the subject ordering, and `mayServeSubjectGrowth` refuses
+the ABS series by name — a state mean price is identical for hundreds of
+properties, so using it as the subject's own Growth is how a score comes to
+rest on nothing about the suburb.
+
+The gate refuses a sample without QLD or WA, because those two are 475 of the
+665 and a VIC/NSW-only backtest would validate the methodology against 26% of
+the portfolio while reporting a number about the other 74%. It explicitly does
+**not** require 100% coverage, a complete Demand set, or Victoria.
+
+### 65.6 Where this leaves ME-7
+
+The population is locked and the gate is written. What the gate is waiting on is
+evidence, and both remaining zero-cost levers are **outside this repository's
+reach**: Domain's answer on enabling two scopes at no charge, and PropTrack's
+answer on trial terms. Neither can be measured, inferred, or substituted — and
+an ME-7 run assembled from anything else would be a backtest of a methodology
+against evidence it will never use in production.
+
+---
+
+## §66 ME-6 — the probe ran once, and the answer is the ambiguous case
+
+*Run 2026-09-08; recorded 2026-09-11.*
+
+The operator ran the source probe exactly once, from the Integrations page, 28
+minutes after #2575 deployed the corrected function. The run is verified in
+the production function logs rather than assumed: `function_edge_logs` holds
+exactly one non-OPTIONS invocation of `market-source-probe` across the whole
+retained window (8–11 Sep, swept in 24-hour slices) — `POST | 200` at
+**2026-09-08T15:42:54Z**, 3,331 ms. The probe persists nothing by design
+(§60.9), so the per-target readings below are the operator surface's own
+rendering of that one response.
+
+What it read:
+
+- `DOMAIN_API_KEY` **present**; Domain classified configured/testable.
+- `domain_address_suggest` → **HTTP 403**.
+- `domain_v2_suburb_performance` → **HTTP 403**.
+- **No `X-Domain-Security-Reason`** visible on either refusal — the one header
+  Domain names as the first diagnostic for a 401/403.
+- Cotality credentials **absent**. PropTrack credentials **absent**. SQM **not
+  authorised** for automated ingestion (policy, not transport — §64).
+
+Under the pre-registered four-case reading (§63, unchanged), 403 + 403 is the
+ambiguous case and **stays ambiguous**: it is equally consistent with a
+project or account configuration, a missing scope, a plan or environment
+restriction, the key's own state, and a WAF refusal that never reached
+Domain's gateway. Entitlement, an invalid key, a WAF and a missing scope were
+each deliberately **not** inferred from the status code alone — inferring any
+one of them sends an operator to the wrong remedy, and with no security-reason
+header nothing on the wire distinguishes them.
+
+Three consequences:
+
+1. **The probe does not need to be run again.** Its question — what does this
+   key get, from this deployment, today — is answered, and the answer is
+   deterministic on Domain's side. Re-run only if Domain configuration changes
+   (a new key, an activated scope, an account change); one run then re-settles
+   the state.
+2. **The resolution is with the provider, not the pipeline.**
+   `DOMAIN_ACTIVATION_REQUEST.md` now carries the both-403 branch as the
+   applicable message: because no security reason was returned there is
+   nothing to quote, so the message asks Domain to state which restriction
+   produces the 403 on this key, and whether `api_properties_read` and
+   `api_suburbperformance_read` can be enabled on the existing application at
+   no additional charge.
+3. **Nothing upstream of the gate moves.** The ME-7 entry gate (§65) still
+   waits on evidence, and a 403 whose cause is unresolved contributes none.

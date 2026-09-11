@@ -168,6 +168,11 @@ export interface EvidencePoint<T = number> {
    * that has already been emailed.
    */
   licensingStatus?: LicensingStatus;
+  /**
+   * How the right to hold this measure was obtained. Absent means
+   * `licensing_unverified`, which is not production evidence.
+   */
+  acquisition?: EvidenceAcquisition;
   /** Anything a reader needs in order not to over-read the number. */
   sourceNote: string | null;
 }
@@ -181,6 +186,94 @@ export function licensingOf(point: EvidencePoint<unknown>): LicensingStatus {
 export function mayReachClientReport(point: EvidencePoint<unknown>): boolean {
   const status = licensingOf(point);
   return status === 'open' || status === 'licensed_for_client_reports';
+}
+
+/**
+ * ME-6 (zero-cost strategy) — HOW the right to hold this measure was obtained.
+ *
+ * A second, orthogonal axis to `LicensingStatus`, and the two answer different
+ * questions. Licensing asks *may this be printed for a client*. Acquisition
+ * asks *on what footing do we hold it at all* — and the footing is what decides
+ * whether a number may become production evidence, which is a decision no
+ * rendering rule makes.
+ *
+ * It exists because the zero-cost programme deliberately mixes footings in one
+ * pipeline: CC-BY government files, a credential Aurixa already pays for, and
+ * an evaluation trial. Those are not interchangeable, and the failure mode is
+ * specific and quiet — **a trial measure that silently becomes production
+ * evidence**. Nothing about a number's shape reveals which footing produced it;
+ * a PropTrack trial median and a licensed one are the same float. So the
+ * footing travels on the point.
+ *
+ * - `open_public` — CC-BY / public-domain government data. No cost, no ceiling.
+ * - `existing_licensed` — a credential already held, at no additional charge.
+ * - `trial_shadow_only` — an evaluation or trial licence. Internal validation
+ *   ONLY: it may be scored in a shadow backtest and may never be rendered,
+ *   redistributed, or sealed as production evidence.
+ * - `commercial_upgrade_required` — the source exists and would answer, but
+ *   only behind a purchase that has not been made. Recorded so the gap is
+ *   visible rather than looking like an absent source.
+ * - `licensing_unverified` — rights not established. The conservative default.
+ */
+export type EvidenceAcquisition =
+  | 'open_public'
+  | 'existing_licensed'
+  | 'trial_shadow_only'
+  | 'commercial_upgrade_required'
+  | 'licensing_unverified';
+
+/** Acquisition footing of a point, defaulting conservatively. */
+export function acquisitionOf(point: EvidencePoint<unknown>): EvidenceAcquisition {
+  return point.acquisition ?? 'licensing_unverified';
+}
+
+/**
+ * May this measure be sealed as PRODUCTION evidence?
+ *
+ * Deliberately not `mayReachClientReport`. That predicate keeps its exact
+ * meaning and its existing callers; this is the new, stricter gate the
+ * zero-cost stack needs, and it is conservative by default — a point that
+ * never declares a footing is not production evidence.
+ */
+export function mayEnterProductionEvidence(point: EvidencePoint<unknown>): boolean {
+  const a = acquisitionOf(point);
+  return a === 'open_public' || a === 'existing_licensed';
+}
+
+/**
+ * May this measure be used in an internal shadow backtest?
+ *
+ * Everything except a source we do not hold. `licensing_unverified` is
+ * admitted here for the same reason `unverified` licensing already is: a
+ * shadow score is not a disclosure. `commercial_upgrade_required` is refused
+ * because it describes data nobody fetched.
+ */
+export function mayEnterShadowBacktest(point: EvidencePoint<unknown>): boolean {
+  return acquisitionOf(point) !== 'commercial_upgrade_required';
+}
+
+/**
+ * The one rule that makes the footing bite: a trial measure must never carry
+ * client-facing rights, and a source we have not bought must not carry any
+ * rights at all. Returns the reason a combination is contradictory, or null.
+ *
+ * Enforced rather than trusted, because the two fields are set at different
+ * places — the adapter sets the footing, the registry sets the licence — and
+ * two writers is exactly how a trial number acquires a production licence.
+ */
+export function acquisitionLicensingConflict(point: EvidencePoint<unknown>): string | null {
+  const a = acquisitionOf(point);
+  const l = licensingOf(point);
+  const clientFacing = l === 'open' || l === 'licensed_for_client_reports';
+  if (a === 'trial_shadow_only' && clientFacing) {
+    return 'a trial/evaluation measure cannot carry client-facing licensing — '
+      + 'trial access is for internal validation and confers no production right';
+  }
+  if (a === 'commercial_upgrade_required' && l !== 'unverified') {
+    return 'a measure behind an unpurchased upgrade cannot carry a licensing status — '
+      + 'nothing was licensed because nothing was obtained';
+  }
+  return null;
 }
 
 /**

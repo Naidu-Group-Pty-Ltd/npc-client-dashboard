@@ -1,5 +1,6 @@
 import type { PortalAcknowledgementKey } from '@/lib/portalAgreement';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   builderAcceptInvite,
   builderAcceptTerms,
@@ -56,6 +57,49 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
   const [previousSeenAt, setPreviousSeenAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const queryClient = useQueryClient();
+  /**
+   * Who the cached builder data belongs to: `<builder_user_id>:<organisation_id>`.
+   * A ref rather than state because nothing renders from it — it exists only to
+   * notice a change.
+   */
+  const cachedIdentity = useRef<string | null>(null);
+
+  /**
+   * THROW AWAY EVERY CACHED ANSWER THAT BELONGED TO SOMEBODY ELSE.
+   *
+   * MEASURED 11 SEPTEMBER 2026, reported as "a stock list uploaded under Kopi
+   * Jantan Builders can be seen from a Bob The Builder account", and seen in
+   * Bob's own Stock Lists page.
+   *
+   * The server was not the leak: every builder-portal query narrows to the
+   * session's organisation, the accessible set comes from a SECURITY DEFINER
+   * function scoped to the user, all four stock tables are RLS service-role
+   * only and both buckets are private. The leak is HERE. React Query caches
+   * one builder's data under keys that name no builder —
+   * `['builder','stock','uploads',1]` — and `signOut` cleared this hook's
+   * React state and nothing else. So:
+   *
+   *   sign in as Kopi Jantan   → cache fills under that key
+   *   sign out                 → cache untouched
+   *   sign in as Bob           → the page mounts, reads the SAME key, and
+   *                              renders Kopi Jantan's stock lists
+   *
+   * before the refetch replaces them. One builder's commercial data drawn in
+   * another builder's portal.
+   *
+   * It is fixed at the identity rather than at the key because
+   * `builderKeys` has forty-odd entries — projects, units, transactions,
+   * construction, documents, conversations — and every one of them is
+   * organisation-blind in exactly the same way. Purging on the identity covers
+   * all of them, and covers every key anybody adds later, which keying them
+   * one by one would not.
+   */
+  const forgetCachedTenant = useCallback(() => {
+    cachedIdentity.current = null;
+    queryClient.removeQueries({ queryKey: ['builder'] });
+  }, [queryClient]);
+
   const clearAuthState = useCallback(() => {
     setUser(null);
     setOrganisations([]);
@@ -64,13 +108,26 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
     setGovernance(null);
     setRequiresOrganisationSelection(false);
     setPreviousSeenAt(null);
-  }, []);
+    forgetCachedTenant();
+  }, [forgetCachedTenant]);
 
   const checkSession = useCallback(async () => {
     const { data, error } = await builderCurrentSession();
     if (error || !data?.valid || !data.user) {
       clearAuthState();
     } else {
+      /*
+       * AND THE SAME PURGE WHEN THE IDENTITY MOVES WITHOUT A SIGN-OUT: a user
+       * who belongs to two organisations switching between them, or a second
+       * account signed into the same tab. The cached rows are the previous
+       * tenant's either way.
+       */
+      const identity = `${data.user.id}:${data.active_organisation?.organisation_id ?? ''}`;
+      if (cachedIdentity.current !== null && cachedIdentity.current !== identity) {
+        queryClient.removeQueries({ queryKey: ['builder'] });
+      }
+      cachedIdentity.current = identity;
+
       setUser(data.user);
       setOrganisations(data.organisations ?? []);
       setActiveOrganisation(data.active_organisation ?? null);
@@ -80,7 +137,7 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
       setPreviousSeenAt(data.previous_seen_at ?? null);
     }
     setLoading(false);
-  }, [clearAuthState]);
+  }, [clearAuthState, queryClient]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
 

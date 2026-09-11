@@ -250,6 +250,25 @@ function pageStatesIdentity(
   pageText: string,
   label: string,
   identityHints: readonly string[] = [],
+  /**
+   * Did the whole document produce exactly ONE property?
+   *
+   * Rule 2 below refuses a page that names any lot other than ours, and for a
+   * document listing MANY properties that is right: two lots on one page is
+   * the document declining to say whose page it is, and a guess becomes
+   * somebody else's house on a client's card.
+   *
+   * With exactly one property there is no other property IN THIS DOCUMENT to
+   * mis-attribute to, so a second lot number is context rather than a
+   * competitor. MEASURED 11 SEPTEMBER 2026 on `LOT 27 - ZIMI - FLYER.pdf`: a
+   * single-property flyer whose page 1 reads "Lot 27" beside "LOT 32, 33, 34"
+   * — neighbouring lots on the estate's own site plan. Rule 2 fired, the page
+   * was refused as a cover, and the flyer's render never reached the card.
+   *
+   * Same principle, same document shape, as the sole-property branch of
+   * `anchorPdfRowsToPages`.
+   */
+  soleProperty = false,
 ): boolean {
   const labelTokens = tokenise(label);
   if (labelTokens.length < MIN_IDENTITY_TOKENS) return false;
@@ -271,8 +290,8 @@ function pageStatesIdentity(
   if (!pageLotReadings.some(readsAsOurs)) return false;
 
   // 2 — and no other lot is: a run is another lot only when NEITHER of its
-  // readings is ours.
-  if (pageLotReadings.some((reading) => !readsAsOurs(reading))) return false;
+  // readings is ours. Waived for a sole-property document — see the parameter.
+  if (!soleProperty && pageLotReadings.some((reading) => !readsAsOurs(reading))) return false;
 
   // 3 — the design, when the label names one.
   const design = designTokens(label);
@@ -327,13 +346,15 @@ export function findPropertyCoverPages(
   pageTexts: string[],
   label: string | null | undefined,
   identityHints: readonly string[] = [],
+  /** See `pageStatesIdentity` — waives the other-lot veto for a lone property. */
+  soleProperty = false,
 ): PropertyCoverEvidence[] {
   const identity = String(label ?? '').trim();
   if (!identity) return [];
 
   const covers: PropertyCoverEvidence[] = [];
   (pageTexts ?? []).forEach((text, index) => {
-    if (!pageStatesIdentity(text ?? '', identity, identityHints)) return;
+    if (!pageStatesIdentity(text ?? '', identity, identityHints, soleProperty)) return;
     const packageFacts = packageFactsOn(text ?? '');
     if (packageFacts.length < MIN_PACKAGE_FACTS) return;
     covers.push({ page: index + 1, identity, packageFacts });
@@ -809,10 +830,15 @@ export function assignPdfMediaRoles(input: {
   design?: string | null;
   /** The row's other identity names. See `pageStatesIdentity`, test 4. */
   identityHints?: readonly string[] | null;
+  /**
+   * The document produced exactly ONE property. See `pageStatesIdentity`.
+   */
+  soleProperty?: boolean;
 }): SourceImageRoleAssignment[] {
   const media = input.media ?? [];
   const covers = input.pageOrderAuthoritative
-    ? findPropertyCoverPages(input.pageTexts ?? [], input.label, input.identityHints ?? [])
+    ? findPropertyCoverPages(input.pageTexts ?? [], input.label, input.identityHints ?? [],
+      input.soleProperty === true)
     : [];
   const structural = input.pageOrderAuthoritative
     && Number.isInteger(input.structuralCoverPage)
@@ -951,6 +977,15 @@ export function assignPdfMediaRolesPerProperty(input: {
   labelByItemId: Map<string, string>;
   /** Each property's other identity names. See `pageStatesIdentity`, test 4. */
   identityHintsByItemId?: Map<string, readonly string[]>;
+  /**
+   * Each property's own house design, for the design-cover fallback — the rung
+   * that accepts the document naming the HOUSE where none names the LOT. The
+   * linked-document path has passed it since that rung existed; this one did
+   * not, so an uploaded package could never reach it.
+   */
+  designByItemId?: Map<string, string | null>;
+  /** The document produced exactly ONE property. See `pageStatesIdentity`. */
+  soleProperty?: boolean;
   pageTexts: string[];
   pageOrderAuthoritative: boolean;
   /** What each picture IS, index-aligned with `media`. See `assignPdfMediaRoles`. */
@@ -974,6 +1009,8 @@ export function assignPdfMediaRolesPerProperty(input: {
     const assignments = assignPdfMediaRoles({
       label: input.labelByItemId.get(itemId) ?? null,
       identityHints: input.identityHintsByItemId?.get(itemId) ?? [],
+      design: input.designByItemId?.get(itemId) ?? null,
+      soleProperty: input.soleProperty === true,
       pageTexts: input.pageTexts,
       pageOrderAuthoritative: input.pageOrderAuthoritative,
       media: indexes.map((index) => media[index].placement ?? {

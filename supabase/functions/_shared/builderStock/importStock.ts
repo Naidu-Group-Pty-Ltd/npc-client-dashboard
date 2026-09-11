@@ -511,6 +511,13 @@ export async function importStockRecords(
   const itemIdByAnchor = new Map<string, string | null>();
   const labelByItemId = new Map<string, string>();
   const identityHintsByItemId = new Map<string, readonly string[]>();
+  /**
+   * Each property's own house design, for the design-cover rung — the one that
+   * accepts a document naming the HOUSE where none names the LOT. The linked
+   * document path has passed it since that rung existed and the uploaded-PDF
+   * path never did, so an uploaded package could not reach it at all.
+   */
+  const designByItemId = new Map<string, string | null>();
   const claimAnchor = (anchor: string | null, itemId: string) => {
     if (!anchor) return;
     if (!itemIdByAnchor.has(anchor)) { itemIdByAnchor.set(anchor, itemId); return; }
@@ -902,6 +909,7 @@ export async function importStockRecords(
       // names the label leaves out, for the corroboration test alone.
       labelByItemId.set(itemId, label);
       identityHintsByItemId.set(itemId, stockIdentityHints(record));
+      designByItemId.set(itemId, record.house_design ?? null);
       claimAnchor(record.source_anchor, itemId);
 
       /**
@@ -977,6 +985,13 @@ export async function importStockRecords(
       ? {
         labelByItemId,
         identityHintsByItemId,
+        designByItemId,
+        /*
+         * One property in the document means there is nobody else in it to
+         * confuse this property with, so a second lot number printed on its
+         * page is context rather than a competitor. See `pageStatesIdentity`.
+         */
+        soleProperty: records.length === 1,
         pageTexts: input.pageTexts,
         pageOrderAuthoritative: input.pageOrderAuthoritative !== false,
       }
@@ -1144,6 +1159,10 @@ export async function attachDocumentMedia(
     labelByItemId: Map<string, string>;
     /** Each property's other identity names. See `pageStatesIdentity`. */
     identityHintsByItemId?: Map<string, readonly string[]>;
+    /** Each property's own house design, for the design-cover rung. */
+    designByItemId?: Map<string, string | null>;
+    /** The document produced exactly ONE property. See `pageStatesIdentity`. */
+    soleProperty?: boolean;
     pageTexts: string[];
     pageOrderAuthoritative: boolean;
   } | null,

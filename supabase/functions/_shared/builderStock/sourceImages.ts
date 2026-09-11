@@ -231,6 +231,28 @@ import {
  * the same answer when it is next asked — and nothing requeues the settled
  * ones for this bump alone.
  *
+ * 24 STOPS A ONE-PROPERTY BROCHURE BEING DISQUALIFIED BY THE LOTS IT MENTIONS.
+ * `pageStatesIdentity`'s fourth test refuses a page that reads another lot's
+ * number, and that test is what makes a MULTI-property package safe: in a
+ * twelve-lot price list the page naming lot 32 is lot 32's page, and letting
+ * lot 27's row take it would put another house on this card. In a document
+ * that describes exactly ONE property the same reading carries no information
+ * at all — a single-lot flyer still prints the estate's other lots in its
+ * availability table, its comparison strip and its "also available" footer —
+ * so the veto fires on every page and the row is told its own brochure names
+ * no image. Measured, 11 September 2026: `LOT 27 - ZIMI - FLYER.pdf`, one
+ * item, one page, its 556x634 raster extracted, stored and READY, refused for
+ * the recorded reason "no page states this property's identity together with
+ * its package information — its first page reads 'Lot 27 — LOT 32, 33, 34,'".
+ * The page states lot 27. It is the only property in the document. The waiver
+ * is therefore narrow by construction: it applies only where the package
+ * holds one property, it removes only the other-lot test, and every other
+ * corroboration a cover must pass is untouched — a multi-property document
+ * re-derives to the same answer byte for byte, which a control in
+ * `builderStockUploadedPackageIdentity.test.ts` asserts. Every
+ * `not_identified` banked at 23 on a one-property package was judged under
+ * the wider veto and is stale by definition.
+ *
  * 23 LETS THE DESIGN REACH THE ELECTION AT ALL. v22 shipped two design-cover
  * rules, deployed cleanly, and changed nothing in production: Lots 502 and
  * 1004 were told again that their own brochures name no image, one minute

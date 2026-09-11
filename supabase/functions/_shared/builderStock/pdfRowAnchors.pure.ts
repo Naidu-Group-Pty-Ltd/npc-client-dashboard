@@ -87,9 +87,21 @@ export function anchorPdfRowsToPages(
    * page happened to sort there. Nothing is anchored in that case.
    */
   pageOrderAuthoritative = true,
+  /**
+   * The row's other identity names — the estate, the project — index-aligned
+   * with `labels`. A builder's flyer identifies a lot the way the estate's
+   * marketing does ("Lot 27, HAVENWOOD") while the row's label carries the
+   * street and suburb the document never mentions, so without these the
+   * corroboration test has nothing to match and the document's own cover is
+   * refused. `stockIdentityHints` is what supplies them; the linked-document
+   * path has passed them since the Watsons Reach fix and the uploaded-PDF
+   * path never did.
+   */
+  identityHintsByRow: ReadonlyArray<readonly string[]> = [],
 ): Array<string | null> {
   if (!labels.length) return [];
   if (!pageOrderAuthoritative) return labels.map(() => null);
+  const hintsFor = (index: number): readonly string[] => identityHintsByRow[index] ?? [];
 
   /**
    * ONE PROPERTY: the document is that property's, and its record is the page
@@ -102,7 +114,9 @@ export function anchorPdfRowsToPages(
    * heading is INCLUSIONS and whose picture is a bedroom.
    */
   if (labels.length === 1) {
-    const covers = findPropertyCoverPages(pageTexts, labels[0]);
+    // Sole property: its own estate name corroborates, and another lot printed
+    // on the page is context rather than a competitor. See `pageStatesIdentity`.
+    const covers = findPropertyCoverPages(pageTexts, labels[0], hintsFor(0), true);
     if (covers.length === 1) return [pdfPageAnchor(covers[0].page)];
     /*
      * SEVERAL COVERS, ONE PROPERTY — WHICH IS NOT AMBIGUITY.

@@ -1699,11 +1699,34 @@ async function repairPdfUpload(
       ?? (item as unknown as NormalisedStockRecord),
   ));
 
+  /*
+   * THE ROW'S OWN ESTATE AND DESIGN, WHICH THIS PATH NEVER PASSED.
+   *
+   * The linked-document path has handed `stockIdentityHints` and the row's
+   * `house_design` to the election since the Watsons Reach fix — a builder's
+   * flyer identifies a lot the way the estate's marketing does ("Lot 27,
+   * HAVENWOOD") while the row's label carries the street and suburb the
+   * document never mentions, so without them the corroboration test has
+   * nothing to match. The UPLOADED-PDF path passed neither, so a package
+   * uploaded as the stock list was held to a stricter standard than the same
+   * package reached through a link, for no reason anybody chose.
+   */
+  const recordOf = (item: { source_row?: unknown }): NormalisedStockRecord =>
+    (item.source_row as unknown as NormalisedStockRecord | null)
+      ?? (item as unknown as NormalisedStockRecord);
+  const identityHints = existing.map((item) => stockIdentityHints(recordOf(item)));
+  const designs = existing.map((item) => recordOf(item).house_design ?? null);
+  /*
+   * One property in the document means there is nobody else in it to confuse
+   * this property with. See `pageStatesIdentity`.
+   */
+  const soleProperty = existing.length === 1;
+
   const photoPages = input.media
     .map((media) => pdfAnchorPage(media.anchor))
     .filter((page): page is number => page !== null);
   const anchors = anchorPdfRowsToPages(
-    labels, input.pageTexts, photoPages, input.pageOrderAuthoritative);
+    labels, input.pageTexts, photoPages, input.pageOrderAuthoritative, identityHints);
 
   const itemIdByAnchor = new Map<string, string | null>();
   anchors.forEach((anchor, index) => {
@@ -1747,6 +1770,10 @@ async function repairPdfUpload(
     // property's than the upload that created it did.
     {
       labelByItemId: new Map(existing.map((item, index) => [item.id, labels[index]])),
+      identityHintsByItemId: new Map(
+        existing.map((item, index) => [item.id, identityHints[index]])),
+      designByItemId: new Map(existing.map((item, index) => [item.id, designs[index]])),
+      soleProperty,
       pageTexts: input.pageTexts,
       pageOrderAuthoritative: input.pageOrderAuthoritative,
     },

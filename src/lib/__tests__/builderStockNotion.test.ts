@@ -620,3 +620,66 @@ describe('TEST H — non-Notion sources are untouched', () => {
     expect(extractNotionPageId('https://acme.example/stock', '<html></html>')).toBeNull();
   });
 });
+
+// ===========================================================================
+// TEST E — the place a Notion list states inside its title
+// ===========================================================================
+
+/**
+ * A Notion database has no `Suburb` column and no `Postcode` column. It states
+ * both inside the page title, which lands whole in `address_line` — so on the
+ * 10 September 2026 upload of this same page `suburb` and `postcode` were null
+ * on all nineteen rows while every one of them carried the answer.
+ *
+ * Measured across every upload since 6 September: each CSV populated the
+ * suburb on every row, and each Notion import on none.
+ */
+describe('TEST E — the suburb and postcode reach the columns', () => {
+  it('writes what the title states, while the record keeps what the source said', async () => {
+    const matrix = recoverMatrix();
+    const keyed = keyRowsByHeader(parseDelimited(matrixToCsv(matrix)));
+    const { db, writes } = fakeStockDb();
+
+    await importStockRecords(db, {
+      organisationId: 'org-1',
+      uploadId: 'upload-1',
+      builderUserId: 'builder-1',
+      rows: keyed?.rows ?? [],
+      media: [],
+    });
+
+    const items = writes
+      .filter((write) => write.table === 'builder_stock_items')
+      .map((write) => write.row);
+    const kalkallo = items.find((row) => String(row.address_line ?? '')
+      .includes('Lot 60434'));
+
+    expect(kalkallo).toBeTruthy();
+    expect(kalkallo?.suburb).toBe('Kalkallo');
+    expect(kalkallo?.postcode).toBe('3064');
+    expect(kalkallo?.state).toBe('VIC');
+    // The line itself is untouched: it is what the builder wrote, and it is
+    // what a package document is searched for.
+    expect(kalkallo?.address_line).toBe('Lot 60434 - Cloverton Estate, Kalkallo VIC 3064');
+
+    /*
+     * AND THE LOT IS NOT WRITTEN, which is a rule rather than an omission.
+     * It is half of `development + lot/unit + design` and that key is
+     * consulted without the identity guard the anchor gets, so filling it
+     * while the design stays unparsed would key two packages on one lot to
+     * the same property — the collision that once turned 125 rows into 95.
+     */
+    expect(kalkallo?.lot_number).toBeUndefined();
+
+    /*
+     * THE RECORD IS WHAT THE SOURCE SAID. `stockRecordLabel` and
+     * `stockMatchKeys` are built from it — the label a package document is
+     * searched for and the key a re-import matches on — so the parse reaches
+     * the columns a card and a geocoder read and reaches nothing that decides
+     * identity.
+     */
+    const records = importedRecords(matrix);
+    expect(records[0].suburb).toBeNull();
+    expect(records[0].postcode).toBeNull();
+  });
+});

@@ -19,10 +19,12 @@
  *   to `unknown`.
  */
 import {
+  coercePostcode, coerceState,
   developmentUnitMatchKey, normaliseStockRow, stockIdentityHints,
   stockMatchKeys, stockRecordLabel, storedRowDevelopmentUnitKey,
   type NormalisedStockRecord,
 } from './normalise.pure.ts';
+import { parseBuilderAddressLine } from '../builderStockAddress.pure.ts';
 import {
   describeIdentityChange, identityDifferences, stockPropertyIdentity,
   type StockPropertyIdentity,
@@ -271,9 +273,38 @@ function writablePatch(record: NormalisedStockRecord): Record<string, unknown> {
   set('development_name', record.development_name);
   set('project_name', record.project_name);
   set('address_line', record.address_line);
-  set('suburb', record.suburb);
-  set('state', record.state);
-  set('postcode', record.postcode);
+
+  /*
+   * THE PLACE, WHERE THE SOURCE HAD NO COLUMN FOR IT.
+   *
+   * The aliases in `normalise.pure.ts` map a HEADING onto a field, which is
+   * how a spreadsheet states a suburb. A Notion database states it inside the
+   * page title and has no such column, so on the 10 September 2026 list
+   * `suburb` and `postcode` were null on all nineteen rows while every one of
+   * them carried `Beveridge` and `3753` inside `address_line`. Measured over
+   * every upload since 6 September: each CSV populated the suburb on every
+   * row, and each Notion import on none.
+   *
+   * HERE, AND DELIBERATELY NOT IN THE RECORD. `normaliseStockRow` produces
+   * what the SOURCE said, and that record is what `stockRecordLabel` and
+   * `stockMatchKeys` are built from — the label a package document is
+   * searched for, and the key a re-import matches on. Filling the suburb
+   * there changed which PDF in a Drive folder is judged to name a property,
+   * which is a different decision with a different blast radius: a row whose
+   * folder offered two candidate packages became unambiguous and took one.
+   * So the parse reaches the COLUMNS a card and a geocoder read, and reaches
+   * nothing that decides identity.
+   *
+   * ONLY WHAT THE LINE NAMES, and only where the source stated nothing — a
+   * builder who typed a suburb into a column meant it. The lot is left out
+   * for the sharper form of the same rule: it is half of
+   * `development + lot/unit + design`, and that key is consulted without the
+   * identity guard the anchor gets.
+   */
+  const place = parseBuilderAddressLine(record.address_line);
+  set('suburb', record.suburb ?? place.suburb);
+  set('state', record.state ?? coerceState(place.state));
+  set('postcode', record.postcode ?? coercePostcode(place.postcode));
   set('lot_number', record.lot_number);
   set('unit_number', record.unit_number);
   set('bedrooms', record.bedrooms);

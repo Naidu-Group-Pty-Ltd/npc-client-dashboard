@@ -26,7 +26,6 @@ import {
   ExternalLink,
   Cloud,
   RefreshCw,
-  Upload,
   AlertCircle,
   Shield,
   Search,
@@ -58,7 +57,6 @@ import { PlannedIntegrations } from '@/components/integrations/PlannedIntegratio
 import { BrandMark } from '@/components/integrations/BrandMark';
 import { getBrandProfile } from '@/lib/integrations/brandProfiles';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
-import { SUPABASE_PROJECT_REF } from '@/integrations/supabase/env';
 import {
   INTEGRATIONS,
   INTEGRATION_CATEGORIES,
@@ -111,17 +109,6 @@ const brandIdFor = (integrationId: string) => BRAND_ID_OVERRIDES[integrationId] 
 
 const integrations: IntegrationConfig[] = INTEGRATIONS;
 
-/**
- * Where to add the SUPABASE_ACCESS_TOKEN secret. Derived from the project this
- * build actually talks to rather than a ref typed into the page: the literal
- * named the prime's project, so every deployment sent its operator to the
- * PRIME's dashboard, and the ref shipped in the bundle.
- */
-const supabaseFunctionSettingsUrl = SUPABASE_PROJECT_REF
-  ? `https://supabase.com/dashboard/project/${SUPABASE_PROJECT_REF}/settings/functions`
-  : 'https://supabase.com/dashboard/projects';
-
-
 interface SupabaseSecretStatus {
   configured: boolean;
   configuredSecrets: string[];
@@ -138,8 +125,10 @@ export default function Integrations() {
   const [loading, setLoading] = useState(true);
   const [supabaseSecrets, setSupabaseSecrets] = useState<Record<string, SupabaseSecretStatus>>({});
   const [loadingSecrets, setLoadingSecrets] = useState(false);
-  const [syncingToSupabase, setSyncingToSupabase] = useState<string | null>(null);
   const [supabaseSetupRequired, setSupabaseSetupRequired] = useState(false);
+  // What the SERVER said the remedy is. The banner used to assert one, which
+  // was wrong on every clone — see the alert below.
+  const [supabaseSetupHint, setSupabaseSetupHint] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusTab, setStatusTab] = useState('all');
   const [activeCategory, setActiveCategory] = useState<IntegrationCategoryId | 'all'>('all');
@@ -225,6 +214,21 @@ export default function Integrations() {
     setShowPasswords(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
+  /**
+   * Save is the WHOLE act, because a credential has two readers.
+   *
+   * `integration_configs` is what a Workflow Playground step resolves its
+   * credentials from (`_shared/workflow/stepExecutor.ts`). The project's
+   * function environment is what everything else reads —
+   * `Deno.env.get('GOHIGHLEVEL_API_KEY')` and its hundred siblings. Those were
+   * two buttons, and pressing the obvious one delivered a key to neither the
+   * GHL client nor anything else in the product.
+   *
+   * The environment is written FIRST. If that fails there is a real reason and
+   * the operator has to see it; recording the row first would leave a workspace
+   * whose page says "saved" and whose runtime has nothing, which is the state
+   * this replaces.
+   */
   const saveIntegration = async (integrationId: string) => {
     const integration = integrations.find(i => i.id === integrationId);
     if (!integration) return;
@@ -232,7 +236,17 @@ export default function Integrations() {
     setSaving(integrationId);
 
     try {
-      // Save each field for this integration
+      const runtime = await applyToRuntime(integration);
+      if (!runtime.ok) {
+        toast({
+          title: 'Not saved',
+          description: runtime.error,
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Then the row the workflow engine reads. Same values, second store.
       for (const field of integration.fields) {
         const value = values[field.key] || '';
 
@@ -261,15 +275,22 @@ export default function Integrations() {
         }
       }
 
+      // Re-read the environment rather than assuming it. The badge beside the
+      // card is the only reading of the store the product actually runs on.
+      await checkSupabaseSecrets();
+
       toast({
-        title: 'Configuration Saved',
-        description: `${integration.name} settings have been saved successfully.`,
+        title: 'Saved and applied',
+        description: runtime.description(integration.name),
       });
     } catch (error) {
       console.error('Error saving integration:', error);
       toast({
-        title: 'Error',
-        description: 'Failed to save configuration. Please try again.',
+        title: 'Partly saved',
+        description:
+          'The credentials reached this deployment\'s runtime but the workflow record ' +
+          'could not be written. ' +
+          (error instanceof Error ? error.message : 'Please try again.'),
         variant: 'destructive',
       });
     } finally {
@@ -277,72 +298,92 @@ export default function Integrations() {
     }
   };
 
+  type RuntimeOutcome =
+    | { ok: true; description: (name: string) => string }
+    | { ok: false; error: string };
+
+  /**
+   * Put this card's credentials into the environment the runtime reads.
+   *
+   * On a deployment holding its own Supabase management token this writes its
+   * own project. On a clone — which must never hold that token, because it is
+   * account-scoped and reaches every project this organisation owns — the
+   * function brokers the write through Mission Control. Which road it took
+   * comes back as `via`, and is said out loud: "saved" means two different
+   * things and an operator chasing a key that is not taking effect needs to
+   * know which end to ask about.
+   */
+  const applyToRuntime = async (integration: IntegrationConfig): Promise<RuntimeOutcome> => {
+    const secrets = integration.fields
+      .filter(field => values[field.key]?.trim())
+      .map(field => ({
+        name: getSupabaseSecretName(field.key),
+        value: values[field.key].trim(),
+      }));
+
+    if (secrets.length === 0) {
+      /*
+       * Refusing an empty submit is a control, not an obstacle.
+       *
+       * A stored credential is never read back into these boxes — a Supabase
+       * secret cannot be — so the form is empty every time the page loads on a
+       * card that is fully configured. The old Save wrote `key_value: ''` over
+       * every field, which silently cleared the Workflow Playground's copy for
+       * anybody who opened a card and pressed Save without retyping.
+       *
+       * It says so rather than saying "nothing to do", because the other thing
+       * an operator may be attempting here is a deliberate clear, and this
+       * page cannot do that: removing a name from the function environment is
+       * a DELETE against the Management API that neither route performs.
+       */
+      return {
+        ok: false,
+        error:
+          `Enter a value for at least one ${integration.name} field. A saved credential is ` +
+          `never shown back in these boxes, so an empty form is not a request to clear one — ` +
+          `and removing a credential is not something this page does.`,
+      };
+    }
+
+    const { data, error } = await invokeSecureFunction('update-integration-secret', { secrets });
+    if (error) {
+      return { ok: false, error: error.message ?? 'The credentials could not be applied.' };
+    }
+
+    if (data?.setupRequired) {
+      // The REMEDY travels with the refusal now. It used to be hard-coded to
+      // "add a SUPABASE_ACCESS_TOKEN", which on a clone sends an operator to
+      // fetch the one credential this arrangement exists to keep off their
+      // project.
+      setSupabaseSetupHint(data.setupHint ?? data.error ?? null);
+      setSupabaseSetupRequired(true);
+      return { ok: false, error: data.setupHint || data.error || 'This deployment cannot apply credentials.' };
+    }
+
+    if (!data?.success) {
+      return { ok: false, error: data?.error || 'The credentials could not be applied.' };
+    }
+
+    setSupabaseSetupRequired(false);
+    setSupabaseSetupHint(null);
+
+    const applied: string[] = data.updatedSecrets ?? [];
+    const warnings: string[] = data.validationWarnings ?? [];
+    const where =
+      data.via === 'broker'
+        ? 'applied to this workspace through Mission Control'
+        : 'applied to this deployment';
+
+    return {
+      ok: true,
+      description: (name: string) =>
+        `${name}: ${applied.length} credential(s) ${where}.` +
+        (warnings.length > 0 ? ` Not applied — ${warnings.join(' ')}` : ''),
+    };
+  };
+
   // Frontend field key → Supabase secret name mapping lives in the registry.
 
-
-  const syncToSupabase = async (integrationId: string) => {
-    const integration = integrations.find(i => i.id === integrationId);
-    if (!integration) return;
-
-    setSyncingToSupabase(integrationId);
-
-    try {
-      // Collect secrets for this integration
-      const secrets = integration.fields
-        .filter(field => values[field.key]?.trim())
-        .map(field => ({
-          name: getSupabaseSecretName(field.key),
-          value: values[field.key].trim()
-        }));
-
-      if (secrets.length === 0) {
-        toast({
-          title: 'No Values to Sync',
-          description: 'Please enter API key values before syncing to Supabase.',
-          variant: 'destructive',
-        });
-        setSyncingToSupabase(null);
-        return;
-      }
-
-      // Use invokeSecureFunction for cookie-based auth (static import at top)
-      const { data, error } = await invokeSecureFunction('update-integration-secret', { secrets });
-
-      if (error) throw error;
-
-      if (data?.setupRequired) {
-        setSupabaseSetupRequired(true);
-        toast({
-          title: 'Setup Required',
-          description: data.error || 'SUPABASE_ACCESS_TOKEN needs to be configured.',
-          variant: 'destructive',
-        });
-        return;
-      }
-
-      if (!data?.success) {
-        throw new Error(data?.error || 'Failed to sync secrets');
-      }
-
-      toast({
-        title: 'Synced to Supabase',
-        description: `${data.updatedSecrets?.length || 0} secret(s) updated successfully.`,
-      });
-
-      // Refresh the Supabase secrets status
-      await checkSupabaseSecrets();
-
-    } catch (error) {
-      console.error('Error syncing to Supabase:', error);
-      toast({
-        title: 'Sync Failed',
-        description: error instanceof Error ? error.message : 'Failed to sync secrets to Supabase.',
-        variant: 'destructive',
-      });
-    } finally {
-      setSyncingToSupabase(null);
-    }
-  };
 
   const getIntegrationStatus = (integration: IntegrationConfig) => {
     const requiredFields = integration.fields.filter(f => f.required !== false);
@@ -662,32 +703,18 @@ export default function Integrations() {
                 Docs
               </Button>
             )}
+            {/*
+              * One button, because there was never more than one act.
+              *
+              * "Sync to Supabase" used to sit here as a second, unlabelled
+              * icon — and it was the only one of the two that put a credential
+              * where the product reads it, while needing a Supabase management
+              * token no clone may hold. Save performs both halves now.
+              */}
             <div className="flex min-w-0 gap-2 sm:ml-auto">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => syncToSupabase(integration.id)}
-                      disabled={syncingToSupabase === integration.id || saving === integration.id}
-                      className="min-h-10 shrink-0 rounded-xl border-border/70 bg-background/70 transition-all hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-55"
-                    >
-                      {syncingToSupabase === integration.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Upload className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Sync to Supabase Secrets</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
               <Button
                 onClick={() => saveIntegration(integration.id)}
-                disabled={saving === integration.id || syncingToSupabase === integration.id || !canEditIntegrations}
+                disabled={saving === integration.id || !canEditIntegrations}
                 className="min-h-10 min-w-0 flex-1 rounded-xl bg-primary px-4 font-semibold text-primary-foreground shadow-[0_12px_28px_hsl(var(--primary)/0.20)] transition-all hover:bg-primary-hover hover:shadow-[0_16px_34px_hsl(var(--primary)/0.24)] focus-visible:ring-2 focus-visible:ring-primary/45 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none"
               >
                 {saving === integration.id ? (
@@ -791,29 +818,25 @@ export default function Integrations() {
 
       <MarketSourceProbePanel />
 
+      {/*
+        * The remedy comes from the SERVER, because there are two of them and
+        * they are opposites.
+        *
+        * This banner used to say "add a SUPABASE_ACCESS_TOKEN" whatever had
+        * happened. On a clone that is precisely wrong: a Supabase personal
+        * access token is scoped to an ACCOUNT and reaches every project this
+        * organisation owns, which is why no clone holds one and why the write
+        * is brokered through Mission Control instead. Telling a tenant to go
+        * and fetch one sends them after the single credential the whole
+        * arrangement exists to keep off their project.
+        */}
       {supabaseSetupRequired && (
         <Alert className="min-w-0 rounded-2xl border-brand-400/40 bg-brand-500/10 shadow-sm">
           <AlertCircle className="h-4 w-4 text-brand-500" />
           <AlertDescription className="text-sm">
-            <span className="font-medium">Supabase Access Token Required:</span> To sync API keys to Supabase secrets,
-            add a <code className="bg-muted px-1 rounded">SUPABASE_ACCESS_TOKEN</code> secret in your{' '}
-            <a
-              href={supabaseFunctionSettingsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-sm text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
-            >
-              Supabase dashboard
-            </a>.
-            Get your token from{' '}
-            <a
-              href="https://supabase.com/dashboard/account/tokens"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-sm text-primary underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/45"
-            >
-              Account → Access Tokens
-            </a>.
+            <span className="font-medium">Credentials cannot be applied yet:</span>{' '}
+            {supabaseSetupHint ??
+              'This deployment could not say where to write a credential. Check its Mission Control link.'}
           </AlertDescription>
         </Alert>
       )}

@@ -3,6 +3,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import {
+  admissibleInputs,
+  claimPermits,
+  policyStamp,
+  PRODUCTION_SCORING_AUTHORITY,
+  type ClaimPermits,
+  NOT_ASSESSED_REASON,
+  OVERALL_GRADE_UNAVAILABLE,
+  type ScoredDimension,
+  type ScoringPolicyStamp,
+} from '../_shared/reports/market/scoringInputPolicy.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -27,6 +38,19 @@ interface InvestmentScoringInput {
   lvr?: number;
   state?: string;
   propertyType?: string;
+  /**
+   * Inputs verified for this property, by name — **internal and test use only.**
+   *
+   * It widens what a dimension may COUNT and does nothing to who may GRADE:
+   * the scoring authority is decided separately, so verifying inputs can never
+   * make the legacy methodology authoritative again. Genuinely trusted evidence
+   * is destined for Scoring V2 after an explicit activation, not for V1.
+   *
+   * Not propagated by the live request path: `transformInputData` rebuilds the
+   * nested request shape field by field and does not carry this through, and no
+   * caller sets it. Present so the policy can be exercised directly.
+   */
+  verifiedInputs?: string[];
 }
 
 interface DimensionScore {
@@ -62,6 +86,14 @@ interface InvestmentScore {
   weaknesses: string[];
   opportunities: string[];
   risks: string[];
+  /** How this run decided what could count, and whether a grade was issued. */
+  policy?: ScoringPolicyStamp;
+  /** The client-facing statement where no grade may be issued; null when one was. */
+  evidenceStatement?: { heading: string; value: string; explanation: string } | null;
+  /** Per-dimension reason, in the client's words, for each dimension not assessed. */
+  notAssessed?: Record<string, string>;
+  /** What the record offered before the policy ruled, for the audit trail. */
+  dataPointsPresented?: Record<string, string[]>;
 }
 
 // Minimum number of dimensions required to publish a quantitative headline score.
@@ -616,12 +648,37 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
   if (hasNum(input.daysOnMarket)) riskPoints.push('daysOnMarket');
   if (hasNum(input.priceGrowth1Year)) riskPoints.push('priceGrowth1Year');
 
+  // The forward-only policy decides what may actually count. An input is
+  // admitted only when the dimension OWNS it and it is either operator-entered
+  // or declared verified — so a per-state walk-score template, a fabricated
+  // commute and a buyer's own leverage all stop reaching a property grade.
+  // Refused inputs remain visible in `dataPointsPresented` for the audit trail.
+  const verified = Array.isArray(input.verifiedInputs) ? input.verifiedInputs : [];
+  const admitted = (dimension: ScoredDimension, presented: string[]) =>
+    admissibleInputs(dimension, presented, verified);
+
+  const yieldAdmitted = admitted('yield', yieldPoints);
+  const growthAdmitted = admitted('growth', growthPoints);
+  const locationAdmitted = admitted('location', locationPoints);
+  const demandAdmitted = admitted('demand', demandPoints);
+  const riskAdmitted = admitted('risk', riskPoints);
+
+  // Yield still needs BOTH price and rent; the policy narrows what may be
+  // counted, it never relaxes a dimension's own requirement.
+  const yieldStillHasData = yieldHasData
+    && yieldAdmitted.includes('propertyPrice') && yieldAdmitted.includes('weeklyRent');
+
   const dims = {
-    yieldScore: { ...yieldScore, hasData: yieldHasData, dataPoints: yieldPoints },
-    growthScore: { ...growthScore, hasData: growthPoints.length > 0, dataPoints: growthPoints },
-    locationScore: { ...locationScore, hasData: locationPoints.length > 0, dataPoints: locationPoints },
-    demandScore: { ...demandScore, hasData: demandPoints.length > 0, dataPoints: demandPoints },
-    riskScore: { ...riskScore, hasData: riskPoints.length > 0, dataPoints: riskPoints },
+    yieldScore: { ...yieldScore, hasData: yieldStillHasData, dataPoints: yieldAdmitted },
+    growthScore: { ...growthScore, hasData: growthAdmitted.length > 0, dataPoints: growthAdmitted },
+    locationScore: { ...locationScore, hasData: locationAdmitted.length > 0, dataPoints: locationAdmitted },
+    demandScore: { ...demandScore, hasData: demandAdmitted.length > 0, dataPoints: demandAdmitted },
+    riskScore: { ...riskScore, hasData: riskAdmitted.length > 0, dataPoints: riskAdmitted },
+  };
+
+  const presentedByDimension: Record<string, string[]> = {
+    yieldScore: yieldPoints, growthScore: growthPoints, locationScore: locationPoints,
+    demandScore: demandPoints, riskScore: riskPoints,
   };
 
   const weights = {
@@ -632,20 +689,66 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
     riskScore: 0.05,
   };
 
-  const { totalScore, breakdown, coverage } = aggregateDimensions(dims, weights);
+  const { totalScore: computedTotal, breakdown, coverage } = aggregateDimensions(dims, weights);
 
-  const { grade, recommendation } = coverage.dataInsufficient
-    ? { grade: 'N/A', recommendation: 'Insufficient quantitative data for a headline grade — qualitative SWOT below' }
-    : determineGradeAndRecommendation(totalScore as number, input);
+  const measuredNow = (Object.keys(dims) as Array<keyof typeof dims>)
+    .filter((k) => dims[k].hasData)
+    .map((k) => k.replace(/Score$/, '') as ScoredDimension);
 
-  // Analyze SWOT (always — qualitative output works even with sparse data)
+  // The authority decides WHICH ENGINE may publish a grade, before any question
+  // of whether the evidence would support one. Gating inputs alone left a
+  // trapdoor: verify three of them later and the legacy methodology becomes the
+  // production grade engine again without anyone deciding that it should.
+  const policy = policyStamp(
+    measuredNow, !coverage.dataInsufficient, new Date(), PRODUCTION_SCORING_AUTHORITY,
+  );
+
+  // No authorised engine means no overall figure at all — a composite from an
+  // unauthorised methodology is the same claim as its grade.
+  const totalScore = policy.gradeIssued ? computedTotal : null;
+  const { grade, recommendation } = policy.gradeIssued
+    ? determineGradeAndRecommendation(computedTotal as number, input)
+    : {
+        grade: 'N/A',
+        recommendation: OVERALL_GRADE_UNAVAILABLE.explanation,
+      };
+
+  // Analyze SWOT. Qualitative output still works on sparse data — but a claim
+  // that restates an unauthorised assessment is withheld with the number it
+  // restates, so the authority boundary cannot be walked around in prose.
+  const permits = claimPermits({
+    authority: policy.authority,
+    measuredDimensions: policy.measuredDimensions,
+    admittedInputs: [
+      ...yieldAdmitted, ...growthAdmitted, ...locationAdmitted,
+      ...demandAdmitted, ...riskAdmitted,
+    ],
+  });
   const { strengths, weaknesses, opportunities, risks } = analyzeSWOT(input, {
     yieldScore,
     growthScore,
     locationScore,
     demandScore,
     riskScore,
-  });
+  }, permits);
+
+  // What a client is told where no grade may be issued, and why each absent
+  // dimension is absent. Composed once here so the viewer, the PDF and the
+  // stored row cannot disagree about it.
+  const evidenceStatement = !policy.gradeIssued
+    ? {
+        heading: OVERALL_GRADE_UNAVAILABLE.heading,
+        value: OVERALL_GRADE_UNAVAILABLE.value,
+        explanation: OVERALL_GRADE_UNAVAILABLE.explanation,
+      }
+    : null;
+  const notAssessed = (Object.keys(dims) as Array<keyof typeof dims>)
+    .filter((k) => !dims[k].hasData)
+    .reduce<Record<string, string>>((acc, k) => {
+      const dim = k.replace(/Score$/, '') as ScoredDimension;
+      acc[dim] = NOT_ASSESSED_REASON[dim];
+      return acc;
+    }, {});
 
   return {
     totalScore,
@@ -657,6 +760,10 @@ function calculateInvestmentScore(input: InvestmentScoringInput): InvestmentScor
     weaknesses,
     opportunities,
     risks,
+    policy,
+    evidenceStatement,
+    notAssessed,
+    dataPointsPresented: presentedByDimension,
   };
 }
 
@@ -1095,67 +1202,86 @@ function determineGradeAndRecommendation(score: number, input: InvestmentScoring
   return { grade, recommendation };
 }
 
-function analyzeSWOT(input: InvestmentScoringInput, scores: any) {
+/**
+ * The qualitative reading — every claim gated by what may actually be said.
+ *
+ * `permits` decides per claim, because the claims have different sources: some
+ * restate a dimension score, some restate an input, and some restate a fact the
+ * operator supplied. Only the last kind survives when no methodology is
+ * authorised. See `claimPermits` for why a sentence is an assessment.
+ */
+function analyzeSWOT(input: InvestmentScoringInput, scores: any, permits: ClaimPermits) {
   const strengths: string[] = [];
   const weaknesses: string[] = [];
   const opportunities: string[] = [];
   const risks: string[] = [];
 
   // Strengths
-  if (scores.yieldScore.score >= 70) {
+  if (permits.fromDimensionScore('yield') && scores.yieldScore.score >= 70) {
     strengths.push('Strong rental yield providing good cash flow');
   }
-  if (scores.growthScore.score >= 70) {
+  if (permits.fromDimensionScore('growth') && scores.growthScore.score >= 70) {
     strengths.push('Solid capital growth track record');
   }
-  if (scores.locationScore.score >= 70) {
+  if (permits.fromDimensionScore('location') && scores.locationScore.score >= 70) {
     strengths.push('Excellent location with strong amenities');
   }
-  if (input.walkScore && input.walkScore >= 80) {
+  if (permits.fromInput('walkScore') && input.walkScore && input.walkScore >= 80) {
     strengths.push('High walkability score enhancing liveability');
   }
 
   // Weaknesses
-  if (scores.yieldScore.score < 50) {
+  if (permits.fromDimensionScore('yield') && scores.yieldScore.score < 50) {
     weaknesses.push('Below average rental yield may require owner contribution');
   }
-  if (scores.growthScore.score < 50) {
+  if (permits.fromDimensionScore('growth') && scores.growthScore.score < 50) {
     weaknesses.push('Limited historical capital growth');
   }
-  if (input.lvr && input.lvr > 80) {
+  // Buyer leverage is owned by `finance` and admitted to NO dimension, so this
+  // never fires — by design. A borrowing position is not a property weakness:
+  // it belongs to Finance Suitability and the financial analysis, where the
+  // figure itself remains fully available. Kept here, permanently gated,
+  // because deleting it would hide that the decision was made.
+  if (permits.fromInput('lvr') && input.lvr && input.lvr > 80) {
     weaknesses.push('High leverage increases financial risk');
   }
-  if (input.vacancyRate && input.vacancyRate > 4) {
+  if (permits.fromInput('vacancyRate') && input.vacancyRate && input.vacancyRate > 4) {
     weaknesses.push('Higher than ideal vacancy rate in the area');
   }
 
   // Opportunities
-  if (input.populationGrowth && input.populationGrowth > 2) {
+  if (permits.fromInput('populationGrowth') && input.populationGrowth && input.populationGrowth > 2) {
     opportunities.push('Strong population growth driving future demand');
   }
-  if (input.medianSuburbPrice && input.propertyPrice < input.medianSuburbPrice * 0.9) {
+  if (permits.fromInput('medianSuburbPrice')
+      && input.medianSuburbPrice && input.propertyPrice < input.medianSuburbPrice * 0.9) {
     opportunities.push('Priced below suburb median - potential for value appreciation');
   }
-  if (input.unemploymentRate && input.unemploymentRate < 3.5) {
+  if (permits.fromInput('unemploymentRate') && input.unemploymentRate && input.unemploymentRate < 3.5) {
     opportunities.push('Low unemployment supporting rental demand');
   }
-  if (scores.locationScore.score >= 70 && scores.yieldScore.score < 60) {
+  if (permits.fromDimensionScore('location') && permits.fromDimensionScore('yield')
+      && scores.locationScore.score >= 70 && scores.yieldScore.score < 60) {
     opportunities.push('Strong location may drive future capital growth');
   }
 
   // Risks
-  if (input.priceGrowth1Year && input.priceGrowth1Year > 15) {
+  if (permits.fromInput('priceGrowth1Year') && input.priceGrowth1Year && input.priceGrowth1Year > 15) {
     risks.push('Rapid recent price growth may indicate market cooling ahead');
   }
-  if (input.cashFlow && input.cashFlow < -150) {
+  // Holding cash flow is likewise the buyer's, owned by `finance` and admitted
+  // to no dimension, so this never fires either. The figure belongs to the
+  // holding analysis, not to a verdict about the asset.
+  if (permits.fromInput('cashFlow') && input.cashFlow && input.cashFlow < -150) {
     risks.push('Significant negative cash flow requiring ongoing funding');
   }
-  if (input.daysOnMarket && input.daysOnMarket > 80) {
+  if (permits.fromInput('daysOnMarket') && input.daysOnMarket && input.daysOnMarket > 80) {
     risks.push('Extended selling times may indicate softer market');
   }
-  if (input.propertyType === 'unit' && input.state && ['VIC', 'QLD'].includes(input.state)) {
-    risks.push('Unit market in this state may face oversupply challenges');
-  }
+  // Dwelling type and state are not scoring inputs and never carry a verdict:
+  // the property type selects a risk schema and contributes nothing, and there
+  // is no state premium. This claim is exactly that verdict in words, so it is
+  // withheld unless a future methodology earns it through a classified input.
 
   return { strengths, weaknesses, opportunities, risks };
 }

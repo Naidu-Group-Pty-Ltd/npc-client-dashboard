@@ -10,6 +10,11 @@ import type { CrimeSeriesRow } from '../_shared/crimeIngest.pure.ts';
 import {
   nswCrimeReading, ntCrimeReading, qldCrimeReading, saCrimeReading, stateContextFrom,
 } from '../_shared/crimeReading.pure.ts';
+import {
+  ADMISSION_REFUSAL_NOTE,
+  admitPopulationForArea,
+  type AdmittedPopulation,
+} from '../_shared/crimePopulationAdmission.pure.ts';
 
 /**
  * Recorded crime statistics — from the police services' own published
@@ -61,6 +66,13 @@ Deno.serve(async (req) => {
     const __parsed = await parseJsonBody(req, CrimeStatisticsRequest, corsHeaders, PUBLIC_SERVICE_MAX_BODY_BYTES);
     if (!__parsed.ok) return __parsed.response;
     const { suburb, state, postcode, lga } = __parsed.data;
+    // RF-7.2B.1B0-F4 — the denominator arrives as ADMITTED EVIDENCE or not at
+    // all. This service used to look `abs_census_poa.population` up itself, on
+    // whatever postcode it was handed; when the report's geography was
+    // unresolved that was the untrusted postcode scraped from the address, and
+    // it restored a population the Client-Safe Gate had withheld. Nothing here
+    // reads a population table any more.
+    const population = (__parsed.data as { population?: AdmittedPopulation }).population ?? null;
     console.log('Crime statistics requested for:', { suburb, state, postcode, lga });
 
     const stateCode = normaliseAuState(state);
@@ -111,19 +123,26 @@ Deno.serve(async (req) => {
           `The BOCSAR postcode dataset holds no rows for ${poa} — recorded-crime figures are unavailable for this postal area rather than borrowed from a neighbour.`);
       }
       const stateRows = await rowsFor('NSW', 'state_total');
-      const [{ data: poaRow }, { data: bench }] = await Promise.all([
-        supabase.from('abs_census_poa').select('population').eq('poa', poa).maybeSingle(),
-        supabase.from('crime_state_benchmarks').select('total12, population, rate_per_100k, denominator').eq('state', 'NSW').maybeSingle(),
-      ]);
+      const { data: bench } = await supabase.from('crime_state_benchmarks')
+        .select('total12, population, rate_per_100k, denominator').eq('state', 'NSW').maybeSingle();
+      const admission = admitPopulationForArea(population, 'postcode', poa);
+      if (admission.refusedBecause) {
+        console.log(`[crime] NSW ${poa}: no per-capita rate — `
+          + ADMISSION_REFUSAL_NOTE[admission.refusedBecause]);
+      }
       const reading = nswCrimeReading(
         rows as CrimeSeriesRow[],
         poa,
         rows[0].source,
         {
-          area: poaRow?.population ?? null,
+          area: admission.value,
           state: (bench?.population as number | null) ?? null,
-          vintage: '2021 Census usual residents (POA); the state rate uses ' +
-            ((bench?.denominator as string | null) ?? 'no stated denominator'),
+          vintage: admission.admitted
+            ? `${admission.admitted.vintage} (${admission.admitted.source}, ${admission.admitted.geography}); `
+              + 'the state rate uses '
+              + ((bench?.denominator as string | null) ?? 'no stated denominator')
+            : 'no admitted area population; the state rate uses '
+              + ((bench?.denominator as string | null) ?? 'no stated denominator'),
         },
         (bench?.total12 as number | null) ?? null,
         stateContextFrom(stateRows as CrimeSeriesRow[], 'NSW'),
@@ -192,14 +211,22 @@ Deno.serve(async (req) => {
       }
       const stateRows = await rowsFor('SA', 'state_total');
       const bench = await benchmarkFor('SA');
-      const { data: poaPop } = await supabase.from('abs_census_poa').select('population').eq('poa', area).maybeSingle();
+      const saAdmission = admitPopulationForArea(population, 'postcode', area);
+      if (saAdmission.refusedBecause) {
+        console.log(`[crime] SA ${area}: no per-capita rate — `
+          + ADMISSION_REFUSAL_NOTE[saAdmission.refusedBecause]);
+      }
       const reading = saCrimeReading(
         rows, area, rows[0].source,
         {
-          area: (poaPop?.population as number | null) ?? null,
+          area: saAdmission.value,
           state: (bench?.population as number | null) ?? null,
-          vintage: '2021 Census usual residents (POA); the state rate uses ' +
-            ((bench?.denominator as string | null) ?? 'no stated denominator'),
+          vintage: saAdmission.admitted
+            ? `${saAdmission.admitted.vintage} (${saAdmission.admitted.source}, `
+              + `${saAdmission.admitted.geography}); the state rate uses `
+              + ((bench?.denominator as string | null) ?? 'no stated denominator')
+            : 'no admitted area population; the state rate uses '
+              + ((bench?.denominator as string | null) ?? 'no stated denominator'),
         },
         (bench?.total12 as number | null) ?? null,
         stateContextFrom(stateRows, 'SA'),

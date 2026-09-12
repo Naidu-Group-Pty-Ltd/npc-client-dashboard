@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { calculateStampDuty } from '../_shared/stampDuty/engine.pure.ts';
+import { AUSTRALIAN_STATES, type AustralianState } from '../_shared/stampDuty/types.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -91,30 +93,62 @@ Deno.serve(async (req) => {
 function validateFinancialCalculations(input: ValidationInput): ValidationFlag[] {
   const flags: ValidationFlag[] = [];
 
-  // 1. STAMP DUTY VALIDATION (2-7% of property value depending on state and value)
-  const stampDutyPercentage = (input.stampDuty / input.propertyValue) * 100;
-  const expectedStampDutyRange = getExpectedStampDutyRange(input.propertyValue, input.state);
-  
-  if (stampDutyPercentage < expectedStampDutyRange.min || stampDutyPercentage > expectedStampDutyRange.max) {
-    flags.push({
-      type: 'error',
-      severity: 'critical',
-      field: 'stamp_duty',
-      message: `Stamp duty of ${stampDutyPercentage.toFixed(2)}% is outside expected range for ${input.state}`,
-      value: input.stampDuty,
-      expected_range: `${expectedStampDutyRange.min.toFixed(2)}% - ${expectedStampDutyRange.max.toFixed(2)}% (${Math.round(input.propertyValue * expectedStampDutyRange.min / 100)} - ${Math.round(input.propertyValue * expectedStampDutyRange.max / 100)})`,
-      recommendation: 'Verify stamp duty calculation uses correct progressive brackets for this state and property value'
+  // 1. STAMP DUTY — measured against the CANONICAL schedule, not a band
+  //
+  // RF-7.2B.1B0. This used to judge duty against a hand-written table of
+  // percentage bands kept in this file, which is a second implementation of a
+  // figure CLAUDE.md says lives in exactly one place. The two disagreed
+  // constantly, and the band was the one that was wrong: a stored NSW duty of
+  // $19,162 on $555,000 — 3.453%, the canonical 2026-27 answer to the dollar —
+  // fell below this file's own 3.5% floor and was flagged `critical` with the
+  // recommendation "verify stamp duty calculation uses correct progressive
+  // brackets", against a calculation that had used them.
+  //
+  // Swept against the engine over $150k-$2m in $10k steps: NSW 117 of 186
+  // prices spuriously critical (62.9%, from $300k to $1.87m), ACT 42, QLD 19,
+  // NT 16, VIC 5. Each one cost 20 points of the quality score.
+  //
+  // Duty in this product is produced by `_shared/stampDuty`, so comparing
+  // against that engine is comparing like with like and a real difference is a
+  // real defect. The tolerance is for ROUNDING only — deliberately tight,
+  // because widening a tolerance until it stops complaining is how a check
+  // stops checking.
+  const dutyState = AUSTRALIAN_STATES.includes(String(input.state ?? '').toUpperCase() as AustralianState)
+    ? String(input.state).toUpperCase() as AustralianState
+    : null;
+  if (dutyState && input.propertyValue > 0) {
+    const canonical = calculateStampDuty({
+      propertyValue: input.propertyValue,
+      state: dutyState,
+      // Investment reports. The engine's own note: no Australian jurisdiction
+      // levies a separate investor surcharge at acquisition — the investor
+      // position is expressed by WHICH SCALE applies, not by an add-on.
+      intent: 'investor',
+      category: 'established',
     });
-  } else if (Math.abs(stampDutyPercentage - expectedStampDutyRange.typical) > 0.5) {
-    flags.push({
-      type: 'warning',
-      severity: 'medium',
-      field: 'stamp_duty',
-      message: `Stamp duty of ${stampDutyPercentage.toFixed(2)}% differs from typical ${expectedStampDutyRange.typical.toFixed(2)}% for ${input.state}`,
-      value: input.stampDuty,
-      expected_range: `Typical: ${expectedStampDutyRange.typical.toFixed(2)}%`,
-      recommendation: 'Review if property qualifies for concessions or exemptions'
-    });
+    // A state with no loaded schedule assesses zero; that is a fact about the
+    // schedule table, not a finding about this report's arithmetic.
+    if (canonical.totalDuty > 0) {
+      const difference = Math.abs(input.stampDuty - canonical.totalDuty);
+      const tolerance = Math.max(2, canonical.totalDuty * 0.001);
+      if (difference > tolerance) {
+        flags.push({
+          type: 'error',
+          severity: 'critical',
+          field: 'stamp_duty',
+          message:
+            `Stamp duty of $${Math.round(input.stampDuty).toLocaleString('en-AU')} does not match the `
+            + `${canonical.scheduleYear} ${dutyState} schedule, which assesses `
+            + `$${Math.round(canonical.totalDuty).toLocaleString('en-AU')} on a purchase price of `
+            + `$${Math.round(input.propertyValue).toLocaleString('en-AU')}`,
+          value: input.stampDuty,
+          expected_range: `$${Math.round(canonical.totalDuty).toLocaleString('en-AU')} (${dutyState} ${canonical.scheduleYear})`,
+          recommendation:
+            'Recalculate through the canonical stamp-duty engine, or record the concession or '
+            + 'surcharge that explains the difference.',
+        });
+      }
+    }
   }
 
   // 2. COUNCIL RATES VALIDATION ($1,000 - $5,000 typical range for residential)
@@ -235,44 +269,6 @@ function validateFinancialCalculations(input: ValidationInput): ValidationFlag[]
   return flags;
 }
 
-function getExpectedStampDutyRange(propertyValue: number, state: string): { min: number; max: number; typical: number } {
-  // Returns expected stamp duty as percentage of property value
-  // Based on progressive bracket structures for each state
-  
-  const ranges: { [key: string]: { min: number; max: number; typical: number } } = {
-    'NSW': propertyValue < 300000 
-      ? { min: 1.0, max: 3.5, typical: 2.5 }
-      : propertyValue < 1000000
-        ? { min: 3.5, max: 4.5, typical: 4.0 }
-        : { min: 4.5, max: 7.0, typical: 5.5 },
-    
-    'VIC': propertyValue < 250000
-      ? { min: 2.0, max: 3.5, typical: 2.8 }
-      : propertyValue < 960000
-        ? { min: 3.5, max: 5.5, typical: 4.5 }
-        : { min: 5.5, max: 6.5, typical: 5.5 },
-    
-    'QLD': propertyValue < 350000
-      ? { min: 1.0, max: 3.0, typical: 2.0 }
-      : propertyValue < 540000
-        ? { min: 2.5, max: 4.0, typical: 3.25 }
-        : { min: 3.5, max: 5.5, typical: 4.5 },
-    
-    'WA': propertyValue < 500000
-      ? { min: 2.0, max: 4.0, typical: 3.0 }
-      : { min: 3.5, max: 5.0, typical: 4.0 },
-    
-    'SA': propertyValue < 500000
-      ? { min: 2.5, max: 4.5, typical: 3.5 }
-      : { min: 4.0, max: 6.0, typical: 4.75 },
-    
-    'TAS': { min: 2.0, max: 4.5, typical: 3.5 },
-    'NT': { min: 3.5, max: 6.0, typical: 4.5 },
-    'ACT': { min: 2.5, max: 5.0, typical: 3.5 }
-  };
-
-  return ranges[state.toUpperCase()] || ranges['NSW'];
-}
 
 function calculateQualityScore(flags: ValidationFlag[]): number {
   let score = 100;

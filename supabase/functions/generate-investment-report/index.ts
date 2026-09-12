@@ -15,6 +15,15 @@ import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.t
 import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts';
 import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
+import {
+  assessEnrichmentReuse,
+  nextAcquisitionAttempt,
+  recordAcquisitionAttempt,
+} from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import {
+  resolveCrimePostcodeAuthority,
+  CRIME_EVIDENCE_WITHHELD_NOTE,
+} from '../_shared/reports/location/crimePostcodeAuthority.pure.ts';
 import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
 import {
   auditGovernedNarrativeAuthority,
@@ -2072,6 +2081,15 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // Initialize Supabase client for database updates
     let supabaseClient = null;
     let existingManualOverrides = null;
+    /**
+     * RF-7.2B.1B1 — did this run REUSE the banked location enrichment, or buy
+     * a fresh one? Declared at handler scope because the enrichment decision and
+     * the early write are thousands of lines apart, and the write needs to know:
+     * a reused object must not be rewritten, a re-acquired one must be, or its
+     * incremented attempt count never persists and the bounded retry never
+     * reaches its bound.
+     */
+    let locationEnrichmentReused = false;
     // Track which enhanced fields are already persisted on the report (so we don't overwrite them)
     let existingEnhancedFields: {
       investmentScore?: any;
@@ -2485,6 +2503,31 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     let postcode = detectedPostcode;
     let state = detectedState || 'NSW';
     let suburb = detectedSuburb;
+
+    // RF-7.2B.1B1 — which postcode may SELECT client-facing crime evidence.
+    //
+    // `detectedPostcode` is `propertyAddress.match(/\b(\d{4})\b/)` — the first
+    // four-digit token in a free-text string, which cannot tell a postcode from
+    // a builder-stock lot number and has no way to say it is unsure.
+    // `propertyDetails.postcode` is a field the caller filled in; the generator
+    // has always received it and logged it, and has never read it for this.
+    //
+    // The geography is not resolved yet at intake, and tracing every production
+    // origin of `propertyDetails.postcode` proved it is NOT independently
+    // structured — `auto-report-webhook` falls through to an address parse, a
+    // suburb-name database lookup and a hardcoded suburb table. So nothing is
+    // trusted at intake today and this call does not go out; the condition is
+    // computed rather than hardcoded so a genuinely authoritative origin would
+    // re-enable it without another change here.
+    //
+    // Deliberately narrow: this decides which AREA is described, and never
+    // touches F4, which decides whether a rate may be divided at all.
+    const crimePostcodeAtIntake = resolveCrimePostcodeAuthority({
+      structuredPostcode: propertyDetails?.postcode,
+      freeTextPostcode: detectedPostcode,
+      state,
+    });
+    console.log(`🔎 Crime evidence postcode at intake: ${crimePostcodeAtIntake.note}`);
     
     try {
       // Use detected values from earlier, or extract from formatted input
@@ -2590,18 +2633,38 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }) : Promise.resolve({ success: false, serviceName: 'abs-seifa-service', error: 'Missing postcode' }),
 
         // 5. Crime statistics
-        (suburb && state) ? fetchServiceWithFallback('crime-statistics-service', async () => {
+        //
+        // RF-7.2B.1B1 — keyed on a postcode whose PROVENANCE is trusted, never
+        // on `propertyAddress.match(/\b(\d{4})\b/)`. That expression takes the
+        // first four-digit token in the address, which for builder stock is the
+        // LOT number: measured over the corpus, 30 of 418 addresses parse the
+        // wrong token and 17 of those land on a real postcode ("Lot 2267 Hunza
+        // Road, Truganina, VIC 3029" parses 2267, which is in NSW). Nothing was
+        // ever served wrong only because the crime service also filters on
+        // state and no Victorian register is loaded — containment by accident,
+        // which stops the day VIC loads.
+        //
+        // The geography has not been resolved at this point in the run, so the
+        // only trusted source available here is a STRUCTURED postcode the caller
+        // supplied as a field. Where there is none this call does not go out at
+        // all, and the re-key below picks it up once the coordinate lands.
+        (suburb && state && crimePostcodeAtIntake.trusted)
+          ? fetchServiceWithFallback('crime-statistics-service', async () => {
           const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ suburb, state, postcode })
+            body: JSON.stringify({ suburb, state, postcode: crimePostcodeAtIntake.postcode })
           }, 30000, 'crime-statistics-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
           }
           return null;
-        }) : Promise.resolve({ success: false, serviceName: 'crime-statistics-service', error: 'Missing suburb/state' }),
+        }) : Promise.resolve({
+          success: false,
+          serviceName: 'crime-statistics-service',
+          error: suburb && state ? crimePostcodeAtIntake.note : 'Missing suburb/state',
+        }),
 
         // 6. Employment data
         state ? fetchServiceWithFallback('abs-employment-service', async () => {
@@ -2868,9 +2931,44 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      // ==================================================================
+      // RF-7.2B.1B1 — a deterministic enrichment is bought ONCE per report
+      // ==================================================================
+      // This block used to run on every resume. `existingEnhancedFields.
+      // locationIntelligence` was read only when deciding what to WRITE, so the
+      // fetch was unguarded — and one enrichment is EIGHT Google calls (1
+      // geocode + 6 Places Nearby + 1 Distance Matrix, confirmed by the
+      // production ledger's exact 6:1 Places:DistanceMatrix ratio). The
+      // 2026-09-12 health check resumed eleven times; on a working geocode that
+      // is 88 calls for one report, 80 of them re-buying an answer that cannot
+      // change, because the property does not move between resumes.
+      //
+      // Reuse is refused unless the stored object can PROVE it describes this
+      // subject: the acquisition stamp names the address, postcode and state it
+      // was acquired for, and every row written before this change has no stamp
+      // and therefore re-fetches exactly as it does today. A failed enrichment
+      // is never persisted in the first place (`success: false` carries no
+      // `data`), so this can never freeze the live F1 outage into place.
+      const enrichmentSubject = {
+        address: formattedInput,
+        postcode,
+        state,
+      };
+      const reuse = assessEnrichmentReuse(
+        existingEnhancedFields.locationIntelligence,
+        enrichmentSubject,
+      );
+      if (reuse.reuse) {
+        locationEnrichmentReused = true;
+        enhancedData = {
+          ...enhancedData,
+          locationIntelligence: existingEnhancedFields.locationIntelligence,
+        };
+        console.log(`♻️ ${reuse.note}`);
+      } else {
       // Fetch location intelligence data
       try {
-        console.log('Fetching location intelligence for:', formattedInput);
+        console.log(`Fetching location intelligence for: ${formattedInput} (${reuse.verdict})`);
         const locationResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
           method: 'POST',
           headers: {
@@ -2889,7 +2987,20 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           const locationData = await locationResponse.json();
           
           if (locationData.success && locationData.data) {
-            enhancedData = { ...enhancedData, locationIntelligence: locationData.data };
+            // RF-7.2B.1B1 — carry the attempt count forward. A partial
+            // acquisition is retried a bounded number of times and then
+            // accepted, so a persistently failing amenity category cannot
+            // re-buy all eight calls on every remaining resume.
+            enhancedData = {
+              ...enhancedData,
+              locationIntelligence: recordAcquisitionAttempt(
+                locationData.data,
+                nextAcquisitionAttempt(
+                  existingEnhancedFields.locationIntelligence,
+                  enrichmentSubject,
+                ),
+              ),
+            };
             console.log('✓ Location intelligence data fetched successfully');
             
             if (locationData.usingMockData) {
@@ -2904,6 +3015,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       } catch (error: any) {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
+      }
       }
 
       // ======================================================================
@@ -3074,6 +3186,49 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         && Number.isFinite(admittedPop.total) && admittedPop.total > 0
         ? admittedPop.total
         : null;
+      // RF-7.2B.1B1 — now the coordinate has landed, the canonical POA outranks
+      // whatever intake had. Two things follow, and they are separate from F4:
+      // this decides WHICH AREA the counts describe, F4 decides whether they may
+      // be DIVIDED by a population.
+      const crimeAuthority = resolveCrimePostcodeAuthority({
+        geographyPostcode: crimePoa,
+        structuredPostcode: propertyDetails?.postcode,
+        freeTextPostcode: detectedPostcode,
+        state,
+      });
+      if (crimeAuthority.trusted
+        && crimeAuthority.postcode !== crimePostcodeAtIntake.postcode) {
+        // Either intake had nothing trusted and now we do, or the POA disagrees
+        // with the structured field. Counts only — the rate, if it is owed, is
+        // added by the admitted-population call below.
+        try {
+          const recount = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              suburb: typeof subjectGeography?.suburb === 'string' ? subjectGeography.suburb : suburb,
+              state,
+              postcode: crimeAuthority.postcode,
+            }),
+          }, 20000, 'crime-statistics-service');
+          if (recount.ok) {
+            const body = await recount.json();
+            if (body?.success && body.data) {
+              enhancedData = { ...enhancedData, crimeStatistics: body.data };
+              console.log(`📍 ${crimeAuthority.note}`);
+            }
+          }
+        } catch (error: any) {
+          console.warn('⚠️ Crime re-key skipped:', error?.message?.substring(0, 80));
+        }
+      } else if (!crimeAuthority.trusted && enhancedData.crimeStatistics) {
+        // Nothing authoritative ties this property to a postcode. Withheld
+        // rather than risked: the danger is not a missing number, it is a real,
+        // current, correctly sourced number about the wrong town.
+        enhancedData = { ...enhancedData, crimeStatistics: undefined };
+        console.log(`⛔ ${crimeAuthority.note} ${CRIME_EVIDENCE_WITHHELD_NOTE}`);
+      }
+
       if (crimePoa && admittedPopValue && (state === 'NSW' || state === 'SA')) {
         try {
           const crimeAgain = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
@@ -3217,7 +3372,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           const crimeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({ suburb, state, postcode, lga: qldLga })
+            // RF-7.2B.1B1 — the LGA is QLD's own published grain and comes from
+            // the cadastre, which keys on the verified coordinate, so this path
+            // is not a cross-grain substitution and is reachable only once the
+            // geography has resolved. The postcode travelling beside it is
+            // still the authoritative one rather than the free-text parse.
+            body: JSON.stringify({
+              suburb, state, postcode: crimeAuthority.postcode, lga: qldLga,
+            })
           }, 20000, 'crime-statistics-service');
           if (crimeResponse.ok) {
             const crimeBody = await crimeResponse.json();
@@ -5805,7 +5967,14 @@ YOUR DEDICATED PROPERTY PARTNER
         if (!existingEnhancedFields.economics && enhancedData?.economics) {
           earlyUpdate.economic_data = enhancedData.economics;
         }
-        if (!existingEnhancedFields.locationIntelligence && enhancedData?.locationIntelligence) {
+        // RF-7.2B.1B1 — also write it when this run RE-ACQUIRED it. The guard
+        // below is "don't overwrite what is already banked", which is right for
+        // a reused enrichment (it is the same object) and wrong for a retried
+        // one: a partial acquisition that was bought again would never persist
+        // its incremented attempt count, so the bounded retry would never reach
+        // its bound and the amplification would return.
+        if (enhancedData?.locationIntelligence
+          && (!existingEnhancedFields.locationIntelligence || !locationEnrichmentReused)) {
           earlyUpdate.location_intelligence = enhancedData.locationIntelligence;
         }
         // The snapshot goes down with the first enhanced write, so a run that is

@@ -19,6 +19,10 @@ import {
 } from '@/lib/builderWorkspace';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
 import { BuilderSchedule } from '@/components/builder-portal/ui/BuilderSchedule';
+import { TitleBlock } from '@/components/builder-portal/ui/TitleBlock';
+/* The one place the locale is named; see docs/aml/ONGOING_CDD_AND_REMINDERS.md —
+   an un-localed format prints 9/12/2026 to an Australian builder. */
+import { AU_LOCALE } from '@/lib/aml/displayDate';
 
 /**
  * Builder / Developer Portal landing surface.
@@ -210,6 +214,61 @@ export default function BuilderDashboard() {
       eyebrow="Welcome back"
       title={smartCapitalize(user?.name) || 'Builder'}
       description="Your project-delivery workspace across every organisation and project shared with your account."
+      /*
+       * THE HERO CARRIES THE SHEET'S TITLE BLOCK.
+       *
+       * A drawing identifies itself in a keyed panel — who it is for, under
+       * what authority, and when it was last revised — and that is exactly
+       * what this page's chrome already knew and drew nowhere: the
+       * organisation and role sat in the sidebar's user card, and how current
+       * the figures are was not said at all, on a page whose whole content is
+       * counts behind a Refresh button.
+       *
+       * Every cell is a fact the page already holds. Nothing here fetches.
+       */
+      aside={
+        <TitleBlock
+          wide={false}
+          cells={[
+            {
+              key: 'organisation',
+              label: 'Organisation',
+              value: organisationName,
+            },
+            {
+              key: 'access',
+              label: 'Access',
+              value: activeOrganisation
+                ? accessRoleLabel(activeOrganisation.membership_role)
+                : null,
+            },
+            {
+              key: 'membership',
+              label: 'Membership',
+              /* `is_primary` is a fact about THIS organisation; where it is
+                 false the honest reading is how many the account reaches,
+                 not a blank. */
+              value: activeOrganisation?.is_primary
+                ? 'Primary'
+                : organisations.length > 1
+                  ? `1 of ${organisations.length}`
+                  : null,
+            },
+            {
+              key: 'updated',
+              label: 'Figures as at',
+              /* The revision date. `dataUpdatedAt` is 0 before the first
+                 settled fetch, which is "not recorded" rather than 1970. */
+              value: summaryQuery.dataUpdatedAt
+                ? new Date(summaryQuery.dataUpdatedAt).toLocaleString(AU_LOCALE, {
+                    day: '2-digit', month: '2-digit', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit',
+                  })
+                : null,
+            },
+          ]}
+        />
+      }
       actions={
         <>
           <Button
@@ -248,10 +307,7 @@ export default function BuilderDashboard() {
           </Button>
         </div>
       ) : (
-        <div className="space-y-3">
-          <BuilderSchedule figures={deliveryFigures} />
-          <BuilderSchedule figures={workspaceFigures} />
-        </div>
+        <BuilderSchedule figures={[...deliveryFigures, ...workspaceFigures]} />
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">

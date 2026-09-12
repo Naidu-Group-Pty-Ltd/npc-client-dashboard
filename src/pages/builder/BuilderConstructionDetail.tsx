@@ -18,6 +18,11 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
+import { DimensionRail } from '@/components/builder-portal/ui/DimensionRail';
+import {
+  isOffSequenceStatus, railIndexFromStages, railIndexFromStatus, railNoteForStatus,
+  railStationsFromStages, railStationsFromStatuses, stageDwellAnnotation,
+} from '@/lib/builderConstructionRail.pure';
 import {
   fetchBuilderPhotographUrl, useBuilderConstructionCase, useBuilderConstructionMutation,
 } from '@/lib/builderQueries';
@@ -53,6 +58,19 @@ export default function BuilderConstructionDetail() {
   const [statusValue, setStatusValue] = useState('');
   const [statusReason, setStatusReason] = useState('');
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  /*
+   * The clock, read once.
+   *
+   * The rail's extent annotation is "how long has this build stood here",
+   * which needs a now — and a `Date.now()` during render is impure: two
+   * renders nothing asked for can disagree. A lazy initialiser reads it once
+   * per mount and every render after that agrees with the first.
+   *
+   * It sits HERE, above the two early returns below, because a hook after an
+   * early return is called on some renders and not others — the defect that
+   * made AmlConfiguration read "Something went wrong" on every visit.
+   */
+  const [renderedAt] = useState(() => Date.now());
 
   if (query.isLoading) {
     return (
@@ -86,6 +104,42 @@ export default function BuilderConstructionDetail() {
   const canEdit = permissions?.construction?.edit === true;
   const canDelete = permissions?.construction?.delete === true;
   const transitions = allowedConstructionTransitions(record.status);
+
+  /*
+   * What the hero's dimension rail is drawn from.
+   *
+   * The build's own stages are the extent where it has them, because a
+   * builder may not run every stage and a rail showing stations this build
+   * does not have is measuring somebody else's job. Otherwise the case's
+   * lifecycle status carries it.
+   *
+   * An off-sequence status (on hold, cancelled) has NO position on either —
+   * the pure module returns null and the rail states the absence rather than
+   * marking a station the record does not name.
+   */
+  const offSequence = isOffSequenceStatus(record.status);
+  const hasStageRows = stages.some((stage) => stage.stage_key !== 'other');
+  const railStages = hasStageRows
+    ? railStationsFromStages(stages)
+    : railStationsFromStatuses();
+  const railIndex = offSequence
+    ? null
+    : hasStageRows
+      ? railIndexFromStages(stages)
+      : railIndexFromStatus(record.status);
+
+  /*
+   * The annotated extent over the current station — how long the build has
+   * stood there. Read from the stage's own `actual_start_date`, so it is
+   * absent rather than estimated where the stage was never dated, and it is
+   * never shown for a status-only rail, which carries no dates at all.
+   */
+  const railAnnotation = railIndex !== null && hasStageRows
+    ? stageDwellAnnotation(
+        stages.find((row) => row.id === railStages[railIndex]?.key)?.actual_start_date,
+        renderedAt,
+      )
+    : null;
 
   const reportError = (error: any, fallback: string) => {
     toast.error(error?.code === 'STALE_VERSION'
@@ -218,6 +272,33 @@ export default function BuilderConstructionDetail() {
     <BuilderPortalShell
       title={record.case_reference || 'Construction'}
       description={`${project.name}${unit ? ` · Unit ${unit.unit_number}` : ''}`}
+      /*
+       * THE DIMENSION RAIL, ON THE ONE RECORD THAT IS ACTUALLY A SEQUENCE.
+       *
+       * A build runs site preparation → base → frame → lock-up → fixing →
+       * practical completion → handover, and `construction_stages` already
+       * carries exactly that with its own `sequence_number`. The page drew it
+       * as "4 of 7 stages complete" under a progress bar — a percentage,
+       * which answers how much and never which.
+       *
+       * Where the build has no stage rows the case's own lifecycle status is
+       * the extent instead; `builderConstructionRail.pure.ts` decides both,
+       * and returns no position rather than guessing one for a status that is
+       * not a point on the line (on hold, cancelled).
+       */
+      aside={
+        <DimensionRail
+          stages={railStages}
+          currentIndex={railIndex}
+          annotation={railAnnotation}
+          note={
+            railNoteForStatus(record.status)
+            ?? (railIndex !== null
+              ? `Stage ${railIndex + 1} of ${railStages.length}`
+              : null)
+          }
+        />
+      }
       actions={
         <>
           <Badge

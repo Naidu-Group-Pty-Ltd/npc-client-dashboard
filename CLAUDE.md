@@ -1911,6 +1911,40 @@ Flutter workspace and must never be hand-edited: `mobile/design-tokens.json`
 (`npm run mobile:tokens`) and `mobile/api-surface.json`
 (`npm run mobile:api`); both have `:check` drift modes.
 
+## The Builder / Developer Portal is a drawing set
+Read [`docs/builder-portal/VISUAL_SYSTEM.md`](./docs/builder-portal/VISUAL_SYSTEM.md)
+before touching `src/styles/builder-drafting.css`,
+`src/components/builder-portal/ui/*`, `builderConstructionRail.pure.ts` or the
+`aside` on `BuilderPortalShell`. The portal's language is the artefact a
+builder already lives in — setout grid, three line weights, annotation type, a
+dimension line, a title block, a ruled schedule — and every selector is scoped
+under `.builder-portal-theme`, which exactly two roots apply.
+
+The defect it records is the one worth remembering: the first pass shipped the
+whole language and **three of its components had zero call sites**.
+`DimensionRail`, `TitleBlock` and `bd-chip` were written, documented, merged
+and deployed without anything ever rendering them — 19 pages mounted the shell
+and **none** passed an `aside` — so what reached production was only the half
+that re-skins existing markup, and every page changed just enough to look
+finished. Nothing in the gate could see it: an unused export typechecks, lints
+and builds. **A component is not shipped until something renders it**, and
+`builderPortalUiMounted.spec.ts` now fails when one is not.
+
+Three rules bite. **Off-sequence is not a position** — `on_hold` and
+`cancelled` are real statuses and not points on the line, so they resolve to
+null and the rail states the absence; placing them at an index invents a fact
+and placing them at the end would say a cancelled build had completed. **The
+case's own stages outrank the catalogue**, because a builder may not run every
+stage and a rail showing stations this build lacks is measuring somebody
+else's job. And **a short label is a prefix of the full one** — the rail draws
+`short` and speaks `label`, so shortening can never rename a station.
+
+What only a render could find is in §3 of that doc, including the one that
+makes the re-skin possible at all: Tailwind v3's `@layer` is build-time
+bucketing rather than native cascade layers, so **specificity decides** and a
+descendant-of-root selector out-ranks a utility — which is what lets one rule
+re-skin ~40 shadcn badges without touching a page.
+
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.
 2. Build shadcn-first; use **@21st-dev/magic** for net-new components, then adapt to

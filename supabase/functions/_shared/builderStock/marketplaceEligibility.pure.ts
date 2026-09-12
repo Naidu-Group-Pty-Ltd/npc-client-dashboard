@@ -55,6 +55,7 @@
  */
 import { isPrimaryRole, readStoredRole } from './sourceImageRole.pure.ts';
 import { sanitizationSettled, storedOriginalSha } from './sanitizedDerivative.pure.ts';
+import { readRepairRegion } from './repairRegion.pure.ts';
 
 /**
  * Bumped when the decision would change for bytes already assessed.
@@ -408,6 +409,66 @@ export function sourceVerdictOutstanding(
 ): boolean {
   if (!sweepWillJudge(sourceDetail)) return false;
   const detail = sourceDetail ?? {};
+  /*
+   * SANITIZATION IS OWED ONLY WHERE THE SANITIZATION SWEEP WOULD TAKE THE
+   * ROW. This used to demand a sanitization stamp from EVERY primary, and
+   * the sweep only ever stamps the rows it admits — so a verdict the
+   * eligibility pass left `pending` (an uncertain overlay, an unreadable
+   * container) was owed a stamp nobody would ever write, this answered
+   * `outstanding` for ever, `nextImageStage` answered `wait` — the one
+   * answer with no exit — and the property looped at `fallback` under the
+   * stall guard for the rest of time.
+   *
+   * MEASURED 12 SEPTEMBER 2026 on `LOT 48 - EMBER - FLYER.pdf`: a clean
+   * facade render whose one faint mark is the sunlit rim of a CLOUD, judged
+   * `overlay_uncertain` (its summary is indistinguishable from pale type on
+   * a pale sky — four candidate instruments were calibrated on the real
+   * bytes against the protected pale-typography corpus and none separates
+   * the two populations). The verdict is honest; what was wrong is that the
+   * ladder waited on a repair the repair sweep is built to refuse:
+   * "'we could not read it' is not 'there is a badge on it'", its own
+   * header says, and an uncertain mark is no more a badge than an
+   * unreadable one. Eight, then thirty-eight claims of one property at one
+   * stage, every completion `stalled: fallback reported progress without
+   * leaving the stage`.
+   *
+   * The rule is the module's own rule, applied to its second half: asked of
+   * the sweeps, not of the column. `sanitizationSweepAdmits` is the sweep's
+   * admission filter, imported by the sweep itself, so the two cannot
+   * disagree about what is owed.
+   */
   return needsEligibilityAssessment(detail)
-    || !sanitizationSettled(detail, storedOriginalSha(detail));
+    || (sanitizationSweepAdmits(detail)
+      && !sanitizationSettled(detail, storedOriginalSha(detail)));
+}
+
+/**
+ * Would `settleImageSanitization` take this row, once the role filter has
+ * passed it?
+ *
+ * THE SWEEP'S OWN SECOND FILTER, NAMED ONCE AND IMPORTED BY THE SWEEP. It
+ * repairs a designated primary the display gate CONVICTED of carrying a
+ * laid-over graphic, and a primary somebody recorded a repair region
+ * against — and nothing else: not a `pending` verdict ("we could not read
+ * it" is not "there is a badge on it") and not an `eligible` one (a clean
+ * photograph must never go through an encoder for no reason). Those two
+ * sentences are the sweep's header; this function is them as a predicate.
+ *
+ * `sourceVerdictOutstanding` reads it so the fallback ladder waits for a
+ * sanitization verdict exactly where one will ever be written. A second
+ * copy of this condition inside the sweep is how the ladder came to wait,
+ * for ever, on rows the sweep is built to skip.
+ *
+ * The region read fails closed (malformed, mis-attributed or oversized
+ * reads as none), which is the right direction twice over: the sweep
+ * without a region falls back to the conviction test, and the ladder
+ * without one stops waiting.
+ */
+export function sanitizationSweepAdmits(
+  sourceDetail: Record<string, unknown> | null | undefined,
+): boolean {
+  const detail = sourceDetail ?? {};
+  if (readRepairRegion(detail, storedOriginalSha(detail))) return true;
+  return readMarketplaceState(detail) === 'ineligible'
+    && detail.marketplace_rejection_reason === 'annotated_marketing_tile';
 }

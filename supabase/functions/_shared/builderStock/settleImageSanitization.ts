@@ -71,7 +71,7 @@ import {
   oversizedRepairRegionShare, readRepairRegion, MAX_REPAIRED_SHARE,
   type RepairRegionBox,
 } from './repairRegion.pure.ts';
-import { readMarketplaceState, sweepWillJudge } from './marketplaceEligibility.pure.ts';
+import { sanitizationSweepAdmits, sweepWillJudge } from './marketplaceEligibility.pure.ts';
 import { SOURCE_SUPPLIED_STAGE, SOURCE_SUPPLIED_VERIFICATION } from './primaryImage.ts';
 import { PROVENANCE_VERSION, readPrimaryImageStanding } from './sourceImages.ts';
 
@@ -785,10 +785,19 @@ export async function settleImageSanitization(
        * so requiring the detector to agree would be requiring the instrument
        * that missed the plate to certify that it is there.
        */
-      if (!region) {
-        if (readMarketplaceState(detail) !== 'ineligible') continue;
-        if (detail.marketplace_rejection_reason !== 'annotated_marketing_tile') continue;
-      }
+      /*
+       * THE ADMISSION IS NAMED ONCE AND IMPORTED, because the fallback
+       * ladder's gate reads the same rule: `sourceVerdictOutstanding` waits
+       * for a sanitization verdict exactly where this sweep will write one.
+       * When this condition lived here as two inline tests, the ladder's
+       * copy demanded a stamp from every primary — including the `pending`
+       * ones these lines skip — and a property with an uncertain verdict
+       * looped at `fallback` for ever. `readRepairRegion` inside the shared
+       * predicate is the same fail-closed read as the one above, so a row
+       * with an oversized or mis-attributed region still falls back to the
+       * conviction test, exactly as before.
+       */
+      if (!sanitizationSweepAdmits(detail)) continue;
 
       /*
        * A CLEARANCE DOES NOT SETTLE A ROW THAT CARRIES A REGION.

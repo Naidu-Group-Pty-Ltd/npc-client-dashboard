@@ -12,6 +12,7 @@ import {
   describeSecretWriteFailure,
   integrationSecretBrokerUrl,
   ownProjectRefFromUrl,
+  looksLikeManagementToken,
   resolveIntegrationSecretRoute,
 } from '../../../supabase/functions/_shared/integrationSecretRoute.pure';
 
@@ -217,6 +218,96 @@ describe('where the write goes', () => {
     expect(ownProjectRefFromUrl('https://short.supabase.co')).toBeNull();
     expect(ownProjectRefFromUrl('http://localhost:54321')).toBeNull();
     expect(ownProjectRefFromUrl(null)).toBeNull();
+  });
+});
+
+/**
+ * Measured on the live clone `plisdzywzleljorrphxv`, 12 Sep 2026.
+ *
+ * `SB_MANAGEMENT_ACCESS_TOKEN` was SET to a value that is not a Supabase
+ * personal access token: the Management API answered
+ * `401 {"message":"JWT could not be decoded"}`. The route is chosen on
+ * PRESENCE, so that dead value took `direct` and disabled a Mission Control
+ * broker that was answering 200 at the same moment — and the page told a
+ * tenant to rotate a Supabase ACCOUNT token, which is the one credential the
+ * whole brokered arrangement exists to keep off their project.
+ */
+describe('presence is not capability', () => {
+  const cloneWithDeadToken = {
+    managementToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.not-a-pat',
+    managementTokenSource: 'SB_MANAGEMENT_ACCESS_TOKEN' as const,
+    supabaseUrl: `https://${PRIME_REF}.supabase.co`,
+    missionControlUrl: 'https://mission-control.aurixasystems.com.au',
+    cloneApiKey: 'ak_live',
+  };
+
+  it('knows a token from a string that is merely set', () => {
+    expect(looksLikeManagementToken('sbp_live')).toBe(true);
+    expect(looksLikeManagementToken('  sbp_live  ')).toBe(true);
+    for (const notAToken of [
+      '',
+      '   ',
+      null,
+      undefined,
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.not-a-pat',
+      'REPLACE_ME',
+      'sbp_',
+    ]) {
+      expect(looksLikeManagementToken(notAToken), String(notAToken)).toBe(false);
+    }
+  });
+
+  it('brokers past a value that cannot be a management token', () => {
+    const r = resolveIntegrationSecretRoute(cloneWithDeadToken);
+    expect(r.via).toBe('broker');
+    if (r.via !== 'broker') return;
+    expect(r.headers['x-clone-api-key']).toBe('ak_live');
+  });
+
+  it('reports the discarded value rather than swallowing it', () => {
+    // A value under that name on a tenant's project is a setting somebody
+    // made. Brokering past it silently leaves it there for the next reader.
+    const r = resolveIntegrationSecretRoute(cloneWithDeadToken);
+    if (r.via !== 'broker') return;
+    expect(r.unusableManagementToken).toContain('SB_MANAGEMENT_ACCESS_TOKEN');
+    expect(r.unusableManagementToken).toContain('sbp_');
+  });
+
+  it('a real token still takes the direct route, so the prime is untouched', () => {
+    const r = resolveIntegrationSecretRoute({ ...cloneWithDeadToken, managementToken: 'sbp_live' });
+    expect(r.via).toBe('direct');
+  });
+
+  it('with no broker to fall back to, it names the dead value rather than "nothing is configured"', () => {
+    // Those two send an operator to opposite remedies, and the second is a lie
+    // about a project that plainly has the name set.
+    const r = resolveIntegrationSecretRoute({
+      ...cloneWithDeadToken,
+      missionControlUrl: null,
+      cloneApiKey: null,
+    });
+    expect(r.via).toBe('unconfigured');
+    if (r.via !== 'unconfigured') return;
+    expect(r.why).toContain('not shaped like');
+    expect(r.why).toContain('Remove the value');
+  });
+});
+
+/**
+ * The remedy the direct route offers — "rotate the Supabase management token"
+ * — is one a tenant cannot perform. Where a broker exists, a refused direct
+ * write must try it rather than dead-ending on that advice.
+ */
+describe('a refused direct write falls through to the broker', () => {
+  const fn = read('update-integration-secret/index.ts');
+
+  it('retries through the broker on a 401, and only then', () => {
+    expect(fn).toContain("response.status === 401 && route.via === 'direct'");
+    expect(fn).toContain('brokerRoute({');
+  });
+
+  it('logs both attempts, so a dead management token stays visible', () => {
+    expect(fn).toContain('direct write refused, brokering instead');
   });
 });
 

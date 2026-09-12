@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Bath, BedDouble, Boxes, Car, CheckCircle2, ChevronLeft, ChevronRight, FileImage,
-  FileSpreadsheet, Globe, Image as ImageIcon, ImageDown, ImageOff, Link2, Loader2, Map, Plus,
-  RefreshCw, Sparkles, Trash2, Upload, UserCheck, type LucideIcon,
+  Globe, Image as ImageIcon, ImageDown, ImageOff, Link2, Loader2, Map, Plus,
+  RefreshCw, Sparkles, Trash2, Upload, type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,7 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import {
   BuilderPropertyImageButton,
 } from '@/components/builder-portal/BuilderPropertyImage';
+import { BuilderSchedule } from '@/components/builder-portal/ui/BuilderSchedule';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
   importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useArchiveBuilderStockItem, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
@@ -387,10 +388,39 @@ export default function BuilderStockList() {
 
   const busy = progress !== null;
 
+  /*
+   * The three figures, each with something to read it against.
+   *
+   * Nothing here invents a movement — the queries return counts, not a series.
+   * Each baseline is either a related figure this page already computes
+   * (`workingImages`, `arrivingUploads`) or a sentence that makes a zero
+   * legible, which is the rule `BuilderSchedule` makes mandatory.
+   */
   const summary = [
-    { label: 'Properties listed', value: pagination?.total ?? records.length, icon: Boxes },
-    { label: 'Stock lists uploaded', value: uploadsQuery.data?.pagination.total ?? uploads.length, icon: FileSpreadsheet },
-    { label: 'Awaiting your acknowledgement', value: pendingSelections.length, icon: UserCheck },
+    {
+      key: 'properties',
+      label: 'Properties listed',
+      value: pagination?.total ?? records.length,
+      baseline: workingImages > 0
+        ? `${workingImages} still finding a picture`
+        : 'No imagery outstanding',
+    },
+    {
+      key: 'uploads',
+      label: 'Stock lists uploaded',
+      value: uploadsQuery.data?.pagination.total ?? uploads.length,
+      baseline: arrivingUploads > 0
+        ? `${arrivingUploads} still being read`
+        : 'All have been read',
+    },
+    {
+      key: 'selections',
+      label: 'Awaiting your acknowledgement',
+      value: pendingSelections.length,
+      baseline: pendingSelections.length === 0
+        ? 'Nothing to acknowledge'
+        : 'Selected by an adviser',
+    },
   ];
 
   return (
@@ -430,16 +460,7 @@ export default function BuilderStockList() {
         }}
       />
 
-      <div className="builder-stock-list-metrics grid gap-3 md:grid-cols-3">
-        {summary.map(({ label, value, icon }) => (
-          <StockListMetricCard
-            key={label}
-            icon={icon}
-            label={label}
-            value={value}
-          />
-        ))}
-      </div>
+      <BuilderSchedule className="builder-stock-list-metrics" figures={summary} />
 
       {progress ? (
         <Card className="builder-stock-list-progress">
@@ -1166,24 +1187,6 @@ function ImportSummaryCard(
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function StockListMetricCard({ icon: Icon, label, value }: {
-  icon: LucideIcon;
-  label: string;
-  value: number | string;
-}) {
-  return (
-    <div className="builder-stock-list-metric">
-      <span className="builder-stock-list-metric-icon" aria-hidden>
-        <Icon className="h-6 w-6" />
-      </span>
-      <span className="min-w-0">
-        <span className="builder-stock-list-metric-label">{label}</span>
-        <strong className="builder-stock-list-metric-value">{value}</strong>
-      </span>
-    </div>
   );
 }
 

@@ -136,12 +136,21 @@ function SidebarNav({ pathname, showCompliance, onNavigate }: { pathname: string
               onClick={onNavigate}
               data-tour={tourAnchor(to)}
               aria-current={active ? 'page' : undefined}
+              /*
+               * The active entry used to be a filled primary pill with a
+               * shadow — the loudest thing in the portal, and the same
+               * treatment every admin panel uses. A drawing marks the thing
+               * in hand with a cut on its leading edge instead: a 2px rule
+               * and a wash that falls away to the right, leaving the label
+               * in the foreground ink rather than reversed out of a slab.
+               * See `bd-nav-active` in builder-drafting.css.
+               */
               className={cn(
-                'flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all duration-200',
+                'flex items-center gap-3 rounded-sm px-4 py-3 text-sm transition-colors duration-200',
                 'focus-visible:ring-ring/80',
                 active
-                  ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/20'
-                  : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
+                  ? 'bd-nav-active font-semibold text-foreground'
+                  : 'font-medium text-muted-foreground hover:bg-accent/30 hover:text-foreground',
               )}
             >
               <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden />

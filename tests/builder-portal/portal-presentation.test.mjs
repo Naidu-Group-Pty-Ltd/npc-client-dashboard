@@ -689,7 +689,11 @@ test('59. attention items read only existing summary values', () => {
       ['Overdue tasks', 'overdue_tasks', '/builder/tasks'],
       ['Unread messages', 'unread_messages', '/builder/messages'],
     ]);
-  assert.match(block, /\.filter\(\(item\) => item\.value > 0\);/);
+  // Still filtered to what is actually waiting — and now also to sections
+  // this portal offers, because a row leading to a withdrawn section is a
+  // door to a notice. The array above keeps every entry, so re-offering a
+  // section restores its row.
+  assert.match(block, /item\.value > 0 && !isWithdrawnBuilderPath\(item\.to\)/);
   assert.doesNotMatch(dashboardCode, /'(critical|high|medium|low|urgent)'/i);
 });
 

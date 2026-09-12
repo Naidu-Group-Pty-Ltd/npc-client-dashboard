@@ -559,14 +559,23 @@ test('both functions are covered by the Deno type check', () => {
 // ---------------------------------------------------------------------------
 
 test('every collaboration route is inside the Builder portal tree', () => {
+  /*
+   * WITHDRAWN, NOT UNROUTED. The section is not offered in this portal
+   * (`builderHiddenSections.pure.ts`), so the path resolves to the notice
+   * instead of the page. The rule this test protects is unchanged and is the
+   * reason it still asserts: the path must live INSIDE the Builder portal
+   * tree, never in the internal dashboard tree.
+   */
   const builderTree = app.slice(app.indexOf('<Route path="/builder/*"'));
   for (const [path, element] of [
-    ['documents', 'BuilderDocuments'], ['messages', 'BuilderMessages'],
+    // Documents is withdrawn from this portal; the other three are offered.
+    ['documents', 'BuilderSectionWithdrawn'], ['messages', 'BuilderMessages'],
     ['tasks', 'BuilderTasks'], ['notifications', 'BuilderNotifications'],
   ]) {
     assert.ok(builderTree.includes(`<Route path="${path}" element={<${element} />} />`),
       `${path} is not routed inside the Builder portal tree`);
   }
+  assert.match(app, /const BuilderDocuments = lazyWithRetry/);
 });
 
 test('no navigation item is left disabled now that every module is built', () => {

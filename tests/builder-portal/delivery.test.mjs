@@ -386,9 +386,17 @@ test('both functions are covered by the Deno type check', () => {
 // ---------------------------------------------------------------------------
 
 test('the delivery route is inside the Builder portal tree', () => {
+  /*
+   * WITHDRAWN, NOT UNROUTED. The section is not offered in this portal
+   * (`builderHiddenSections.pure.ts`), so the path resolves to the notice
+   * instead of the page. The rule this test protects is unchanged and is the
+   * reason it still asserts: the path must live INSIDE the Builder portal
+   * tree, never in the internal dashboard tree.
+   */
   const builderTree = app.slice(app.indexOf('<Route path="/builder/*"'));
   assert.ok(builderTree.includes(
-    '<Route path="construction/:constructionCaseId/delivery" element={<BuilderDeliveryDetail />} />'));
+    '<Route path="construction/:constructionCaseId/delivery" element={<BuilderSectionWithdrawn />} />'));
+  assert.match(app, /const BuilderDeliveryDetail = lazyWithRetry/);
 });
 
 test('the browser never reaches the database directly', () => {

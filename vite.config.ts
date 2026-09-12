@@ -5,6 +5,10 @@ import { execSync } from "node:child_process";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
 import { inlineXlsxPlugin } from "./vite-inline-xlsx";
 import { stagingTargetPlugin } from "./vite-staging-target";
+import {
+  parseDeploymentAllowances,
+  resolveClientFacingFlag,
+} from "./src/lib/clientFacing";
 
 // npc-client-dashboard IS the client-facing deployment — the mode is this
 // repository's identity, not a per-deploy setting, so it is pinned here
@@ -13,6 +17,31 @@ import { stagingTargetPlugin } from "./vite-staging-target";
 // operator can build an internal-console bundle from this repo when needed.
 // See src/lib/clientFacing.ts and docs/CLIENT_FACING_MODE.md.
 process.env.VITE_CLIENT_FACING ??= "true";
+
+// Paths the hidden-path list takes away and this deployment keeps, pinned here
+// for the same reason the mode above is: an exception in the repository can be
+// diffed and reverted in one line, where one in a hosting console cannot.
+//
+//   /integrations  TEMPORARY. Operator tooling, and the mode is right to hide
+//                  it — but this is the deployment the GoHighLevel cutover is
+//                  being tested on, and that test types a credential into that
+//                  page. Remove the entry when the test is done. It is the one
+//                  entry here with a cost: allowing the path also re-admits the
+//                  page's CHUNK, which carries the 143-entry integration
+//                  registry and its Supabase secret NAMES (never values).
+//
+//   /billing       This workspace sees its own subscription and administers its
+//   /admin/users   own seats. The list hides both on the reading that those are
+//                  the operator's relationship with the workspace rather than
+//                  the workspace's own; that reading is wrong for this tenant,
+//                  so it is overridden here rather than by editing a list every
+//                  other deployment shares. Neither is chunk-gated, so this
+//                  costs the bundle nothing. /billing also covers the legacy
+//                  /billing/usage redirect.
+//
+// Every other hidden page stays hidden, and the four remaining excluded chunks
+// stay unbuilt.
+process.env.VITE_CLIENT_FACING_ALLOW ??= "/integrations,/billing,/admin/users";
 
 // Identifies the deployed build. `version.json` carries the same value, so a
 // tab can tell whether it is running the current bundle or a cached older one
@@ -34,6 +63,19 @@ function resolveBuildId(): string {
 }
 
 const BUILD_ID = resolveBuildId();
+
+// Read once, here, so the two halves of the mode cannot be computed from
+// different expressions. `CLIENT_FACING` is what the running code reads; the
+// `EXCLUDED` helper is what decides whether a page's chunk is emitted, and both
+// come from this one parsed allowance list. They disagreed once — see
+// src/lib/clientFacing.ts — and the visible result was a route that resolved to
+// nothing and drew a blank page.
+const CLIENT_FACING = resolveClientFacingFlag(process.env.VITE_CLIENT_FACING);
+const CLIENT_FACING_ALLOWANCES = parseDeploymentAllowances(
+  process.env.VITE_CLIENT_FACING_ALLOW,
+);
+const EXCLUDED = (hiddenPath: string) =>
+  CLIENT_FACING && !CLIENT_FACING_ALLOWANCES.includes(hiddenPath);
 
 /** Writes the build id next to the bundle so the running app can compare. */
 function buildVersionManifest(): Plugin {
@@ -58,13 +100,24 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
-    // A literal, unlike isClientFacingDeployment() which is a function call
-    // the bundler cannot see through. Inlining it as `true`/`false` lets
-    // Rollup fold the branch and DROP the dynamic import behind it, so a
-    // hidden page's chunk is never emitted rather than merely unreachable.
-    __CLIENT_FACING__: JSON.stringify(
-      process.env.VITE_CLIENT_FACING === "true" || process.env.VITE_CLIENT_FACING === "1",
-    ),
+
+    // Literals, because Rollup folds a literal and cannot see through a
+    // function call. `isClientFacingDeployment()` reads the first of these —
+    // it is the ONE authority, and reading the environment at runtime instead
+    // is the defect src/lib/clientFacing.ts records.
+    __CLIENT_FACING__: JSON.stringify(CLIENT_FACING),
+    __CLIENT_FACING_ALLOW__: JSON.stringify(CLIENT_FACING_ALLOWANCES),
+
+    // One literal per page whose CHUNK is the leak, because folding the
+    // ternary in App.tsx is what drops the `import()` behind it — a single
+    // flag could not express "hide four of these and keep one". Each name is
+    // paired with its entry in CLIENT_FACING_HIDDEN_PATHS, and a test asserts
+    // App.tsx gates exactly these five and no others.
+    __EXCLUDE_INTEGRATIONS__: JSON.stringify(EXCLUDED("/integrations")),
+    __EXCLUDE_WORKFLOW_PLAYGROUND__: JSON.stringify(EXCLUDED("/workflow-playground")),
+    __EXCLUDE_CLOUDFLARE__: JSON.stringify(EXCLUDED("/cloudflare")),
+    __EXCLUDE_MODEL_HUB__: JSON.stringify(EXCLUDED("/model-hub")),
+    __EXCLUDE_API_USAGE__: JSON.stringify(EXCLUDED("/api-usage")),
   },
   plugins: [
     // Inert unless run with `--mode staging` AND the local staging variables

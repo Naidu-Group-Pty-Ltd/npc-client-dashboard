@@ -11,7 +11,12 @@ echo "── identity / build mode ──"
 chk "vite.config pins VITE_CLIENT_FACING=true"      "grep -q 'process.env.VITE_CLIENT_FACING ??= \"true\"' vite.config.ts"
 chk "vite.config defines __CLIENT_FACING__"          "grep -q '__CLIENT_FACING__' vite.config.ts"
 chk "App.tsx excludes routes from the build"         "grep -q 'RouteExcludedFromBuild' src/App.tsx"
-chk "App.tsx gates 5 routes on __CLIENT_FACING__"    "test \$(grep -c '^const .* = __CLIENT_FACING__' src/App.tsx) -eq 5"
+chk "App.tsx gates 5 routes on __EXCLUDE_*__"        "test \$(grep -c '^const .* = __EXCLUDE_[A-Z_]*__$' src/App.tsx) -eq 5"
+chk "the runtime flag reads the build constant"     "grep -q 'typeof __CLIENT_FACING__' src/lib/clientFacing.ts"
+# Comment lines are stripped first: the module DESCRIBES the import.meta read it
+# no longer performs, and that prose is the record of why the rule exists.
+chk "the runtime flag never reads import.meta"      "! grep -vE '^\\s*(\\*|//|/\\*)' src/lib/clientFacing.ts | grep -q 'import\\.meta'"
+chk "the excluded-route placeholder is not null"    "! grep -q 'RouteExcludedFromBuild = () => null' src/App.tsx"
 
 echo "── the one hidden-path list ──"
 chk "clientFacing.ts exists"                         "test -f src/lib/clientFacing.ts"

@@ -1,11 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { internalError } from '../_shared/errorResponse.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
-  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-};
+import { createCorsHeaders } from '../_shared/auth.ts';
 
 // ============ SCORING LOGIC (embedded from investment-scoring-service) ============
 
@@ -178,6 +173,21 @@ function extractRentFromContent(content: string): number | null {
 // ============ MAIN ============
 
 Deno.serve(async (req) => {
+  // CORS is built PER REQUEST from the shared allowlist, never hardcoded.
+  //
+  // This answered `Access-Control-Allow-Origin: *` while running
+  // `verify_jwt = false`. Now that the gateway demands a JWT the call is
+  // credentialed, and the Fetch spec makes a browser REJECT a credentialed
+  // response carrying a wildcard — opaquely, as "Failed to fetch" — so the
+  // wildcard would have turned an authentication fix into a broken endpoint.
+  //
+  // `createCorsHeaders` is called rather than spread-and-overridden: it already
+  // supplies Allow-Headers and Expose-Headers from the canonical lists in
+  // `_shared/auth.ts`, and restating them here would pin this function to a
+  // snapshot of those lists taken today. The lists it returns are supersets of
+  // the three headers this file used to name, so nothing is narrowed.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }

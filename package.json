@@ -89,6 +89,7 @@
     "security:inventory": "node scripts/security/security-inventory.mjs --write",
     "security:registry": "node scripts/security/check-function-registry.mjs",
     "security:static": "node scripts/security/scan-auth-patterns.mjs",
+    "security:policies": "node scripts/security/check-policy-predicates.mjs",
     "security:edd-boundary": "node scripts/security/check-aml-edd-mlro-boundary.mjs",
     "security:screening-boundary": "node scripts/security/check-aml-screening-boundary.mjs",
     "security:edge-check": "node scripts/security/check-edge-functions.mjs",

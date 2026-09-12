@@ -120,8 +120,17 @@ function transformInputData(rawInput: any): InvestmentScoringInput {
   // Extract key metrics from financials
   const keyMetrics = financials.keyMetrics || {};
   
-  // Extract location amenities
-  const walkScore = locationIntelligence.walkScore || 0;
+  // Extract location amenities.
+  //
+  // RF-7.2B.1B2 — `?? ` rather than `|| `, and never a `0` floor. A Places
+  // category whose provider call FAILED now stores null, and `null || 0`
+  // would hand this scorer a measured zero: `hasNum(0)` is true, so the
+  // dimension counts as EVIDENCED, while `if (input.walkScore)` is falsy, so
+  // it scores nothing — a livability score depressed by an outage nobody
+  // measured. A successful zero is preserved (`0 ?? undefined` is `0`), which
+  // is the whole distinction. The sibling builder below already read
+  // `|| undefined`; these two lines were the pair that did not.
+  const walkScore = locationIntelligence.walkScore ?? undefined;
   const schools = locationIntelligence.schools || {};
   const commute = locationIntelligence.commute || {};
   
@@ -134,12 +143,12 @@ function transformInputData(rawInput: any): InvestmentScoringInput {
     priceGrowth3Year: marketData.priceGrowth3Year || undefined,
     vacancyRate: marketData.vacancyRate || undefined,
     daysOnMarket: marketData.daysOnMarket || undefined,
-    walkScore: walkScore,
+    walkScore,
     populationGrowth: demographics.populationGrowth || undefined,
     medianIncome: demographics.medianIncome || demographics.medianHouseholdIncome || undefined,
     unemploymentRate: demographics.unemploymentRate || undefined,
     commuteTimeCBD: commute.durationMinutes || undefined,
-    schoolsNearby: schools.schoolsWithin3km || 0,
+    schoolsNearby: schools.schoolsWithin3km ?? undefined,
     cashFlow: keyMetrics.weeklyNet || undefined,
     lvr: keyMetrics.lvr || undefined,
     state: rawInput.state || demographics.state || undefined

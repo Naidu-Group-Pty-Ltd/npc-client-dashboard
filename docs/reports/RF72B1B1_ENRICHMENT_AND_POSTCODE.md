@@ -299,3 +299,98 @@ postcode module cannot compute with a population, a rate or a denominator.
 - It does not make the free-text parser smarter. A better parse would still be
   untrusted under the rule above, and making it cleverer is how a guess acquires
   the appearance of authority.
+
+---
+
+## §13 (RF-7.2B.1B2) — a failed Places lookup is not a measurement of zero
+
+RF-7.2B.1B1 added `ok` to `fetchNearbyPlaces` so the ACQUISITION could tell a
+failed amenity lookup from an empty area. It could. Nothing else could: `ok`
+was reduced to one `stages.places: 'complete' | 'partial'` flag and then
+discarded, so the object that is persisted — and that every consumer reads —
+stored `count: 0` and `nearest: 'N/A'` for a category whose provider never
+answered. Byte-identical to a genuine zero, and unrecoverable afterwards.
+
+It reached a client. `regenerate-report-qualitative` composes the model's
+location context with
+
+```ts
+const healthcare = loc.healthcare?.facilitiesWithin5km;
+if (typeof healthcare === 'number') lines.push(`- Healthcare facilities within 5km: ${healthcare}`);
+```
+
+and `typeof 0 === 'number'`. Executed against the pre-change projection, a
+Places outage handed the model:
+
+```
+- Healthcare facilities within 5km: 0
+- Shopping centres nearby: 0        nearestHospital = "N/A"
+```
+
+The author had already refused the string `'N/A'` for `nearestSchool` on the
+line below. The COUNT had no such guard, because until `ok` existed there was
+nothing in the data that could justify one.
+
+Three things compounded it. `'N/A'` is **truthy**, so it survived every `||`
+fallback in the generator's prompt and arrived in front of the model as though
+it were a value ("Nearest Station | N/A"). `walkScore` is a composite over all
+six categories and spends points per category, so an outage did not omit a
+figure — it **depressed** one, publishing a confident low walkability nobody
+measured. And the Client-Safe Gate disowns only four location paths
+(`walkScore`, `transport.qualityScore`, `commute`,
+`schools.schoolsWithin3km`), so healthcare, shopping, recreation, restaurants
+and transit counts all reached the narrative unguarded.
+
+### The rule
+
+**A measurement that was not taken is absent, never zero** — the rule
+`rentalEvidence` established when 83 reports printed `0.00%` beside a real
+rent. `placesAvailability.pure.ts` is the one place that applies it, and the
+correction is entirely at the producer: a failed category stores `null` for
+its count, its nearest name and its distance; a reached-and-empty category
+still stores `0`, because a rural address with no hospital within five
+kilometres is a fact worth printing.
+
+No consumer changed. `null` is what each of them already handles correctly —
+`typeof null === 'object'` makes the two `typeof x === 'number'` guards OMIT
+the line (§3's "omit the unsupported category"), `null || 'XX'` renders the
+placeholder the prompt already had, and `investment-scoring-service` gates on
+`hasNum(...)` so an absent value is simply not scored.
+
+Two more: the acquisition stamp now names **which** categories did not answer
+(`stages.placesUnavailable`, additive — the RF-7.2B.1B1 reuse decision reads
+`places` alone and is unchanged), and `walkScore` is `null` rather than
+depressed whenever any category is missing, because a composite over an
+incomplete basis is not a measurement of the composite.
+
+`placesAreComplete` is now the single implementation of complete-vs-partial,
+shared by the stamp and the projection, so the record and the figures cannot
+disagree about which lookups answered.
+
+### What was checked and found already correct
+
+The withheld-crime path needed no change. `crimeStatBlocks` returns one honest
+line and an explicit prohibition when the reading is absent — no table, no
+score, no rating, no rate, and no digit of any kind — so a withheld postcode
+cannot become zero crime, low crime or a safe area. State-wide movement is
+composed only ALONGSIDE a real local total (it sits after the `total === null`
+early return), so nothing substitutes a state, LGA or SA2 figure into a
+postcode slot. The QLD LGA path refuses without a cadastre-derived LGA
+("figures are unavailable rather than guessed from a suburb name"), refuses an
+ambiguous council match ("rather than reporting another council's offences"),
+and names its grain in the client-facing prose
+(`areaKind: 'local government area'`).
+
+One imprecision is recorded and deliberately **not** changed: the withheld line
+reads "No recorded-crime register is integrated for this location", which is
+exact for an unloaded register (Victoria) but names the wrong reason when the
+register is loaded and it is the POSTCODE that could not be established. Both
+reach the same safe behaviour — say it plainly, print nothing — so this is
+cosmetic wording, not a client-facing error.
+
+### Tests
+
+`rf72b1b2PartialPlacesSemantics.spec.ts` is the §4 matrix A–E; every source
+probe in it is present exactly once in the pre-change file and absent from the
+current one, so the suite discriminates rather than merely passing.
+`rf72b1b2CrimeWithholdSemantics.spec.ts` is the §6 matrix A–G.

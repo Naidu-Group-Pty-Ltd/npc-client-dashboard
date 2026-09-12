@@ -12,6 +12,16 @@ import {
   subjectKeyFor,
   type EnrichmentStages,
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import {
+  measuredCount,
+  measuredDistance,
+  measuredName,
+  measuredWalkScore,
+  placesAreComplete,
+  unavailableCategories,
+  type PlacesCategory,
+  type PlacesLookups,
+} from '../_shared/reports/location/placesAvailability.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
@@ -36,10 +46,12 @@ interface LocationIntelligenceInput {
 
 interface AmenityScore {
   category: string;
-  count: number;
-  nearest: string;
-  distance: number;
-  score: number;
+  // RF-7.2B.1B2 — null where the provider never answered for this category.
+  // A scored row is a claim that somebody looked.
+  count: number | null;
+  nearest: string | null;
+  distance: number | null;
+  score: number | null;
 }
 
 Deno.serve(async (req) => {
@@ -326,24 +338,33 @@ async function fetchLocationIntelligence(
     ? await calculateCommuteTime(coordinates, cbdCoordinates, apiKey)
     : COMMUTE_DESTINATION_UNKNOWN;
 
-  // Calculate walk score and lifestyle score - enhanced with real transport data
-  const walkScore = calculateWalkScore({
+  // RF-7.2B.1B2 — the six lookups, named once so that every projection below
+  // reads the SAME per-category outcome. `ok` used to be reduced to one
+  // complete/partial flag and discarded here, which is what left a failed
+  // lookup indistinguishable from a measured zero everywhere downstream.
+  const placesLookups: PlacesLookups = {
     transit: transitData,
     schools: schoolsData,
     healthcare: healthcareData,
     shopping: shoppingData,
     recreation: recreationData,
-    restaurants: restaurantsData
-  });
+    restaurants: restaurantsData,
+  };
+  const placesUnavailable = unavailableCategories(placesLookups);
+  if (placesUnavailable.length > 0) {
+    console.warn(
+      `⚠️ Places lookups that did not answer: ${placesUnavailable.join(', ')} `
+      + '— these categories are recorded as unmeasured, never as zero.',
+    );
+  }
 
-  const amenityScores = calculateAmenityScores({
-    transit: transitData,
-    schools: schoolsData,
-    healthcare: healthcareData,
-    shopping: shoppingData,
-    recreation: recreationData,
-    restaurants: restaurantsData
-  });
+  // Calculate walk score and lifestyle score - enhanced with real transport data
+  const walkScore = measuredWalkScore(
+    calculateWalkScore(placesLookups),
+    placesLookups,
+  );
+
+  const amenityScores = calculateAmenityScores(placesLookups);
 
   // Use the GTFS reading where a loaded feed covers the location, otherwise the
   // coordinate-measured Google Places result.
@@ -367,9 +388,12 @@ async function fetchLocationIntelligence(
       notMeasured: publicTransportData.notMeasured ?? [],
     }),
   } : {
-    nearestStation: transitData.results[0]?.name || 'N/A',
-    distanceToStation: transitData.results[0]?.distance ?? null,
-    stationsWithin2km: transitData.count,
+    // RF-7.2B.1B2 — `'N/A'` is truthy, so it survived every `||` fallback in
+    // the generator's prompt and arrived in front of the model as a value.
+    // A transit lookup that never answered reports null.
+    nearestStation: measuredName(transitData),
+    distanceToStation: measuredDistance(transitData),
+    stationsWithin2km: measuredCount(transitData),
     source: 'google_places',
   };
 
@@ -379,10 +403,16 @@ async function fetchLocationIntelligence(
     walkScore,
     amenities: amenityScores,
     transport: transportInfo,
+    // RF-7.2B.1B2 — every figure below is the MEASURED value or null. A
+    // category whose provider call failed stores null, so the two
+    // `typeof x === 'number'` guards that compose the model's location context
+    // omit the line instead of asserting "Healthcare facilities within 5km: 0"
+    // about an address nobody managed to look up. A category that was reached
+    // and genuinely holds nothing still stores 0, because that is a fact.
     schools: {
-      nearestSchool: schoolsData.results[0]?.name || 'N/A',
-      distanceToSchool: schoolsData.results[0]?.distance || 0,
-      schoolsWithin3km: schoolsData.count,
+      nearestSchool: measuredName(schoolsData),
+      distanceToSchool: measuredDistance(schoolsData),
+      schoolsWithin3km: measuredCount(schoolsData),
       topSchools: schoolsData.results.slice(0, 5).map((s: any) => ({
         name: s.name,
         distance: s.distance,
@@ -390,16 +420,16 @@ async function fetchLocationIntelligence(
       }))
     },
     healthcare: {
-      nearestHospital: healthcareData.results[0]?.name || 'N/A',
-      distanceToHospital: healthcareData.results[0]?.distance || 0,
-      facilitiesWithin5km: healthcareData.count
+      nearestHospital: measuredName(healthcareData),
+      distanceToHospital: measuredDistance(healthcareData),
+      facilitiesWithin5km: measuredCount(healthcareData)
     },
     lifestyle: {
-      shoppingCenters: shoppingData.count,
-      parks: recreationData.count,
-      restaurants: restaurantsData.count,
-      nearestShopping: shoppingData.results[0]?.name || 'N/A',
-      nearestPark: recreationData.results[0]?.name || 'N/A'
+      shoppingCenters: measuredCount(shoppingData),
+      parks: measuredCount(recreationData),
+      restaurants: measuredCount(restaurantsData),
+      nearestShopping: measuredName(shoppingData),
+      nearestPark: measuredName(recreationData)
     }
   };
 
@@ -419,10 +449,11 @@ async function fetchLocationIntelligence(
       // One failed amenity lookup makes the whole set unreusable: a zero that
       // came from an outage reads exactly like a zero that came from a quiet
       // suburb, and only this flag can tell them apart later.
-      places: [
-        transitData, schoolsData, healthcareData,
-        shoppingData, recreationData, restaurantsData,
-      ].every((r) => r.ok) ? 'complete' : 'partial',
+      places: placesAreComplete(placesLookups) ? 'complete' : 'partial',
+      // Which ones, so a reader of the record can tell WHAT was not measured
+      // rather than only that something was not. Additive: the reuse decision
+      // in RF-7.2B.1B1 reads `places` alone and is unchanged.
+      placesUnavailable,
       commute: commuteData === COMMUTE_DESTINATION_UNKNOWN
         ? 'destination_unknown'
         : commuteData === COMMUTE_NO_ROUTE ? 'no_route' : 'measured',
@@ -764,48 +795,35 @@ function calculateWalkScore(amenities: any): number {
   return Math.min(100, Math.round(score));
 }
 
-function calculateAmenityScores(amenities: any): AmenityScore[] {
-  const scores: AmenityScore[] = [];
+function calculateAmenityScores(lookups: PlacesLookups): AmenityScore[] {
+  // RF-7.2B.1B2 — one row per category, built from the MEASURED value.
+  //
+  // A failed lookup used to produce `{ count: 0, nearest: 'N/A', distance: 0,
+  // score: 0 }`, which is a scored row asserting that somebody looked and found
+  // nothing. Per-category weights are unchanged; only the basis for computing
+  // them is now required to exist.
+  const WEIGHTS: ReadonlyArray<{
+    readonly category: string;
+    readonly key: PlacesCategory;
+    readonly perItem: number;
+  }> = [
+    { category: 'Public Transport', key: 'transit', perItem: 20 },
+    { category: 'Schools', key: 'schools', perItem: 10 },
+    { category: 'Healthcare', key: 'healthcare', perItem: 15 },
+    { category: 'Shopping', key: 'shopping', perItem: 12 },
+    { category: 'Recreation', key: 'recreation', perItem: 8 },
+  ];
 
-  scores.push({
-    category: 'Public Transport',
-    count: amenities.transit.count,
-    nearest: amenities.transit.results[0]?.name || 'N/A',
-    distance: amenities.transit.results[0]?.distance || 0,
-    score: Math.min(100, amenities.transit.count * 20)
+  return WEIGHTS.map(({ category, key, perItem }) => {
+    const count = measuredCount(lookups[key]);
+    return {
+      category,
+      count,
+      nearest: measuredName(lookups[key]),
+      distance: measuredDistance(lookups[key]),
+      // Absent, not zero: a score of 0 beside an unmeasured category reads as
+      // "this area has none of these", which is the claim being refused.
+      score: count === null ? null : Math.min(100, count * perItem),
+    };
   });
-
-  scores.push({
-    category: 'Schools',
-    count: amenities.schools.count,
-    nearest: amenities.schools.results[0]?.name || 'N/A',
-    distance: amenities.schools.results[0]?.distance || 0,
-    score: Math.min(100, amenities.schools.count * 10)
-  });
-
-  scores.push({
-    category: 'Healthcare',
-    count: amenities.healthcare.count,
-    nearest: amenities.healthcare.results[0]?.name || 'N/A',
-    distance: amenities.healthcare.results[0]?.distance || 0,
-    score: Math.min(100, amenities.healthcare.count * 15)
-  });
-
-  scores.push({
-    category: 'Shopping',
-    count: amenities.shopping.count,
-    nearest: amenities.shopping.results[0]?.name || 'N/A',
-    distance: amenities.shopping.results[0]?.distance || 0,
-    score: Math.min(100, amenities.shopping.count * 12)
-  });
-
-  scores.push({
-    category: 'Recreation',
-    count: amenities.recreation.count,
-    nearest: amenities.recreation.results[0]?.name || 'N/A',
-    distance: amenities.recreation.results[0]?.distance || 0,
-    score: Math.min(100, amenities.recreation.count * 8)
-  });
-
-  return scores;
 }

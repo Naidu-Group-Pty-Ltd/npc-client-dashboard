@@ -1633,6 +1633,33 @@ rank, and where nothing is trusted the counts are WITHHELD rather than risked,
 with no LGA or SA2 substitute. It is orthogonal to F4: that decides whether a
 rate may be DIVIDED, this decides which AREA is described.
 
+The same class had a third instance, and it is the one that reached a sentence.
+**A Places lookup that FAILED is not a measurement of zero.** Read §13 of the
+same doc before touching
+`_shared/reports/location/placesAvailability.pure.ts`. RF-7.2B.1B1's `ok` flag
+was reduced to one complete-vs-partial stamp and then DISCARDED, so the
+persisted object stored `count: 0` and `nearest: 'N/A'` for a category whose
+provider never answered — and `regenerate-report-qualitative` guards its
+location context with `typeof healthcare === 'number'`, which `0` satisfies.
+Executed against the pre-change projection, an outage handed the model
+`- Healthcare facilities within 5km: 0`. Three things compounded it: `'N/A'` is
+TRUTHY, so it survived every `||` fallback in the prompt and arrived as a
+value; `walkScore` spends points per category, so an outage DEPRESSED a
+published figure rather than omitting one; and the Client-Safe Gate disowns
+only four location paths, so healthcare, shopping, recreation, restaurants and
+transit reached the narrative unguarded. The rule is `rentalEvidence`'s —
+**absent is never zero** — applied entirely at the producer: a failed category
+stores `null`, a reached-and-empty one still stores `0`, because a rural
+address with no hospital within five kilometres is a fact worth printing. No
+consumer changed, because `null` is what each already handles
+(`typeof null === 'object'` omits the line; `null || 'XX'` renders the
+placeholder the prompt already had). The stamp now names WHICH categories were
+unavailable, and `placesAreComplete` is the one implementation both it and the
+projection read. The withheld-crime half was checked and needed no change:
+`crimeStatBlocks` answers an absent reading with one honest line and an
+explicit prohibition, carries no digit at all, and composes state-wide movement
+only ALONGSIDE a real local total.
+
 **A stored report is addressable by section now.** Read
 [`SECTION_STORAGE.md`](./docs/reports/SECTION_STORAGE.md) before touching
 `_shared/reports/investment/sectionStorage.pure.ts`, `detectSectionLevel` /

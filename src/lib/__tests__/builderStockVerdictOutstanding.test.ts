@@ -41,7 +41,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
-  MARKETPLACE_ELIGIBILITY_VERSION, sourceVerdictOutstanding, sweepWillJudge,
+  MARKETPLACE_ELIGIBILITY_VERSION, sanitizationSweepAdmits, sourceVerdictOutstanding,
+  sweepWillJudge,
 } from '../../../supabase/functions/_shared/builderStock/marketplaceEligibility.pure';
 import {
   nextImageStage,
@@ -150,6 +151,123 @@ describe('what is genuinely owed about a stored image', () => {
         expect(sourceVerdictOutstanding(detail), `${role} @ ${version}`).toBe(false);
       }
     }
+  });
+});
+
+/*
+ * THE SECOND WEDGE, ONE DAY AFTER THE FIRST, AND THE SAME SHAPE ONE LEVEL
+ * DOWN.
+ *
+ * MEASURED 12 SEPTEMBER 2026 on `LOT 48 - EMBER - FLYER.pdf`. The election
+ * worked: page 1 states the property with its package facts, the render was
+ * extracted, stored, `ready`, `role: primary_property` at v24. The
+ * eligibility sweep worked: it measured the picture and answered `pending` /
+ * `overlay_uncertain` — one faint line, 4.5% of the frame, which at native
+ * resolution is the sunlit rim of a CLOUD against quiet render sky. The
+ * verdict is honest; the pale-typography corpus and this cloud are not
+ * separable at measurement resolution (four instruments were calibrated on
+ * the real bytes: column periodicity, full-resolution component structure,
+ * two-sided band contrast, stroke-width statistics — the populations overlap
+ * on every one).
+ *
+ * What was wrong: `sourceVerdictOutstanding` demanded a sanitization stamp
+ * from every primary, and the sanitization sweep only stamps the rows it
+ * ADMITS — a convicted tile, or a recorded repair region. A `pending` verdict
+ * is neither ("'we could not read it' is not 'there is a badge on it'", the
+ * sweep's own header), so the stamp was owed by nobody, the predicate
+ * answered outstanding for ever, `nextImageStage` answered `wait`, and the
+ * property looped at `fallback` under the stall guard: thirty-eight claims,
+ * every completion `stalled: fallback reported progress without leaving the
+ * stage`.
+ */
+describe('a pending verdict is a closed question, not one on its way', () => {
+  /** LOT 48's stored detail, verbatim shape from production. */
+  const UNCERTAIN = {
+    ...ELECTED,
+    provenance_version: 24,
+    marketplace_measured: true,
+    marketplace_display_eligible: false,
+    marketplace_eligibility_state: 'pending',
+    marketplace_rejection_reason: 'overlay_uncertain',
+    marketplace_eligibility_version: MARKETPLACE_ELIGIBILITY_VERSION,
+  } as Record<string, unknown>;
+
+  /** And the container nothing here can decode — the other pending. */
+  const UNMEASURED = {
+    ...UNCERTAIN,
+    marketplace_measured: false,
+    marketplace_rejection_reason: 'decoder_unsupported',
+  } as Record<string, unknown>;
+
+  it('owes nothing for an uncertain overlay the sweep will never repair', () => {
+    expect(sanitizationSweepAdmits(UNCERTAIN)).toBe(false);
+    expect(sourceVerdictOutstanding(UNCERTAIN)).toBe(false);
+  });
+
+  it('owes nothing for a container nothing could decode, either', () => {
+    expect(sanitizationSweepAdmits(UNMEASURED)).toBe(false);
+    expect(sourceVerdictOutstanding(UNMEASURED)).toBe(false);
+  });
+
+  it('so the ladder runs instead of waiting for ever', () => {
+    expect(nextImageStage([imageRow(UNCERTAIN)] as never,
+      { sourceSettlementComplete: true })).toBe('web_search');
+  });
+
+  it('still owes the repair for a convicted tile, exactly as before', () => {
+    const convicted = {
+      ...UNCERTAIN,
+      marketplace_eligibility_state: 'ineligible',
+      marketplace_rejection_reason: 'annotated_marketing_tile',
+    };
+    expect(sanitizationSweepAdmits(convicted)).toBe(true);
+    expect(sourceVerdictOutstanding(convicted)).toBe(true);
+    // And a stamped conviction closes it.
+    const repaired = {
+      ...convicted,
+      sanitization_failure: {
+        sanitization_version: 99, original_sha256: convicted.stored_sha256,
+      },
+    };
+    expect(sourceVerdictOutstanding(repaired)).toBe(false);
+  });
+
+  it('and a recorded repair region is owed work whatever the verdict says', () => {
+    const withRegion = {
+      ...UNCERTAIN,
+      repair_region: {
+        original_sha256: UNCERTAIN.stored_sha256,
+        boxes: [{ left: 0.1, top: 0.1, right: 0.3, bottom: 0.2 }],
+      },
+    };
+    expect(sanitizationSweepAdmits(withRegion)).toBe(true);
+    expect(sourceVerdictOutstanding(withRegion)).toBe(true);
+  });
+
+  it('a cleared uncertain picture is displayable and nothing waits on it', () => {
+    /*
+     * The resolver for an uncertainty no instrument can settle is a PERSON:
+     * the sha-bound clearance the precise inspection writes, with an
+     * operator as the instrument. LOT 48\'s was the first, written by hand;
+     * the record below is its exact shape.
+     */
+    const cleared = {
+      ...UNCERTAIN,
+      sanitization_clearance: {
+        sanitization_version: 2,
+        original_sha256: UNCERTAIN.stored_sha256,
+        evidence: { method: 'operator_attested' },
+      },
+    };
+    expect(sourceVerdictOutstanding(cleared)).toBe(false);
+    expect(nextImageStage([imageRow(cleared)] as never,
+      { sourceSettlementComplete: true })).toBe('none');
+  });
+
+  it('the sweep itself reads the same admission, so the two cannot drift', () => {
+    expect(SANITIZATION_SWEEP).toContain('if (!sanitizationSweepAdmits(detail)) continue;');
+    expect(SANITIZATION_SWEEP).not.toMatch(
+      /readMarketplaceState\(detail\) !== 'ineligible'/);
   });
 });
 

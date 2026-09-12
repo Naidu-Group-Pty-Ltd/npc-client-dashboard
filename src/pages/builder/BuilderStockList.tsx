@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Bath, BedDouble, Boxes, Car, CheckCircle2, ChevronLeft, ChevronRight, FileImage,
+  AlertTriangle, Boxes, CheckCircle2, ChevronLeft, ChevronRight, FileImage,
   Globe, Image as ImageIcon, ImageDown, ImageOff, Link2, Loader2, Map, Plus,
   RefreshCw, Sparkles, Trash2, Upload, type LucideIcon,
 } from 'lucide-react';
@@ -29,15 +29,17 @@ import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShe
 import {
   BuilderPropertyImageButton,
 } from '@/components/builder-portal/BuilderPropertyImage';
+import { StockPicture } from '@/components/stock/StockPicture';
+import { AU_LOCALE } from '@/lib/aml/displayDate';
 import { BuilderSchedule } from '@/components/builder-portal/ui/BuilderSchedule';
 import { useDebounce } from '@/hooks/useDebounce';
 import {
   importBuilderStockUrl, type StockImportSummary, type StockUploadProgress, type StockUploadResult, uploadBuilderStockFile, useAcknowledgeStockSelection, useBuilderStockItems, useBuilderStockSelections, useBuilderStockUploads, useArchiveBuilderStockItem, useDeleteBuilderStockSource, useEnrichPendingStockImages, useRecoverStockSourceImages, useRefreshBrochureLinks, useReprocessStockSource,
-  useSetBuilderStockAvailability,
+  useSetBuilderStockAvailability, builderStockImageUrl,
 } from '@/lib/builderStockQueries';
 import {
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
-  stockItemConfiguration, stockItemLocality, stockItemPrice, stockItemTitle,
+  stockItemLocality, stockItemPrice, stockItemTitle,
   MAX_STOCK_FILE_BYTES, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
   STOCK_IMAGE_STAGE_BADGES, STOCK_SELECTION_STATUS_LABELS, STOCK_UPLOAD_STATUS_CLASSES,
   STOCK_UPLOAD_STATUS_LABELS, STOCK_SOURCE_TYPE_LABELS, stockSourceLabel,
@@ -530,8 +532,13 @@ export default function BuilderStockList() {
       <Card className="builder-stock-list-section builder-stock-list-workspace">
         <CardHeader className="builder-stock-list-workspace-header gap-5">
           <div className="min-w-0">
-            <CardTitle className="text-base">Your stock</CardTitle>
-            <CardDescription>
+            <p className="bd-annot bd-annot-strong">Your stock</p>
+            <CardTitle className="mt-1.5 text-lg tracking-tight">
+              {pagination
+                ? `${pagination.total} ${pagination.total === 1 ? 'property' : 'properties'} on the marketplace`
+                : 'Your stock'}
+            </CardTitle>
+            <CardDescription className="mt-1">
               Properties imported from your stock lists. These are what the Command Centre sees.
             </CardDescription>
           </div>
@@ -651,60 +658,22 @@ export default function BuilderStockList() {
               ) : null}
 
               {/*
-                Two presentations of the same rows, the same data and the same
-                controls.
+                ONE PRESENTATION. THE PLATE SHEET.
 
-                The cut is 1400px rather than a named breakpoint because it is
-                measured, not chosen: a 288px sidebar and the content gutters
-                leave ~1030px there, which is the width at which six columns
-                seat "Under contract" in a select and "Builder supplied" on a
-                badge without either being cut short. Below it the identical
-                fields stack into cards — a complete card beats a squeezed row,
-                and neither presentation needs a scroller.
+                This was a table above 1400px and a stacked card list below
+                it, both rendered and one hidden with `min-[1400px]:hidden` —
+                the duplicate-DOM shape the Command Centre work already
+                recorded: a CSS-hidden copy still carries every accessible
+                name in the document, and two presentations are two places
+                for an act to go missing.
+
+                They are one plate list now, which is also what let the
+                photograph in: a plate needs the width a table column could
+                never give it.
               */}
-              <div className="builder-stock-list-table hidden min-[1400px]:block">
-                <Table className="table-fixed">
-                  <TableHeader>
-                    {/* Percentages, not rem: the columns divide whatever the
-                        content area is, so the table can never be wider than
-                        the card that holds it. */}
-                    <TableRow>
-                      <TableHead className="w-[26%] px-3">Property</TableHead>
-                      <TableHead className="w-[14%] px-3">Configuration</TableHead>
-                      <TableHead className="w-[14%] px-3">Price</TableHead>
-                      <TableHead className="w-[15%] px-3">Images</TableHead>
-                      <TableHead className="w-[18%] px-3">Availability</TableHead>
-                      <TableHead className="w-[13%] px-3">Selected</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {records.map((item) => (
-                      <StockRow
-                        key={item.id}
-                        item={item}
-                        saving={setAvailabilityMutation.isPending}
-                        onAvailabilityChange={(next) => {
-                          setAvailabilityMutation.mutate(
-                            { stockItemId: item.id, availability: next },
-                            {
-                              onError: (error) => toast({
-                                title: 'Could not update availability',
-                                description: (error as Error).message,
-                                variant: 'destructive',
-                              }),
-                            },
-                          );
-                        }}
-                        onRemoved={refreshAll}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              <ul className="builder-stock-list-cards space-y-3 min-[1400px]:hidden">
+              <ul className="bd-plate-list builder-stock-list-plates">
                 {records.map((item) => (
-                  <StockCard
+                  <StockPlate
                     key={item.id}
                     item={item}
                     saving={setAvailabilityMutation.isPending}
@@ -1263,48 +1232,6 @@ function PropertyIdentity({ item }: { item: BuilderStockItem }) {
   );
 }
 
-/**
- * Bedrooms, bathrooms and car spaces as three compact chips instead of a
- * sentence. The words are kept for screen readers and on hover, so nothing the
- * text form said is lost.
- */
-function ConfigurationChips({ item, hideWhenEmpty = false }: {
-  item: BuilderStockItem;
-  /** Cards omit an absent field; a table column still needs its placeholder. */
-  hideWhenEmpty?: boolean;
-}) {
-  const configuration = stockItemConfiguration(item);
-  if (!configuration) {
-    return hideWhenEmpty ? null : <span className="text-sm text-muted-foreground">—</span>;
-  }
-
-  const parts: Array<{ icon: LucideIcon; value: number; label: string }> = [];
-  if (item.bedrooms !== null && item.bedrooms !== undefined) {
-    parts.push({ icon: BedDouble, value: item.bedrooms, label: 'bed' });
-  }
-  if (item.bathrooms !== null && item.bathrooms !== undefined) {
-    parts.push({ icon: Bath, value: item.bathrooms, label: 'bath' });
-  }
-  if (item.car_spaces !== null && item.car_spaces !== undefined) {
-    parts.push({ icon: Car, value: item.car_spaces, label: 'car' });
-  }
-
-  return (
-    <ul className="builder-stock-list-configuration flex flex-wrap items-center gap-1.5" title={configuration}>
-      {parts.map(({ icon: Icon, value, label }) => (
-        <li
-          key={label}
-          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 px-1.5 py-1 text-xs leading-none text-foreground"
-        >
-          <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="tabular-nums">{value}</span>
-          <span className="sr-only">{`${value} ${label}`}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 function PriceBlock({ item }: { item: BuilderStockItem }) {
   const price = stockItemPrice(item);
   const { amount, qualifier } = splitPriceLine(price);
@@ -1615,70 +1542,270 @@ function RemoveProperty({ item, onRemoved }: {
 }
 
 /** xl and up: the six-column table row. */
-function StockRow({ item, saving, onAvailabilityChange, onRemoved }: StockPresentationProps) {
-  return (
-    <TableRow>
-      <TableCell className="px-3 py-3 align-top">
-        <PropertyIdentity item={item} />
-      </TableCell>
-      <TableCell className="px-3 py-3 align-top">
-        <ConfigurationChips item={item} />
-      </TableCell>
-      <TableCell className="px-3 py-3 align-top">
-        <PriceBlock item={item} />
-      </TableCell>
-      <TableCell className="px-3 py-3 align-top">
-        <ImageSources item={item} />
-      </TableCell>
-      <TableCell className="px-3 py-3 align-top">
-        <AvailabilityControl
-          item={item}
-          saving={saving}
-          onAvailabilityChange={onAvailabilityChange}
-        />
-        {/* Under the control that changes this property, not in a column of
-            its own: six columns already divide the width and a seventh would
-            take it from the address. */}
-        <div className="mt-1.5">
-          <RemoveProperty item={item} onRemoved={onRemoved} />
-        </div>
-      </TableCell>
-      <TableCell className="px-3 py-3 align-top">
-        <SelectionStatus item={item} />
-      </TableCell>
-    </TableRow>
-  );
-}
+/**
+ * ONE PROPERTY, DRAWN AS A PLATE.
+ *
+ * What replaces `StockRow` (a six-column table row above 1400px) and
+ * `StockCard` (the same fields stacked below it, rendered in parallel and
+ * hidden with `min-[1400px]:hidden`).
+ *
+ * ## The defect this exists to fix
+ *
+ * This page rendered ZERO photographs. Every builder's own house imagery is
+ * discovered from what they supplied, de-duplicated, classified, ranked and
+ * stored — and the Images column showed them a status word. The server's
+ * `image_url` operation was live and `builderStockImageUrl` was written; it
+ * had no caller anywhere. A builder could hand over a picture through
+ * `BuilderPropertyImageButton` and never see it.
+ *
+ * A volume builder sells off an elevation, so the elevation leads. Every
+ * fact and every control the two old presentations carried is still here —
+ * identity, price, configuration, image provenance, availability, removal,
+ * selection — because none of them was the problem.
+ *
+ * ## Three things worth knowing
+ *
+ * **The picture treatment is not this file's.** `StockPicture` is the
+ * marketplace card's fit-and-ground logic, extracted so both portals draw
+ * the same photograph the same way. Re-deriving it here would have
+ * reproduced the grey-band defect it was built to fix.
+ *
+ * **The configuration is a keyed schedule, not chips.** `ConfigurationChips`
+ * showed bed/bath/car as unlabelled icon pills and omitted land entirely.
+ * A dash in a cell whose key is drawn beside it is unambiguous — which is
+ * why the "name an absence, never dash it" rule that governs `TitleBlock`
+ * does not bind here: that rule is about a fixed grid lying about which key
+ * a value belongs to, and here the key is on the page.
+ *
+ */
+export function StockPlate({
+  item, saving, onAvailabilityChange, onRemoved,
+}: StockPresentationProps) {
+  const image = primaryStockImage(item);
+  const title = stockItemTitle(item);
+  const locality = stockItemLocality(item);
+  const price = stockItemPrice(item);
+  const { amount, qualifier } = splitPriceLine(price);
 
-/** Below xl: the same fields stacked, so nothing has to be scrolled to. */
-function StockCard({ item, saving, onAvailabilityChange, onRemoved }: StockPresentationProps) {
   return (
-    <li className="builder-portal-soft-panel p-4 transition-colors hover:bg-muted/30">
-      {/* The badge drops to its own line rather than squeezing the address into
-          a four-line column on a narrow phone. */}
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5">
-        <div className="min-w-0 flex-1 basis-56">
-          <PropertyIdentity item={item} />
+    <li className="bd-plate">
+      <div className="bd-plate-mount">
+        <StockPicture
+          image={image}
+          resolveUrl={builderStockImageUrl}
+          className="bd-plate-frame"
+          alt={`${title} — the picture shown on the marketplace`}
+          emptyLabel="No picture found yet"
+          emptyAction={
+            <div className="mt-2">
+              <BuilderPropertyImageButton
+                stockItemId={item.id}
+                propertyLabel={title}
+                hasImage={false}
+              />
+            </div>
+          }
+        />
+        {/*
+          Under the picture, because everything in it is ABOUT the picture:
+          where it came from, how to replace it, and which sources were read.
+          It was briefly a one-line caption beside a "Plate n / m" annotation;
+          the real render showed it is three lines of controls, and the sheet
+          number was decoration colliding with a button.
+        */}
+        <div className="bd-plate-caption">
+          <ImageSources item={item} showLabels />
         </div>
-        <SelectionStatus item={item} />
       </div>
 
-      <div className="mt-3 grid gap-3 border-t border-border/50 pt-3 sm:grid-cols-2">
-        <div className="min-w-0 space-y-2">
-          <PriceBlock item={item} />
-          <ConfigurationChips item={item} hideWhenEmpty />
+      {/*
+        TWO COLUMNS, AND THE SECOND ONE IS ANCHORED AT BOTH ENDS.
+
+        The plate and its provenance cluster stand ~440px tall; the facts
+        beside them fill ~250px. A third column left ~180px of dead space
+        under the schedule, and merely moving the controls into the second
+        column left the same void with a stack floating at the top of it —
+        measured on the real component, not the harness. So the body is a
+        sheet in its own right: the property is named at the head, the title
+        block and its controls are set at the foot, and the space between
+        them is the sheet's, bounded by a rule at each end.
+      */}
+      <div className="bd-plate-body">
+        <div className="bd-plate-head">
+          <PlateIdentity item={item} />
+          {/*
+            The row's own controls, in its top-right corner. `Remove` had a
+            line of its own at the foot — one quiet text button 700px from
+            anything, costing 52px of every row — and the head's right-hand
+            side was 90% empty. It is safe here because it opens a
+            confirmation naming the property; what it must not be is loud or
+            adjacent to something ordinary, which is why it stays a text
+            button under the status rather than beside the schedule.
+          */}
+          <div className="bd-plate-controls">
+            <SelectionStatus item={item} />
+            <RemoveProperty item={item} onRemoved={onRemoved} />
+          </div>
         </div>
-        <div className="flex min-w-0 flex-col gap-2 sm:items-end">
-          <ImageSources item={item} showLabels />
-          <AvailabilityControl
+
+        <div className="bd-plate-foot">
+          <SpecSchedule
             item={item}
-            saving={saving}
-            onAvailabilityChange={onAvailabilityChange}
-            className="sm:w-48"
+            price={price ? amount : null}
+            terms={qualifier}
+            availability={
+              /* Bounded. The trigger declares `w-full` for the narrow
+                 presentations that used to call it, and in a 910px column
+                 that drew a 908px empty select across the foot of the row. */
+              <AvailabilityControl
+                item={item}
+                saving={saving}
+                onAvailabilityChange={onAvailabilityChange}
+                className="h-9 w-[12rem]"
+              />
+            }
           />
-          <RemoveProperty item={item} onRemoved={onRemoved} />
         </div>
       </div>
     </li>
   );
+}
+
+/**
+ * The property, named at the head of its own sheet.
+ *
+ * `PropertyIdentity` is the list's shared identity block and stays exactly as
+ * it is for every other caller; this is the plate's, because a plate has room
+ * for two facts the row never had. The estate goes ABOVE the address as the
+ * eyebrow — `stockItemTitle` deliberately leaves `development_name` out (it
+ * spends the title's width twice and truncated the one part that tells two
+ * packages on one lot apart), so on the list it is a fact the builder's own
+ * file supplied and nothing ever drew. It is suppressed where the title
+ * already carries it, because a title falls back to the estate name when the
+ * row states no address at all.
+ */
+function PlateIdentity({ item }: { item: BuilderStockItem }) {
+  const title = stockItemTitle(item);
+  const locality = stockItemLocality(item);
+  const estate = (item.development_name ?? item.project_name ?? '').trim();
+  const eyebrow = [
+    estate && !title.includes(estate) ? estate : '',
+    (item.property_type ?? '').trim(),
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <div className="builder-stock-list-property min-w-0">
+      {eyebrow ? <p className="bd-annot bd-plate-eyebrow">{eyebrow}</p> : null}
+      {/* Wraps rather than truncating, for the reason the shared block
+          carries: half an address identifies nothing. */}
+      <p className="bd-plate-title">{title}</p>
+      {locality || item.external_reference ? (
+        <p className="bd-plate-place">
+          {locality}
+          {locality && item.external_reference ? ' · ' : ''}
+          {item.external_reference ? `Ref ${item.external_reference}` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * THE SCHEDULE: the offer and the specification, as one ruled object.
+ *
+ * A builder lives in two artefacts — the elevation and the schedule of
+ * inclusions that goes with it — so the plate is the first and this is the
+ * second: labels left in annotation type, figures right and tabular, a
+ * hairline between every row.
+ *
+ * ## Why it runs DOWN the column and not across it
+ *
+ * Measured, on the real component rather than the harness. The plate stands
+ * 306px with its provenance cluster beneath it — 410px of left column — and
+ * the property's identity is 91px. A four-cell strip beside that left ~450px
+ * of the row empty horizontally AND ~150px empty vertically; a full-width
+ * title block across the body fixed the width and made the height worse. Six
+ * stacked rows come to 216px, and 91 + 216 + 52 of controls + the column's
+ * own gaps is 407px against the plate stack's 410 — so the two columns read
+ * as one sheet because they actually are the same height.
+ *
+ * That is also what let the labels become words. `BED / BATH / CAR` was the
+ * abbreviation a four-cell strip could afford.
+ *
+ * ## Three rules
+ *
+ * **A ROW WITH NOTHING IN IT PRINTS A DASH AND KEEPS ITS PLACE.** That is
+ * the convention the device comes from — a drawing with no revision prints
+ * `—` in the REV field rather than dropping the field — and it is what makes
+ * the figures align down the sheet. A collapsing schedule would put LAND
+ * where HOME was on the row above it.
+ *
+ * **PRICE NOT STATED IS A STATE, NOT AN ABSENCE.** A builder's sheet may
+ * price on application, so the leading row says so in words at reading size
+ * rather than printing a 1.5rem em dash where the figure goes — which is
+ * exactly what `splitPriceLine(null)` would hand it.
+ *
+ * **NOTHING HERE REFORMATS THE OFFER.** The figure is the first half of
+ * whatever `stockItemPrice` returned, so "From $749,000" keeps its "From"
+ * and the rest of the line is set under it as the field's own note — which
+ * is where it belongs: above the schedule, "fixed price, house and land"
+ * read as a stray lowercase sentence qualifying nothing.
+ *
+ * ## Availability is a field, not a loose control
+ *
+ * A drawing's title block carries its STATUS, and whether a property is
+ * available is a fact about it that happens to be settable. Left outside as
+ * a bare select it sat 700px from anything it related to, at the foot of the
+ * row, beside the one destructive control — so the quietest thing on the
+ * plate and the loudest shared a line. In the schedule it is the last field,
+ * and `Remove` is then the only thing outside it.
+ */
+function SpecSchedule({ item, price, terms, availability }: {
+  item: BuilderStockItem;
+  price: string | null;
+  terms: string | null;
+  availability: ReactNode;
+}) {
+  const rows: Array<{ key: string; label: string; value: string }> = [
+    { key: 'bed', label: 'Bedrooms', value: numberOrDash(item.bedrooms) },
+    { key: 'bath', label: 'Bathrooms', value: numberOrDash(item.bathrooms) },
+    { key: 'car', label: 'Car spaces', value: numberOrDash(item.car_spaces) },
+    { key: 'home', label: 'Home', value: areaOrDash(item.building_size_sqm) },
+    { key: 'land', label: 'Land', value: areaOrDash(item.land_size_sqm) },
+  ];
+
+  return (
+    <dl className="bd-spec">
+      <div className="bd-spec-row bd-spec-lead">
+        <dt className="bd-annot">Price</dt>
+        <dd className="bd-spec-offer">
+          {price
+            ? <span className="bd-spec-price">{price}</span>
+            : <span className="bd-spec-unpriced">On application</span>}
+          {terms ? <span className="bd-spec-terms">{terms}</span> : null}
+        </dd>
+      </div>
+      {rows.map((row) => (
+        <div className="bd-spec-row" key={row.key}>
+          <dt className="bd-annot">{row.label}</dt>
+          <dd className="bd-spec-value">{row.value}</dd>
+        </div>
+      ))}
+      <div className="bd-spec-row bd-spec-settable">
+        <dt className="bd-annot">Availability</dt>
+        <dd className="bd-spec-control">{availability}</dd>
+      </div>
+    </dl>
+  );
+}
+
+/** An area in whole square metres, or an em dash where none is recorded. */
+function areaOrDash(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '\u2014';
+  return `${Math.round(value).toLocaleString(AU_LOCALE)} m\u00b2`;
+}
+
+/** A count, or an em dash where the record does not state one. */
+function numberOrDash(value: number | null | undefined): string {
+  return value === null || value === undefined ? '\u2014' : String(value);
 }

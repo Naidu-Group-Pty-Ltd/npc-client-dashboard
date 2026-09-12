@@ -141,3 +141,115 @@ reads as a value somebody entered.
   returns early while loading and again on error; the clock the rail's extent
   annotation needs is read once, at the top, by a lazy `useState` initialiser
   — a `Date.now()` during render is impure and two renders can disagree.
+
+## 7. The plate sheet — the builder's own houses, on the Stock List
+
+The workhorse page of the portal rendered **zero `<img>` elements**. Every
+builder's own house imagery was already discovered, de-duplicated, classified,
+ranked, stored and signed, and the page showed a status word instead:
+`builderStockImageUrl` was written and had no caller anywhere. So the Stock
+List is a **plate sheet** now — each property is its elevation, framed like a
+plate, with a ruled schedule beside it.
+
+It is a plate beside a schedule in the portal's existing ledger rhythm, not a
+photo-card grid, which is the templated answer for anything involving
+property. The line work becomes the **frame** rather than the subject.
+
+### The measurements that decided the layout
+
+Everything below was taken by rendering the real component's DOM against the
+real built stylesheet in Chromium. Four arrangements were built and measured:
+
+| Arrangement | Outcome |
+| --- | --- |
+| Three columns (plate / facts / controls) | plate stack 338px, both other columns ~160px — **~180px of dead space** under the schedule on every row |
+| Two columns, controls moved into the body | same void, now with a stack floating at the top of it |
+| Four-cell strip beside the plate | left ~450px of the row empty horizontally **and** ~150px vertically |
+| Full-width title block across the body | fixed the width, made the height worse |
+
+The arithmetic is the constraint: 306px of picture beside a 91px address
+cannot balance in a 910px column, and a **narrower** plate reduces the
+mismatch, which is the opposite of what the page needs. Six stacked schedule
+rows come to 216px, and `91 + 216 + 52` of controls plus the column's gaps is
+**397px against the plate stack's 397** — measured, not estimated. The two
+columns read as one sheet because they are the same height.
+
+Four rules follow.
+
+**The schedule runs DOWN the column, and its label and figure are
+adjacent.** Set as a justified pair the label landed at x=634 and its figure
+at x=1535 — 850px apart, with nothing between them to carry the eye. A ruled
+sheet whose entries occupy the left of each rule is a ledger; a label and a
+number at opposite ends of a 900px row is a table that has come apart.
+
+**The foot STRETCHES rather than being sized.** A property whose address
+wraps to two lines would otherwise open a hole of exactly that size, and a
+hole is the one thing this row cannot afford. `flex: 1` on the foot and on
+each schedule row means the columns match for every property, not for the
+fixture.
+
+**A row with nothing in it prints a dash and keeps its place**, which is the
+convention the device comes from — a drawing with no revision prints `—` in
+the REV field rather than dropping the field. A collapsing schedule would put
+LAND where HOME was on the row above it. Price is the exception: "on
+application" is a real state for a builder's sheet, so the leading row says
+so in words rather than printing `splitPriceLine(null)`'s em dash at 1.5rem.
+
+**Availability is a schedule field, not a loose control.** A drawing's title
+block carries its STATUS. Left outside, the select sat at the foot of the row
+700px from anything it related to, `w-full` drew it 908px wide, and it shared
+a line with the one destructive control — the quietest thing on the plate
+beside the loudest. `Remove` is now alone in the head's top-right corner,
+which saved 52px of every row.
+
+Two facts the record held and no presentation on this page ever drew:
+`building_size_sqm` (the marketplace card has always shown it) and
+`development_name`, which `stockItemTitle` deliberately leaves out of the
+title and which is now the eyebrow — suppressed where the title falls back to
+it. An empty frame is **hatched**, because 544×306 of empty box reads as a
+picture that failed to load, which is a different thing from a property whose
+photograph has not been found yet.
+
+`StockPicture` was **extracted, not copied**: the Command Centre marketplace
+card's fit-and-ground logic with the transport as a parameter, the same shape
+as `buildCasePassportView(…, audience)`. One implementation, so the two
+portals cannot come to draw the same photograph differently.
+
+### §1 happened again, in the stylesheet
+
+The plate sheet's first pass landed with **seventeen `.bd-*` rules nothing
+rendered** — a recessive board, a four-cell masthead, and a whole second
+implementation of the picture treatment (`.bd-plate-img`, `-ground`,
+`-scrim`, `-empty*`) that `StockPicture` draws with utilities. Checking for
+that found **eleven more already on `main`**, from the work §1 describes:
+`.bd-sheet`, `.bd-sheet-cut`, `.bd-rule`, `.bd-chip`, `.bd-chip-dot`,
+`.bd-card`, `.bd-ledger`, `.bd-num`, `.bd-lot`, `.bd-nav-group` and
+`.bd-mark`. `bd-chip` is named in §1 as one of the three things that shipped
+unmounted; `builderPortalUiMounted.spec.ts` fixed the two **components** and
+could never see the class.
+
+All twenty-eight are deleted. The primitives were redundant by construction
+rather than merely unused: this stylesheet's strategy is the **re-skin**, so
+`.luxury-badge` already does what `.bd-chip` was for, `.bg-card` does
+`.bd-card` and `.bd-sheet`, and `thead th` / `tbody td` do `.bd-ledger` — on
+the pages that exist, rather than on pages that would have had to adopt a new
+class list. Two implementations of one design decision is how one of them
+becomes wrong, and the unreachable one is the one nobody notices going stale.
+
+The masthead is the one that was **designed and could not be mounted
+honestly**: every count this page holds except `pagination.total` is scoped to
+the PAGE (`records`, `uploads`, the availability tallies), and "48 with a
+photograph" over a list of 148 is a number that means something other than
+what it says.
+
+`builderDraftingMounted.spec.ts` now fails on any `.bd-*` class the sheet
+declares that nothing in `src/` applies. It asserts reachability, not quality.
+Dead CSS compiles, lints, passes `audit:style` and ships — bytes in every
+builder's bundle describing a page that does not exist, indistinguishable in
+the source from the half that is live.
+
+One latent bug fell out of adding the spec: two builder contract tests
+`readdirSync`'d `src/pages/builder` and `read()` every **entry**, so the
+`__tests__/` directory the repo's own convention asks for
+(`src/pages/{admin,aml,calculators}` all have one) threw EISDIR. The sibling
+readdir in the same expression had filtered to `.tsx` from the start.

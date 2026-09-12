@@ -257,7 +257,11 @@ test('17-19. branding is read live from settings, so a change propagates', () =>
 
 test('20-22. no hard-coded operator identity anywhere in Builder', () => {
   const builderFiles = [
-    ...readdirSync(join(root, 'src/pages/builder')).map((f) => `src/pages/builder/${f}`),
+    // Files, not entries: the directory now holds `__tests__/`, and
+    // `read()` on a directory throws EISDIR.
+    ...readdirSync(join(root, 'src/pages/builder'))
+      .filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))
+      .map((f) => `src/pages/builder/${f}`),
     ...readdirSync(join(root, 'src/components/builder-portal'))
       .filter((f) => f.endsWith('.tsx')).map((f) => `src/components/builder-portal/${f}`),
     ...BUILDER_UI,

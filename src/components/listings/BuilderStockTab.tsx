@@ -22,12 +22,13 @@ import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useSupplyStockImageForBuilder } from '@/lib/marketplaceBuilderStock';
 import { cn } from '@/lib/utils';
+import { StockPicture } from '@/components/stock/StockPicture';
 import {
   marketplaceStockImageUrl, useMarketplaceBuilderStock, useMarketplaceBuilders,
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
 } from '@/lib/marketplaceBuilderStock';
 import {
-  cardPictureFit, homeSizeDisplay, type CardPictureFit,
+  homeSizeDisplay,
   primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
   stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
@@ -397,215 +398,87 @@ function StockCard({
 }
 
 /**
- * The image, and where it came from.
+ * The marketplace card's picture.
  *
- * A stored image is fetched through a short-lived signed URL; a search result
- * is a link to somebody else's server and is loaded without a referrer and
- * labelled unverified. It is never presented as a photograph OF this property.
+ * THE TREATMENT MOVED, THE BADGE STAYED. Everything about how a picture sits
+ * in its frame — the 16:9 shape, `cardPictureFit`'s cover-vs-contain rule,
+ * the blurred own-ground for a contained picture, measure-on-mount-as-well-
+ * as-load — is now `StockPicture`, because the Builder portal needed to draw
+ * the same photograph and a second copy of this logic is how one of them
+ * comes to show a grey band again.
+ *
+ * What stays here is what is particular to THIS card: the provenance badge,
+ * and the link out to a web source. The transport stays here too —
+ * `marketplaceStockImageUrl` signs on the Command Centre's authorisation,
+ * where the portal signs on the builder's.
+ *
+ * THE BADGE IS DERIVED FROM THE SAME DECISION THAT PICKED THE IMAGE.
+ * `stockImageProvenance` is the client mirror of the server's ranking, so a
+ * card cannot say "Builder supplied" over a picture the ranking took from a
+ * web search or from Street View. That is the whole reason a fallback is
+ * allowed to reach a card at all: it is shown as what it is.
  */
 function StockCardImage({ image, onSupply, supplying }: {
   image: BuilderStockImage | null;
   onSupply?: () => void;
   supplying?: boolean;
 }) {
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  const [broken, setBroken] = useState(false);
-  /*
-   * HOW THIS PICTURE SITS IN THE FRAME — ASKED OF THE PICTURE THAT LOADED.
-   *
-   * The stored `source_width`/`source_height` describe the PAGE for a
-   * page-crop extraction rather than the crop that was kept, so the record is
-   * the wrong witness; `naturalWidth` is the thing actually being drawn.
-   *
-   * `contain` until it loads, which is also the answer for a picture that
-   * never does: showing a picture whole is the choice that cannot cut a house
-   * in half, so the unmeasured case takes the safe one.
-   */
-  const [fit, setFit] = useState<CardPictureFit>('contain');
-
-  const measure = useCallback((drawn: HTMLImageElement) => {
-    setFit(cardPictureFit(drawn.naturalWidth, drawn.naturalHeight));
-  }, []);
-
-  /*
-   * Measured on mount as well as on load, because a picture already in the
-   * browser's cache can complete BEFORE React attaches `onLoad` and would
-   * then never be measured at all — which fails to the plain box rather than
-   * to a wrong one, but fails silently and only on a revisit, which is the
-   * hardest kind of gap to notice. Stable, so a re-render does not detach and
-   * reattach the ref on every card in the grid.
-   */
-  const measureOnMount = useCallback((drawn: HTMLImageElement | null) => {
-    if (drawn?.complete && drawn.naturalWidth) measure(drawn);
-  }, [measure]);
-
-  useEffect(() => {
-    let alive = true;
-    setBroken(false);
-    setSignedUrl(null);
-    setFit('contain');
-    if (!image) return () => { alive = false; };
-    if (image.external_url && !image.storage_path) {
-      setSignedUrl(image.external_url);
-      return () => { alive = false; };
-    }
-    void marketplaceStockImageUrl(image.id).then((url) => {
-      if (alive) setSignedUrl(url);
-    });
-    return () => { alive = false; };
-  }, [image]);
-
-  if (!image) {
-    return (
-      <div
-        className="flex aspect-[16/9] w-full items-center justify-center border-b border-border/60 bg-muted/30"
-      >
-        <div className="text-center">
-          <ImageIcon className="mx-auto h-6 w-6 text-muted-foreground/50" aria-hidden />
-          <p className="mt-1 text-[11px] text-muted-foreground">No image found</p>
-          {/*
-            A blank card costs a sale today, and a builder who has not answered
-            an email is not a reason to keep showing nothing — staff routinely
-            hold the marketing pack first. The record says staff supplied it,
-            because acting for somebody is a different act from acting for
-            yourself.
-          */}
-          {onSupply ? (
-            <button
-              type="button"
-              className="mt-2 text-[11px] font-medium text-primary underline-offset-2 hover:underline
-                disabled:opacity-60"
-              disabled={supplying}
-              onClick={onSupply}
-            >
-              {supplying ? 'Adding…' : 'Add a picture'}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
-
-  /**
-   * THE BADGE IS DERIVED FROM THE SAME DECISION THAT PICKED THE IMAGE.
-   *
-   * `stockImageProvenance` is the client mirror of the server's ranking, so a
-   * card cannot say "Builder supplied" over a picture the ranking took from a
-   * web search or from Street View. That is the whole reason a fallback is
-   * allowed to reach a card at all: it is shown as what it is.
-   */
-  const provenance = stockImageProvenance(image);
+  const provenance = image ? stockImageProvenance(image) : null;
   const fallback = provenance === 'web_sourced' || provenance === 'street_view';
 
-  /**
-   * THE PICTURE FILLS THE FRAME, AND THE FRAME IS THE SHAPE A RENDER IS.
-   *
-   * This began as a 160px strip with `object-cover`, which discarded 68% of a
-   * portrait render and kept a band of sky. The repair was to CONTAIN every
-   * picture in a 16:10 frame — nothing cropped, ever — and that bought the
-   * defect that replaced it: a grey band above and below almost every card,
-   * with the provenance badge floating in it, reported as looking broken.
-   *
-   * Both were the same mistake, which is treating the frame and the fit as
-   * one decision. Measured over the 94 properties live on 11 September 2026,
-   * SIXTY-SIX carry a 16:9 render — the modal shape by a factor of six, and
-   * the shape the builders' rendering software emits. Sixty-four are 16:9 to
-   * the bit and fill the frame with nothing cropped at all; the other two
-   * are 1.7780 and lose a hundredth of a percent.
-   *
-   * For the rest, `cardPictureFit` decides on the AXIS the crop would run.
-   * Taller than the frame and covering discards sky and foreground planting;
-   * that was checked by eye against the three worst live images, where a 43%
-   * crop removed nothing but sky and shrubs and improved the composition. So
-   * the vertical allowance is generous. Wider than the frame and covering
-   * discards the sides, which is where a house extends and where a brochure
-   * banner can put the building; that allowance is tight, and past it the
-   * picture is contained whole with its own ground behind it.
-   *
-   * On the live list every one of the 94 is 1.778 or taller-than-wide, so all
-   * 94 fill the frame and not one is contained. The ground below is kept for
-   * the shapes that will arrive tomorrow.
-   */
   return (
-    <div
-      className="relative aspect-[16/9] w-full overflow-hidden border-b border-border/60 bg-muted/30"
-    >
-      {/*
-        THE GROUND UNDER A PICTURE THAT IS SHOWN WHOLE.
-
-        Reached only where `cardPictureFit` said `contain` — a portrait taller
-        than 1:1.25, or a banner wider than 2.22:1, neither of which is on the
-        live list today. Nothing there is drawn over a bare card: the surround
-        is the picture's own, blurred and lifted, so a contained photograph
-        sits on a field of its own colour rather than in a grey slot. The
-        scrim is light (30%, down from 45%) because the fault it used to have
-        was washing that colour out into exactly the grey it was meant to
-        replace.
-
-        It is the same `src`, so it is already decoded and costs no request,
-        and it is mounted only once the picture has been MEASURED — never for
-        one that failed to load, where a blur of nothing is a grey slab.
-
-        This is a `filter`, not a `backdrop-filter`: the material rules in
-        `glass.css` forbid a backdrop filter on anything that repeats, and a
-        grid of twenty-four cards repeats.
-      */}
-      {signedUrl && !broken && fit === 'contain' ? (
-        <img
-          src={signedUrl}
-          alt=""
-          aria-hidden
-          className="absolute inset-0 z-0 h-full w-full scale-125 object-cover blur-3xl saturate-150"
-          loading="lazy"
-          referrerPolicy="no-referrer"
-        />
-      ) : null}
-      {signedUrl && !broken && fit === 'contain' ? (
-        <div className="absolute inset-0 z-0 bg-background/30" aria-hidden />
-      ) : null}
-      {signedUrl && !broken ? (
-        <img
-          src={signedUrl}
-          alt={STOCK_IMAGE_STAGE_LABELS[image.source_stage]}
-          className={cn('relative z-10 h-full w-full',
-            fit === 'cover' ? 'object-cover' : 'object-contain')}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          ref={measureOnMount}
-          onLoad={(event) => measure(event.currentTarget)}
-          onError={() => setBroken(true)}
-        />
-      ) : (
-        <div className="flex h-full items-center justify-center">
-          {broken
-            ? <p className="text-[11px] text-muted-foreground">Image unavailable</p>
-            : <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />}
-        </div>
-      )}
-      <span
-        className={cn(
-          'absolute left-2 top-2 z-20 rounded-full border px-2 py-0.5 text-[10px] font-semibold backdrop-blur',
-          fallback
-            ? 'border-warning/40 bg-warning/15 text-warning'
-            : 'border-border/60 bg-background/80 text-foreground',
-        )}
-      >
-        {provenance
-          ? STOCK_PROVENANCE_LABEL[provenance]
-          : STOCK_IMAGE_STAGE_BADGES[image.source_stage]}
-      </span>
-      {fallback && image.source_page_url ? (
-        <a
-          href={image.source_page_url}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          className="absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[10px] font-medium backdrop-blur hover:bg-background"
+    <StockPicture
+      image={image}
+      resolveUrl={marketplaceStockImageUrl}
+      className="border-b border-border/60"
+      alt={image ? STOCK_IMAGE_STAGE_LABELS[image.source_stage] : ''}
+      emptyLabel="No image found"
+      emptyAction={onSupply ? (
+        /*
+          A blank card costs a sale today, and a builder who has not answered
+          an email is not a reason to keep showing nothing — staff routinely
+          hold the marketing pack first. The record says staff supplied it,
+          because acting for somebody is a different act from acting for
+          yourself.
+        */
+        <button
+          type="button"
+          className="mt-2 text-[11px] font-medium text-primary underline-offset-2 hover:underline
+            disabled:opacity-60"
+          disabled={supplying}
+          onClick={onSupply}
         >
-          Source
-          <ExternalLink className="h-3 w-3" aria-hidden />
-        </a>
-      ) : null}
-    </div>
+          {supplying ? 'Adding\u2026' : 'Add a picture'}
+        </button>
+      ) : undefined}
+      overlay={image ? (
+        <>
+          <span
+            className={cn(
+              'absolute left-2 top-2 z-20 rounded-full border px-2 py-0.5 text-[10px] font-semibold backdrop-blur',
+              fallback
+                ? 'border-warning/40 bg-warning/15 text-warning'
+                : 'border-border/60 bg-background/80 text-foreground',
+            )}
+          >
+            {provenance
+              ? STOCK_PROVENANCE_LABEL[provenance]
+              : STOCK_IMAGE_STAGE_BADGES[image.source_stage]}
+          </span>
+          {fallback && image.source_page_url ? (
+            <a
+              href={image.source_page_url}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="absolute bottom-2 right-2 z-20 inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2 py-0.5 text-[10px] font-medium backdrop-blur hover:bg-background"
+            >
+              Source
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+          ) : null}
+        </>
+      ) : undefined}
+    />
   );
 }
 

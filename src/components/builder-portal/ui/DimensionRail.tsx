@@ -43,6 +43,13 @@ export interface DimensionStage {
   /** What the station is called under its tick. Kept short; several of them
    *  share the width. */
   label: string;
+  /**
+   * The drawn form, where `label` is too long to sit under a tick beside its
+   * neighbours. The DRAWING takes this; the spoken description always takes
+   * `label`, so shortening can never rename a station — and by convention a
+   * short form is a prefix of the full one.
+   */
+  short?: string;
 }
 
 export interface DimensionRailProps {
@@ -99,8 +106,16 @@ export function DimensionRail({
     return { left: `${at(i)}%`, transform: 'translateX(-50%)' };
   };
 
+  /*
+   * `bd-rail` is what BOUNDS the extent, and it replaces the `w-full` this
+   * root used to carry. A dimension line run across a 1,550px sheet reads
+   * as a row of unrelated points rather than one measured span — found by
+   * rendering it, not by reading it — so the class sets a max-width as well
+   * as the full width. A dense rail lives in a table cell already narrower
+   * than that bound, so it costs those nothing.
+   */
   return (
-    <div className={cn('w-full', className)} role="img" aria-label={spoken}>
+    <div className={cn('bd-rail', className)} role="img" aria-label={spoken}>
       {/* Section marker and extent, above the station it measures to. */}
       {!dense && hasPosition && annotation ? (
         <div className="relative h-7">
@@ -144,18 +159,33 @@ export function DimensionRail({
       </div>
 
       <div className={cn('bd-rail-labels', dense ? 'mt-1' : 'mt-1.5')}>
-        {stages.map((stage, i) => (
-          <span
-            key={`lbl-${stage.key}`}
-            className={cn(
-              'bd-rail-label bd-annot',
-              hasPosition && i === current && 'font-bold text-foreground',
-            )}
-            style={labelStyle(i)}
-          >
-            {stage.label}
-          </span>
-        ))}
+        {stages.map((stage, i) => {
+          /*
+           * DENSE DRAWS THREE STATIONS, NOT ALL OF THEM.
+           *
+           * A dense rail lives in a table cell. Seven names across ~500px is
+           * ~70px each, and "Practical completion" alone is twice that — so
+           * every row of a build list overlapped its own labels. The ends
+           * carry the extent and the current station carries the answer;
+           * the ticks still mark every station, so nothing is removed from
+           * the drawing, only from the annotation.
+           */
+          const drawn = !dense || i === 0 || i === stages.length - 1 || i === current;
+          if (!drawn) return null;
+
+          return (
+            <span
+              key={`lbl-${stage.key}`}
+              className={cn(
+                'bd-rail-label bd-annot',
+                hasPosition && i === current && 'font-bold text-foreground',
+              )}
+              style={labelStyle(i)}
+            >
+              {stage.short ?? stage.label}
+            </span>
+          );
+        })}
       </div>
 
       {/* Drawing notes. Where the position is unknown this carries the reason,

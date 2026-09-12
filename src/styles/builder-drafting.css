@@ -52,7 +52,9 @@
 
     /* The setout grid's own ink. Derived from the foreground so it
        reads on both themes without being declared twice. */
-    --bd-grid: hsl(var(--foreground) / 0.05);
+    /* Measured against a real render: at 0.05 on the dark ground the grid
+       was a rumour rather than a sheet. */
+    --bd-grid: hsl(var(--foreground) / 0.075);
     --bd-grid-step: 24px;
 
     /* Stage ramp — ONE hue, monotonic lightness, stepped off the
@@ -186,12 +188,21 @@
 
   /* Extension line — dropped from each station, the way a dimension is
      tied back to the thing it measures. */
+  /* A DIMENSION LINE HAS A NATURAL LENGTH. Run across a 1,550px sheet its
+     stations read as unrelated points rather than one measured extent, so
+     the rail is bounded and sits at the start of whatever column holds it. */
+  .builder-portal-theme .bd-rail {
+    width: 100%;
+    max-width: 46rem;
+  }
+
   .builder-portal-theme .bd-rail-ext {
     position: absolute;
     top: 0;
     bottom: 0;
     width: 1px;
-    background-color: hsl(var(--border) / 0.7);
+    /* Full border weight: at 0.7 alpha these did not survive the render. */
+    background-color: hsl(var(--border));
   }
 
   /* Tick terminator — the 45° slash a chain of dimensions uses instead
@@ -304,6 +315,27 @@
     box-shadow: var(--glass-inner);
   }
 
+  /* EIGHT FIGURES ARE ONE SCHEDULE, NOT TWO SLABS. The dashboard drew two
+     four-across blocks; measured at 1,920px that is a 400px cell holding a
+     single digit, and two borders where a drawing would rule one table. */
+  .builder-portal-theme .bd-schedule-8 > * {
+    padding: 0.875rem 1rem;
+  }
+
+  @media (min-width: 768px) {
+    .builder-portal-theme .bd-schedule-8 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .builder-portal-theme .bd-schedule-8 > *:nth-child(4n) {
+      border-right: 0;
+    }
+
+    .builder-portal-theme .bd-schedule-8 > *:nth-last-child(-n + 4) {
+      border-bottom: 0;
+    }
+  }
+
   @media (min-width: 768px) {
     .builder-portal-theme .bd-schedule-3 {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -361,7 +393,10 @@
      with the sheets beneath it, and keeps everything else.
      ══════════════════════════════════════════════════════════════════ */
   .builder-portal-theme .builder-portal-page-header {
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
+    /* The cut, on the leading edge — the same mark the active nav entry
+       takes, so the sheet in hand is identified the same way everywhere. */
+    border-left: 2px solid hsl(var(--primary) / 0.55);
   }
 
   /* ══════════════════════════════════════════════════════════════════
@@ -506,6 +541,26 @@
      not the portal's sheet.
      ══════════════════════════════════════════════════════════════════ */
 
+  /* ── Badges become chips ──────────────────────────────────────────
+     `luxury-badge` is the base class every shadcn `Badge` carries — the
+     same kind of hook `bg-card` is — so the portal's ~40 status badges
+     take the annotation register without a single page changing.
+
+     ONLY the shape and the type are set. Each variant's colour comes
+     from Tailwind utilities in the utilities layer, which outrank this
+     rule by layer order, so `success`/`warning`/`destructive` keep the
+     semantic tones Category B fixes — a caution chip must never read as
+     a brand one. */
+  .builder-portal-theme .luxury-badge {
+    padding: 0.25rem 0.5625rem;
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
   /* Cards become sheets. `bg-card` is the hook glass.css already
      established for this, and every shadcn `Card` in the portal carries
      it, so one rule reaches all of them. */
@@ -520,8 +575,19 @@
   .builder-portal-theme input,
   .builder-portal-theme textarea,
   .builder-portal-theme select,
-  .builder-portal-theme [role="combobox"] {
+  .builder-portal-theme [role="combobox"],
+  /* Buttons were omitted from the first pass, which left the loudest
+     control on every page as a rounded pill on a sheet of square ones. */
+  .builder-portal-theme button,
+  .builder-portal-theme [role="button"] {
     border-radius: var(--radius-sm);
+  }
+
+  /* Round things that are MEANT to be round: avatars, icon-only toggles and
+     anything a page has explicitly asked to be a circle. */
+  .builder-portal-theme button.rounded-full,
+  .builder-portal-theme [role="button"].rounded-full {
+    border-radius: 9999px;
   }
 
   /* ── Tables become ledgers ────────────────────────────────────────

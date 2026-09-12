@@ -55,9 +55,15 @@ export function BuilderSchedule({ figures, className }: BuilderScheduleProps) {
       className={cn(
         'bd-schedule',
         /* Three and four across from `md`; anything else stays two, which is
-           the only column count that divides cleanly at every width. */
+           the only column count that divides cleanly at every width.
+
+           Eight is four across over two ruled rows — ONE schedule. The
+           dashboard used to draw two four-across blocks stacked, which at
+           1,920px is a 400px cell holding a single digit and a second border
+           where a drawing would simply rule another row. */
         figures.length === 3 && 'bd-schedule-3',
         figures.length === 4 && 'bd-schedule-4',
+        figures.length === 8 && 'bd-schedule-8',
         className,
       )}
     >

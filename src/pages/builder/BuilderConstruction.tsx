@@ -7,7 +7,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Progress } from '@/components/ui/progress';
+import { DimensionRail } from '@/components/builder-portal/ui/DimensionRail';
+import {
+  isOffSequenceStatus, railIndexFromStatus, railStationsFromStatuses,
+} from '@/lib/builderConstructionRail.pure';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -34,6 +37,14 @@ import {
  * The project filter narrows within what is already permitted. It cannot widen
  * anything: the server intersects it with the caller's accessible projects.
  */
+/*
+ * The extent every row is measured against — the case lifecycle, in order.
+ * Built once at module scope because it is the same line for every build and
+ * `DimensionRail` takes it by value; rebuilding it per row would hand React a
+ * new array on every render for no gain.
+ */
+const STATUS_RAIL_STAGES = railStationsFromStatuses();
+
 export default function BuilderConstruction() {
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState('');
@@ -153,7 +164,7 @@ export default function BuilderConstruction() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Build</TableHead>
-                    <TableHead>Progress</TableHead>
+                    <TableHead className="w-[30%] min-w-64">Stage</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="hidden md:table-cell">Est. completion</TableHead>
                   </TableRow>
@@ -177,9 +188,30 @@ export default function BuilderConstruction() {
                           </span>
                         </Link>
                       </TableCell>
-                      <TableCell className="w-40">
-                        <Progress value={Number(record.percent_complete)} className="h-2" />
-                        <span className="mt-1 block text-xs text-muted-foreground">
+                      <TableCell className="w-[30%] min-w-64">
+                        {/*
+                          A DENSE DIMENSION RAIL, NOT A PROGRESS BAR.
+
+                          A bar answers "how much" and a build is asked "which
+                          stage" — the same question the detail page answers.
+                          `railIndexFromStatus` returns null for a status that
+                          is not a point on the line (on hold, cancelled), so
+                          those rows draw the extent with no mark rather than
+                          being placed somewhere the record does not say.
+
+                          The percentage is KEPT: the rail replaces how the
+                          row is drawn, never what it tells you.
+                        */}
+                        <DimensionRail
+                          dense
+                          stages={STATUS_RAIL_STAGES}
+                          currentIndex={
+                            isOffSequenceStatus(record.status)
+                              ? null
+                              : railIndexFromStatus(record.status)
+                          }
+                        />
+                        <span className="mt-1.5 block text-xs tabular-nums text-muted-foreground">
                           {formatPercentComplete(record.percent_complete)}
                         </span>
                       </TableCell>

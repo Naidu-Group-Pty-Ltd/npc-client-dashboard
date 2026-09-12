@@ -498,11 +498,20 @@ test('both functions are covered by the Deno type check', () => {
 // ---------------------------------------------------------------------------
 
 test('the transaction routes are inside the Builder portal tree', () => {
+  /*
+   * WITHDRAWN, NOT UNROUTED. The section is not offered in this portal
+   * (`builderHiddenSections.pure.ts`), so the path resolves to the notice
+   * instead of the page. The rule this test protects is unchanged and is the
+   * reason it still asserts: the path must live INSIDE the Builder portal
+   * tree, never in the internal dashboard tree.
+   */
   const builderTree = app.slice(app.indexOf('<Route path="/builder/*"'));
-  assert.ok(builderTree.includes('<Route path="transactions" element={<BuilderTransactions />} />'));
+  assert.ok(builderTree.includes('<Route path="transactions" element={<BuilderSectionWithdrawn />} />'));
   assert.ok(builderTree.includes(
-    '<Route path="transactions/:transactionId" element={<BuilderTransactionDetail />} />'));
-  assert.ok(builderTree.includes('<Route path="pipeline" element={<BuilderPipeline />} />'));
+    '<Route path="transactions/:transactionId" element={<BuilderSectionWithdrawn />} />'));
+  assert.ok(builderTree.includes('<Route path="pipeline" element={<BuilderSectionWithdrawn />} />'));
+  assert.match(app, /const BuilderTransactions = lazyWithRetry/);
+  assert.match(app, /const BuilderPipeline = lazyWithRetry/);
 });
 
 test('the Transactions and Pipeline navigation items are enabled', () => {

@@ -371,12 +371,21 @@ test('both functions are covered by the Deno type check', () => {
 // ---------------------------------------------------------------------------
 
 test('the inventory routes are inside the Builder portal tree, not the dashboard', () => {
+  /*
+   * WITHDRAWN, NOT UNROUTED. The section is not offered in this portal
+   * (`builderHiddenSections.pure.ts`), so the path resolves to the notice
+   * instead of the page. The rule this test protects is unchanged and is the
+   * reason it still asserts: the path must live INSIDE the Builder portal
+   * tree, never in the internal dashboard tree.
+   */
   const builderTree = app.slice(app.indexOf('<Route path="/builder/*"'));
-  assert.ok(builderTree.includes('<Route path="inventory" element={<BuilderInventory />} />'));
-  assert.ok(builderTree.includes('<Route path="inventory/:unitId" element={<BuilderUnitDetail />} />'));
-  // And nothing outside the portal tree links to them.
+  assert.ok(builderTree.includes('<Route path="inventory" element={<BuilderSectionWithdrawn />} />'));
+  assert.ok(builderTree.includes('<Route path="inventory/:unitId" element={<BuilderSectionWithdrawn />} />'));
+  // And nothing outside the portal tree links to them — the guard that
+  // matters most here, and it is untouched by the withdrawal.
   const beforeTree = app.slice(0, app.indexOf('<Route path="/builder/*"'));
   assert.ok(!beforeTree.includes('BuilderInventory />'));
+  assert.match(app, /const BuilderInventory = lazyWithRetry/);
 });
 
 test('the Inventory navigation item is enabled', () => {

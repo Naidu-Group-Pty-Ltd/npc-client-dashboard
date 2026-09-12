@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 import { useBuilderMyPreferences, useBuilderWorkspaceMutation } from '@/lib/builderQueries';
 import { cn } from '@/lib/utils';
+import { WITHDRAWN_BUILDER_SECTION_KEYS } from '@/lib/builderHiddenSections.pure';
 
 interface TourStep {
   selector: string;
@@ -50,7 +51,7 @@ const STEPS: TourStep[] = [
   {
     selector: '[data-tour="dashboard"]',
     title: 'Your dashboard',
-    description: 'Your home base — active projects, units needing attention, construction milestones coming due and anything flagged as at risk.',
+    description: 'Your home base — the figures for everything shared with your account, what is waiting on you, and your recent activity.',
     icon: LayoutDashboard,
   },
   {
@@ -109,6 +110,29 @@ const STEPS: TourStep[] = [
   },
 ];
 
+/*
+ * A TOUR STEP IS A PROMISE THAT SOMETHING IS THERE TO POINT AT.
+ *
+ * Four of the steps above anchor to sidebar entries for sections withdrawn
+ * from this portal (`builderHiddenSections.pure.ts`). Their `data-tour`
+ * elements are no longer drawn, so `document.querySelector` returns null and
+ * the step highlights nothing — a tour that stalls on an empty spotlight is
+ * worse than a shorter tour.
+ *
+ * The key is read off the selector rather than added as a field, because the
+ * selector IS the anchor name and a second copy of it is how the two drift.
+ * The table above keeps every step, so re-offering a section restores its
+ * step with no second edit — and `onboarding-tour.test.mjs` still reads the
+ * complete table to check Builder's destinations and terminology.
+ * Everything at RUNTIME reads `VISIBLE_STEPS`, so the progress dots, the
+ * "3 of N" counter and the last-step test all count what is shown.
+ */
+const tourKeyOf = (selector: string) => selector.match(/data-tour="([^"]+)"/)?.[1] ?? '';
+
+const VISIBLE_STEPS: TourStep[] = STEPS.filter(
+  (step) => !WITHDRAWN_BUILDER_SECTION_KEYS.includes(tourKeyOf(step.selector)),
+);
+
 export const BUILDER_TOUR_EVENT = 'builder:start-tour';
 
 export function BuilderOnboardingTour() {
@@ -145,7 +169,7 @@ export function BuilderOnboardingTour() {
   }, []);
 
   const cleanup = useCallback(() => {
-    STEPS.forEach((s) => {
+    VISIBLE_STEPS.forEach((s) => {
       const el = document.querySelector(s.selector) as HTMLElement | null;
       if (!el) return;
       el.style.position = ''; el.style.zIndex = ''; el.style.boxShadow = ''; el.style.borderRadius = '';
@@ -157,8 +181,8 @@ export function BuilderOnboardingTour() {
   }, []);
 
   const position = useCallback((index: number) => {
-    if (index < 0 || index >= STEPS.length) return;
-    const el = document.querySelector(STEPS[index].selector) as HTMLElement | null;
+    if (index < 0 || index >= VISIBLE_STEPS.length) return;
+    const el = document.querySelector(VISIBLE_STEPS[index].selector) as HTMLElement | null;
     if (!el) { setCentered(true); return; }
     const rect = el.getBoundingClientRect();
     // The nav scrolls horizontally on small screens and a destination may be
@@ -208,7 +232,7 @@ export function BuilderOnboardingTour() {
   if (!active) return null;
 
   const isWelcome = step === -1;
-  const current = step >= 0 ? STEPS[step] : null;
+  const current = step >= 0 ? VISIBLE_STEPS[step] : null;
   const Icon = current?.icon;
 
   return (
@@ -249,7 +273,7 @@ export function BuilderOnboardingTour() {
         <div
           role="dialog"
           aria-modal="true"
-          aria-label={`Tour step ${step + 1} of ${STEPS.length}: ${current.title}`}
+          aria-label={`Tour step ${step + 1} of ${VISIBLE_STEPS.length}: ${current.title}`}
           className={cn(
             'fixed z-[62] w-[340px] animate-in duration-200 fade-in motion-reduce:animate-none md:w-[380px]',
             centered ? 'left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 zoom-in-95' : 'slide-in-from-top-3',
@@ -282,7 +306,7 @@ export function BuilderOnboardingTour() {
 
             <div className="flex items-center justify-between border-t border-border bg-muted/30 px-5 py-3">
               <div className="flex items-center gap-1.5" aria-hidden>
-                {STEPS.map((_, i) => (
+                {VISIBLE_STEPS.map((_, i) => (
                   <div
                     key={i}
                     className={cn(
@@ -293,13 +317,13 @@ export function BuilderOnboardingTour() {
                 ))}
               </div>
               <div className="flex items-center gap-2">
-                <span className="mr-1 text-xs text-muted-foreground">{step + 1}/{STEPS.length}</span>
+                <span className="mr-1 text-xs text-muted-foreground">{step + 1}/{VISIBLE_STEPS.length}</span>
                 <Button
-                  onClick={() => (step < STEPS.length - 1 ? setStep(step + 1) : finish())}
+                  onClick={() => (step < VISIBLE_STEPS.length - 1 ? setStep(step + 1) : finish())}
                   size="sm"
                   className="h-8 gap-1.5"
                 >
-                  {step === STEPS.length - 1
+                  {step === VISIBLE_STEPS.length - 1
                     ? <>Finish <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /></>
                     : <>Next <ArrowRight className="h-3.5 w-3.5" aria-hidden /></>}
                 </Button>

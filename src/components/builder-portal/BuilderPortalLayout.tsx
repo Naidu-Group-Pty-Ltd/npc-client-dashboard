@@ -20,6 +20,7 @@ import { BrandLockup, BrandLogo } from '@/components/branding/BrandAssets';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { cn } from '@/lib/utils';
 import { accessRoleLabel } from '@/lib/builderAccessTerms';
+import { isWithdrawnBuilderPath } from '@/lib/builderHiddenSections.pure';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 import { BuilderNotificationBell } from './BuilderNotificationBell';
 import { BuilderPortalUserCard } from './ui/BuilderPortalUserCard';
@@ -100,6 +101,18 @@ function SidebarNav({ pathname, showCompliance, onNavigate }: { pathname: string
     <TooltipProvider delayDuration={200}>
       <nav aria-label="Builder portal" className="space-y-1 px-3">
         {NAV.map(({ to, label, icon: Icon, exact, available, complianceGated }) => {
+          /*
+           * Withdrawn from this portal entirely — see
+           * `builderHiddenSections.pure.ts`. The entry stays in NAV and is
+           * filtered HERE rather than deleted from the array, so re-offering
+           * a section is one line in that module and the array continues to
+           * describe the portal's full shape.
+           *
+           * One filter serves the desktop sidebar and the mobile sheet,
+           * because both mount this same component — the trap the AML module
+           * fell into was two navigation surfaces built from two lists.
+           */
+          if (isWithdrawnBuilderPath(to)) return null;
           // Flag-gated entry: absent until the compliance surface is enabled.
           if (complianceGated && !showCompliance) return null;
           if (!available) {

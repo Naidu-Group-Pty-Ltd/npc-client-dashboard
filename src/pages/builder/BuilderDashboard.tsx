@@ -23,6 +23,7 @@ import { TitleBlock } from '@/components/builder-portal/ui/TitleBlock';
 /* The one place the locale is named; see docs/aml/ONGOING_CDD_AND_REMINDERS.md —
    an un-localed format prints 9/12/2026 to an Australian builder. */
 import { AU_LOCALE } from '@/lib/aml/displayDate';
+import { isWithdrawnBuilderPath } from '@/lib/builderHiddenSections.pure';
 
 /**
  * Builder / Developer Portal landing surface.
@@ -166,7 +167,15 @@ export default function BuilderDashboard() {
       baseline: 'Recorded against your lots',
       to: '/builder/transactions',
     },
-  ];
+    /*
+     * A FIGURE IS A DOOR. Three of these four count things whose section is
+     * withdrawn from this portal, and a count nobody can open is both a
+     * number the reader can do nothing with and a link to a notice saying
+     * the section is not offered. They are FILTERED rather than deleted, so
+     * re-offering a section in `builderHiddenSections.pure.ts` brings its
+     * figure back without a second edit here.
+     */
+  ].filter((figure) => !isWithdrawnBuilderPath(figure.to));
 
   const workspaceFigures = [
     {
@@ -201,13 +210,15 @@ export default function BuilderDashboard() {
       baseline: unreadNotifications === 0 ? 'You are up to date' : 'Since your last visit',
       to: '/builder/notifications',
     },
-  ];
+  ].filter((figure) => !isWithdrawnBuilderPath(figure.to));
 
   const attention = [
     { label: 'Open defects', value: summary?.open_defects ?? 0, to: '/builder/construction' },
     { label: 'Overdue tasks', value: summary?.overdue_tasks ?? 0, to: '/builder/tasks' },
     { label: 'Unread messages', value: summary?.unread_messages ?? 0, to: '/builder/messages' },
-  ].filter((item) => item.value > 0);
+    /* Same rule as the figures above — a row that leads to a withdrawn
+       section is a door to a notice. */
+  ].filter((item) => item.value > 0 && !isWithdrawnBuilderPath(item.to));
 
   return (
     <BuilderPortalShell
@@ -373,7 +384,7 @@ export default function BuilderDashboard() {
                 <AlertTriangle className="h-4 w-4 text-destructive" aria-hidden />
                 Project delivery attention
               </CardTitle>
-              <CardDescription>Open defects, overdue tasks and unread messages.</CardDescription>
+              <CardDescription>What is waiting on you across this workspace.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2">
               {attention.length === 0 ? (

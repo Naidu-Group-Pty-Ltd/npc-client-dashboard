@@ -163,11 +163,36 @@ Deno.serve(async (req) => {
  * So the coordinate is a precondition, and when it cannot be established
  * this returns the reason instead of a profile.
  */
-type UnresolvedReason = 'address_not_resolved' | 'supplied_coordinates_rejected';
+/**
+ * RF-7.2B.1B0 — a refusal by the geocoder is not a fact about the address.
+ *
+ * Every geocode failure used to collapse into `address_not_resolved`, whose
+ * message says "the address could not be resolved to a location in
+ * Australia". For a `ZERO_RESULTS` that is true. For a `REQUEST_DENIED` it is
+ * FALSE, and it is the expensive kind of false: it blames the customer's
+ * address for this deployment's own credential, and sends whoever reads it to
+ * re-check an address that was never wrong.
+ *
+ * Measured in production on 2026-09-12: 24 of 24 geocode attempts over 24
+ * hours answered `REQUEST_DENIED`, 0 answered `ZERO_RESULTS`, 0 succeeded —
+ * so every report generated in that window carried no coordinate, no
+ * geography, and therefore no demographics, SEIFA or employment, while the
+ * only recorded reason said the addresses could not be found.
+ *
+ * `geocoder_unavailable` is therefore its own reading: the remedy is ours
+ * (credential, quota, API enablement, billing), not the caller's.
+ */
+type UnresolvedReason =
+  | 'address_not_resolved'
+  | 'geocoder_unavailable'
+  | 'supplied_coordinates_rejected';
 
 const UNRESOLVED_MESSAGE: Record<UnresolvedReason, string> = {
   address_not_resolved:
     'The address could not be resolved to a location in Australia — location intelligence is unavailable for this property.',
+  geocoder_unavailable:
+    'The geocoding service did not answer for this request, so no location could be established. '
+    + 'This is a fault in this deployment\'s map service access — the address supplied was never rejected as invalid.',
   supplied_coordinates_rejected:
     'The supplied coordinates are not a location in Australia — location intelligence is unavailable for this property.',
 };
@@ -195,8 +220,13 @@ async function fetchLocationIntelligence(
     }
     reason = 'supplied_coordinates_rejected';
   } else {
-    coordinates = await geocodeAddress(input, apiKey);
-    reason = 'address_not_resolved';
+    const geocoded = await geocodeAddress(input, apiKey);
+    coordinates = geocoded.ok ? { lat: geocoded.lat, lng: geocoded.lng } : null;
+    // Which of the two it was is decided where the provider's own status is
+    // in hand, never re-derived here from the absence of a point.
+    reason = geocoded.ok || !geocoded.providerRefused
+      ? 'address_not_resolved'
+      : 'geocoder_unavailable';
   }
 
   if (!coordinates) return { resolved: false, reason };
@@ -402,22 +432,46 @@ async function fetchLocationIntelligence(
  * then the land mask (every rectangle around Australia contains sea), then
  * the record's own state when it names one.
  *
- * Unresolved returns **null**, and null means the location section is absent
- * rather than wrong. That is the trade this makes deliberately: a reader can
- * see an absent section, and cannot see a correct-looking figure measured
- * from the wrong continent.
+ * Unresolved yields no coordinate, and that means the location section is
+ * absent rather than wrong. That is the trade this makes deliberately: a
+ * reader can see an absent section, and cannot see a correct-looking figure
+ * measured from the wrong continent.
+ *
+ * It reports WHICH kind of unresolved, because the two have opposite
+ * remedies. `providerRefused` is true where the fault is this deployment's —
+ * a denied key, an exhausted quota, a request we built wrongly, a provider
+ * that could not be reached — and false only where the provider answered
+ * about the address itself: `ZERO_RESULTS`, or a point it returned that is
+ * not in Australia. Never inferred from the absence of a point, which is what
+ * both look like from outside.
  */
+type GeocodeOutcome =
+  | { ok: true; lat: number; lng: number }
+  | { ok: false; providerRefused: boolean };
+
+/**
+ * The only Google geocoder status that is a statement about the ADDRESS.
+ * Every other status — `REQUEST_DENIED`, `OVER_QUERY_LIMIT`,
+ * `OVER_DAILY_LIMIT`, `INVALID_REQUEST`, `UNKNOWN_ERROR` — is a statement
+ * about our request or their service, so an unrecognised status counts as
+ * ours: attributing our outage to the customer's address is the error that
+ * costs, and the conservative side is to own it.
+ */
+const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS';
+
 async function geocodeAddress(
   input: LocationIntelligenceInput,
   apiKey: string,
-): Promise<{ lat: number; lng: number } | null> {
+): Promise<GeocodeOutcome> {
   // The suburb, postcode and state were already in hand — used for the CBD
   // lookup and the transport call, and withheld from the one request that
   // needed them. See `auGeocodeQuery.pure.ts` for the split that measures it.
   const address = buildAuGeocodeQuery(input);
   if (!address) {
+    // Nothing was supplied to look up. That is the caller's input, not the
+    // provider's refusal.
     console.warn('[location-intelligence-service] no address to geocode');
-    return null;
+    return { ok: false, providerRefused: false };
   }
 
   try {
@@ -435,7 +489,7 @@ async function geocodeAddress(
 
     if (!response.ok) {
       console.warn('[location-intelligence-service] geocode HTTP', response.status);
-      return null;
+      return { ok: false, providerRefused: true };
     }
 
     const data = await response.json();
@@ -444,8 +498,18 @@ async function geocodeAddress(
     const lng = Number(location?.lng);
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      console.warn('[location-intelligence-service] geocode returned no point:', data?.status ?? 'unknown');
-      return null;
+      const status = typeof data?.status === 'string' ? data.status : 'unknown';
+      // Google answers HTTP 200 with the real verdict in the body — the same
+      // shape the ABS boundary server uses, and the same trap: `response.ok`
+      // says nothing about whether the call worked.
+      const refused = status !== ADDRESS_IS_THE_ANSWER;
+      console.warn(
+        `[location-intelligence-service] geocode returned no point: ${status}`
+        + (refused
+          ? ' — this is a fault in our map service access, not in the address'
+          : ' — the provider has no match for this address'),
+      );
+      return { ok: false, providerRefused: refused };
     }
 
     const verdict = assessAuPoint(lat, lng, input.state);
@@ -454,13 +518,16 @@ async function geocodeAddress(
       // `wrong_state` are different faults with different remedies, and the
       // log is the only place anybody will see which one happened.
       console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
-      return null;
+      // The provider answered about this address and we refused the answer.
+      // Ours to explain, but not a service fault.
+      return { ok: false, providerRefused: false };
     }
 
-    return { lat, lng };
+    return { ok: true, lat, lng };
   } catch (error) {
+    // Never reached the provider, or its body could not be read.
     console.error('Geocoding error:', error);
-    return null;
+    return { ok: false, providerRefused: true };
   }
 }
 

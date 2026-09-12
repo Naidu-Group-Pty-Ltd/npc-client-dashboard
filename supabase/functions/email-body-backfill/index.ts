@@ -8,6 +8,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { createCorsHeaders } from '../_shared/auth.ts';
 
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -15,12 +16,6 @@ const MICROSOFT_TENANT_ID = Deno.env.get('MICROSOFT_TENANT_ID');
 const DEFAULT_MAILBOX_EMAIL = Deno.env.get('MICROSOFT_MAILBOX_EMAIL');
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
-  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-};
 
 async function getAccessToken(): Promise<string> {
   const r = await meteredFetch(`https://login.microsoftonline.com/${MICROSOFT_TENANT_ID}/oauth2/v2.0/token`, {
@@ -81,6 +76,21 @@ async function findMessageOnGraph(token: string, sender: string, receivedAt: str
 }
 
 Deno.serve(async (req) => {
+  // CORS is built PER REQUEST from the shared allowlist, never hardcoded.
+  //
+  // This answered `Access-Control-Allow-Origin: *` while running
+  // `verify_jwt = false`. Now that the gateway demands a JWT the call is
+  // credentialed, and the Fetch spec makes a browser REJECT a credentialed
+  // response carrying a wildcard — opaquely, as "Failed to fetch" — so the
+  // wildcard would have turned an authentication fix into a broken endpoint.
+  //
+  // `createCorsHeaders` is called rather than spread-and-overridden: it already
+  // supplies Allow-Headers and Expose-Headers from the canonical lists in
+  // `_shared/auth.ts`, and restating them here would pin this function to a
+  // snapshot of those lists taken today. The lists it returns are supersets of
+  // the three headers this file used to name, so nothing is narrowed.
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     if (!MICROSOFT_CLIENT_ID || !MICROSOFT_CLIENT_SECRET || !MICROSOFT_TENANT_ID || !DEFAULT_MAILBOX_EMAIL) {

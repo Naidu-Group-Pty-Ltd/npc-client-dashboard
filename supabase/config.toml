@@ -574,8 +574,13 @@ request_timeout = 300
 [functions.get-email-data]
 verify_jwt = false
 
+# Operator-only backfill. Was verify_jwt = false with no caller check of any
+# kind, a service-role client and CORS '*' — anyone who knew the URL could
+# invoke it, spend the vendor credential it holds and write to production.
+# It has no programmatic caller anywhere in the repository, so requiring a
+# JWT breaks nothing. Security audit, 12 September 2026.
 [functions.backfill-investment-scores]
-verify_jwt = false
+verify_jwt = true
 request_timeout = 300
 
 [functions.parse-formara-pdf]
@@ -1368,8 +1373,13 @@ verify_jwt = false
 [functions.aml-verification-processor]
 verify_jwt = false
 
+# Operator-only backfill. Was verify_jwt = false with no caller check of any
+# kind, a service-role client and CORS '*' — anyone who knew the URL could
+# invoke it, spend the vendor credential it holds and write to production.
+# It has no programmatic caller anywhere in the repository, so requiring a
+# JWT breaks nothing. Security audit, 12 September 2026.
 [functions.backfill-message-directions]
-verify_jwt = false
+verify_jwt = true
 
 [functions.backfill-opportunity-mappings]
 verify_jwt = false
@@ -1398,8 +1408,13 @@ verify_jwt = false
 [functions.cotality-service]
 verify_jwt = false
 
+# Operator-only backfill. Was verify_jwt = false with no caller check of any
+# kind, a service-role client and CORS '*' — anyone who knew the URL could
+# invoke it, spend the vendor credential it holds and write to production.
+# It has no programmatic caller anywhere in the repository, so requiring a
+# JWT breaks nothing. Security audit, 12 September 2026.
 [functions.email-body-backfill]
-verify_jwt = false
+verify_jwt = true
 
 [functions.email-copilot-extras]
 verify_jwt = false

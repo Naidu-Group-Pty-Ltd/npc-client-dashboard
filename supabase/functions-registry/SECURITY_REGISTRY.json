@@ -27,7 +27,7 @@
       "exposure_class": "internal-service",
       "owner": "reporting-engine-program",
       "reviewed": true,
-      "notes": "ABS Regional population (ERP by SA2) ingest \u2014 fetches the release datacube from abs.gov.au itself (measured reachable from this project); parsing server-side with refusal-shaped bounds incl. the national-total plausibility anchor. Gateway JWT on; inside, internal edge secret (bearer or X-Cron-Secret) or the self-sealing empty-table bootstrap. Writes only abs_sa2_meta/abs_sa2_population/abs_regional_sync."
+      "notes": "ABS Regional population (ERP by SA2) ingest — fetches the release datacube from abs.gov.au itself (measured reachable from this project); parsing server-side with refusal-shaped bounds incl. the national-total plausibility anchor. Gateway JWT on; inside, internal edge secret (bearer or X-Cron-Secret) or the self-sealing empty-table bootstrap. Writes only abs_sa2_meta/abs_sa2_population/abs_regional_sync."
     },
     "abs-regional-service": {
       "verify_jwt": false,
@@ -324,11 +324,12 @@
       "reviewed_in": "second-round-audit-remediation"
     },
     "backfill-investment-scores": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
-      "wp14_auto_classified": true
+      "wp14_auto_classified": false,
+      "note": "Security audit 2026-09-12: ran verify_jwt=false with no caller check, a service-role client and CORS *. Auto-classified cron-worker but no cron job or code path invokes it. Now JWT-gated; invoke as a signed-in operator."
     },
     "backfill-lead-attributions": {
       "verify_jwt": true,
@@ -338,11 +339,12 @@
       "wp14_auto_classified": true
     },
     "backfill-message-directions": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
-      "wp14_auto_classified": true
+      "wp14_auto_classified": false,
+      "note": "Security audit 2026-09-12: ran verify_jwt=false with no caller check, a service-role client and CORS *. Auto-classified cron-worker but no cron job or code path invokes it. Now JWT-gated; invoke as a signed-in operator."
     },
     "backfill-notes-to-ghl": {
       "verify_jwt": false,
@@ -837,11 +839,12 @@
       "wp14_auto_classified": true
     },
     "email-body-backfill": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
-      "wp14_auto_classified": true
+      "wp14_auto_classified": false,
+      "note": "Security audit 2026-09-12: ran verify_jwt=false with no caller check, a service-role client and CORS *. Auto-classified cron-worker but no cron job or code path invokes it. Now JWT-gated; invoke as a signed-in operator."
     },
     "email-copilot": {
       "verify_jwt": false,
@@ -2584,7 +2587,7 @@
       "exposure_class": "internal-service",
       "owner": "reporting-engine-program",
       "reviewed": true,
-      "notes": "Per-section index over stored investment reports (Phase 3). Derives an addressable projection of investment_reports.report_content with _shared/reports/investment/sectionStorage.pure.ts and writes ONLY investment_report_sections / investment_report_section_index \u2014 never a client report. Gateway JWT on; inside, the internal edge secret (bearer or X-Cron-Secret) or the per-REPORT self-sealing arm (a report with no index row may be indexed once without it; force always needs the secret). An index is written only where re-assembly proves it lossless, and the stored counts describe what is stored."
+      "notes": "Per-section index over stored investment reports (Phase 3). Derives an addressable projection of investment_reports.report_content with _shared/reports/investment/sectionStorage.pure.ts and writes ONLY investment_report_sections / investment_report_section_index — never a client report. Gateway JWT on; inside, the internal edge secret (bearer or X-Cron-Secret) or the per-REPORT self-sealing arm (a report with no index row may be indexed once without it; force always needs the secret). An index is written only where re-assembly proves it lossless, and the stored counts describe what is stored."
     },
     "request-lead-magnet": {
       "verify_jwt": false,

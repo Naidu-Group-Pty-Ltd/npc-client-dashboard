@@ -322,6 +322,13 @@ jobs:
       - name: Static auth-pattern scan (F-01/F-06/CORS/body-trust/public-URL rules)
         run: npm run security:static
 
+      # A policy predicate ending in `OR true` reads as restrictive in a diff
+      # and grants everything. One shipped: `tpl_comments_update_own_or_resolve`
+      # gave every authenticated principal UPDATE on every comment row. Frozen
+      # baseline, so only NEW ones fail.
+      - name: Policy predicate check (no disjunctive literal true)
+        run: npm run security:policies
+
       # Type-check the shared trust libraries with Deno. A type error in these
       # (auth, authz, permissions, notify, reset tokens) breaks the whole
       # function fleet at runtime and can escape the frontend-only build — the

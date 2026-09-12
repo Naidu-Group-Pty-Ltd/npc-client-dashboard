@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useWorkspaceEntitlements } from '@/hooks/useWorkspaceEntitlements';
 import { getCapabilityDefinition } from '@/lib/entitlements';
+import { isClientFacingDeployment, isPathVisibleInDeployment } from '@/lib/clientFacing';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { CloudOff, Crown, Lock, Settings2, ShieldAlert } from 'lucide-react';
@@ -57,6 +58,12 @@ export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }:
 
   if (!allowed) {
     if (status === 'plan_excluded') {
+      // Both buttons land on /billing, which a client-facing deployment may
+      // hide — its subscription is Aurixa's relationship with the workspace
+      // rather than something the workspace administers. Offering a control
+      // that lands on "not available on this dashboard" is worse than
+      // offering none, so the buttons are drawn only where the page is.
+      const billingReachable = isPathVisibleInDeployment('/billing', isClientFacingDeployment());
       return (
         <div className="p-6">
           <Alert>
@@ -64,14 +71,18 @@ export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }:
             <AlertTitle>Not included in your subscription</AlertTitle>
             <AlertDescription className="space-y-3">
               <p>This module is not currently included in your subscription.</p>
-              <div className="flex flex-wrap gap-2">
-                <Button asChild size="sm" variant="default">
-                  <Link to="/billing">View Billing &amp; Usage</Link>
-                </Button>
-                <Button asChild size="sm" variant="outline">
-                  <Link to="/billing">Review Available Add-ons</Link>
-                </Button>
-              </div>
+              {billingReachable ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button asChild size="sm" variant="default">
+                    <Link to="/billing">View Billing &amp; Usage</Link>
+                  </Button>
+                  <Button asChild size="sm" variant="outline">
+                    <Link to="/billing">Review Available Add-ons</Link>
+                  </Button>
+                </div>
+              ) : (
+                <p>Contact your workspace administrator to have it added.</p>
+              )}
             </AlertDescription>
           </Alert>
         </div>

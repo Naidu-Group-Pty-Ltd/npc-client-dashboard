@@ -71,12 +71,16 @@ export function transformScoringInput(raw: any): ScoringInput {
     priceGrowth3Year: marketData.priceGrowth3Year,
     vacancyRate: marketData.vacancyRate,
     daysOnMarket: marketData.daysOnMarket,
-    walkScore: locationIntelligence.walkScore || 0,
+    // RF-7.2B.1B2 — `?? ` not `|| `. A Places category whose provider call
+    // failed now stores null, and `|| 0` would floor it to a measured zero
+    // here. Every neighbouring line already reads the value bare; these two
+    // were the outliers.
+    walkScore: locationIntelligence.walkScore ?? undefined,
     populationGrowth: demographics.populationGrowth,
     medianIncome: demographics.medianIncome || demographics.medianHouseholdIncome,
     unemploymentRate: demographics.unemploymentRate,
     commuteTimeCBD: commute.durationMinutes,
-    schoolsNearby: schools.schoolsWithin3km || 0,
+    schoolsNearby: schools.schoolsWithin3km ?? undefined,
     cashFlow: keyMetrics.weeklyNet,
     lvr: keyMetrics.lvr,
     state: raw?.state || demographics.state,

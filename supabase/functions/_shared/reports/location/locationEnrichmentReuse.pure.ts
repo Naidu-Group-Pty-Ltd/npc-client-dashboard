@@ -70,6 +70,13 @@ export interface EnrichmentStages {
   readonly geocode: 'fetched' | 'supplied';
   /** `complete` — all six Places calls returned; `partial` — at least one failed. */
   readonly places: 'complete' | 'partial';
+  /**
+   * RF-7.2B.1B2 — WHICH categories did not answer. Additive and advisory: the
+   * reuse decision below reads `places` alone and is unchanged by it. It exists
+   * because "something was not measured" cannot tell a reader of the record
+   * whether the missing thing was the hospitals or the parks.
+   */
+  readonly placesUnavailable?: readonly string[];
   /** A commute is legitimately absent for a state with no known destination. */
   readonly commute: 'measured' | 'no_route' | 'destination_unknown';
 }

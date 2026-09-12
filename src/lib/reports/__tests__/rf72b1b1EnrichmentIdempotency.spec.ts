@@ -200,7 +200,12 @@ describe('D — an incomplete acquisition may finish the missing work', () => {
 
   it('the service distinguishes a failed amenity lookup from an empty area', () => {
     expect(service).toContain('ok: false, count: 0, results: []');
-    expect(service).toMatch(/\.every\(\(r\) => r\.ok\) \? 'complete' : 'partial'/);
+    // RF-7.2B.1B2 moved the reduction into `placesAreComplete`, which is now
+    // shared with the per-category projection so the stamp and the stored
+    // figures cannot disagree about which lookups answered. The RULE pinned
+    // here is that the acquisition records complete-vs-partial from the real
+    // per-call outcome — not the byte-form of the expression that does it.
+    expect(service).toMatch(/places:\s*placesAreComplete\(placesLookups\)\s*\?\s*'complete'\s*:\s*'partial'/);
   });
 });
 

@@ -26,7 +26,7 @@ GRANT USAGE ON SCHEMA extensions TO postgres, anon, authenticated, service_role;
 CREATE TABLE IF NOT EXISTS extension_migration_status (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   extension_name TEXT NOT NULL UNIQUE,
-  current_schema TEXT NOT NULL,
+  "current_schema" TEXT NOT NULL,
   target_schema TEXT NOT NULL DEFAULT 'extensions',
   status TEXT NOT NULL DEFAULT 'pending', -- pending, in_progress, completed, deferred
   migration_plan TEXT,
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS extension_migration_status (
 );
 
 -- Insert current extension status
-INSERT INTO extension_migration_status (extension_name, current_schema, target_schema, status, migration_plan, risks, estimated_downtime)
+INSERT INTO extension_migration_status (extension_name, "current_schema", target_schema, status, migration_plan, risks, estimated_downtime)
 VALUES
   (
     'vector',
@@ -59,7 +59,7 @@ VALUES
   ),
   (
     'pg_net',
-    'public,
+    'public',
     'extensions',
     'deferred',
     '1. Backup database

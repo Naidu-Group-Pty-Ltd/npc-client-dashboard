@@ -194,8 +194,25 @@ describe('the service asks the right question and refuses to guess', () => {
   it('no longer answers Sydney CBD when it cannot resolve an address', () => {
     const s = src();
     const geocoder = s.slice(s.indexOf('async function geocodeAddress'), s.indexOf('async function fetchNearbyPlaces'));
+    // The rule: no hardcoded coordinate anywhere in the geocoder, and a real
+    // refusal path when it cannot place the address.
     expect(geocoder).not.toContain('-33.8688');
-    expect(geocoder).toContain('return null');
+
+    // RF-7.2B.1B0 renegotiated the SPELLING of that refusal, never the rule.
+    // This used to assert `return null`, which was the refusal at the time;
+    // the geocoder now reports WHICH kind of failure it was, because a denied
+    // credential and a genuine miss are opposite remedies and `null` made them
+    // indistinguishable. So the assertion moved onto the rule itself, which is
+    // strictly more than the literal it replaces: every exit that yields no
+    // coordinate says so, and the one success carries the provider's OWN
+    // parsed point rather than any value written here.
+    const refusals = geocoder.match(/return\s*\{\s*ok:\s*false/g) ?? [];
+    expect(refusals.length).toBeGreaterThanOrEqual(4);
+    const successes = geocoder.match(/return\s*\{\s*ok:\s*true[^}]*\}/g) ?? [];
+    expect(successes).toHaveLength(1);
+    expect(successes[0]).toContain('lat, lng');
+    // And nothing anywhere in it hands back a coordinate literal.
+    expect(geocoder).not.toMatch(/lat:\s*-?\d+\.\d+/);
   });
 
   it('keeps the two legitimate uses of that coordinate', () => {

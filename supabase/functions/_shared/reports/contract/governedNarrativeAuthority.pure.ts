@@ -514,11 +514,47 @@ function unexemptFigures(
  * markdown table row and a `{{bars: …}}` visual directive each assert on their
  * own line without a full stop, and both carry figures.
  */
+interface ClaimUnitSpan {
+  /** The unit exactly as `claimUnits` would have produced it. */
+  readonly text: string;
+  /** Offsets of the TRIMMED unit within the original document. */
+  readonly start: number;
+  readonly end: number;
+  /** Where the next unit begins — the separator belongs to this unit. */
+  readonly nextStart: number;
+}
+
+/**
+ * The same split, with offsets kept.
+ *
+ * RF-7.2B.1A.2. Remediation has to remove exactly the units the audit
+ * condemns, and `claimUnits` threw the positions away — so the remediator
+ * would have had to re-derive them and the two would have drifted the first
+ * time either split changed. One segmentation, two readers.
+ */
+function claimUnitSpans(text: string): ClaimUnitSpan[] {
+  const out: { text: string; start: number; end: number; nextStart: number }[] = [];
+  const SEP = /\n+|(?<=[.!?])\s+/g;
+  const push = (from: number, to: number, nextStart: number) => {
+    const raw = text.slice(from, to);
+    const lead = raw.length - raw.trimStart().length;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return;
+    out.push({ text: trimmed, start: from + lead, end: from + lead + trimmed.length, nextStart });
+  };
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  SEP.lastIndex = 0;
+  while ((m = SEP.exec(text)) !== null) {
+    push(cursor, m.index, m.index + m[0].length);
+    cursor = m.index + m[0].length;
+  }
+  push(cursor, text.length, text.length);
+  return out;
+}
+
 function claimUnits(text: string): string[] {
-  return text
-    .split(/\n+|(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  return claimUnitSpans(text).map((u) => u.text);
 }
 
 const trim = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 240);
@@ -691,11 +727,37 @@ export function auditGovernedNarrativeAuthority(
   if (withheld.length === 0) return [];
 
   const faults: GovernedClaimFault[] = [];
-  const units = claimUnits(reportText);
+  for (const unit of claimUnits(reportText)) faults.push(...faultsForUnit(unit, withheld, context));
 
-  for (const unit of units) {
+  // One fault of each kind per category is enough to send a reviewer to the
+  // text; the same finding twenty times is how a flag list stops being read.
+  const seen = new Set<string>();
+  return faults.filter((f) => {
+    const key = `${f.topic}|${f.kind}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Every governed fault in ONE claim unit.
+ *
+ * RF-7.2B.1A.2. Extracted verbatim from the audit loop so the remediator
+ * removes exactly what the audit condemns. Two implementations of "is this
+ * unit a claim" would disagree the first time either changed, and the failure
+ * mode is the worst available: prose deleted that was never at fault, or a
+ * fabrication left in because the remover judged it differently.
+ */
+function faultsForUnit(
+  unit: string,
+  withheld: readonly TopicSpec[],
+  context: GovernedAuditContext,
+): GovernedClaimFault[] {
+  const faults: GovernedClaimFault[] = [];
+  {
     const figures = unexemptFigures(unit, context, withheld);
-    if (figures.length === 0) continue;
+    if (figures.length === 0) return faults;
     for (const spec of withheld) {
       spec.terms.lastIndex = 0;
       if (!spec.terms.test(unit)) continue;
@@ -740,16 +802,194 @@ export function auditGovernedNarrativeAuthority(
       });
     }
   }
+  return faults;
+}
 
-  // One fault of each kind per category is enough to send a reviewer to the
-  // text; the same finding twenty times is how a flag list stops being read.
-  const seen = new Set<string>();
-  return faults.filter((f) => {
-    const key = `${f.topic}|${f.kind}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+/**
+ * What the report says instead, per category.
+ *
+ * RF-7.2B.1A.2. Deliberately carries NO figure of any kind, so the re-audit
+ * cannot condemn the repair — and states the limitation as a fact about the
+ * EVIDENCE rather than about the area, because "no data was available" is
+ * true and "the area is unremarkable" would be an invention of a different
+ * kind. It is client-facing prose: no flag names, no codes, no markers.
+ */
+const EVIDENCE_GAP_DISCLOSURE: Record<GovernedCategory, string> = {
+  demographics:
+    'Authoritative postcode-level demographic information was not available for this '
+    + 'analysis, so no quantitative demographic conclusions have been relied upon.',
+  seifa:
+    'Authoritative socio-economic index data was not available for this postal area, so no '
+    + 'ranking or index-based conclusions have been relied upon.',
+  employment:
+    'Authoritative postcode-level workforce and employment data was not available for this '
+    + 'analysis, so no quantitative employment conclusions have been relied upon.',
+};
+
+/** A unit the remediator removed, kept for the audit trail. */
+export interface GovernedRemoval {
+  readonly category: GovernedCategory;
+  readonly topic: string;
+  readonly kind: GovernedFaultKind;
+  readonly excerpt: string;
+}
+
+export interface GovernedRemediation {
+  /** The document with every condemned claim unit removed. */
+  readonly text: string;
+  readonly removed: readonly GovernedRemoval[];
+  readonly disclosed: readonly GovernedCategory[];
+  readonly changed: boolean;
+}
+
+/**
+ * A unit that carries document STRUCTURE rather than prose.
+ *
+ * A table row, a chart directive, a heading or a list marker cannot host a
+ * replacement sentence without corrupting the thing it belongs to, so those
+ * are deleted and the disclosure goes to a prose unit instead.
+ */
+const STRUCTURAL_UNIT = /^\s*(?:\||\{\{|#{1,6}\s|[-*+]\s|>\s|\d+\.\s)/;
+
+/**
+ * Remove every governed claim the snapshot cannot support, and say why once.
+ *
+ * RF-7.2B.1A.2. The audit proved more reliable than the prompt: a
+ * search-grounded model will occasionally still reach for a public figure, and
+ * the product cannot be "generated, then withheld from the client". So the
+ * unsupported claim is taken OUT and the document continues.
+ *
+ * Three rules carry it.
+ *
+ * **The whole claim unit goes.** The production sentence that forced this —
+ * "Public profiles describe Cowra as a town of around 10,000 residents with a
+ * predominance of detached houses, a meaningful share of owner-occupiers and a
+ * material rental sector" — mixes an unsupported population count with
+ * qualitative tenure commentary whose provenance is the same "public
+ * profiles". Salvaging the half that reads acceptably would keep a claim whose
+ * source was never good enough. Correct omission beats fabricated precision.
+ *
+ * **Nothing is rewritten, only deleted or replaced by a fixed sentence.** No
+ * model is asked to repair the prose: sending a search-grounded model back
+ * into the same environment is how the defect was produced. The replacement is
+ * a constant, so it cannot invent a second figure.
+ *
+ * **It is deterministic and bounded.** One pass over the spans, no loop, no
+ * network, no randomness — the caller re-audits and may run it once more with
+ * `disclose: false` as a fallback, and blocks if even that is not clean.
+ */
+export function remediateGovernedNarrative(
+  reportText: unknown,
+  snapshot: Pick<MarketFactSnapshot, 'facts'> | null | undefined,
+  context: GovernedAuditContext = {},
+  options: { readonly disclose?: boolean } = {},
+): GovernedRemediation {
+  const empty: GovernedRemediation = {
+    text: typeof reportText === 'string' ? reportText : '',
+    removed: [], disclosed: [], changed: false,
+  };
+  if (typeof reportText !== 'string' || reportText.trim() === '') return empty;
+  const standing = governedTopicStanding(snapshot);
+  const withheld = TOPICS.filter((t) => standing[t.topic] === 'withheld');
+  if (withheld.length === 0) return empty;
+
+  const spans = claimUnitSpans(reportText);
+  const condemned: { span: ClaimUnitSpan; faults: GovernedClaimFault[] }[] = [];
+  for (const span of spans) {
+    const faults = faultsForUnit(span.text, withheld, context);
+    if (faults.length > 0) condemned.push({ span, faults });
+  }
+  if (condemned.length === 0) return empty;
+
+  const removed: GovernedRemoval[] = [];
+  for (const { faults } of condemned) {
+    for (const f of faults) {
+      removed.push({ category: f.category, topic: f.topic, kind: f.kind, excerpt: f.excerpt });
+    }
+  }
+
+  // One disclosure per affected category, and never a second copy of one the
+  // document already makes.
+  const disclose = options.disclose !== false;
+  const categories: GovernedCategory[] = [];
+  if (disclose) {
+    for (const { faults } of condemned) {
+      for (const f of faults) {
+        if (categories.includes(f.category)) continue;
+        if (reportText.includes(EVIDENCE_GAP_DISCLOSURE[f.category])) continue;
+        categories.push(f.category);
+      }
+    }
+  }
+  // The sentence replaces the first PROSE unit removed; a table row, chart
+  // directive or heading is deleted outright and the disclosure moves on.
+  const hostIndex = categories.length === 0
+    ? -1
+    : condemned.findIndex((c) => !STRUCTURAL_UNIT.test(c.span.text));
+  const replacement = ALL_CATEGORIES
+    .filter((c) => categories.includes(c))
+    .map((c) => EVIDENCE_GAP_DISCLOSURE[c])
+    .join(' ');
+
+  let out = '';
+  let cursor = 0;
+  condemned.forEach((c, i) => {
+    out += reportText.slice(cursor, c.span.start);
+    if (i === hostIndex) out += replacement;
+    // The separator that followed the unit is consumed with it, so deleting a
+    // sentence does not leave a double space and deleting a directive does not
+    // leave a blank line — except where the unit is being replaced, which is
+    // in-place and keeps the document's shape exactly.
+    cursor = i === hostIndex ? c.span.end : c.span.nextStart;
   });
+  out += reportText.slice(cursor);
+
+  // Nothing structural was rewritten, so the only tidying needed is the
+  // paragraph break a deleted stand-alone line can leave behind.
+  out = out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n');
+
+  // A disclosure that found no prose host still has to be said.
+  if (categories.length > 0 && hostIndex === -1) {
+    out = `${out.trimEnd()}\n\n${replacement}\n`;
+  }
+
+  return { text: out, removed, disclosed: categories, changed: true };
+}
+
+/**
+ * The same flag, recording a claim that was REMOVED rather than one standing.
+ *
+ * `blocking: false` — the document no longer carries it, so there is nothing
+ * to withhold; `governedAuthorityBlockFromFlags` reads exactly this field, so
+ * a remediated report passes the delivery gate while the trail of what was
+ * taken out, and why, stays on the row.
+ */
+export function governedRemediatedFlag(removal: GovernedRemoval): {
+  type: string;
+  severity: string;
+  field: string;
+  message: string;
+  value: Record<string, unknown>;
+} {
+  return {
+    type: GOVERNED_AUTHORITY_FLAG_TYPE,
+    severity: 'warning',
+    field: `governed.${removal.category}`,
+    message:
+      `An unsupported claim about ${removal.category} was removed from the report before `
+      + 'completion, because the snapshot holds no admissible fact for it. The evidence gap '
+      + 'is disclosed in the document instead.',
+    value: {
+      kind: removal.kind,
+      category: removal.category,
+      topic: removal.topic,
+      excerpt: removal.excerpt,
+      blocking: false,
+      readiness: 'remediated',
+      remediation: 'claim_removed',
+      version: GOVERNED_NARRATIVE_AUTHORITY_VERSION,
+    },
+  };
 }
 
 /**

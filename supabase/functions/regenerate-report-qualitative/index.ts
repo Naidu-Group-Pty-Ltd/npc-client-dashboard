@@ -24,7 +24,10 @@ import {
 } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import {
   auditGovernedNarrativeAuthority,
+  remediateGovernedNarrative,
+  governedRemediatedFlag,
   subjectPostcodeForAudit,
+  type GovernedRemoval,
   governedAuthorityBlocks,
   governedCategoryDirective,
   governedFaultToFlag,
@@ -2146,13 +2149,51 @@ YOUR DEDICATED PROPERTY PARTNER
       // Prior governed verdicts are dropped rather than merged: they describe
       // prose this run has just replaced. Every other flag type is left alone,
       // because nothing here recomputes those.
-      const governedFaults = auditGovernedNarrativeAuthority(
-        combinedContent,
-        safeGeneration.snapshot,
+      const governedContext = {
         // RF-7.2B.1A.1 — same context the first generation uses; two audits of
         // one document must not judge the subject's own postcode differently.
-        { subjectPostcode: subjectPostcodeForAudit(safeGeneration.snapshot, propertyAddress) },
+        subjectPostcode: subjectPostcodeForAudit(safeGeneration.snapshot, propertyAddress),
+      };
+      let governedFaults = auditGovernedNarrativeAuthority(
+        combinedContent, safeGeneration.snapshot, governedContext,
       );
+      // RF-7.2B.1A.2 — the same repair the first generation performs, because
+      // this path rewrites the prose with the same search-grounded model and
+      // can reproduce the same claim. `updatePayload.report_content` was
+      // assigned BEFORE this point, so the remediated text has to be written
+      // back over it — mutating `combinedContent` alone would store the
+      // unrepaired document.
+      const governedRemovals: GovernedRemoval[] = [];
+      if (governedFaults.length > 0) {
+        const pass1 = remediateGovernedNarrative(
+          combinedContent, safeGeneration.snapshot, governedContext,
+        );
+        if (pass1.changed) {
+          combinedContent = pass1.text;
+          updatePayload.report_content = combinedContent;
+          governedRemovals.push(...pass1.removed);
+          governedFaults = auditGovernedNarrativeAuthority(
+            combinedContent, safeGeneration.snapshot, governedContext,
+          );
+        }
+        if (governedFaults.length > 0) {
+          const pass2 = remediateGovernedNarrative(
+            combinedContent, safeGeneration.snapshot, governedContext, { disclose: false },
+          );
+          if (pass2.changed) {
+            combinedContent = pass2.text;
+            updatePayload.report_content = combinedContent;
+            governedRemovals.push(...pass2.removed);
+            governedFaults = auditGovernedNarrativeAuthority(
+              combinedContent, safeGeneration.snapshot, governedContext,
+            );
+          }
+        }
+        console.log(
+          `\u2713 Governed-authority remediation (regeneration): ${governedRemovals.length} `
+          + `claim(s) removed, ${governedFaults.length} finding(s) remain`,
+        );
+      }
       const { data: priorFlagRow } = await supabase
         .from('investment_reports')
         .select('validation_flags')
@@ -2166,6 +2207,7 @@ YOUR DEDICATED PROPERTY PARTNER
           const row = f as Record<string, unknown> | null;
           return !(row && typeof row === 'object' && row.type === GOVERNED_AUTHORITY_FLAG_TYPE);
         }),
+        ...governedRemovals.map(governedRemediatedFlag),
         ...governedFaults.map(governedFaultToFlag),
       ];
       if (governedAuthorityBlocks(governedFaults)) {

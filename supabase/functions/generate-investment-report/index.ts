@@ -18,7 +18,10 @@ import { resolveOneReportGeography } from '../_shared/geography/resolveOneReport
 import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
 import {
   auditGovernedNarrativeAuthority,
+  remediateGovernedNarrative,
+  governedRemediatedFlag,
   subjectPostcodeForAudit,
+  type GovernedRemoval,
   governedAuthorityBlocks,
   governedCategoryDirective,
   governedFaultToFlag,
@@ -6528,7 +6531,8 @@ YOUR DEDICATED PROPERTY PARTNER
       // Kept separate from `factFlags` because it answers a different question
       // and carries its own flag type; both land in `allValidationFlags`.
       let claimFlags: Array<ReturnType<typeof claimFaultToFlag>> = [];
-      let governedFlags: Array<ReturnType<typeof governedFaultToFlag>> = [];
+      let governedFlags: Array<ReturnType<typeof governedFaultToFlag>
+        | ReturnType<typeof governedRemediatedFlag>> = [];
       try {
         const factNum = (v: unknown): number | undefined => {
           const n = toFiniteNumber(v);
@@ -6581,21 +6585,62 @@ YOUR DEDICATED PROPERTY PARTNER
         // This pass is CATEGORY-anchored, and it BLOCKS rather than
         // disclosing: the other two describe a fact the report holds, this
         // one finds a fact the report does not hold at all.
-        const governedFaults = auditGovernedNarrativeAuthority(
-          reportContent,
-          safeGeneration.snapshot,
-          // RF-7.2B.1A.1 — the subject's own postcode is not a figure about the
-          // subject. Without it, naming the postal area that HAS no data read as
-          // stating a number for it.
-          { subjectPostcode: subjectPostcodeForAudit(safeGeneration.snapshot, propertyAddress) },
+        const governedContext = {
+          subjectPostcode: subjectPostcodeForAudit(safeGeneration.snapshot, propertyAddress),
+        };
+        let governedFaults = auditGovernedNarrativeAuthority(
+          reportContent, safeGeneration.snapshot, governedContext,
         );
+        // RF-7.2B.1A.2 — a report is REPAIRED, not withheld.
+        //
+        // The audit proved the more reliable control: a search-grounded model
+        // will occasionally still reach for a public figure whatever the
+        // prompt says. Withholding the finished document from the client was
+        // never the product, so the unsupported claim comes OUT and the
+        // report continues. Deterministic, no model, no network, and bounded
+        // at two passes — the second drops the disclosure in case the
+        // disclosure itself is what the re-audit objected to, and anything
+        // still standing after that blocks exactly as before.
+        const governedRemovals: GovernedRemoval[] = [];
         if (governedFaults.length > 0) {
           console.error(
-            `⛔ Governed-authority audit: ${governedFaults.length} BLOCKING finding(s) — `
-            + governedFaults.map((f) => `${f.category}/${f.kind}`).join(', '),
+            `\u26d4 Governed-authority audit: ${governedFaults.length} finding(s) — `
+            + governedFaults.map((f) => `${f.category}/${f.kind}`).join(', ')
+            + ' — attempting remediation',
+          );
+          const pass1 = remediateGovernedNarrative(
+            reportContent, safeGeneration.snapshot, governedContext,
+          );
+          if (pass1.changed) {
+            reportContent = pass1.text;
+            governedRemovals.push(...pass1.removed);
+            governedFaults = auditGovernedNarrativeAuthority(
+              reportContent, safeGeneration.snapshot, governedContext,
+            );
+          }
+          if (governedFaults.length > 0) {
+            const pass2 = remediateGovernedNarrative(
+              reportContent, safeGeneration.snapshot, governedContext, { disclose: false },
+            );
+            if (pass2.changed) {
+              reportContent = pass2.text;
+              governedRemovals.push(...pass2.removed);
+              governedFaults = auditGovernedNarrativeAuthority(
+                reportContent, safeGeneration.snapshot, governedContext,
+              );
+            }
+          }
+          console.log(
+            `\u2713 Governed-authority remediation: ${governedRemovals.length} claim(s) removed, `
+            + `${governedFaults.length} finding(s) remain`,
           );
         }
-        governedFlags = governedFaults.map(governedFaultToFlag);
+        // What was taken out is recorded and does NOT block; anything the
+        // remediator could not clear still does.
+        governedFlags = [
+          ...governedRemovals.map(governedRemediatedFlag),
+          ...governedFaults.map(governedFaultToFlag),
+        ];
         if (governedAuthorityBlocks(governedFaults)) {
           console.error(
             '⛔ This report asserts a governed fact it does not hold. It is not client-ready.',

@@ -130,6 +130,22 @@ const CASES = [
     replace: '"version": "20261112999999"',
   },
   {
+    gate: 'check-migration-security.mjs',
+    file: 'supabase/migrations/20261119150000_revoke_public_execute_trigger_bodies.sql',
+    what: 'a revoke names anon and authenticated but not PUBLIC, so it removes nothing',
+    // The defect this catches SHIPPED. 20261119140000 revoked EXECUTE on two
+    // trigger bodies `FROM anon, authenticated`; one was already closed and
+    // `validate_property_comparison_report_types` — SECURITY DEFINER, holding
+    // `=X/postgres` — stayed executable by anon. A no-op revoke succeeds, so
+    // the migration reported success and the audit finding stayed open.
+    //
+    // Dropping PUBLIC from this file restores exactly that state, because the
+    // rule asks whether ANY migration revokes PUBLIC on the function rather
+    // than whether this text looks right.
+    find: 'FROM PUBLIC, anon, authenticated;',
+    replace: 'FROM anon, authenticated;',
+  },
+  {
     gate: 'check-edge-column-names.mjs',
     file: 'supabase/functions/market-updates-embed-backfill/index.ts',
     what: 'an Edge Function selects a column its table does not have',

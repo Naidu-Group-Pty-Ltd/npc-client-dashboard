@@ -87,6 +87,42 @@ const files = readdirSync(MIGRATIONS)
   .filter((f) => f.slice(0, 14) >= BASELINE)
   .sort();
 
+/*
+ * ── WHICH FUNCTIONS HAVE EVER HAD `PUBLIC` REVOKED ──────────────────────────
+ *
+ * The `secdef_execute` rule below already carries the sentence "Revoking from
+ * `anon` alone is a no-op", but only enforces it for functions a migration
+ * also CREATES. That gap shipped. 20261119140000 revoked EXECUTE on two
+ * trigger bodies `FROM anon, authenticated` and created neither, so nothing
+ * checked them. Measured on the live catalogue after it applied:
+ * `enforce_step_up_session_owner` closed (it carried no PUBLIC grant) and
+ * `validate_property_comparison_report_types` did NOT — it is SECURITY
+ * DEFINER, still held `=X/postgres`, and remained executable by `anon` after
+ * a migration whose whole purpose was to close it. A no-op revoke succeeds,
+ * so nothing reported anything.
+ *
+ * WHY THIS IS A CORPUS-WIDE PASS AND NOT A BASELINE.
+ *
+ * The question worth asking is not "does this file contain the mistake" — an
+ * applied migration is immutable history and its text is a correct record of
+ * what ran. It is "was this revoke a no-op that nothing since has FIXED". So
+ * the whole corpus is read first for every function PUBLIC has been revoked
+ * on, and a finding is raised only where no migration anywhere does it. The
+ * rule therefore needs no frozen baseline, no start date and no keeplist
+ * entry, and it clears itself the moment a follow-up migration lands — which
+ * is what 20261119150000 does for both functions above.
+ */
+const REVOKE_FN =
+  /REVOKE\s+(?:ALL|EXECUTE)(?:\s+PRIVILEGES)?\s+ON\s+FUNCTION\s+([\w".]+)\s*\([^)]*\)([^;]*);/gi;
+
+const publicRevoked = new Set();
+for (const file of files) {
+  const sql = stripComments(readFileSync(join(MIGRATIONS, file), 'utf8'));
+  for (const m of sql.matchAll(REVOKE_FN)) {
+    if (/\bPUBLIC\b/i.test(m[2])) publicRevoked.add(qualify(m[1]));
+  }
+}
+
 for (const file of files) {
   const sql = stripComments(readFileSync(join(MIGRATIONS, file), 'utf8'));
   const at = (rule, object, message) => {
@@ -135,6 +171,20 @@ for (const file of files) {
         + `If it must stay client-callable (an RLS predicate, say), add it to `
         + `MIGRATION_SECURITY_KEEPLIST.json with a reason.`);
     }
+  }
+
+  // ── A revoke naming `anon` but not `PUBLIC` removes a grant it never had ──
+  for (const m of sql.matchAll(REVOKE_FN)) {
+    const fn = qualify(m[1]);
+    if (!/\b(?:anon|authenticated)\b/i.test(m[2])) continue;
+    if (publicRevoked.has(fn)) continue;
+    at('revoke_without_public', fn,
+      `this revokes EXECUTE on \`${fn}\` from \`anon\`/\`authenticated\` and no migration in `
+      + `the repository ever revokes it from \`PUBLIC\`. Postgres grants EXECUTE to PUBLIC on `
+      + `CREATE and every role inherits it, so revoking a role individually removes a grant it `
+      + `was never given and the function stays executable — the revoke succeeds and changes `
+      + `nothing. Write \`REVOKE EXECUTE ON FUNCTION ${fn}(...) FROM PUBLIC, anon, authenticated;\`, `
+      + `here or in a follow-up migration.`);
   }
 
   // ── Views ────────────────────────────────────────────────────────────────

@@ -187,6 +187,41 @@ Deno.serve(async (req) => {
       ?? null;
 
     /**
+     * THE PAGE MUST NOT BE LYING ABOUT WHO IT IS.
+     *
+     * `activeOrganisationId` above is server-held and correct — that is not in
+     * question and never was. The problem is that the BROWSER can be showing a
+     * different organisation than the cookie names.
+     *
+     * `__Host-builder_session_token` is one cookie name per origin, so signing
+     * into a second builder account destroys the first tab's token and
+     * replaces it. That tab is told nothing: it keeps rendering the previous
+     * organisation's name and stock while every request it sends now carries
+     * the new account's credential. REPORTED AND CONFIRMED 12 SEPTEMBER 2026 —
+     * a stock list uploaded from a page headed with one organisation was filed
+     * under a different one. The audit log shows the first session last
+     * used at 01:19:04, a second account logging in at 01:21:28 and the upload
+     * at 01:22:32 attributed to that second account. Every server-side check passed, correctly, on the
+     * credential it was given.
+     *
+     * So the client now sends the organisation IT believes it is acting as,
+     * from its own per-tab state, and a mismatch is refused rather than filed
+     * under whoever the cookie now names. It is advisory in one direction
+     * only: absent, nothing changes; present and wrong, the write stops.
+     * It can never WIDEN access — `activeOrganisationId` still decides what is
+     * reachable, and this only ever refuses.
+     */
+    const expectedOrganisationId = cleanText(body.expected_organisation_id, 64);
+    if (expectedOrganisationId && expectedOrganisationId !== activeOrganisationId) {
+      return json({
+        error: 'You are signed in as a different organisation than this page is showing. '
+          + 'Reload the page and try again.',
+        code: 'organisation_context_changed',
+        active_organisation_id: activeOrganisationId,
+      }, 409);
+    }
+
+    /**
      * Stock is inventory the organisation is offering, so it rides the
      * existing `inventory` permission key rather than inventing a parallel
      * one. Deny by default, resolved in the database.

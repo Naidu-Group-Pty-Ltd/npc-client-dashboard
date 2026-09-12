@@ -14,7 +14,9 @@ import {
   type BuilderOrganisation,
   type BuilderPermissionMatrix,
   type BuilderPortalUser,
+  BUILDER_IDENTITY_CHANNEL,
 } from '@/lib/builderPortal';
+import { setActingOrganisation } from '@/lib/builderActingOrganisation';
 
 /**
  * Builder / Developer Portal authentication provider.
@@ -104,6 +106,7 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
     setUser(null);
     setOrganisations([]);
     setActiveOrganisation(null);
+    setActingOrganisation(null);
     setPermissions({});
     setGovernance(null);
     setRequiresOrganisationSelection(false);
@@ -123,14 +126,32 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
        * tenant's either way.
        */
       const identity = `${data.user.id}:${data.active_organisation?.organisation_id ?? ''}`;
-      if (cachedIdentity.current !== null && cachedIdentity.current !== identity) {
+      const identityChanged = cachedIdentity.current !== null
+        && cachedIdentity.current !== identity;
+      if (identityChanged) {
         queryClient.removeQueries({ queryKey: ['builder'] });
       }
       cachedIdentity.current = identity;
+      /*
+       * Tell the other tabs, and store nothing. A tab that is still rendering
+       * the previous organisation has no other way to learn that the single
+       * session cookie now belongs to somebody else. Wrapped because
+       * `BroadcastChannel` is absent in a few environments, and a portal
+       * without it must still work — the focus listener below covers that.
+       */
+      if (identityChanged) {
+        try {
+          const channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
+          channel.postMessage(identity);
+          channel.close();
+        } catch { /* no BroadcastChannel — focus and visibility still apply */ }
+      }
 
       setUser(data.user);
       setOrganisations(data.organisations ?? []);
       setActiveOrganisation(data.active_organisation ?? null);
+      // Per-tab, so a write carries the organisation THIS tab is showing.
+      setActingOrganisation(data.active_organisation?.organisation_id ?? null);
       setPermissions(data.permissions ?? {});
       setGovernance(data.governance ?? null);
       setRequiresOrganisationSelection(!!data.requires_organisation_selection);
@@ -140,6 +161,60 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
   }, [clearAuthState, queryClient]);
 
   useEffect(() => { void checkSession(); }, [checkSession]);
+
+  /**
+   * A TAB MUST NOTICE THAT IT IS NO LONGER WHO IT THINKS IT IS.
+   *
+   * REPORTED AND CONFIRMED 12 SEPTEMBER 2026: a stock list uploaded from a tab
+   * showing one organisation landed in a different one. Traced through
+   * the audit log — Kopi session last used 01:19:04, a Bob login at 01:21:28,
+   * the upload at 01:22:32 attributed to Bob — and the server was right every
+   * step of the way.
+   *
+   * `__Host-builder_session_token` is ONE cookie name per origin, so two
+   * builder accounts cannot be signed in at once: the second login destroys
+   * the first token and replaces it. Every already-open tab then sends the new
+   * account's credential on `credentials: 'include'` while still rendering the
+   * old organisation's name, stock and chrome — because `checkSession` ran
+   * only on mount, and nothing here listened for anything.
+   *
+   * The purge above fixes "sign out, sign in as somebody else, same tab". It
+   * cannot see "two tabs, one cookie", because the stale tab never asks again.
+   *
+   * So it asks again: on a message from another tab (BroadcastChannel
+   * delivers only to OTHER contexts, which is exactly the case that was
+   * blind), and when this tab is focused or made visible — the moment before
+   * a person reaches for a button in a tab they left open.
+   */
+  useEffect(() => {
+    /*
+     * `focus` fires on every alt-tab, and each one would otherwise be a
+     * request. A short floor keeps a person moving between windows from
+     * hammering the endpoint while still being far below the time it takes to
+     * reach for a button — the case this exists for. A BROADCAST IS NEVER
+     * THROTTLED: it means another tab has just changed identity, which is the
+     * one signal that must always be acted on.
+     */
+    const FOCUS_RECHECK_FLOOR_MS = 3_000;
+    let lastChecked = 0;
+    const recheck = () => { lastChecked = Date.now(); void checkSession(); };
+    const recheckThrottled = () => {
+      if (Date.now() - lastChecked >= FOCUS_RECHECK_FLOOR_MS) recheck();
+    };
+    const onVisible = () => { if (!document.hidden) recheckThrottled(); };
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
+      channel.onmessage = recheck;
+    } catch { channel = null; }
+    window.addEventListener('focus', recheckThrottled);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      channel?.close();
+      window.removeEventListener('focus', recheckThrottled);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [checkSession]);
 
   const signIn = useCallback(async (email: string, password: string, turnstileToken?: string) => {
     const { data, error } = await builderLogin(email, password, turnstileToken);

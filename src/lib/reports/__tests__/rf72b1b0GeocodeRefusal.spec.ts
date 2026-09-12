@@ -139,12 +139,19 @@ describe('RF-7.2B.1B0 — the reason reaches the caller', () => {
   });
 
   it('maps providerRefused onto it, and nothing else onto it', () => {
-    const start = src.indexOf('coordinates = geocoded.ok');
-    expect(start).toBeGreaterThan(-1);
-    const window = src.slice(start, start + 400);
-    expect(window).toContain('geocoded.providerRefused');
-    expect(window).toContain("'geocoder_unavailable'");
-    expect(window).toContain("'address_not_resolved'");
+    // Asserted on the ASSIGNMENT rather than on a byte window. The window was
+    // 400 characters from `coordinates = geocoded.ok`, which RF-7.2B.1B1 pushed
+    // the mapping out of by adding one line above it — a failure that says
+    // nothing about whether the mapping is right. The statement itself is the
+    // rule: which of the two reasons is chosen, decided from the provider's own
+    // refusal flag and from nothing else.
+    const assignment = src.match(/reason\s*=\s*geocoded\.ok[\s\S]*?;/)?.[0] ?? '';
+    expect(assignment).toBeTruthy();
+    expect(assignment).toContain('geocoded.providerRefused');
+    expect(assignment).toContain("'geocoder_unavailable'");
+    expect(assignment).toContain("'address_not_resolved'");
+    // A refused provider is the ONLY route to `geocoder_unavailable`.
+    expect(assignment).toMatch(/!geocoded\.providerRefused[\s\S]*'address_not_resolved'[\s\S]*'geocoder_unavailable'/);
   });
 
   it('its message says the fault is ours and clears the address', () => {

@@ -210,7 +210,13 @@ describe('the service asks the right question and refuses to guess', () => {
     expect(refusals.length).toBeGreaterThanOrEqual(4);
     const successes = geocoder.match(/return\s*\{\s*ok:\s*true[^}]*\}/g) ?? [];
     expect(successes).toHaveLength(1);
-    expect(successes[0]).toContain('lat, lng');
+    // RF-7.2B.1B1 widened that return to carry Google's own `formatted_address`
+    // for verification, so it is no longer one line. The rule is unchanged and
+    // is what is asserted: the point handed back is the PROVIDER'S parsed
+    // `lat`/`lng`, passed as shorthand, never a value composed here.
+    expect(successes[0]).toMatch(/\blat,/);
+    expect(successes[0]).toMatch(/\blng,/);
+    expect(successes[0]).not.toMatch(/lat:\s*[^g]/);
     // And nothing anywhere in it hands back a coordinate literal.
     expect(geocoder).not.toMatch(/lat:\s*-?\d+\.\d+/);
   });

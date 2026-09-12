@@ -7,6 +7,11 @@ import {
   resolveCbdDestination,
 } from '../_shared/reports/location/cbdDestination.pure.ts';
 import { projectTransportForLocationIntelligence } from '../_shared/transportReading.pure.ts';
+import {
+  stampAcquisition,
+  subjectKeyFor,
+  type EnrichmentStages,
+} from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
@@ -207,8 +212,12 @@ async function fetchLocationIntelligence(
 ): Promise<LocationIntelligenceResult> {
   let coordinates: { lat: number; lng: number } | null;
   let reason: UnresolvedReason;
+  // RF-7.2B.1B1 — what the acquisition record will say about this run.
+  let geocodeStage: EnrichmentStages['geocode'] = 'fetched';
+  let matchedAddress: string | null = null;
 
   if (Number.isFinite(input.lat) && Number.isFinite(input.lng)) {
+    geocodeStage = 'supplied';
     // A supplied coordinate goes through the same gate as a fetched one.
     // These arrive from stored rows, and the stored rows are where the 183
     // out-of-country points live — trusting the caller here would let the
@@ -222,6 +231,7 @@ async function fetchLocationIntelligence(
   } else {
     const geocoded = await geocodeAddress(input, apiKey);
     coordinates = geocoded.ok ? { lat: geocoded.lat, lng: geocoded.lng } : null;
+    matchedAddress = geocoded.ok ? geocoded.matchedAddress : null;
     // Which of the two it was is decided where the provider's own status is
     // in hand, never re-derived here from the absence of a point.
     reason = geocoded.ok || !geocoded.providerRefused
@@ -393,7 +403,34 @@ async function fetchLocationIntelligence(
     }
   };
 
-  return { resolved: true, data };
+  // RF-7.2B.1B1 — the acquisition record. Without it the persisted object could
+  // not say which property it described, when it was bought, or whether every
+  // stage actually ran, so nothing downstream could safely decide not to buy it
+  // again. `stampAcquisition` returns a new object; no measured value is touched.
+  const stamped = stampAcquisition(data, {
+    subjectKey: subjectKeyFor({
+      address: input.address,
+      postcode: input.postcode,
+      state: input.state,
+    }),
+    acquiredAt: new Date().toISOString(),
+    stages: {
+      geocode: geocodeStage,
+      // One failed amenity lookup makes the whole set unreusable: a zero that
+      // came from an outage reads exactly like a zero that came from a quiet
+      // suburb, and only this flag can tell them apart later.
+      places: [
+        transitData, schoolsData, healthcareData,
+        shoppingData, recreationData, restaurantsData,
+      ].every((r) => r.ok) ? 'complete' : 'partial',
+      commute: commuteData === COMMUTE_DESTINATION_UNKNOWN
+        ? 'destination_unknown'
+        : commuteData === COMMUTE_NO_ROUTE ? 'no_route' : 'measured',
+    },
+    matchedAddress,
+  });
+
+  return { resolved: true, data: stamped };
 }
 
 /**
@@ -446,7 +483,7 @@ async function fetchLocationIntelligence(
  * both look like from outside.
  */
 type GeocodeOutcome =
-  | { ok: true; lat: number; lng: number }
+  | { ok: true; lat: number; lng: number; matchedAddress: string | null }
   | { ok: false; providerRefused: boolean };
 
 /**
@@ -553,7 +590,17 @@ async function geocodeAddress(
       return { ok: false, providerRefused: false };
     }
 
-    return { ok: true, lat, lng };
+    // What Google says it MATCHED, kept so a verification can compare the
+    // answer against the question. It is evidence, never an input: nothing
+    // downstream keys on it, because a `formatted_address` describes what the
+    // provider matched rather than what the source said.
+    const matched = data?.results?.[0]?.formatted_address;
+    return {
+      ok: true,
+      lat,
+      lng,
+      matchedAddress: typeof matched === 'string' ? matched : null,
+    };
   } catch (error) {
     // Never reached the provider, or its body could not be read.
     console.error('Geocoding error:', error);
@@ -598,12 +645,18 @@ async function fetchNearbyPlaces(
     });
 
     return {
+      ok: true,
       count: results.length,
       results: results.sort((a: any, b: any) => a.distance - b.distance)
     };
   } catch (error) {
+    // RF-7.2B.1B1 — `ok` separates "we looked and found nothing" from "the
+    // lookup failed". Both produce `count: 0`, and once persisted they are
+    // indistinguishable — which is how a Places outage could otherwise be
+    // frozen into a report as "this address has no schools". The counts
+    // themselves are unchanged; only the acquisition record can see this.
     console.error(`Error fetching ${type}:`, error);
-    return { count: 0, results: [] };
+    return { ok: false, count: 0, results: [] };
   }
 }
 

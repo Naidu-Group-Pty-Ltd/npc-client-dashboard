@@ -1604,6 +1604,35 @@ of QLD's rollup trap, proved on every load (0 repeated cells, 0 `-` totals
 beside their parts) because the day that stops being true is the day summing
 silently double-counts.
 
+**A deterministic enrichment is bought once, and a lot number may not select
+crime evidence.** Read
+[`RF72B1B1_ENRICHMENT_AND_POSTCODE.md`](./docs/reports/RF72B1B1_ENRICHMENT_AND_POSTCODE.md)
+before touching `_shared/reports/location/locationEnrichmentReuse.pure.ts`,
+`_shared/reports/location/crimePostcodeAuthority.pure.ts` or the enrichment and
+crime call sites in `generate-investment-report`. Two things, and each was
+invisible. **`existingEnhancedFields.locationIntelligence` guarded the WRITE and
+nothing guarded the FETCH**, so the enrichment block re-ran on every resume — and
+one enrichment is EIGHT Google calls (1 geocode + 6 Places Nearby + 1 Distance
+Matrix, confirmed by the ledger's exact 6:1 Places:Distance ratio), so an
+eleven-resume report buys 88 calls and re-buys 80 of them. Reuse is refused
+unless the stored object can PROVE it describes this subject: the acquisition
+stamp names the address, postcode and state, every legacy row has no stamp and
+re-fetches exactly as before, a failed enrichment is never persisted at all so
+an outage cannot become a cache, and a `partial` Places run is refused because a
+failed lookup and a quiet rural suburb both store `count: 0`. And **the postcode
+that selects crime evidence was `propertyAddress.match(/\b(\d{4})\b/)`** — the
+first four-digit token, which for builder stock is the LOT number: 30 of 418
+corpus addresses parse the wrong token and 17 land on a real postcode
+(`Lot 2267 Hunza Road, Truganina, VIC 3029` parses a NSW postcode). Nothing was
+ever served wrong only because the crime service also filters on state and no
+Victorian register is loaded — containment by accident, which ends the day VIC
+loads. Only a **resolved POA** or a **structured `propertyDetails.postcode`**
+(supplied and logged all along, never read for this) may select evidence; a
+free-text parse may not, a postcode contradicting its state is refused at any
+rank, and where nothing is trusted the counts are WITHHELD rather than risked,
+with no LGA or SA2 substitute. It is orthogonal to F4: that decides whether a
+rate may be DIVIDED, this decides which AREA is described.
+
 **A stored report is addressable by section now.** Read
 [`SECTION_STORAGE.md`](./docs/reports/SECTION_STORAGE.md) before touching
 `_shared/reports/investment/sectionStorage.pure.ts`, `detectSectionLevel` /

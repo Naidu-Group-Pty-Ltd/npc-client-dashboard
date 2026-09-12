@@ -192,12 +192,24 @@ whose chunk was never built is exactly the blank screen above — so
 Allowing a path therefore also re-admits its chunk, which for these five is the
 point of hiding them; weigh that before adding one.
 
-This repository currently pins `VITE_CLIENT_FACING_ALLOW="/integrations"` in
-`vite.config.ts`, beside the pinned mode and for the same reason: the
-GoHighLevel cutover is being tested on this deployment and that test types a
-credential into the Integrations page. It is temporary, it is one line to
-revert, and it is in the repository rather than a hosting console so that it
-can be diffed. The other four pages stay hidden and their chunks stay unbuilt.
+This repository pins `VITE_CLIENT_FACING_ALLOW` in `vite.config.ts`, beside the
+pinned mode and for the same reason — an exception in the repository can be
+diffed and reverted in one line, where one in a hosting console cannot. It
+currently names three paths:
+
+| path | why |
+| --- | --- |
+| `/integrations` | **Temporary.** The GoHighLevel cutover is being tested on this deployment and that test types a credential into the page. The one entry here with a cost: allowing the path re-admits the page's chunk (the 143-entry registry and its Supabase secret *names*, never values). |
+| `/billing` | This workspace sees its own subscription. The list hides it on the reading that billing is the operator's relationship with the workspace; that reading is wrong for this tenant. Covers the legacy `/billing/usage` redirect too. |
+| `/admin/users` | This workspace administers its own seats, for the same reason. |
+
+Neither `/billing` nor `/admin/users` is chunk-gated, so those two cost the
+bundle nothing. Every other hidden page stays hidden and the four remaining
+excluded chunks stay unbuilt.
+
+Overriding here rather than editing `CLIENT_FACING_HIDDEN_PATHS` is deliberate:
+the list is what the mode means for *every* client-facing deployment, and one
+tenant's answer is not that.
 
 ## Which Supabase project the build talks to
 

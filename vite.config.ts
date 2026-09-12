@@ -18,18 +18,30 @@ import {
 // See src/lib/clientFacing.ts and docs/CLIENT_FACING_MODE.md.
 process.env.VITE_CLIENT_FACING ??= "true";
 
-// TEMPORARY, and pinned here for the same reason the line above is: the
-// Integrations page is operator tooling and the mode hides it, but this
-// deployment is the one the GoHighLevel cutover is being tested on, and that
-// test is typing a credential into that page. Naming it here keeps the
-// exception reviewable and revertible in one line, rather than as a setting in
-// a hosting console nobody can diff. Remove the line when the test is done.
+// Paths the hidden-path list takes away and this deployment keeps, pinned here
+// for the same reason the mode above is: an exception in the repository can be
+// diffed and reverted in one line, where one in a hosting console cannot.
 //
-// The cost is deliberate and worth stating: allowing the path also re-admits
-// the page's CHUNK, which carries the 143-entry integration registry and its
-// Supabase secret NAMES (never values). Every other hidden page stays hidden
-// and its chunk stays unbuilt.
-process.env.VITE_CLIENT_FACING_ALLOW ??= "/integrations";
+//   /integrations  TEMPORARY. Operator tooling, and the mode is right to hide
+//                  it — but this is the deployment the GoHighLevel cutover is
+//                  being tested on, and that test types a credential into that
+//                  page. Remove the entry when the test is done. It is the one
+//                  entry here with a cost: allowing the path also re-admits the
+//                  page's CHUNK, which carries the 143-entry integration
+//                  registry and its Supabase secret NAMES (never values).
+//
+//   /billing       This workspace sees its own subscription and administers its
+//   /admin/users   own seats. The list hides both on the reading that those are
+//                  the operator's relationship with the workspace rather than
+//                  the workspace's own; that reading is wrong for this tenant,
+//                  so it is overridden here rather than by editing a list every
+//                  other deployment shares. Neither is chunk-gated, so this
+//                  costs the bundle nothing. /billing also covers the legacy
+//                  /billing/usage redirect.
+//
+// Every other hidden page stays hidden, and the four remaining excluded chunks
+// stay unbuilt.
+process.env.VITE_CLIENT_FACING_ALLOW ??= "/integrations,/billing,/admin/users";
 
 // Identifies the deployed build. `version.json` carries the same value, so a
 // tab can tell whether it is running the current bundle or a cached older one

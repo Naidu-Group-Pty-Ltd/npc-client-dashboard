@@ -121,30 +121,28 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════
-     SHEETS
+     WHAT IS NOT HERE, AND WHY
 
-     A pane is a sheet, not a pillow: a 4px corner, one thin edge and a
-     lit top. It takes the glass FILL and skips the blur, because these
-     repeat down a page — the same rule glass.css applies to stat cards.
+     Eleven primitives were removed in the plate-sheet work: `.bd-sheet`,
+     `.bd-sheet-cut`, `.bd-rule`, `.bd-chip`, `.bd-chip-dot`, `.bd-card`,
+     `.bd-ledger`, `.bd-num`, `.bd-lot`, `.bd-nav-group` and `.bd-mark`.
+     Every one had ZERO call sites — the same defect the drawing set
+     already shipped once with three components, still live in the
+     stylesheet where a component-level guard could not see it.
+
+     They were redundant by construction rather than merely unused. This
+     file's strategy is THE RE-SKIN: it converts the portal's existing
+     markup by the classes that markup already carries. So `.luxury-badge`
+     already does what `.bd-chip` was for, `.bg-card` does `.bd-card` and
+     `.bd-sheet`, and `thead th` / `tbody td` do `.bd-ledger` — on the
+     pages that exist, rather than on pages that would have had to adopt a
+     new class list. Two implementations of one design decision is how one
+     of them becomes wrong, and the unreachable one is the one nobody
+     notices going stale.
+
+     `builderDraftingMounted.spec.ts` now fails on any `.bd-*` class this
+     file declares that nothing in `src/` applies.
      ══════════════════════════════════════════════════════════════════ */
-  .builder-portal-theme .bd-sheet {
-    position: relative;
-    border: 1px solid var(--bd-thin);
-    border-radius: var(--radius-sm);
-    background-color: var(--glass-fill);
-    background-image: var(--glass-sheen);
-    box-shadow: var(--glass-inner);
-  }
-
-  /* The cut edge. One per view — the thing being looked at. */
-  .builder-portal-theme .bd-sheet-cut {
-    border-color: var(--bd-heavy);
-    border-left-width: 2px;
-  }
-
-  .builder-portal-theme .bd-rule {
-    border-color: var(--bd-hair);
-  }
 
   /* ══════════════════════════════════════════════════════════════════
      DIMENSION RAIL
@@ -400,127 +398,6 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════
-     CHIPS
-
-     Status is carried by a word and a mark, never by colour alone —
-     `--warning` and the brand accent can resolve to neighbouring hues
-     under white-label, and a caution chip must never read as a premium
-     one. Colour here is reinforcement.
-     ══════════════════════════════════════════════════════════════════ */
-  .builder-portal-theme .bd-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    padding: 0.25rem 0.5625rem;
-    border: 1px solid var(--bd-thin);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 0.5625rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
-    white-space: nowrap;
-  }
-
-  .builder-portal-theme .bd-chip-dot {
-    width: 0.3125rem;
-    height: 0.3125rem;
-    flex: none;
-    border-radius: 9999px;
-    background-color: currentColor;
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     CARDS
-
-     Repeated, so they take the fill and the lit edge and skip the blur.
-     Hover promotes the edge to the heavy weight rather than growing a
-     shadow, which is how a drawing marks the thing under the cursor.
-     ══════════════════════════════════════════════════════════════════ */
-  .builder-portal-theme .bd-card {
-    overflow: hidden;
-    border: 1px solid var(--bd-thin);
-    border-radius: var(--radius-sm);
-    background-color: var(--glass-fill);
-    background-image: var(--glass-sheen);
-    box-shadow: var(--glass-inner);
-    transition:
-      border-color var(--motion-fast, 120ms) var(--motion-ease-out, ease-out),
-      transform var(--motion-fast, 120ms) var(--motion-ease-out, ease-out),
-      box-shadow var(--motion-fast, 120ms) var(--motion-ease-out, ease-out);
-  }
-
-  .builder-portal-theme .bd-card:hover,
-  .builder-portal-theme .bd-card:focus-within {
-    border-color: var(--bd-heavy);
-    box-shadow: var(--glass-shadow-lg), var(--glass-inner);
-    transform: translateY(-2px);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .builder-portal-theme .bd-card {
-      transition: none;
-    }
-
-    .builder-portal-theme .bd-card:hover,
-    .builder-portal-theme .bd-card:focus-within {
-      transform: none;
-    }
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
-     LEDGER
-
-     A table is a schedule of figures. Tabular numerals, hairline rows,
-     an annotated head, and money right-aligned so the columns read.
-     ══════════════════════════════════════════════════════════════════ */
-  .builder-portal-theme .bd-ledger {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .builder-portal-theme .bd-ledger th {
-    padding: 0.6875rem 0.8125rem;
-    border-top: 1px solid var(--bd-thin);
-    border-bottom: 1px solid var(--bd-thin);
-    background-color: hsl(var(--primary) / 0.06);
-    font-family: var(--font-mono);
-    font-size: 0.5625rem;
-    font-weight: 500;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    text-align: left;
-    white-space: nowrap;
-    color: hsl(var(--muted-foreground));
-  }
-
-  .builder-portal-theme .bd-ledger td {
-    padding: 0.75rem 0.8125rem;
-    border-bottom: 1px solid var(--bd-hair);
-    vertical-align: middle;
-  }
-
-  .builder-portal-theme .bd-ledger tr:last-child td {
-    border-bottom: 0;
-  }
-
-  .builder-portal-theme .bd-ledger .bd-num {
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    letter-spacing: -0.025em;
-  }
-
-  /* A lot number is an identifier, so it is set like one. */
-  .builder-portal-theme .bd-lot {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-  }
-
-  /* ══════════════════════════════════════════════════════════════════
      THE RE-SKIN
 
      Everything below converts the portal's EXISTING surfaces rather than
@@ -645,15 +522,6 @@
      Group labels are drawing notes. The active entry takes a wash that
      falls away to the right and a 2px cut on its leading edge, which is
      how a drawing marks the thing in hand. */
-  .builder-portal-theme .bd-nav-group {
-    font-family: var(--font-mono);
-    font-size: 0.5rem;
-    font-weight: 500;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: hsl(var(--muted-foreground));
-  }
-
   .builder-portal-theme .bd-nav-active {
     position: relative;
     background-image: linear-gradient(
@@ -674,6 +542,230 @@
     background-color: hsl(var(--primary));
   }
 
+
+  /* ══════════════════════════════════════════════════════════════════
+     THE PLATE SHEET — the builder's own houses, on the Stock List.
+
+     A volume builder sells off an ELEVATION: a photograph of the facade
+     plus a schedule of inclusions. That artefact is the most
+     characteristic thing in this audience's world, and it was the one
+     thing the portal hid — `BuilderStockList` rendered zero `<img>`
+     while every builder's imagery sat stored, signed and reachable
+     through a helper with no caller. So each property is its elevation,
+     framed like a plate, with its schedule ruled beside it.
+
+     THE RISK, AND WHY IT IS THE RIGHT ONE. This puts large warm
+     photography into a language that had been pure hairline and
+     monospace. It belongs because a builder's own drawing set carries
+     the elevation on its cover sheet: the line work becomes the FRAME
+     rather than the subject, and the contrast between 9.5px annotation
+     and a real photograph is what makes the page land. It is
+     deliberately a plate beside a ruled schedule in the existing ledger
+     rhythm — NOT a photo-card grid, which is the templated answer for
+     anything involving property.
+
+     WHAT WAS CUT. Registration ticks at the plate corners, and a
+     staggered entrance for the plates. The ticks landed as stray marks
+     on the sky rather than as intention; a staggered card reveal is the
+     most generic motion effect there is, and this page's strength is its
+     composition. Both were built, rendered, judged and removed.
+     ══════════════════════════════════════════════════════════════════ */
+  /* WHAT A BOARD AND A MASTHEAD WOULD HAVE COST.
+     A recessive board under the sheet and a four-cell masthead over it were
+     both written here and both are gone, for two different reasons. The
+     board put a bordered surface inside the workspace Card, which already
+     is one — a box in a box. And the masthead had no honest cells: every
+     count this page holds except `pagination.total` is scoped to the PAGE
+     (`records`, `uploads`, the availability tallies), and "48 with a
+     photograph" over a list of 148 is a number that means something other
+     than what it says. The Card's own header states the one list-wide
+     figure, which is the number that is true. */
+
+  .builder-portal-theme .bd-plate-list > * + * { border-top: 1px solid var(--bd-thin); }
+
+  /* ── THE PLATE ROW ────────────────────────────────────────────
+     Three zones: the elevation, its schedule, and what you can do to
+     it. The plate leads because it is the thing a builder recognises
+     the property by. */
+  .builder-portal-theme .bd-plate {
+    display: grid;
+    /* 34rem, not 27. The picture is the point of the page and at 27rem it
+       was 432px wide in a 1520px sheet — 28% of the row, with the facts
+       beside it occupying a quarter of what was left. */
+    grid-template-columns: minmax(0, 34rem) minmax(0, 1fr);
+    gap: 2rem;
+    padding: 1.5rem 1.5rem 1.625rem;
+    transition: background-color 140ms ease-out;
+  }
+  .builder-portal-theme .bd-plate:hover { background-color: hsl(var(--primary) / 0.04); }
+  .builder-portal-theme .bd-plate-mount { min-width: 0; }
+
+  .builder-portal-theme .bd-plate-frame {
+    position: relative; overflow: hidden;
+    aspect-ratio: 16 / 9;
+    border: 1px solid var(--bd-thin);
+    border-radius: var(--radius-sm);
+    background-color: hsl(var(--muted) / 0.3);
+    box-shadow: 0 1px 0 hsl(var(--foreground) / 0.06) inset,
+                0 28px 56px -26px hsl(0 0% 0% / 0.95);
+    transition: border-color 140ms ease-out;
+  }
+  .builder-portal-theme .bd-plate:hover .bd-plate-frame { border-color: var(--bd-heavy); }
+
+  /* The picture inside the frame is `StockPicture`'s, drawn with the
+     utilities that carry its fit-and-ground rules — which the Command
+     Centre marketplace card shares. Rules for the image, its blurred
+     ground, its scrim and its empty state were written here too and are
+     gone: a second implementation of the treatment is exactly what
+     extracting the component avoided. */
+
+  .builder-portal-theme .bd-plate-caption {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .5rem; margin-top: .5625rem;
+  }
+
+  /* ── THE SHEET BESIDE THE PLATE ────────────────────────────────
+     Anchored at both ends: the property is NAMED at the head, the title
+     block and its controls are SET at the foot, and the space between is
+     the sheet's own. The alternative — a stack of facts starting at the
+     top — left the same measured void with something floating in it. */
+  .builder-portal-theme .bd-plate-body {
+    display: flex; flex-direction: column; min-width: 0; gap: 1.5rem;
+  }
+  /* NO RULE OF ITS OWN. It had one, and the schedule's top rule 24px below
+     it read as a double line drawn by mistake. The schedule's rule is the
+     divider, and the head's right-hand column carries the row's controls. */
+  .builder-portal-theme .bd-plate-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 1.25rem;
+  }
+  .builder-portal-theme .bd-plate-controls {
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: .3125rem; flex: none;
+  }
+  /* The NPC signature: a wide uppercase eyebrow over a tight-tracked title. */
+  .builder-portal-theme .bd-plate-eyebrow { margin: 0 0 .3125rem; }
+  .builder-portal-theme .bd-plate-title {
+    margin: 0; font-size: 1.5rem; font-weight: 600; line-height: 1.08;
+    letter-spacing: -.032em; color: hsl(var(--foreground));
+    overflow-wrap: break-word;
+  }
+  .builder-portal-theme .bd-plate-place {
+    margin: .375rem 0 0; font-size: .8125rem; line-height: 1.35;
+    color: hsl(var(--muted-foreground)); overflow-wrap: break-word;
+  }
+
+  /* ── THE SCHEDULE ─────────────────────────────────────────────
+     Labels left, figures right, a hairline between every row. It runs DOWN
+     the column because that is the only arrangement whose height matches
+     the plate's — the reasoning, with the measurements, is on
+     `SpecSchedule`. */
+  /* THE FOOT STRETCHES, so the two columns are the same height by
+     construction rather than by arithmetic. A property whose address wraps
+     to two lines would otherwise open a hole of exactly that size, and the
+     one thing this row cannot afford is a hole. The controls sit in the
+     bottom-RIGHT corner, which is where a drawing sheet puts its title
+     block. */
+  .builder-portal-theme .bd-plate-foot {
+    display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto;
+  }
+  .builder-portal-theme .bd-spec {
+    display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto;
+    border-top: 1px solid var(--bd-thin);
+    border-bottom: 1px solid var(--bd-thin);
+  }
+  /* LABEL AND FIGURE ADJACENT, and the rule runs the full width past them.
+     Set as a justified pair the label landed at x=634 and its figure at
+     x=1535 — 850px apart, with nothing between them to carry the eye. A
+     ruled sheet whose entries occupy the left of each rule is a ledger,
+     which is a thing; a label and a number at opposite ends of a 900px row
+     is a table that has come apart. */
+  .builder-portal-theme .bd-spec-row {
+    display: grid; grid-template-columns: minmax(0, 7.5rem) minmax(0, auto);
+    align-items: baseline; gap: 1.25rem;
+    flex: 1 1 auto; min-height: 2.375rem;
+    padding: .375rem .0625rem;
+  }
+  .builder-portal-theme .bd-spec-row + .bd-spec-row {
+    border-top: 1px solid var(--bd-hair);
+  }
+  .builder-portal-theme .bd-spec-row > .bd-annot { align-self: center; }
+  /* THE OFFER LEADS BY ITS TYPE, NOT BY A FILL. A tinted band 910px wide is
+     the one thing this language does not do — the whole portal is hairline
+     and annotation type, and the boldness on this page is spent on the
+     photograph. */
+  .builder-portal-theme .bd-spec-lead {
+    border-bottom: 1px solid var(--bd-thin);
+    padding-bottom: .5rem;
+  }
+  .builder-portal-theme .bd-spec-lead + .bd-spec-row { border-top: 0; }
+  .builder-portal-theme .bd-spec-offer { margin: 0; min-width: 0; }
+  .builder-portal-theme .bd-spec-price {
+    display: block; font-size: 1.5rem; font-weight: 600; line-height: 1.05;
+    letter-spacing: -.042em; font-variant-numeric: tabular-nums;
+    color: hsl(var(--foreground));
+  }
+  /* At reading size and the same weight as a figure: the leading row of a
+     schedule must not read as the weakest thing in it. */
+  .builder-portal-theme .bd-spec-unpriced {
+    display: block; font-size: 1rem; font-weight: 500; line-height: 1.3;
+    color: hsl(var(--muted-foreground));
+  }
+  /* The rest of the builder's own price line, under the figure it
+     qualifies. Sentence-cased by the file, so it is left exactly as
+     written — "From $749,000 fixed price, house and land" is one line the
+     builder typed and reformatting it states a different offer. */
+  .builder-portal-theme .bd-spec-terms {
+    display: block; margin-top: .1875rem; font-size: .75rem; line-height: 1.35;
+    color: hsl(var(--muted-foreground));
+  }
+  /* A settable field: the control is the value, so the row gives it the
+     height it needs and no more. */
+  .builder-portal-theme .bd-spec-settable { align-items: center; }
+  .builder-portal-theme .bd-spec-control { margin: 0; min-width: 0; }
+  .builder-portal-theme .bd-spec-value {
+    margin: 0; font-size: 1rem; font-weight: 600;
+    letter-spacing: -.015em; line-height: 1.2;
+    font-variant-numeric: tabular-nums; color: hsl(var(--foreground));
+  }
+
+  /* ── WHAT YOU CAN DO TO IT ────────────────────────────────────── */
+  /* ── AN EMPTY PLATE ───────────────────────────────────────────
+     Hatched, because a drawing set marks an area with nothing in it rather
+     than leaving it blank: 544×306 of empty box reads as a picture that
+     failed to load, which is a different thing from a property whose
+     photograph has not been found yet. */
+  .builder-portal-theme .bd-plate-frame[data-picture="empty"] {
+    background-image: repeating-linear-gradient(
+      135deg,
+      hsl(var(--foreground) / 0.035) 0 1px,
+      transparent 1px 9px
+    );
+    box-shadow: 0 1px 0 hsl(var(--foreground) / 0.05) inset;
+  }
+
+  /* Below this the 34rem plate and the schedule beside it both fall under a
+     comfortable measure, so the row becomes a sheet: plate over schedule,
+     in the same order a drawing set reads. The plate keeps its 34rem
+     CEILING — unbounded it took the whole width, which at a 900px viewport
+     drew a 786×442 picture and a 943px row, one property to a screen. */
+  @media (max-width: 63.99rem) {
+    .builder-portal-theme .bd-plate { grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+    .builder-portal-theme .bd-plate-mount { max-width: 34rem; }
+    .builder-portal-theme .bd-plate-title { font-size: 1.25rem; }
+    .builder-portal-theme .bd-spec-price { font-size: 1.375rem; }
+    .builder-portal-theme .bd-spec-row { min-height: 0; }
+  }
+  /* The head's controls column took 150px off a title that had 180px to
+     begin with, so it becomes a row beneath the name instead. */
+  @media (max-width: 35.99rem) {
+    .builder-portal-theme .bd-plate-head { flex-direction: column; align-items: stretch; gap: .75rem; }
+    .builder-portal-theme .bd-plate-controls {
+      flex-direction: row; align-items: center; justify-content: space-between;
+    }
+    .builder-portal-theme .bd-spec-row { grid-template-columns: minmax(0, 6.5rem) minmax(0, auto); }
+  }
+
   /* ══════════════════════════════════════════════════════════════════
      AUTHENTICATION
 
@@ -685,22 +777,5 @@
      ══════════════════════════════════════════════════════════════════ */
   .builder-portal-theme .bd-auth-grid {
     --bd-grid: hsl(var(--foreground) / 0.07);
-  }
-
-  .builder-portal-theme .bd-mark {
-    display: grid;
-    place-items: center;
-    flex: none;
-    border-radius: var(--radius-sm);
-    background-image: linear-gradient(
-      135deg,
-      hsl(var(--primary)),
-      hsl(var(--brand)) 52%,
-      hsl(var(--accent))
-    );
-    color: hsl(var(--primary-foreground));
-    font-family: var(--font-mono);
-    font-weight: 700;
-    box-shadow: inset 0 1px 0 hsl(var(--primary-foreground) / 0.3);
   }
 }

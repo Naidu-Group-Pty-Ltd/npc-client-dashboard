@@ -502,7 +502,17 @@ test('no Builder frontend file touches Web Storage', () => {
     'src/components/builder-portal/BuilderPortalProtectedRoute.tsx',
     'src/components/builder-portal/BuilderPortalLayout.tsx',
     'src/components/builder-portal/BuilderOrganisationSwitcher.tsx',
-    ...readdirSync(join(root, 'src/pages/builder')).map((f) => `src/pages/builder/${f}`),
+    /*
+     * FILES, NOT ENTRIES. `src/pages/builder` holds a `__tests__/`
+     * directory — the convention `src/pages/{admin,aml,calculators}`
+     * already follow — and `read()` on a directory throws EISDIR, so this
+     * failed on a name rather than on a finding. The sibling readdir in
+     * `portal-presentation.test.mjs` filtered from the start; this one
+     * did not.
+     */
+    ...readdirSync(join(root, 'src/pages/builder'))
+      .filter((f) => f.endsWith('.tsx') || f.endsWith('.ts'))
+      .map((f) => `src/pages/builder/${f}`),
   ];
   for (const file of files) {
     const body = stripJsComments(read(file));

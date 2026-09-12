@@ -42,10 +42,23 @@ describe('the operation that existed and had no caller', () => {
     expect(page()).not.toContain("'archive_stock_item'");
   });
 
-  it('reaches BOTH presentations, because they are one page', () => {
-    // The table above 1400px and the cards below it. A control on one only is
-    // a control a phone does not have.
-    expect(page().split('<RemoveProperty').length - 1).toBe(2);
+  it('is reached from the ONE presentation there now is', () => {
+    /*
+     * This asserted TWO mounts, because the page drew a table above 1400px
+     * and a stacked card list below it, both rendered with one hidden by
+     * `min-[1400px]:hidden`. The rule it protected — a control on one
+     * presentation only is a control a phone does not have — is now true by
+     * construction: there is a single plate list, so a phone gets the same
+     * markup and the same controls as a desktop, and the duplicate-DOM shape
+     * that carried every accessible name twice is gone with it.
+     *
+     * So the count is one, AND the reason it is safe to be one is asserted:
+     * no CSS-hidden second copy.
+     */
+    const source = page();
+    expect(source.split('<RemoveProperty').length - 1).toBe(1);
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(code).not.toMatch(/min-\[1400px\]:hidden|max-\[1399px\]:hidden/);
   });
 });
 

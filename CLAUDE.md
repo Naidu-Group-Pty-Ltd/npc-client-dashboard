@@ -1986,6 +1986,37 @@ finished. Nothing in the gate could see it: an unused export typechecks, lints
 and builds. **A component is not shipped until something renders it**, and
 `builderPortalUiMounted.spec.ts` now fails when one is not.
 
+**And it happened again, in the stylesheet, where that spec cannot look.** The
+plate-sheet work landed with 17 unmounted `.bd-*` rules and found **11 more
+already on `main`** — `bd-chip` among them, so the class named above was never
+actually mounted, only its two sibling components. All 28 are deleted, because
+the primitives were redundant by construction rather than merely unused: the
+sheet's strategy is the RE-SKIN, so `.luxury-badge` already does `.bd-chip`,
+`.bg-card` does `.bd-card`/`.bd-sheet` and `thead th`/`tbody td` do
+`.bd-ledger`, on the pages that exist. **A class is not shipped until
+something wears it** — `builderDraftingMounted.spec.ts` fails on any `.bd-*`
+the sheet declares that nothing in `src/` applies. Dead CSS compiles, lints,
+passes `audit:style` and ships.
+
+**The Stock List is a plate sheet, and it rendered zero `<img>` before this.**
+Every builder's own imagery was discovered, de-duplicated, classified, ranked,
+stored and signed while the page showed a status word — `builderStockImageUrl`
+had no caller anywhere. §7 of that doc carries the layout, which was decided
+by measuring four arrangements in a real Chromium rather than by taste: 306px
+of picture beside a 91px address cannot balance in a 910px column, so the
+schedule runs DOWN it, six rows come to 216px, and `91 + 216 + 52` plus the
+gaps is 397px against the plate stack's 397. Four rules bite. **Label and
+figure are adjacent** — justified, they landed 850px apart with nothing to
+carry the eye. **The foot stretches rather than being sized**, so an address
+that wraps cannot open a hole. **A row with nothing in it prints a dash and
+keeps its place**, except price, where "on application" is a real state and an
+em dash at 1.5rem reads as a broken page. And **availability is a schedule
+field** (a title block carries its STATUS), which is what got a 908px `w-full`
+select off the foot of every row and away from the one destructive control.
+`StockPicture` is the marketplace card's fit-and-ground logic **extracted with
+the transport as a parameter** — one implementation, so two portals cannot
+draw the same photograph differently.
+
 Three rules bite. **Off-sequence is not a position** — `on_hold` and
 `cancelled` are real statuses and not points on the line, so they resolve to
 null and the rail states the absence; placing them at an index invents a fact

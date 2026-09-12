@@ -138,13 +138,31 @@ describe('cardPictureNeedsGround', () => {
   });
 });
 
-describe('the frame the arithmetic assumes is the frame the card draws', () => {
-  const component = () => readFileSync(
-    join(process.cwd(), 'src/components/listings/BuilderStockTab.tsx'), 'utf8',
+/*
+ * THE TREATMENT MOVED, AND THAT IS WHAT THESE NOW PIN.
+ *
+ * Every assertion below used to read `BuilderStockTab.tsx`, because the
+ * fit-and-ground logic lived inline in the Command Centre's marketplace card.
+ * The Builder portal's Stock List needed to draw the same photograph the same
+ * way, so it was EXTRACTED into `StockPicture` with the transport as a
+ * parameter rather than copied — and the reason it was extracted is exactly
+ * the reason these assertions follow it: two implementations of one treatment
+ * is how the two portals come to draw the same house differently.
+ *
+ * So the rules are unchanged and asserted against the one module that
+ * implements them, plus a new one: neither caller may re-implement any of it.
+ */
+describe('the frame the arithmetic assumes is the frame the picture draws', () => {
+  const picture = () => readFileSync(
+    join(process.cwd(), 'src/components/stock/StockPicture.tsx'), 'utf8',
   );
+  /** Comments may NAME a rule; only code may break it. */
+  const stripComments = (source: string) => source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/.*$/gm, '');
 
-  it('pins CARD_PICTURE_ASPECT to the class BuilderStockTab renders', () => {
-    const source = component();
+  it('pins CARD_PICTURE_ASPECT to the class StockPicture renders', () => {
+    const source = picture();
     const classes = source.match(/aspect-\[(\d+)\/(\d+)\]/g) ?? [];
     expect(classes.length).toBeGreaterThan(0);
     for (const drawn of classes) {
@@ -154,17 +172,51 @@ describe('the frame the arithmetic assumes is the frame the card draws', () => {
   });
 
   it('lets the measured fit decide, never a hardcoded object-fit', () => {
-    const source = component();
+    const source = picture();
     // The photograph's fit comes from `cardPictureFit`; only the decorative
     // ground is allowed a fixed `object-cover`, because it must always fill.
     expect(source).toContain("fit === 'cover' ? 'object-cover' : 'object-contain'");
     expect(source).toContain('cardPictureFit(drawn.naturalWidth, drawn.naturalHeight)');
   });
 
-  it('unmounts the ground with the picture it belongs to', () => {
-    const source = component();
-    const guard = "signedUrl && !broken && fit === 'contain'";
-    expect(source.split(guard).length - 1).toBe(2);
+  it('mounts the ground only where the picture it belongs to is mounted', () => {
+    const source = picture();
+    /*
+     * The rule used to be checked by counting one inline guard expression
+     * TWICE — once on the ground, once on the picture — which is the shape
+     * that let them drift in the first place. It is one named reading now,
+     * and the ground is gated on nothing else: `contained` can only be true
+     * where the picture is already drawn, so a blur of nothing (the grey slab
+     * this whole treatment exists to remove) is unreachable rather than
+     * merely absent.
+     */
+    expect(source).toContain(
+      "const contained = Boolean(signedUrl) && !broken && fit === 'contain';",
+    );
+    expect(source).toContain('{contained ? (');
+    /*
+     * And the ground is a `filter`, never a `backdrop-filter`: `glass.css`
+     * forbids one on anything that repeats, and a sheet of plates repeats.
+     * Judged on the CODE, because the module's own prose states the rule in
+     * those words — the trap this repo has hit before, where an assertion
+     * matches the comment explaining it.
+     */
+    expect(stripComments(source)).not.toMatch(/backdrop-(filter|blur)/);
+  });
+
+  it('is the only implementation — neither caller re-derives the fit', () => {
+    for (const caller of [
+      'src/components/listings/BuilderStockTab.tsx',
+      'src/pages/builder/BuilderStockList.tsx',
+    ]) {
+      const source = readFileSync(join(process.cwd(), caller), 'utf8');
+      expect(source).toContain('<StockPicture');
+      // Comments may NAME the rule; no call site may execute it.
+      const code = stripComments(source);
+      expect(code).not.toContain('cardPictureFit(');
+      expect(code).not.toContain("fit === 'cover' ? 'object-cover' : 'object-contain'");
+      expect(code).not.toMatch(/scale-125[^"'`]*blur-3xl/);
+    }
   });
 });
 

@@ -63,6 +63,14 @@
  * independent deny-list, because a broker that trusts its caller's validation
  * is not a broker.
  *
+ * **Presence is not capability.** `direct` is chosen because this deployment
+ * HOLDS a management token, and for a while that was read as "a value is set
+ * under the name". A dead value then outranked a healthy broker and the page
+ * told a tenant to rotate a Supabase account credential they must never hold.
+ * `looksLikeManagementToken` is the difference between a token and a string,
+ * and a direct write that is refused 401 now retries through the broker when
+ * there is one rather than dead-ending.
+ *
  * **Who refused is read from a header**, never guessed from a body:
  * `x-mission-control-refusal` is set on Mission Control's own refusals and
  * never on what it relays. "Your Mission Control key lacks a scope" and "the
@@ -92,6 +100,14 @@ export type IntegrationSecretRoute =
       missionControlUrl: string;
       /** What was trimmed, when the setting carried a path. Reported, never silent. */
       trimmedPath?: string;
+      /**
+       * Set when a management token WAS present and was discarded as unusable.
+       *
+       * Reported rather than swallowed: a value under that name on a tenant's
+       * project is a setting somebody made, and brokering past it silently
+       * leaves it there to confuse the next reader.
+       */
+      unusableManagementToken?: string;
       headers: Record<string, string>;
       secret: string;
     }
@@ -136,6 +152,62 @@ export function ownProjectRefFromUrl(supabaseUrl: string | null | undefined): st
   return m ? m[1] : null;
 }
 
+/**
+ * Whether a value can be a Supabase management token AT ALL.
+ *
+ * This is not validation — only Supabase can say whether a token is live, and
+ * this deliberately does not try. It answers the cheaper question the resolver
+ * actually needs: is this a token, or is it some other string sitting under
+ * that name?
+ *
+ * The two have opposite consequences, which is why the difference is worth a
+ * function. A Supabase personal access token is `sbp_` followed by its body.
+ * Measured on `plisdzywzleljorrphxv` on 12 Sep 2026, the value under
+ * `SB_MANAGEMENT_ACCESS_TOKEN` was not one: the Management API answered
+ * `401 {"message":"JWT could not be decoded"}`, which is what it says when the
+ * bearer is neither a PAT nor a JWT. That single dead value took the `direct`
+ * route — which is chosen on PRESENCE — and so disabled a Mission Control
+ * broker that was healthy at the same moment, and the page told a tenant to
+ * rotate a Supabase account token they must never hold in the first place.
+ *
+ * So: a value that cannot be a token is ABSENT, not present. The prime is
+ * untouched by this, because a real `sbp_` token still resolves `direct`.
+ */
+export function looksLikeManagementToken(raw: string | null | undefined): boolean {
+  // The PREFIX is the discriminator and nothing else is. A length floor would
+  // be guessing at a format Supabase is free to change, and the cost of
+  // guessing wrong is the prime silently losing its direct route.
+  return /^sbp_[A-Za-z0-9._-]+$/.test((raw ?? '').trim());
+}
+
+/**
+ * The brokered route this deployment could use, or null.
+ *
+ * Split out because two callers need it: the resolver, and the retry that runs
+ * when a direct write is refused. A broker that exists is a route that was
+ * available all along, and a dead end with a working alternative beside it is
+ * the defect this module keeps being repaired for.
+ */
+export function brokerRoute(input: {
+  missionControlUrl: string | null | undefined;
+  cloneApiKey: string | null | undefined;
+}): Extract<IntegrationSecretRoute, { via: 'broker' }> | null {
+  const mc = missionControlOrigin((input.missionControlUrl ?? '').trim());
+  const cloneKey = (input.cloneApiKey ?? '').trim();
+  if (!mc.origin || !cloneKey) return null;
+  return {
+    via: 'broker',
+    missionControlUrl: mc.origin,
+    ...(mc.trimmedPath ? { trimmedPath: mc.trimmedPath } : {}),
+    headers: {
+      'x-clone-api-key': cloneKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    secret: cloneKey,
+  };
+}
+
 export function resolveIntegrationSecretRoute(input: {
   managementToken: string | null | undefined;
   /** Set when `SB_MANAGEMENT_ACCESS_TOKEN` supplied the token, for the message on a 401. */
@@ -144,7 +216,13 @@ export function resolveIntegrationSecretRoute(input: {
   missionControlUrl: string | null | undefined;
   cloneApiKey: string | null | undefined;
 }): IntegrationSecretRoute {
-  const token = (input.managementToken ?? '').trim();
+  const presented = (input.managementToken ?? '').trim();
+  // A value that cannot be a token is absent. See `looksLikeManagementToken`.
+  const token = looksLikeManagementToken(presented) ? presented : '';
+  const discarded = presented && !token
+    ? `A value is set under ${input.managementTokenSource ?? 'SUPABASE_ACCESS_TOKEN'} but it is ` +
+      'not shaped like a Supabase personal access token (those begin `sbp_`), so it was not used.'
+    : '';
   const projectRef = ownProjectRefFromUrl(input.supabaseUrl);
 
   if (token && projectRef) {
@@ -172,19 +250,22 @@ export function resolveIntegrationSecretRoute(input: {
     };
   }
 
-  const mc = missionControlOrigin((input.missionControlUrl ?? '').trim());
-  const cloneKey = (input.cloneApiKey ?? '').trim();
-  if (mc.origin && cloneKey) {
+  const broker = brokerRoute(input);
+  if (broker) {
+    return discarded ? { ...broker, unusableManagementToken: discarded } : broker;
+  }
+
+  /*
+   * Nothing works. When a value WAS presented, say that rather than "nothing
+   * is configured": those send an operator to opposite remedies, and the
+   * second one is a lie about a project that plainly has the name set.
+   */
+  if (discarded) {
     return {
-      via: 'broker',
-      missionControlUrl: mc.origin,
-      ...(mc.trimmedPath ? { trimmedPath: mc.trimmedPath } : {}),
-      headers: {
-        'x-clone-api-key': cloneKey,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      secret: cloneKey,
+      via: 'unconfigured',
+      why:
+        `${discarded} This deployment has no Mission Control link to fall back to either, so ` +
+        'there is nowhere to write. Remove the value, or replace it with a real management token.',
     };
   }
 

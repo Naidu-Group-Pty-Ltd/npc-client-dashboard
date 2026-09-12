@@ -8,6 +8,7 @@ import { deploymentIdentityRefusal } from '../_shared/deploymentIdentitySecrets.
 import {
   describeSecretWriteFailure,
   integrationSecretBrokerUrl,
+  brokerRoute,
   resolveIntegrationSecretRoute,
   type IntegrationSecretRoute,
 } from '../_shared/integrationSecretRoute.pure.ts';
@@ -258,7 +259,7 @@ Deno.serve(async (req) => {
      * — including why a clone must never hold the management token that would
      * make the direct route work.
      */
-    const route = resolveIntegrationSecretRoute({
+    const firstRoute = resolveIntegrationSecretRoute({
       managementToken: sbMgmt ?? legacyMgmt,
       managementTokenSource: sbMgmt ? 'SB_MANAGEMENT_ACCESS_TOKEN' : 'SUPABASE_ACCESS_TOKEN',
       supabaseUrl,
@@ -266,32 +267,69 @@ Deno.serve(async (req) => {
       cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
     });
 
-    if (route.via === 'unconfigured') {
-      console.error('[update-integration-secret] no route', { why: route.why });
+    if (firstRoute.via === 'unconfigured') {
+      console.error('[update-integration-secret] no route', { why: firstRoute.why });
       return new Response(
         JSON.stringify({
           success: false,
-          error: route.why,
+          error: firstRoute.why,
           // Kept so the page still raises its banner, but the REMEDY travels
           // with it now. The banner used to be hard-coded to "add a
           // SUPABASE_ACCESS_TOKEN", which on a clone sends an operator to
           // fetch the one credential this arrangement exists to keep off
           // their project.
           setupRequired: true,
-          setupHint: route.why,
+          setupHint: firstRoute.why,
         }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     console.log('[update-integration-secret] writing', {
-      via: route.via,
-      target: route.via === 'direct' ? route.projectRef : route.missionControlUrl,
+      via: firstRoute.via,
+      target: firstRoute.via === 'direct' ? firstRoute.projectRef : firstRoute.missionControlUrl,
       names: validSecrets.map(s => s.name),
-      ...(route.via === 'direct' ? { tokenSource: route.tokenSource } : {}),
+      ...(firstRoute.via === 'direct' ? { tokenSource: firstRoute.tokenSource } : {}),
+      // A value under the management-token name that was discarded as unusable.
+      ...(firstRoute.via === 'broker' && firstRoute.unusableManagementToken
+        ? { unusableManagementToken: firstRoute.unusableManagementToken }
+        : {}),
     });
 
-    const response = await writeSecrets(route, validSecrets);
+    let route = firstRoute;
+    let response = await writeSecrets(route, validSecrets);
+
+    /*
+     * A refused DIRECT write is not the end of the road when this deployment
+     * can broker.
+     *
+     * The remedy the direct route offers is "rotate the Supabase management
+     * token", and a tenant cannot perform it: that credential reaches every
+     * project the account owns, which is the whole reason a clone is not meant
+     * to hold one. So where a broker exists, it is tried — the same names, the
+     * same allow-list (every refusal ran before the route was resolved), and
+     * Mission Control derives the project from the key it is presented rather
+     * than from anything sent here.
+     *
+     * Both attempts are logged. A silent second attempt would hide that this
+     * project holds a management token that does not work, which is a setting
+     * somebody still has to remove.
+     */
+    if (!response.ok && response.status === 401 && route.via === 'direct') {
+      const fallback = brokerRoute({
+        missionControlUrl: Deno.env.get('MISSION_CONTROL_URL'),
+        cloneApiKey: Deno.env.get('MISSION_CONTROL_CLONE_API_KEY'),
+      });
+      if (fallback) {
+        console.warn('[update-integration-secret] direct write refused, brokering instead', {
+          tokenSource: route.tokenSource,
+          missionControlUrl: fallback.missionControlUrl,
+          names: validSecrets.map((sec) => sec.name),
+        });
+        route = fallback;
+        response = await writeSecrets(route, validSecrets);
+      }
+    }
 
     if (!response.ok) {
       const errorText = redact(await response.text(), route.secret);

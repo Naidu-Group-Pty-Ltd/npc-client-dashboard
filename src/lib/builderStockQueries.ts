@@ -9,6 +9,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeBuilderFunction } from '@/lib/builderPortal';
+import { actingOrganisation } from '@/lib/builderActingOrganisation';
 import {
   countArrivingUploads, countWorkingImages,
 } from '../../supabase/functions/_shared/builderStock/imageProgress.pure';
@@ -37,8 +38,26 @@ export interface Paginated<T> {
   pagination: { page: number; page_size: number; total: number; total_pages: number };
 }
 
+/**
+ * Stamp every call with the organisation THIS TAB is displaying.
+ *
+ * `__Host-builder_session_token` is one cookie name per origin, so signing
+ * into a second builder account silently repoints every open tab at the new
+ * account while the old one still renders the previous organisation. Sending
+ * what the page believes lets the server refuse the mismatch rather than file
+ * the write under whoever the cookie now names — which on 12 September 2026
+ * put one organisation's upload into another.
+ *
+ * Omitted when the tab does not know yet, so nothing that worked before starts
+ * failing on a null.
+ */
+function withActingOrganisation(body: Record<string, unknown>): Record<string, unknown> {
+  const expected = actingOrganisation();
+  return expected ? { ...body, expected_organisation_id: expected } : body;
+}
+
 async function invoke<T>(body: Record<string, unknown>): Promise<T> {
-  const { data, error } = await invokeBuilderFunction<T>('builder-portal-stock', body);
+  const { data, error } = await invokeBuilderFunction<T>('builder-portal-stock', withActingOrganisation(body));
   if (error) {
     const failure = new Error(error.message) as Error & { code?: string; status?: number };
     failure.code = error.code;
@@ -272,7 +291,7 @@ function invokeBounded<T>(
   ms = IMPORT_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   return withDeadline(what, ms, async (signal) => {
-    const { data, error } = await invokeBuilderFunction<T>('builder-portal-stock', body, { signal });
+    const { data, error } = await invokeBuilderFunction<T>('builder-portal-stock', withActingOrganisation(body), { signal });
     if (error) {
       const failure = new Error(error.message) as Error & { code?: string; status?: number };
       failure.code = error.code;

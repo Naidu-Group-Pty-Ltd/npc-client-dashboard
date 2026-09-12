@@ -17,6 +17,7 @@ import { PaymentGateProvider } from "@/hooks/usePaymentGate";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
+import { NotOnThisDeployment } from "@/components/auth/ClientFacingGate";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
 import { BackgroundJobTracker } from "./components/BackgroundJobTracker";
 import { ReportGenerationProgress } from "./components/reports/ReportGenerationProgress";
@@ -134,28 +135,41 @@ const MarketQADigests = lazyWithRetry(() => import("./pages/qa/MarketQADigests")
  * Cloudflare surface and the API-usage/billing internals — so for them the
  * chunk itself is the leak.
  *
- * `__CLIENT_FACING__` is a build-time literal, so Rollup folds the ternary
- * and drops the `import()` behind it: no chunk is emitted at all. The
- * placeholder never renders — ClientFacingGate answers these paths before
- * the element does — it exists so the route stays type-valid.
+ * Each `__EXCLUDE_*__` is a build-time literal, so Rollup folds the ternary
+ * and drops the `import()` behind it: no chunk is emitted at all. They are one
+ * constant per page rather than one flag for all five because
+ * `VITE_CLIENT_FACING_ALLOW` can keep a named page on a deployment that hides
+ * the rest, and a single flag cannot express that — vite.config.ts derives each
+ * from the same allowance list the navigation and the route gate read.
+ *
+ * The placeholder renders the gate's OWN screen rather than `null`. It used to
+ * be `() => null` on the reasoning that ClientFacingGate answers these paths
+ * before the element does; the reasoning was sound and the premise was false.
+ * `isClientFacingDeployment()` read `import.meta.env` through a cast that
+ * Vite's substitution never matched, so on every client-facing build the gate
+ * believed it was the internal console and waved the URL through to an element
+ * with nothing behind it: `/integrations` drew a blank content area — no
+ * title, no cards, no explanation — which reads as a broken page rather than a
+ * withheld one. The flag is repaired (src/lib/clientFacing.ts), and the
+ * placeholder no longer depends on its being right.
  */
-const RouteExcludedFromBuild = () => null;
+const RouteExcludedFromBuild = () => <NotOnThisDeployment />;
 
-const Integrations = __CLIENT_FACING__
+const Integrations = __EXCLUDE_INTEGRATIONS__
   ? RouteExcludedFromBuild
   : lazyWithRetry(() => import("./pages/Integrations"));
-const WorkflowPlayground = __CLIENT_FACING__
+const WorkflowPlayground = __EXCLUDE_WORKFLOW_PLAYGROUND__
   ? RouteExcludedFromBuild
   : lazyWithRetry(() => import("./pages/WorkflowPlayground"));
 const MarketingAnalytics = lazyWithRetry(() => import("./pages/MarketingAnalytics"));
-const CloudflareManagement = __CLIENT_FACING__
+const CloudflareManagement = __EXCLUDE_CLOUDFLARE__
   ? RouteExcludedFromBuild
   : lazyWithRetry(() => import("./pages/CloudflareManagement"));
 const ClientManagement = lazyWithRetry(() => import("./pages/ClientManagement"));
 const ClientTracker = lazyWithRetry(() => import("./pages/ClientTracker"));
 const PortfolioReports = lazyWithRetry(() => import("./pages/PortfolioReports"));
 const ReportRequests = lazyWithRetry(() => import("./pages/ReportRequests"));
-const ApiUsage = __CLIENT_FACING__
+const ApiUsage = __EXCLUDE_API_USAGE__
   ? RouteExcludedFromBuild
   : lazyWithRetry(() => import("./pages/ApiUsage"));
 const DealPipeline = lazyWithRetry(() => import("./pages/DealPipeline"));
@@ -174,7 +188,7 @@ const PublicPassport = lazyWithRetry(() => import("./pages/PublicPassport"));
 const GamePlan = lazyWithRetry(() => import("./pages/GamePlan"));
 const Commissions = lazyWithRetry(() => import("./pages/Commissions"));
 const ReportsAnalytics = lazyWithRetry(() => import("./pages/ReportsAnalytics"));
-const ModelHub = __CLIENT_FACING__
+const ModelHub = __EXCLUDE_MODEL_HUB__
   ? RouteExcludedFromBuild
   : lazyWithRetry(() => import("./pages/ModelHub"));
 const Billing = lazyWithRetry(() => import("./pages/Billing"));
@@ -437,7 +451,7 @@ const App = () => (
                             Brought across by hand from the prime. `src/App.tsx`
                             is `manual_reconcile` in this clone's sync
                             exclusions — it carries RouteExcludedFromBuild and
-                            __CLIENT_FACING__ gates the prime does not — so a
+                            the __EXCLUDE_*__ gates the prime does not — so a
                             new upstream route arrives here only when somebody
                             adds it. These two are public links a recipient
                             opens; they are not developer surfaces, so they are

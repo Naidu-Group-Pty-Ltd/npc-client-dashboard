@@ -133,19 +133,35 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
       }
       cachedIdentity.current = identity;
       /*
-       * Tell the other tabs, and store nothing. A tab that is still rendering
-       * the previous organisation has no other way to learn that the single
-       * session cookie now belongs to somebody else. Wrapped because
-       * `BroadcastChannel` is absent in a few environments, and a portal
-       * without it must still work — the focus listener below covers that.
+       * ANNOUNCE WHO THIS TAB IS, EVERY TIME — NOT ONLY WHEN IT CHANGED.
+       *
+       * This used to be `if (identityChanged)`, and that guard had a hole
+       * exactly where it mattered most. `identityChanged` requires
+       * `cachedIdentity.current !== null`, which is never true on a tab that
+       * has just mounted — so THE TAB YOU SIGN IN ON announced nothing, and
+       * that is the one tab whose login replaced the single `__Host-` cookie
+       * for every other tab in the browser.
+       *
+       * MEASURED 12 SEPTEMBER 2026: sign-in to the second organisation at
+       * 06:18:24 in a fresh tab, no broadcast, and the first tab was still
+       * listing the first organisation's stock when its delete button was
+       * pressed at 06:20:12 and again at 06:20:17. Both were answered 404,
+       * correctly, about a stock list the operator could see on the screen.
+       *
+       * So the post is unconditional now, and the RECEIVER does the
+       * comparing — see the listener below. Storing nothing: the identity
+       * reaches the tabs open right now and leaves no trace for the next
+       * person to use this browser. The session stays in the HttpOnly cookie.
+       *
+       * Wrapped because `BroadcastChannel` is absent in a few environments,
+       * and a portal without it must still work — focus and visibilitychange
+       * cover that case on their own.
        */
-      if (identityChanged) {
-        try {
-          const channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
-          channel.postMessage(identity);
-          channel.close();
-        } catch { /* no BroadcastChannel — focus and visibility still apply */ }
-      }
+      try {
+        const channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
+        channel.postMessage(identity);
+        channel.close();
+      } catch { /* no BroadcastChannel — focus and visibility still apply */ }
 
       setUser(data.user);
       setOrganisations(data.organisations ?? []);
@@ -205,7 +221,23 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
     let channel: BroadcastChannel | null = null;
     try {
       channel = new BroadcastChannel(BUILDER_IDENTITY_CHANNEL);
-      channel.onmessage = recheck;
+      /*
+       * AGREEMENT IS SILENCE. Every tab now posts its identity on every
+       * settled session read, so a tab that already agrees must do nothing —
+       * otherwise each post triggers a re-check which posts again, and two
+       * healthy tabs would talk to each other for ever.
+       *
+       * A message that DIFFERS is the signal this whole mechanism exists for:
+       * another tab holds the cookie now, and this one is rendering somebody
+       * else's organisation until it asks. That is never throttled.
+       *
+       * `BroadcastChannel` delivers only to OTHER contexts, so this can never
+       * hear itself — the comparison is against the tab that posted.
+       */
+      channel.onmessage = (event: MessageEvent) => {
+        if (typeof event.data === 'string' && event.data === cachedIdentity.current) return;
+        recheck();
+      };
     } catch { channel = null; }
     window.addEventListener('focus', recheckThrottled);
     document.addEventListener('visibilitychange', onVisible);

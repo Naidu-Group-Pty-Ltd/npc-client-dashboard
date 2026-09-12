@@ -233,6 +233,40 @@ Deno.serve(async (req) => {
       return json({ error: 'You do not have access to stock', code: 'permission_denied' }, 403);
     }
 
+    /**
+     * AN ID THAT DOES NOT RESOLVE HERE IS USUALLY A PAGE THAT HAS MOVED ON.
+     *
+     * Every id below is resolved BY id AND active organisation, so a row
+     * belonging to somebody else answers "not found" rather than "forbidden".
+     * That stays exactly as it is: the reply must never disclose that the row
+     * exists in another organisation.
+     *
+     * What changes is the WORDING, because a bare "not found" is a dead end
+     * and on 12 SEPTEMBER 2026 it was the wrong one. Two delete attempts at
+     * 06:20:12 and 06:20:17 were answered 404 while the operator watched the
+     * stock list they were trying to remove sit on the screen. Both were
+     * correct: the tab was still listing one organisation's uploads after the
+     * single `__Host-` session cookie had been replaced by a second account's,
+     * so the id was real and simply not theirs any more. They were told the
+     * stock list did not exist. What was true is that it does not exist FOR
+     * THE ORGANISATION THEY ARE NOW SIGNED IN AS.
+     *
+     * Naming that organisation discloses nothing — it is the caller's own
+     * session, already drawn in their own chrome — and it turns a mystery
+     * into the one instruction that resolves it.
+     */
+    const notFoundHere = (what: string, extra: Record<string, unknown> = {}) => json({
+      ...extra,
+      error: organisationName
+        ? `${what} was not found in ${organisationName}. If the page was showing a `
+          + 'different organisation, this browser has since signed in as another one — '
+          + 'reload the page and try again.'
+        : `${what} was not found in the organisation you are signed in as. Reload the `
+          + 'page and try again.',
+      code: 'not_found_in_active_organisation',
+      active_organisation_id: activeOrganisationId,
+    }, 404);
+
     /** Load one upload, scoped. A row outside the organisation is "not found". */
     const loadUpload = async (uploadId: string) => {
       if (!uploadId) return null;
@@ -531,8 +565,8 @@ Deno.serve(async (req) => {
       }
 
       const upload = await loadUpload(cleanText(body.upload_id, 64));
-      if (!upload) return json({ error: 'Upload not found' }, 404);
-      if (upload.deleted_at) return json({ error: 'Upload not found' }, 404);
+      if (!upload) return notFoundHere('That stock list');
+      if (upload.deleted_at) return notFoundHere('That stock list');
       if (!isAcceptableStockStoragePath(upload.storage_path)) {
         return json({ error: 'That file location is not allowed' }, 400);
       }
@@ -610,7 +644,7 @@ Deno.serve(async (req) => {
       }
 
       const item = await loadItem(stockItemId);
-      if (!item) return json({ error: 'Property not found' }, 404);
+      if (!item) return notFoundHere('That property');
       const storagePath = propertyImageStoragePath({
         organisationId: activeOrganisationId,
         stockItemId,
@@ -686,7 +720,7 @@ Deno.serve(async (req) => {
       }
       {
         const item = await loadItem(stockItemId);
-        if (!item) return json({ error: 'Property not found' }, 404);
+        if (!item) return notFoundHere('That property');
         const attached = await attachBuilderImage(supabase, {
           organisationId: activeOrganisationId,
           stockItemId,
@@ -755,8 +789,8 @@ Deno.serve(async (req) => {
       }
 
       const upload = await loadUpload(cleanText(body.upload_id, 64));
-      if (!upload) return json({ error: 'Upload not found' }, 404);
-      if (upload.deleted_at) return json({ error: 'Upload not found' }, 404);
+      if (!upload) return notFoundHere('That stock list');
+      if (upload.deleted_at) return notFoundHere('That stock list');
       if (!isAcceptableStockStoragePath(upload.storage_path)) {
         return json({ error: 'That file location is not allowed' }, 400);
       }
@@ -1169,7 +1203,7 @@ Deno.serve(async (req) => {
       let sourceIds: string[] = [];
       if (uploadId) {
         const upload = await loadUpload(uploadId);
-        if (!upload || upload.deleted_at) return json({ error: 'Source not found' }, 404);
+        if (!upload || upload.deleted_at) return notFoundHere('That stock list');
         sourceIds = [upload.id];
       } else {
         const { data: uploads } = await supabase
@@ -1453,7 +1487,7 @@ Deno.serve(async (req) => {
 
     if (operation === 'get_upload') {
       const upload = await loadUpload(cleanText(body.upload_id, 64));
-      if (!upload) return json({ error: 'Upload not found' }, 404);
+      if (!upload) return notFoundHere('That stock list');
       // The row is selected in full above so the handler can read it;
       // `projectUploadListRow` keeps `error_detail` off the wire and answers
       // `link_recovery_available` in its place, and `storage_path` stays
@@ -1504,7 +1538,7 @@ Deno.serve(async (req) => {
 
     if (operation === 'get_stock_item') {
       const item = await loadItem(cleanText(body.stock_item_id, 64));
-      if (!item) return json({ error: 'Property not found' }, 404);
+      if (!item) return notFoundHere('That property');
       const [decorated] = await decorateItems(supabase, [item], activeOrganisationId);
       return json({ success: true, record: decorated });
     }
@@ -1517,7 +1551,7 @@ Deno.serve(async (req) => {
         .eq('id', imageId)
         .eq('organisation_id', activeOrganisationId)
         .maybeSingle();
-      if (!image) return json({ error: 'Image not found' }, 404);
+      if (!image) return notFoundHere('That image');
       if (image.external_url && !image.storage_path) {
         return json({ success: true, url: image.external_url, external: true });
       }
@@ -1537,7 +1571,7 @@ Deno.serve(async (req) => {
         return json({ error: 'You do not have permission to manage stock', code: 'permission_denied' }, 403);
       }
       const item = await loadItem(cleanText(body.stock_item_id, 64));
-      if (!item) return json({ error: 'Property not found' }, 404);
+      if (!item) return notFoundHere('That property');
 
       const status = cleanText(body.availability_status, 40);
       if (!(STOCK_AVAILABILITY_STATUSES as readonly string[]).includes(status)) {
@@ -1568,7 +1602,7 @@ Deno.serve(async (req) => {
         return json({ error: 'You do not have permission to remove stock', code: 'permission_denied' }, 403);
       }
       const item = await loadItem(cleanText(body.stock_item_id, 64));
-      if (!item) return json({ error: 'Property not found' }, 404);
+      if (!item) return notFoundHere('That property');
 
       const { data, error } = await supabase
         .from('builder_stock_items')
@@ -1612,7 +1646,7 @@ Deno.serve(async (req) => {
         .select('id, source_type, source_url, error_code, error_detail, deleted_at')
         .eq('id', uploadId).eq('organisation_id', activeOrganisationId).maybeSingle();
       if (!upload || upload.deleted_at) {
-        return json({ success: false, error: 'That stock list was not found.' }, 404);
+        return notFoundHere('That stock list', { success: false });
       }
 
       /*
@@ -1684,7 +1718,7 @@ Deno.serve(async (req) => {
       // Resolved by id AND active organisation. An upload id from another
       // organisation is "not found", never "forbidden".
       const upload = await loadUpload(cleanText(body.upload_id, 64));
-      if (!upload || upload.deleted_at) return json({ error: 'Stock list not found' }, 404);
+      if (!upload || upload.deleted_at) return notFoundHere('That stock list');
 
       // Everything this organisation holds that named the source. Read before
       // anything changes, so the decision is made against stored state.
@@ -1838,7 +1872,7 @@ Deno.serve(async (req) => {
         .eq('id', selectionId)
         .eq('organisation_id', activeOrganisationId)
         .maybeSingle();
-      if (!selection) return json({ error: 'Selection not found' }, 404);
+      if (!selection) return notFoundHere('That selection');
       if (selection.status !== 'selected') {
         return json({ error: 'This selection has already moved on.', code: 'not_acknowledgeable' }, 409);
       }

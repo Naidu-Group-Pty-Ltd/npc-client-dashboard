@@ -40,6 +40,19 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
+
+/*
+ * A SOURCE-TEXT ASSERTION MUST NOT READ THE PROSE ABOUT THE CODE.
+ *
+ * The comment above this fix NAMES the condition the fix removed, in order to
+ * explain it — so an assertion that the condition is gone matched the sentence
+ * saying it went. Strip comments before asserting on structure. (This has cost
+ * this repository twice before, both times on a verification that quoted its
+ * own explanation back at itself.)
+ */
+const stripComments = (src: string) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/^[^\n]*?\/\/[^\n]*$/gm, '');
 const HOOK    = read('src/hooks/useBuilderPortalAuth.tsx');
 const ACTING  = read('src/lib/builderActingOrganisation.ts');
 const QUERIES = read('src/lib/builderStockQueries.ts');
@@ -48,7 +61,8 @@ const SERVER  = read('supabase/functions/builder-portal-stock/index.ts');
 describe('a stale tab finds out that it is no longer who it thinks it is', () => {
   it('re-checks the session when another tab announces a new identity', () => {
     expect(HOOK).toMatch(/new BroadcastChannel\(BUILDER_IDENTITY_CHANNEL\)/);
-    expect(HOOK).toMatch(/channel\.onmessage = recheck/);
+    expect(HOOK).toMatch(/channel\.onmessage = \(event: MessageEvent\) =>/);
+    expect(HOOK).toMatch(/recheck\(\);/);
   });
 
   /*
@@ -71,12 +85,54 @@ describe('a stale tab finds out that it is no longer who it thinks it is', () =>
   it('throttles focus but never a broadcast', () => {
     expect(HOOK).toMatch(/FOCUS_RECHECK_FLOOR_MS/);
     expect(HOOK).toMatch(/addEventListener\(\s*'focus',\s*recheckThrottled\)/);
-    expect(HOOK).toMatch(/channel\.onmessage = recheck;/);
+    expect(HOOK).toMatch(/channel\.onmessage = \(event: MessageEvent\) =>/);
   });
 
-  it('announces the change so the other tabs get that message at all', () => {
+  /*
+   * THE TAB YOU SIGN IN ON IS THE ONE THAT MUST SPEAK, AND IT WAS THE ONE
+   * THAT COULD NOT.
+   *
+   * The post used to sit behind `if (identityChanged)`, which requires
+   * `cachedIdentity.current !== null` — never true on a tab that has just
+   * mounted. So a fresh tab signing in announced nothing, while being exactly
+   * the tab whose login had just replaced the single `__Host-` cookie for
+   * every other tab in the browser.
+   *
+   * MEASURED 12 SEPTEMBER 2026: sign-in at 06:18:24 in a fresh tab, no
+   * broadcast, and the older tab still listed the previous organisation's
+   * stock when its delete button was pressed at 06:20:12 and 06:20:17. Both
+   * were answered 404 — correctly — about a stock list on the operator's own
+   * screen.
+   */
+  it('announces its identity on every settled read, not only on a change', () => {
     expect(HOOK).toMatch(/channel\.postMessage\(identity\)/);
-    expect(HOOK).toMatch(/if \(identityChanged\)/);
+
+    // Between settling the identity and posting it there must be no condition
+    // — that gap is where the fresh-mount hole lived.
+    const code = stripComments(HOOK);
+    const settle = code.indexOf('cachedIdentity.current = identity;');
+    const post = code.indexOf('channel.postMessage(identity)');
+    expect(settle).toBeGreaterThan(-1);
+    expect(post).toBeGreaterThan(settle);
+    expect(code.slice(settle, post)).not.toMatch(/if \(identityChanged\)/);
+  });
+
+  /*
+   * AGREEMENT IS SILENCE. Now that every tab posts on every settled read, a
+   * receiver that re-checked unconditionally would post again on the way out,
+   * and two healthy tabs would talk to each other for ever.
+   */
+  it('ignores a message that matches this tab, so two tabs cannot loop', () => {
+    expect(HOOK).toMatch(/event\.data === cachedIdentity\.current\) return;/);
+  });
+
+  /*
+   * The purge still turns on a real CHANGE. Announcing is not forgetting: a
+   * tab that agrees with the message must not throw its own cache away.
+   */
+  it('still purges the cache only when the identity actually changed', () => {
+    expect(HOOK).toMatch(/const identityChanged = cachedIdentity\.current !== null/);
+    expect(HOOK).toMatch(/if \(identityChanged\) \{\s*queryClient\.removeQueries/);
   });
 
   /*
@@ -100,6 +156,44 @@ describe('a stale tab finds out that it is no longer who it thinks it is', () =>
   it('survives BroadcastChannel being unavailable', () => {
     const block = HOOK.slice(HOOK.indexOf('new BroadcastChannel'));
     expect(block.slice(0, 260)).toMatch(/catch/);
+  });
+});
+
+/*
+ * AND WHEN IT STILL GOES WRONG, THE REFUSAL HAS TO BE ACTIONABLE.
+ *
+ * Every id is resolved BY id AND active organisation, so a row belonging to
+ * another organisation answers 404 rather than 403 — that is deliberate and
+ * must not change, because the reply may not disclose that the row exists
+ * elsewhere. What it CAN say is which organisation the caller is signed in
+ * as, which is the caller's own session and discloses nothing.
+ */
+describe('a 404 says which organisation it looked in', () => {
+  it('names the acting organisation instead of a bare "not found"', () => {
+    expect(SERVER).toMatch(/const notFoundHere = /);
+    expect(SERVER).toMatch(/not_found_in_active_organisation/);
+    expect(SERVER).toMatch(/was not found in \$\{organisationName\}/);
+  });
+
+  it('still answers 404 and never 403, so existence is not disclosed', () => {
+    const block = SERVER.slice(SERVER.indexOf('const notFoundHere = '));
+    const body = block.slice(0, block.indexOf('};') + 2);
+    expect(body).toMatch(/\}, 404\);/);
+    expect(body).not.toMatch(/403/);
+  });
+
+  /*
+   * The bare strings are gone rather than left beside the helper — one of
+   * them is what the operator was shown, and a second spelling is a second
+   * place for this to come back.
+   */
+  it('leaves no bare not-found string on an organisation-scoped lookup', () => {
+    for (const dead of [
+      "error: 'Upload not found' }, 404",
+      "error: 'Property not found' }, 404",
+      "error: 'Stock list not found' }, 404",
+      "error: 'Source not found' }, 404",
+    ]) expect(SERVER).not.toContain(dead);
   });
 });
 

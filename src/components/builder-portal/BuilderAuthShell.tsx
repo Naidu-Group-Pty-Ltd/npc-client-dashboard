@@ -58,7 +58,7 @@ export function BuilderAuthShell({
   const companyName = settings.companyName || 'Builder / Developer Portal';
 
   return (
-    <div className="builder-portal-theme flex min-h-screen">
+    <div className="builder-portal-theme bd-auth-grid flex min-h-screen">
       {/* ── Branded panel (from lg up) ── */}
       <aside
         className="builder-portal-sidebar relative z-10 hidden shrink-0 flex-col border-r lg:flex lg:w-[480px] xl:w-[520px]"
@@ -80,7 +80,7 @@ export function BuilderAuthShell({
 
           <div className="space-y-8">
             <div>
-              <h2 className="text-3xl font-bold leading-tight tracking-tight text-foreground">
+              <h2 className="text-[2rem] font-semibold leading-[1.06] tracking-[-0.045em] text-foreground">
                 Deliver every project<br />
                 with <span className="text-primary">control</span>.
               </h2>
@@ -102,11 +102,11 @@ export function BuilderAuthShell({
                     delay: reduceMotion ? 0 : 0.3 + index * 0.12,
                   }}
                 >
-                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-primary/25 bg-primary/10 text-primary">
                     <point.icon className="h-4 w-4" />
                   </span>
                   <span className="min-w-0">
-                    <span className="block text-sm font-semibold text-foreground">{point.title}</span>
+                    <span className="bd-annot block text-foreground">{point.title}</span>
                     <span className="block text-xs leading-relaxed text-muted-foreground">
                       {point.desc}
                     </span>
@@ -116,7 +116,7 @@ export function BuilderAuthShell({
             </ul>
           </div>
 
-          <p className="flex items-center gap-1.5 text-[10px] text-muted-foreground/50">
+          <p className="bd-annot flex items-center gap-1.5">
             <ShieldCheck className="h-3 w-3 shrink-0" />
             <span>Secured portal · Access resolved per request · Audit logged</span>
           </p>
@@ -137,24 +137,25 @@ export function BuilderAuthShell({
               slot="auth"
               alt={companyName}
               className="h-14 max-w-[220px] object-contain"
-              fallbackClassName="h-14 w-14 rounded-2xl border border-primary/20"
+              fallbackClassName="h-14 w-14 rounded-sm border border-primary/20"
             />
             <div className="text-center">
               <p className="text-lg font-bold tracking-tight text-foreground">{companyName}</p>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                Builder / Developer Portal
-              </p>
+              <p className="bd-annot">Builder / Developer Portal</p>
             </div>
           </div>
 
           <div className="mb-6">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">{title}</h1>
+            <p className="bd-annot bd-annot-strong mb-2.5">Secure access</p>
+            <h1 className="text-[1.75rem] font-semibold leading-[1.05] tracking-[-0.045em] text-foreground">
+              {title}
+            </h1>
             {description ? (
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{description}</p>
             ) : null}
           </div>
 
-          <div className="glass-raised rounded-2xl p-6 sm:p-7">
+          <div className="glass-raised rounded-md border-[hsl(var(--border)/0.9)] p-6 sm:p-7">
             {children}
           </div>
 
@@ -162,7 +163,7 @@ export function BuilderAuthShell({
             <div className="mt-6 text-center text-sm text-muted-foreground">{footer}</div>
           ) : null}
 
-          <p className="mt-8 flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground/50 lg:hidden">
+          <p className="bd-annot mt-8 flex items-center justify-center gap-1.5 lg:hidden">
             <ShieldCheck className="h-3 w-3 shrink-0" aria-hidden />
             <span>Secured portal · Access resolved per request</span>
           </p>

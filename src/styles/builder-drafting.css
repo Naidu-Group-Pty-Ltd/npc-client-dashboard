@@ -1,0 +1,640 @@
+/* ────────────────────────────────────────────────────────────────
+   BUILDER / DEVELOPER PORTAL — THE DRAWING SET
+
+   The portal's visual language, taken from the artefact a builder
+   already lives in: dimension lines, a setout grid, line-weight
+   hierarchy, annotation type and a title block.
+
+   ── Why this file exists at all ────────────────────────────────────
+   The portal used to look like every other dark admin panel: glass
+   cards, a blue accent, rounded tiles, a gradient chart. Competent and
+   anonymous — nothing on screen said construction. Rather than add more
+   gradient, this borrows the conventions of a drawing sheet and puts
+   them to work: a dimension line carries an annotated extent, which is
+   exactly the shape of "where is this lot and how long has it been
+   there"; a progress bar throws that annotation away.
+
+   ── Why it is imported AFTER glass.css ─────────────────────────────
+   glass.css is deliberately last so it can re-skin the app's existing
+   surface taxonomy on source order. This partial sits after it for the
+   same reason and one more: it re-declares two rules glass.css sets on
+   the builder portal (the theme root's background, and the page header)
+   and must win at equal specificity.
+
+   ── The rule that keeps it safe ────────────────────────────────────
+   EVERY selector here is scoped under `.builder-portal-theme`, which is
+   applied by exactly two roots — `BuilderPortalLayout` and
+   `BuilderAuthShell`. Nothing here can reach the Client, Finance or
+   Solicitor portals, the command centre, or a generated report.
+
+   ── Rules inherited from glass.css, still binding ──────────────────
+   • Never write a colour. Every value resolves from the semantic tokens
+     in tokens.css, which are driven by the tenant's white-label row —
+     so a tenant who retunes `--primary` retunes this whole language.
+     A raw hex would break re-theming and trip `npm run audit:style`.
+   • Never put `backdrop-filter` on a repeated element. The setout grid
+     is ONE background-image on ONE container; a card or a table row
+     gets a translucent fill and a lit edge, nothing more.
+   • No component declares a font-family. Annotation type is the
+     existing `--font-mono` token.
+   ──────────────────────────────────────────────────────────────── */
+
+@layer components {
+  .builder-portal-theme {
+    /* ── Line weights ──────────────────────────────────────────────
+       A drawing builds hierarchy from three weights, not from one
+       border repeated everywhere. Hairline is the setout grid and the
+       rows inside a sheet; thin is an object's own edge; heavy is the
+       cut — the active row, the focused field, the hovered card. */
+    --bd-hair: hsl(var(--border) / 0.45);
+    --bd-thin: hsl(var(--border) / 0.9);
+    --bd-heavy: hsl(var(--primary) / 0.55);
+
+    /* The setout grid's own ink. Derived from the foreground so it
+       reads on both themes without being declared twice. */
+    --bd-grid: hsl(var(--foreground) / 0.05);
+    --bd-grid-step: 24px;
+
+    /* Stage ramp — ONE hue, monotonic lightness, stepped off the
+       primary so it follows white-label. Validated against the dark
+       surface: chroma floor and 3:1 contrast both pass, which a
+       blue→magenta sweep did not (adjacent steps were 5.3 ΔE apart in
+       normal vision and 1.6 under protanopia). Stage order is
+       sequential, not categorical, and identity is carried by each
+       row's own label — never by colour alone. */
+    --bd-s1: hsl(var(--primary) / 0.95);
+    --bd-s2: hsl(var(--primary) / 0.78);
+    --bd-s3: hsl(var(--primary) / 0.62);
+    --bd-s4: hsl(var(--primary) / 0.46);
+    --bd-s5: hsl(var(--primary) / 0.3);
+
+    /* The drafting field. Re-declared rather than extended because
+       glass.css sets `background-image` on this same selector, and a
+       second declaration replaces it wholesale — so the two radial
+       washes it contributes are repeated here verbatim and the setout
+       grid is appended. Losing them would flatten the portal. */
+    background-color: transparent;
+    background-image: radial-gradient(
+        circle at top left,
+        hsl(var(--primary) / 0.1),
+        transparent 28%
+      ),
+      radial-gradient(
+        circle at top right,
+        hsl(var(--primary) / 0.06),
+        transparent 24%
+      ),
+      linear-gradient(var(--bd-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--bd-grid) 1px, transparent 1px);
+    background-size:
+      auto,
+      auto,
+      var(--bd-grid-step) var(--bd-grid-step),
+      var(--bd-grid-step) var(--bd-grid-step);
+    /* Fixed so the grid reads as the sheet the content sits on rather
+       than a texture that slides with it. */
+    background-attachment: fixed;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     ANNOTATION TYPE
+
+     Labels, units, keys and captions are set the way a drawing notes
+     them: monospace, uppercase, widely tracked, quiet. It is the
+     `--font-mono` token — the same one the White-Label admin retunes —
+     so no component here declares a family of its own.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-annot {
+    font-family: var(--font-mono);
+    font-size: 0.594rem; /* 9.5px at a 16px root */
+    font-weight: 500;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .builder-portal-theme .bd-annot-strong {
+    color: hsl(var(--primary));
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     SHEETS
+
+     A pane is a sheet, not a pillow: a 4px corner, one thin edge and a
+     lit top. It takes the glass FILL and skips the blur, because these
+     repeat down a page — the same rule glass.css applies to stat cards.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-sheet {
+    position: relative;
+    border: 1px solid var(--bd-thin);
+    border-radius: var(--radius-sm);
+    background-color: var(--glass-fill);
+    background-image: var(--glass-sheen);
+    box-shadow: var(--glass-inner);
+  }
+
+  /* The cut edge. One per view — the thing being looked at. */
+  .builder-portal-theme .bd-sheet-cut {
+    border-color: var(--bd-heavy);
+    border-left-width: 2px;
+  }
+
+  .builder-portal-theme .bd-rule {
+    border-color: var(--bd-hair);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     DIMENSION RAIL
+
+     Built in HTML rather than SVG, and that is the whole point of the
+     rule below.
+
+     THE LINE WORK SCALES; THE TYPE DOES NOT. The first version drew the
+     rail inside a 620-unit viewBox. A viewBox scales everything in it —
+     so on a 1,730px sheet the drawing was rendered at 2.8×, which turned
+     8-unit station labels into 22px text that swamped the line it was
+     annotating. Absolutely-positioned HTML gives each station a
+     percentage along the track while its label keeps a real CSS size at
+     every width, which is how a drawing behaves: the sheet gets bigger,
+     the annotation stays legible.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-rail-track {
+    position: relative;
+    height: 1.25rem;
+  }
+
+  /* The extent, and the part of it already travelled. */
+  .builder-portal-theme .bd-rail-line,
+  .builder-portal-theme .bd-rail-done {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    height: 1.5px;
+    transform: translateY(-50%);
+  }
+
+  .builder-portal-theme .bd-rail-line {
+    right: 0;
+    background-color: hsl(var(--border));
+  }
+
+  .builder-portal-theme .bd-rail-done {
+    height: 2px;
+    background-color: hsl(var(--primary));
+  }
+
+  /* Extension line — dropped from each station, the way a dimension is
+     tied back to the thing it measures. */
+  .builder-portal-theme .bd-rail-ext {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: hsl(var(--border) / 0.7);
+  }
+
+  /* Tick terminator — the 45° slash a chain of dimensions uses instead
+     of an arrow head. */
+  .builder-portal-theme .bd-rail-tick {
+    position: absolute;
+    top: 50%;
+    width: 1.5px;
+    height: 0.75rem;
+    background-color: hsl(var(--muted-foreground));
+    transform: translate(-50%, -50%) rotate(45deg);
+    opacity: 0.7;
+  }
+
+  .builder-portal-theme .bd-rail-tick-reached {
+    background-color: hsl(var(--primary));
+    opacity: 1;
+  }
+
+  /* The station the lot is standing at. */
+  .builder-portal-theme .bd-rail-dot {
+    position: absolute;
+    top: 50%;
+    width: 0.5625rem;
+    height: 0.5625rem;
+    border-radius: 9999px;
+    background-color: hsl(var(--primary));
+    box-shadow: 0 0 0 2px hsl(var(--background));
+    transform: translate(-50%, -50%);
+  }
+
+  /* Section marker and the annotated extent, above the current station. */
+  .builder-portal-theme .bd-rail-marker {
+    position: absolute;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.1875rem;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+
+  .builder-portal-theme .bd-rail-caret {
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid hsl(var(--primary));
+  }
+
+  .builder-portal-theme .bd-rail-labels {
+    position: relative;
+    height: 1rem;
+  }
+
+  .builder-portal-theme .bd-rail-label {
+    position: absolute;
+    top: 0;
+    white-space: nowrap;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     TITLE BLOCK
+
+     The panel every drawing sheet carries in its corner. It replaces
+     rows of unlabelled metadata with keyed cells a builder can read
+     without a legend.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-titleblock {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--bd-thin);
+    border-radius: var(--radius-sm);
+    background-color: hsl(var(--card) / 0.35);
+  }
+
+  @media (min-width: 640px) {
+    .builder-portal-theme .bd-titleblock-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  .builder-portal-theme .bd-titleblock > * {
+    padding: 0.5rem 0.75rem;
+    border-right: 1px solid var(--bd-hair);
+    border-bottom: 1px solid var(--bd-hair);
+  }
+
+  .builder-portal-theme .bd-titleblock > *:last-child {
+    border-right: 0;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     SCHEDULE
+
+     What replaces a grid of bordered stat tiles. Figures set in one
+     ruled block, so four numbers cost four cells rather than four
+     borders, four shadows and four icon chips.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-schedule {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--bd-thin);
+    border-radius: var(--radius-sm);
+    background-color: var(--glass-fill);
+    background-image: var(--glass-sheen);
+    box-shadow: var(--glass-inner);
+  }
+
+  @media (min-width: 768px) {
+    .builder-portal-theme .bd-schedule-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .builder-portal-theme .bd-schedule-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  .builder-portal-theme .bd-schedule > * {
+    padding: 1rem 1.0625rem;
+    border-right: 1px solid var(--bd-hair);
+    border-bottom: 1px solid var(--bd-hair);
+  }
+
+  @media (min-width: 768px) {
+    .builder-portal-theme .bd-schedule-3 > *,
+    .builder-portal-theme .bd-schedule-4 > * {
+      border-bottom: 0;
+    }
+
+    .builder-portal-theme .bd-schedule-3 > *:last-child,
+    .builder-portal-theme .bd-schedule-4 > *:last-child {
+      border-right: 0;
+    }
+  }
+
+  /* A figure is the loudest thing in its cell, and its unit trails it
+     quietly. Tabular so a column of them lines up. */
+  .builder-portal-theme .bd-figure {
+    font-size: 2.25rem;
+    font-weight: 600;
+    line-height: 0.94;
+    letter-spacing: -0.055em;
+    font-variant-numeric: tabular-nums;
+    color: hsl(var(--foreground));
+  }
+
+  .builder-portal-theme .bd-figure-unit {
+    margin-left: 0.375rem;
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     THE PAGE HEADER
+
+     glass.css gives every portal header the accent stroke and the
+     primary-tinted wash. Builder's takes a square corner so it agrees
+     with the sheets beneath it, and keeps everything else.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .builder-portal-page-header {
+    border-radius: var(--radius-md);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     CHIPS
+
+     Status is carried by a word and a mark, never by colour alone —
+     `--warning` and the brand accent can resolve to neighbouring hues
+     under white-label, and a caution chip must never read as a premium
+     one. Colour here is reinforcement.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    padding: 0.25rem 0.5625rem;
+    border: 1px solid var(--bd-thin);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+  }
+
+  .builder-portal-theme .bd-chip-dot {
+    width: 0.3125rem;
+    height: 0.3125rem;
+    flex: none;
+    border-radius: 9999px;
+    background-color: currentColor;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     CARDS
+
+     Repeated, so they take the fill and the lit edge and skip the blur.
+     Hover promotes the edge to the heavy weight rather than growing a
+     shadow, which is how a drawing marks the thing under the cursor.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-card {
+    overflow: hidden;
+    border: 1px solid var(--bd-thin);
+    border-radius: var(--radius-sm);
+    background-color: var(--glass-fill);
+    background-image: var(--glass-sheen);
+    box-shadow: var(--glass-inner);
+    transition:
+      border-color var(--motion-fast, 120ms) var(--motion-ease-out, ease-out),
+      transform var(--motion-fast, 120ms) var(--motion-ease-out, ease-out),
+      box-shadow var(--motion-fast, 120ms) var(--motion-ease-out, ease-out);
+  }
+
+  .builder-portal-theme .bd-card:hover,
+  .builder-portal-theme .bd-card:focus-within {
+    border-color: var(--bd-heavy);
+    box-shadow: var(--glass-shadow-lg), var(--glass-inner);
+    transform: translateY(-2px);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .builder-portal-theme .bd-card {
+      transition: none;
+    }
+
+    .builder-portal-theme .bd-card:hover,
+    .builder-portal-theme .bd-card:focus-within {
+      transform: none;
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     LEDGER
+
+     A table is a schedule of figures. Tabular numerals, hairline rows,
+     an annotated head, and money right-aligned so the columns read.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-ledger {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .builder-portal-theme .bd-ledger th {
+    padding: 0.6875rem 0.8125rem;
+    border-top: 1px solid var(--bd-thin);
+    border-bottom: 1px solid var(--bd-thin);
+    background-color: hsl(var(--primary) / 0.06);
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    text-align: left;
+    white-space: nowrap;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .builder-portal-theme .bd-ledger td {
+    padding: 0.75rem 0.8125rem;
+    border-bottom: 1px solid var(--bd-hair);
+    vertical-align: middle;
+  }
+
+  .builder-portal-theme .bd-ledger tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .builder-portal-theme .bd-ledger .bd-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+
+  /* A lot number is an identifier, so it is set like one. */
+  .builder-portal-theme .bd-lot {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     THE RE-SKIN
+
+     Everything below converts the portal's EXISTING surfaces rather than
+     asking twenty-eight pages to change their class lists — the same
+     move glass.css makes, and for the same reason it records: the
+     portals were built largely from bare Tailwind utilities, so
+     rewriting each call site would be a very large, very mechanical diff
+     with a lot of room to break layout.
+
+     Descendant-of-root is (0,2,0) or better, which is what it takes to
+     out-rank a Tailwind utility. Nothing here changes a layout, a
+     spacing scale or a behaviour: corners, line weights and the register
+     of small type, only.
+
+     A dialog is deliberately NOT caught. Radix portals its content to
+     `body`, outside `.builder-portal-theme`, so overlays keep the app's
+     own treatment — which is correct: a modal is the platform's surface,
+     not the portal's sheet.
+     ══════════════════════════════════════════════════════════════════ */
+
+  /* Cards become sheets. `bg-card` is the hook glass.css already
+     established for this, and every shadcn `Card` in the portal carries
+     it, so one rule reaches all of them. */
+  .builder-portal-theme .bg-card {
+    border-radius: var(--radius-sm);
+    border-color: var(--bd-thin);
+  }
+
+  /* Form controls are drawn on the sheet, so they take its corner and
+     its line weight. The focus ring is untouched — it is an
+     accessibility affordance, not a decoration. */
+  .builder-portal-theme input,
+  .builder-portal-theme textarea,
+  .builder-portal-theme select,
+  .builder-portal-theme [role="combobox"] {
+    border-radius: var(--radius-sm);
+  }
+
+  /* ── Tables become ledgers ────────────────────────────────────────
+     Every table in the portal, not a class a page has to remember. The
+     head is annotated and tinted; rows are separated by the hairline
+     rather than by the app's heavier default; figures stay tabular so a
+     column of money reads down the page.
+
+     `th`/`td` padding is deliberately left alone: the pages set their
+     own column widths and paddings, and overriding them here would
+     re-flow eleven tables to serve a border. */
+  .builder-portal-theme thead th {
+    font-family: var(--font-mono);
+    font-size: 0.5625rem;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    background-color: hsl(var(--primary) / 0.06);
+    border-bottom: 1px solid var(--bd-thin);
+  }
+
+  .builder-portal-theme tbody td {
+    border-bottom: 1px solid var(--bd-hair);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .builder-portal-theme tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  /* ── Tab rails read as sheet tabs ─────────────────────────────────
+     Annotation type, square corners, and the active tab marked by the
+     cut weight rather than by a filled pill. */
+  .builder-portal-theme [role="tablist"] {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--bd-thin);
+    background-color: hsl(var(--card) / 0.4);
+  }
+
+  .builder-portal-theme [role="tab"] {
+    border-radius: calc(var(--radius-sm) - 1px);
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .builder-portal-theme [role="tab"][data-state="active"] {
+    box-shadow: inset 0 -2px 0 hsl(var(--primary));
+  }
+
+  /* ── The navigation rail ──────────────────────────────────────────
+     Group labels are drawing notes. The active entry takes a wash that
+     falls away to the right and a 2px cut on its leading edge, which is
+     how a drawing marks the thing in hand. */
+  .builder-portal-theme .bd-nav-group {
+    font-family: var(--font-mono);
+    font-size: 0.5rem;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .builder-portal-theme .bd-nav-active {
+    position: relative;
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0.22),
+      hsl(var(--primary) / 0)
+    );
+  }
+
+  .builder-portal-theme .bd-nav-active::before {
+    content: "";
+    position: absolute;
+    top: 0.375rem;
+    bottom: 0.375rem;
+    left: 0;
+    width: 2px;
+    border-radius: 9999px;
+    background-color: hsl(var(--primary));
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     AUTHENTICATION
+
+     The first surface anyone sees, and the one that was most templated.
+     The setout grid runs at full strength behind a single column, and
+     the mark carries the brand ramp. `BuilderAuthShell` is the only
+     root that wears this, so login, invite, forgot-password and
+     reset-password all inherit it from one place.
+     ══════════════════════════════════════════════════════════════════ */
+  .builder-portal-theme .bd-auth-grid {
+    --bd-grid: hsl(var(--foreground) / 0.07);
+  }
+
+  .builder-portal-theme .bd-mark {
+    display: grid;
+    place-items: center;
+    flex: none;
+    border-radius: var(--radius-sm);
+    background-image: linear-gradient(
+      135deg,
+      hsl(var(--primary)),
+      hsl(var(--brand)) 52%,
+      hsl(var(--accent))
+    );
+    color: hsl(var(--primary-foreground));
+    font-family: var(--font-mono);
+    font-weight: 700;
+    box-shadow: inset 0 1px 0 hsl(var(--primary-foreground) / 0.3);
+  }
+}

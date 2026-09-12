@@ -98,7 +98,13 @@
     box-shadow: 0 0.75rem 2rem -1rem hsl(var(--primary) / 0.6);
   }
 
-  .builder-stock-list-page > .builder-portal-page-header > div > div:last-child {
+  /* Targets the action cluster BY NAME. This was
+     `> .builder-portal-page-header > div > div:last-child`, which framed the
+     buttons only while `actions` happened to be the header row's second
+     child — so when the shell moved them under the title, the frame wrapped
+     the heading and description too. `BuilderPortalShell` owns the layout
+     inside its header; `builder-portal-page-actions` is the contract. */
+  .builder-stock-list-page .builder-portal-page-actions {
     padding: 0.35rem;
     border: 1px solid hsl(var(--primary) / 0.14);
     border-radius: var(--radius-lg);

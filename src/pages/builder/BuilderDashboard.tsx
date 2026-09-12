@@ -1,8 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, Bell, Boxes, Building2, FileText, Hammer, History, ListChecks,
-  Loader2, MessageSquare, Receipt, RefreshCw, ShieldCheck, UserRound,
+  AlertTriangle, ArrowRight, Building2, History, Loader2, RefreshCw, ShieldCheck, UserRound,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +18,7 @@ import {
   ACTIVITY_ENTITY_LABELS, ACTOR_TYPE_LABELS, activityActionLabel, formatWorkspaceTime,
 } from '@/lib/builderWorkspace';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
-import { BuilderPortalStatCard } from '@/components/builder-portal/ui/BuilderPortalStatCard';
+import { BuilderSchedule } from '@/components/builder-portal/ui/BuilderSchedule';
 
 /**
  * Builder / Developer Portal landing surface.
@@ -101,20 +100,103 @@ export default function BuilderDashboard() {
     ? activeOrganisation.trading_name || activeOrganisation.legal_name
     : 'No organisation selected';
 
-  /** The three headline figures, in the primary stat-card treatment. */
-  const primaryTiles = [
-    { label: 'Active projects', value: summary?.projects ?? 0, icon: Building2, to: '/builder/projects' },
-    { label: 'Units in inventory', value: summary?.units ?? 0, icon: Boxes, to: '/builder/inventory' },
-    { label: 'Active builds', value: summary?.construction_cases ?? 0, icon: Hammer, to: '/builder/construction' },
+  /*
+   * THE EIGHT FIGURES, EACH WITH SOMETHING TO READ IT AGAINST.
+   *
+   * These used to be three stat cards over five smaller ones, and under them a
+   * footnote apologising for the numbers: "a zero means nothing you can see,
+   * not necessarily nothing at all". That sentence exists because a bare `0`
+   * in a bordered box reads as a broken page.
+   *
+   * The scoping it was making is real and is kept — but it belongs to each
+   * figure rather than to the grid, so it is said in the baseline where the
+   * reader is already looking, and the footnote goes.
+   *
+   * NOTHING HERE INVENTS A TREND. `useBuilderWorkspaceSummary` returns counts,
+   * not a series, so no baseline claims a movement. Where the summary holds a
+   * genuinely related figure — overdue against open, defects against builds,
+   * unread against conversations — the baseline uses it; otherwise it states
+   * what the count is scoped to, which is the honest thing a count can say
+   * about itself.
+   */
+  const count = (value: number | undefined) => value ?? 0;
+  const plural = (value: number, one: string, many: string) => (value === 1 ? one : many);
+
+  const openDefects = count(summary?.open_defects);
+  const overdueTasks = count(summary?.overdue_tasks);
+  const unreadMessages = count(summary?.unread_messages);
+  const openTasks = count(summary?.open_tasks);
+  const unreadNotifications = count(summary?.unread_notifications);
+
+  const deliveryFigures = [
+    {
+      key: 'projects',
+      label: 'Active projects',
+      value: count(summary?.projects),
+      unit: plural(count(summary?.projects), 'project', 'projects'),
+      baseline: 'Shared with your account',
+      to: '/builder/projects',
+    },
+    {
+      key: 'units',
+      label: 'Units in inventory',
+      value: count(summary?.units),
+      unit: plural(count(summary?.units), 'unit', 'units'),
+      baseline: 'Across every project you reach',
+      to: '/builder/inventory',
+    },
+    {
+      key: 'builds',
+      label: 'Active builds',
+      value: count(summary?.construction_cases),
+      unit: plural(count(summary?.construction_cases), 'build', 'builds'),
+      baseline: openDefects > 0
+        ? `${openDefects} open ${plural(openDefects, 'defect', 'defects')}`
+        : 'No open defects',
+      to: '/builder/construction',
+    },
+    {
+      key: 'transactions',
+      label: 'Transactions',
+      value: count(summary?.transactions),
+      baseline: 'Recorded against your lots',
+      to: '/builder/transactions',
+    },
   ];
 
-  /** The remaining five, in the smaller operational treatment. */
-  const secondaryTiles = [
-    { label: 'Transactions', value: summary?.transactions ?? 0, icon: Receipt, to: '/builder/transactions' },
-    { label: 'Documents', value: summary?.documents ?? 0, icon: FileText, to: '/builder/documents' },
-    { label: 'Open conversations', value: summary?.open_conversations ?? 0, icon: MessageSquare, to: '/builder/messages' },
-    { label: 'Open tasks', value: summary?.open_tasks ?? 0, icon: ListChecks, to: '/builder/tasks' },
-    { label: 'Unread notifications', value: summary?.unread_notifications ?? 0, icon: Bell, to: '/builder/notifications' },
+  const workspaceFigures = [
+    {
+      key: 'documents',
+      label: 'Documents',
+      value: count(summary?.documents),
+      baseline: 'Across every project you reach',
+      to: '/builder/documents',
+    },
+    {
+      key: 'conversations',
+      label: 'Open conversations',
+      value: count(summary?.open_conversations),
+      baseline: unreadMessages > 0
+        ? `${unreadMessages} unread ${plural(unreadMessages, 'message', 'messages')}`
+        : 'Nothing unread',
+      to: '/builder/messages',
+    },
+    {
+      key: 'tasks',
+      label: 'Open tasks',
+      value: openTasks,
+      baseline: overdueTasks > 0
+        ? `${overdueTasks} overdue`
+        : openTasks === 0 ? 'Nothing waiting on you' : 'None overdue',
+      to: '/builder/tasks',
+    },
+    {
+      key: 'notifications',
+      label: 'Unread notifications',
+      value: unreadNotifications,
+      baseline: unreadNotifications === 0 ? 'You are up to date' : 'Since your last visit',
+      to: '/builder/notifications',
+    },
   ];
 
   const attention = [
@@ -166,43 +248,10 @@ export default function BuilderDashboard() {
           </Button>
         </div>
       ) : (
-        <>
-          {/* Primary KPI row */}
-          <div className="grid gap-3 sm:grid-cols-3">
-            {primaryTiles.map(({ label, value, icon, to }) => (
-              <BuilderPortalStatCard key={label} icon={icon} label={label} value={value} to={to} />
-            ))}
-          </div>
-
-          {/* Secondary operational row */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {secondaryTiles.map(({ label, value, icon: Icon, to }) => (
-              <Link
-                key={label}
-                to={to}
-                className="builder-portal-soft-panel flex items-center gap-3 p-4 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <span
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"
-                  aria-hidden
-                >
-                  <Icon className="h-4 w-4 text-primary" />
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-lg font-semibold tabular-nums leading-tight text-foreground">
-                    {value}
-                  </span>
-                  <span className="block truncate text-xs text-muted-foreground">{label}</span>
-                </span>
-              </Link>
-            ))}
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Every figure counts only what your access reaches. A zero means nothing you can see,
-            not necessarily nothing at all.
-          </p>
-        </>
+        <div className="space-y-3">
+          <BuilderSchedule figures={deliveryFigures} />
+          <BuilderSchedule figures={workspaceFigures} />
+        </div>
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">

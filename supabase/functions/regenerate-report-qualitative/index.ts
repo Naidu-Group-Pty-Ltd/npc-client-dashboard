@@ -24,6 +24,7 @@ import {
 } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import {
   auditGovernedNarrativeAuthority,
+  subjectPostcodeForAudit,
   governedAuthorityBlocks,
   governedCategoryDirective,
   governedFaultToFlag,
@@ -2148,6 +2149,9 @@ YOUR DEDICATED PROPERTY PARTNER
       const governedFaults = auditGovernedNarrativeAuthority(
         combinedContent,
         safeGeneration.snapshot,
+        // RF-7.2B.1A.1 — same context the first generation uses; two audits of
+        // one document must not judge the subject's own postcode differently.
+        { subjectPostcode: subjectPostcodeForAudit(safeGeneration.snapshot, propertyAddress) },
       );
       const { data: priorFlagRow } = await supabase
         .from('investment_reports')

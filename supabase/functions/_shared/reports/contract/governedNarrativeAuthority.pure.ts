@@ -178,7 +178,7 @@ const TOPICS: readonly TopicSpec[] = [
     // Plurals matter: the defect corpus contains a model-drawn occupier-mix
     // chart reading `Local owner-occupiers 35`, which asserts an
     // owner-occupier RATE, and `owner[- ]occupier` alone does not match it.
-    terms: /\b(owner[- ]occupiers?|renters?|rented dwellings?|tenure)\b/gi,
+    terms: /\b(owner[-\u2010\u2011\u2012\u2013\u2014 ]occupiers?|renters?|rented dwellings?|tenure)\b/gi,
   },
   {
     topic: 'householdSize',
@@ -220,7 +220,7 @@ const TOPICS: readonly TopicSpec[] = [
     category: 'seifa',
     label: 'SEIFA socio-economic ranking',
     owns: (n) => n.startsWith('abs.seifa.'),
-    terms: /\b(seifa|socio[- ]economic (?:index|advantage|disadvantage)|decile)\b/gi,
+    terms: /\b(seifa|socio[-\u2010\u2011\u2012\u2013\u2014 ]economic (?:index|advantage|disadvantage)|decile)\b/gi,
   },
   {
     topic: 'unemployment',
@@ -311,25 +311,203 @@ const QUANT = /\$\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?%|\d{1,3}(?:,\d{3})+
  * `median household income` must keep firing.
  */
 const NON_GOVERNED_ATTRIBUTION =
-  /\b(purchased|purchase price|bought|sold|sale price|price|valued at|valuation|stamp duty|solicitor|conveyanc|loan|deposit|lvr|loan[- ]to[- ]value|interest rate|repayment|land size|block of|build size|floor area|bedrooms?|bathrooms?|car spaces?|settlement|occupancy|insurance|council rates|water rates|strata|body corporate|management fee|letting fee|depreciation|yield|cash flow|per week|per annum|m²|sqm|square metres)\b[^.]{0,34}$/i;
+  /\b(purchased|purchase price|bought|sold|sale price|price|valued at|valuation|leased at|let at|rented at|renting at|asking rent|rents for|stamp duty|solicitor|conveyanc|loan|deposit|lvr|loan[- ]to[- ]value|interest rate|repayment|land size|block of|build size|floor area|bedrooms?|bathrooms?|car spaces?|settlement|occupancy|insurance|council rates|water rates|strata|body corporate|management fee|letting fee|depreciation|yield|cash flow|per week|per annum|m²|sqm|square metres)\b[^.]{0,34}$/i;
 
-/** Characters of preceding context examined for that attribution. */
+/**
+ * The SAME attribution, on the other side of the figure.
+ *
+ * RF-7.2B.1A.1. Production writes the property's own measurements value-first
+ * — "The property's large 988 m² land size drives demand from families and
+ * long-term renters" — and the lookbehind sees only "The property's large ",
+ * which carries no attribution at all. The report was blocked for quoting its
+ * own land size beside the word "renters". The fixture above is that exact
+ * sentence.
+ *
+ * Anchored at `^`, so only the text IMMEDIATELY after the figure can exempt
+ * it: a governed term elsewhere in the sentence cannot reach back and excuse a
+ * figure that is genuinely a demographic claim. A unit of measure is allowed
+ * between the number and the noun, because that is how the phrase reads.
+ */
+const NON_GOVERNED_ATTRIBUTION_AFTER =
+  /^\s*(?:m²|m2|sqm|sq\.?\s?m|square metres?|ha|hectares?|%|p\.?a\.?|per week|per annum|per month)?[\s,.\-–—]*\b(purchase price|purchased|bought|sold|sale price|price|valuation|stamp duty|solicitor|conveyanc|loan|deposit|lvr|loan[- ]to[- ]value|interest rate|repayment|land size|land area|block|build size|floor area|bedrooms?|bathrooms?|car spaces?|settlement|occupancy|insurance|council rates|water rates|strata|body corporate|management fee|letting fee|depreciation|yield|cash flow)\b/i;
+
+/**
+ * The street number of an address, and a measured distance or duration.
+ *
+ * RF-7.2B.1A.1, found by replaying the retained production report rather than
+ * by inspection. Four more units were refused over prose like "48 Redfern
+ * Street sits within an established residential pocket of Cowra, giving
+ * residents close access to local parks" — the STREET NUMBER read as a figure
+ * beside the word "residents" — and "sports fields within roughly 1–3
+ * kilometres, and river-corridor recreation reachable with a short 5–10 minute
+ * drive". An address and an amenity distance are not demographic claims.
+ *
+ * Both are anchored immediately after the figure. `years` is deliberately NOT
+ * a duration here: "a median age of 36 years" must keep firing.
+ */
+const STREET_ADDRESS_AFTER =
+  /^\s+[A-Z][A-Za-z'’-]*(?:\s+[A-Z][A-Za-z'’-]*)*\s+(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Court|Ct|Place|Pl|Crescent|Cres|Way|Lane|Ln|Parade|Pde|Terrace|Tce|Close|Circuit|Cct|Boulevard|Blvd|Highway|Hwy|Esplanade|Esp)\b/;
+const MEASUREMENT_AFTER =
+  /^\s*(?:[–—-]\s*\d+(?:\.\d+)?\s*)?(?:km|kilometres?|kms|metres?|minutes?|mins?|hours?|hrs?|months?|weeks?|days?)\b/i;
+
+/** Characters of context examined for that attribution, either side. */
 const ATTRIBUTION_LOOKBEHIND = 46;
+const ATTRIBUTION_LOOKAHEAD = 34;
 
-function hasQuantitativeAssertion(sentence: string): boolean {
-  QUANT.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = QUANT.exec(sentence)) !== null) {
-    const token = match[0].trim();
-    const bare = token.replace(/[\s,$%]/g, '');
-    const decorated = /[$%]/.test(token) || /,/.test(token);
-    if (!decorated && /^(?:19|20)\d{2}$/.test(bare)) continue; // a year, not a figure
-    const before = sentence.slice(Math.max(0, match.index - ATTRIBUTION_LOOKBEHIND), match.index);
-    if (NON_GOVERNED_ATTRIBUTION.test(before)) continue; // the deal's figure, not the area's
-    return true;
+/**
+ * Recorded-crime evidence this platform actually loads (`crime_reference`).
+ *
+ * RF-7.2B.1A.1. A crime rate is quoted "per 100,000 residents", and a crime
+ * count sits beside the word "incidents" — so a BOCSAR sentence carries a
+ * governed term and several figures, and was blocked as a demographic claim.
+ * Crime is a different, genuinely loaded source; it is not demographics.
+ *
+ * The exemption needs BOTH halves and is deliberately not a keyword pass:
+ * the unit must carry recognised crime-source evidence, AND the individual
+ * figure must sit in crime or rate context. "BOCSAR reports 1,144 offences;
+ * the population is 13,795" therefore still blocks on the population figure,
+ * because its own window names no crime.
+ */
+const CRIME_SOURCE =
+  /\b(bocsar|qps|queensland police|sapol|nt police|police force|recorded criminal incidents?|recorded offences?|criminal incidents?|recorded crime|crime rate|offence rate)\b/i;
+
+/**
+ * "per 100,000 residents" is a RATE DENOMINATOR, not a population claim.
+ *
+ * Masked out before a crime unit is judged, because it otherwise supplies both
+ * a figure (100,000) and a governed term ("residents") to a sentence that is
+ * about offences. Replaced with spaces rather than removed so every remaining
+ * offset still lines up.
+ */
+const RATE_DENOMINATOR = /per\s+100,?000\s+(?:residents?|people|persons|population)/gi;
+
+/**
+ * How close a governed term must be to a figure, inside a crime unit, for that
+ * figure to be a demographic claim rather than a crime statistic.
+ *
+ * The rule is inverted here on purpose. A window that merely LOOKED for crime
+ * vocabulary near the figure exempted "BOCSAR records 1,144 offences; the
+ * median age is 41" — "offences" sat 15 characters from the 41. Asking instead
+ * whether a GOVERNED term is adjacent cannot be satisfied by an unrelated
+ * crime word elsewhere in the sentence.
+ */
+const CRIME_GOVERNED_PROXIMITY = 24;
+
+/**
+ * There is deliberately NO disclosure or negation exemption.
+ *
+ * RF-7.2B.1A.1 first carried one: a unit naming an explicit absence
+ * ("could not be established") was exempt while no surviving figure sat within
+ * 40 characters of the topic it disclaimed. The adversarial pass then showed
+ * the distance IS the evasion — state the term once, push the figure past the
+ * window, and an unsupported claim rides through on the disclaimer:
+ *
+ *   "Median age could not be established from authoritative sources for this
+ *    particular postal area, but other commentary sources put it at about 41."
+ *   "Population statistics could not be established ... and after considerable
+ *    additional desktop review the number appears to be 12,272."
+ *   "SEIFA scores could not be established ... though secondary commentary
+ *    elsewhere indicates a score of about 947."
+ *
+ * All three passed on a 40-character window, and any fixed window has the same
+ * hole one clause further out. The rule is therefore GONE rather than widened:
+ * it could only ever permit, the production disclosure needs no exemption
+ * because the subject-postcode rule already leaves it with no figure at all,
+ * and deleting the parameter removes the thing there was to game.
+ *
+ * A disclosure carrying a genuinely unexempt figure now blocks. That is the
+ * conservative side of a client-delivery gate, and it is a shape production
+ * has never produced.
+ */
+
+/** Context a claim unit is judged in. */
+export interface GovernedAuditContext {
+  /** The subject property's own postcode, when the report names one. */
+  readonly subjectPostcode?: string | null;
+}
+
+/**
+ * Is this four-digit token the subject property's own postcode, in postcode
+ * position?
+ *
+ * RF-7.2B.1A.1. "the specific 2794 postal area" read as a figure, so naming
+ * the postal area that has no data was itself treated as stating a figure for
+ * it. Deliberately NOT "four-digit numbers are harmless": the token must equal
+ * the subject postcode AND sit immediately beside a postcode marker, so a real
+ * four-digit governed figure — "a population of 2794 residents" — is still a
+ * figure even when the postcode happens to be 2794.
+ */
+function isSubjectPostcode(
+  token: string, before: string, after: string, subjectPostcode: string | null | undefined,
+): boolean {
+  if (!subjectPostcode || token !== subjectPostcode) return false;
+  return /\b(?:nsw|vic|qld|sa|wa|tas|nt|act)\s*$/i.test(before)
+    || /\b(?:postcode|postal area|poa)\s*$/i.test(before)
+    || /^\s*(?:postal area|postcode|poa)\b/i.test(after);
+}
+
+/** Is a term for any withheld topic within `CRIME_GOVERNED_PROXIMITY` of this figure? */
+function governedTermNear(
+  sentence: string, index: number, length: number, withheld: readonly TopicSpec[],
+): boolean {
+  for (const spec of withheld) {
+    const terms = new RegExp(spec.terms.source, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = terms.exec(sentence)) !== null) {
+      const gap = index >= m.index
+        ? index - (m.index + m[0].length)
+        : m.index - (index + length);
+      if (gap <= CRIME_GOVERNED_PROXIMITY) return true;
+    }
   }
   return false;
 }
+
+interface Figure { readonly token: string; readonly index: number; readonly length: number; }
+
+/**
+ * The figures in this unit that ARE a claim — every exemption applied.
+ *
+ * Replaces the boolean `hasQuantitativeAssertion`: the disclosure rule needs
+ * to know WHERE the surviving figures are, not merely whether any exist.
+ */
+function unexemptFigures(
+  sentence: string, ctx: GovernedAuditContext, withheld: readonly TopicSpec[] = TOPICS,
+): Figure[] {
+  const out: Figure[] = [];
+  const crimeSourced = CRIME_SOURCE.test(sentence);
+  // Judge a crime unit with its rate denominators blanked, so the idiom cannot
+  // donate a figure or a governed word to the sentence it qualifies.
+  const judged = crimeSourced
+    ? sentence.replace(RATE_DENOMINATOR, (m) => ' '.repeat(m.length))
+    : sentence;
+  QUANT.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = QUANT.exec(judged)) !== null) {
+    const raw = match[0];
+    const token = raw.trim();
+    const bare = token.replace(/[\s,$%]/g, '');
+    const decorated = /[$%]/.test(token) || /,/.test(token);
+    if (!decorated && /^(?:19|20)\d{2}$/.test(bare)) continue; // a year, not a figure
+
+    const idx = match.index;
+    const before = judged.slice(Math.max(0, idx - ATTRIBUTION_LOOKBEHIND), idx);
+    const after = judged.slice(idx + raw.length, idx + raw.length + ATTRIBUTION_LOOKAHEAD);
+
+    if (NON_GOVERNED_ATTRIBUTION.test(before)) continue;      // the deal's figure, stated label-first
+    if (NON_GOVERNED_ATTRIBUTION_AFTER.test(after)) continue; // ...and value-first
+    if (STREET_ADDRESS_AFTER.test(after)) continue;           // a street number
+    if (MEASUREMENT_AFTER.test(after)) continue;              // a distance or a duration
+    if (isSubjectPostcode(bare, before, after, ctx.subjectPostcode)) continue;
+    // In a crime unit a figure is an offence count or a rate unless a governed
+    // term is sitting right next to it.
+    if (crimeSourced && !governedTermNear(judged, idx, raw.length, withheld)) continue;
+    out.push({ token, index: idx, length: raw.length });
+  }
+  return out;
+}
+
+
 
 /**
  * Split into claim-sized units. Sentences, but newlines end a unit too: a
@@ -460,12 +638,38 @@ export function governedCategoryDirective(
     '  in this report for these categories. No such figure is held for this property.',
     '- Where such a figure would have appeared, write "Not available" and state in one',
     '  sentence that the data could not be established for this property.',
+    '- Do NOT manufacture a distribution. No percentage split, composition chart,',
+    '  donut, bar or pie of household types, life stages, tenure or workforce mix,',
+    '  and no "indicative", "approximate", "typical" or "estimated" numeric profile.',
+    '  Labelling an invented split as indicative does not make it qualitative — a',
+    '  reader sees a chart of demographic percentages either way. Do not emit a',
+    '  {{donut: …}}, {{bars: …}} or {{pie: …}} directive for any category above.',
     '- You MAY still discuss the area qualitatively — its role, its amenity, the kind',
     '  of tenant it attracts, the character of local demand — provided you attach NO',
     '  number to any category listed above.',
     '',
   );
   return lines.join('\n');
+}
+
+/**
+ * The subject property's own postcode, for `GovernedAuditContext`.
+ *
+ * Read from the snapshot's resolved geography where one exists, and otherwise
+ * from the trailing four digits of the address the report was written about —
+ * which is the case that matters, because an unresolved geography is exactly
+ * when these categories are withheld and the postcode still appears in prose.
+ */
+export function subjectPostcodeForAudit(
+  snapshot: { geography?: { postcode?: unknown } } | null | undefined,
+  propertyAddress?: unknown,
+): string | null {
+  const resolved = snapshot?.geography?.postcode;
+  if (typeof resolved === 'string' && /^\d{4}$/.test(resolved.trim())) return resolved.trim();
+  if (typeof resolved === 'number' && /^\d{4}$/.test(String(resolved))) return String(resolved);
+  if (typeof propertyAddress !== 'string') return null;
+  const matches = propertyAddress.match(/\b\d{4}\b/g);
+  return matches && matches.length > 0 ? matches[matches.length - 1] : null;
 }
 
 /**
@@ -479,6 +683,7 @@ export function governedCategoryDirective(
 export function auditGovernedNarrativeAuthority(
   reportText: unknown,
   snapshot: Pick<MarketFactSnapshot, 'facts'> | null | undefined,
+  context: GovernedAuditContext = {},
 ): GovernedClaimFault[] {
   if (typeof reportText !== 'string' || reportText.trim() === '') return [];
   const standing = governedTopicStanding(snapshot);
@@ -489,7 +694,8 @@ export function auditGovernedNarrativeAuthority(
   const units = claimUnits(reportText);
 
   for (const unit of units) {
-    if (!hasQuantitativeAssertion(unit)) continue;
+    const figures = unexemptFigures(unit, context, withheld);
+    if (figures.length === 0) continue;
     for (const spec of withheld) {
       spec.terms.lastIndex = 0;
       if (!spec.terms.test(unit)) continue;

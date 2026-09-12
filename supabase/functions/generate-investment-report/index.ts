@@ -18,6 +18,7 @@ import { resolveOneReportGeography } from '../_shared/geography/resolveOneReport
 import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
 import {
   auditGovernedNarrativeAuthority,
+  subjectPostcodeForAudit,
   governedAuthorityBlocks,
   governedCategoryDirective,
   governedFaultToFlag,
@@ -6583,6 +6584,10 @@ YOUR DEDICATED PROPERTY PARTNER
         const governedFaults = auditGovernedNarrativeAuthority(
           reportContent,
           safeGeneration.snapshot,
+          // RF-7.2B.1A.1 — the subject's own postcode is not a figure about the
+          // subject. Without it, naming the postal area that HAS no data read as
+          // stating a number for it.
+          { subjectPostcode: subjectPostcodeForAudit(safeGeneration.snapshot, propertyAddress) },
         );
         if (governedFaults.length > 0) {
           console.error(

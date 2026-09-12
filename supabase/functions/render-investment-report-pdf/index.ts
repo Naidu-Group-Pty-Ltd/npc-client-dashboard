@@ -15,6 +15,7 @@ import { collectFootnoteDefinitions } from "./footnotes.ts";
 import { statCardHasValue } from "../_shared/reports/investment/blockHygiene.pure.ts";
 import { dimensionWasScored } from "../_shared/reports/investment/scoreSections.pure.ts";
 import { PLATFORM_ISSUER_NAME, resolveReportDisclaimer, resolveReportIssuer } from "../_shared/reports/issuerIdentity.pure.ts";
+import { governedAuthorityBlockFromFlags } from "../_shared/reports/contract/governedNarrativeAuthority.pure.ts";
 // Both are called by `wrapInsightSections` below and neither was imported, so
 // every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
 // not defined` before WeasyPrint was ever reached. The modules exist and are
@@ -5703,7 +5704,7 @@ if (import.meta.main) Deno.serve(async (req) => {
     const { data: report, error } = await supabase
       .from("investment_reports")
       .select(
-        "id, property_address, report_content, sources_content, created_at, financial_calculations, investment_score, location_intelligence, demographics_data, report_variant, derived_from_report_id",
+        "id, property_address, report_content, sources_content, created_at, financial_calculations, investment_score, location_intelligence, demographics_data, report_variant, derived_from_report_id, validation_flags",
       )
       .eq("id", reportId)
       .maybeSingle();
@@ -5711,6 +5712,46 @@ if (import.meta.main) Deno.serve(async (req) => {
     if (error || !report) {
       return new Response(JSON.stringify({ error: error?.message || "Report not found" }), {
         status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // RF-7.2B.1A — the client-readiness gate, and the only place `blocking`
+    // means anything.
+    //
+    // This function is the sole producer of the client deliverable: it renders
+    // the PDF and writes `pdf_url`, and the client portal serves what it
+    // produced (`get-portal-client-data` reads that column, it does not
+    // render). Refusing here therefore closes the export, the download and the
+    // portal in one place, which is why the gate is here and not in three.
+    //
+    // Measured before this existed: NO surface read `validation_flags` at all
+    // — not this one, not the portal, not the viewer. `severity: 'critical'`
+    // was drawn in a different colour and subtracted 15 from a quality score,
+    // and nothing anywhere was prevented.
+    //
+    // The report is NOT deleted, NOT failed and NOT hidden: it stays stored,
+    // readable and reviewable with its evidence attached. What it may not do
+    // is leave as a finished client document.
+    const governedBlock = governedAuthorityBlockFromFlags(
+      (report as Record<string, unknown>).validation_flags,
+    );
+    if (governedBlock.blocked) {
+      console.error(
+        `⛔ [render-investment-report-pdf] refused ${reportId}: governed-authority block (`
+        + `${governedBlock.categories.join(', ')})`,
+      );
+      return new Response(JSON.stringify({
+        error: "report_not_client_ready",
+        reason: "governed_authority_block",
+        categories: governedBlock.categories,
+        message:
+          "This report asserts a governed fact it does not hold — a figure was stated for a "
+          + "category the report's own record shows as unavailable. It is retained for review "
+          + "with its validation evidence, but cannot be issued as a client document until the "
+          + "claim is removed or the underlying data becomes available.",
+      }), {
+        status: 409,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

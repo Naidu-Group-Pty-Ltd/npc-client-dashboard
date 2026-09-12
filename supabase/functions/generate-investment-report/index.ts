@@ -16,6 +16,12 @@ import { macroEconomicBlock } from '../_shared/reports/macroPromptBlocks.pure.ts
 import { activateSafeGenerationInputs, subjectPostcodeOf } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
 import { auditMarketClaims, claimFaultToFlag } from '../_shared/reports/contract/marketClaimAudit.pure.ts';
+import {
+  auditGovernedNarrativeAuthority,
+  governedAuthorityBlocks,
+  governedCategoryDirective,
+  governedFaultToFlag,
+} from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
 import { regionalTrendBlocks } from '../_shared/reports/regionalPromptBlocks.pure.ts';
 import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
@@ -4982,11 +4988,22 @@ This report synthesizes publicly available data and ${documentContent ? 'provide
 20. **DATE-STAMP ECONOMICS**: All economic indicators must include "as at [Month Year]" to convey data currency.`;
 
     // Select the appropriate prompt based on report scope
-    let prompt = reportScope === 'suburb' ? suburbPrompt 
+    let prompt = reportScope === 'suburb' ? suburbPrompt
       : reportScope === 'postcode' ? postcodePrompt
       : reportScope === 'statewide' ? statewidePrompt
       : propertyPrompt;
-    
+
+    // RF-7.2B.1A — appended HERE, after the scope has chosen, rather than
+    // inside any one of the four templates above.
+    //
+    // This is the same reasoning that put the Client-Safe Gate on the object
+    // instead of on each prompt: there are four base prompts, a report reaches
+    // exactly one of them, and a rule written into one is a rule three scopes
+    // do not have. Withheld demographics can occur on any scope, so the
+    // directive has to sit where the four converge. Empty string when every
+    // governed category is admissible, so a healthy prompt is unchanged.
+    prompt += governedCategoryDirective(safeGeneration.snapshot);
+
     // For area reports, inject explicit exclusion instructions to prevent property-level sections
     if (isAreaReport) {
       const areaExclusionInstructions = `
@@ -6510,6 +6527,7 @@ YOUR DEDICATED PROPERTY PARTNER
       // Kept separate from `factFlags` because it answers a different question
       // and carries its own flag type; both land in `allValidationFlags`.
       let claimFlags: Array<ReturnType<typeof claimFaultToFlag>> = [];
+      let governedFlags: Array<ReturnType<typeof governedFaultToFlag>> = [];
       try {
         const factNum = (v: unknown): number | undefined => {
           const n = toFiniteNumber(v);
@@ -6547,6 +6565,37 @@ YOUR DEDICATED PROPERTY PARTNER
             + claimFaults.map((f) => `${f.fact}/${f.kind}`).join(', '));
         }
         claimFlags = claimFaults.map(claimFaultToFlag);
+
+        // RF-7.2B.1A — the question neither of the two above can ask.
+        //
+        // `auditMarketClaims` is VALUE-anchored: it finds a figure the
+        // snapshot holds and checks the words around it. A WITHHELD fact has
+        // no value to anchor on, so a figure invented in its place is
+        // invisible to it — and its header assumed "the fact reconciliation
+        // already looks for" that, which `factReconciliation.pure.ts` does
+        // not. Measured on two reports generated 2026-09-11 with
+        // `market.demographics` absent: both stated a population, one citing
+        // the ABS Census for a figure that disagrees with the ABS Census.
+        //
+        // This pass is CATEGORY-anchored, and it BLOCKS rather than
+        // disclosing: the other two describe a fact the report holds, this
+        // one finds a fact the report does not hold at all.
+        const governedFaults = auditGovernedNarrativeAuthority(
+          reportContent,
+          safeGeneration.snapshot,
+        );
+        if (governedFaults.length > 0) {
+          console.error(
+            `⛔ Governed-authority audit: ${governedFaults.length} BLOCKING finding(s) — `
+            + governedFaults.map((f) => `${f.category}/${f.kind}`).join(', '),
+          );
+        }
+        governedFlags = governedFaults.map(governedFaultToFlag);
+        if (governedAuthorityBlocks(governedFaults)) {
+          console.error(
+            '⛔ This report asserts a governed fact it does not hold. It is not client-ready.',
+          );
+        }
 
         // The other half of the same question. Above asks whether the prose
         // agrees with the record; this asks whether the record agrees with
@@ -6588,6 +6637,7 @@ YOUR DEDICATED PROPERTY PARTNER
         ...factFlags,
         // Right number, wrong label — grain, period or source (RF-7.2B.1 §7).
         ...claimFlags,
+        ...governedFlags,
         // Add quality-based validation flags
         ...(avgScore < 70 ? [{
           type: 'quality',

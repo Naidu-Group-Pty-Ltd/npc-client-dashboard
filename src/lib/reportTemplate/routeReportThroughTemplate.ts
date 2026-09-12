@@ -307,6 +307,13 @@ export async function routeReportThroughTemplate(
         fileName,
         templateId: tplRow.id,
         mode: 'final',
+        // Which record this document IS, so the renderer can refuse to issue
+        // one the report itself is not cleared to produce. This route is tried
+        // BEFORE the legacy renderer, so a client-readiness gate that only the
+        // legacy renderer applied was a gate on the path nobody takes first.
+        // The renderer reads the verdict from the row; nothing about the
+        // decision travels in this payload.
+        reportId,
       });
       if (pdfErr || !pdfData?.url) {
         refuse('render_failed',

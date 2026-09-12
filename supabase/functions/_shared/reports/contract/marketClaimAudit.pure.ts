@@ -124,8 +124,17 @@ const trim = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 200);
  * Audit one report's prose against the facts it was generated from.
  *
  * Only `present` facts are audited: an absent fact has no value to find in the
- * text, and a report that mentions a figure the gate withheld is a different
- * defect that the fact reconciliation already looks for.
+ * text. That is a real limit of a value-anchored audit, not a gap — but the
+ * sentence that used to sit here said the withheld case was "a different
+ * defect that the fact reconciliation already looks for", and it does not:
+ * `factReconciliation.pure.ts` contains no occurrence of `withheld`, `absent`,
+ * `demographic` or `population`. Two modules each assumed the other covered
+ * it, and neither did, so two reports generated on 2026-09-11 stated a
+ * population while `market.demographics` was `absent` in their snapshot.
+ *
+ * The withheld case belongs to `governedNarrativeAuthority.pure.ts`, which is
+ * CATEGORY-anchored for exactly this reason, and which BLOCKS where this
+ * module discloses. Both run; neither is a fallback for the other.
  */
 export function auditMarketClaims(
   reportText: unknown,

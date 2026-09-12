@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
+import { governedAuthorityBlockFromFlags } from "../_shared/reports/contract/governedNarrativeAuthority.pure.ts"
 
 function extractPortalToken(headers: Headers, body?: any): string | null {
   const headerToken = headers.get('x-portal-session-token');
@@ -126,6 +127,38 @@ Deno.serve(async (req) => {
           JSON.stringify({ error: 'Report not found', success: false }),
           { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+      }
+
+      // RF-7.2B.1A — a governed-authority block must survive a PDF that was
+      // rendered BEFORE the block existed.
+      //
+      // Two ways a stale document could otherwise reach a client here: the
+      // source report's `pdf_url`, and `client_portal_reports.storage_path`,
+      // which this function CACHES from it a few lines below — after which the
+      // investment report is never consulted again. So the source report's
+      // verdict is read whenever there is a source report at all, cached path
+      // or not. Refusing the render alone would have left both copies live.
+      if (report.source_report_id) {
+        const { data: sourceFlags } = await supabase
+          .from('investment_reports')
+          .select('validation_flags')
+          .eq('id', report.source_report_id)
+          .maybeSingle();
+        const block = governedAuthorityBlockFromFlags(sourceFlags?.validation_flags);
+        if (block.blocked) {
+          console.error(
+            `⛔ [get-portal-client-data] withheld ${report.source_report_id}: governed-authority `
+            + `block (${block.categories.join(', ')})`,
+          );
+          return new Response(
+            JSON.stringify({
+              error: 'report_not_client_ready',
+              reason: 'governed_authority_block',
+              success: false,
+            }),
+            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
+        }
       }
 
       let storagePath = report.storage_path;

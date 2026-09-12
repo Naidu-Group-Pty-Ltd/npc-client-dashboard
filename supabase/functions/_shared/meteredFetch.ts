@@ -57,6 +57,27 @@ export type MeteredFetchOptions = {
   metadata?: Record<string, unknown>;
   /** Skip metering for this call — e.g. a health check that costs nothing. */
   skipMetering?: boolean;
+  /**
+   * Judge the outcome from the vendor's OWN body, for vendors that answer
+   * HTTP 200 with the real verdict inside it.
+   *
+   * RF-7.2B.1B0-F3. `response.ok` is the default and stays the default for
+   * every existing caller — this is opt-in per call site and changes nothing
+   * that does not ask for it. It exists because Google Maps answers
+   * `REQUEST_DENIED` with HTTP 200, which this wrapper recorded as a
+   * *successful, billable* request: measured 2026-09-12, 24 of 24 refused
+   * geocodes were logged `status: 'success'`, forwarded to Mission Control
+   * with `quantity: 1`, and charged to the tenant for calls that returned
+   * nothing — while every health surface read the vendor as perfectly well.
+   * It is the same trap `resolveOneReportGeography` already records for the
+   * ABS boundary server: a 200 plus an error body is transport, not success.
+   *
+   * Called with the parsed JSON of a CLONE, so the caller's stream is
+   * untouched. Return `null` to fall back to the HTTP reading. A body that is
+   * not JSON, or that cannot be cloned, also falls back rather than losing
+   * the call.
+   */
+  judgeBody?: (body: unknown) => "success" | "error" | null;
 };
 
 let cachedClient: ReturnType<typeof createClient> | null = null;
@@ -135,13 +156,23 @@ export async function meteredFetch(
     throw networkError;
   }
 
-  void recordUsage(
-    urlOf(input),
-    response,
-    Date.now() - startedAt,
-    response.ok ? "success" : "error",
-    options,
-  );
+  void (async () => {
+    let status: "success" | "error" = response.ok ? "success" : "error";
+    // Only pay for the clone where a caller has said the body decides.
+    if (options.judgeBody && response.ok) {
+      try {
+        const type = response.headers.get("content-type") ?? "";
+        if (type.includes("json")) {
+          const verdict = options.judgeBody(await response.clone().json());
+          if (verdict) status = verdict;
+        }
+      } catch {
+        // Unparseable or unclonable: keep the HTTP reading rather than lose
+        // the call. Metering must never throw and never drop a row.
+      }
+    }
+    recordUsage(urlOf(input), response, Date.now() - startedAt, status, options);
+  })();
   return response;
 }
 

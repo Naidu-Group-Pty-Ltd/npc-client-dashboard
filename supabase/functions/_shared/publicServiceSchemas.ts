@@ -100,11 +100,27 @@ export const ClimateDataRequest = z.object({
  * register is LGA-keyed (QLD): the generator passes the cadastre's own
  * shire name once planning data has resolved it.
  */
+/**
+ * RF-7.2B.1B0-F4 — the population a per-capita rate divides by is ADMITTED
+ * EVIDENCE supplied by the caller, never something the crime service looks up.
+ * Every field is required when it is present at all: a population with no
+ * source, geography or vintage cannot describe its own denominator, and a rate
+ * that cannot describe its denominator is what §25 forbids.
+ */
+const admittedPopulation = z.object({
+  value: z.number().finite().positive(),
+  source: z.string().min(1).max(120),
+  geography: z.string().min(1).max(120),
+  grain: z.enum(['postcode', 'lga', 'sa2', 'region', 'state']),
+  vintage: z.string().min(1).max(200),
+}).strict();
+
 export const CrimeStatisticsRequest = z.object({
   suburb: optionalField(localityField),
   state: stateField,
   postcode: optionalField(postcodeField),
   lga: optionalField(localityField),
+  population: admittedPopulation.optional(),
 }).strict();
 
 /**

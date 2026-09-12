@@ -459,6 +459,21 @@ type GeocodeOutcome =
  */
 const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS';
 
+/**
+ * RF-7.2B.1B0-F3 — what Google Maps counts as a served request.
+ *
+ * Google answers HTTP 200 for everything, so `response.ok` billed us for
+ * refusals. `OK` and `ZERO_RESULTS` are both requests Google served and
+ * charges for — a genuine no-match is a real answer. Everything else
+ * (`REQUEST_DENIED`, `OVER_QUERY_LIMIT`, `INVALID_REQUEST`, `UNKNOWN_ERROR`)
+ * is a request that returned nothing and must not be metered as spend.
+ */
+const judgeGoogleMapsBody = (body: unknown): 'success' | 'error' | null => {
+  const status = (body as { status?: unknown } | null)?.status;
+  if (typeof status !== 'string') return null;
+  return status === 'OK' || status === ADDRESS_IS_THE_ANSWER ? 'success' : 'error';
+};
+
 async function geocodeAddress(
   input: LocationIntelligenceInput,
   apiKey: string,
@@ -484,7 +499,9 @@ async function geocodeAddress(
       key: apiKey,
     });
     const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`
+      `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`,
+      undefined,
+      { judgeBody: judgeGoogleMapsBody },
     );
 
     if (!response.ok) {
@@ -499,12 +516,25 @@ async function geocodeAddress(
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       const status = typeof data?.status === 'string' ? data.status : 'unknown';
+      // RF-7.2B.1B0-F1 — Google says WHY in `error_message`, and without it an
+      // operator cannot tell an unenabled API from a dead key from disabled
+      // billing. It is a fixed diagnostic sentence and never echoes the
+      // credential, but it is sanitised anyway: any long key-shaped token is
+      // redacted and the whole thing is capped, because a log line is the one
+      // place a secret must never reach by accident.
+      const detail = typeof data?.error_message === 'string'
+        ? data.error_message
+          .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[redacted-key]')
+          .replace(/\b[0-9A-Za-z_-]{30,}\b/g, '[redacted]')
+          .slice(0, 300)
+        : null;
       // Google answers HTTP 200 with the real verdict in the body — the same
       // shape the ABS boundary server uses, and the same trap: `response.ok`
       // says nothing about whether the call worked.
       const refused = status !== ADDRESS_IS_THE_ANSWER;
       console.warn(
         `[location-intelligence-service] geocode returned no point: ${status}`
+        + (detail ? ` — provider says: ${detail}` : '')
         + (refused
           ? ' — this is a fault in our map service access, not in the address'
           : ' — the provider has no match for this address'),
@@ -539,7 +569,9 @@ async function fetchNearbyPlaces(
   try {
     const radius = type === 'school' ? 3000 : type === 'park' ? 2000 : 5000;
     const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coordinates.lat},${coordinates.lng}&radius=${radius}&type=${type}&key=${apiKey}`
+      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${coordinates.lat},${coordinates.lng}&radius=${radius}&type=${type}&key=${apiKey}`,
+      undefined,
+      { judgeBody: judgeGoogleMapsBody },
     );
 
     if (!response.ok) {
@@ -582,7 +614,9 @@ async function calculateCommuteTime(
 ) {
   try {
     const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&mode=transit&key=${apiKey}`
+      `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&mode=transit&key=${apiKey}`,
+      undefined,
+      { judgeBody: judgeGoogleMapsBody },
     );
 
     if (!response.ok) {

@@ -12,6 +12,7 @@ import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { governedAuthorityBlockFromFlags } from "../_shared/reports/contract/governedNarrativeAuthority.pure.ts";
 import {
   MAX_HTML_BYTES,
   renderPdf,
@@ -139,6 +140,79 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     templateId = payload.templateId ? String(payload.templateId) : null;
     const templateName: string | null = payload.templateName ? String(payload.templateName).slice(0, 200) : null;
     mode = payload.mode === 'final' ? 'final' : 'preview';
+
+    /*
+     * The SECOND render path for the Investment report, and the one tried
+     * FIRST.
+     *
+     * `produceInvestmentDocument` asks `tryTemplateDocument` before it asks
+     * `render-investment-report-pdf`, so gating only the legacy route left the
+     * preferred path open. This is not theoretical and not dormant: measured
+     * 2026-09-12, `report_templates` carries three active `investment_compass`
+     * rows plus one `investment`, and `template_render_jobs` holds ELEVEN
+     * succeeded `final`-mode Investment Compass renders, the most recent
+     * 2026-09-04. The adapter loads the report through `get-investment-reports`
+     * and chunks `report_content` into `sections.*` bindings, so the prose a
+     * governed block is about travels this way intact.
+     *
+     * This function is otherwise format-agnostic — it is handed compiled HTML
+     * and draws it for all ten formats — so the check is scoped by the caller
+     * naming a report, and asks only about a row that is actually an investment
+     * report. Nothing else changes for the other nine.
+     *
+     * `preview` is deliberately exempt. A preview is the operator looking at
+     * their own draft inside the builder; the thing being refused is a finished
+     * client document.
+     *
+     * Failing open is the same rule the other two gates follow and for the same
+     * reason: an unreadable row or absent flags must not withhold the 1,190
+     * stored reports that predate this.
+     */
+    const boundReportId = typeof payload.reportId === 'string' && payload.reportId.trim()
+      ? payload.reportId.trim()
+      : null;
+    if (mode === 'final' && boundReportId) {
+      const { data: boundReport, error: boundErr } = await supabase
+        .from('investment_reports')
+        .select('id, validation_flags')
+        .eq('id', boundReportId)
+        .maybeSingle();
+      // A read that FAILED is not a row that is ABSENT. It still fails open —
+      // withholding a document because a lookup broke is the worse failure —
+      // but it is SAID, because a silently discarded error is the exact class
+      // this repository has been bitten by (`aml.cases`' phantom `tenant_id`,
+      // the fifty-eight sweep). An id that names no investment report is the
+      // ordinary case for the other nine formats and is not an error.
+      if (boundErr) {
+        console.warn(
+          `[render-template-pdf] client-readiness lookup failed for ${boundReportId} `
+          + `(${boundErr.code ?? 'no code'}) — rendering, because a failed read must not `
+          + 'withhold a document',
+        );
+      }
+      const governedBlock = governedAuthorityBlockFromFlags(
+        (boundReport as Record<string, unknown> | null)?.validation_flags,
+      );
+      if (governedBlock.blocked) {
+        console.error(
+          `⛔ [render-template-pdf] refused ${boundReportId}: governed-authority block (`
+          + `${governedBlock.categories.join(', ')})`,
+        );
+        return new Response(JSON.stringify({
+          error: 'report_not_client_ready',
+          reason: 'governed_authority_block',
+          categories: governedBlock.categories,
+          message:
+            'This report asserts a governed fact it does not hold — a figure was stated for a '
+            + "category the report's own record shows as unavailable. It is retained for review "
+            + 'with its validation evidence, but cannot be issued as a client document until the '
+            + 'claim is removed or the underlying data becomes available.',
+        }), {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
 
     // WeasyPrint resolves image, stylesheet, and font URLs from its own network.
     // Enforce the resource boundary here even if an earlier importer or caller

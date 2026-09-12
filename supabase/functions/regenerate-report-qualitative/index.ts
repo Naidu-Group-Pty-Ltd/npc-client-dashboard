@@ -22,6 +22,13 @@ import {
   subjectPostcodeOf,
   type SafeGenerationResult,
 } from '../_shared/reports/contract/safeGenerationInputs.pure.ts';
+import {
+  auditGovernedNarrativeAuthority,
+  governedAuthorityBlocks,
+  governedCategoryDirective,
+  governedFaultToFlag,
+  GOVERNED_AUTHORITY_FLAG_TYPE,
+} from '../_shared/reports/contract/governedNarrativeAuthority.pure.ts';
 import { resolveOneReportGeography } from '../_shared/geography/resolveOneReportGeography.ts';
 
 const corsHeaders = {
@@ -1399,6 +1406,11 @@ async function regenerateSection(
   propertyAddress: string,
   enhancedData: EnhancedData,
   templateContext?: string,
+  // RF-7.2B.1A — the withheld-category prohibition, composed by the caller
+  // from the same snapshot the gate produced. Passed in rather than derived
+  // here because this function does not hold the snapshot, and deriving it
+  // from `enhancedData` would be a second opinion about what was withheld.
+  governedDirective: string = '',
   maxRetries: number = 2
 ): Promise<{ content: string; citations: any[]; error?: string }> {
   
@@ -1513,6 +1525,8 @@ The renderer converts these shortcodes to print-quality typography and inline SV
 - Section divider (max 1/chapter, breaks page): \`::: divider stat="78" label="Composite score" eyebrow="Chapter 04"\\nHeadline thesis line.\\n:::\`
 - Quote page (max 1/report, breaks page): \`::: quote-page attribution="RBA, May 2026" eyebrow="Market context"\\n"Single editorial line."\\n:::\`
 - Inline stat block: \`::: stat label="Median yield" unit="%" sub="trailing 12mo"\\n4.8\\n:::\`
+
+${governedDirective}
 
 Generate the ${sectionDef.name} section now:`;
 
@@ -1865,7 +1879,8 @@ YOUR DEDICATED PROPERTY PARTNER
           previousContext,
           propertyAddress,
           enhancedData,
-          templateContext
+          templateContext,
+          governedCategoryDirective(safeGeneration.snapshot)
         );
         
         if (result.error) {
@@ -2120,6 +2135,42 @@ YOUR DEDICATED PROPERTY PARTNER
       // different runs. This is an explicit rewrite, not a reopen — reopening
       // still reads the stored snapshot and re-queries nothing.
       updatePayload.market_fact_snapshot = safeGeneration.snapshot;
+
+      // RF-7.2B.1A — this path rewrites the prose with the same
+      // search-grounded model the first generation uses, so it can re-source a
+      // withheld category exactly as that one did. Protecting only the first
+      // generation would leave regeneration as an open door to the same
+      // defect. Same shared module, same rule, same blocking flag.
+      //
+      // Prior governed verdicts are dropped rather than merged: they describe
+      // prose this run has just replaced. Every other flag type is left alone,
+      // because nothing here recomputes those.
+      const governedFaults = auditGovernedNarrativeAuthority(
+        combinedContent,
+        safeGeneration.snapshot,
+      );
+      const { data: priorFlagRow } = await supabase
+        .from('investment_reports')
+        .select('validation_flags')
+        .eq('id', reportId)
+        .maybeSingle();
+      const priorFlags = Array.isArray(priorFlagRow?.validation_flags)
+        ? priorFlagRow.validation_flags as unknown[]
+        : [];
+      updatePayload.validation_flags = [
+        ...priorFlags.filter((f: unknown) => {
+          const row = f as Record<string, unknown> | null;
+          return !(row && typeof row === 'object' && row.type === GOVERNED_AUTHORITY_FLAG_TYPE);
+        }),
+        ...governedFaults.map(governedFaultToFlag),
+      ];
+      if (governedAuthorityBlocks(governedFaults)) {
+        console.error(
+          `⛔ Governed-authority audit (regeneration): ${governedFaults.length} BLOCKING finding(s) — `
+          + governedFaults.map((f) => `${f.category}/${f.kind}`).join(', ')
+          + '. This report asserts a governed fact it does not hold; it is not client-ready.',
+        );
+      }
       updatePayload.investment_score = enhancedData.investmentScore || null;
       
       // Merge enhanced financials with any existing data

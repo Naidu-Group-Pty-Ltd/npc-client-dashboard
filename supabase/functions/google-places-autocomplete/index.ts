@@ -2,7 +2,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { createCorsHeaders } from "../_shared/auth.ts";
 import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 import {
-  enforceGlobalDailyQuota,
   enforceIpQuota,
   enforceKeyQuota,
   fetchWithTimeout,
@@ -11,6 +10,7 @@ import {
   redactError,
   sanitizeShortText,
 } from "../_shared/publicAbuseControls.ts";
+import { clientHttpStatusFor, clientStatusFor, consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
 
 // WP-10 — Google Places autocomplete abuse controls.
 //   * Per-IP + per-session + global daily quotas.
@@ -64,9 +64,28 @@ Deno.serve(async (req) => {
       const sess = await enforceKeyQuota(supabase, sessionToken, 'google_places_session', { limit: 60, windowMs: 60_000 });
       if (!sess.ok) return j({ error: 'rate_limited', success: false }, 429);
     }
-    const dailyCap = Number(Deno.env.get('GOOGLE_PLACES_DAILY_LIMIT') ?? '5000');
-    const globalCheck = await enforceGlobalDailyQuota(supabase, 'google_places', dailyCap);
-    if (!globalCheck.ok) return j({ error: 'daily_quota_exceeded', success: false }, 429);
+    // Autocomplete is its own Google billing SKU at its own price, so it has
+    // its own allowance. It used to share one `google_places` bucket with the
+    // Nearby Search a report's amenity lookups make, which meant a busy address
+    // field could spend the budget a client's report needed.
+    //
+    // The IP and session quotas above are abuse control and are unchanged; this
+    // is the spending ceiling, and it fails closed when the shared counter
+    // cannot be reached. Autocomplete then degrades to "no suggestions", which
+    // is still a form an operator can type into.
+    const globalCheck = await consumeGoogleDailyCap(supabase, 'placesAutocomplete');
+    if (!globalCheck.ok) {
+      // The exact reason goes to the log; the caller is told only whether this
+      // is an exhausted allowance (which clears tomorrow) or unavailability
+      // (which does not). Reporting a kill switch or an unreachable counter as
+      // "daily quota exceeded" sends an operator away to wait for a state that
+      // waiting will not change.
+      console.warn(`[google-places-autocomplete] not attempted (${globalCheck.reason})`);
+      return j(
+        { error: clientStatusFor(globalCheck.reason), success: false },
+        clientHttpStatusFor(globalCheck.reason),
+      );
+    }
 
     const params = new URLSearchParams({
       input,

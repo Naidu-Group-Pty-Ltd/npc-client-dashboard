@@ -63,7 +63,7 @@ export function resolveCbdDestination(state: string | null | undefined): CbdDest
 /** Why no commute was measured, in a form a reader can render. */
 export interface CommuteNotMeasured {
   measured: false;
-  reason: 'destination_unknown' | 'no_route_returned';
+  reason: 'destination_unknown' | 'no_route_returned' | 'daily_cap_reached';
   detail: string;
 }
 
@@ -72,6 +72,24 @@ export const COMMUTE_DESTINATION_UNKNOWN: CommuteNotMeasured = {
   reason: 'destination_unknown',
   detail: 'No state was supplied with this request, so the CBD a commute would be measured '
     + 'to is unknown. Nothing is assumed.',
+};
+
+/**
+ * The lookup was not made, because the day's paid allowance was spent.
+ *
+ * Distinct from `no_route_returned` on purpose. "No route" is a MEASUREMENT —
+ * we asked and transit does not connect these two points — and a reader is
+ * entitled to treat it as a fact about the location. This is the opposite:
+ * nobody asked. Collapsing the two would turn a spending ceiling into a
+ * finding about somebody's property, which is exactly the fabrication the
+ * ceiling exists to avoid.
+ */
+export const COMMUTE_CAP_REACHED: CommuteNotMeasured = {
+  measured: false,
+  reason: 'daily_cap_reached',
+  detail: 'The daily allowance for transit routing lookups was already spent when this '
+    + 'report was produced, so no commute time was measured. This is a limit this '
+    + 'deployment sets on its own spending, not a finding about the location.',
 };
 
 export const COMMUTE_NO_ROUTE: CommuteNotMeasured = {

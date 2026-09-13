@@ -23,52 +23,7 @@ import { useEmailSnippets, SnippetManagerDialog } from '@/components/email/Email
 import { ScheduleSendButton, useScheduledSends, ScheduledSendsDialog } from '@/components/email/ScheduleSend';
 import { FollowUpReminderDialog } from '@/components/email/FollowUpReminderDialog';
 import { RecipientSanityWarning, AttachmentSummary } from '@/components/email/RecipientSanityWarning';
-import { 
-  Mail, 
-  FileText, 
-  MessageSquare, 
-  Clock, 
-  AlertCircle, 
-  CheckCircle,
-  Plus,
-  Trash2,
-  Copy,
-  RefreshCw,
-  Archive,
-  Link as LinkIcon,
-  Sparkles,
-  User,
-  Calendar,
-  Inbox,
-  Send,
-  MoreVertical,
-  Reply,
-  Star,
-  ChevronRight,
-  Search,
-  Filter,
-  X,
-  ChevronDown,
-  ChevronUp,
-  MessageCircle,
-  Bell,
-  BellOff,
-  Volume2,
-  VolumeX,
-  Maximize2,
-  Mic,
-  MicOff,
-  Loader2,
-  ArrowLeft,
-  Paperclip,
-  Download,
-  Eye,
-  FileIcon,
-  Image as ImageIcon,
-  Forward,
-  Upload,
-  Settings
-} from 'lucide-react';
+import { AlertCircle, Archive, ArrowLeft, Bell, BellOff, Calendar, CheckCircle, ChevronDown, ChevronRight, ChevronUp, Clock, Copy, Download, Eye, FileIcon, FileText, Filter, Forward, History, Image as ImageIcon, Inbox, Link as LinkIcon, Loader2, Mail, Maximize2, MessageCircle, MessageSquare, Mic, MicOff, MoreVertical, Paperclip, Plus, RefreshCw, Reply, Search, Send, Settings, Sparkles, Star, Trash2, Upload, User, Volume2, VolumeX, X } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -812,8 +767,11 @@ export default function EmailCopilot() {
 
     setIsSyncing(true);
     try {
+      // 200, not 50. The edge function follows `@odata.nextLink` now, so a
+      // limit past one page is a real instruction rather than a number Graph
+      // silently ignored.
       const { data, error } = await invokeSecureFunction('outlook-email-sync', {
-        action: 'sync', limit: 50, mailbox: mailboxToSync
+        action: 'sync', limit: 200, mailbox: mailboxToSync
       });
 
       if (error) throw error;
@@ -828,6 +786,61 @@ export default function EmailCopilot() {
     } catch (error) {
       console.error('Error syncing Outlook:', error);
       toast.error('Failed to sync emails from Outlook');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  /**
+   * Walk the mailbox BACKWARDS until there is nothing older left.
+   *
+   * The admin inbox converges on its own — `email-sync-cron` runs a bounded
+   * backfill step every five minutes — but a personal mailbox has no cron
+   * behind it, so this is how one is brought up to date. Each call asks for
+   * messages older than the oldest already stored, which means it resumes
+   * from the database rather than from anything held here: closing the tab
+   * loses nothing, and pressing it again after it finishes is a no-op.
+   *
+   * It loops because one call is budgeted to ~100s server-side, and it stops
+   * on `complete` — a fact about what Graph offered, never about the budget —
+   * so this terminates.
+   */
+  const handleImportHistory = async () => {
+    const mailboxToSync = selectedMailbox === 'personal' && personalMailbox ? personalMailbox : null;
+    if (selectedMailbox === 'admin' && !hasAdminEmailAccess) {
+      toast.error('You do not have permission to access the admin email inbox');
+      return;
+    }
+
+    setIsSyncing(true);
+    let importedTotal = 0;
+    try {
+      // A ceiling on ROUNDS, not on messages: it is the guard against a server
+      // that keeps answering `complete: false`, not a limit on how much
+      // history a mailbox may have.
+      for (let round = 0; round < 25; round++) {
+        const { data, error } = await invokeSecureFunction('outlook-email-sync', {
+          action: 'backfill', limit: 500, mailbox: mailboxToSync
+        });
+        if (error) throw error;
+
+        importedTotal += data?.inserted || 0;
+        toast.info(
+          data?.complete
+            ? `Imported ${importedTotal} historical email(s) — history is complete`
+            : `Imported ${importedTotal} so far, still working...`,
+        );
+        fetchEmails();
+        if (data?.complete) break;
+        // Nothing new AND not complete means every message in this window was
+        // already stored. The boundary still moved, so the next round asks
+        // about older mail — but if it happens twice running there is nothing
+        // left to gain by asking again.
+        if ((data?.fetched || 0) === 0) break;
+      }
+    } catch (error) {
+      console.error('Error importing email history:', error);
+      toast.error('Failed to import email history');
     } finally {
       setIsSyncing(false);
     }
@@ -2000,6 +2013,11 @@ export default function EmailCopilot() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              <DropdownMenuItem onClick={handleImportHistory} disabled={isSyncing} className="rounded-lg transition-colors">
+                <History className="h-4 w-4 mr-2" />
+                Import Full History
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleClearAllEmails} className="rounded-lg text-destructive transition-colors focus:bg-destructive/10 focus:text-destructive">
                 <Trash2 className="h-4 w-4 mr-2" />
                 Clear All Emails

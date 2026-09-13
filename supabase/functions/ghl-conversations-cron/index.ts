@@ -1,6 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
+
+/** Independent per-client syncs, overlapped; each still queues on the shared GHL bucket. */
+const CLIENT_CONCURRENCY = 4;
 
 /**
  * GHL Conversations Cron Sync
@@ -58,8 +62,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Determine how many to sync this run (limit to avoid timeouts)
-    const maxClientsPerRun = 20;
+    // Determine how many to sync this run (limit to avoid timeouts).
+    //
+    // Raised from 20 because the loop below no longer waits for one client
+    // before starting the next. At 20 a tenant with 776 clients needed 39 runs
+    // to cover everyone once, which is why a newly provisioned deployment took
+    // so long to look populated. The ceiling is still a ceiling: every inner
+    // call queues on the same shared GHL bucket, so this changes how much of
+    // the 250s budget gets used, not how hard the vendor is hit.
+    const maxClientsPerRun = 60;
     const batchSize = Math.min(clients.length, maxClientsPerRun);
     
     // Find clients whose conversations are stale (never synced or synced > 30 min ago)
@@ -88,14 +99,16 @@ Deno.serve(async (req) => {
     // Call the sync function for each client via internal HTTP call
     const anonKey = Deno.env.get('SUPABASE_ANON_KEY') || '';
     
-    for (const client of orderedClients) {
-      // Check if we're approaching timeout (leave 30s buffer)
-      if (Date.now() - startTime > 250000) {
-        console.log(`[ghl-conversations-cron] Approaching timeout, stopping after ${processed} clients`);
-        break;
-      }
-
-      try {
+    // Each client is an independent invocation of `sync-ghl-conversations`, and
+    // awaiting them one at a time meant this cron cost the SUM of every
+    // client's sync — a full edge function round trip each, for work that does
+    // not interact. They overlap now; the pacing that matters is still the
+    // shared GHL token bucket inside each invocation, which every one of them
+    // queues on, so this uses the budget rather than raising the vendor's load.
+    const outcome = await mapWithConcurrency(
+      orderedClients,
+      CLIENT_CONCURRENCY,
+      async (client: any) => {
         const syncUrl = `${supabaseUrl}/functions/v1/sync-ghl-conversations`;
         const internalEdgeSecret = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
         const syncRes = await fetch(syncUrl, {
@@ -113,23 +126,31 @@ Deno.serve(async (req) => {
           }),
         });
 
-        if (syncRes.ok) {
-          const result = await syncRes.json();
-          totalConversations += result.conversations_synced || 0;
-          totalMessages += result.messages_synced || 0;
-          processed++;
-        } else {
+        if (!syncRes.ok) {
           const errText = await syncRes.text();
-          console.error(`[ghl-conversations-cron] Sync failed for ${client.id}: ${syncRes.status} ${errText}`);
-          errors.push({ clientId: client.id, error: `HTTP ${syncRes.status}` });
+          throw new Error(`HTTP ${syncRes.status} ${errText}`);
         }
-      } catch (err: any) {
-        console.error(`[ghl-conversations-cron] Exception for ${client.id}:`, err.message);
-        errors.push({ clientId: client.id, error: err.message });
-      }
+        const result = await syncRes.json();
+        totalConversations += result.conversations_synced || 0;
+        totalMessages += result.messages_synced || 0;
+        processed++;
+      },
+      // Leave the same 30s buffer the sequential loop left, asked before a
+      // client is STARTED — in-flight syncs still finish, because abandoning
+      // one would leave its conversations half-written with nothing saying so.
+      { stop: () => Date.now() - startTime > 250000 },
+    );
 
-      // Rate limit: 1s between client syncs
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    for (const r of outcome.results) {
+      if (r.error) {
+        console.error(`[ghl-conversations-cron] Sync failed for ${(r.item as any).id}: ${r.error}`);
+        errors.push({ clientId: (r.item as any).id, error: r.error });
+      }
+    }
+    if (outcome.startedCount < orderedClients.length) {
+      console.log(
+        `[ghl-conversations-cron] Stopped after ${outcome.startedCount}/${orderedClients.length} clients, budget spent`,
+      );
     }
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);

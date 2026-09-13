@@ -3,6 +3,7 @@ import { decode as base64Decode } from "https://deno.land/std@0.168.0/encoding/b
 import { verifyInternal, logSecurityEvent } from "../_shared/auth_v2.ts";
 import { insertTargetedNotification } from "../_shared/notify.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { fetchMailWindow } from '../_shared/graphMailPaging.ts';
 
 /**
  * Background email sync cron function.
@@ -191,25 +192,93 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     const accessToken = await getAccessToken();
 
-    // Fetch recent inbox emails (last 30 messages)
-    const limit = 30;
-    const graphUrl = `https://graph.microsoft.com/v1.0/users/${DEFAULT_MAILBOX_EMAIL}/messages?$top=${limit}&$orderby=receivedDateTime desc&$select=id,internetMessageId,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,isRead,hasAttachments`;
+    /**
+     * TWO PASSES, AND THE SECOND ONE IS WHY A FRESH DEPLOYMENT EVER CATCHES UP.
+     *
+     * The incremental pass is unchanged in spirit: the newest messages, every
+     * five minutes, so the bell rings. What it could never do is reach
+     * BACKWARDS. This function asked for `$top=30` once and never followed
+     * `@odata.nextLink`, so a deployment whose mailbox predates it — every
+     * newly provisioned clone — was permanently missing its own history, and
+     * re-running the sync could not help because the second page was never
+     * requested.
+     *
+     * So after the incremental pass, if there is history still to collect, one
+     * bounded backfill step runs in the same tick. It walks OLDER than the
+     * oldest row already stored, which needs no cursor table and cannot go
+     * stale: the boundary is re-derived from the database each time, a run
+     * that dies halfway loses nothing, and a repeat is a no-op against the
+     * duplicate constraint. It converges on its own and then stops costing
+     * anything, which is the point — asking an operator to press a button once
+     * per deployment is asking them to fix this product's own record-keeping
+     * by hand.
+     */
+    const INCREMENTAL_LIMIT = 30;
+    // Leaves room for the insert loop and the attachment work below inside the
+    // function's wall clock.
+    const BACKFILL_BUDGET_MS = 60_000;
+    const BACKFILL_MAX_PER_TICK = 400;
 
-    const response = await fetch(graphUrl, {
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    const incremental = await fetchMailWindow<any>(
+      accessToken,
+      DEFAULT_MAILBOX_EMAIL,
+      'inbox',
+      { max: INCREMENTAL_LIMIT },
+      'Email Sync Cron',
+    );
+    let emails = incremental.messages;
+    console.log(`[Email Sync Cron] Fetched ${emails.length} recent inbox emails`);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Graph API error: ${response.status} ${errorText}`);
+    // The oldest row we already hold for this mailbox source. `received_at`
+    // and `mailbox_source` are the columns this table actually has — it has no
+    // `email_date` and no `mailbox` address column, and naming either would
+    // answer 42703, which PostgREST hands back as `data: null`. That reads as
+    // "nothing stored yet", which would restart the whole history walk on
+    // every tick, for ever, while reporting progress.
+    let backfillAttempted = false;
+    let backfillComplete: boolean | null = null;
+    const { data: oldestRow, error: oldestError } = await supabase
+      .from('email_copilot_emails')
+      .select('received_at')
+      .eq('folder', 'inbox')
+      .eq('mailbox_source', 'admin')
+      .not('received_at', 'is', null)
+      .order('received_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (oldestError) {
+      // Never fail the tick over the backfill — the incremental sync is the
+      // job this function is scheduled for, and a failed read here is not a
+      // reason to stop delivering new mail.
+      console.error(`[Email Sync Cron] could not read the backfill boundary: ${oldestError.message}`);
+    } else if (oldestRow?.received_at) {
+      backfillAttempted = true;
+      const older = await fetchMailWindow<any>(
+        accessToken,
+        DEFAULT_MAILBOX_EMAIL,
+        'inbox',
+        {
+          max: BACKFILL_MAX_PER_TICK,
+          deadline: Date.now() + BACKFILL_BUDGET_MS,
+          olderThanIso: oldestRow.received_at,
+        },
+        'Email Sync Cron backfill',
+      );
+      backfillComplete = older.exhausted;
+      if (older.messages.length > 0) {
+        emails = emails.concat(older.messages);
+        console.log(
+          `[Email Sync Cron] backfill added ${older.messages.length} historical email(s) older than ` +
+            `${oldestRow.received_at} over ${older.pages} page(s)` +
+            `${older.exhausted ? ' — history is now complete' : ''}`,
+        );
+      } else if (older.exhausted) {
+        console.log('[Email Sync Cron] backfill: history already complete, nothing older to collect');
+      }
     }
 
-    const data = await response.json();
-    const emails = data.value || [];
-    console.log(`[Email Sync Cron] Fetched ${emails.length} inbox emails`);
+    console.log(`[Email Sync Cron] Processing ${emails.length} inbox email(s) this tick`);
 
     let insertedCount = 0;
     let skippedCount = 0;
@@ -351,7 +420,13 @@ Deno.serve(async (req) => {
         success: true,
         inserted: insertedCount,
         skipped: skippedCount,
-        total_fetched: emails.length
+        total_fetched: emails.length,
+        // Reported so an operator can watch a new deployment converge rather
+        // than having to infer it from a row count. `null` means the backfill
+        // did not run this tick (no rows stored yet, or the boundary read
+        // failed) — which is not the same as "history is complete".
+        backfill_ran: backfillAttempted,
+        history_complete: backfillComplete,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

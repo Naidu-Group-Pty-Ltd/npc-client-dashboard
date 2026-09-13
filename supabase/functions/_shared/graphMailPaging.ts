@@ -45,13 +45,50 @@ export function dateFieldFor(folder: MailFolder | string): string {
   return folder === "sent" ? "sentDateTime" : "receivedDateTime";
 }
 
+/**
+ * **Both branches name a FOLDER.** The inbox branch used to fall through to
+ * `/users/{email}/messages`, which is not the Inbox — Graph documents it as
+ * every message in the mailbox, Sent Items, Drafts, Deleted Items, Junk and
+ * Archive included.
+ *
+ * It was nearly invisible while the read was one `$top=30` page of the newest
+ * mail. The backfill made it structural: walking that path backwards imported
+ * the team's own outbound mail, drafts and deleted mail into Email Co-Pilot as
+ * unread incoming correspondence. Measured on the prime 13 Sep 2026, the whole
+ * of it landed in ONE hour (07:00–08:00 UTC): 2,303 rows, every one written
+ * `folder = 'inbox'` and `status = 'unread'`, carrying `received_at` between
+ * 2025-01-27 and 2025-11-24.
+ *
+ * **How much of that is repairable by SQL was measured, and it is less than it
+ * first looked.** Two signatures were proposed and neither survives:
+ *
+ *   - 934 rows in `folder = 'inbox'` whose sender is our own domain — but 660
+ *     of those pre-date the incident. A colleague emailing you lands in your
+ *     Inbox and belongs there, so an own-domain sender is an ordinary inbox
+ *     state rather than a marker of anything.
+ *   - 34 messages present in BOTH folders — real, and every one created
+ *     between January and 2 September 2026. Not one is in the damage hour.
+ *     Inside it, the (subject, received_at) and (conversation_id, received_at)
+ *     cross-folder tests both return ZERO.
+ *
+ * So nothing stored can tell a wrongly-filed row from a real one, and re-filing
+ * on a guess would HIDE real inbox mail. **The folder is repaired by re-reading
+ * Graph through the corrected path above, never by SQL.**
+ *
+ * What IS decidable is the arrival stamp, and that is what
+ * `20261119190000_email_backfill_was_not_an_arrival.sql` repairs: mail already
+ * more than thirty days old when it was imported was never a new arrival. The
+ * bell it rang is the larger harm — 9,196 notifications in that hour, four
+ * recipients times ~2,299 messages, against three to six in every other hour
+ * of the preceding three days.
+ */
 export function mailboxPathFor(
   mailboxEmail: string,
   folder: MailFolder | string,
 ): string {
   return folder === "sent"
     ? `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/mailFolders/sentitems/messages`
-    : `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/messages`;
+    : `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/mailFolders/inbox/messages`;
 }
 
 /**
@@ -126,15 +163,34 @@ export interface MailPage<T> {
   readonly nextLink: string | null;
 }
 
+/**
+ * One page of a Graph collection, and the link to the next.
+ *
+ * The rest of this module is about mail, but THIS function is not: a Graph
+ * collection page is a `value` array plus an optional `@odata.nextLink`
+ * whatever the collection holds, and the opaque-nextLink rule above is the
+ * same rule for all of them. `outlook-calendar`'s `listEvents` reads
+ * `/calendarView` through it rather than growing a second paginator, because
+ * that function had exactly the defect this module was written for — one
+ * `$top=200` request, `@odata.nextLink` never read, ordered by start time, so
+ * a calendar with more than 200 events in the window silently lost the END of
+ * the period and the page drew a month that emptied partway through.
+ *
+ * `extraHeaders` exists for that caller: `/calendarView` needs
+ * `Prefer: outlook.timezone="UTC"` or Graph answers in the mailbox's own
+ * timezone, and every consumer here treats the times it returns as UTC.
+ */
 export async function fetchMailPage<T = unknown>(
   accessToken: string,
   url: string,
   label = "graph-mail",
+  extraHeaders: Record<string, string> = {},
 ): Promise<MailPage<T>> {
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
+      ...extraHeaders,
     },
   });
 

@@ -3,7 +3,7 @@
 // re-asks each question through market-updates-qa, synthesises a single markdown
 // digest via Lovable AI, writes market_qa_digests, and drops a notification.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
+import { enforceRawBodyLimit, verifyRequiredCronSecret, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { callInternalFunction } from '../_shared/internalCall.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { meteredFetch } from "../_shared/meteredFetch.ts";
@@ -138,13 +138,36 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
   const __csrf = enforceCsrf(req); if (!__csrf.ok) return csrfDenied(cors, __csrf); // SEC5-CSRF (no-op for cron/no-cookie)
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+  // The signature covers a hash of the raw bytes, so the body is read once as
+  // text and parsed from that — `req.json()` consumes the stream and leaves
+  // nothing for `verifySignedInternal` to hash.
+  const bounded = await enforceRawBodyLimit(req, 8192);
+  if (!bounded.ok) return bounded.error;
   let body: any = {};
-  try { body = await req.json(); } catch {}
+  try { body = bounded.raw ? JSON.parse(bounded.raw) : {}; } catch {}
   const action = body?.action ?? 'run-due';
 
   if (action === 'run-due') {
+    /**
+     * The hourly job could never satisfy this, and `market_qa_digests` is empty.
+     *
+     * `market-qa-digest-runner-hourly` (`35 * * * *`) invokes this through
+     * `cron_invoke_signed_function`, and `cron_signed_internal_headers` sends
+     * `X-Internal-{Timestamp,Nonce,Caller,Key-Id,Signature}` and NO
+     * `x-cron-secret` — so the only credential this branch accepted was one the
+     * caller does not send. Every run since it was scheduled answered 401
+     * (measured in `net._http_response`) while pg_cron reported success,
+     * because pg_cron reports on the SQL that queued the call and never on the
+     * call. Not one digest has ever been written.
+     *
+     * The signed path is added rather than swapping the secret in, exactly as
+     * `market-updates-embed-backfill` does it — same family, same pairing, and
+     * a manual `x-cron-secret` invocation keeps working.
+     */
     const secret = req.headers.get('x-cron-secret');
-    if (!verifyRequiredCronSecret(CRON_SECRET, secret)) return json({ error: 'unauthorized' }, 401);
+    const authorised = verifyRequiredCronSecret(CRON_SECRET, secret) ||
+      (await verifySignedInternal(sb, req, bounded.raw, ['pg_cron'])).ok;
+    if (!authorised) return json({ error: 'unauthorized' }, 401);
     return await runDue(sb);
   }
 

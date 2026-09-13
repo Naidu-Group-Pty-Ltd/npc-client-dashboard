@@ -2227,11 +2227,25 @@ export default function EmailCopilot() {
                     <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10">
                       <Inbox className="h-7 w-7 text-primary/45" />
                     </span>
+                    {/*
+                      Searching and filtering happen over the messages ALREADY
+                      LOADED, never over the mailbox — so "no matching emails"
+                      is only true when there is nothing left to load. While
+                      `hasMoreEmails` holds, the honest statement is that we
+                      have not looked at the rest yet, and the Load more button
+                      below the list is what looks.
+                    */}
                     <p className="text-sm font-semibold text-foreground">
-                      {searchQuery || statusFilter !== 'all' ? 'No matching emails' : 'No emails'}
+                      {searchQuery || statusFilter !== 'all'
+                        ? (hasMoreEmails ? 'No matches in the emails loaded so far' : 'No matching emails')
+                        : 'No emails'}
                     </p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {searchQuery || statusFilter !== 'all' ? 'Try adjusting your filters' : 'Sync your inbox or add an email'}
+                      {searchQuery || statusFilter !== 'all'
+                        ? (hasMoreEmails
+                          ? 'Search covers what has been loaded. Load more below to search further back.'
+                          : 'Try adjusting your filters')
+                        : 'Sync your inbox or add an email'}
                     </p>
                   </div>
                 ) : (
@@ -2406,26 +2420,6 @@ export default function EmailCopilot() {
                         </div>
                       );
                     })}
-                    {hasMoreEmails && (
-                      <div className="p-4 text-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={loadMoreEmails}
-                          disabled={isLoadingMore}
-                          className="w-full rounded-full border-primary/20 bg-background/70 shadow-sm transition-all hover:border-primary/45 hover:bg-primary/5 disabled:bg-muted/40"
-                        >
-                          {isLoadingMore ? (
-                            <>
-                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                              Loading more emails...
-                            </>
-                          ) : (
-                            <>Load more emails ({emails.length} loaded)</>
-                          )}
-                        </Button>
-                      </div>
-                    )}
                   </div>
                 )}
               </>
@@ -2437,9 +2431,13 @@ export default function EmailCopilot() {
                     <span className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl border border-success/20 bg-success/10">
                       <Send className="h-7 w-7 text-success/55" />
                     </span>
-                    <p className="text-sm font-semibold text-foreground">No sent emails</p>
+                    <p className="text-sm font-semibold text-foreground">
+                      {hasMoreEmails && searchQuery ? 'No matches in the emails loaded so far' : 'No sent emails'}
+                    </p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      Emails you send will appear here
+                      {hasMoreEmails
+                        ? 'Search covers what has been loaded. Load more below to search further back.'
+                        : 'Emails you send will appear here'}
                     </p>
                   </div>
                 ) : (
@@ -2560,6 +2558,40 @@ export default function EmailCopilot() {
                   </div>
                 )}
               </>
+            )}
+
+            {/*
+              One Load more, drawn for BOTH views and OUTSIDE the empty-state
+              branch.
+              
+              It used to live inside the inbox list's `else`, so a search that
+              matched nothing in the page already loaded rendered "No matching
+              emails — try adjusting your filters" with no way to look further,
+              while the match sat on page four of a 7,980-message mailbox. The
+              advice was wrong and the only control that could have proved it
+              wrong was hidden by the same condition. Sent never had the button
+              at all, so that view could not page past its first load however
+              many sent messages existed.
+            */}
+            {hasMoreEmails && (
+              <div className="p-4 text-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadMoreEmails}
+                  disabled={isLoadingMore}
+                  className="w-full rounded-full border-primary/20 bg-background/70 shadow-sm transition-all hover:border-primary/45 hover:bg-primary/5 disabled:bg-muted/40"
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Loading more emails...
+                    </>
+                  ) : (
+                    <>Load more emails ({emails.length} loaded)</>
+                  )}
+                </Button>
+              </div>
             )}
           </ScrollArea>
         </div>

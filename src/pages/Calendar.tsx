@@ -124,9 +124,9 @@ export default function Calendar() {
   const { canEdit: canEditCalendar } = useModulePermissions('calendar');
   const { user } = useAuth();
   const isMobile = useIsMobile();
-  const { calendars, events, calendarGroups, contactCache, isLoading, isUpdating, error, fetchCalendarData, fetchCalendarGroups, fetchContact, getCalendarColor, rescheduleEvent, updateEvent, deleteEvent, createAppointment, searchContacts, blockSlot, fetchFreeSlots } = useGHLCalendar();
+  const { calendars, failedCalendars, events, calendarGroups, contactCache, isLoading, isUpdating, error, fetchCalendarData, fetchCalendarGroups, fetchContact, getCalendarColor, rescheduleEvent, updateEvent, deleteEvent, createAppointment, searchContacts, blockSlot, fetchFreeSlots } = useGHLCalendar();
   const {
-    outlookEvents, teamAvailability, isLoading: outlookLoading, isCreating: outlookCreating,
+    outlookEvents, outlookTruncated, teamAvailability, isLoading: outlookLoading, isCreating: outlookCreating,
     outlookEnabled, microsoftEmail, fetchOutlookEvents, createOutlookEvent, updateOutlookEvent,
     deleteOutlookEvent, fetchTeamAvailability, getMicrosoftEmail, setMicrosoftEmail, createPrepBlock,
   } = useOutlookCalendar();
@@ -1041,6 +1041,32 @@ export default function Calendar() {
                   GoHighLevel Appointments
                   {isUpdating && <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary shadow-sm shadow-primary/10 animate-pulse">Updating...</span>}
                 </p>
+                {/*
+                  A calendar cut short reads exactly like a quiet one. Outlook
+                  used to return one page of 200 events ordered by start time,
+                  so a busy period lost its END and the grid simply stopped
+                  drawing partway through the month with nothing said. The walk
+                  follows every page now; this is what it looks like when even
+                  the page ceiling binds.
+                */}
+                {outlookVisible && outlookTruncated && (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-warning">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    Outlook returned more events than this view can hold — narrow the date range to see them all.
+                  </p>
+                )}
+                {/*
+                  Same rule on the GoHighLevel side: one calendar failing does
+                  not blank the page, and used to say nothing at all, so an
+                  unread calendar and an empty one were the same column.
+                */}
+                {failedCalendars.length > 0 && (
+                  <p className="mt-1 flex items-center gap-1.5 text-xs font-medium text-warning">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    Could not load {failedCalendars.length === 1 ? 'one calendar' : `${failedCalendars.length} calendars`}
+                    {' '}({failedCalendars.join(', ')}) — appointments on {failedCalendars.length === 1 ? 'it' : 'them'} are not shown.
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 md:justify-end">

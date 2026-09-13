@@ -144,6 +144,16 @@ export function useGHLCalendar() {
   const [calendars, setCalendars] = useState<GHLCalendar[]>([]);
   const [events, setEvents] = useState<GHLEvent[]>([]);
   const [calendarGroups, setCalendarGroups] = useState<GHLCalendarGroup[]>([]);
+  /**
+   * Calendars GoHighLevel refused to answer for on the last load.
+   *
+   * One calendar failing must not blank the page, so the edge function returns
+   * the ones that worked — but a failed calendar and a calendar with nothing
+   * booked drew exactly the same empty column, under a response that still
+   * said `success: true`. Naming them is the only way a reader can tell those
+   * two apart.
+   */
+  const [failedCalendars, setFailedCalendars] = useState<string[]>([]);
   const [contactCache, setContactCache] = useState<Map<string, GHLContact>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -219,10 +229,12 @@ export function useGHLCalendar() {
 
         console.info('[GHL Calendar] calendars:', data.calendars.length, 'events(raw):', rawEvents.length, 'events(normalized):', normalized.length);
         setEvents(normalized);
+        setFailedCalendars(Array.isArray(data.failedCalendars) ? data.failedCalendars : []);
       }
     } catch (err: any) {
       console.error('Error fetching calendar data:', err);
       setError(err.message);
+      setFailedCalendars([]);
       toast({
         title: 'Failed to load calendar',
         description: err.message,
@@ -697,6 +709,7 @@ export function useGHLCalendar() {
 
   return {
     calendars,
+    failedCalendars,
     events,
     calendarGroups,
     contactCache,

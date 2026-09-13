@@ -107,11 +107,18 @@ Deno.serve(async (req) => {
     const boundedBody = await enforceRawBodyLimit(req, 1024);
     if (!boundedBody.ok) return boundedBody.error;
 
+    // The sibling worker's trap, closed here before it fires. This one's live
+    // schedule still carries `investment-report-resume-cron` and works, but it
+    // is the only other job in the fleet that does not sign as `pg_cron` — so
+    // one out-of-band re-schedule taking the default argument would silently
+    // stop every investment-report resume, exactly as it did for
+    // `resume-bulk-generation`. See the note there for why accepting both
+    // spellings widens nothing.
     const auth = await verifySignedInternal(
       supabase,
       req,
       boundedBody.raw,
-      ['investment-report-resume-cron'],
+      ['investment-report-resume-cron', 'pg_cron'],
     );
     if (!auth.ok) {
       console.warn('[resume-investment-reports] rejected unauthorized invocation', {

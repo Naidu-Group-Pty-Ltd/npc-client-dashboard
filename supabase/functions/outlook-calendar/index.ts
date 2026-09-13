@@ -5,6 +5,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
+import { fetchMailPage, type MailPage } from '../_shared/graphMailPaging.ts';
 
 /** Independent per-colleague Graph reads, overlapped but bounded. */
 const USER_CONCURRENCY = 6;
@@ -100,38 +101,74 @@ function assertMailboxOwnership(
 
 // ── Action handlers ──────────────────────────────────────────────────
 
+/**
+ * A calendar window is READ TO THE END, and says so when it is not.
+ *
+ * This asked Graph for one page of 200 `$orderby: start/dateTime` and returned
+ * `data.value`. `@odata.nextLink` was never read, so a mailbox with more than
+ * 200 events in the requested window lost the events with the LATEST start
+ * times — the month view drew January correctly and emptied partway through,
+ * and a busy colleague read as free for the rest of it. Ordering by start time
+ * is what decided which half went missing; nothing about the symptom pointed
+ * at paging.
+ *
+ * `fetchMailPage` is the repo's one implementation of the nextLink contract
+ * (opaque, complete, followed verbatim or not at all) and is collection-
+ * agnostic despite living beside the mail helpers. `Prefer` travels with it
+ * because `/calendarView` answers in the mailbox's own timezone without it and
+ * every consumer here treats these times as UTC.
+ *
+ * The walk is bounded, and a bound that BINDS is reported rather than
+ * swallowed: `truncated` is true only when Graph still had pages and we
+ * stopped, which is the distinction `graphMailPaging`'s own header calls the
+ * failure it exists to end — a half-read window that reports itself complete
+ * is indistinguishable from a quiet calendar.
+ */
+const CALENDAR_PAGE_SIZE = 200;
+const CALENDAR_MAX_PAGES = 15; // 3,000 events in one window is already absurd
+
 async function listEvents(
   accessToken: string,
   email: string,
   startTime: string,
   endTime: string,
-) {
+): Promise<{ events: any[]; truncated: boolean; pages: number }> {
   const params = new URLSearchParams({
     startDateTime: startTime,
     endDateTime: endTime,
-    $top: '200',
+    $top: String(CALENDAR_PAGE_SIZE),
     $orderby: 'start/dateTime',
     $select: 'id,subject,start,end,location,bodyPreview,isAllDay,showAs,organizer,attendees,categories',
   });
 
-  const url = graphUrl(email, `/calendarView?${params.toString()}`);
+  let url: string | null = graphUrl(email, `/calendarView?${params.toString()}`);
   console.log(`[outlook-calendar] listEvents for ${email}, url: ${url.substring(0, 80)}...`);
 
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Prefer: 'outlook.timezone="UTC"',
-    },
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error(`[outlook-calendar] Graph calendarView failed for ${email} (${res.status}):`, err);
-    throw new Error(`Graph calendarView failed (${res.status}): ${err}`);
+  const raw: any[] = [];
+  let pages = 0;
+  while (url && pages < CALENDAR_MAX_PAGES) {
+    // Annotated: `url` is assigned from `page.nextLink` inside the loop that
+    // produces `page`, and an inferred type there is circular (TS7022).
+    const page: MailPage<any> = await fetchMailPage<any>(
+      accessToken,
+      url,
+      `outlook-calendar:${email}`,
+      { Prefer: 'outlook.timezone="UTC"' },
+    );
+    pages += 1;
+    raw.push(...page.messages);
+    url = page.nextLink;
   }
 
-  const data = await res.json();
-  return (data.value || []).map((ev: any) => normalizeEvent(ev, email));
+  const truncated = url !== null;
+  if (truncated) {
+    console.warn(
+      `[outlook-calendar] window for ${email} truncated at ${CALENDAR_MAX_PAGES} pages ` +
+      `(${raw.length} events); more remain between ${startTime} and ${endTime}`,
+    );
+  }
+
+  return { events: raw.map((ev: any) => normalizeEvent(ev, email)), truncated, pages };
 }
 
 async function createEvent(
@@ -246,7 +283,7 @@ async function getFreeBusy(
     const results: any[] = [];
     for (const email of emails) {
       try {
-        const events = await listEvents(accessToken, email, startTime, endTime);
+        const { events } = await listEvents(accessToken, email, startTime, endTime);
         results.push({
           scheduleId: email,
           scheduleItems: events.map((ev: any) => ({
@@ -347,7 +384,11 @@ async function listTeamAvailability(
         outlookConnected: false,
       };
     }
-    const events = await listEvents(accessToken, msEmail, startTime, endTime);
+    // Only `events` here: an availability window is an appointment-sized slice,
+    // and 3,000 events inside one is not a state that happens. The walk's own
+    // console.warn is the signal if it ever does. A field nothing renders does
+    // not belong in a payload that was just narrowed to what is rendered.
+    const { events } = await listEvents(accessToken, msEmail, startTime, endTime);
     return {
       userId: user.id,
       username: user.username,
@@ -533,7 +574,7 @@ Deno.serve(async (req) => {
       try {
         const now = new Date();
         const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-        const events = await listEvents(accessToken, testEmail, now.toISOString(), weekLater.toISOString());
+        const { events } = await listEvents(accessToken, testEmail, now.toISOString(), weekLater.toISOString());
         eventsTest = { success: true, error: '', count: events.length };
       } catch (e) {
         eventsTest = { success: false, error: (e as Error).message, count: 0 };
@@ -566,8 +607,13 @@ Deno.serve(async (req) => {
       if (!startTime || !endTime) {
         return jsonResponse({ error: 'startTime and endTime are required' }, corsHeaders, 400);
       }
-      const events = await listEvents(accessToken, userEmail, startTime, endTime);
-      return jsonResponse({ success: true, events }, corsHeaders);
+      const listed = await listEvents(accessToken, userEmail, startTime, endTime);
+      // `truncated` travels: a window Graph still had pages for is not the same
+      // answer as a quiet calendar, and the page must be able to say so.
+      return jsonResponse(
+        { success: true, events: listed.events, truncated: listed.truncated },
+        corsHeaders,
+      );
     }
 
     if (action === 'createEvent') {
@@ -624,8 +670,54 @@ Deno.serve(async (req) => {
       if (!startTime || !endTime) {
         return jsonResponse({ error: 'startTime and endTime required' }, corsHeaders, 400);
       }
+      /**
+       * THIS HAD NO CHECK OF ANY KIND, directly beneath the one that does.
+       *
+       * `freeBusy`, immediately above, passes every requested address through
+       * `assertMailboxOwnership` — WP-13 hardened it precisely so a caller
+       * could not read arbitrary colleagues' calendars through the `emails`
+       * array. `teamAvailability` reaches the same data by a different door:
+       * it walks every active `custom_users` row and calls `listEvents` for
+       * each against the APP-ONLY Graph token, which is not scoped to the
+       * caller at all. Any authenticated dashboard user who posted
+       * `{action:'teamAvailability', startTime, endTime}` got every
+       * colleague's calendar back.
+       *
+       * Two things are wrong and both are fixed here.
+       *
+       * A caller must be a real, active staff account. `loadCallerAccount`
+       * returning null is the file's own test for that, and it is what the
+       * settings actions below already use.
+       */
+      if (!userId || userId === 'service_role') {
+        return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+      }
+      const teamCaller = await loadCallerAccount(supabase, effectiveUserId!);
+      if (!teamCaller) {
+        return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+      }
+      /**
+       * And the response carries availability, never the appointments.
+       *
+       * `listTeamAvailability` returned a full `events` array per colleague —
+       * each entry carrying `title`, `bodyPreview`, `organizer`, `attendees`
+       * (address, name and response status), `location` and `categories` from
+       * `normalizeEvent`. NOTHING renders it: every consumer
+       * (`OutlookCalendarPanel`, `TeamOutlookAvailability`) reads `username`,
+       * `outlookConnected`, `error` and `busySlots` alone. It was the whole
+       * disclosure and none of the feature, so it does not leave the function.
+       */
       const team = await listTeamAvailability(supabase, accessToken, startTime, endTime);
-      return jsonResponse({ success: true, team }, corsHeaders);
+      const availability = (team || []).map((m: any) => ({
+        userId: m.userId,
+        username: m.username,
+        outlookConnected: m.outlookConnected,
+        // `busySlots` passes through whole: it is already the narrowed shape
+        // (`start`, `end`, `title`, `showAs`) and every field of it is drawn.
+        busySlots: m.busySlots ?? [],
+        ...(m.error ? { error: m.error } : {}),
+      }));
+      return jsonResponse({ success: true, team: availability }, corsHeaders);
     }
 
     if (action === 'setMicrosoftEmail') {
@@ -715,6 +807,18 @@ Deno.serve(async (req) => {
 
     // Agent tool: get team member Outlook settings
     if (action === 'getTeamOutlookStatus') {
+      // Same door, same rule: this enumerates every active colleague and their
+      // linked Microsoft address. A service-role caller (the dashboard agent)
+      // is allowed; an unauthenticated one is not.
+      if (userId !== 'service_role') {
+        if (!userId) {
+          return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+        }
+        const statusCaller = await loadCallerAccount(supabase, effectiveUserId!);
+        if (!statusCaller) {
+          return jsonResponse({ error: 'Authentication required' }, corsHeaders, 401);
+        }
+      }
       const { data: users } = await supabase
         .from('custom_users')
         .select('id, username, microsoft_email, outlook_auto_prep_enabled')

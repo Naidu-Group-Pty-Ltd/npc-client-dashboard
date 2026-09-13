@@ -275,7 +275,11 @@ Deno.serve(async (req) => {
           const [stagesRes, paymentsRes, paymentsDoneRes] = await Promise.all([
             supabase.from('deal_stages').select('id', { count: 'exact', head: true }).eq('deal_id', deal.id),
             supabase.from('build_progress_payments').select('id', { count: 'exact', head: true }).eq('deal_id', deal.id),
-            supabase.from('build_progress_payments').select('id', { count: 'exact', head: true }).eq('deal_id', deal.id).eq('status', 'paid'),
+            // `build_progress_payments` carries no `status`; a stage that has
+            // been paid is `paid_to_builder`. The filter named a column the
+            // table lacks, so the completed-payment count read zero on every
+            // purchase file however many stages had been paid.
+            supabase.from('build_progress_payments').select('id', { count: 'exact', head: true }).eq('deal_id', deal.id).eq('paid_to_builder', true),
           ]);
           linked_deal = {
             ...deal,

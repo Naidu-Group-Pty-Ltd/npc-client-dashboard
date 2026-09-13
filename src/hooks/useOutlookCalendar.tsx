@@ -23,12 +23,25 @@ export interface OutlookEvent {
   status: string;
 }
 
+/**
+ * What `teamAvailability` sends — availability, never the appointments.
+ *
+ * This used to declare `events: OutlookEvent[]` and `email: string`, and the
+ * function used to send both. Nothing ever rendered either: every consumer
+ * reads `username`, `outlookConnected`, `error` and `busySlots`. The events
+ * array carried each colleague's `bodyPreview`, `organizer`, `attendees`,
+ * `location` and `categories` to any authenticated browser, through an action
+ * that had no authorization check at all, so it is no longer sent and no
+ * longer declared. `outlookConnected` was always sent and never declared.
+ *
+ * (`email` on a team member is unrelated to `useTeamUsers()`, which is a
+ * different hook and still carries addresses for the attendee picker.)
+ */
 export interface OutlookTeamMember {
   userId: string;
   username: string;
-  email: string;
-  events: OutlookEvent[];
-  busySlots: { start: string; end: string; title: string }[];
+  outlookConnected: boolean;
+  busySlots: { start: string; end: string; title: string; showAs?: string }[];
   error?: string;
 }
 
@@ -48,6 +61,12 @@ export interface CreateOutlookEventPayload {
 
 export function useOutlookCalendar() {
   const [outlookEvents, setOutlookEvents] = useState<OutlookEvent[]>([]);
+  /**
+   * True when Graph still had pages for the requested window and the walk
+   * stopped. A calendar cut short reads exactly like a quiet one, so the
+   * difference has to be a fact the page can render rather than an absence.
+   */
+  const [outlookTruncated, setOutlookTruncated] = useState(false);
   const [teamAvailability, setTeamAvailability] = useState<OutlookTeamMember[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -74,11 +93,13 @@ export function useOutlookCalendar() {
         (e: OutlookEvent) => e.startTime && e.endTime,
       );
       setOutlookEvents(events);
+      setOutlookTruncated(data.truncated === true);
       setOutlookEnabled(true);
       return events;
     } catch (err: any) {
       console.error('[useOutlookCalendar] fetchOutlookEvents error:', err);
       setError(err.message);
+      setOutlookTruncated(false);
       if (!err.message?.includes('No Microsoft email')) {
         toast({
           title: 'Outlook sync failed',
@@ -284,6 +305,7 @@ export function useOutlookCalendar() {
 
   return {
     outlookEvents,
+    outlookTruncated,
     teamAvailability,
     isLoading,
     isCreating,

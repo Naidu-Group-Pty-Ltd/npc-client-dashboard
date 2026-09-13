@@ -30,11 +30,36 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceKey);
     const boundedBody = await enforceRawBodyLimit(req, 1024);
     if (!boundedBody.ok) return boundedBody.error;
+    /**
+     * Both spellings, because the live schedule and this list disagreed and
+     * nothing could see it.
+     *
+     * `cron_invoke_signed_function(fn, body, caller)` folds `caller` into the
+     * HMAC and sends it as `X-Internal-Caller`; this list is what the receiver
+     * will accept. The repo's own migration
+     * (`20260729030000_secure_bulk_generation_resume_cron.sql`) schedules
+     * `bulk-generation-resume-cron` and applied cleanly — and the live job on
+     * the prime signs as `pg_cron`, having been re-scheduled out of band after
+     * that migration ran. So every tick since has been refused 401 (~480 a day,
+     * measured in `net._http_response`), while pg_cron reported each run as
+     * successful because it reports on the SQL that QUEUED the call and never
+     * on the call. One bulk report job has sat `processing` since 2026-05-15
+     * because the only thing that closes it is this worker.
+     *
+     * Re-scheduling the job would repair the prime and could be undone by
+     * whatever undid it last time; accepting both spellings repairs every
+     * deployment whichever name its job happens to carry, and cannot be. It
+     * widens nothing: `caller` is not a secret, every pg_cron job on the
+     * database signs with the same Vault key, and `pg_cron` is the DEFAULT
+     * third argument — so any of them could already spell either name.
+     * `dispatch-marketing-reports` accepts `['pg_cron','marketing-reports-cron']`
+     * for exactly this reason.
+     */
     const auth = await verifySignedInternal(
       supabase,
       req,
       boundedBody.raw,
-      ['bulk-generation-resume-cron'],
+      ['bulk-generation-resume-cron', 'pg_cron'],
     );
     if (!auth.ok) {
       console.warn('[resume-bulk-generation] rejected unauthorized invocation', {

@@ -172,6 +172,7 @@
     "security:webauthn-step-up": "node scripts/security/check-webauthn-lifecycle-step-up.mjs",
     "security:gates-wired": "node scripts/security/check-gates-wired.mjs",
     "security:verify-jwt-declared": "node scripts/security/check-verify-jwt-declared.mjs",
+    "security:cron-caller-names": "node scripts/security/check-cron-caller-names.mjs",
     "security:activity-entity-types": "node scripts/security/check-activity-entity-types.mjs",
     "security:migrations": "node scripts/security/check-migration-security.mjs",
     "security:migration-versions": "node scripts/security/check-migration-version-collisions.mjs",

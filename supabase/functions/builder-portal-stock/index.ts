@@ -18,7 +18,8 @@
  *   create_upload | process_upload | reprocess_upload | enrich_images
  *   create_builder_image | attach_builder_image
  *   list_uploads | get_upload
- *   list_stock | get_stock_item | set_availability | archive_stock_item
+ *   list_stock | get_stock_item | set_availability | set_manual_stats
+ *   archive_stock_item
  *   image_url
  *   list_selections | acknowledge_selection
  */
@@ -108,6 +109,7 @@ import {
   BUILDER_SELECTION_SELECT, STOCK_AVAILABILITY_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, STOCK_UPLOAD_SELECT, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
+import { applyManualStatsToAll, parseManualStats } from '../_shared/builderStock/manualStats.pure.ts';
 
 /** Signed read URLs are short-lived — a leaked link outlives nothing. */
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -1597,6 +1599,76 @@ Deno.serve(async (req) => {
       return json({ success: true, record: data });
     }
 
+    /*
+     * THE FIGURES A BUILDER STATES THEMSELVES.
+     *
+     * Their stock list does not always say how many bedrooms a house has —
+     * measured on the prime, the three PDF-sourced properties missing bed,
+     * bath and car are all DUAL-KEY homes, where the brochure states two sets
+     * of figures for two self-contained dwellings and the extraction rightly
+     * declined to collapse them into one. The document cannot be parsed
+     * harder into carrying a fact it does not carry; the builder supplies it.
+     *
+     * IT NEVER WRITES THE EXTRACTION'S OWN COLUMNS. `manual_stats` is a
+     * column `writablePatch` does not name, which is the whole point: a
+     * figure written to `bedrooms` would survive a silent stock list and be
+     * destroyed by the next one that speaks. The overlay happens on read.
+     */
+    if (operation === 'set_manual_stats') {
+      if (!await can('edit')) {
+        return json({ error: 'You do not have permission to manage stock', code: 'permission_denied' }, 403);
+      }
+      const item = await loadItem(cleanText(body.stock_item_id, 64));
+      if (!item) return notFoundHere('That property');
+
+      const { stats, errors } = parseManualStats(body.stats, {
+        recordedAt: new Date().toISOString(),
+        recordedBy: me.id,
+      });
+      /*
+       * REFUSED, NEVER CLAMPED. Turning a mistyped 3000 into 99 records a
+       * bedroom count nobody stated, on a card a client reads — the same
+       * class as a fabricated price, which is the one thing the extraction
+       * prompt's first rule exists to prevent.
+       */
+      if (errors.length) {
+        return json({ error: errors[0].message, code: 'invalid_stat', fields: errors }, 400);
+      }
+
+      const { data, error } = await supabase
+        .from('builder_stock_items')
+        .update({ manual_stats: stats })
+        .eq('id', item.id)
+        .eq('organisation_id', activeOrganisationId)
+        .select(STOCK_ITEM_SELECT)
+        .single();
+      if (error) {
+        console.error('[builder-portal-stock] manual stats write failed', error.message);
+        return json({ error: 'The property could not be updated' }, 400);
+      }
+
+      await logBuilderProjectActivity(supabase, req, {
+        builderUserId: me.id, organisationId: activeOrganisationId,
+        action: stats ? 'builder_stock_manual_stats_set' : 'builder_stock_manual_stats_cleared',
+        entityType: 'stock_item', entityId: item.id,
+        // What the document said, beside what the builder stated, so the log
+        // records the disagreement rather than only the outcome.
+        previousState: {
+          manual_stats: (item as { manual_stats?: unknown }).manual_stats ?? null,
+          extracted: {
+            bedrooms: item.bedrooms ?? null, bathrooms: item.bathrooms ?? null,
+            car_spaces: item.car_spaces ?? null,
+            building_size_sqm: item.building_size_sqm ?? null,
+            land_size_sqm: item.land_size_sqm ?? null,
+          },
+        },
+        newState: { manual_stats: stats },
+      });
+
+      const [decorated] = await decorateItems(supabase, [data], activeOrganisationId);
+      return json({ success: true, record: decorated });
+    }
+
     if (operation === 'archive_stock_item') {
       if (!await can('delete')) {
         return json({ error: 'You do not have permission to remove stock', code: 'permission_denied' }, 403);
@@ -1955,6 +2027,17 @@ async function decorateItems(
   organisationId: string,
 ): Promise<any[]> {
   if (!items.length) return [];
+  /*
+   * THE BUILDER'S OWN FIGURES, LAID OVER THE DOCUMENT'S, ONCE AND HERE.
+   *
+   * Applied to the incoming rows rather than inside the mapper below, so
+   * everything downstream — the spread, the eligibility reading, anything
+   * added later — sees the effective property rather than the extraction.
+   * Both read paths do exactly this, and the "every read path
+   * applies the overlay" case in `builderStockManualStats.test.ts` reads both
+   * sources and fails either one that stops.
+   */
+  items = applyManualStatsToAll(items);
   const ids = items.map((item) => item.id);
 
   const [{ data: images }, { data: selections }, { data: rows }] = await Promise.all([

@@ -239,6 +239,22 @@ jobs:
             src/lib/__tests__/builderStock \
             src/lib/__tests__/builderPortal
 
+      # THE BUILDER PORTAL'S OWN SURFACES, which no step named — the same
+      # failure the comment below describes, found again by looking. The
+      # portal's two mount guards live here and neither was ever run by CI:
+      # `builderPortalUiMounted.spec.ts`, which exists because the drawing set
+      # once shipped with three components at zero call sites, and
+      # `builderDraftingMounted.spec.ts`, which exists because it then happened
+      # again in the stylesheet. A guard that only passes on a developer's
+      # machine is the thing it was written to prevent.
+      - name: Unit tests (Builder / Developer portal surfaces)
+        run: |
+          npx vitest run \
+            src/components/builder-portal \
+            src/components/stock \
+            src/pages/builder \
+            src/styles/__tests__
+
       # These specs existed and no step named them, which is the same failure
       # `check-gates-wired.mjs` was written for: a guard nobody runs still reads
       # as coverage. The cash-flow projection geometry, the comparison picker's

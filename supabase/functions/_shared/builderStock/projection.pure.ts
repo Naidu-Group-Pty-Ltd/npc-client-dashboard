@@ -41,6 +41,22 @@
  * here fails loudly with 42703 rather than arriving as `undefined`, which is
  * the one thing that must not happen to an identity field.
  */
+/*
+ * `manual_stats` — THE FIGURES THE BUILDER STATED THEMSELVES, where their
+ * stock list did not. Selected here because this list is what BOTH audiences
+ * read, and a property's bedroom count is not a disclosure boundary: it is
+ * the same fact for the builder and for the Command Centre, and the two
+ * screens disagreeing about one house is the failure this prevents. It is
+ * not the effective value — `applyManualStats` overlays it on read.
+ *
+ * NOTHING BUT COLUMNS GOES INSIDE THE LITERAL. This note began INSIDE it,
+ * which broke two ways at once: a comment in a template literal is text
+ * PostgREST would receive as part of the select list, and the backticks
+ * around a symbol name terminated the string and turned the rest into parsed
+ * code (`TS2304: Cannot find name 'manualStatsOverlay'`). Every stock read
+ * would have failed. `check-edge-functions.mjs` caught it, which is the
+ * whole reason TS2304 is fatal there and never baselined.
+ */
 export const STOCK_ITEM_SELECT = `
   id, organisation_id, upload_id, first_upload_id, created_by_builder_user_id,
   builder_project_id, builder_unit_id, external_reference,
@@ -51,7 +67,8 @@ export const STOCK_ITEM_SELECT = `
   lifecycle_status, enrichment_status, enriched_at, primary_image_id,
   created_at, updated_at, last_seen_at,
   image_work_stage,
-  house_design:source_row->>house_design
+  house_design:source_row->>house_design,
+  manual_stats
 `;
 
 /**

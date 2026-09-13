@@ -42,6 +42,7 @@ import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
+import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
 import {
   derivativeToServe, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
@@ -635,6 +636,17 @@ Deno.serve(async (req) => {
 /** Images and builder identity for a page of stock. Two queries, not 2N. */
 async function decorate(supabase: any, items: any[]): Promise<any[]> {
   if (!items.length) return [];
+  /*
+   * THE BUILDER'S OWN FIGURES, LAID OVER THE DOCUMENT'S, ONCE AND HERE.
+   *
+   * Applied to the incoming rows rather than inside the mapper below, so
+   * everything downstream — the spread, the eligibility reading, anything
+   * added later — sees the effective property rather than the extraction.
+   * Both read paths do exactly this, and the "every read path
+   * applies the overlay" case in `builderStockManualStats.test.ts` reads both
+   * sources and fails either one that stops.
+   */
+  items = applyManualStatsToAll(items);
   const ids = items.map((item) => item.id);
   const organisationIds = Array.from(new Set(items.map((item) => item.organisation_id)));
 

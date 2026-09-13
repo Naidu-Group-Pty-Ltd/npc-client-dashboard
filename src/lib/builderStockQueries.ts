@@ -15,6 +15,7 @@ import {
 } from '../../supabase/functions/_shared/builderStock/imageProgress.pure';
 import type {
   BuilderStockItem, BuilderStockSelectionForBuilder, BuilderStockUpload,
+  ManualStatField,
 } from '@/lib/builderStock';
 
 export const builderStockKeys = {
@@ -422,6 +423,38 @@ export function useSetBuilderStockAvailability() {
         operation: 'set_availability',
         stock_item_id: input.stockItemId,
         availability_status: input.availability,
+      }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
+  });
+}
+
+/**
+ * State the figures this property's stock list did not.
+ *
+ * All five fields are sent every time, and a box the builder cleared is sent
+ * as `null` rather than left out — `parseManualStats` reads an absent key, a
+ * null and an empty string identically, so either shape works, and sending
+ * the field states plainly that the correction was WITHDRAWN rather than
+ * simply not mentioned this time.
+ *
+ * A cleared field therefore returns the document's own reading, and clearing
+ * every field withdraws the whole override. `0` is NOT a cleared field: a
+ * townhouse may have no car space, so it travels as the figure it is.
+ *
+ * The server refuses an out-of-range figure rather than clamping it, so a
+ * rejection carries a message worth showing.
+ */
+export function useSetBuilderStockManualStats() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      stockItemId: string;
+      stats: Partial<Record<ManualStatField, number | null>>;
+    }) =>
+      invoke<{ record: BuilderStockItem }>({
+        operation: 'set_manual_stats',
+        stock_item_id: input.stockItemId,
+        stats: input.stats,
       }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: builderStockKeys.root() }); },
   });

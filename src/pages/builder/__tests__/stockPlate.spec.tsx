@@ -216,7 +216,22 @@ describe('dom capture', () => {
         {plate({ id: 'item-3', lot_number: '58', address_line: '7 Marloo Court',
                  development_name: 'Thornhill Gardens', suburb: 'Officer',
                  postcode: '3809', land_size_sqm: null,
+                 bedrooms: null, bathrooms: null, car_spaces: null,
                  primary_image_id: null, images: [] })}
+        {/* The reported defect, and the way out of it: a dual-key brochure
+            states two sets of figures, so the extraction stated none, and the
+            builder has stated three of them by hand. */}
+        {plate({ id: 'item-4', lot_number: '324', address_line: '12 Dapple Avenue',
+                 development_name: 'Palomino Estate', suburb: 'Armstrong Creek',
+                 postcode: '3217', price_display: '$863,850 *',
+                 bedrooms: 4, bathrooms: 3, car_spaces: 2,
+                 building_size_sqm: null, land_size_sqm: 350,
+                 manual_stats: {
+                   values: { bedrooms: 4, bathrooms: 3, car_spaces: 2 },
+                   recorded_at: '2026-09-13T02:00:00Z', recorded_by: 'u1',
+                 },
+                 stated_bedrooms: null, stated_bathrooms: null,
+                 stated_car_spaces: null } as never)}
       </ul>,
     );
     /*
@@ -228,7 +243,7 @@ describe('dom capture', () => {
       expect(container.querySelectorAll('.bd-plate-frame img').length).toBeGreaterThan(0);
     });
     writeFileSync(join(process.cwd(), out), container.innerHTML, 'utf8');
-    expect(container.querySelectorAll('.bd-plate').length).toBe(3);
+    expect(container.querySelectorAll('.bd-plate').length).toBe(4);
   });
   afterAll(() => { /* nothing to tear down */ });
 });

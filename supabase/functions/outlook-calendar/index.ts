@@ -4,6 +4,10 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { internalError } from '../_shared/errorResponse.ts';
+import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
+
+/** Independent per-colleague Graph reads, overlapped but bounded. */
+const USER_CONCURRENCY = 6;
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
 const MICROSOFT_TENANT_ID = Deno.env.get('MICROSOFT_TENANT_ID');
@@ -238,6 +242,7 @@ async function getFreeBusy(
   // getSchedule may not work with application-level tokens; fall back to per-user calendarView
   if (!res.ok) {
     // Fallback: read each user's calendarView and infer busy blocks
+    // Same independent per-mailbox fan-out, overlapped.
     const results: any[] = [];
     for (const email of emails) {
       try {
@@ -320,47 +325,61 @@ async function listTeamAvailability(
   // rule the pickers use (see `assignablePerson.pure.ts`).
   const unroutable = (address: string) => /\.(invalid|test|example|localhost)$|@example\.(com|net|org)$/i.test(address.trim());
 
-  const results: any[] = [];
-  for (const user of users) {
-    const accountEmail = String(user.email ?? '');
-    if (accountEmail && unroutable(accountEmail)) continue;
+  // One Graph round trip PER COLLEAGUE, and every one of them is independent
+  // — nobody's calendar depends on anybody else's. Awaiting them in sequence
+  // made the team view cost the sum of the team's latency, so it got slower
+  // every time somebody joined. The order of the returned array is preserved,
+  // which the page relies on.
+  const connected = users.filter((u: any) => {
+    const accountEmail = String(u.email ?? '');
+    return !(accountEmail && unroutable(accountEmail));
+  });
 
+  const fetched = await mapWithConcurrency(connected, USER_CONCURRENCY, async (user: any) => {
     const msEmail = user.microsoft_email;
     if (!msEmail) {
-      results.push({
+      return {
         userId: user.id,
         username: user.username,
         email: user.email ?? null,
         events: [],
         busySlots: [],
         outlookConnected: false,
-      });
+      };
+    }
+    const events = await listEvents(accessToken, msEmail, startTime, endTime);
+    return {
+      userId: user.id,
+      username: user.username,
+      email: msEmail,
+      outlookConnected: true,
+      events,
+      busySlots: events
+        .filter((e: any) => ['busy', 'tentative', 'oof', 'workingElsewhere'].includes(e.showAs))
+        .map((e: any) => ({ start: e.startTime, end: e.endTime, title: e.title, showAs: e.showAs })),
+    };
+  });
+
+  // One colleague's mailbox failing must not blank the whole team's calendar —
+  // the loop this replaces caught per-user and pushed an entry carrying the
+  // error, and that entry is what the page renders as "could not load".
+  const results: any[] = [];
+  for (const r of fetched.results) {
+    if (r.value) {
+      results.push(r.value);
       continue;
     }
-    try {
-      const events = await listEvents(accessToken, msEmail, startTime, endTime);
-      results.push({
-        userId: user.id,
-        username: user.username,
-        email: msEmail,
-        outlookConnected: true,
-        events,
-        busySlots: events
-          .filter((e: any) => ['busy', 'tentative', 'oof', 'workingElsewhere'].includes(e.showAs))
-          .map((e: any) => ({ start: e.startTime, end: e.endTime, title: e.title, showAs: e.showAs })),
-      });
-    } catch (e) {
-      console.error(`[outlook-calendar] Failed to fetch for ${msEmail}:`, (e as Error).message);
-      results.push({
-        userId: user.id,
-        username: user.username,
-        email: msEmail,
-        outlookConnected: true,
-        events: [],
-        busySlots: [],
-        error: (e as Error).message,
-      });
-    }
+    const user: any = r.item;
+    console.error(`[outlook-calendar] Failed to fetch for ${user.microsoft_email}: ${r.error}`);
+    results.push({
+      userId: user.id,
+      username: user.username,
+      email: user.microsoft_email,
+      outlookConnected: true,
+      events: [],
+      busySlots: [],
+      error: r.error,
+    });
   }
   return results;
 }

@@ -1,14 +1,42 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Pinned to match `_shared/ghl-rate-limiter.ts` and the nine
+// `ghl-migrate-*-worker` functions that already share its token bucket. A
+// floating `@2` resolved to a DIFFERENT `SupabaseClient` type instantiation,
+// which the limiter's signature then rejected — and a floating major is its
+// own hazard besides: the deployed client can change without a commit.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { ghlFetchShared, tokenKeyFor } from '../_shared/ghl-rate-limiter.ts';
+import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
-function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+/**
+ * THIS FUNCTION USED TO SPEND MOST OF ITS WALL CLOCK ASLEEP.
+ *
+ * It paced itself with `delay(500)` between contacts, `delay(300)` before each
+ * conversation's messages and `delay(300)` between message pages, and it ran
+ * strictly one contact at a time. Measured on the clone 13 Sep 2026 across 5
+ * invocations: 78.5s average, 98.4s peak, against the 120s `request_timeout`
+ * this function declares. At 500ms per contact a 95s budget can reach at most
+ * 190 of the prime's 776 clients before it has to stop — and that is the floor,
+ * before a single conversation or message page is fetched.
+ *
+ * A fixed sleep is the wrong instrument twice over: far slower than the vendor
+ * allows when it is idle, and not a limit at all when two invocations overlap,
+ * because two isolates each sleeping 500ms still issue 4 req/s between them.
+ *
+ * Pacing now comes from `ghlFetchShared`, which reserves a slot in a Postgres
+ * token bucket that every caller of the same GHL token shares, honours
+ * `Retry-After` on a 429 and broadcasts the cooldown to every other isolate.
+ * That is a real limit rather than a hopeful one, and because it counts rather
+ * than sleeps, the requests are free to overlap — which is what
+ * `mapWithConcurrency` then does. Nine `ghl-migrate-*-worker` functions have
+ * been using that limiter in production; this one simply never adopted it.
+ */
+const CONTACT_CONCURRENCY = 6;
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -135,31 +163,40 @@ Deno.serve(async (req) => {
     const startedAt = Date.now();
     const startIndex = Math.max(0, Number(cursor) || 0);
     const queue = targetContactIds.slice(startIndex);
-    let processed = 0;
+    // `label` is already `'legacy' | 'new'`, so it is passed straight through
+    // the way the migration workers do it. Collapsing an unrecognised label to
+    // 'new' with a ternary would hand two DIFFERENT tokens the same bucket key,
+    // which is the one way a shared limiter can under-count.
+    const tokenKey = tokenKeyFor(_ghlCreds.label, apiKey);
 
-    for (const { clientId, ghlContactId } of queue) {
-      if (Date.now() - startedAt > BUDGET_MS) break;
-      processed++;
-      try {
-        // Rate limit: 500ms between contacts
-        await delay(500);
-
+    // The budget is now a predicate rather than a `break`: it stops the pool
+    // taking NEW contacts while everything already in flight finishes, so a
+    // contact is never left with its conversations written and its messages
+    // missing. `startedCount` is what the cursor advances by, and it is exact
+    // because work is started in order even though it completes out of order.
+    const outcome = await mapWithConcurrency(
+      queue,
+      CONTACT_CONCURRENCY,
+      async ({ clientId, ghlContactId }) => {
         // Step 1: Search conversations for this contact
         const searchParams = new URLSearchParams({
           locationId,
           contactId: ghlContactId,
         });
 
-        const convRes = await fetch(`${GHL_API_BASE}/conversations/search?${searchParams}`, {
-          method: 'GET',
-          headers: ghlHeaders,
-        });
+        const convRes = await ghlFetchShared(
+          supabase,
+          tokenKey,
+          `${GHL_API_BASE}/conversations/search?${searchParams}`,
+          { method: 'GET', headers: ghlHeaders },
+          { logTag: 'sync-ghl-conversations' },
+        );
 
         if (!convRes.ok) {
           const errText = await convRes.text();
           console.error(`[sync-ghl-conversations] Search failed for ${ghlContactId}: ${convRes.status} ${errText}`);
           errors.push({ contactId: ghlContactId, error: `Search failed: ${convRes.status}` });
-          continue;
+          return;
         }
 
         const convData = await convRes.json();
@@ -198,15 +235,15 @@ Deno.serve(async (req) => {
 
           totalConversations++;
 
-          // Step 2: Fetch messages for this conversation
-          await delay(300); // Rate limit
-
+          // Step 2: Fetch messages for this conversation. No sleep — the
+          // shared limiter reserves the slot.
           const messagesResult = await fetchConversationMessages(
             ghlConvId,
             upsertedConv.id,
             ghlHeaders,
             supabase,
-            mode
+            mode,
+            tokenKey
           );
 
           totalMessages += messagesResult.synced;
@@ -220,12 +257,20 @@ Deno.serve(async (req) => {
             errors.push({ contactId: ghlContactId, error: messagesResult.error });
           }
         }
-      } catch (err) {
-        console.error(`[sync-ghl-conversations] Exception for contact ${ghlContactId}:`, err);
-        errors.push({ contactId: ghlContactId, error: err.message });
+      },
+      { stop: () => Date.now() - startedAt > BUDGET_MS },
+    );
+
+    // A thrown contact is that contact's failure and nobody else's — the same
+    // guarantee the per-contact try/catch gave, kept deliberately.
+    for (const r of outcome.results) {
+      if (r.error) {
+        console.error(`[sync-ghl-conversations] Exception for contact ${r.item.ghlContactId}: ${r.error}`);
+        errors.push({ contactId: r.item.ghlContactId, error: r.error });
       }
     }
 
+    const processed = outcome.startedCount;
     const nextCursor = startIndex + processed;
     const done = nextCursor >= targetContactIds.length;
     console.log(`[sync-ghl-conversations] ${done ? 'Complete' : 'Paused at ' + nextCursor + '/' + targetContactIds.length}: ${totalConversations} conversations, ${totalMessages} messages synced`);
@@ -339,7 +384,8 @@ async function fetchConversationMessages(
   localConversationId: string,
   ghlHeaders: Record<string, string>,
   supabase: any,
-  mode: string
+  mode: string,
+  tokenKey: string
 ): Promise<{ synced: number; channels: string[]; error?: string }> {
   let synced = 0;
   const channels = new Set<string>();
@@ -356,7 +402,9 @@ async function fetchConversationMessages(
         params.set('lastMessageId', lastMessageId);
       }
 
-      const res = await fetch(
+      const res = await ghlFetchShared(
+        supabase,
+        tokenKey,
         `${GHL_API_BASE}/conversations/${ghlConversationId}/messages?${params}`,
         { method: 'GET', headers: ghlHeaders }
       );
@@ -429,8 +477,9 @@ async function fetchConversationMessages(
         hasMore = false;
       }
 
-      // Rate limit between pages
-      await delay(300);
+      // No sleep between pages: `ghlFetchShared` reserves the next slot from
+      // the shared bucket, which is a limit that actually counts rather than
+      // one that hopes.
     }
 
     return { synced, channels: [...channels] };

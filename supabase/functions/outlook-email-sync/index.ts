@@ -7,6 +7,7 @@ import { checkPermission } from "../_shared/permissions.ts";
 import { insertTargetedNotification } from "../_shared/notify.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { fetchMailWindow } from '../_shared/graphMailPaging.ts';
 
 const MICROSOFT_CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID');
 const MICROSOFT_CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET');
@@ -93,30 +94,41 @@ async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
-async function fetchEmailsFromFolder(accessToken: string, mailboxEmail: string, folder: string = 'inbox', limit: number = 20): Promise<OutlookMessage[]> {
-  console.log(`[Outlook Sync] Fetching ${folder} emails for ${mailboxEmail}...`);
-  
-  // Use folder-specific endpoint for sent items, default endpoint for inbox
-  const graphUrl = folder === 'sent' 
-    ? `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/mailFolders/sentitems/messages?$top=${limit}&$orderby=sentDateTime desc&$select=id,internetMessageId,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments`
-    : `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/messages?$top=${limit}&$orderby=receivedDateTime desc&$select=id,internetMessageId,conversationId,subject,bodyPreview,body,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,isRead,hasAttachments`;
-  
-  const response = await fetch(graphUrl, {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`[Outlook Sync] Graph API error for ${folder}:`, errorText);
-    throw new Error(`Failed to fetch ${folder} emails: ${response.status} ${errorText}`);
-  }
-
-  const data = await response.json();
-  console.log(`[Outlook Sync] Fetched ${data.value?.length || 0} ${folder} emails`);
-  return data.value || [];
+/**
+ * THIS USED TO ISSUE ONE REQUEST AND STOP.
+ *
+ * `?$top=${limit}` with no follow of `@odata.nextLink` means the mailbox is
+ * readable only as far as a single page, and the Email Co-Pilot page asks for
+ * `limit: 50`. So the product could hold the fifty most recent messages per
+ * folder and, structurally, nothing else — measured 13 Sep 2026 the clone held
+ * 101 rows against the prime's 5,677 on the same mailbox, which is 1.8%, and
+ * no amount of re-syncing would ever have closed it because the second page
+ * was never requested.
+ *
+ * The paging itself lives in `_shared/graphMailPaging.ts` because
+ * `email-sync-cron` had a second copy of this same one-page read, with a
+ * different hardcoded limit. Two copies is how a fix lands in one of them.
+ */
+async function fetchEmailsFromFolder(
+  accessToken: string,
+  mailboxEmail: string,
+  folder: string = 'inbox',
+  limit: number = 20,
+  window: { max?: number; deadline?: number; olderThanIso?: string | null } = {},
+): Promise<{ messages: OutlookMessage[]; exhausted: boolean }> {
+  const max = Math.max(1, window.max ?? limit);
+  const result = await fetchMailWindow<OutlookMessage>(
+    accessToken,
+    mailboxEmail,
+    folder,
+    { max, deadline: window.deadline, olderThanIso: window.olderThanIso },
+    'Outlook Sync',
+  );
+  console.log(
+    `[Outlook Sync] ${folder}: ${result.messages.length} message(s) over ${result.pages} page(s)` +
+      `${result.stoppedOnBudget ? ' (stopped on budget)' : ''}`,
+  );
+  return { messages: result.messages, exhausted: result.exhausted };
 }
 
 // Known inline/signature image patterns to skip
@@ -573,11 +585,81 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fetch both inbox and sent emails from Outlook
-    const [inboxEmails, sentEmails] = await Promise.all([
-      fetchEmailsFromFolder(accessToken, targetMailbox, 'inbox', limit),
-      fetchEmailsFromFolder(accessToken, targetMailbox, 'sent', limit)
+    /**
+     * Two directions, one fetcher.
+     *
+     * `sync` reads the NEWEST messages and is what the page's button and the
+     * webhook want: cheap, incremental, and now able to honour a `limit` past
+     * one page because the fetcher follows `@odata.nextLink`.
+     *
+     * `backfill` reads OLDER than the oldest row already stored for this
+     * mailbox, which is how history arrives without a cursor table: the
+     * boundary is re-derived from the database on every invocation, so a run
+     * that dies halfway loses nothing and a run that is repeated is a no-op
+     * over what it already wrote. It is budgeted rather than unbounded — the
+     * function has ~150s and a page of bodies is not free — and it reports
+     * whether Graph had more to give, so a caller knows to come back.
+     */
+    const isBackfill = action === 'backfill';
+    const BACKFILL_BUDGET_MS = 100_000;
+    const deadline = Date.now() + BACKFILL_BUDGET_MS;
+    // Per invocation. Large enough to make real progress on a 5,000-message
+    // mailbox, small enough that the attachment work below still fits.
+    const backfillMax = Math.min(Math.max(Number(limit) || 500, 1), 2000);
+
+    let inboxOlderThan: string | null = null;
+    let sentOlderThan: string | null = null;
+    if (isBackfill) {
+      const oldestOf = async (folder: 'inbox' | 'sent'): Promise<string | null> => {
+        // `received_at` and `mailbox_source`, which are the columns this table
+        // actually has. It carries no `mailbox` address column and no
+        // `email_date`; naming either would answer 42703, and PostgREST hands
+        // that back as `data: null` — which this function would have read as
+        // "nothing stored yet" and walked the whole history from the top on
+        // every single invocation, for ever, reporting progress the whole time.
+        let q = supabase
+          .from('email_copilot_emails')
+          .select('received_at')
+          .eq('folder', folder)
+          .eq('mailbox_source', mailboxSource)
+          .not('received_at', 'is', null)
+          .order('received_at', { ascending: true })
+          .limit(1);
+        // A personal mailbox is scoped to its owner as well as its source, or
+        // two colleagues backfilling at once would each read the other's
+        // boundary and conclude their own history was already complete.
+        if (mailboxSource === 'personal' && userId && userId !== 'service_role') {
+          q = q.eq('owner_user_id', userId);
+        }
+        const { data, error } = await q.maybeSingle();
+        // A failed read is not an empty mailbox. Treating it as one would ask
+        // Graph for the whole history again from the top — expensive, and the
+        // duplicate constraint would swallow every row, which reads exactly
+        // like a finished backfill.
+        if (error) throw new Error(`Could not read the oldest stored ${folder} email: ${error.message}`);
+        return (data as any)?.received_at ?? null;
+      };
+      [inboxOlderThan, sentOlderThan] = await Promise.all([oldestOf('inbox'), oldestOf('sent')]);
+      console.log(
+        `[Outlook Sync] backfill boundary — inbox older than ${inboxOlderThan ?? '(none stored)'}, ` +
+          `sent older than ${sentOlderThan ?? '(none stored)'}`,
+      );
+    }
+
+    const [inboxPage, sentPage] = await Promise.all([
+      fetchEmailsFromFolder(accessToken, targetMailbox, 'inbox', limit, {
+        max: isBackfill ? backfillMax : limit,
+        deadline: isBackfill ? deadline : undefined,
+        olderThanIso: inboxOlderThan,
+      }),
+      fetchEmailsFromFolder(accessToken, targetMailbox, 'sent', limit, {
+        max: isBackfill ? backfillMax : limit,
+        deadline: isBackfill ? deadline : undefined,
+        olderThanIso: sentOlderThan,
+      }),
     ]);
+    const inboxEmails = inboxPage.messages;
+    const sentEmails = sentPage.messages;
 
     console.log(`[Outlook Sync] Fetched ${inboxEmails.length} inbox and ${sentEmails.length} sent emails`);
 
@@ -739,14 +821,38 @@ Deno.serve(async (req) => {
       },
     });
 
+    // `complete` is a fact about GRAPH, not about the budget: it is true only
+    // when Graph offered no further page in both folders. A run that stopped
+    // because it ran out of time reports false and is called again, and a
+    // caller that loops on this therefore terminates.
+    const complete = isBackfill ? inboxPage.exhausted && sentPage.exhausted : undefined;
+
     return new Response(
-      JSON.stringify({ 
-        success: true, 
+      JSON.stringify({
+        success: true,
+        mode: isBackfill ? 'backfill' : 'sync',
         fetched: inboxEmails.length + sentEmails.length,
         inserted: totalInserted,
         inboxInserted,
         sentInserted,
-        message: `Synced ${totalInserted} new emails from Outlook (${inboxInserted} inbox, ${sentInserted} sent)`
+        ...(isBackfill
+          ? {
+              complete,
+              // Where the NEXT invocation will start from, so an operator can
+              // see the walk moving rather than having to infer it.
+              oldestInboxSeen: inboxEmails.length
+                ? inboxEmails[inboxEmails.length - 1].receivedDateTime
+                : inboxOlderThan,
+              oldestSentSeen: sentEmails.length
+                ? ((sentEmails[sentEmails.length - 1] as any).sentDateTime ??
+                    sentEmails[sentEmails.length - 1].receivedDateTime)
+                : sentOlderThan,
+            }
+          : {}),
+        message: isBackfill
+          ? `Backfilled ${totalInserted} historical email(s) (${inboxInserted} inbox, ${sentInserted} sent)` +
+            `${complete ? ' — history is complete' : ' — more remain, run again'}`
+          : `Synced ${totalInserted} new emails from Outlook (${inboxInserted} inbox, ${sentInserted} sent)`,
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

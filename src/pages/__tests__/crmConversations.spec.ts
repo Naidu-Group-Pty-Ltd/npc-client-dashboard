@@ -114,15 +114,29 @@ describe('the typo that rendered nothing, everywhere it appeared', () => {
  * Audit 3 item 15 — "Request timed out" came back after the budget was raised.
  *
  * Raising it was right and could never be enough: the function walks every
- * client with a GoHighLevel contact id, pausing 500ms between contacts
- * because GHL rate-limits, so its runtime grows with the tenant. A run that
- * must finish inside one request will fail again at the next size. It stops
- * while it can still answer, and the caller resumes it.
+ * client with a GoHighLevel contact id, so its runtime grows with the tenant.
+ * A run that must finish inside one request will fail again at the next size.
+ * It stops while it can still answer, and the caller resumes it.
+ *
+ * The walk used to pause 500ms between contacts, and that is what made the
+ * budget bite so early — at 500ms a contact, 95s reaches at most 190 of the
+ * prime's 776 clients. Pacing now comes from the shared GHL token bucket
+ * (`ghlFetchShared`) and the contacts overlap, so the budget is consulted as
+ * `mapWithConcurrency`'s `stop` predicate rather than as a `break`. The
+ * CONTRACT is unchanged and is what this asserts: the same `BUDGET_MS`, still
+ * measured against `startedAt`, still leaving room to answer.
  */
 describe('Audit 3 item 15 — the sync outgrows any single request', () => {
   it('the function keeps a wall-clock budget and stops before the request does', () => {
     expect(sync).toMatch(/const BUDGET_MS = [\d_]+;/);
-    expect(sync).toMatch(/if \(Date\.now\(\) - startedAt > BUDGET_MS\) break;/);
+    // Asserted on the comparison, not on the statement that acts on it: a
+    // `break` and a `stop` predicate are the same promise, and pinning the
+    // syntax would fail a refactor that keeps the promise while forbidding
+    // nothing that breaks it.
+    expect(sync).toMatch(/Date\.now\(\) - startedAt > BUDGET_MS/);
+    // And the budget has to reach the walk. A constant nothing consults is
+    // the failure this whole describe block exists to prevent.
+    expect(sync).toMatch(/stop:\s*\(\)\s*=>\s*Date\.now\(\) - startedAt > BUDGET_MS/);
   });
 
   it('the budget leaves room to answer inside the declared request_timeout', () => {

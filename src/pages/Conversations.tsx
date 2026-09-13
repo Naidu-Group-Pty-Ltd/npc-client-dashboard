@@ -413,6 +413,29 @@ export default function Conversations() {
     enabled: !!selectedId,
   });
 
+  // ── Correspondence only ──
+  // `/conversations/{id}/messages` returns a thread's ENTRIES, and GHL puts its
+  // own activity records among them — "Opportunity updated", an appointment
+  // title, "DnD enabled by customer", a call with no body at all. They are not
+  // correspondence and must not be drawn as it; `isCorrespondence` is the one
+  // place that decides, shared with the sync that writes them. Nothing is
+  // deleted: the rows stay, and 465 of this deployment's threads hold NOTHING
+  // else, which is why the empty state below reads the filtered list and says
+  // what is being withheld rather than drawing an empty scroller.
+  //
+  // Declared HERE, directly under the query it derives from, and NOT beside the
+  // grouping that consumes it. Two effects below name it in a dependency array,
+  // and a dependency array is an ordinary expression evaluated during render —
+  // so a `const` declared after them is read inside its temporal dead zone and
+  // throws `ReferenceError: Cannot access 'correspondence' before
+  // initialization` on every render, taking the whole page to the error
+  // boundary. It shipped that way once. Keep this above the first reader.
+  const correspondence = useMemo(
+    () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
+    [messages],
+  );
+  const withheldEntryCount = messages.length - correspondence.length;
+
   // ── Mailboxes ──
   const { data: mailboxes = [] } = useQuery({
     queryKey: ["mailboxes-conversations-page"],
@@ -636,21 +659,6 @@ export default function Conversations() {
     }
     return list;
   }, [conversations, channelFilter, searchTerm]);
-
-  // ── Correspondence only ──
-  // `/conversations/{id}/messages` returns a thread's ENTRIES, and GHL puts its
-  // own activity records among them — "Opportunity updated", an appointment
-  // title, "DnD enabled by customer", a call with no body at all. They are not
-  // correspondence and must not be drawn as it; `isCorrespondence` is the one
-  // place that decides, shared with the sync that writes them. Nothing is
-  // deleted: the rows stay, and 465 of this deployment's threads hold NOTHING
-  // else, which is why the empty state below reads the filtered list and says
-  // what is being withheld rather than drawing an empty scroller.
-  const correspondence = useMemo(
-    () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
-    [messages],
-  );
-  const withheldEntryCount = messages.length - correspondence.length;
 
   // ── Group messages by date ──
   const groupedMessages = useMemo(() => {

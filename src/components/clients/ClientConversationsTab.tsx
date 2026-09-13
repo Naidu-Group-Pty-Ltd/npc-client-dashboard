@@ -185,6 +185,21 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
     enabled: !!selectedConversation?.id,
   });
 
+  // Correspondence only — GHL interleaves its own activity records (opportunity,
+  // appointment, contact, call) among a thread's entries, and they are not
+  // messages. `isCorrespondence` is the shared decision; see
+  // `_shared/ghlConversationMap.pure.ts`. Nothing is deleted.
+  //
+  // Declared HERE, under the query it derives from, because the scroll effect
+  // below names it in a dependency array — an expression evaluated during
+  // render — so declaring it later reads it inside its temporal dead zone and
+  // throws during every render.
+  const correspondence = useMemo(
+    () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
+    [messages],
+  );
+  const withheldEntryCount = messages.length - correspondence.length;
+
   // Trigger sync
   const syncMutation = useMutation({
     mutationFn: async () => {
@@ -339,16 +354,6 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
     if (isYesterday(d)) return 'Yesterday';
     return format(d, 'dd/MM/yy');
   };
-
-  // Correspondence only — GHL interleaves its own activity records (opportunity,
-  // appointment, contact, call) among a thread's entries, and they are not
-  // messages. `isCorrespondence` is the shared decision; see
-  // `_shared/ghlConversationMap.pure.ts`. Nothing is deleted.
-  const correspondence = useMemo(
-    () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
-    [messages],
-  );
-  const withheldEntryCount = messages.length - correspondence.length;
 
   // Group messages by date
   const groupedMessages = useMemo(() => {

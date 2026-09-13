@@ -54,6 +54,39 @@ export function mailboxPathFor(
     : `https://graph.microsoft.com/v1.0/users/${mailboxEmail}/messages`;
 }
 
+/**
+ * A database timestamp rendered as the DateTimeOffset Graph's `$filter` needs.
+ *
+ * `received_at` comes back from PostgREST as `2025-11-24T01:11:04` — no zone
+ * designator — and OData rejects that outright:
+ *
+ *   Invalid filter clause: The DateTimeOffset text '2025-11-24T01:11:04'
+ *   should be in format 'yyyy-mm-ddThh:mm:ss('.'s+)?(zzzzzz)?'
+ *
+ * Measured on the prime, 13 Sep 2026: every backfill tick between 05:44 and
+ * 06:50 answered 400 on exactly that, roughly one every five minutes.
+ *
+ * The zone is APPENDED rather than left to the runtime, because ECMAScript
+ * parses a date-TIME form with no offset as LOCAL time (a date-only form as
+ * UTC — the two forms disagree, which is the trap). These values are stored
+ * UTC, so `Z` is the truth; inferring it from the container's TZ would make
+ * the boundary depend on where the function happens to run.
+ *
+ * Answers null for anything it cannot read, so the one caller that must not
+ * proceed without a boundary can say so rather than silently walking the
+ * whole mailbox.
+ */
+export function graphDateTimeOffset(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const hasZone = /(?:[Zz]|[+-]\d{2}:?\d{2})$/.test(raw);
+  // PostgREST can also hand back a space separator rather than `T`.
+  const ms = Date.parse(hasZone ? raw : `${raw.replace(" ", "T")}Z`);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
 export function firstPageUrl(
   mailboxEmail: string,
   folder: MailFolder | string,
@@ -70,7 +103,20 @@ export function firstPageUrl(
   // hold" needs no stored cursor, cannot go stale, and converges even when an
   // invocation dies halfway, because the next one re-derives the boundary from
   // what is actually in the table.
-  if (olderThanIso) params.push(`$filter=${dateField} lt ${olderThanIso}`);
+  //
+  // A boundary that was ASKED FOR and cannot be rendered is refused here
+  // rather than dropped. Dropping it would return the NEWEST page instead of
+  // the oldest — every row already held, no history ever reached, and the walk
+  // reporting pages fetched the whole time.
+  if (olderThanIso !== null && olderThanIso !== undefined && String(olderThanIso).trim() !== "") {
+    const bound = graphDateTimeOffset(olderThanIso);
+    if (bound === null) {
+      throw new Error(
+        `cannot read the backfill boundary ${JSON.stringify(olderThanIso)} as a timestamp`,
+      );
+    }
+    params.push(`$filter=${dateField} lt ${bound}`);
+  }
   return `${mailboxPathFor(mailboxEmail, folder)}?${params.join("&")}`;
 }
 

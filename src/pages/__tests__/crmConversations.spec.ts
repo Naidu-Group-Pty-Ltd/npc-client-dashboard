@@ -10,6 +10,10 @@ const root = join(__dirname, '..', '..', '..');
 const page = readFileSync(join(root, 'src', 'pages', 'Conversations.tsx'), 'utf8');
 const config = readFileSync(join(root, 'supabase', 'config.toml'), 'utf8');
 const sync = readFileSync(join(root, 'supabase', 'functions', 'sync-ghl-conversations', 'index.ts'), 'utf8');
+const cron = readFileSync(
+  join(root, 'supabase', 'functions', 'conversation-sync-cron', 'index.ts'),
+  'utf8',
+);
 const broker = readFileSync(
   join(root, 'supabase', 'functions', 'get-client-data', 'index.ts'),
   'utf8',
@@ -186,5 +190,74 @@ describe('Audit 3 item 14 — an emailed reply is recorded in the conversation',
   it('never fails the send over the record — the email has already gone', () => {
     expect(page).toMatch(/catch \(persistError\)/);
     expect(page).toMatch(/could not be added to the conversation history/);
+  });
+});
+
+describe('the scheduled conversation sync stops sleeping too', () => {
+  /*
+    THE THIRD ONE, AND THE ONE THAT ACTUALLY RUNS.
+
+    `sync-ghl-conversations` and `ghl-conversations-cron` were un-slept first;
+    `conversation-sync-cron` is what pg_cron fires every ten minutes and it
+    still paced itself by hand. Measured on the prime, 13 Sep 2026, five
+    consecutive runs of 56 contacts: 136s, 134s, 109s, 125s, 134s. The
+    `delay(500)` per contact is 28 seconds of that before a single request is
+    made.
+  */
+  it('sleeps nowhere', () => {
+    // Comments may still NAME the sleeps this replaced; code may not call one.
+    const code = cron.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/await delay\(/);
+    expect(code).not.toMatch(/setTimeout\(/);
+  });
+
+  it('paces through the shared bucket rather than a guess', () => {
+    /*
+      A fixed sleep is wrong twice over: far slower than the vendor allows
+      when nothing else is calling, and not a limit at all when something is —
+      two overlapping invocations each sleeping 500ms together issue four
+      requests a second. Every GHL call goes through the Postgres token
+      bucket, which is shared across isolates and reads GHL's own
+      `Retry-After`.
+    */
+    expect(cron).toContain("import { ghlFetchShared, tokenKeyFor } from '../_shared/ghl-rate-limiter.ts'");
+    expect(cron).not.toMatch(/await fetch\(/);
+    expect((cron.match(/await ghlFetchShared\(/g) ?? []).length).toBe(2);
+  });
+
+  it('keys the bucket on the account, never on a literal', () => {
+    // Two GHL accounts are two buckets. One shared key would pace a token
+    // against another token's traffic.
+    expect(cron).toMatch(/tokenKeyFor\(_ghlCreds\.label, apiKey\)/);
+  });
+
+  it('works contacts concurrently, bounded', () => {
+    expect(cron).toContain("import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts'");
+    expect(cron).toMatch(/mapWithConcurrency\(\s*\[\.\.\.contactsToSync\],\s*CONTACT_CONCURRENCY/);
+    const limit = Number(cron.match(/const CONTACT_CONCURRENCY = (\d+);/)?.[1]);
+    expect(limit).toBeGreaterThan(1);
+  });
+
+  it('stops starting work at a wall-clock budget', () => {
+    /*
+      The set is re-derived from the database every tick, so a contact this
+      run did not reach is picked up by the next one — there is no cursor to
+      leave stale, which is what makes stopping safe.
+    */
+    expect(cron).toMatch(/stop:\s*\(\)\s*=>\s*Date\.now\(\) - startedAt > BUDGET_MS/);
+    const budget = Number(cron.match(/const BUDGET_MS = ([\d_]+);/)?.[1].replace(/_/g, ''));
+    expect(budget).toBeGreaterThan(0);
+    expect(budget).toBeLessThan(150_000);
+  });
+
+  it('pins the client to the version the rate limiter declares', () => {
+    // A floating `@2` resolves to a different SupabaseClient type and the
+    // limiter's first parameter stops matching.
+    const limiterPin = readFileSync(
+      join(root, 'supabase', 'functions', '_shared', 'ghl-rate-limiter.ts'),
+      'utf8',
+    ).match(/@supabase\/supabase-js@([\d.]+)/)?.[1];
+    expect(limiterPin).toBeDefined();
+    expect(cron).toContain(`@supabase/supabase-js@${limiterPin}`);
   });
 });

@@ -254,27 +254,52 @@ Deno.serve(async (req) => {
       console.error(`[Email Sync Cron] could not read the backfill boundary: ${oldestError.message}`);
     } else if (oldestRow?.received_at) {
       backfillAttempted = true;
-      const older = await fetchMailWindow<any>(
-        accessToken,
-        DEFAULT_MAILBOX_EMAIL,
-        'inbox',
-        {
-          max: BACKFILL_MAX_PER_TICK,
-          deadline: Date.now() + BACKFILL_BUDGET_MS,
-          olderThanIso: oldestRow.received_at,
-        },
-        'Email Sync Cron backfill',
-      );
-      backfillComplete = older.exhausted;
-      if (older.messages.length > 0) {
-        emails = emails.concat(older.messages);
-        console.log(
-          `[Email Sync Cron] backfill added ${older.messages.length} historical email(s) older than ` +
-            `${oldestRow.received_at} over ${older.pages} page(s)` +
-            `${older.exhausted ? ' — history is now complete' : ''}`,
+      /*
+       * THE BACKFILL MAY NEVER COST THE LIVE SYNC.
+       *
+       * The read above already carried that rule; the FETCH did not, and the
+       * difference was measured on the prime between 05:44 and 06:50 on
+       * 13 Sep 2026. Graph answered 400 to every backfill page — the boundary
+       * was sent without a zone designator — the error propagated out of the
+       * handler, and the thirty messages the incremental pass had ALREADY
+       * fetched were discarded with it. Every tick logged "Fetched 30 recent
+       * inbox emails" and then `internal_error`, and `email_copilot_emails`
+       * took nothing for sixty-five minutes. A history walk nobody asked for
+       * had taken the mail delivery down with it.
+       *
+       * So the whole opportunistic half is contained: it can fail, and what
+       * fails is the backfill. `backfillComplete` stays null, which the
+       * response already distinguishes from "there is nothing older" — a
+       * failed walk must never be reported as a finished one.
+       */
+      try {
+        const older = await fetchMailWindow<any>(
+          accessToken,
+          DEFAULT_MAILBOX_EMAIL,
+          'inbox',
+          {
+            max: BACKFILL_MAX_PER_TICK,
+            deadline: Date.now() + BACKFILL_BUDGET_MS,
+            olderThanIso: oldestRow.received_at,
+          },
+          'Email Sync Cron backfill',
         );
-      } else if (older.exhausted) {
-        console.log('[Email Sync Cron] backfill: history already complete, nothing older to collect');
+        backfillComplete = older.exhausted;
+        if (older.messages.length > 0) {
+          emails = emails.concat(older.messages);
+          console.log(
+            `[Email Sync Cron] backfill added ${older.messages.length} historical email(s) older than ` +
+              `${oldestRow.received_at} over ${older.pages} page(s)` +
+              `${older.exhausted ? ' — history is now complete' : ''}`,
+          );
+        } else if (older.exhausted) {
+          console.log('[Email Sync Cron] backfill: history already complete, nothing older to collect');
+        }
+      } catch (backfillError) {
+        console.error(
+          `[Email Sync Cron] backfill failed, continuing with the incremental sync: ` +
+            `${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
+        );
       }
     }
 

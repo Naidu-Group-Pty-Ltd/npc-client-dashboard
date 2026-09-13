@@ -14,11 +14,11 @@ import {
 import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
 import { assessAgainstConsensus, type GeoPointLike } from '../_shared/geoConsensus.pure.ts';
 import {
-  enforceGlobalDailyQuota,
   fetchWithTimeout,
   killSwitchActive,
   redactError,
 } from '../_shared/publicAbuseControls.ts';
+import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
 
 // Resolves map coordinates for property listings WITHOUT any browser-side
 // geocoding. Order of resolution per listing:
@@ -358,13 +358,23 @@ Deno.serve(async (req) => {
         if (remaining <= 0) break;
         if (seenHashes.has(item.hash)) continue;
 
-        const globalQuota = await enforceGlobalDailyQuota(
-          supabase,
-          CIRCUIT_SCOPE,
-          Number(Deno.env.get('GOOGLE_GEOCODING_DAILY_LIMIT') ?? '5000'),
-        );
+        // ONE product-wide Geocoding budget. Google bills every geocode in
+        // this deployment together, so `location-intelligence-service`,
+        // `parse-property-pdf`, `builderStock/images.ts` and this function all
+        // consume `google_geocoding` — otherwise `GOOGLE_GEOCODING_DAILY_LIMIT`
+        // would mean "N times however many functions happen to geocode", which
+        // is not a ceiling anybody can reason about.
+        //
+        // `CIRCUIT_SCOPE` is untouched and still names this function's own
+        // breaker below: a breaker is about one caller's error rate, a budget
+        // is about the account's spend. Different axes, different scopes.
+        const globalQuota = await consumeGoogleDailyCap(supabase, 'geocoding');
         if (!globalQuota.ok) {
-          console.warn('[resolve-listing-coordinates] global daily lookup budget exhausted');
+          // Includes `limiter_unavailable`: when the shared counter cannot be
+          // reached the ceiling cannot be enforced, and an unenforceable
+          // ceiling on a paid provider is no ceiling at all. A listing simply
+          // keeps the coordinate it already had.
+          console.warn(`[resolve-listing-coordinates] geocoding not attempted (${globalQuota.reason})`);
           break;
         }
         seenHashes.add(item.hash);

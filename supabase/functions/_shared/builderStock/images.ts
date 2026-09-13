@@ -22,7 +22,13 @@
  * an image is allowed to change what the marketplace shows.
  */
 import { meteredFetch } from '../meteredFetch.ts';
-import { enforceGlobalDailyQuota, killSwitchActive } from '../publicAbuseControls.ts';
+import { killSwitchActive } from '../publicAbuseControls.ts';
+import {
+  clientMessageFor,
+  consumeGoogleDailyCap,
+  type GoogleCapKind,
+  type GoogleCapRefusal,
+} from '../googleMapsDailyCaps.ts';
 import { STOCK_IMAGE_BUCKET } from './fileTypes.pure.ts';
 import { geocodableAddress, hasPhotographableStreetAddress } from './normalise.pure.ts';
 import { hasReadySourceImage } from './sourceImages.ts';
@@ -317,17 +323,38 @@ export async function enrichFromGoogle(
       'Location imagery is temporarily unavailable.', 'google', false);
   }
 
-  // The same daily ceiling and the same env var as `street-view`, because it
-  // is the same Google account being billed.
-  const dailyLimit = Number(Deno.env.get('GOOGLE_STREET_VIEW_DAILY_LIMIT') ?? '5000');
-  const spend = async (): Promise<boolean> =>
-    (await enforceGlobalDailyQuota(db, GOOGLE_CIRCUIT_SCOPE, dailyLimit)).ok;
+  // One unit per billable request, against the allowance for the SKU that
+  // request actually bills to.
+  //
+  // This used to spend every one of the four — a geocode, Street View
+  // metadata, a Street View image and a static map — against the single
+  // `google_street_view` bucket. The per-request accounting was already right;
+  // the ROUTING was not. Its geocode is billed by Google alongside every other
+  // geocode this deployment makes, so it belongs in the product-wide
+  // `google_geocoding` budget, and a static map is a different SKU again. A
+  // bucket that mixes SKUs makes each configured ceiling mean nothing on its
+  // own.
+  //
+  // `GOOGLE_CIRCUIT_SCOPE` is untouched: it still names this caller's breaker,
+  // which is about Google failing rather than about what we have spent.
+  // The refusal REASON travels out, because the message built from it is
+  // persisted on the row as `error_message` and outlives the incident. Saying
+  // "the daily limit has been reached" about a provider somebody switched off,
+  // or about a counter that could not be read, is a false record that whoever
+  // reads it next will act on.
+  let lastRefusal: GoogleCapRefusal | undefined;
+  const spend = async (kind: GoogleCapKind): Promise<boolean> => {
+    const verdict = await consumeGoogleDailyCap(db, kind);
+    lastRefusal = verdict.reason;
+    if (!verdict.ok) console.warn(`[builderStock] ${kind} not attempted (${verdict.reason})`);
+    return verdict.ok;
+  };
 
   try {
-    if (!await spend()) {
+    if (!await spend('geocoding')) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google', false);
+        clientMessageFor(lastRefusal), 'google', false);
     }
     const geocoded = await meteredFetch(
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&region=au&key=${apiKey}`,
@@ -364,10 +391,10 @@ export async function enrichFromGoogle(
     let bytes: Uint8Array | null = null;
     let product = 'streetview';
 
-    if (!await spend()) {
+    if (!await spend('streetView')) {
       return await recordStageUnavailable(
         db, item, 'google_maps', 'unavailable',
-        'The daily limit for location imagery has been reached.', 'google', false);
+        clientMessageFor(lastRefusal), 'google', false);
     }
     const metadata = await meteredFetch(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(point)}&key=${apiKey}`,
@@ -405,7 +432,7 @@ export async function enrichFromGoogle(
         db, item, 'google_maps', 'unavailable', usefulness.reason, 'google', true);
     }
 
-    if (meta?.status === 'OK' && await spend()) {
+    if (meta?.status === 'OK' && await spend('streetView')) {
       /*
        * AIM THE CAMERA AT THE HOUSE.
        *
@@ -449,7 +476,7 @@ export async function enrichFromGoogle(
      * road has not been driven — the card shows nothing, which is what the
      * rule asks for.
      */
-    if (!bytes && await spend()) {
+    if (!bytes && await spend('staticMaps')) {
       product = 'staticmap';
       const params = new URLSearchParams({
         center: point, zoom: '18', size: '640x400', maptype: 'satellite',

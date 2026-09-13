@@ -1,5 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { consumeGoogleDailyCap } from "../_shared/googleMapsDailyCaps.ts";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
@@ -412,7 +413,10 @@ async function extractFromSingleImage(
 async function completeAddressWithGoogleMaps(
   payload: StructuredPropertyPayload,
   googleMapsApiKey: string,
-  originalExtractedAddress: string | undefined
+  originalExtractedAddress: string | undefined,
+  // The shared daily allowance is consumed through the database, because a
+  // ceiling held in an isolate is not a ceiling under horizontal scaling.
+  db: unknown,
 ): Promise<StructuredPropertyPayload> {
   const originalStreetAddress = originalExtractedAddress || payload.propertyAddress;
   
@@ -439,6 +443,17 @@ async function completeAddressWithGoogleMaps(
   const searchQuery = parts.join(', ');
   console.log('🗺️ Geocoding search query:', searchQuery);
   
+  // One unit for the one billable Geocoding request below, against the same
+  // product-wide allowance every other geocoder consumes. Refusal returns the
+  // payload untouched — exactly what a failed lookup, a generic result and a
+  // non-OK status already do — so the address keeps whatever the extraction
+  // genuinely read and nothing is filled in from a guess.
+  const budget = await consumeGoogleDailyCap(db, 'geocoding');
+  if (!budget.ok) {
+    console.warn(`⚠️ Geocoding not attempted (${budget.reason}); keeping the extracted address as-is`);
+    return payload;
+  }
+
   try {
     const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(searchQuery)}&key=${googleMapsApiKey}&region=au&components=country:AU`;
     const response = await fetch(geocodeUrl);
@@ -627,7 +642,9 @@ Deno.serve(async (req) => {
     
     if (googleMapsApiKey && needsGeocoding && structuredPayload.propertyAddress !== 'Address Not Found') {
       console.log('🗺️ Attempting to complete address with Google Maps...');
-      structuredPayload = await completeAddressWithGoogleMaps(structuredPayload, googleMapsApiKey, originalExtractedStreetAddress);
+      structuredPayload = await completeAddressWithGoogleMaps(
+        structuredPayload, googleMapsApiKey, originalExtractedStreetAddress, supabase,
+      );
     } else if (structuredPayload.suburb && structuredPayload.state && structuredPayload.postcode) {
       structuredPayload.propertyAddress = buildFullAddress(originalExtractedStreetAddress, structuredPayload.suburb, structuredPayload.state, structuredPayload.postcode);
       console.log('✅ Built full address without geocoding:', structuredPayload.propertyAddress);

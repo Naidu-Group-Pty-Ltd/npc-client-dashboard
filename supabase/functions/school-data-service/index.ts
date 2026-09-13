@@ -4,6 +4,7 @@ import { internalError } from '../_shared/errorResponse.ts';
 import { parseJsonBody } from '../_shared/validate.ts';
 import { SchoolDataRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
+import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -168,7 +169,7 @@ async function fetchSchoolDataFromDB(
     
     // Fallback: Try Google Places API if coordinates provided
     if (latitude && longitude) {
-      const googleSchools = await fetchSchoolsFromGooglePlaces(latitude, longitude);
+      const googleSchools = await fetchSchoolsFromGooglePlaces(latitude, longitude, supabase);
       if (googleSchools.length > 0) {
         console.log(`✅ Found ${googleSchools.length} schools from Google Places API`);
         return {
@@ -192,11 +193,28 @@ async function fetchSchoolDataFromDB(
   }
 }
 
-async function fetchSchoolsFromGooglePlaces(latitude: number, longitude: number): Promise<School[]> {
+async function fetchSchoolsFromGooglePlaces(
+  latitude: number,
+  longitude: number,
+  // The allowance is shared with every other Places Nearby caller and held in
+  // the database, because a ceiling inside one isolate is not a ceiling.
+  db: unknown,
+): Promise<School[]> {
   try {
     const googleApiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
     if (!googleApiKey) {
       console.log('⚠️ Google Maps API key not configured');
+      return [];
+    }
+
+    // One unit for the one billable Places Nearby request below. An empty
+    // array is what an unconfigured key and a failed lookup already return,
+    // and the caller answers it with `null` — "nothing honest to return" —
+    // rather than reporting a location with no schools. So a refusal needs no
+    // new absence path; it takes the one that is already correct.
+    const budget = await consumeGoogleDailyCap(db, 'placesNearby');
+    if (!budget.ok) {
+      console.warn(`⚠️ School lookup not attempted (${budget.reason}); reporting no data rather than none found`);
       return [];
     }
 

@@ -193,16 +193,31 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
   {
     id: 'google',
     name: 'Google Maps Platform',
-    description: 'Geocoding, Places autocomplete and Street View imagery for the map view and address capture.',
+    description: 'Geocoding, Places, Distance Matrix, Street View and Static Maps — for the map view, address capture and report location evidence.',
     category: 'property_data',
     tags: ['maps', 'geocoding', 'places', 'street view', 'autocomplete'],
     docsUrl: 'https://developers.google.com/maps/documentation',
     fallbackIcon: 'map',
     fields: [
       { key: 'GOOGLE_MAPS_API_KEY', label: 'Maps API Key', placeholder: 'AIza...', type: 'password', required: true },
-      { key: 'GOOGLE_GEOCODING_DAILY_LIMIT', label: 'Geocoding Daily Cap', placeholder: '2500', type: 'text', required: false },
-      { key: 'GOOGLE_PLACES_DAILY_LIMIT', label: 'Places Daily Cap', placeholder: '2500', type: 'text', required: false },
-      { key: 'GOOGLE_STREET_VIEW_DAILY_LIMIT', label: 'Street View Daily Cap', placeholder: '2500', type: 'text', required: false },
+      // One ceiling per Google BILLING SKU, because that is what Google
+      // charges for separately — a Nearby Search and an Autocomplete are
+      // different prices, and one shared number could not express either.
+      // Every ceiling the runtime reads is declared here: a spending limit
+      // that exists only in code is configuration an operator cannot see.
+      // Defaults live in `_shared/googleMapsDailyCaps.ts` and are set to keep
+      // ordinary pay-as-you-go usage under Google's free monthly thresholds;
+      // the placeholders below show them.
+      { key: 'GOOGLE_GEOCODING_DAILY_LIMIT', label: 'Geocoding Daily Cap', placeholder: '250', type: 'text', required: false },
+      { key: 'GOOGLE_PLACES_NEARBY_DAILY_LIMIT', label: 'Places Nearby Daily Cap', placeholder: '150', type: 'text', required: false },
+      { key: 'GOOGLE_PLACES_AUTOCOMPLETE_DAILY_LIMIT', label: 'Places Autocomplete Daily Cap', placeholder: '250', type: 'text', required: false },
+      { key: 'GOOGLE_DISTANCE_MATRIX_DAILY_LIMIT', label: 'Distance Matrix Daily Cap', placeholder: '250', type: 'text', required: false },
+      { key: 'GOOGLE_STREET_VIEW_DAILY_LIMIT', label: 'Street View Daily Cap', placeholder: '250', type: 'text', required: false },
+      { key: 'GOOGLE_STATIC_MAPS_DAILY_LIMIT', label: 'Static Maps Daily Cap', placeholder: '250', type: 'text', required: false },
+      // Superseded by the two SKU-specific Places caps above and still read as
+      // a fallback for Autocomplete, so a value an operator already set is not
+      // silently discarded.
+      { key: 'GOOGLE_PLACES_DAILY_LIMIT', label: 'Places Daily Cap (legacy)', placeholder: '250', type: 'text', required: false },
     ],
   },
 

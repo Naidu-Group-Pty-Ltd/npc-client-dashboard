@@ -78,7 +78,18 @@ describe('RF-7.2B.1B0 — the geocoder says which kind of failure it was', () =>
   });
 
   it('declares an outcome type that carries providerRefused', () => {
-    expect(src).toMatch(/type GeocodeOutcome[\s\S]{0,200}providerRefused:\s*boolean/);
+    // Judged on the DECLARATION with its comments stripped, not on a byte
+    // window from the type's name. The window was 200 characters and RC-2
+    // pushed the field out of it by explaining, above the field, why a cost
+    // ceiling is a separate flag — a failure that says nothing about whether
+    // the type is right. This file already learned that lesson once, in
+    // `maps providerRefused onto it`; it applies here too.
+    const at = src.indexOf('type GeocodeOutcome');
+    expect(at).toBeGreaterThan(-1);
+    // To the blank line that ends it — a `;` would stop inside the first
+    // union member, which is where `{ ok: true; lat: number; … }` puts one.
+    const declaration = codeOnly(src.slice(at, src.indexOf('\n\n', at)));
+    expect(declaration).toMatch(/providerRefused:\s*boolean/);
     expect(src).toContain('Promise<GeocodeOutcome>');
   });
 
@@ -150,8 +161,34 @@ describe('RF-7.2B.1B0 — the reason reaches the caller', () => {
     expect(assignment).toContain('geocoded.providerRefused');
     expect(assignment).toContain("'geocoder_unavailable'");
     expect(assignment).toContain("'address_not_resolved'");
-    // A refused provider is the ONLY route to `geocoder_unavailable`.
-    expect(assignment).toMatch(/!geocoded\.providerRefused[\s\S]*'address_not_resolved'[\s\S]*'geocoder_unavailable'/);
+
+    // A refused provider is the ONLY route to `geocoder_unavailable`. Asserted
+    // as a property of the statement rather than as one arrangement of it: the
+    // original regex pinned a particular ternary shape, and RC-2 changed the
+    // shape (adding a third outcome) without weakening the rule. What must
+    // hold is that `geocoder_unavailable` is reachable only where
+    // `providerRefused` is being tested — so every OTHER branch of the
+    // statement names a different reason.
+    const guardedByRefusal = assignment
+      .split(/\?|:/)
+      .filter((part) => part.includes("'geocoder_unavailable'"));
+    expect(guardedByRefusal).toHaveLength(1);
+    expect(assignment.indexOf('geocoded.providerRefused'))
+      .toBeLessThan(assignment.indexOf("'geocoder_unavailable'"));
+
+    // RC-2 — and a refused SPEND is not a provider refusal. It produces no
+    // coordinate either, but it sends an operator to a completely different
+    // remedy: this deployment's own controls rather than broken map access.
+    // The two must never collapse into one reason.
+    //
+    // The state is named for what happened rather than for one of its causes:
+    // the lookup was not attempted, and it might not have been because the
+    // provider was switched off, because the allowance was spent, or because
+    // the shared counter could not be read. `capReason` carries which.
+    expect(assignment).toContain('geocoded.capped');
+    expect(assignment).toContain("'geocoder_not_attempted'");
+    expect(assignment.indexOf('geocoded.capped'))
+      .toBeLessThan(assignment.indexOf('geocoded.providerRefused'));
   });
 
   it('its message says the fault is ours and clears the address', () => {

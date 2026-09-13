@@ -888,25 +888,39 @@ export function describeManualStats(item: BuilderStockItem): ManualStatsReading 
     // it is truthy.
     return value === null || value === undefined || !Number.isFinite(Number(value));
   });
-  const labelOf = (field: ManualStatField) =>
-    (MANUAL_STAT_SPECS.find((spec) => spec.field === field)?.label ?? field).toLowerCase();
+  const labelOf = (field: ManualStatField) => {
+    const spec = MANUAL_STAT_SPECS.find((entry) => entry.field === field);
+    return spec?.prose ?? (spec?.label ?? field).toLowerCase();
+  };
 
-  const clauses: string[] = [];
+  /*
+   * LABEL FIRST, THEN THE FIELDS. The brand's voice is "precise, unhurried,
+   * quietly authoritative — it states the position, names the next action, and
+   * stops". The first version explained itself instead: "Bedrooms, bathrooms,
+   * car spaces and home are not in your stock list · bedrooms stated by you"
+   * reads as an apology, repeats "your", and joins two independent statements
+   * with a middot. Naming the CONDITION first lets a builder scan the state
+   * without reading the list, and the two conditions become two sentences
+   * rather than one run-on.
+   */
+  const sentences: string[] = [];
   if (missing.length) {
-    clauses.push(
-      `${sentenceList(missing.map(labelOf))} ${missing.length === 1 ? 'is' : 'are'} not in your stock list`,
-    );
+    sentences.push(`Not specified in your stock list: ${sentenceList(missing.map(labelOf))}.`);
   }
   if (stated.length) {
-    clauses.push(`${sentenceList(stated.map(labelOf))} stated by you`);
+    sentences.push(`Supplied by you: ${sentenceList(stated.map(labelOf))}.`);
   }
-  const note = clauses.length
-    ? `${clauses.join(' · ').replace(/^./, (c) => c.toUpperCase())}.`
-    : null;
+  const note = sentences.length ? sentences.join(' ') : null;
 
   return {
     stated, missing, note,
-    action: missing.length ? 'Add these figures' : 'Edit figures',
+    /*
+     * The act, named and stopped. "Add these figures" leant on a demonstrative
+     * and "Edit figures" named a form rather than the record; both sit under a
+     * ruled SCHEDULE, which is the artefact a builder already works in and the
+     * noun the rest of this portal uses.
+     */
+    action: missing.length ? 'Complete the schedule' : 'Update the schedule',
   };
 }
 

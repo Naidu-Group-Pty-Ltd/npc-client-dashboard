@@ -38,22 +38,22 @@ function draw(node: React.ReactElement) {
   return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
 }
 
-const open = () => fireEvent.click(screen.getByRole('button', { name: /figures/i }));
+const open = () => fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
 const boxFor = (label: RegExp) => screen.getByLabelText(label) as HTMLInputElement;
 
 beforeEach(() => { mutate.mockReset(); });
 
 describe('the control on the plate', () => {
-  it('offers to ADD where the stock list left a figure empty', () => {
+  it('offers to COMPLETE where the stock list left a figure empty', () => {
     draw(<BuilderStockFiguresButton item={item()} />);
-    expect(screen.getByRole('button', { name: /Add these figures/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Complete the schedule/i })).toBeTruthy();
   });
 
-  it('offers to EDIT where the stock list stated everything', () => {
+  it('offers to UPDATE where the stock list stated everything', () => {
     draw(<BuilderStockFiguresButton item={item({
       bedrooms: 4, bathrooms: 3, car_spaces: 2, building_size_sqm: 174,
     })} />);
-    expect(screen.getByRole('button', { name: /Edit figures/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Update the schedule/i })).toBeTruthy();
   });
 });
 
@@ -75,7 +75,7 @@ describe('the control on the plate', () => {
 describe('the control’s weight follows what is outstanding', () => {
   it('is marked outstanding while a figure is missing', () => {
     draw(<BuilderStockFiguresButton item={item()} />);
-    expect(screen.getByRole('button', { name: /Add these figures/i })
+    expect(screen.getByRole('button', { name: /Complete the schedule/i })
       .getAttribute('data-figures')).toBe('outstanding');
   });
 
@@ -83,7 +83,7 @@ describe('the control’s weight follows what is outstanding', () => {
     draw(<BuilderStockFiguresButton item={item({
       bedrooms: 4, bathrooms: 3, car_spaces: 2, building_size_sqm: 174,
     })} />);
-    expect(screen.getByRole('button', { name: /Edit figures/i })
+    expect(screen.getByRole('button', { name: /Update the schedule/i })
       .getAttribute('data-figures')).toBe('stated');
   });
 
@@ -93,7 +93,7 @@ describe('the control’s weight follows what is outstanding', () => {
     draw(<BuilderStockFiguresButton item={item({
       bedrooms: 0, bathrooms: 1, car_spaces: 0, building_size_sqm: 52,
     })} />);
-    expect(screen.getByRole('button', { name: /Edit figures/i })
+    expect(screen.getByRole('button', { name: /Update the schedule/i })
       .getAttribute('data-figures')).toBe('stated');
   });
 });
@@ -104,8 +104,8 @@ describe('the dialog shows what the document said', () => {
     open();
     // A builder disagreeing with their own file should see the reading they
     // are replacing before they type over it.
-    expect(screen.getByText(/Your stock list says 4/)).toBeTruthy();
-    expect(screen.getByText(/Your stock list says 350 m²/)).toBeTruthy();
+    expect(screen.getByText(/Stock list: 4/)).toBeTruthy();
+    expect(screen.getByText(/Stock list: 350 m²/)).toBeTruthy();
   });
 
   it('says the file was silent, rather than leaving a bare empty field', () => {
@@ -113,7 +113,7 @@ describe('the dialog shows what the document said', () => {
     // product that lost the number — the whole reason Lot 324 was reported.
     draw(<BuilderStockFiguresButton item={item()} />);
     open();
-    expect(screen.getAllByText('Not in your stock list').length).toBe(4);
+    expect(screen.getAllByText('Not specified').length).toBe(4);
   });
 
   it('reads a document value from `stated_*` once a builder has overridden it', () => {
@@ -124,7 +124,7 @@ describe('the dialog shows what the document said', () => {
     open();
     // The row now CARRIES 3 because the server overlaid it. The document said
     // 4, and that is what the builder is shown underneath.
-    expect(screen.getByText(/Your stock list says 4/)).toBeTruthy();
+    expect(screen.getByText(/Stock list: 4/)).toBeTruthy();
     expect(boxFor(/^Bedrooms/).value).toBe('3');
   });
 });
@@ -162,7 +162,7 @@ describe('saving', () => {
     draw(<BuilderStockFiguresButton item={item()} />);
     open();
     fireEvent.change(boxFor(/^Bedrooms/), { target: { value: '4' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save figures/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Save schedule/i }));
 
     expect(mutate).toHaveBeenCalledTimes(1);
     const [payload] = mutate.mock.calls[0];
@@ -177,17 +177,17 @@ describe('saving', () => {
     draw(<BuilderStockFiguresButton item={item()} />);
     open();
     fireEvent.change(boxFor(/^Car spaces/), { target: { value: '0' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save figures/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Save schedule/i }));
     expect(mutate.mock.calls[0][0].stats.car_spaces).toBe(0);
   });
 
   it('cannot be saved until something changes', () => {
     draw(<BuilderStockFiguresButton item={item()} />);
     open();
-    const save = screen.getByRole('button', { name: /Save figures/i }) as HTMLButtonElement;
+    const save = screen.getByRole('button', { name: /Save schedule/i }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.change(boxFor(/^Bedrooms/), { target: { value: '4' } });
-    expect((screen.getByRole('button', { name: /Save figures/i }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: /Save schedule/i }) as HTMLButtonElement).disabled)
       .toBe(false);
   });
 
@@ -198,7 +198,7 @@ describe('saving', () => {
     draw(<BuilderStockFiguresButton item={item()} />);
     open();
     fireEvent.change(boxFor(/^Bedrooms/), { target: { value: '3000' } });
-    fireEvent.click(screen.getByRole('button', { name: /Save figures/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Save schedule/i }));
     // The server REFUSES rather than clamping, so its message is worth
     // showing verbatim instead of "something went wrong".
     expect(within(screen.getByRole('alert')).getByText(/between 0 and 99/)).toBeTruthy();

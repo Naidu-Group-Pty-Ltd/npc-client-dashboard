@@ -324,14 +324,42 @@ something the other does not.
 
 **THE NOTE NAMES THE FIGURES, AND SITS UNDER THE SCHEDULE** — where a drawing
 puts a note, and where a builder already is when they notice something wrong.
-A per-row "stated by you" chip would say one thing up to five times; the note
-says *"Home is not in your stock list · bedrooms, bathrooms and car spaces
-stated by you."* and the control beside it reads "Add these figures" or "Edit
-figures" depending on what is outstanding.
+A per-row chip would say one thing up to five times; the note names the
+condition FIRST and the fields after it — *"Not specified in your stock list:
+bathrooms, car spaces and home size. Supplied by you: bedrooms."* — so the
+state can be read without reading the list, and two conditions are two
+sentences rather than one run-on. The control beside it reads "Complete the
+schedule" or "Update the schedule" depending on what is outstanding.
+
+The first wording was reported as unprofessional and it was: *"Bedrooms,
+bathrooms, car spaces and home are not in your stock list · bedrooms stated by
+you"* explains and apologises where the brand's voice is **"precise, unhurried,
+quietly authoritative — it states the position, names the next action, and
+stops"**. "Add these figures" leant on a demonstrative and "Edit figures" named
+a form rather than the record; *schedule* is the artefact a builder already
+works in and the noun this portal already uses. Field names get a `prose` form
+on their spec for the sentence case a bare column heading cannot carry — a row
+is headed `Home`, but "home is not specified" is not English.
 
 Price is deliberately **not** stateable here: it is the offer rather than a
 description of the product, every document this pipeline reads states one, and
 a builder changes it by re-issuing the stock list.
+
+**A CONTROL'S LEGIBILITY MUST NOT DEPEND ON THE TENANT'S HUE.** This one was
+reported unreadable twice. The first time it was a 144x15px caption with no
+border, ground or padding — "quiet, and never a button" was the wrong call for
+the only act that fills the em dashes above it, so weight now tracks what is
+owed: filled where a figure is missing, outlined where nothing is. The second
+time only the outlined state was wrong, and the cause is the one worth keeping:
+its `.55` border over a `.12` ground with the label in `--primary` itself was
+tuned by eye against the PRIME, where `--primary` is a goldenrod that carries
+easily on near-black. The White-Label admin retunes it per tenant, and on the
+deployment that reported it that token is a blue several stops darker — the
+same alphas collapsed. Rendered side by side under that blue, a brighter border
+did not fix it either: 11px of blue on obsidian is the weak part. So **the
+border carries the brand and the label is `--foreground` ink**, which holds at
+any hue a tenant can choose, and it reads better on the prime too. Anything
+tuned against one `--primary` is tuned against one tenant.
 
 ### Three things found by looking
 

@@ -160,8 +160,8 @@ function BuilderStockFiguresDialog({
     save.mutate({ stockItemId: item.id, stats }, {
       onSuccess: () => {
         toast({
-          title: 'Figures updated',
-          description: `${title} now shows the figures you stated.`,
+          title: 'Schedule updated',
+          description: `${title} now shows the figures you supplied.`,
         });
         onClose();
       },
@@ -171,9 +171,9 @@ function BuilderStockFiguresDialog({
          * so its message names the field and is worth showing verbatim rather
          * than replaced with "something went wrong".
          */
-        const message = (error as Error).message || 'Those figures could not be saved.';
+        const message = (error as Error).message || 'The schedule could not be saved.';
         setFieldError(message);
-        toast({ title: 'Those figures were not saved', description: message, variant: 'destructive' });
+        toast({ title: 'Schedule not saved', description: message, variant: 'destructive' });
       },
     });
   };
@@ -192,11 +192,10 @@ function BuilderStockFiguresDialog({
         */}
         <form onSubmit={submit} noValidate>
           <DialogHeader>
-            <DialogTitle>Figures for {title}</DialogTitle>
+            <DialogTitle>Schedule — {title}</DialogTitle>
             <DialogDescription>
-              Where your stock list does not state a figure, you can state it here.
-              What you enter is what the Command Centre sees, and it is kept when you
-              upload the list again.
+              Figures entered here appear in the Command Centre and are retained when
+              this stock list is uploaded again.
             </DialogDescription>
           </DialogHeader>
 
@@ -219,8 +218,8 @@ function BuilderStockFiguresDialog({
                     */}
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {document === null
-                        ? 'Not in your stock list'
-                        : `Your stock list says ${document.toLocaleString(AU_LOCALE)}${spec.unit ? ` ${spec.unit}` : ''}`}
+                        ? 'Not specified'
+                        : `Stock list: ${document.toLocaleString(AU_LOCALE)}${spec.unit ? ` ${spec.unit}` : ''}`}
                     </p>
                   </div>
                   <Input
@@ -242,8 +241,8 @@ function BuilderStockFiguresDialog({
           </div>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            Leave a box empty to use your stock list’s own figure. Enter 0 to state
-            that there is none.
+            Leave a field empty to retain your stock list’s figure. Enter 0 where
+            there are none.
           </p>
           {fieldError ? (
             <p className="mt-2 text-xs text-destructive" role="alert">{fieldError}</p>
@@ -256,7 +255,7 @@ function BuilderStockFiguresDialog({
             <Button type="submit" disabled={save.isPending || !dirty}>
               {save.isPending ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />Saving…</>
-              ) : 'Save figures'}
+              ) : 'Save schedule'}
             </Button>
           </DialogFooter>
         </form>

@@ -57,6 +57,47 @@ describe('the control on the plate', () => {
   });
 });
 
+/**
+ * PROMINENCE TRACKS WHAT IS OWED.
+ *
+ * This control shipped as 144x15px of 10px annotation type with no border, no
+ * ground and no padding — measured in Chromium, not guessed — and was reported
+ * as not visible enough. It is the ONLY way to fill the em dashes in the
+ * schedule above it, so on a property that is missing a figure it is now a
+ * filled control; where nothing is owed it stays outlined, because a single
+ * loud treatment would stamp a solid block on every already-complete card down
+ * a sheet.
+ *
+ * The attribute is what the stylesheet keys on, so it is the thing worth
+ * pinning: the CSS can be retuned without touching this test, but the STATE
+ * must keep tracking `missing`.
+ */
+describe('the control’s weight follows what is outstanding', () => {
+  it('is marked outstanding while a figure is missing', () => {
+    draw(<BuilderStockFiguresButton item={item()} />);
+    expect(screen.getByRole('button', { name: /Add these figures/i })
+      .getAttribute('data-figures')).toBe('outstanding');
+  });
+
+  it('is marked stated once the stock list covers every figure', () => {
+    draw(<BuilderStockFiguresButton item={item({
+      bedrooms: 4, bathrooms: 3, car_spaces: 2, building_size_sqm: 174,
+    })} />);
+    expect(screen.getByRole('button', { name: /Edit figures/i })
+      .getAttribute('data-figures')).toBe('stated');
+  });
+
+  it('counts a stated ZERO as covered, so a studio is not nagged for ever', () => {
+    // `0` is falsy; a truthiness reading here would mark a complete studio
+    // "outstanding" on every visit and never stop.
+    draw(<BuilderStockFiguresButton item={item({
+      bedrooms: 0, bathrooms: 1, car_spaces: 0, building_size_sqm: 52,
+    })} />);
+    expect(screen.getByRole('button', { name: /Edit figures/i })
+      .getAttribute('data-figures')).toBe('stated');
+  });
+});
+
 describe('the dialog shows what the document said', () => {
   it('names the stock list’s own reading under each field', () => {
     draw(<BuilderStockFiguresButton item={item({ bedrooms: 4, land_size_sqm: 350 })} />);

@@ -59,6 +59,25 @@ export function BuilderStockFiguresButton({
       <button
         type="button"
         className={className ?? 'bd-spec-note-action'}
+        /*
+         * PROMINENCE TRACKS WHAT IS OWED.
+         *
+         * This control is the ONLY way to fill the em dashes in the schedule
+         * above it, and it first shipped as 144x15px of 10px annotation type
+         * with no border, no ground and no padding — measured, not guessed. It
+         * read as a footnote to a footnote: on the reported property it sat
+         * further from the dashes it repairs than the sentence explaining them
+         * did. "Quiet, and never a button" was the wrong call for the one act
+         * the surface exists to offer.
+         *
+         * So a property with a figure MISSING gets a filled control, and one
+         * where nothing is owed gets an outlined one. Both are unmistakably
+         * controls; only the first competes for attention, because only the
+         * first is asking for anything. A single loud treatment would put a
+         * solid block on every card down a sheet of properties that are
+         * already complete.
+         */
+        data-figures={reading.missing.length ? 'outstanding' : 'stated'}
         onClick={() => setOpen(true)}
       >
         <PencilRuler className="h-3 w-3" aria-hidden />

@@ -744,9 +744,18 @@
     margin: 0; min-width: 0; font-size: .75rem; line-height: 1.4;
     color: hsl(var(--muted-foreground));
   }
-  /* Quiet, and never a button: stating a figure is an ordinary correction to
-     a builder's own record, not an act the plate should shout about. It
-     still carries the 44px touch floor `utilities.css` gives a control. */
+  /* A CONTROL, AND SIZED LIKE ONE — with its weight set by what is owed.
+     The first version of this was "quiet, and never a button": no border, no
+     ground, no padding, 10px type. Measured in a real Chromium it came to
+     144x15px, and on the reported property it sat FURTHER from the em dashes
+     it repairs than the sentence explaining them did — a footnote to a
+     footnote, for the one act this whole surface exists to offer.
+     A drawing flags outstanding work with a revision tag, so that is the
+     idiom: a boxed, mono, letterspaced tag. Both states are unmistakably
+     controls; only the outstanding one is filled, because a single loud
+     treatment would stamp a solid block on every card down a sheet of
+     properties that are already complete. The 44px touch floor under 768px
+     comes from `utilities.css`, which already covers every `button`. */
   .builder-portal-theme .bd-spec-note-action {
     /* ALWAYS AT THE RIGHT-HAND END, note or no note. `justify-content:
        space-between` puts a lone child at the START, so a property whose
@@ -755,15 +764,37 @@
        same sheet. */
     margin-left: auto;
     display: inline-flex; align-items: center; gap: .375rem; flex: none;
-    background: none; border: 0; padding: 0; cursor: pointer;
-    font-family: var(--font-mono); font-size: .625rem; font-weight: 600;
-    letter-spacing: .14em; text-transform: uppercase;
+    /* NO `width` HERE. `.passport-action` declared one and lost to the
+       `.w-auto` every call site paired it with, because both are single-class
+       selectors and source order decided. A control is sized by its padding
+       and its label. */
+    padding: .5rem .8rem; cursor: pointer;
+    min-height: 2rem;
+    border: 1px solid hsl(var(--primary) / .55);
+    border-radius: 3px;
+    background: hsl(var(--primary) / .12);
     color: hsl(var(--primary));
-    transition: color 120ms ease-out;
+    font-family: var(--font-mono); font-size: .6875rem; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase;
+    transition: background-color 120ms ease-out, color 120ms ease-out,
+                border-color 120ms ease-out;
   }
-  .builder-portal-theme .bd-spec-note-action:hover { color: hsl(var(--foreground)); }
+  .builder-portal-theme .bd-spec-note-action:hover {
+    background: hsl(var(--primary) / .22);
+    border-color: hsl(var(--primary) / .8);
+  }
+  /* SOMETHING IS MISSING AND ONLY THIS FIXES IT. */
+  .builder-portal-theme .bd-spec-note-action[data-figures="outstanding"] {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+  .builder-portal-theme .bd-spec-note-action[data-figures="outstanding"]:hover {
+    background: hsl(var(--primary) / .88);
+    border-color: hsl(var(--primary) / .88);
+  }
   .builder-portal-theme .bd-spec-note-action:focus-visible {
-    outline: 2px solid hsl(var(--ring)); outline-offset: 3px; border-radius: 2px;
+    outline: 2px solid hsl(var(--ring)); outline-offset: 3px;
   }
 
   /* ── AN EMPTY PLATE ───────────────────────────────────────────

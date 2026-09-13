@@ -252,14 +252,23 @@ Deno.serve(async (req) => {
       console.error("[send-ghl-message] GHL API error:", ghlRes.status, ghlData);
       const safeError = providerError(ghlRes.status, ghlData, channel);
       if (idempotencyKey) {
-        await supabase.from('ghl_conversation_messages').upsert({
+        // `message_type` is NOT written. It duplicates `channel_type` and the
+        // column exists in no migration and no generated type — see the note
+        // on `messageRecord` below.
+        const { error: failRowError } = await supabase.from('ghl_conversation_messages').upsert({
           ghl_message_id: `failed-${idempotencyKey}`,
           client_request_id: idempotencyKey,
           conversation_id: convRecord.id,
           direction: 'outbound', body: message, channel_type: channel,
-          message_type: channel, message_status: 'failed', error_message: safeError,
+          message_status: 'failed', error_message: safeError,
           ghl_date_added: new Date().toISOString(),
         }, { onConflict: 'ghl_message_id' });
+        if (failRowError) {
+          // Named rather than discarded. This row is what the retry action
+          // reads, and a write that silently did not happen is how the retry
+          // came to mint a fresh key every time.
+          console.error('[send-ghl-message] failed-state row not written:', failRowError.message);
+        }
       }
       return new Response(
         JSON.stringify({
@@ -273,13 +282,33 @@ Deno.serve(async (req) => {
     console.log(`[send-ghl-message] Message sent successfully: ${ghlData.messageId || ghlData.id}`);
 
     // Store the outbound message in our database
+    /*
+      `message_type` used to sit here beside `channel_type`, carrying the same
+      value, and `ghl_conversation_messages` HAS NO SUCH COLUMN — not in the
+      table, not in any migration, not in the generated types. PostgREST answers
+      a write naming an unknown column with PGRST204, the error was re-thrown
+      below, and the outer catch returned HTTP 500 "CRM messaging is temporarily
+      unavailable" — AFTER GoHighLevel had already accepted and delivered the
+      message.
+
+      So every outbound SMS and WhatsApp this product has ever sent from the CRM
+      was really sent, never recorded, and reported to the operator as a
+      failure; the conversation's own metadata update and `logApiUsage` below it
+      never ran either. The operator then retried, and the duplicate guard above
+      could not stop it, because the read that guards it named `client_request_id`
+      on a table that did not have that column either and discarded the error.
+
+      The other three columns are real again as of
+      `20260913094500_conversation_delivery_safety_reissue.sql`, which re-issues
+      a migration committed on 23 Jul 2026 and applied to nothing. This one is
+      simply deleted: `channel_type` already carries it.
+    */
     const messageRecord = {
       ghl_message_id: ghlData.messageId || ghlData.id || crypto.randomUUID(),
       conversation_id: null as string | null,
       direction: "outbound",
       body: message,
       channel_type: channel,
-      message_type: channel,
       message_status: "sent",
       client_request_id: idempotencyKey || null,
       ghl_date_added: new Date().toISOString(),

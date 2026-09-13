@@ -173,7 +173,6 @@ interface Message {
   ghl_message_id: string;
   direction: string;
   body: string | null;
-  message_type?: string | null;
   content_type?: string | null;
   channel_type?: string | null;
   message_status: string | null;
@@ -514,7 +513,6 @@ export default function Conversations() {
             ghl_message_id: `opt-${Date.now()}`,
             body: variables.message,
             direction: "outbound",
-            message_type: variables.channel,
             channel_type: variables.channel,
             content_type: null,
             ghl_date_added: new Date().toISOString(),
@@ -542,7 +540,6 @@ export default function Conversations() {
             ghl_message_id: messageId,
             body: variables.message,
             direction: "outbound",
-            message_type: variables.channel,
             channel_type: variables.channel,
             content_type: null,
             ghl_date_added: new Date().toISOString(),

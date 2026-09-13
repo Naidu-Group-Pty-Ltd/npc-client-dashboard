@@ -85,7 +85,6 @@ interface Conversation {
   id: string;
   ghl_conversation_id: string;
   channel_type: string;
-  contact_name: string | null;
   last_message_body: string | null;
   last_message_date: string | null;
   last_message_direction: string | null;
@@ -98,7 +97,6 @@ interface Message {
   direction: string;
   channel_type: string | null;
   body: string | null;
-  message_type: string | null;
   message_status: string | null;
   ghl_date_added: string | null;
   attachment_urls: string[] | null;
@@ -252,7 +250,6 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
             body: variables.message,
             direction: 'outbound',
             channel_type: replyChannel,
-            message_type: variables.type,
             ghl_date_added: new Date().toISOString(),
             message_status: 'sent',
             attachment_urls: null,
@@ -291,9 +288,12 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
   const filteredConversations = useMemo(() => {
     if (!searchTerm) return conversations;
     const term = searchTerm.toLowerCase();
+    // `contact_name` was a third clause here and `ghl_conversations` has no
+    // such column, so that term matched nothing on any row — and this tab is
+    // already scoped to ONE named client, where searching by contact name
+    // would match everything or nothing anyway.
     return conversations.filter(
       (c) =>
-        c.contact_name?.toLowerCase().includes(term) ||
         c.last_message_body?.toLowerCase().includes(term) ||
         c.channel_type?.toLowerCase().includes(term)
     );
@@ -446,7 +446,7 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <span className={cn('text-sm truncate', conv.unread_count > 0 ? 'font-semibold' : 'font-medium')}>
-                      {conv.contact_name || clientName}
+                      {clientName}
                     </span>
                     <span className="text-xs text-muted-foreground shrink-0">
                       {formatConversationDate(conv.last_message_date)}
@@ -492,7 +492,7 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
           <ChannelIcon className="h-3.5 w-3.5" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{selectedConversation.contact_name || clientName}</p>
+          <p className="text-sm font-medium truncate">{clientName}</p>
           <p className="text-[10px] text-muted-foreground capitalize">{normalizedSelectedChannel.replace('_', ' ')}</p>
         </div>
         <Button

@@ -735,20 +735,30 @@ Deno.serve(async (req) => {
       if (!convExists) {
         console.warn('[Send Email] Skipping thread persist for unknown ghlConversationId');
       } else try {
+        // `message_type` used to sit here beside `channel_type` carrying the
+        // same value, and the column exists nowhere — not in the table, not in
+        // a migration, not in the generated types. PostgREST answers PGRST204,
+        // the error below was not read, and so every emailed reply this
+        // product has sent was absent from the thread it was sent in. The
+        // spec that vouches for this write is structural and could not see it.
         const messageRecord = {
           ghl_message_id: `email-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
           conversation_id: ghlConversationId,
           direction: 'outbound',
           body: emailBody,
           channel_type: 'email',
-          message_type: 'email',
           message_status: 'delivered',
           ghl_date_added: new Date().toISOString(),
         };
 
-        await supabase.from('ghl_conversation_messages').upsert(messageRecord, {
-          onConflict: 'ghl_message_id',
-        });
+        const { error: threadPersistError } = await supabase
+          .from('ghl_conversation_messages')
+          .upsert(messageRecord, { onConflict: 'ghl_message_id' });
+        if (threadPersistError) {
+          // Named, never thrown: the email has already gone, and failing the
+          // send over the record would be the worse of the two outcomes.
+          console.error('[Send Email] thread persist failed:', threadPersistError.message);
+        }
 
         // Update conversation metadata
         await supabase

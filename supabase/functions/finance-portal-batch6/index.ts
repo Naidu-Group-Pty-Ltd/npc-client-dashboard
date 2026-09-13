@@ -435,14 +435,24 @@ async function runRemindersDue(supabase: any, json: (data: unknown, status?: num
       notifiedPartner++;
     } else if (row.client_id) {
       const tone = nextLevel === 'firm' ? 'Important' : 'Friendly nudge';
-      await supabase.from('client_portal_messages').insert({
+      // `client_portal_messages` carries one `message` column and has no
+      // `subject`, `body` or `metadata` — so this insert answered PGRST204 and
+      // the automated document reminder never reached a single client, while
+      // `notifiedClient` counted it as sent. The subject is folded into the
+      // message the way `cross-portal-outbox-worker` already writes one.
+      const { error: reminderError } = await supabase.from('client_portal_messages').insert({
         client_id: row.client_id,
         sender_type: 'system',
-        subject: `${tone}: ${row.label} still outstanding`,
-        body: `Hi — we're still waiting on "${row.label}" to keep your file moving. Please upload when you have a moment.`,
-        metadata: { kind: 'doc_auto_reminder', instance_id: row.id, level: nextLevel, count: nextCount },
+        sender_name: `${tone}: ${row.label} still outstanding`,
+        message: `Hi — we're still waiting on "${row.label}" to keep your file moving. Please upload when you have a moment.`,
       });
-      notifiedClient++;
+      if (reminderError) {
+        // Counted only when it was really written. A reminder tally that
+        // includes the ones nobody received is worse than no tally.
+        console.error('[finance-portal-batch6] client reminder not written:', reminderError.message);
+      } else {
+        notifiedClient++;
+      }
     }
   }
   return json({ ok: true, processed: dueRows?.length || 0, notified_client: notifiedClient, notified_partner: notifiedPartner });

@@ -4783,11 +4783,15 @@ async function executeRunPlaybook(sb: any, args: any, userId: string) {
       const stepResult = await executeTool(sb, step.tool_name, stepArgs, userId);
       results.push({ step: i+1, tool: step.tool_name, status: 'success', result: stepResult });
       // Log each step to audit trail
+      // `agent_action_log` has no `metadata` column, and this write is fire
+      // and forget — so PostgREST answered PGRST204, nothing was logged, and
+      // the playbook audit trail has always been empty. The playbook context
+      // that key carried has no column of its own, and inventing one is a
+      // schema change this does not make; the row is what matters.
       await sb.from('agent_action_log').insert({
         user_id: userId, tool_name: step.tool_name, tool_arguments: stepArgs,
         tool_result: stepResult, status: stepResult.error ? 'error' : 'success',
         execution_time_ms: Date.now() - stepStart,
-        metadata: { source: 'playbook', playbook_id: args.playbook_id, playbook_name: pb.name, step_index: i },
       }).then(() => {}).catch(() => {}); // fire and forget
     }
     catch (e: any) {
@@ -4796,7 +4800,6 @@ async function executeRunPlaybook(sb: any, args: any, userId: string) {
         user_id: userId, tool_name: step.tool_name, tool_arguments: stepArgs,
         tool_result: { error: e.message }, status: 'error',
         execution_time_ms: Date.now() - stepStart,
-        metadata: { source: 'playbook', playbook_id: args.playbook_id, playbook_name: pb.name, step_index: i },
       }).then(() => {}).catch(() => {});
     }
   }

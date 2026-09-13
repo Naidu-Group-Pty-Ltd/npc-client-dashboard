@@ -319,10 +319,20 @@ Deno.serve(async (req) => {
       ].join('|');
       if (!key || key === '||') return true;
       try {
+        // The column is `caller_function`. It was `caller`, which the table
+        // does not have — so PostgREST answered PGRST204 rather than the 23505
+        // this branch is looking for, the nonce was never recorded, and every
+        // notification was claimed. The idempotency this block exists for has
+        // never been in force.
         const { error } = await supabase
           .from('internal_request_nonces')
-          .insert({ nonce: `outlook:${key}`, caller: 'outlook-email-webhook' });
+          .insert({ nonce: `outlook:${key}`, caller_function: 'outlook-email-webhook' });
         if (error && (error as any).code === '23505') return false;
+        if (error) {
+          // Named rather than swallowed: this is best-effort by design, but a
+          // guard that cannot write is a guard that is not running.
+          console.warn('[outlook-email-webhook] nonce not recorded:', error.message);
+        }
         return true;
       } catch { return true; }
     }

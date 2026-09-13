@@ -66,7 +66,7 @@ import { format, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
-import { isCorrespondence } from "@/lib/ghl/conversationEntry";
+import { isCorrespondence, summariseWithheldEntries, withheldEntriesSentence } from "@/lib/ghl/conversationEntry";
 
 // ── Channel helpers ──────────────────────────────────────────
 function normalizeChannel(ch: string | undefined): string {
@@ -434,7 +434,12 @@ export default function Conversations() {
     () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
     [messages],
   );
-  const withheldEntryCount = messages.length - correspondence.length;
+  const withheldNotice = useMemo(
+    () => withheldEntriesSentence(
+      summariseWithheldEntries(messages.map((msg) => msg.channel_type)),
+    ),
+    [messages],
+  );
 
   // ── Mailboxes ──
   const { data: mailboxes = [] } = useQuery({
@@ -1811,15 +1816,9 @@ export default function Conversations() {
                         When this contact sends or receives CRM messages, the
                         thread will appear here.
                       </p>
-                      {withheldEntryCount > 0 && (
+                      {withheldNotice && (
                         <p className="mt-3 text-xs leading-5 text-muted-foreground dark:text-muted-foreground">
-                          {withheldEntryCount === 1
-                            ? "One CRM activity entry"
-                            : `${withheldEntryCount} CRM activity entries`}{" "}
-                          {withheldEntryCount === 1 ? "is" : "are"} recorded
-                          against this contact — opportunity, appointment and
-                          call records rather than correspondence. They are kept
-                          and are not shown here.
+                          {withheldNotice}
                         </p>
                       )}
                     </div>

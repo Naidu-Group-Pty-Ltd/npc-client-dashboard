@@ -44,7 +44,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import { toast } from 'sonner';
-import { isCorrespondence } from '@/lib/ghl/conversationEntry';
+import { isCorrespondence, summariseWithheldEntries, withheldEntriesSentence } from '@/lib/ghl/conversationEntry';
 
 // Normalize GHL channel types
 function normalizeChannel(ch: string | undefined): string {
@@ -198,7 +198,12 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
     () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
     [messages],
   );
-  const withheldEntryCount = messages.length - correspondence.length;
+  const withheldNotice = useMemo(
+    () => withheldEntriesSentence(
+      summariseWithheldEntries(messages.map((msg) => msg.channel_type)),
+    ),
+    [messages],
+  );
 
   // Trigger sync
   const syncMutation = useMutation({
@@ -535,15 +540,8 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
           <div className="text-center py-12 text-muted-foreground">
             <MessageSquare className="h-6 w-6 mx-auto mb-2 opacity-40" />
             <p className="text-xs">No messages in this conversation</p>
-            {withheldEntryCount > 0 && (
-              <p className="mt-2 text-[11px] leading-5 px-6">
-                {withheldEntryCount === 1
-                  ? 'One CRM activity entry is'
-                  : `${withheldEntryCount} CRM activity entries are`}{' '}
-                recorded against this contact — opportunity, appointment and call
-                records rather than correspondence. They are kept and are not
-                shown here.
-              </p>
+            {withheldNotice && (
+              <p className="mt-2 text-[11px] leading-5 px-6">{withheldNotice}</p>
             )}
           </div>
         ) : (

@@ -13,6 +13,7 @@ import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '.
 import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
 import { canAccessFinanceClient } from '../_shared/financePortalObjectAuthz.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
+import { isCorrespondence } from '../_shared/ghlConversationMap.pure.ts';
 import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
@@ -145,13 +146,43 @@ async function listInbox(supabase: any, partner: any, body: any, json: JsonRespo
   let ghlMsgs: any[] = [];
   if ((ghlConv.data ?? []).length > 0) {
     const convIds = ghlConv.data!.map((c: any) => c.id);
+    // GoHighLevel's `/conversations/{id}/messages` returns a thread's ENTRIES,
+    // and GHL interleaves its own activity records among them under the same
+    // field that carries the channel — "Opportunity updated", an appointment
+    // title, "DnD enabled by customer", a call with a null body. Measured on
+    // the prime 13 Sep 2026: 4,753 of 13,255 rows, 36% of the table.
+    //
+    // They must not reach a finance partner as correspondence. Unfiltered they
+    // did two things here: `CHANNEL_META[m.channel] ?? CHANNEL_META.portal`
+    // drew each one with a blue **Portal** badge and `direction: 'outbound'`
+    // right-aligned it, so a partner read "Opportunity updated" as a message
+    // the business sent their client; and a `type_call` row (null body) drew an
+    // empty timestamped bubble.
+    //
+    // The exclusion is BOTH server-side and in code, and the two are not
+    // redundant. `isCorrespondence` is the rule — one implementation, shared
+    // with the sync that writes these rows and with both staff surfaces. The
+    // SQL predicate exists because `.limit()` is applied by the database BEFORE
+    // anything is classified: on a client whose recent history is mostly
+    // opportunity updates, an unfiltered window fills with activity and the
+    // real SMS and email fall out of it entirely, so the partner sees fewer
+    // messages than they have. Excluding server-side is what makes the window
+    // mean 200 messages rather than 200 rows.
+    //
+    // The SQL names what production holds; the code decides. A future
+    // `type_activity_invoice` is caught by `isCorrespondence`'s prefix rule
+    // even though the predicate below does not name it — it would consume
+    // window slots until the predicate learns it, which costs breadth and never
+    // correctness.
     const { data: msgs } = await supabase
       .from('ghl_conversation_messages')
       .select('id, conversation_id, ghl_message_id, direction, channel_type, body, sender_name, ghl_date_added, created_at')
       .in('conversation_id', convIds)
+      .not('channel_type', 'like', 'type_activity%')
+      .not('channel_type', 'in', '("type_call","call")')
       .order('ghl_date_added', { ascending: false })
       .limit(limit);
-    ghlMsgs = msgs ?? [];
+    ghlMsgs = (msgs ?? []).filter((m: any) => isCorrespondence(m.channel_type));
   }
 
   const unified: any[] = [];

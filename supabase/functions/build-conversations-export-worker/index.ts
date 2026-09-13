@@ -14,6 +14,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { strToU8, zipSync } from 'https://esm.sh/fflate@0.8.2';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { verifyInternal } from '../_shared/auth_v2.ts';
+import { isCorrespondence, mapChannelType } from '../_shared/ghlConversationMap.pure.ts';
 
 const PAGE_SIZE = 1000;             // pagination page size for messages
 const IN_CHUNK_SIZE = 100;           // max IDs per .in() call (URL length limit)
@@ -28,19 +29,15 @@ const HEADERS = [
   'Message Type', 'Status', 'Body', 'Attachments',
 ];
 
-function normalizeChannel(ch: string | undefined | null): string {
-  if (!ch) return 'sms';
-  const lower = String(ch).toLowerCase();
-  const map: Record<string, string> = {
-    type_phone: 'sms', phone: 'sms', sms: 'sms', type_sms: 'sms', type_sms_reaction: 'sms',
-    type_email: 'email', email: 'email',
-    type_whatsapp: 'whatsapp', whatsapp: 'whatsapp',
-    type_instagram: 'instagram', instagram: 'instagram',
-    type_facebook: 'facebook', facebook: 'facebook',
-    type_live_chat: 'live_chat', live_chat: 'live_chat', livechat: 'live_chat',
-  };
-  return map[lower] || lower;
-}
+/**
+ * The channel vocabulary is `mapChannelType`, imported rather than restated.
+ *
+ * This file held a FOURTH copy of that table and it had drifted furthest: no
+ * `mail`, no `whats_app`, no numeric forms, and — the one that showed — no
+ * `type_activity_*` and no `type_call`, so `map[lower] || lower` passed those
+ * straight through and the Channel column of a client's exported spreadsheet
+ * printed the raw `type_activity_opportunity`.
+ */
 
 function pad2(n: number) { return String(n).padStart(2, '0'); }
 function fmtDate(d: Date) {
@@ -266,24 +263,42 @@ Deno.serve(async (req) => {
         const clientInfo = conv.client_id ? clientMap.get(conv.client_id) : null;
         const clientName = clientInfo?.name || (conv.client_id ? 'Unknown' : 'Unlinked Contact');
         const clientEmail = clientInfo?.email || '';
-        const msgs = (messagesByConversation.get(conv.id) || []).sort((a, b) =>
+        const entries = (messagesByConversation.get(conv.id) || []).sort((a, b) =>
           timeMs(a.ghl_date_added) - timeMs(b.ghl_date_added)
           || timeMs(a.created_at) - timeMs(b.created_at)
         );
 
+        // `/conversations/{id}/messages` returns ENTRIES, and GHL interleaves
+        // its own activity records among them — "Opportunity updated", an
+        // appointment title, "DnD enabled by customer", a call with a null
+        // body. Measured on the prime 13 Sep 2026: 4,753 of 13,255 rows, 36%.
+        //
+        // This sheet is called Message History and is the artefact that leaves
+        // the building, so it holds what the thread holds. `isCorrespondence`
+        // is the same decision both staff surfaces and the finance portal make
+        // — one implementation, so an export can never disagree with the
+        // screen the operator launched it from. Nothing is deleted: the rows
+        // stay in the table, and the placeholder below SAYS how many were left
+        // out rather than dropping them silently.
+        const msgs = entries.filter((m: any) => isCorrespondence(m.channel_type));
+        const withheldEntries = entries.length - msgs.length;
+
       if (msgs.length === 0) {
         rows.push([
           idx, 0, clientName, clientEmail,
-          normalizeChannel(conv.channel_type), conv.ghl_contact_id || '',
+          mapChannelType(conv.channel_type), conv.ghl_contact_id || '',
           conv.ghl_conversation_id || '', '', '', '', '', '', '', '', '',
-          '(no messages)', '',
+          withheldEntries > 0
+            ? `(no messages — ${withheldEntries} CRM activity ${withheldEntries === 1 ? 'entry' : 'entries'} not exported)`
+            : '(no messages)',
+          '',
         ]);
       } else {
         msgs.forEach((m, i) => {
           const d = parseValidDate(m.ghl_date_added);
           rows.push([
             idx, i + 1, clientName, clientEmail,
-            normalizeChannel(m.channel_type || conv.channel_type),
+            mapChannelType(m.channel_type || conv.channel_type),
             conv.ghl_contact_id || '', conv.ghl_conversation_id || '',
             m.ghl_message_id || '', m.direction || '', m.sender_name || '',
             d ? fmtDate(d) : '', d ? fmtTime(d) : '',

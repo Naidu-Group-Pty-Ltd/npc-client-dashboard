@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { format, formatDistanceToNow, isToday, isYesterday } from 'date-fns';
 import { toast } from 'sonner';
+import { isCorrespondence } from '@/lib/ghl/conversationEntry';
 
 // Normalize GHL channel types
 function normalizeChannel(ch: string | undefined): string {
@@ -282,7 +283,7 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
   // Scroll to bottom when messages load
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [correspondence]);
 
   // Filter conversations
   const filteredConversations = useMemo(() => {
@@ -339,11 +340,21 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
     return format(d, 'dd/MM/yy');
   };
 
+  // Correspondence only — GHL interleaves its own activity records (opportunity,
+  // appointment, contact, call) among a thread's entries, and they are not
+  // messages. `isCorrespondence` is the shared decision; see
+  // `_shared/ghlConversationMap.pure.ts`. Nothing is deleted.
+  const correspondence = useMemo(
+    () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
+    [messages],
+  );
+  const withheldEntryCount = messages.length - correspondence.length;
+
   // Group messages by date
   const groupedMessages = useMemo(() => {
     const groups: { label: string; messages: Message[] }[] = [];
     let currentLabel = '';
-    messages.forEach((msg) => {
+    correspondence.forEach((msg) => {
       const d = msg.ghl_date_added ? new Date(msg.ghl_date_added) : new Date();
       let label: string;
       if (isToday(d)) label = 'Today';
@@ -357,7 +368,7 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
       }
     });
     return groups;
-  }, [messages]);
+  }, [correspondence]);
 
   // ===== CONVERSATION LIST VIEW =====
   if (!selectedConversation) {
@@ -515,10 +526,20 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        ) : messages.length === 0 ? (
+        ) : correspondence.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <MessageSquare className="h-6 w-6 mx-auto mb-2 opacity-40" />
             <p className="text-xs">No messages in this conversation</p>
+            {withheldEntryCount > 0 && (
+              <p className="mt-2 text-[11px] leading-5 px-6">
+                {withheldEntryCount === 1
+                  ? 'One CRM activity entry is'
+                  : `${withheldEntryCount} CRM activity entries are`}{' '}
+                recorded against this contact — opportunity, appointment and call
+                records rather than correspondence. They are kept and are not
+                shown here.
+              </p>
+            )}
           </div>
         ) : (
           <div className="space-y-4 px-1">

@@ -66,6 +66,7 @@ import { format, isToday, isYesterday } from "date-fns";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
+import { isCorrespondence } from "@/lib/ghl/conversationEntry";
 
 // ── Channel helpers ──────────────────────────────────────────
 function normalizeChannel(ch: string | undefined): string {
@@ -605,7 +606,7 @@ export default function Conversations() {
   // ── Auto-scroll messages ──
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [correspondence]);
 
   // ── Deep-link from notification ──
   useEffect(() => {
@@ -636,11 +637,26 @@ export default function Conversations() {
     return list;
   }, [conversations, channelFilter, searchTerm]);
 
+  // ── Correspondence only ──
+  // `/conversations/{id}/messages` returns a thread's ENTRIES, and GHL puts its
+  // own activity records among them — "Opportunity updated", an appointment
+  // title, "DnD enabled by customer", a call with no body at all. They are not
+  // correspondence and must not be drawn as it; `isCorrespondence` is the one
+  // place that decides, shared with the sync that writes them. Nothing is
+  // deleted: the rows stay, and 465 of this deployment's threads hold NOTHING
+  // else, which is why the empty state below reads the filtered list and says
+  // what is being withheld rather than drawing an empty scroller.
+  const correspondence = useMemo(
+    () => messages.filter((msg) => isCorrespondence(msg.channel_type)),
+    [messages],
+  );
+  const withheldEntryCount = messages.length - correspondence.length;
+
   // ── Group messages by date ──
   const groupedMessages = useMemo(() => {
     const groups: { label: string; messages: Message[] }[] = [];
     let currentLabel = "";
-    messages.forEach((msg) => {
+    correspondence.forEach((msg) => {
       const d = msg.ghl_date_added ? new Date(msg.ghl_date_added) : new Date();
       let label: string;
       if (isToday(d)) label = "Today";
@@ -654,7 +670,7 @@ export default function Conversations() {
       }
     });
     return groups;
-  }, [messages]);
+  }, [correspondence]);
 
   const formatConversationDate = (dateStr: string | null) => {
     if (!dateStr) return "";
@@ -1775,7 +1791,7 @@ export default function Conversations() {
                         Retry messages
                       </Button>
                     </div>
-                  ) : messages.length === 0 ? (
+                  ) : correspondence.length === 0 ? (
                     <div className="mx-auto mt-8 flex max-w-md flex-col items-center justify-center rounded-3xl border border-border dark:border-white/[0.09] bg-[radial-gradient(circle_at_top,rgba(251,191,36,0.10),transparent_34%),rgba(255,255,255,0.025)] px-6 py-12 text-center text-muted-foreground dark:text-muted-foreground shadow-inner shadow-sm dark:shadow-black/20">
                       <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-brand-100/20 bg-brand-300/10 text-brand-100/80">
                         <MessageSquare className="h-5 w-5" />
@@ -1787,6 +1803,17 @@ export default function Conversations() {
                         When this contact sends or receives CRM messages, the
                         thread will appear here.
                       </p>
+                      {withheldEntryCount > 0 && (
+                        <p className="mt-3 text-xs leading-5 text-muted-foreground dark:text-muted-foreground">
+                          {withheldEntryCount === 1
+                            ? "One CRM activity entry"
+                            : `${withheldEntryCount} CRM activity entries`}{" "}
+                          {withheldEntryCount === 1 ? "is" : "are"} recorded
+                          against this contact — opportunity, appointment and
+                          call records rather than correspondence. They are kept
+                          and are not shown here.
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-4">

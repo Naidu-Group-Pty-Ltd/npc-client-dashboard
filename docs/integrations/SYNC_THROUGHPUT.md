@@ -580,3 +580,98 @@ across 47 tables, and almost all of them are columns production really has and
 asking a database, so a source-tree gate would be noise. It is a deploy-time
 question: compare the repository's migrations against
 `supabase_migrations.schema_migrations` on the project itself.
+
+---
+
+## §15 — An entry is not a message, and 36% of the table is not correspondence
+
+This is the defect the deep backfill *created*, and it is the one worth reading
+first, because everything about it reported as success: rows written, no error,
+a fuller thread than yesterday.
+
+### What was measured
+
+The prime, 13 Sep 2026, after `conversation-sync-cron` had been walking history
+for roughly ninety minutes:
+
+| `channel_type` | rows | newest row | what the body says |
+|---|---:|---|---|
+| `type_activity_opportunity` | 3,821 | today 11:41 | `Opportunity updated` / `Opportunity created` |
+| `type_activity_appointment` | 673 | today 11:41 | the appointment's title |
+| `type_call` | 194 | today 11:40 | **null on all 194** |
+| `type_activity_contact` | 65 | today 11:40 | `DnD enabled by customer` |
+
+**4,753 rows — 36% of a 13,255-row table — reaching 1,150 of 1,272
+conversations.** 465 threads hold *nothing else*.
+
+`GET /conversations/{id}/messages` does not return messages. It returns a
+thread's **entries**, and GHL interleaves its own activity records among them
+under the same `messageType` field that carries the channel. One value is being
+asked both *how was this sent* and *was anything sent at all*, and it cannot
+answer the second.
+
+None of this was visible while the walk was `?limit=20` and one page. Paging the
+history properly is what surfaced it — §8's own work.
+
+### They rendered, and the near miss is the instructive part
+
+Both copies of the UI's `normalizeChannel` **already** mapped `type_activity_*`
+to `'activity'`. Knowing was never the problem. Nothing *consumed* it:
+`getOutboundBubbleClass()` switches on that value and carries arms for `sms`,
+`whatsapp` and `email`, so `'activity'` fell to `default` — which is the SMS
+treatment. "Opportunity updated" drew as a blue outbound bubble a reader cannot
+tell from a text message the business actually sent its customer, on 90% of
+threads. "DnD enabled by customer" drew **inbound**, as though the customer had
+written it. And both copies map `type_call` to `'sms'`, discarding the one fact
+that mattered: the render guards only the TEXT (`msg.body && …`) and never the
+bubble, so all 194 call rows drew an empty bubble with a timestamp in it.
+
+**A value can be normalised perfectly and still be acted on by nothing.** That
+is why the fix is a classifier the thread has to ASK, and why
+`crmConversations.spec.ts` asserts the *wiring* — that each surface groups and
+counts the filtered list — rather than asserting the module exists.
+
+### The rules
+
+**A channel says how something was sent; it cannot say whether anything was.**
+`classifyGhlEntry` answers `message` / `activity` / `call` and only `message` may
+be drawn as correspondence. It lives in `ghlConversationMap.pure.ts` beside the
+mappers that write these rows, and `src/lib/ghl/conversationEntry.ts` is a
+re-export — `normalizeChannel` is already written twice here and the copies have
+measurably drifted (the tab's knows neither `mail` nor `whats_app`), so a third
+private copy of "is this a message" was the thing to prevent.
+
+**The activity family is matched by PREFIX, never enumerated.** GHL publishes
+`TYPE_ACTIVITY_INVOICE` and `TYPE_ACTIVITY_PAYMENT` too. An enumeration is a
+list of what we happened to meet, and it would let an invoice arrive as an
+untyped bubble the day one is raised.
+
+**Nothing deletes.** An activity row is a real GHL record. This decides what the
+thread *draws*, not what the table *keeps* — the read-path rule the image
+library and the finance heal already answer to, and it has to be the read path
+because a re-sync writes these rows again and a write-path fix would leave every
+existing one rendering.
+
+**An unknown channel is still a message.** Pass-through is `mapChannelType`'s
+rule and it holds here: refusing to draw something nobody has seen before is the
+greater harm. Only the two families GHL documents as non-messages are withheld.
+
+**The empty state reads the filtered list and names what it withholds.** 465
+threads hold activity entries and nothing else; keyed on `messages.length` the
+empty state never fires on them and the reader gets a blank scroller — the
+"blank area reads as a broken page" rule. It now says how many entries are
+recorded and that they are kept.
+
+### What was deliberately not done
+
+**A call is excluded, and that is a decision rather than a conclusion.** A call
+IS a real communication event and the row carries a real `message_status`
+(`completed` / `no-answer`) — the honest way to show it is a call timeline with
+direction, status and duration, which is a surface to design rather than a bug
+to fix. Excluding it restores what a reader saw before the deep walk and loses
+nothing that was ever legible: an empty bubble is not a record of a phone call.
+The rows are in the table whenever that surface is wanted.
+
+The conversation **list** preview needed no change and was checked rather than
+assumed: `last_message_body` comes from GHL's own field on the conversation, not
+from these rows, and zero of 1,272 previews carry activity text.

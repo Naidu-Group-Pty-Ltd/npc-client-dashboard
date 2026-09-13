@@ -143,11 +143,79 @@ export async function writeMessages(
       .upsert(chunk, { onConflict: 'ghl_message_id', ignoreDuplicates: false });
     // 23505 is a unique violation the upsert already resolves for the conflict
     // target; anything else is a real fault and is named rather than counted.
+    //
+    // It STOPS rather than skipping, and that is the whole point. Items arrive
+    // newest-first, so breaking leaves the held set a contiguous prefix of the
+    // newest messages — which is exactly the invariant the pager's stop
+    // condition assumes. `continue` would write chunk 3 after chunk 2 failed
+    // and PERFORATE the thread, and a hole below the first fully-held page is
+    // unreachable by both walks at once: the top-down walk stops on page one
+    // because that page is held, and the deep probe seeds from the OLDEST held
+    // message, which sits below the hole. A failed write may truncate what we
+    // hold; it must never puncture it.
     if (error && error.code !== '23505') {
-      console.error(`[${logTag}] messages upsert failed: ${error.message}`);
-      continue;
+      console.error(`[${logTag}] messages upsert failed, stopping this batch: ${error.message}`);
+      break;
     }
     written += chunk.length;
   }
+
+  await refreshAvailableChannels(supabase, rows, written, localConversationId, logTag);
   return written;
+}
+
+/** The three channels the inbox filter and the message history key on. */
+const FILTERABLE_CHANNELS = new Set(['sms', 'email', 'whatsapp']);
+
+/**
+ * Keep `ghl_conversations.available_channels` true after a message write.
+ *
+ * It had a writer before this rewrite and lost one: `sync-ghl-conversations`
+ * used to `.update({ available_channels })` after each conversation — against
+ * a column that did not exist, so it silently did nothing, and removing the
+ * dead line left the column with NO writer at all. The reissue migration
+ * backfills it once, and `Conversations.tsx` filters the inbox on
+ * `c.available_channels?.some(...)`, so without this every conversation
+ * DISCOVERED after that backfill — which is exactly what the bootstrap band
+ * exists to produce — would hold `{}` and be invisible to the channel filter
+ * for ever.
+ *
+ * Two rules. It MERGES rather than replaces, because this batch is one page of
+ * a thread and not the whole thread — recomputing from it would drop a channel
+ * the conversation really has. And it never fails the message write: the rows
+ * are already in the table, and losing a filter facet is not worth losing
+ * them. It issues no UPDATE when the set would not change, which is the
+ * ordinary case once a thread is established.
+ */
+async function refreshAvailableChannels(
+  supabase: SupabaseClient,
+  rows: readonly Row[],
+  written: number,
+  localConversationId: string,
+  logTag: string,
+): Promise<void> {
+  if (written === 0) return;
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const c = r.channel_type;
+    if (typeof c === 'string' && FILTERABLE_CHANNELS.has(c)) seen.add(c);
+  }
+  if (seen.size === 0) return;
+
+  const { data, error } = await supabase
+    .from('ghl_conversations')
+    .select('available_channels')
+    .eq('id', localConversationId)
+    .maybeSingle();
+  if (error || !data) return;
+
+  const current: string[] = Array.isArray(data.available_channels) ? data.available_channels : [];
+  const merged = [...new Set([...current, ...seen])].sort();
+  if (merged.length === current.length && merged.every((c, i) => c === [...current].sort()[i])) return;
+
+  const { error: writeError } = await supabase
+    .from('ghl_conversations')
+    .update({ available_channels: merged })
+    .eq('id', localConversationId);
+  if (writeError) console.warn(`[${logTag}] available_channels not updated: ${writeError.message}`);
 }

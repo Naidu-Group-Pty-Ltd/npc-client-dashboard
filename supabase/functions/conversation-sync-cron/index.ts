@@ -329,31 +329,47 @@ Deno.serve(async (req) => {
         .filter((r) => typeof r.ghl_contact_id === 'string' && (r.ghl_contact_id as string).length > 0)
         .map((r) => ({ ghlContactId: r.ghl_contact_id as string, clientId: (r.client_id as string | null) ?? null }));
 
-    // One contact is one search, so a contact reached by an earlier band is
-    // never paid for twice — and the earlier band is always the more urgent
-    // one, because the bands are assembled in priority order.
+    /*
+      One contact is one search, so a contact an earlier band REACHED is never
+      paid for twice — and the earlier band is always the more urgent one,
+      because the bands are assembled in priority order.
+
+      REACHED, not listed. A band is cut short by its deadline, and claiming at
+      assembly time removed contacts from the stale tail that the earlier band
+      then never started: band A lists its 50 but may start 17 of them, and the
+      other 33 were struck off band C's list for work nobody did. Band A does
+      not stamp `last_synced_at`, and an unstarted contact is never upserted
+      either, so nothing about those rows changed and the SAME tail was
+      excluded again on the next tick. They are the most recently active
+      threads in the account — the ones this function exists to keep current.
+
+      That is the second instance of one mistake: a row is only handled when it
+      has actually been handled, and a list is not a promise. `claimUpTo` is
+      therefore called by `runBand` with `startedCount`, which
+      `mapWithConcurrency` documents as exact because tasks are started in
+      order even though they complete out of order.
+    */
     const claimed = new Set<string>();
-    const dedupe = (entries: ContactEntry[]): ContactEntry[] => {
+    /** Drop contacts an earlier band already STARTED, and de-duplicate within this band. */
+    const withoutClaimed = (entries: ContactEntry[]): ContactEntry[] => {
       const out: ContactEntry[] = [];
+      const seen = new Set<string>();
       for (const e of entries) {
-        if (claimed.has(e.ghlContactId)) continue;
-        claimed.add(e.ghlContactId);
+        if (claimed.has(e.ghlContactId) || seen.has(e.ghlContactId)) continue;
+        seen.add(e.ghlContactId);
         out.push(e);
       }
       return out;
     };
+    const claimUpTo = (entries: ContactEntry[], count: number): void => {
+      for (let i = 0; i < count && i < entries.length; i++) claimed.add(entries[i].ghlContactId);
+    };
 
-    const freshBand = dedupe(toEntries(freshRows as Row[] | null));
-    const bootstrapBand = dedupe(bootstrapSlice);
-    const staleBand = dedupe(toEntries(staleRows as Row[] | null));
+    const freshBand = withoutClaimed(toEntries(freshRows as Row[] | null));
+    const bootstrapBand = withoutClaimed(bootstrapSlice);
 
     bands.fresh.contacts = freshBand.length;
     bands.bootstrap.contacts = bootstrapBand.length;
-    bands.stale.contacts = staleBand.length;
-
-    console.log(
-      `[conversation-sync-cron] bands — fresh:${freshBand.length} bootstrap:${bootstrapBand.length} stale:${staleBand.length}`,
-    );
 
     // ─── The work ───────────────────────────────────────────────────────────
 
@@ -470,7 +486,11 @@ Deno.serve(async (req) => {
             logTag: `conversation-sync-cron:${opts.tag}`,
           });
           tally(counters, top, 'messages');
-          counters.messages += await writeMessages(supabase, top.items, localId, 'conversation-sync-cron');
+          // Hoisted: `x += await f()` reads `x` BEFORE the await, so six
+          // concurrent contacts each read the same value and the last write
+          // wins. The tally is what the run reports on; it must not undercount.
+          const wroteTop = await writeMessages(supabase, top.items, localId, 'conversation-sync-cron');
+          counters.messages += wroteTop;
 
           await notifyNewInbound(
             top.items,
@@ -506,7 +526,8 @@ Deno.serve(async (req) => {
               logTag: `conversation-sync-cron:${opts.tag}`,
             });
             tally(counters, deep, 'messages');
-            counters.messages += await writeMessages(supabase, deep.items, localId, 'conversation-sync-cron');
+            const wroteDeep = await writeMessages(supabase, deep.items, localId, 'conversation-sync-cron');
+            counters.messages += wroteDeep;
           }
         }
       } finally {
@@ -540,6 +561,9 @@ Deno.serve(async (req) => {
         { stop: () => Date.now() - startedAt > opts.deadlineMs },
       );
       counters.started = outcome.startedCount;
+      // Claimed on START. A contact this band listed but never reached must
+      // stay available to the bands after it.
+      claimUpTo(entries, outcome.startedCount);
       if (outcome.startedCount < entries.length) {
         console.log(
           `[conversation-sync-cron] ${opts.tag}: budget reached — ${outcome.startedCount} of ${entries.length} contacts`,
@@ -556,6 +580,18 @@ Deno.serve(async (req) => {
     await runBand(bootstrapBand, bands.bootstrap, {
       deadlineMs: BOOTSTRAP_DEADLINE_MS, deepProbe: false, stampAttempt: false, tag: 'bootstrap',
     });
+
+    // Assembled AFTER the two bands above have run, so it excludes exactly the
+    // contacts they reached and keeps the ones they listed but ran out of
+    // clock for. The query itself ran at the top with the others; only the
+    // claim filter waits.
+    const staleBand = withoutClaimed(toEntries(staleRows as Row[] | null));
+    bands.stale.contacts = staleBand.length;
+    console.log(
+      `[conversation-sync-cron] bands — fresh:${freshBand.length} (started ${bands.fresh.started}) ` +
+        `bootstrap:${bootstrapBand.length} (started ${bands.bootstrap.started}) stale:${staleBand.length}`,
+    );
+
     await runBand(staleBand, bands.stale, {
       deadlineMs: BUDGET_MS, deepProbe: true, stampAttempt: true, tag: 'stale',
     });

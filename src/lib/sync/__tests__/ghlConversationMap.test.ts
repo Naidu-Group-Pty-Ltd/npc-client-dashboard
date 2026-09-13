@@ -7,6 +7,8 @@ import {
   MESSAGE_ROW_KEYS,
   classifyGhlEntry,
   isCorrespondence,
+  summariseWithheldEntries,
+  withheldEntriesSentence,
   mapChannelType,
   mapContentType,
   mapMessageDirection,
@@ -277,12 +279,100 @@ describe("classifyGhlEntry", () => {
     }
   });
 
-  it("never withholds a channel the channel map can produce", () => {
-    // The two vocabularies must not collide: anything `mapChannelType`
-    // resolves to one of our own channel names is correspondence by
-    // construction, or the sync would write rows the thread refuses to draw.
-    for (const ours of ["sms", "email", "whatsapp", "facebook", "instagram", "live_chat"]) {
-      expect(isCorrespondence(mapChannelType(ours))).toBe(true);
+  it("withholds the row the WRITER produces for a GHL activity entry", () => {
+    // This is the seam that matters, and the first version of this test missed
+    // it entirely: it looped our own OUTPUT vocabulary back into
+    // `mapChannelType` ("sms" -> "sms" -> isCorrespondence true), which is a
+    // tautology and a duplicate of the test above.
+    //
+    // Production never calls the classifier with a raw GHL string. The UI calls
+    // `isCorrespondence(msg.channel_type)`, and `channel_type` is whatever
+    // `toMessageRow` WROTE. So the property to pin is end-to-end: a GHL
+    // activity entry must become a row the thread withholds.
+    //
+    // Two mutations at this seam were measured to survive the whole suite
+    // before this test existed, and each one puts all 4,753 activity rows back
+    // on screen: mapping an activity kind onto a friendly word in
+    // `mapChannelType`'s table, and swapping the `messageType ?? source`
+    // precedence in `toMessageRow`. Both fail here now.
+    for (const kind of GHL_NON_MESSAGE_CHANNELS) {
+      const row = toMessageRow({ id: "m1", messageType: kind, source: "app" }, "conv-1");
+      expect(isCorrespondence(row.channel_type)).toBe(false);
     }
+  });
+
+  it("withholds an activity kind this deployment has never seen, end to end", () => {
+    const row = toMessageRow({ id: "m2", messageType: "TYPE_ACTIVITY_INVOICE" }, "conv-1");
+    expect(isCorrespondence(row.channel_type)).toBe(false);
+  });
+
+  it("still writes a real message as correspondence", () => {
+    // The other half of the same property: the filter must not eat real traffic.
+    for (const kind of ["type_sms", "SMS", "type_email", "type_whatsapp", "1", "2"]) {
+      const row = toMessageRow({ id: "m3", messageType: kind }, "conv-1");
+      expect(isCorrespondence(row.channel_type)).toBe(true);
+    }
+  });
+});
+
+/*
+  WHAT A THREAD SAYS IT IS WITHHOLDING.
+
+  The first version of the notice named "opportunity, appointment and call
+  records" on every thread whatever it held — the hard-coded enumeration this
+  module's own header forbids. A thread holding only `type_activity_contact`
+  was told about three categories it has none of, and the one it does hold went
+  unnamed.
+*/
+describe("summariseWithheldEntries / withheldEntriesSentence", () => {
+  it("counts only what is withheld, and names what is actually there", () => {
+    const s = summariseWithheldEntries([
+      "sms", "type_activity_opportunity", "email", "type_activity_opportunity", "type_call",
+    ]);
+    expect(s.count).toBe(3);
+    expect(s.kinds).toEqual(["opportunity", "call"]);
+  });
+
+  it("names a kind it has never seen, from the value itself", () => {
+    expect(summariseWithheldEntries(["type_activity_invoice"]).kinds).toEqual(["invoice"]);
+    expect(summariseWithheldEntries(["type_activity_purchase_order"]).kinds)
+      .toEqual(["purchase order"]);
+  });
+
+  it("says nothing at all when nothing is withheld", () => {
+    expect(withheldEntriesSentence(summariseWithheldEntries(["sms", "email"]))).toBe("");
+    expect(withheldEntriesSentence({ count: 0, kinds: [] })).toBe("");
+  });
+
+  it("is scoped to the conversation, never to the customer", () => {
+    // The count is per-thread; the first wording said "recorded against this
+    // contact", which describes a different and larger set.
+    const sentence = withheldEntriesSentence(summariseWithheldEntries(["type_activity_contact"]));
+    expect(sentence).toContain("on this conversation");
+    expect(sentence).not.toContain("this contact");
+  });
+
+  it("agrees in number", () => {
+    expect(withheldEntriesSentence(summariseWithheldEntries(["type_call"])))
+      .toMatch(/^1 CRM activity entry is /);
+    expect(withheldEntriesSentence(summariseWithheldEntries(["type_call", "type_call"])))
+      .toMatch(/^2 CRM activity entries are /);
+  });
+
+  it("drops the naming clause rather than inventing a word for it", () => {
+    // `classifyGhlEntry` withholds by prefix; if a value ever yields no usable
+    // word, a count with no list is honest and a list with a guess is not.
+    const sentence = withheldEntriesSentence({ count: 2, kinds: [] });
+    expect(sentence).toContain("2 CRM activity entries are recorded on this conversation");
+    expect(sentence).not.toContain("—");
+  });
+
+  it("never names a category the thread does not hold", () => {
+    const sentence = withheldEntriesSentence(
+      summariseWithheldEntries(["type_activity_opportunity", "type_activity_opportunity"]),
+    );
+    expect(sentence).toContain("opportunity");
+    expect(sentence).not.toContain("appointment");
+    expect(sentence).not.toContain("call");
   });
 });

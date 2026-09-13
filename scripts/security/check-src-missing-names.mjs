@@ -26,7 +26,28 @@
  *
  * ## Why it is here
  *
- * It happened. `PortalAgreementConsent` declared `beforeAccept` in its props
+ * It happened twice, in two different spellings of the same fault.
+ *
+ * The second time was `TS2448`, 13 Sep 2026. A `useEffect` dependency array
+ * named `correspondence` forty lines ABOVE the `const` that declared it. A
+ * dependency array is an ordinary expression evaluated during render, so the
+ * binding was read inside its temporal dead zone and both conversation
+ * surfaces threw `ReferenceError: Cannot access 'correspondence' before
+ * initialization` on every render, for every user, with no input that avoided
+ * it. This gate ran on that commit and printed "No undefined identifiers in
+ * src/." — because it filtered on a two-entry map and TS2448 was not in it.
+ *
+ * The lesson is not "add a code". It is that the class this gate defends is
+ * **a name that cannot be read at the moment the line runs**, and TypeScript
+ * spells that three ways: the name does not exist (TS2304/TS2552), or it
+ * exists but is not reachable yet (TS2448). All three are a ReferenceError
+ * with the component's whole page behind it, and none is type debt. A code
+ * that produces a certain ReferenceError belongs here; one that describes a
+ * wrong shape does not, which is why TS2454 (used before ASSIGNED) is
+ * deliberately absent — that is definite-assignment analysis, it is routinely
+ * conservative, and it does not promise a throw.
+ *
+ * The first time. `PortalAgreementConsent` declared `beforeAccept` in its props
  * TYPE and rendered `{beforeAccept}` in its JSX, and the prop was never added
  * to the destructured parameter list. TypeScript was right about the props;
  * the identifier simply did not exist. Lint passed, the build passed, and
@@ -55,13 +76,19 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const KNOWN_MISSING_PATH = join(root, 'scripts', 'security', 'src-missing-names.txt');
 
 /**
- * There is no such thing as a deliberately-undefined identifier on a live
- * code path, which is why this list is two entries long and will stay that
- * way. TS2552 is the same fault with a spelling suggestion attached.
+ * There is no such thing as a deliberately-undefined identifier on a live code
+ * path, nor a deliberate read of a binding before it exists. TS2552 is TS2304
+ * with a spelling suggestion attached; TS2448 is the same outcome reached by
+ * ORDER rather than by absence — the name is declared, just not yet, and the
+ * read throws exactly as hard.
+ *
+ * This list grows only for a code that guarantees a ReferenceError at the
+ * moment the line runs. It is not a place to collect type errors.
  */
 const FATAL = new Map([
   ['TS2304', 'name does not exist — ReferenceError the moment that line renders'],
   ['TS2552', 'name does not exist — ReferenceError the moment that line renders'],
+  ['TS2448', 'name read before its declaration — ReferenceError the moment that line renders'],
 ]);
 
 const KNOWN_MISSING = new Set(readFileSync(KNOWN_MISSING_PATH, 'utf8')
@@ -127,17 +154,21 @@ for (const line of out.split('\n')) {
 
 if (fatal.length > 0) {
   console.error(
-    `\n${fatal.length} undefined identifier(s) in src/. These are never type debt and are never\n`
-    + 'baselined: the name does not exist, so the line throws a ReferenceError the moment it\n'
-    + 'renders — and a component that throws on render takes its whole page with it.\n',
+    `\n${fatal.length} unreadable identifier(s) in src/. These are never type debt and are\n`
+    + 'never baselined: the name cannot be read where it is used — it does not exist, or it is\n'
+    + 'not declared yet — so the line throws a ReferenceError the moment it renders, and a\n'
+    + 'component that throws on render takes its whole page with it.\n',
   );
   for (const item of fatal) {
     console.error(`  ${item.where}\n    ${item.code}: ${item.message}\n    ${FATAL.get(item.code)}`);
   }
   console.error(
-    '\nFix the name. If it is a real global this project\'s types do not know about, declare it\n'
-    + `in global.d.ts — adding it to ${relative(root, KNOWN_MISSING_PATH)} is for occurrences that\n`
-    + 'predate this gate, and there were none.\n',
+    '\nFor TS2304/TS2552, fix the name; if it is a real global this project\'s types do not know\n'
+    + 'about, declare it in global.d.ts. For TS2448, MOVE THE DECLARATION above its first\n'
+    + 'reader — note that a hook dependency array is an ordinary expression evaluated during\n'
+    + 'render, so naming a `const` there that is declared further down is exactly this fault.\n'
+    + `Adding it to ${relative(root, KNOWN_MISSING_PATH)} is for occurrences that predate\n`
+    + 'this gate, and there were none.\n',
   );
   process.exit(1);
 }

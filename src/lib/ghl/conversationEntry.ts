@@ -17,7 +17,9 @@
 export {
   classifyGhlEntry,
   isCorrespondence,
+  summariseWithheldEntries,
+  withheldEntriesSentence,
   GHL_ACTIVITY_PREFIX,
   GHL_NON_MESSAGE_CHANNELS,
 } from '../../../supabase/functions/_shared/ghlConversationMap.pure.ts';
-export type { GhlEntryKind } from '../../../supabase/functions/_shared/ghlConversationMap.pure.ts';
+export type { GhlEntryKind, WithheldSummary } from '../../../supabase/functions/_shared/ghlConversationMap.pure.ts';

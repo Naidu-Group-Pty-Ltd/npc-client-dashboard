@@ -675,3 +675,109 @@ The rows are in the table whenever that surface is wanted.
 The conversation **list** preview needed no change and was checked rather than
 assumed: `last_message_body` comes from GHL's own field on the conversation, not
 from these rows, and zero of 1,272 previews carry activity text.
+
+---
+
+## §16 — Three more readers, and the gate that was one entry short
+
+§15's classifier was correct and wired to two of the five things that read
+`ghl_conversation_messages`. An adversarial review of that commit — six
+dimensions, every finding put to a refuter that defaults to "not real" — raised
+20 findings, confirmed 14 and refuted 6. What follows is the confirmed set
+minus the one that was already fixed in the hotfix.
+
+### The gate existed, ran, and let it through
+
+`scripts/security/check-src-missing-names.mjs` is built for exactly the class
+that broke production: *"undefined identifiers in the app bundle — fatal, never
+baselined… ReferenceError the moment that line renders."* It runs in CI
+(`ci.yml:286`) against `tsconfig.app.json`. It ran on the broken commit and
+printed **"No undefined identifiers in src/."**
+
+Its `FATAL` map held two entries, `TS2304` and `TS2552`, and line 121 does
+`if (!FATAL.has(code)) continue;`. The fault was `TS2448` — *block-scoped
+variable used before its declaration* — which is the same outcome reached by
+ORDER rather than by absence. The name is declared, just not yet, and the read
+throws exactly as hard.
+
+**The class this gate defends is a name that cannot be read where it is used,
+and TypeScript spells that three ways.** `TS2448` is now fatal. `TS2454` (used
+before *assigned*) is deliberately still absent: that is definite-assignment
+analysis, it is routinely conservative, and it does not promise a throw. This
+list grows only for a code that guarantees a ReferenceError.
+
+That gate's own header already warned about the trap that produced this —
+`tsconfig.json` declares `"files": []` and delegates to project references, so
+`tsc --noEmit -p tsconfig.json`, the obvious spelling, compiles nothing and
+exits 0. The header was written after the first occurrence. The second
+occurrence ran the obvious spelling anyway and reported it as green.
+
+Proved by reintroducing the defect: the gate exits 1 and names it.
+
+### Two more readers drew activity entries as correspondence
+
+**`finance-portal-client-comms`** — a finance *partner's* client inbox.
+`CHANNEL_META` has keys `sms|whatsapp|email|portal`, so
+`type_activity_opportunity` fell to `?? CHANNEL_META.portal` and rendered with
+a blue **Portal** badge, right-aligned by `direction: 'outbound'`: a partner
+read "Opportunity updated" as something the business sent their client.
+
+The exclusion here is **both server-side and in code, and the two are not
+redundant**. `isCorrespondence` is the rule. The SQL predicate exists because
+`.limit()` is applied by the database BEFORE anything is classified — on a
+client whose recent history is mostly opportunity updates, an unfiltered
+200-row window fills with activity and the real SMS and email fall out of it
+entirely. Excluding server-side is what makes the window mean *200 messages*
+rather than *200 rows*. The SQL names what production holds; the code decides,
+so a future `type_activity_invoice` is withheld by the prefix rule even though
+the predicate does not name it — costing breadth, never correctness.
+
+**`build-conversations-export-worker`** — the sheet titled *Message History*,
+which is the artefact that leaves the building. It carried one row per entry
+and counted every one into `total_messages`, so the page that had just said
+"no messages in this conversation" exported 26 numbered message rows for it and
+the toast read "26 messages from 1 conversations". Fixing the count at source
+repairs all three call sites in `Conversations.tsx` (783, 806, 1188) without
+touching them.
+
+It also held a **fourth** copy of the channel table, drifted furthest — no
+`mail`, no `whats_app`, no numeric forms, no activity arm — so the Channel
+column printed the raw `type_activity_opportunity`. Deleted; it imports
+`mapChannelType` now. **Nothing is deleted from the database**: a conversation
+whose entries are all activity still emits its row, and the placeholder SAYS
+how many were left out rather than dropping them silently.
+
+### The notice named categories the thread did not hold
+
+"opportunity, appointment and call records" was printed on every thread
+whatever it held — the hard-coded enumeration `ghlConversationMap.pure.ts`'s own
+header forbids. A thread holding only `type_activity_contact` ("DnD enabled by
+customer") was told about three categories it has none of while the one it does
+hold went unnamed, so an operator looking for that record was pointed at call
+records that do not exist. It was also scoped wrong: *"recorded against this
+contact"* while counting one conversation.
+
+`summariseWithheldEntries` reads the label **off the value** — the suffix after
+`type_activity_` is the word, so `type_activity_purchase_order` reads as
+"purchase order" the day one arrives — and a value that yields no usable word
+contributes nothing, because a count with no list is honest and a list with an
+invented entry is not.
+
+### Three assertions that did not bite
+
+Each was proved by mutation, and each now fails against the defect it names:
+
+| assertion | why it passed on broken code |
+|---|---|
+| "nothing deletes" | required `delete` BEFORE the table name — the broker's spelling, not supabase-js's `.from(t).delete()`, which twelve-plus files under `src/` use |
+| "never withholds a channel the map can produce" | fed our own OUTPUT vocabulary back in, reducing to a duplicate of the test above it |
+| "declared once and re-exported" | satisfied by the shim's own header comment; gutting the export block left every test passing |
+
+The replacement for the second is the seam that matters: a GHL activity entry
+must become a row the thread withholds, asserted through `toMessageRow`. It
+catches both mutations measured to survive the old suite — mapping an activity
+kind onto a friendly word, and swapping the `messageType ?? source` precedence.
+
+**A source-scanning assertion binds to the shape of the code, so it must bind
+to the NAME and not the formatting.** Two of §15's assertions broke when the
+import list grew and a variable was renamed — they were measuring layout.

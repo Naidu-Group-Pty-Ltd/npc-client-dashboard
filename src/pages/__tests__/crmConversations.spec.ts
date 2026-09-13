@@ -560,7 +560,10 @@ describe('a thread draws correspondence, and nothing else', () => {
 
   for (const [label, source] of surfaces) {
     it(`${label} asks the shared classifier rather than keeping its own list`, () => {
-      expect(source).toMatch(/import \{ isCorrespondence \} from ['"]@\/lib\/ghl\/conversationEntry['"]/);
+      // Bind to the NAME and the module, not to the exact import list — the
+      // list grew when the withheld-entry sentence moved into the shared
+      // module, and an assertion that breaks on that is measuring formatting.
+      expect(source).toMatch(/import \{[^}]*\bisCorrespondence\b[^}]*\} from ['"]@\/lib\/ghl\/conversationEntry['"]/);
       expect(source).toMatch(/messages\.filter\(\(msg\) => isCorrespondence\(msg\.channel_type\)\)/);
     });
 
@@ -577,9 +580,15 @@ describe('a thread draws correspondence, and nothing else', () => {
       expect(source).not.toMatch(/messages\.length === 0 \?/);
     });
 
-    it(`${label} says what it is withholding rather than silently dropping it`, () => {
-      expect(source).toContain('withheldEntryCount');
-      expect(source).toMatch(/activity entr/i);
+    it(`${label} says what it is withholding, from the rows rather than a fixed list`, () => {
+      // The sentence itself lives in the shared module and is tested there.
+      // What the SURFACE has to prove is that it renders the derived sentence
+      // and does not restate the categories locally — the first version
+      // hard-coded "opportunity, appointment and call records" on every thread
+      // whatever it held, which is the enumeration the classifier forbids.
+      expect(source).toMatch(/withheldEntriesSentence\(\s*summariseWithheldEntries\(/);
+      expect(source).toContain('withheldNotice');
+      expect(source).not.toMatch(/opportunity, appointment and/i);
     });
   }
 
@@ -589,17 +598,30 @@ describe('a thread draws correspondence, and nothing else', () => {
     // same failure with worse consequences.
     expect(mapper).toContain('export function isCorrespondence');
     const shim = readFileSync(join(root, 'src', 'lib', 'ghl', 'conversationEntry.ts'), 'utf8');
-    expect(shim).toContain('ghlConversationMap.pure.ts');
+    // `toContain('ghlConversationMap.pure.ts')` was satisfied by the shim's own
+    // HEADER COMMENT: replacing the whole export block with `export const
+    // nothing = 1;` left all 81 tests passing, under a test titled "declared
+    // once and re-exported". Assert the export statement itself.
+    expect(shim).toMatch(/export \{[\s\S]*isCorrespondence[\s\S]*\} from ['"][^'"]*ghlConversationMap\.pure\.ts['"]/);
     for (const [, source] of surfaces) {
       expect(source).not.toContain('function isCorrespondence');
     }
   });
 
-  it('nothing in the read path deletes an activity row', () => {
+  it('nothing in the read path deletes an activity row, in either idiom', () => {
     // An activity is a real GHL record. This decides what is drawn; it must
     // never decide what is kept.
+    //
+    // The first version of this guard was `/delete[\s\S]{0,40}ghl_.../`, which
+    // requires the word `delete` to appear BEFORE the table name. That is the
+    // broker's spelling (`{ operation: "delete", table: "..." }`) and it is NOT
+    // supabase-js's, which is `.from(table).delete()` — table first. Proved by
+    // inserting a real `.from("ghl_conversation_messages").delete()` into the
+    // page: all 54 tests passed. Twelve-plus files under src/ use that shape,
+    // so it is the form a future edit is most likely to take.
     for (const [, source] of surfaces) {
       expect(source).not.toMatch(/delete[\s\S]{0,40}ghl_conversation_messages/);
+      expect(source).not.toMatch(/ghl_conversation_messages['"]\s*\)?[\s\S]{0,40}\.delete\(/);
     }
   });
 });

@@ -185,6 +185,83 @@ export function classifyGhlEntry(channelType: unknown): GhlEntryKind {
   return 'message';
 }
 
+/**
+ * What a thread is withholding, in the reader's words, derived from the rows.
+ *
+ * The first version of the withheld-entry notice named three categories —
+ * "opportunity, appointment and call records" — on every thread whatever it
+ * held. Two consequences, both measured. A thread whose withheld entries are
+ * all `type_activity_opportunity` (3,821 of 4,753 rows, the dominant kind) was
+ * told about appointments and calls it does not have; and a thread holding
+ * only `type_activity_contact` ("DnD enabled by customer") was told about
+ * three categories it has none of, while the one it does hold went unnamed —
+ * so an operator looking for that record was pointed at call records that do
+ * not exist.
+ *
+ * It was also the hard-coded enumeration this module's own header forbids. The
+ * activity family is matched by PREFIX so `type_activity_invoice` is withheld
+ * the day one arrives; describing it as "opportunity, appointment and call"
+ * would be a sentence that gets less true over time.
+ *
+ * So the label is READ OFF the value: the suffix after `type_activity_` is the
+ * word, `type_call` is a call. A kind that yields no usable word contributes
+ * nothing rather than a guess — `kinds` comes back short and the caller drops
+ * the naming clause, because a count with no list is honest and a list with an
+ * invented entry is not.
+ */
+export interface WithheldSummary {
+  /** How many entries are being withheld. */
+  readonly count: number;
+  /** Human words for the kinds actually present, deduped, first-seen order. */
+  readonly kinds: readonly string[];
+}
+
+export function summariseWithheldEntries(
+  channelTypes: readonly unknown[],
+): WithheldSummary {
+  const kinds: string[] = [];
+  let count = 0;
+  for (const raw of channelTypes) {
+    const value = String(raw ?? '').trim().toLowerCase();
+    const kind = classifyGhlEntry(value);
+    if (kind === 'message') continue;
+    count += 1;
+    let word = '';
+    if (kind === 'call') {
+      word = 'call';
+    } else if (value.startsWith(GHL_ACTIVITY_PREFIX)) {
+      // `type_activity_opportunity` -> `opportunity`. Underscores inside the
+      // suffix become spaces so a future `type_activity_purchase_order` reads
+      // as "purchase order" rather than as an identifier.
+      word = value.slice(GHL_ACTIVITY_PREFIX.length).replace(/_+/g, ' ').trim();
+    }
+    if (word && !kinds.includes(word)) kinds.push(word);
+  }
+  return { count, kinds };
+}
+
+/**
+ * The naming clause, or an empty string where nothing can be named honestly.
+ *
+ * Kept here rather than in either component because both surfaces render it
+ * and two copies of a sentence is how one screen comes to describe something
+ * the other does not.
+ */
+export function withheldEntriesSentence(summary: WithheldSummary): string {
+  const { count, kinds } = summary;
+  if (count <= 0) return '';
+  const noun = count === 1 ? 'entry' : 'entries';
+  const verb = count === 1 ? 'is' : 'are';
+  const head = `${count} CRM activity ${noun} ${verb} recorded on this conversation`;
+  if (kinds.length === 0) {
+    return `${head} rather than correspondence. They are kept and are not shown here.`;
+  }
+  const list = kinds.length === 1
+    ? kinds[0]
+    : `${kinds.slice(0, -1).join(', ')} and ${kinds[kinds.length - 1]}`;
+  return `${head} — ${list} records rather than correspondence. They are kept and are not shown here.`;
+}
+
 /** True only for an entry that may be drawn as a message in a thread. */
 export function isCorrespondence(channelType: unknown): boolean {
   return classifyGhlEntry(channelType) === 'message';

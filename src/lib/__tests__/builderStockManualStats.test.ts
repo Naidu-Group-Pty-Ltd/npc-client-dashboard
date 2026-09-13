@@ -286,9 +286,9 @@ describe('what the plate says about the figures', () => {
     // Named, never counted: "three figures are missing" sends somebody to
     // compare two lists to find out which three.
     expect(reading.note).toBe(
-      'Bedrooms, bathrooms, car spaces and home are not in your stock list.',
+      'Not specified in your stock list: bedrooms, bathrooms, car spaces and home size.',
     );
-    expect(reading.action).toBe('Add these figures');
+    expect(reading.action).toBe('Complete the schedule');
   });
 
   it('names the figures the builder stated, and offers to edit', () => {
@@ -296,8 +296,8 @@ describe('what the plate says about the figures', () => {
       bedrooms: 3, bathrooms: 2, car_spaces: 2, building_size_sqm: 174,
       manual_stats: { values: { bedrooms: 3, bathrooms: 2 }, recorded_at: null, recorded_by: null },
     }));
-    expect(reading.note).toBe('Bedrooms and bathrooms stated by you.');
-    expect(reading.action).toBe('Edit figures');
+    expect(reading.note).toBe('Supplied by you: bedrooms and bathrooms.');
+    expect(reading.action).toBe('Update the schedule');
   });
 
   it('says both, where some are stated and some are still absent', () => {
@@ -305,8 +305,10 @@ describe('what the plate says about the figures', () => {
       bedrooms: 3,
       manual_stats: { values: { bedrooms: 3 }, recorded_at: null, recorded_by: null },
     }));
+    // Two conditions, two sentences — never one run-on joined by a middot.
     expect(reading.note).toBe(
-      'Bathrooms, car spaces and home are not in your stock list · bedrooms stated by you.',
+      'Not specified in your stock list: bathrooms, car spaces and home size.'
+      + ' Supplied by you: bedrooms.',
     );
   });
 
@@ -315,7 +317,7 @@ describe('what the plate says about the figures', () => {
       bedrooms: 3, bathrooms: 2, car_spaces: 2, building_size_sqm: 174,
     }));
     expect(reading.note).toBeNull();
-    expect(reading.action).toBe('Edit figures');
+    expect(reading.action).toBe('Update the schedule');
   });
 
   it('counts a stated ZERO as stated', () => {

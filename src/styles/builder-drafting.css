@@ -770,18 +770,27 @@
        and its label. */
     padding: .5rem .8rem; cursor: pointer;
     min-height: 2rem;
-    border: 1px solid hsl(var(--primary) / .55);
+    /* THE LABEL'S LEGIBILITY MUST NOT DEPEND ON THE TENANT'S HUE.
+       This first shipped as a .55 border over a .12 ground with the label in
+       `--primary` itself, tuned by eye against the prime, where `--primary` is
+       a goldenrod that carries easily on near-black. The White-Label admin
+       retunes it per tenant, and on the deployment that reported this it is a
+       blue several stops darker: the same alphas collapsed and the control was
+       reported unreadable a second time. Rendered side by side under that blue,
+       a brighter border did not fix it — 11px of blue on obsidian is the weak
+       part. So the BORDER carries the brand and the LABEL is foreground ink,
+       which holds at any hue a tenant can choose. */
+    border: 1px solid hsl(var(--primary));
     border-radius: 3px;
-    background: hsl(var(--primary) / .12);
-    color: hsl(var(--primary));
+    background: hsl(var(--primary) / .2);
+    color: hsl(var(--foreground));
     font-family: var(--font-mono); font-size: .6875rem; font-weight: 600;
     letter-spacing: .14em; text-transform: uppercase;
     transition: background-color 120ms ease-out, color 120ms ease-out,
                 border-color 120ms ease-out;
   }
   .builder-portal-theme .bd-spec-note-action:hover {
-    background: hsl(var(--primary) / .22);
-    border-color: hsl(var(--primary) / .8);
+    background: hsl(var(--primary) / .34);
   }
   /* SOMETHING IS MISSING AND ONLY THIS FIXES IT. */
   .builder-portal-theme .bd-spec-note-action[data-figures="outstanding"] {

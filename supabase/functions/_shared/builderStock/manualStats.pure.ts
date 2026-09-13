@@ -66,6 +66,12 @@ export interface ManualStatSpec {
   readonly field: ManualStatField;
   /** What the builder is asked for. The schedule's own wording. */
   readonly label: string;
+  /**
+   * The same field inside a SENTENCE, where a bare column heading reads wrong:
+   * a schedule row is headed `Home`, but "home is not specified" is not
+   * English. Defaults to the lowercased label where the two agree.
+   */
+  readonly prose?: string;
   /** Printed after the figure, where it has a unit. */
   readonly unit: string | null;
   readonly min: number;
@@ -88,8 +94,8 @@ export const MANUAL_STAT_SPECS: readonly ManualStatSpec[] = [
   { field: 'bedrooms', label: 'Bedrooms', unit: null, min: 0, max: 99, step: 1 },
   { field: 'bathrooms', label: 'Bathrooms', unit: null, min: 0, max: 99, step: 0.5 },
   { field: 'car_spaces', label: 'Car spaces', unit: null, min: 0, max: 99, step: 1 },
-  { field: 'building_size_sqm', label: 'Home', unit: 'm²', min: 1, max: 100000, step: 1 },
-  { field: 'land_size_sqm', label: 'Land', unit: 'm²', min: 1, max: 1000000, step: 1 },
+  { field: 'building_size_sqm', label: 'Home', prose: 'home size', unit: 'm²', min: 1, max: 100000, step: 1 },
+  { field: 'land_size_sqm', label: 'Land', prose: 'land size', unit: 'm²', min: 1, max: 1000000, step: 1 },
 ] as const;
 
 export const MANUAL_STAT_FIELDS: readonly ManualStatField[] =

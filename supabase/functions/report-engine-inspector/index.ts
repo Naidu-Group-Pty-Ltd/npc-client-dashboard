@@ -666,7 +666,11 @@ Deno.serve(async (req) => {
             before_value: { config_key, scope: 'default', value: current },
             after_value: { config_key, scope: 'default', value: next },
             rationale: body.rationale || `Pin ${template_ids.length} template(s) to ${scope}:${section_id}`,
-            proposed_by: userId,
+            // `proposed_by` does not exist; the table separates the two kinds
+            // of proposer, `proposed_by_agent` and `proposed_by_user`. This is
+            // a person, so it is the user column — and because the error below
+            // is thrown, this operation answered 500 on every call.
+            proposed_by_user: userId,
             status: 'pending',
           }).select('*').single();
         if (error) throw error;

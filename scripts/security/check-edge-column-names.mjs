@@ -36,10 +36,56 @@
  *
  * ## What this checks
  *
- * Literal column lists only — `.select('a, b')`, and `.insert({ a: … })` /
- * `.update({ … })` / `.upsert({ … })` with an inline object. A payload built in
- * a variable, an interpolated select or an embedded resource (`a, b(c)`) is not
- * a set of names this can read, and is skipped rather than guessed at.
+ * Literal column lists only — `.select('a, b')`, and `.insert(…)` /
+ * `.update(…)` / `.upsert(…)` whose payload is an object LITERAL. An
+ * interpolated select or an embedded resource (`a, b(c)`) is not a set of
+ * names this can read, and is skipped rather than guessed at.
+ *
+ * ## Two shapes it used to miss, and what they cost
+ *
+ * Both were found on 13 Sep 2026, in the CRM's outbound message path, and both
+ * were FATAL rather than silent — `ghl_conversation_messages` has no
+ * `message_type` column in the table, in any migration, or in the generated
+ * types, and PostgREST answers a write naming one with PGRST204.
+ *
+ *   A LITERAL WITH AN INTERPOLATION IN IT. The write body was matched with
+ *   `[^{}]*`, so a payload containing a template literal — `\`failed-${key}\`` —
+ *   or any nested object failed to match at all and was never judged. The
+ *   object is now brace-matched and only TOP-LEVEL keys are taken, which is
+ *   what makes a nested `metadata: { … }` safe to skip rather than fatal to
+ *   parse.
+ *
+ *   A LITERAL BOUND TO A CONST. `const messageRecord = { … }` passed to
+ *   `.upsert(messageRecord)` was skipped under the old rule that "a payload
+ *   assembled in a variable is not a set of names anything can read". A `const`
+ *   whose initialiser is an object literal IS readable, and that is the shape
+ *   that returned HTTP 500 on every outbound SMS the product ever sent — after
+ *   GoHighLevel had already delivered the message. The rule is sharpened
+ *   rather than dropped: a literal is judged wherever it is written, and
+ *   anything genuinely dynamic (a spread, a computed key, an identifier with
+ *   no literal initialiser, one assigned more than once) is still skipped.
+ *
+ * ## What it still cannot see
+ *
+ * The columns are the generated types UNION the migrations, which
+ * over-approximates on purpose so a column added since the types were last
+ * regenerated is not reported as missing. That union is why this check passed
+ * over `available_channels` for two months: a committed migration declared it
+ * and **that migration had never been applied to any database in the fleet**
+ * (Mission Control's `schema_migration_queue` was built on 28 Aug 2026 and its
+ * oldest entry is `20260828020000`, so nothing committed before that date was
+ * ever enqueued). A column named by a migration is not a column the database
+ * has.
+ *
+ * That class deliberately has NO gate here, and the reason is measured rather
+ * than assumed: reporting every column the migrations declare and the
+ * generated types do not finds 95 across 47 tables, and almost all of them are
+ * columns production really has and `types.ts` is simply stale about — the
+ * lib's own header names `builder_stock_items.image_work_stage` as exactly
+ * that. The two cases are indistinguishable without asking a database, so a
+ * gate here would be noise. Compare the repo's migrations against
+ * `supabase_migrations.schema_migrations` on the project itself; that is a
+ * deploy-time question, not a source-tree one.
  *
  * Columns are resolved by `lib/supabaseSchema.mjs` as the UNION of the
  * generated types and the migrations, so a column added since the types were
@@ -90,7 +136,132 @@ function schemaHandles(source) {
  * nonsense.
  */
 const SELECT = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)((?:(?!\.from\()[^;]){0,200}?)\.select\(\s*(['"`])([^'"`]*)\5/g;
-const WRITE = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)\s*\.(insert|update|upsert)\(\s*\{([^{}]*)\}/g;
+/** `.from('table').insert(` — the payload is read from the source after it. */
+const WRITE_HEAD = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)\s*\.(insert|update|upsert)\(\s*/g;
+
+/**
+ * The object literal starting at `open`, or null if there is not one there.
+ *
+ * Brace-matched rather than regex-matched, and string-aware, so a payload
+ * carrying a template literal or a nested object is READ rather than skipped —
+ * the old `[^{}]*` skipped exactly those.
+ */
+function objectLiteralAt(source, open) {
+  if (source[open] !== '{') return null;
+  let depth = 0;
+  let quote = null;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return source.slice(open + 1, i);
+    }
+  }
+  return null;
+}
+
+/**
+ * The TOP-LEVEL keys of an object literal body.
+ *
+ * Depth-aware, so a nested `metadata: { a: 1 }` contributes `metadata` and not
+ * `a`; string-aware, so a key-like sequence inside a value is not a key.
+ * Returns null when the literal is not a readable key set — a spread carries
+ * names from somewhere else, and a computed key is not a name at all.
+ */
+function topLevelKeys(body) {
+  if (/\.\.\./.test(body)) return null;
+  const keys = [];
+  let depth = 0;
+  let quote = null;
+  let atKeyPosition = true;
+  let token = '';
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; token = ''; continue; }
+    if (ch === '{' || ch === '[' || ch === '(') { depth++; continue; }
+    if (ch === '}' || ch === ']' || ch === ')') { depth--; continue; }
+    if (depth > 0) continue;
+    if (ch === ',') { atKeyPosition = true; token = ''; continue; }
+    if (ch === ':' && atKeyPosition) {
+      const name = token.trim();
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) keys.push(name);
+      else if (name.startsWith('[')) return null; // a computed key is not a name
+      atKeyPosition = false;
+      token = '';
+      continue;
+    }
+    token += ch;
+  }
+  return keys;
+}
+
+/**
+ * How far back an identifier's declaration may sit and still be believed.
+ *
+ * There is no parser here, so scope is approximated by proximity plus the
+ * no-intervening-binding rule below. A first version searched the WHOLE file
+ * for `const <name> = {`, and in a 9,000-line function file that is
+ * confidently wrong: `ai-dashboard-agent` binds `const updates: any = {
+ * is_enabled: … }` for scheduled tasks at line 4865, and four `game_plan*`
+ * handlers two thousand lines further down do `const { plan_id, ...updates } =
+ * args` and then `.update(updates)`. The lookup attributed the first shape to
+ * all four and reported four columns that call site never sends. Being wrong
+ * in this direction is worse than being silent: it teaches a reader that the
+ * gate cannot be trusted.
+ */
+const MAX_DECL_LOOKBACK = 3000;
+
+/**
+ * The object literal an identifier holds AT a call site, if that is knowable.
+ *
+ * Three conditions, all of them about not guessing:
+ *   the declaration is an object LITERAL (`const x = { … }`), because that is
+ *   the only form whose keys can be read;
+ *   it is the LAST binding of that name before the call — a rest pattern
+ *   (`const { a, ...x } = args`), a reassignment or a second declaration all
+ *   count as bindings and all disqualify the earlier literal;
+ *   and it is near enough to be plausibly the same scope.
+ *
+ * `const messageRecord = { … }` sixteen lines above `.upsert(messageRecord)`
+ * satisfies all three, and that is the shape that made every outbound CRM
+ * message report as failed.
+ */
+function literalForIdentifier(source, name, callIndex) {
+  const from = Math.max(0, callIndex - MAX_DECL_LOOKBACK);
+  const region = source.slice(from, callIndex);
+
+  // Any binding of the name: a declaration (including a destructuring or rest
+  // pattern, hence the permissive middle) or a plain assignment.
+  const binding = new RegExp(
+    `(?:(?:const|let|var)\\s+[^;\\n]{0,200}?(?<![\\w$])${name}(?![\\w$]))|(?:(?<![.\\w$])${name}\\s*=(?!=))`,
+    'g',
+  );
+  const bindings = [...region.matchAll(binding)];
+  if (bindings.length === 0) return null;
+
+  const last = bindings[bindings.length - 1];
+  // The last binding must itself be `<name> = {`, or the value at the call
+  // site came from somewhere this cannot read.
+  const tail = region.slice(last.index, last.index + last[0].length + 240);
+  const opener = new RegExp(`(?<![\\w$])${name}(?![\\w$])\\s*(?::[^=;\\n]{0,120})?=\\s*\\{`);
+  const openerHit = opener.exec(tail);
+  if (!openerHit || openerHit.index !== last[0].length - name.length) return null;
+
+  const braceAt = from + last.index + openerHit.index + openerHit[0].length - 1;
+  return objectLiteralAt(source, braceAt);
+}
 
 const findings = [];
 
@@ -111,13 +282,29 @@ for (const file of walk(FUNCTIONS)) {
     if (missing.length) findings.push(`${where(m.index)} select ${table} → ${missing.join(', ')}`);
   }
 
-  for (const m of source.matchAll(WRITE)) {
-    const [, receiver, , table, op, body] = m;
+  for (const m of source.matchAll(WRITE_HEAD)) {
+    const [, receiver, , table, op] = m;
     if (handles.has(receiver)) continue;
-    if (body.includes('...')) continue; // a spread is not a literal key set
     const columns = knownColumns(table);
     if (!columns) continue;
-    const keys = [...body.matchAll(/(?:^|,)\s*([a-z_][a-z0-9_]*)\s*:/gi)].map((k) => k[1]);
+
+    const payloadAt = m.index + m[0].length;
+    let body = objectLiteralAt(source, payloadAt);
+    if (body === null) {
+      // Not an inline literal. An array of literals (`upsert([{ … }])`) and a
+      // bare identifier are both still readable; anything else is not.
+      const arrayOpen = source[payloadAt] === '[' ? source.indexOf('{', payloadAt) : -1;
+      if (arrayOpen !== -1 && source.slice(payloadAt, arrayOpen).trim() === '[') {
+        body = objectLiteralAt(source, arrayOpen);
+      } else {
+        const ident = /^([A-Za-z_$][\w$]*)\s*[,)]/.exec(source.slice(payloadAt, payloadAt + 80));
+        body = ident ? literalForIdentifier(source, ident[1], payloadAt) : null;
+      }
+    }
+    if (body === null) continue;
+
+    const keys = topLevelKeys(body);
+    if (keys === null) continue; // a spread or a computed key is not a key set
     const missing = keys.filter((k) => !columns.includes(k));
     if (missing.length) findings.push(`${where(m.index)} ${op} ${table} → ${missing.join(', ')}`);
   }

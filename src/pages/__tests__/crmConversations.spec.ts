@@ -18,6 +18,11 @@ const broker = readFileSync(
   join(root, 'supabase', 'functions', 'get-client-data', 'index.ts'),
   'utf8',
 );
+const shared = (name: string) =>
+  readFileSync(join(root, 'supabase', 'functions', '_shared', name), 'utf8');
+const paging = shared('ghlConversationPaging.ts');
+const store = shared('ghlConversationStore.ts');
+const mapper = shared('ghlConversationMap.pure.ts');
 
 describe('item 37 — the client waits as long as the server is allowed', () => {
   /**
@@ -139,8 +144,15 @@ describe('Audit 3 item 15 — the sync outgrows any single request', () => {
     // nothing that breaks it.
     expect(sync).toMatch(/Date\.now\(\) - startedAt > BUDGET_MS/);
     // And the budget has to reach the walk. A constant nothing consults is
-    // the failure this whole describe block exists to prevent.
-    expect(sync).toMatch(/stop:\s*\(\)\s*=>\s*Date\.now\(\) - startedAt > BUDGET_MS/);
+    // the failure this whole describe block exists to prevent — so the
+    // predicate is named once and every consumer is checked to take it,
+    // rather than the literal being re-matched at each call site.
+    expect(sync).toMatch(/const stop = \(\) => Date\.now\(\) - startedAt > BUDGET_MS;/);
+    // The contact pool.
+    expect(sync).toMatch(/\{ stop \},/);
+    // And every paged walk, so a single contact's conversations and messages
+    // cannot run past the moment the run has to answer.
+    expect((sync.match(/^\s+stop,$/gm) ?? []).length).toBeGreaterThanOrEqual(3);
   });
 
   it('the budget leaves room to answer inside the declared request_timeout', () => {
@@ -216,13 +228,17 @@ describe('the scheduled conversation sync stops sleeping too', () => {
       A fixed sleep is wrong twice over: far slower than the vendor allows
       when nothing else is calling, and not a limit at all when something is —
       two overlapping invocations each sleeping 500ms together issue four
-      requests a second. Every GHL call goes through the Postgres token
-      bucket, which is shared across isolates and reads GHL's own
-      `Retry-After`.
+      requests a second.
+
+      The bucket is reached through the pager now rather than named here, so
+      the assertion is that this function issues NO request of its own: one
+      module holds every GHL call these two functions make, and the pace is a
+      property of that module rather than of each caller remembering.
     */
-    expect(cron).toContain("import { ghlFetchShared, tokenKeyFor } from '../_shared/ghl-rate-limiter.ts'");
     expect(cron).not.toMatch(/await fetch\(/);
-    expect((cron.match(/await ghlFetchShared\(/g) ?? []).length).toBe(2);
+    expect(cron).not.toMatch(/ghlFetchShared/);
+    expect(paging).toContain("import { ghlFetchShared } from './ghl-rate-limiter.ts'");
+    expect(paging).not.toMatch(/await fetch\(/);
   });
 
   it('keys the bucket on the account, never on a literal', () => {
@@ -233,21 +249,117 @@ describe('the scheduled conversation sync stops sleeping too', () => {
 
   it('works contacts concurrently, bounded', () => {
     expect(cron).toContain("import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts'");
-    expect(cron).toMatch(/mapWithConcurrency\(\s*\[\.\.\.contactsToSync\],\s*CONTACT_CONCURRENCY/);
+    expect(cron).toMatch(/mapWithConcurrency\(\s*entries,\s*CONTACT_CONCURRENCY/);
     const limit = Number(cron.match(/const CONTACT_CONCURRENCY = (\d+);/)?.[1]);
     expect(limit).toBeGreaterThan(1);
   });
 
   it('stops starting work at a wall-clock budget', () => {
     /*
-      The set is re-derived from the database every tick, so a contact this
-      run did not reach is picked up by the next one — there is no cursor to
-      leave stale, which is what makes stopping safe.
+      Every boundary is re-derived from rows that already exist, so a contact
+      this run did not reach is picked up by the next one — there is no cursor
+      to leave stale, which is what makes stopping safe.
     */
-    expect(cron).toMatch(/stop:\s*\(\)\s*=>\s*Date\.now\(\) - startedAt > BUDGET_MS/);
+    expect(cron).toMatch(/stop:\s*\(\)\s*=>\s*Date\.now\(\) - startedAt > opts\.deadlineMs/);
     const budget = Number(cron.match(/const BUDGET_MS = ([\d_]+);/)?.[1].replace(/_/g, ''));
     expect(budget).toBeGreaterThan(0);
     expect(budget).toBeLessThan(150_000);
+  });
+
+  it('gives each band its own deadline, and they are in priority order', () => {
+    /*
+      Three bands need three deadlines and `stop` is a single global
+      predicate, so they are three passes. The deadlines are ABSOLUTE against
+      one `startedAt`, which is what lets a band that finishes early hand the
+      rest of the clock to the next one instead of idling.
+    */
+    const at = (name: string) =>
+      Number(cron.match(new RegExp(`const ${name} = ([0-9_]+);`))?.[1].replace(/_/g, ''));
+    const fresh = at('FRESH_HEAD_DEADLINE_MS');
+    const bootstrap = at('BOOTSTRAP_DEADLINE_MS');
+    const budget = at('BUDGET_MS');
+    expect(fresh).toBeGreaterThan(0);
+    expect(fresh).toBeLessThan(bootstrap);
+    expect(bootstrap).toBeLessThan(budget);
+    expect(budget).toBeLessThan(150_000);
+  });
+
+  it('runs the three bands, and runs the fresh head first', () => {
+    /*
+      The inbound notification hangs off the fresh head, and an operator
+      waiting on a reply is the only reader here with a clock. Bootstrap is
+      the coverage gap; the stale tail is the completeness rotation.
+    */
+    const order = [...cron.matchAll(/runBand\((fresh|bootstrap|stale)Band,/g)].map((m) => m[1]);
+    expect(order).toEqual(['fresh', 'bootstrap', 'stale']);
+  });
+
+  it('walks history on the two bands that can need it, and not on the third', () => {
+    /*
+      A top-down walk stops at the first page it already holds in full, which
+      is correct for "what is new" and blind to everything BELOW a thread an
+      earlier cap cut short.
+
+      The FRESH head pays for it because its own upsert stamps
+      `last_synced_at = now` on every conversation it touches, which puts those
+      threads permanently at the back of the stale tail's ordering — the fifty
+      most active threads would otherwise never reach the band that completes a
+      truncated one, and they are the threads most likely to be truncated.
+
+      BOOTSTRAP does not, and cannot need to: a conversation it has just
+      discovered has an empty held set, so the top-down walk already ran to
+      exhaustion and there is no anchor to seed a second one from.
+    */
+    expect(cron).toMatch(/runBand\(freshBand,[\s\S]{0,160}?deepProbe: true/);
+    expect(cron).toMatch(/runBand\(bootstrapBand,[\s\S]{0,160}?deepProbe: false/);
+    expect(cron).toMatch(/runBand\(staleBand,[\s\S]{0,160}?deepProbe: true/);
+  });
+
+  it('stamps the rotation column on every attempt, not only on success', () => {
+    /*
+      `last_synced_at` is what orders the stale-tail band. A conversation whose
+      search was refused and which is therefore never stamped stays at the head
+      of that queue for ever and blocks everything behind it — a priority
+      inversion that gets worse the more often the job runs.
+    */
+    expect(cron).toMatch(/runBand\(staleBand,[\s\S]{0,160}?stampAttempt: true/);
+    expect(cron).toMatch(/\} finally \{[\s\S]{0,900}?last_synced_at: syncedAtIso/);
+  });
+
+  it('states nullsFirst wherever the ordering decides what gets looked at', () => {
+    /*
+      Postgres orders DESC as NULLS FIRST, and `last_message_date` is nullable.
+      "The 50 newest conversations" was in fact up to 50 rows with no message
+      date at all — the opposite of what that band is for. ASC is NULLS LAST,
+      and a never-stamped row is the one most in need of attention, so the
+      stale tail states the other direction for the opposite reason.
+    */
+    expect(cron).toMatch(/order\('last_message_date', \{ ascending: false, nullsFirst: false \}\)/);
+    expect(cron).toMatch(/order\('last_synced_at', \{ ascending: true, nullsFirst: true \}\)/);
+    expect(store).toMatch(/order\('ghl_date_added', \{ ascending: true, nullsFirst: false \}\)/);
+  });
+
+  it('sweeps the never-seen contacts through the proved window, never an ad-hoc modulo', () => {
+    /*
+      `floor(now / period) % windowCount` reaches only the residues of
+      `stride mod N` — at a 15-minute cadence over 6 windows it visits
+      {0,1,3,4} and never 2 or 5, silently. The pure module advances by at
+      most one window width per tick, so consecutive windows abut and their
+      union is the whole list for any cadence.
+    */
+    expect(cron).toMatch(/import \{[^}]*bootstrapWindow[^}]*\} from '\.\.\/_shared\/ghlBootstrapWindow\.pure\.ts'/);
+    const code = cron.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/Math\.floor\(Date\.now\(\) \/ /);
+  });
+
+  it('never pages a result set with an unbounded select', () => {
+    /*
+      PostgREST answers at most `max_rows` and says nothing about having
+      truncated. Both of these read a set whose COMPLETENESS is the point.
+    */
+    expect(cron).toContain("from '../_shared/postgrestPaging.pure.ts'");
+    expect(sync).toContain("from '../_shared/postgrestPaging.pure.ts'");
+    expect(store).toContain("from './postgrestPaging.pure.ts'");
   });
 
   it('pins the client to the version the rate limiter declares', () => {
@@ -258,6 +370,109 @@ describe('the scheduled conversation sync stops sleeping too', () => {
       'utf8',
     ).match(/@supabase\/supabase-js@([\d.]+)/)?.[1];
     expect(limiterPin).toBeDefined();
-    expect(cron).toContain(`@supabase/supabase-js@${limiterPin}`);
+    for (const src of [cron, sync, paging, store]) {
+      const pins = [...src.matchAll(/@supabase\/supabase-js@([\d.]+)/g)].map((m) => m[1]);
+      for (const pin of pins) expect(pin).toBe(limiterPin);
+    }
+  });
+});
+
+describe('one conversation mapper, one conversation store', () => {
+  /*
+    Four copies of these mappers existed. Two call sites writing the same
+    message through two copies of `mapMessageDirection` is how one message
+    comes to be `inbound` on the scheduled path and `outbound` on the
+    browser's refresh, with `onConflict: 'ghl_message_id'` making whichever
+    ran last the winner.
+  */
+  it('neither sync function keeps a private copy of the mappers', () => {
+    for (const src of [cron, sync]) {
+      expect(src).not.toMatch(/^function mapChannelType\(/m);
+      expect(src).not.toMatch(/^function mapMessageDirection\(/m);
+      expect(src).not.toMatch(/^function mapContentType\(/m);
+      expect(src).not.toMatch(/^function parseGhlDate\(/m);
+    }
+  });
+
+  it('both write a conversation and a message through the one store', () => {
+    for (const src of [cron, sync]) {
+      expect(src).toContain("from '../_shared/ghlConversationStore.ts'");
+      // The row shapes live in the mapper; nothing assembles one inline.
+      expect(src).not.toMatch(/ghl_message_id: msg\.id/);
+      expect(src).not.toMatch(/\.from\('ghl_conversation_messages'\)\s*\n\s*\.upsert/);
+    }
+  });
+
+  it('deduplicates a batch before the upsert', () => {
+    /*
+      GHL repeats the anchor message across a page boundary, and Postgres
+      answers a second conflicting row inside one statement with 21000 —
+      which loses the WHOLE batch, not the duplicate.
+    */
+    expect(store).toMatch(/const byId = new Map<string, Row>\(\)/);
+    expect(store).toMatch(/byId\.set\(id, m\)/);
+  });
+
+  it('refuses a truncated held set rather than using it', () => {
+    /*
+      The pager stops walking when a page is already held in full, so the set
+      it is handed has to be COMPLETE. A window of it either stops the walk
+      above messages it never fetched, or — worse — makes it run to the bottom
+      of the thread on every tick for ever.
+    */
+    expect(store).toMatch(/if \(got\.truncated\) \{/);
+    expect(store).toMatch(/failed: `held set exceeded/);
+  });
+
+  it('keeps the migration worker’s replay columns out of an import', () => {
+    // Writing them would erase an account-to-account migration's state.
+    expect(mapper).not.toMatch(/new_ghl_conversation_id:/);
+    expect(mapper).not.toMatch(/new_ghl_message_id:/);
+    expect(mapper).not.toMatch(/replayed_at:/);
+    expect(mapper).not.toMatch(/replay_skipped_reason:/);
+  });
+});
+
+describe('a walk that failed is never reported as one that finished', () => {
+  /*
+    `ghlFetchShared` RETURNS a non-2xx response after its retries rather than
+    throwing, so the natural `break` on a bad response leaves no cursor, cuts
+    no budget, and computes exhaustion. `GhlWindow` therefore carries four
+    separate facts and derives `exhausted` from all of them at one place.
+  */
+  it('derives exhaustion once, from every fact', () => {
+    expect(paging).toMatch(
+      /exhausted: !flags\.failed && !flags\.stoppedOnBudget && !flags\.hitPageCap && flags\.noCursor/,
+    );
+    // Exactly one place may decide it. The interface DECLARES the field;
+    // only `done()` may compute a value for it.
+    expect((paging.match(/exhausted: [^b]/g) ?? []).length).toBe(1);
+  });
+
+  it('never reads `nextPage` on the conversation search', () => {
+    /*
+      That field exists only on the messages sub-endpoint. Reading it on the
+      search is what made a previous worker exit after one page.
+    */
+    const search = paging.slice(
+      paging.indexOf('export async function searchConversationsForContact'),
+      paging.indexOf('function readMessagePage'),
+    );
+    expect(search).not.toMatch(/nextPage/);
+    expect(search).toMatch(/params\.set\('startAfterId', startAfterId\)/);
+    expect(search).toMatch(/params\.set\('startAfter', startAfter\)/);
+  });
+
+  it('has no short-page early exit — only the absence of a cursor ends a walk', () => {
+    // A short page is not proof of exhaustion. The copy this replaces ended
+    // the walk on `messages.length < 50`.
+    const code = paging.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/\.length < GHL_MESSAGE_PAGE_LIMIT/);
+    expect(code).not.toMatch(/length < 50/);
+  });
+
+  it('both callers read the failure rather than inferring it from a count', () => {
+    expect(sync).toMatch(/if \(search\.failed\)/);
+    expect(cron).toMatch(/if \(search\.failed\)/);
   });
 });

@@ -30,6 +30,7 @@ import {
   BuilderPropertyImageButton,
 } from '@/components/builder-portal/BuilderPropertyImage';
 import { StockPicture } from '@/components/stock/StockPicture';
+import { BuilderStockFiguresButton } from '@/components/builder-portal/BuilderStockFigures';
 import { AU_LOCALE } from '@/lib/aml/displayDate';
 import { BuilderSchedule } from '@/components/builder-portal/ui/BuilderSchedule';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -38,6 +39,7 @@ import {
   useSetBuilderStockAvailability, builderStockImageUrl,
 } from '@/lib/builderStockQueries';
 import {
+  describeManualStats,
   formatFileSize, primaryStockImage, stockFileAcceptAttribute, stockImageStageSummary,
   stockItemLocality, stockItemPrice, stockItemTitle,
   MAX_STOCK_FILE_BYTES, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
@@ -1210,7 +1212,27 @@ function splitPriceLine(price: string | null): { amount: string; qualifier: stri
   if (!price) return { amount: '—', qualifier: null };
   const match = PRICE_AMOUNT.exec(price.trim());
   if (!match) return { amount: price, qualifier: null };
-  return { amount: match[1], qualifier: match[2] || null };
+  return { amount: match[1], qualifier: meaningfulTerms(match[2]) };
+}
+
+/**
+ * A QUALIFIER HAS TO SAY SOMETHING.
+ *
+ * Builders footnote a price on their own sheets, so `price_display` arrives as
+ * `"$863,850 *"` and the split hands the figure `$863,850` and the terms `*`
+ * — a footnote MARKER whose footnote is on a page the card does not have.
+ * Live on the prime, Lot 324 drew a lone asterisk under its price.
+ *
+ * The marker is dropped and the figure keeps every digit: nothing here edits
+ * the offer, and `title` still carries the builder's line exactly as written,
+ * so the asterisk is still there for anyone who hovers it. A run with no
+ * letter and no digit carries no terms — `*`, `†`, `(*)`, `~` — while
+ * `"* conditions apply"` is a real qualifier and survives.
+ */
+function meaningfulTerms(terms: string | undefined): string | null {
+  const text = (terms ?? '').trim();
+  if (!text) return null;
+  return /[\p{L}\p{N}]/u.test(text) ? text : null;
 }
 
 function PropertyIdentity({ item }: { item: BuilderStockItem }) {
@@ -1665,9 +1687,29 @@ export function StockPlate({
               />
             }
           />
+          {/*
+            THE NOTE UNDER THE SCHEDULE, which is where a drawing puts one and
+            where a builder is already looking when they notice a figure is
+            wrong. It names which figures the stock list did not state and
+            which the builder stated themselves — a per-row chip would say the
+            same thing up to five times — and the control beside it changes its
+            wording with what is outstanding.
+          */}
+          <StockFiguresNote item={item} />
         </div>
       </div>
     </li>
+  );
+}
+
+/** What the stock list did not say, and the way to say it. */
+function StockFiguresNote({ item }: { item: BuilderStockItem }) {
+  const reading = describeManualStats(item);
+  return (
+    <div className="bd-spec-note">
+      {reading.note ? <p className="bd-spec-note-text">{reading.note}</p> : null}
+      <BuilderStockFiguresButton item={item} />
+    </div>
   );
 }
 

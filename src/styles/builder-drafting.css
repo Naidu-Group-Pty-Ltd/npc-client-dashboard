@@ -730,6 +730,42 @@
   }
 
   /* ── WHAT YOU CAN DO TO IT ────────────────────────────────────── */
+  /* ── THE NOTE UNDER THE SCHEDULE ──────────────────────────────
+     A drawing's notes sit beneath the schedule they qualify, in annotation
+     type, and that is where a builder is already looking when they notice a
+     figure is wrong. The control is part of the note rather than a button
+     elsewhere on the plate: the sentence says what is outstanding and the
+     words beside it are how to fix it. */
+  .builder-portal-theme .bd-spec-note {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 1rem; flex-wrap: wrap; padding-top: .625rem;
+  }
+  .builder-portal-theme .bd-spec-note-text {
+    margin: 0; min-width: 0; font-size: .75rem; line-height: 1.4;
+    color: hsl(var(--muted-foreground));
+  }
+  /* Quiet, and never a button: stating a figure is an ordinary correction to
+     a builder's own record, not an act the plate should shout about. It
+     still carries the 44px touch floor `utilities.css` gives a control. */
+  .builder-portal-theme .bd-spec-note-action {
+    /* ALWAYS AT THE RIGHT-HAND END, note or no note. `justify-content:
+       space-between` puts a lone child at the START, so a property whose
+       stock list stated everything drew this control on the left while its
+       neighbour drew it on the right — one control in two places down the
+       same sheet. */
+    margin-left: auto;
+    display: inline-flex; align-items: center; gap: .375rem; flex: none;
+    background: none; border: 0; padding: 0; cursor: pointer;
+    font-family: var(--font-mono); font-size: .625rem; font-weight: 600;
+    letter-spacing: .14em; text-transform: uppercase;
+    color: hsl(var(--primary));
+    transition: color 120ms ease-out;
+  }
+  .builder-portal-theme .bd-spec-note-action:hover { color: hsl(var(--foreground)); }
+  .builder-portal-theme .bd-spec-note-action:focus-visible {
+    outline: 2px solid hsl(var(--ring)); outline-offset: 3px; border-radius: 2px;
+  }
+
   /* ── AN EMPTY PLATE ───────────────────────────────────────────
      Hatched, because a drawing set marks an area with nothing in it rather
      than leaving it blank: 544×306 of empty box reads as a picture that

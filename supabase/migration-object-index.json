@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1038,
+  "migration_files": 1039,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -639,6 +639,7 @@
     "index:builder_stock_item_images_upload_idx",
     "index:builder_stock_items_availability_idx",
     "index:builder_stock_items_image_work_queue_idx",
+    "index:builder_stock_items_manual_stats_idx",
     "index:builder_stock_items_org_development_unit_design_key",
     "index:builder_stock_items_org_development_unit_key",
     "index:builder_stock_items_org_idx",

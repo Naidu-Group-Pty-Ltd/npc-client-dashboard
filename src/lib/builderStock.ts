@@ -12,6 +12,15 @@
  */
 import { addressWithoutLeadingDesignation } from '../../supabase/functions/_shared/builderStock/normalise.pure';
 import { parseBuilderAddressLine } from '../../supabase/functions/_shared/builderStockAddress.pure';
+/*
+ * The five figures a builder may state, and the rules for each, imported
+ * rather than restated — what the dialog asks for and what the server accepts
+ * cannot become two standards. Same move `assessPepEvidence` makes.
+ */
+import {
+  MANUAL_STAT_SPECS, MANUAL_STAT_FIELDS, manualStatFields,
+  type ManualStatField, type ManualStatSpec,
+} from '../../supabase/functions/_shared/builderStock/manualStats.pure';
 import {
   comparePrimaryEvidence, isPrimaryRole, readStoredEvidenceLevel, readStoredRole,
 } from '../../supabase/functions/_shared/builderStock/sourceImageRole.pure';
@@ -128,6 +137,31 @@ export interface BuilderStockItem {
   property_type: string | null;
   land_size_sqm: number | null;
   building_size_sqm: number | null;
+  /**
+   * The figures the BUILDER stated, where their stock list did not.
+   *
+   * The five fields above are already the EFFECTIVE values — the server lays
+   * a builder's own figures over the document's in `applyManualStats`, once,
+   * in the projection both this portal and the Command Centre marketplace
+   * read, so the two can never disagree about one house. This field says
+   * WHICH of them were typed rather than read, and `stated_*` carries what
+   * the document said underneath.
+   *
+   * Optional because a deployment whose server predates the column sends no
+   * such field, and its absence means "nothing was stated" rather than an
+   * error. See `_shared/builderStock/manualStats.pure.ts`.
+   */
+  manual_stats?: {
+    values: Partial<Record<ManualStatField, number>>;
+    recorded_at: string | null;
+    recorded_by: string | null;
+  } | null;
+  /** What the document said, where a builder overrode it. */
+  stated_bedrooms?: number | null;
+  stated_bathrooms?: number | null;
+  stated_car_spaces?: number | null;
+  stated_building_size_sqm?: number | null;
+  stated_land_size_sqm?: number | null;
   /**
    * The house on the land — `Vanta 20`, `Nex 20`, `Cura 20B`.
    *
@@ -812,3 +846,75 @@ export function formatFileSize(bytes: number | null | undefined): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** `a`, `a and b`, `a, b and c` — an English list, not a comma join. */
+function sentenceList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+export interface ManualStatsReading {
+  /** Fields the builder stated themselves. */
+  stated: ManualStatField[];
+  /** Fields still empty — neither the document nor the builder gave one. */
+  missing: ManualStatField[];
+  /** One line under the schedule, or null where there is nothing to say. */
+  note: string | null;
+  /** What the control offers, which changes with what is outstanding. */
+  action: string;
+}
+
+/**
+ * What to say about a property's figures, under its schedule.
+ *
+ * ONE LINE, AND ONLY WHERE THERE IS SOMETHING TO SAY. A per-row "stated by
+ * you" chip on five rows is five chips saying one thing; a drawing puts that
+ * in a note under the schedule, which is also where a builder is already
+ * looking when they notice a figure is wrong.
+ *
+ * It names WHICH fields rather than counting them, because "three figures are
+ * missing" sends somebody to compare two lists to find out which three.
+ *
+ * The action wording follows the outstanding work: a property with an empty
+ * row is offered "Add", one that is complete is offered "Edit". A control that
+ * says the same thing whatever the state is a control nobody reads.
+ */
+export function describeManualStats(item: BuilderStockItem): ManualStatsReading {
+  const stated = manualStatFields(item as unknown as Record<string, unknown>);
+  const missing = MANUAL_STAT_FIELDS.filter((field) => {
+    const value = (item as unknown as Record<string, unknown>)[field];
+    // `0` is a stated figure — a studio has no bedroom, a townhouse may have
+    // no car space — so this asks whether a number is present, never whether
+    // it is truthy.
+    return value === null || value === undefined || !Number.isFinite(Number(value));
+  });
+  const labelOf = (field: ManualStatField) =>
+    (MANUAL_STAT_SPECS.find((spec) => spec.field === field)?.label ?? field).toLowerCase();
+
+  const clauses: string[] = [];
+  if (missing.length) {
+    clauses.push(
+      `${sentenceList(missing.map(labelOf))} ${missing.length === 1 ? 'is' : 'are'} not in your stock list`,
+    );
+  }
+  if (stated.length) {
+    clauses.push(`${sentenceList(stated.map(labelOf))} stated by you`);
+  }
+  const note = clauses.length
+    ? `${clauses.join(' · ').replace(/^./, (c) => c.toUpperCase())}.`
+    : null;
+
+  return {
+    stated, missing, note,
+    action: missing.length ? 'Add these figures' : 'Edit figures',
+  };
+}
+
+/*
+ * Re-exported so a surface takes the whole stock vocabulary from one module,
+ * the way it already takes `stockItemTitle` and the availability labels.
+ */
+export {
+  MANUAL_STAT_SPECS, MANUAL_STAT_FIELDS, manualStatFields,
+};
+export type { ManualStatField, ManualStatSpec };

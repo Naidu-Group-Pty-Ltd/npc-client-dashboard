@@ -136,6 +136,52 @@ function schemaHandles(source) {
  * nonsense.
  */
 const SELECT = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)((?:(?!\.from\()[^;]){0,200}?)\.select\(\s*(['"`])([^'"`]*)\5/g;
+/**
+ * Blank every comment to spaces, keeping offsets and line numbering exact.
+ *
+ * The structural scans below track quotes so a brace inside a string does not
+ * fool them — and a comment is full of unpaired quotes. One apostrophe in a
+ * prose comment ("the vendor's own cursor") opened a string that never closed,
+ * so `objectLiteralAt` ran to the end of the file and `topLevelKeys` read a
+ * colon inside a comment as a key boundary. Both failure modes are SILENT: the
+ * payload is skipped or mis-parsed and nothing is reported, which is the one
+ * outcome a gate must never have.
+ *
+ * Comments become spaces rather than being removed, so every index into the
+ * result still points at the same character of the original and the reported
+ * line number stays right.
+ */
+function blankComments(source) {
+  let out = '';
+  let quote = null;
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (quote) {
+      out += ch;
+      if (ch === '\\') { out += source[i + 1] ?? ''; i += 2; continue; }
+      if (ch === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; out += ch; i++; continue; }
+    if (ch === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') { out += ' '; i++; }
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      out += source.slice(i, stop).replace(/[^\n]/g, ' ');
+      i = stop;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 /** `.from('table').insert(` — the payload is read from the source after it. */
 const WRITE_HEAD = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)\s*\.(insert|update|upsert)\(\s*/g;
 
@@ -182,6 +228,21 @@ function topLevelKeys(body) {
   let quote = null;
   let atKeyPosition = true;
   let token = '';
+  let sawBracket = false;
+
+  /*
+    `{ user_id }` names the column `user_id` exactly as `{ user_id: user_id }`
+    does, and recording a key only at a `:` dropped every shorthand property
+    silently. A gate that cannot see half the syntax its language admits is
+    worse than no gate, because the green result is believed.
+  */
+  const flushShorthand = () => {
+    const name = token.trim();
+    if (atKeyPosition && !sawBracket && /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) keys.push(name);
+    token = '';
+    sawBracket = false;
+  };
+
   for (let i = 0; i < body.length; i++) {
     const ch = body[i];
     if (quote) {
@@ -189,21 +250,50 @@ function topLevelKeys(body) {
       if (ch === quote) quote = null;
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === '`') { quote = ch; token = ''; continue; }
-    if (ch === '{' || ch === '[' || ch === '(') { depth++; continue; }
+    // A quoted key is still a key: `{ "user_id": 1 }` writes the same column as
+    // `{ user_id: 1 }`. In key position the string's CONTENT becomes the token
+    // so the `:` branch below sees the name; anywhere else it is a value and is
+    // skipped as before.
+    if (ch === '"' || ch === "'" || ch === '`') {
+      // `depth === 0 && !sawBracket` is load-bearing: this branch runs before
+      // the depth guard below, so without it a string INSIDE a computed key —
+      // `{ [mode === 'morning' ? 'a' : 'b']: v }` — was captured as the key
+      // name, and `finance-portal-briefing-runner` was reported as writing a
+      // column called `morning`. A gate's false positive is worse than its
+      // silence, because it teaches a reader to stop believing it.
+      if (atKeyPosition && depth === 0 && !sawBracket && token.trim() === '') {
+        const close = body.indexOf(ch, i + 1);
+        if (close !== -1) {
+          token = body.slice(i + 1, close);
+          i = close;
+          continue;
+        }
+      }
+      quote = ch;
+      continue;
+    }
+    if (ch === '{' || ch === '[' || ch === '(') {
+      if (depth === 0 && ch === '[') sawBracket = true;
+      depth++;
+      continue;
+    }
     if (ch === '}' || ch === ']' || ch === ')') { depth--; continue; }
     if (depth > 0) continue;
-    if (ch === ',') { atKeyPosition = true; token = ''; continue; }
+    if (ch === ',') { flushShorthand(); atKeyPosition = true; continue; }
     if (ch === ':' && atKeyPosition) {
+      // A computed key is checked FIRST and refuses the whole literal. Asking
+      // "does the token look like an identifier?" first lets a computed key
+      // whose branches happen to be identifiers slip through as a column name.
+      if (sawBracket) return null;
       const name = token.trim();
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) keys.push(name);
-      else if (name.startsWith('[')) return null; // a computed key is not a name
       atKeyPosition = false;
       token = '';
       continue;
     }
     token += ch;
   }
+  flushShorthand();
   return keys;
 }
 
@@ -260,13 +350,26 @@ function literalForIdentifier(source, name, callIndex) {
   if (!openerHit || openerHit.index !== last[0].length - name.length) return null;
 
   const braceAt = from + last.index + openerHit.index + openerHit[0].length - 1;
+
+  /*
+    Proximity cannot tell two adjacent functions apart, and a payload that is a
+    PARAMETER has no binding this scan can see — so the nearest preceding
+    `const x = { … }` in the file above it belongs to somebody else. Refusing
+    across a function boundary is the cheap approximation of scope that keeps
+    the gate from reporting columns the call site never sends; a false positive
+    teaches a reader the gate cannot be trusted, which is worse than silence.
+  */
+  if (/\b(?:function\s|=>\s*\{)/.test(source.slice(braceAt, callIndex))) return null;
   return objectLiteralAt(source, braceAt);
 }
 
 const findings = [];
 
 for (const file of walk(FUNCTIONS)) {
-  const source = readFileSync(file, 'utf8');
+  const raw = readFileSync(file, 'utf8');
+  // Every structural scan below runs on the comment-blanked text; offsets and
+  // line numbers are identical, so `where()` still reports the real line.
+  const source = blankComments(raw);
   const handles = schemaHandles(source);
   const where = (index) => `${relative(root, file)}:${source.slice(0, index).split('\n').length}`;
 

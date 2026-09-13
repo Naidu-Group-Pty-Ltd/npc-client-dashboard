@@ -296,7 +296,10 @@ Deno.serve(async (req) => {
           if (top.failed) {
             errors.push({ contactId: ghlContactId, error: `Messages fetch: ${top.failureStatus}` });
           }
-          totalMessages += await writeMessages(supabase, top.items, localId, 'sync-ghl-conversations');
+          // Hoisted: `x += await f()` reads `x` before the await, so six
+          // concurrent contacts lose each other's increments.
+          const wroteTop = await writeMessages(supabase, top.items, localId, 'sync-ghl-conversations');
+          totalMessages += wroteTop;
 
           if (deepProbe && held.oldestAnchor && !stop()) {
             const deep = await fetchMessagesOlderThan(supabase, tokenKey, ghlHeaders, {
@@ -311,7 +314,8 @@ Deno.serve(async (req) => {
             if (deep.failed) {
               errors.push({ contactId: ghlContactId, error: `History fetch: ${deep.failureStatus}` });
             }
-            totalMessages += await writeMessages(supabase, deep.items, localId, 'sync-ghl-conversations');
+            const wroteDeep = await writeMessages(supabase, deep.items, localId, 'sync-ghl-conversations');
+            totalMessages += wroteDeep;
           }
         }
       },

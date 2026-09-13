@@ -139,4 +139,34 @@ describe("the gate that could not see any of it", () => {
   it("takes top-level keys only, so a nested object is not misread as columns", () => {
     expect(gate).toMatch(/function topLevelKeys\(body\)/);
   });
+
+  it("blanks comments before any structural scan", () => {
+    /*
+      The scans track quotes so a brace inside a string cannot fool them — and
+      a comment is full of unpaired quotes. One apostrophe in prose ("the
+      vendor's own cursor") opened a string that never closed, so the payload
+      was skipped or mis-parsed, SILENTLY. Comments become spaces rather than
+      being removed, so reported line numbers stay exact.
+    */
+    expect(gate).toMatch(/function blankComments\(source\)/);
+    expect(gate).toMatch(/const source = blankComments\(raw\);/);
+  });
+
+  it("records a shorthand and a quoted key, and refuses a computed one", () => {
+    // `{ user_id }` names the column `user_id` exactly as `{ user_id: 1 }`
+    // does; `{ "user_id": 1 }` likewise. A computed key is not a name at all,
+    // and is checked FIRST so branches that look like identifiers cannot slip
+    // through — that false positive reported `finance_portal_users.morning`.
+    expect(gate).toMatch(/const flushShorthand = \(\) => \{/);
+    expect(gate).toContain("atKeyPosition && depth === 0 && !sawBracket && token.trim() === ''");
+    const colon = gate.slice(gate.indexOf("if (ch === ':' && atKeyPosition)"));
+    expect(colon.indexOf("if (sawBracket) return null;"))
+      .toBeLessThan(colon.indexOf("/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)"));
+  });
+
+  it("refuses a literal that sits on the other side of a function boundary", () => {
+    // Proximity cannot tell two adjacent functions apart, and a payload that
+    // is a PARAMETER has no binding the scan can see.
+    expect(gate).toContain("test(source.slice(braceAt, callIndex))) return null;");
+  });
 });

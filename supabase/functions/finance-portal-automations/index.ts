@@ -66,7 +66,10 @@ Deno.serve(async (req) => {
     const { data: existing } = await supabase
       .from('notifications')
       .select('id')
-      .eq('user_id', userId)
+      // `notifications` addresses a recipient with `target_user_id`; it has no
+      // `user_id`. This is the 24-hour duplicate guard, so the failed read left
+      // `existing` null and every run emitted the notification again.
+      .eq('target_user_id', userId)
       .eq('type', type)
       .gte('created_at', since)
       .contains('metadata', { purchase_file_id: fileId })

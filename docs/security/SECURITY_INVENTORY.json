@@ -588,6 +588,7 @@
       "builder-portal-stock/index.ts",
       "builder-stock-image-settler/index.ts",
       "builder-stock-link-callback/index.ts",
+      "cleanup-stale-calls/index.ts",
       "client-legal-workspace/index.ts",
       "commercial-bc-scenario-agent/index.ts",
       "dispatch-marketing-reports/index.ts",

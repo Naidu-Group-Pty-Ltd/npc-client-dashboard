@@ -227,6 +227,25 @@ Deno.serve(async (req) => {
       'Email Sync Cron',
     );
     let emails = incremental.messages;
+    /**
+     * WHICH PASS A MESSAGE CAME FROM, because the loop below cannot otherwise
+     * tell an email that just arrived from one being recovered from 2025 — and
+     * it rings a bell for each.
+     *
+     * `insertTargetedNotification` with a `moduleKey` is not one query: it
+     * resolves `user_roles`, `dashboard_modules` and `user_permissions` and
+     * then inserts a row per recipient, with nothing cached across the loop.
+     * A backfill tick of 400 historical messages is therefore ~1,200 resolution
+     * queries and 400 notifications PER VIEWER, announcing mail from last year.
+     * Measured on the prime 13 Sep 2026: all 2,303 rows written that morning
+     * were stamped unread and notified.
+     *
+     * A backfilled message is a record being recovered, not correspondence
+     * arriving. Only the incremental pass notifies.
+     */
+    const incrementalIds = new Set<string>(
+      incremental.messages.map((m: any) => String(m?.id ?? '')).filter(Boolean),
+    );
     console.log(`[Email Sync Cron] Fetched ${emails.length} recent inbox emails`);
 
     // The oldest row we already hold for this mailbox source. `received_at`
@@ -425,17 +444,23 @@ Deno.serve(async (req) => {
       // mailbox, so target users who can view the email_copilot module (+
       // superadmins) rather than broadcasting sender/subject to all staff.
       const senderName = (email.from?.emailAddress?.name || email.from?.emailAddress?.address || 'Unknown').split('<')[0].trim();
-      await insertTargetedNotification(supabase, {
-        moduleKey: 'email_copilot',
-        notification: {
-          type: 'email_received',
-          title: `Email from ${senderName}`,
-          message: email.subject || 'No subject',
-          entity_id: insertedEmail.id,
-        },
-      });
-
+      // Counted first: the row IS inserted either way, and a `continue` above
+      // the counter would report a written row as nothing — the same
+      // "an insert that failed is counted as nothing" shape this file already
+      // has once.
       insertedCount++;
+
+      if (incrementalIds.has(String(email.id ?? ''))) {
+        await insertTargetedNotification(supabase, {
+          moduleKey: 'email_copilot',
+          notification: {
+            type: 'email_received',
+            title: `Email from ${senderName}`,
+            message: email.subject || 'No subject',
+            entity_id: insertedEmail.id,
+          },
+        });
+      }
     }
 
     console.log(`[Email Sync Cron] Done: ${insertedCount} new, ${skippedCount} duplicates skipped`);

@@ -182,6 +182,54 @@ function blankComments(source) {
   return out;
 }
 
+/**
+ * `.from('table')` and the chain that follows it, so every FILTER in that chain
+ * can be judged the same way its select is.
+ *
+ * This gate's own header records `agent-insights-runner` filtering
+ * `client_deals.assigned_user_id`, a column that does not exist — and the gate
+ * could not see it, because a filter names its column in `.eq('col', …)`
+ * rather than in a select list. The same blind spot let
+ * `ai-dashboard-agent`'s email stats filter `email_copilot_emails.is_read`,
+ * which that table has never had: PostgREST answers 42703, the discarded error
+ * leaves `count` null, and `unread.count || 0` reported ZERO unread on a
+ * mailbox holding 6,330 of them.
+ *
+ * The chain segment stops at the first `;` or the next `.from(`, so a sibling
+ * query inside a `Promise.all([…])` — separated by a comma, not a semicolon —
+ * cannot have its filters attributed to the previous table.
+ */
+const FROM_HEAD = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)/g;
+
+/**
+ * Filter sites frozen at their first sighting, keyed by file + table + column
+ * so an edit elsewhere in the file cannot shift them.
+ *
+ * These are NOT false positives — every column here is genuinely absent, and
+ * every one of these five reads therefore returns nothing. They are frozen
+ * because the correct column is not a rename this check can make:
+ * `agent-insights-runner` asks "which clients / deals / reminders belong to
+ * this team member", and measured on the prime 13 Sep 2026 the columns that
+ * would answer it are unpopulated — `clients.assigned_team_user_id` is set on
+ * 1 of 40+ rows and `client_deals.created_by` on 0 of all of them. Repairing
+ * the names would produce code that looks fixed and still raises no insight,
+ * which is worse than a gate entry that says what is actually wrong. How a
+ * client or deal is attributed to a team member is the product's question to
+ * answer, not this script's.
+ *
+ * Removing an entry is the goal. Adding one needs a reason of this shape.
+ */
+const FROZEN_FILTERS = new Set([
+  'agent-insights-runner/index.ts|client_reminders|user_id',
+  'agent-insights-runner/index.ts|clients|assigned_user_id',
+  'agent-insights-runner/index.ts|clients|status',
+  'agent-insights-runner/index.ts|client_deals|assigned_user_id',
+]);
+
+/** A single-column filter or ordering inside that chain. */
+const CHAIN_FILTER =
+  /\.(eq|neq|gt|gte|lt|lte|like|ilike|is|in|contains|containedBy|order)\(\s*(['"`])([^'"`]*)\2/g;
+
 /** `.from('table').insert(` — the payload is read from the source after it. */
 const WRITE_HEAD = /([A-Za-z_$][\w$]*)\s*\.from\(\s*(['"`])([a-z0-9_]+)\2\s*\)\s*\.(insert|update|upsert)\(\s*/g;
 
@@ -383,6 +431,41 @@ for (const file of walk(FUNCTIONS)) {
     const named = selection.split(',').map((c) => c.trim()).filter(Boolean);
     const missing = named.filter((c) => !columns.includes(c));
     if (missing.length) findings.push(`${where(m.index)} select ${table} → ${missing.join(', ')}`);
+  }
+
+  for (const m of source.matchAll(FROM_HEAD)) {
+    const [, receiver, , table] = m;
+    if (handles.has(receiver)) continue;
+    const columns = knownColumns(table);
+    if (!columns) continue;
+
+    // The chain this `.from` owns: up to the first statement end or the next
+    // `.from(`, whichever comes first, and bounded so a runaway match cannot
+    // swallow the rest of a file.
+    const rest = source.slice(m.index + m[0].length, m.index + m[0].length + 600);
+    const stop = Math.min(
+      ...[rest.indexOf(';'), rest.indexOf('.from(')].filter((i) => i !== -1),
+      rest.length,
+    );
+    const chain = rest.slice(0, stop);
+
+    for (const f of chain.matchAll(CHAIN_FILTER)) {
+      const [, op, , name] = f;
+      // Not a plain column of THIS table, and not something this can read:
+      //   `a.b`   — an embedded resource's column, or a foreign table's
+      //   `${…}`  — interpolated, so not a name at all
+      //   `a->>b` — a JSONB path; PostgREST resolves it INSIDE the column, so
+      //             the thing to judge is the part before the arrow and the
+      //             rest is data. Five real call sites filter this way.
+      //   ''      — `.order()` with no column, or an empty filter
+      if (!name || name.includes('.') || name.includes('${') || name.includes('->')) continue;
+      // `.order('col', { … })` and `.in('col', [ … ])` name a column first,
+      // exactly like `.eq`; nothing here reads the second argument.
+      if (columns.includes(name)) continue;
+      const relPath = relative(root, file).replace(/^supabase\/functions\//, '');
+      if (FROZEN_FILTERS.has(`${relPath}|${table}|${name}`)) continue;
+      findings.push(`${where(m.index + m[0].length + f.index)} ${op} ${table} → ${name}`);
+    }
   }
 
   for (const m of source.matchAll(WRITE_HEAD)) {

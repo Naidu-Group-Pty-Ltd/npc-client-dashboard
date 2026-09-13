@@ -23,6 +23,7 @@
  */
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
+import { meteredFetch } from './meteredFetch.ts';
 
 export interface RateLimitOptions {
   /** Max requests allowed per rolling window. Default: 6 */
@@ -120,7 +121,23 @@ export interface SharedFetchOptions extends RateLimitOptions {
 
 /**
  * One-stop fetch: reserve a shared slot, fire the request, honour Retry-After
- * on 429, broadcast cooldown to every other caller, retry with backoff.
+ * on 429, broadcast cooldown to every other caller, retry with backoff — and
+ * put the vendor bill on it.
+ *
+ * **The metering lives here because this is the chokepoint.** `ghl` is a mapped,
+ * billable service (`GOHIGHLEVEL_API_KEY`, priced per request) and
+ * `leadconnectorhq.com` is in `meteredFetch`'s host map, yet `api_usage_log`
+ * held zero GHL rows: every caller reached the vendor through plain `fetch`,
+ * so a workspace running on the prime's forwarded GoHighLevel key spent it for
+ * free. Metering each call site instead would be the "remember to log" rule
+ * `meteredFetch`'s own header says decays — and no current caller of this
+ * function logs, so this cannot double-bill anything.
+ *
+ * A retried attempt is metered too, as an ERROR. That is what happened: GHL
+ * received the request and refused it, the attempt consumed the token's quota,
+ * and a 429 storm that leaves no trace is how a rate-limit problem stays
+ * invisible. Only the attempt we return records `success`, so a call is
+ * charged once and its failures are visible rather than billed.
  */
 export async function ghlFetchShared(
   supabase: SupabaseClient,
@@ -136,7 +153,10 @@ export async function ghlFetchShared(
   let attempt = 0;
   while (true) {
     await reserveGhlSlot(supabase, tokenKey, opts);
-    const res = await fetch(url, init);
+    const res = await meteredFetch(url, init, {
+      feature: tag,
+      metadata: { token_key: tokenKey, attempt: attempt + 1 },
+    });
     if (res.status !== 429 && res.status < 500) return res;
 
     // Compute back-off

@@ -16,7 +16,6 @@ interface BusySlot {
 interface TeamMemberAvailability {
   userId: string;
   username: string;
-  email: string;
   busySlots: BusySlot[];
   error?: string;
   /**

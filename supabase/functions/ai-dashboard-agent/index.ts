@@ -3202,7 +3202,12 @@ async function executeGetEmploymentDetails(sb: any, args: any) {
   ]);
   const contactEmployment: any[] = [];
   for (const c of (contacts.data || [])) {
-    const { data: emp } = await sb.from('client_employment').select('*').eq('contact_id', c.id);
+    // `client_employment` has no `contact_id`; an additional contact's row is
+    // keyed by `additional_contact_id`, and `contacts` above is
+    // `client_additional_contacts`. The filter named a column the table does
+    // not have, so PostgREST answered 42703, the discarded error left `emp`
+    // null, and every additional contact reported no employment at all.
+    const { data: emp } = await sb.from('client_employment').select('*').eq('additional_contact_id', c.id);
     if (emp?.length) contactEmployment.push({ contact: `${c.first_name} ${c.surname}`, employment: emp });
   }
   return { primary_employment: primary.data || [], contact_employment: contactEmployment };
@@ -3710,7 +3715,10 @@ async function executeGetClientFiles(sb: any, args: any) {
   const v = await validateClientExists(sb, args.client_id);
   if (!v.valid) return { error: v.error };
   const cid = v.resolvedId || args.client_id;
-  const { data } = await sb.from('client_files').select('*').eq('client_id', cid).order('created_at', { ascending: false });
+  // `client_files` stamps `uploaded_at`, not `created_at`. PostgREST rejects
+  // an ORDER on a column the table lacks and fails the WHOLE request, so this
+  // returned an empty file list for every client.
+  const { data } = await sb.from('client_files').select('*').eq('client_id', cid).order('uploaded_at', { ascending: false });
   return { files: data || [] };
 }
 
@@ -4066,7 +4074,10 @@ async function executeGetClientScore(sb: any, args: any) {
   const v = await validateClientExists(sb, args.client_id);
   if (!v.valid) return { error: v.error };
   const cid = v.resolvedId || args.client_id;
-  const { data } = await sb.from('client_scores').select('*').eq('client_id', cid).order('created_at', { ascending: false }).limit(1);
+  // `client_scores` stamps `last_calculated_at`; there is no `created_at`, and
+  // ordering by one fails the whole request — so "no score data found" was the
+  // answer for every client, scored or not.
+  const { data } = await sb.from('client_scores').select('*').eq('client_id', cid).order('last_calculated_at', { ascending: false }).limit(1);
   return data?.[0] ? { score: data[0] } : { message: 'No score data found for this client.' };
 }
 
@@ -4302,7 +4313,16 @@ async function executeCompleteDealStage(sb: any, args: any) {
 async function executeGetEmailStats(sb: any) {
   const [total, unread, unlinked] = await Promise.all([
     sb.from('email_copilot_emails').select('id', { count: 'exact', head: true }),
-    sb.from('email_copilot_emails').select('id', { count: 'exact', head: true }).eq('is_read', false),
+    // `email_copilot_emails` has never had an `is_read` column — read state
+    // lives in `status`, whose values are unread / sent / summarized / drafted
+    // / archived, and which is what the Email Co-Pilot's own unread badge
+    // counts. Filtering the missing column made PostgREST answer 42703, the
+    // discarded error left `count` null, and `unread.count || 0` reported
+    // **zero unread** on a mailbox holding 6,330 of them. That is the
+    // `docs/aml/CASE_TENANT_COLUMN.md` class exactly: a column the table does
+    // not have is invisible, because a failed read and an empty one look the
+    // same to every caller downstream.
+    sb.from('email_copilot_emails').select('id', { count: 'exact', head: true }).eq('status', 'unread'),
     sb.from('email_copilot_emails').select('id', { count: 'exact', head: true }).is('client_id', null),
   ]);
   return { total_emails: total.count || 0, unread: unread.count || 0, unlinked: unlinked.count || 0 };
@@ -5055,7 +5075,10 @@ async function executeGetDealTimeline(sb: any, args: any) {
     sb.from('client_deals').select('*, clients:client_id(primary_first_name, primary_surname)').eq('id', did).single(),
     sb.from('deal_stages').select('*').eq('deal_id', did).order('stage_number', { ascending: true }),
     sb.from('build_progress_payments').select('*').eq('deal_id', did).order('stage_number', { ascending: true }),
-    sb.from('client_activities').select('id, title, description, activity_type, created_at').eq('entity_id', did).order('created_at', { ascending: false }).limit(20),
+    // `client_activities` records what a row relates to in
+    // `related_record_id` / `related_record_table`; it has no `entity_id`. The
+    // deal timeline was therefore empty on every deal.
+    sb.from('client_activities').select('id, title, description, activity_type, created_at').eq('related_record_id', did).order('created_at', { ascending: false }).limit(20),
   ]);
   if (!deal.data) return { error: 'Deal not found.' };
   const events: any[] = [];

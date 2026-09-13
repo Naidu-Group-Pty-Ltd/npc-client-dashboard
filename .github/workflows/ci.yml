@@ -570,6 +570,17 @@ jobs:
       - name: Edge Functions name columns their tables have
         run: node scripts/security/check-edge-column-names.mjs
 
+      # A scheduled job and the function it calls must agree on WHO IS CALLING.
+      # `cron_invoke_signed_function` folds the caller name into the HMAC and
+      # sends it as `X-Internal-Caller`; the receiver holds an allow-list. The
+      # two ends were spelled in different files with nothing comparing them,
+      # and three workers had therefore never once run — a bulk-report resume
+      # refused ~480 times a day, an hourly digest runner with zero digests
+      # ever written, and a stale-call sweep asking a cron job for an admin's
+      # JWT. pg_cron reported every one of them as a successful run.
+      - name: Cron jobs and their functions agree on the caller
+        run: node scripts/security/check-cron-caller-names.mjs
+
       # WP-24: items 6, 8, 9 and 13 of the 20-item review were already in good
       # shape and gated by nothing — true because of how somebody wrote the code
       # once, with no mechanism to notice the next person writing it differently.

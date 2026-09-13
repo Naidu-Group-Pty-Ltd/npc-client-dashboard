@@ -1,9 +1,14 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// Pinned to the version `_shared/ghl-rate-limiter.ts` declares, for the reason
+// `_shared/ghlConversationPaging.ts` records at its own head: a floating `@2`
+// resolves to a different `SupabaseClient` instantiation and the limiter's
+// first parameter stops matching it.
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
+import { ghlFetchShared, tokenKeyFor } from '../_shared/ghl-rate-limiter.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
@@ -205,10 +210,31 @@ Deno.serve(async (req) => {
       'Content-Type': 'application/json',
     };
 
+    /**
+     * Every GHL call in this file goes through the SHARED limiter now.
+     *
+     * GoHighLevel rate-limits per TOKEN (~100 requests / 10s), and this
+     * function fires up to `CALENDAR_CONCURRENCY` requests at once, on the
+     * same token that `ghl-conversations-cron`, the migration workers and the
+     * marketing dump are already using. Thirteen raw `fetch` calls here
+     * cooperated with none of them: a page load could burst straight through
+     * the budget and take the other callers' 429s with it, and nothing here
+     * honoured `Retry-After` or backed off at all.
+     *
+     * `ghlFetchShared` serialises the reservation through Postgres so every
+     * isolate and every function share one budget, retries 429/5xx with the
+     * vendor's own `Retry-After`, and — since this change — meters the call.
+     * `api_usage_log` held ZERO GHL rows before it, so a workspace running on
+     * the prime's forwarded GoHighLevel key spent it for free.
+     */
+    const ghlTokenKey = tokenKeyFor(_ghlCreds.label, apiKey);
+    const ghlFetch = (target: string, init: RequestInit = { method: 'GET', headers }) =>
+      ghlFetchShared(supabase, ghlTokenKey, target, init, { logTag: `ghl-calendar:${action}` });
+
     // Fetch calendars
     if (action === 'calendars' || action === 'all') {
       console.log('Fetching calendars...');
-      const calendarsResponse = await fetch(`${GHL_API_BASE}/calendars/?locationId=${locationId}`, {
+      const calendarsResponse = await ghlFetch(`${GHL_API_BASE}/calendars/?locationId=${locationId}`, {
         method: 'GET',
         headers,
       });
@@ -272,7 +298,7 @@ Deno.serve(async (req) => {
         CALENDAR_CONCURRENCY,
         async (cal) => {
           const eventsUrl = `${GHL_API_BASE}/calendars/events?locationId=${locationId}&calendarId=${cal.id}&startTime=${defaultStartTime}&endTime=${defaultEndTime}`;
-          const eventsResponse = await fetch(eventsUrl, { method: 'GET', headers });
+          const eventsResponse = await ghlFetch(eventsUrl);
           if (!eventsResponse.ok) {
             throw new Error(`${eventsResponse.status} ${await eventsResponse.text()}`);
           }
@@ -283,9 +309,17 @@ Deno.serve(async (req) => {
       // One calendar failing is that calendar's failure. The loop this replaces
       // caught per-iteration and carried on, and the page showing the other
       // calendars beats the page showing none.
+      //
+      // But a calendar that FAILED and a calendar with no events drew exactly
+      // the same thing — an empty column — while the response still said
+      // `success: true`. The names of the ones that failed travel now, because
+      // a reader cannot otherwise tell a quiet Tuesday from a calendar that
+      // was never read.
+      const failedCalendars: string[] = [];
       for (const r of calendarPages.results) {
         if (r.error) {
           console.error(`Failed to fetch events for calendar ${r.item.name}: ${r.error}`);
+          failedCalendars.push(r.item.name);
         } else if (r.value) {
           allEvents = [...allEvents, ...r.value];
           console.log(`Fetched ${r.value.length} events from calendar: ${r.item.name}`);
@@ -314,6 +348,7 @@ Deno.serve(async (req) => {
         success: true,
         calendars,
         events: eventsWithCalendarInfo,
+        failedCalendars,
         dateRange: {
           start: defaultStartTime,
           end: defaultEndTime,
@@ -333,7 +368,7 @@ Deno.serve(async (req) => {
 
       // If caller didn't provide calendarId, fetch calendars and pull events per calendar
       if (!calendarId) {
-        const calendarsResponse = await fetch(`${GHL_API_BASE}/calendars/?locationId=${locationId}`, {
+        const calendarsResponse = await ghlFetch(`${GHL_API_BASE}/calendars/?locationId=${locationId}`, {
           method: 'GET',
           headers,
         });
@@ -359,16 +394,18 @@ Deno.serve(async (req) => {
         let allEvents: GHLEvent[] = [];
         const eventPages = await mapWithConcurrency(calendars, CALENDAR_CONCURRENCY, async (cal) => {
           const eventsUrl = `${GHL_API_BASE}/calendars/events?locationId=${locationId}&calendarId=${cal.id}&startTime=${defaultStartTime}&endTime=${defaultEndTime}`;
-          const eventsResponse = await fetch(eventsUrl, { method: 'GET', headers });
+          const eventsResponse = await ghlFetch(eventsUrl);
           if (!eventsResponse.ok) {
             throw new Error(`${eventsResponse.status} ${await eventsResponse.text()}`);
           }
           const eventsData = await eventsResponse.json();
           return (eventsData.events || []).map((event: any) => ({ ...event, calendarId: cal.id }));
         });
+        const failedCalendars: string[] = [];
         for (const r of eventPages.results) {
           if (r.error) {
             console.error(`Failed to fetch events for calendar ${r.item.name} (events): ${r.error}`);
+            failedCalendars.push(r.item.name);
           } else if (r.value) {
             allEvents = [...allEvents, ...r.value];
           }
@@ -393,6 +430,7 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({
           success: true,
           events: eventsWithCalendarInfo,
+          failedCalendars,
           dateRange: { start: defaultStartTime, end: defaultEndTime },
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -401,7 +439,7 @@ Deno.serve(async (req) => {
 
       // calendarId provided
       const eventsUrl = `${GHL_API_BASE}/calendars/events?locationId=${locationId}&calendarId=${calendarId}&startTime=${defaultStartTime}&endTime=${defaultEndTime}`;
-      const eventsResponse = await fetch(eventsUrl, { method: 'GET', headers });
+      const eventsResponse = await ghlFetch(eventsUrl);
 
       if (!eventsResponse.ok) {
         const errorText = await eventsResponse.text();
@@ -461,7 +499,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      const updateResponse = await fetch(`${GHL_API_BASE}/calendars/events/appointments/${eventId}`, {
+      const updateResponse = await ghlFetch(`${GHL_API_BASE}/calendars/events/appointments/${eventId}`, {
         method: 'PUT',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(updatePayload),
@@ -517,7 +555,7 @@ Deno.serve(async (req) => {
       // GHL does not support a DELETE endpoint for appointments.
       // The correct approach is to update the appointmentStatus to "cancelled".
       // NOTE: GHL uses "appointmentStatus" (not "status") for this field.
-      const deleteResponse = await fetch(`${GHL_API_BASE}/calendars/events/appointments/${eventId}`, {
+      const deleteResponse = await ghlFetch(`${GHL_API_BASE}/calendars/events/appointments/${eventId}`, {
         method: 'PUT',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ appointmentStatus: 'cancelled' }),
@@ -568,7 +606,7 @@ Deno.serve(async (req) => {
 
       console.log(`Fetching contact details for: ${contactId}`);
 
-      const contactResponse = await fetch(`${GHL_API_BASE}/contacts/${contactId}`, {
+      const contactResponse = await ghlFetch(`${GHL_API_BASE}/contacts/${contactId}`, {
         method: 'GET',
         headers,
       });
@@ -613,7 +651,7 @@ Deno.serve(async (req) => {
 
       console.log(`Searching contacts for: ${query}`);
 
-      const searchResponse = await fetch(`${GHL_API_BASE}/contacts/?locationId=${locationId}&query=${encodeURIComponent(query)}&limit=${limit}`, {
+      const searchResponse = await ghlFetch(`${GHL_API_BASE}/contacts/?locationId=${locationId}&query=${encodeURIComponent(query)}&limit=${limit}`, {
         method: 'GET',
         headers,
       });
@@ -646,7 +684,7 @@ Deno.serve(async (req) => {
     if (action === 'groups') {
       console.log('Fetching calendar groups...');
 
-      const groupsResponse = await fetch(`${GHL_API_BASE}/calendars/groups?locationId=${locationId}`, {
+      const groupsResponse = await ghlFetch(`${GHL_API_BASE}/calendars/groups?locationId=${locationId}`, {
         method: 'GET',
         headers,
       });
@@ -700,7 +738,7 @@ Deno.serve(async (req) => {
         appointmentStatus: 'confirmed',
       };
 
-      const blockResponse = await fetch(`${GHL_API_BASE}/calendars/events/block-slots`, {
+      const blockResponse = await ghlFetch(`${GHL_API_BASE}/calendars/events/block-slots`, {
         method: 'POST',
         headers,
         body: JSON.stringify(blockPayload),
@@ -746,7 +784,7 @@ Deno.serve(async (req) => {
 
       console.log(`Fetching free slots for calendar ${targetCalendarId}`);
 
-      const slotsResponse = await fetch(`${GHL_API_BASE}/calendars/${targetCalendarId}/free-slots?startDate=${startDate}&endDate=${endDate}&timezone=${encodeURIComponent(timezone)}`, {
+      const slotsResponse = await ghlFetch(`${GHL_API_BASE}/calendars/${targetCalendarId}/free-slots?startDate=${startDate}&endDate=${endDate}&timezone=${encodeURIComponent(timezone)}`, {
         method: 'GET',
         headers,
       });
@@ -811,7 +849,7 @@ Deno.serve(async (req) => {
 
       console.log('[ghl-calendar] Create payload:', JSON.stringify(createPayload));
 
-      const createResponse = await fetch(`${GHL_API_BASE}/calendars/events/appointments`, {
+      const createResponse = await ghlFetch(`${GHL_API_BASE}/calendars/events/appointments`, {
         method: 'POST',
         headers,
         body: JSON.stringify(createPayload),

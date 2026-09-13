@@ -1,13 +1,37 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+// Pinned to the version `_shared/ghl-rate-limiter.ts` declares. A floating
+// `@2` resolves to a different SupabaseClient type and the limiter's first
+// parameter stops matching.
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { ghlFetchShared, tokenKeyFor } from '../_shared/ghl-rate-limiter.ts';
+import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
-function delay(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+/*
+ * THE THIRD CONVERSATION SYNC, AND THE ONE THAT ACTUALLY RUNS.
+ *
+ * `sync-ghl-conversations` and `ghl-conversations-cron` were unpaced and are
+ * not; this one runs every ten minutes and was still sleeping its way
+ * through the work. Measured on the prime, 13 Sep 2026, five consecutive runs: 56
+ * contacts in 136s, 134s, 109s, 125s, 134s — against a wall clock it shares
+ * with nothing. `delay(500)` per contact is 28 seconds of the first number
+ * before a single request is made, and `delay(300)` per conversation adds
+ * more.
+ *
+ * A fixed sleep is wrong twice over. It is far slower than the vendor allows
+ * when nothing else is calling, and it is not a limit at all when something
+ * is: two invocations that overlap each sleep 500ms and together issue four
+ * requests a second. `ghlFetchShared` reserves a slot in a Postgres token
+ * bucket instead, so the pacing is real, shared across isolates, and reads
+ * GHL's own `Retry-After` on a 429.
+ */
+const CONTACT_CONCURRENCY = 6;
+// Against the ~150s an Edge Function gets, leaving room for the notification
+// work and the final write.
+const BUDGET_MS = 110_000;
 
 Deno.serve(async (req) => {
   // This function is called by pg_cron — no auth needed
@@ -88,23 +112,33 @@ Deno.serve(async (req) => {
     let totalMessages = 0;
     let totalConversations = 0;
 
-    for (const [ghlContactId, clientId] of contactsToSync) {
-      try {
-        await delay(500);
+    const startedAt = Date.now();
+    // Keyed on the ACCOUNT LABEL, not on a hardcoded name: two GHL accounts
+    // are two buckets, and sharing one key between them would pace a token
+    // against another token's traffic.
+    const tokenKey = tokenKeyFor(_ghlCreds.label, apiKey);
 
+    const outcome = await mapWithConcurrency(
+      [...contactsToSync],
+      CONTACT_CONCURRENCY,
+      async ([ghlContactId, clientId]) => {
+      try {
         const searchParams = new URLSearchParams({
           locationId,
           contactId: ghlContactId,
         });
 
-        const convRes = await fetch(`${GHL_API_BASE}/conversations/search?${searchParams}`, {
-          method: 'GET',
-          headers: ghlHeaders,
-        });
+        const convRes = await ghlFetchShared(
+          supabase,
+          tokenKey,
+          `${GHL_API_BASE}/conversations/search?${searchParams}`,
+          { method: 'GET', headers: ghlHeaders },
+          { logTag: 'conversation-sync-cron' },
+        );
 
         if (!convRes.ok) {
           console.warn(`[conversation-sync-cron] Search failed for ${ghlContactId}: ${convRes.status}`);
-          continue;
+          return;
         }
 
         const convData = await convRes.json();
@@ -137,12 +171,15 @@ Deno.serve(async (req) => {
 
           totalConversations++;
 
-          // Fetch only latest messages (1 page)
-          await delay(300);
-
-          const msgRes = await fetch(
+          // Fetch only latest messages (1 page). No sleep: the next slot is
+          // reserved from the shared bucket, which is a real limit rather
+          // than a guess about how busy the rest of the fleet is.
+          const msgRes = await ghlFetchShared(
+            supabase,
+            tokenKey,
             `${GHL_API_BASE}/conversations/${ghlConvId}/messages?limit=20`,
-            { method: 'GET', headers: ghlHeaders }
+            { method: 'GET', headers: ghlHeaders },
+            { logTag: 'conversation-sync-cron' },
           );
 
           if (!msgRes.ok) continue;
@@ -244,6 +281,19 @@ Deno.serve(async (req) => {
       } catch (err) {
         console.error(`[conversation-sync-cron] Error for contact ${ghlContactId}:`, err);
       }
+      },
+      // Stop STARTING contacts at the budget; whatever is already in flight
+      // finishes and is kept. The set is re-derived from the database on the
+      // next tick, so a contact this run did not reach is simply picked up
+      // then — there is no cursor to leave stale.
+      { stop: () => Date.now() - startedAt > BUDGET_MS },
+    );
+
+    if (outcome.startedCount < contactsToSync.size) {
+      console.log(
+        `[conversation-sync-cron] budget reached — ${outcome.startedCount} of ` +
+          `${contactsToSync.size} contacts this tick, the rest resume next run`,
+      );
     }
 
     console.log(`[conversation-sync-cron] ✅ Complete: ${totalConversations} convos, ${totalMessages} messages`);

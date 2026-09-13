@@ -164,3 +164,110 @@ than what it replaces, because a fixed sleep never knew about a 429 and this
 does. Every error path, every non-destructive-update rule, every duplicate
 guard and every resume cursor is preserved; the tests and this document exist
 to say which ones and why.
+
+## Three things the first pass got wrong, found by watching it run
+
+Everything above was measured before the change. These three were measured
+**after** it, from the prime's own function logs and the deploy ledger — and
+each of them reported as ordinary operation from every surface except the one
+that was actually looked at.
+
+### 5. There is a THIRD conversation sync, and it is the one on the cron
+
+The first pass un-slept `sync-ghl-conversations` and `ghl-conversations-cron`.
+It missed `conversation-sync-cron`, which is what pg_cron actually fires every
+ten minutes.
+
+Measured on the prime, 13 Sep 2026, five consecutive runs of the same 56
+contacts:
+
+| start | finish | elapsed |
+|---|---|---|
+| 06:00:08 | 06:02:24 | 136s |
+| 06:10:00 | 06:12:14 | 134s |
+| 06:20:00 | 06:21:49 | 109s |
+| 06:30:01 | 06:32:06 | 125s |
+| 06:40:01 | 06:42:15 | 134s |
+
+`await delay(500)` per contact is 28 seconds of the first number before a
+single request is made, and `await delay(300)` per conversation adds more on
+top. It now works six contacts at a time through `mapWithConcurrency`, paces
+every call through `ghlFetchShared`, and stops **starting** contacts at a
+wall-clock budget while what is in flight finishes and is kept.
+
+Stopping is safe here for a specific reason: the contact set is re-derived
+from the database on every tick, so a contact this run did not reach is
+picked up by the next one. There is no cursor to leave stale.
+
+A sweep of the other twelve edge functions that still call `delay()` found
+**none of them on a cron** — they are one-off backfills, legacy migration
+tools, and the report generators, which pace against model APIs for reasons
+of their own.
+
+### 6. The backfill boundary was sent to Graph exactly as Postgres wrote it
+
+`received_at` comes back from PostgREST as `2025-11-24T01:11:04`, with no zone
+designator, and OData refuses it:
+
+```
+Invalid filter clause: The DateTimeOffset text '2025-11-24T01:11:04' should be
+in format 'yyyy-mm-ddThh:mm:ss('.'s+)?(zzzzzz)?'
+```
+
+Every backfill tick on the prime between 05:44 and 06:50 answered 400 on that.
+
+`graphDateTimeOffset` renders it where the filter is built, so no caller can
+get it wrong. Two things about it are deliberate. **The zone is appended, not
+inferred** — ECMAScript parses a date-*only* form as UTC and a date-*time*
+form with no offset as **local** time, so letting the runtime decide would
+make the boundary depend on where the function happens to run. And **a
+boundary that was asked for and cannot be rendered is refused, never
+dropped**: dropping it returns the *newest* page instead of the oldest, so
+every row is one already held, no history is ever reached, and the walk
+reports pages fetched the whole time. That is the silent version of the same
+bug, and the worse one.
+
+### 7. A failed history walk took the live mail sync down with it
+
+This is the one that cost something. The boundary **read** was guarded from
+the first version — *"never fail the tick over the backfill, the incremental
+sync is the job this function is scheduled for"* — but the **fetch** was not.
+Graph's 400 propagated out of the handler and the thirty messages the
+incremental pass had already retrieved were discarded with it:
+
+```
+[Email Sync Cron] Starting background email sync...
+[Email Sync Cron] Fetched 30 recent inbox emails
+[email-sync-cron] internal_error correlation_id=… Graph returned 400: …
+```
+
+`email_copilot_emails` took **nothing for sixty-five minutes** — 0 rows
+inserted, measured. A history walk nobody asked for had taken the mail
+delivery down.
+
+The opportunistic half is contained now: it can fail, and what fails is the
+backfill. `history_complete` stays null on a failed walk, which the response
+already distinguishes from "there is nothing older" — **a walk that failed
+must never be reported as one that finished.**
+
+The rule the three of them share: *an optimisation may not be the reason the
+thing it optimises stops working.*
+
+## Getting the change onto a clone is its own problem
+
+Worth knowing if a clone looks like it did not receive this. The clone's own
+`deploy-supabase-functions.yml` **deploys nothing** — it resolves the project,
+writes a job summary listing every candidate function, and hands off to
+Mission Control, which holds the only credential that can deploy. A green
+15-second run there is the hand-off working, not a deployment.
+
+Mission Control's `edge_function_deploy` lane walks the bundles alphabetically
+in budgeted passes and re-reads the prime's HEAD on **every** pass, while
+marking "already delivered" against the run's *start time*. A run that spans a
+prime merge therefore deploys its early letters from one tree and its late
+ones from another, and reports the whole thing as deployed. Measured on
+`npc-client-dashboard`: `email-sync-cron` (05:16), `ghl-conversations-cron`
+(05:30), `ghl-calendar` (05:32) and `import-clients-from-ghl` (05:34) landed
+from the tree before the 05:38 merge; `outlook-email-sync` (05:48) landed from
+the tree after it. Fixed in Mission Control by `planDeployGeneration`, which
+restarts the generation when the observed revision moves.

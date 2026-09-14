@@ -30,6 +30,11 @@ const MIGRATIONS = [
   '20260803000000_builder_portal_phase3_projects.sql',
   '20260804000000_builder_portal_inventory.sql',
   '20260805000000_builder_portal_transactions.sql',
+  // Phase 5 of the network extraction re-pointed the fourth case-link slot at
+  // the builder_network_transactions mirror; the transport migration carries
+  // the connections table the mirror's FK needs.
+  '20261121000000_builder_network_mirror.sql',
+  '20261122000000_builder_network_phase5_inbound_fk_release.sql',
 ];
 
 const run = (args, db = DB) =>
@@ -85,6 +90,18 @@ try {
   record('the transactions migration is idempotent — a second apply succeeds', true);
 } catch (error) {
   record('the transactions migration is idempotent — a second apply succeeds', false,
+    String(error.stderr || error.message).trim().split('\n')[0]);
+}
+
+// The re-apply above steps outside version order and re-installs the
+// builder_transactions guard; production only ever applies in version order,
+// so restore it by re-applying Phase 5 — which is also that file's own
+// idempotence probe.
+try {
+  run(['-f', join(migrationsDir, '20261122000000_builder_network_phase5_inbound_fk_release.sql')]);
+  record('the phase 5 re-point is idempotent — a second apply succeeds', true);
+} catch (error) {
+  record('the phase 5 re-point is idempotent — a second apply succeeds', false,
     String(error.stderr || error.message).trim().split('\n')[0]);
 }
 
@@ -365,6 +382,22 @@ expectEqual('and it wrote a trusted audit row',
   `SELECT count(*)>0 FROM builder_portal_activity_log
    WHERE action='builder_transaction_client_set' AND entity_id='${TXN_2}'`, 't');
 
+// Phase 5 (20261122000000) re-pointed the fourth slot at the network mirror:
+// a transaction the mirror does not hold is refused by name, whatever its
+// clone-side row says. The probe runs BEFORE the mirror rows are seeded.
+expectRejection('an unmirrored transaction cannot be linked to a case',
+  `SELECT builder_link_transaction_to_case('${ACTOR}','command_user',NULL,'${TXN_2}','${CASE_A}','x')`,
+  'BUILDER_TRANSACTION_NOT_MIRRORED');
+
+// The rows the network sync will write in production: the mirror PK IS the
+// network's transaction id (ids are preserved across the boundary), the
+// client as the network reports it. Everything below links against these.
+const NET_CONN = 'cccccccc-0000-0000-0000-00000000000c';
+run(['-c', `INSERT INTO builder_network_connections(id, network_connection_id, state, scopes, accepted_at)
+  VALUES ('${NET_CONN}','cccccccc-0000-0000-0000-00000000000d','active','{transactions:share}',now())`]);
+run(['-c', `INSERT INTO builder_network_transactions(id, connection_id, client_id, status)
+  VALUES ('${TXN_2}','${NET_CONN}','${CLIENT_A}','reserved')`]);
+
 const CASE_B = 'eeeeeeee-0000-0000-0000-00000000000b';
 run(['-c', `INSERT INTO transaction_cases(id, client_id, case_type)
   VALUES ('${CASE_B}','${CLIENT_B}','construction')`]);
@@ -394,6 +427,8 @@ const TXN_3 = query(`SELECT (builder_upsert_transaction('${ACTOR}','command_user
   '${PROJECT_1}',NULL,'${BLD_ORG}','{"transaction_reference":"TX-3"}'::jsonb,NULL,'fixture')).id`);
 run(['-c', `SELECT builder_set_transaction_client('${ACTOR}','command_user',NULL,'${TXN_3}',
   '${CLIENT_B}',(SELECT row_version FROM builder_transactions WHERE id='${TXN_3}'),'ok')`]);
+run(['-c', `INSERT INTO builder_network_transactions(id, connection_id, client_id, status)
+  VALUES ('${TXN_3}','${NET_CONN}','${CLIENT_B}','reserved')`]);
 expectRejection('MIG-02: an UPDATE touching only builder_transaction_id still fires the guard',
   `UPDATE transaction_case_links SET builder_transaction_id='${TXN_3}' WHERE case_id='${CASE_A}'`,
   'CROSS_CLIENT_CASE_LINK');

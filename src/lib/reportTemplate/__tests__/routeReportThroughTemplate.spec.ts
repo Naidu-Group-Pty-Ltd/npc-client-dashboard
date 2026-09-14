@@ -25,7 +25,7 @@
  * template parser, HTML renderer and production guard are real too — only the
  * template resolution and the PDF call are stubbed.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   routingCalls: [] as Array<Record<string, unknown>>,
@@ -87,6 +87,7 @@ vi.mock('@/lib/secureInvoke', () => ({
     h.invokeCalls.push([name, payload]);
     return h.invokeResult;
   },
+  describeAuthError: () => null,
 }));
 
 import { routeReportThroughTemplate } from '../routeReportThroughTemplate';
@@ -129,7 +130,10 @@ beforeEach(() => {
   };
   h.bindingResult = { data: { portfolio: { review: { summary: 'All good.' } } } };
   h.resolved = { template: TEMPLATE_ROW, engine: 'weasyprint', source: 'global' };
-  h.invokeResult = { data: { url: 'https://cdn.example/x.pdf', fileName: 'x.pdf' }, error: null };
+  h.invokeResult = {
+    data: { url: 'https://cdn.example/x.pdf', path: 'template-builder/2026-09-14/x.pdf', fileName: 'x.pdf' },
+    error: null,
+  };
 });
 
 describe('an adapter that declines is not overruled', () => {
@@ -280,5 +284,138 @@ describe('the generic entry point', () => {
     const result = await tryRouteThroughTemplateBuilderFor('portfolio', REPORT_ID);
     expect(result).toBeNull();
     warn.mockRestore();
+  });
+});
+
+/**
+ * The FINAL renderer.
+ *
+ * RS-2: the same route, the same adapter, the same frozen payload and the
+ * same template — drawn by the pinned print engine through
+ * `render-template-pdf` in `final` mode instead of by jsPDF in this tab. The
+ * caller chooses with `renderer: 'weasyprint'`, and only a deliberate final
+ * action does; every other caller gets the browser default above.
+ */
+describe('the final renderer', () => {
+  const fetched = vi.fn();
+  beforeEach(() => {
+    fetched.mockReset();
+    fetched.mockResolvedValue({
+      ok: true, status: 200,
+      blob: async () => new Blob(['%PDF-1.7 final'], { type: 'application/pdf' }),
+    });
+    vi.stubGlobal('fetch', fetched);
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('compiles the template to print HTML and asks the engine for a FINAL render, once', async () => {
+    const result = await routeReportThroughTemplate(REPORT_ID, {
+      reportType: 'portfolio', renderer: 'weasyprint',
+    });
+
+    expect(result).toMatchObject({
+      renderer: 'weasyprint_final',
+      templateId: TEMPLATE_ROW.id,
+      source: 'global:portfolio',
+      storagePath: 'template-builder/2026-09-14/x.pdf',
+    });
+    expect(await result!.blob.text()).toBe('%PDF-1.7 final');
+
+    // Exactly one call, to the one function, in the one mode, naming the
+    // report the gate and the ledger read.
+    expect(h.invokeCalls).toHaveLength(1);
+    const [fn, body] = h.invokeCalls[0];
+    expect(fn).toBe('render-template-pdf');
+    expect(body).toMatchObject({
+      mode: 'final',
+      reportId: REPORT_ID,
+      reportType: 'portfolio',
+      templateId: TEMPLATE_ROW.id,
+      templateName: 'Meridian 01',
+      pageCount: 1,
+    });
+    // The HTML carries the bound data and no unresolved binding — the same
+    // proof the browser test reads off the drawn PDF, read here off what the
+    // engine is handed, because the engine is what draws it.
+    const html = String(body.html);
+    expect(html).toContain('All good.');
+    expect(html).not.toContain('{{');
+    // And it was compiled for PRINT: the container is the font source, so the
+    // document asks the engine to fetch nothing.
+    expect(html).not.toMatch(/fonts\.googleapis\.com/);
+    // The bytes are fetched back from the signed URL the engine answered.
+    expect(fetched).toHaveBeenCalledWith('https://cdn.example/x.pdf', expect.anything());
+  });
+
+  it('draws a template the browser renderer refuses, because the HTML renderer can', async () => {
+    h.resolved = {
+      template: {
+        ...TEMPLATE_ROW,
+        schema: {
+          ...TEMPLATE_ROW.schema,
+          pages: [{
+            ...TEMPLATE_ROW.schema.pages[0],
+            // `gantt` is HTML-first: jsPDF paints a placeholder, the HTML
+            // renderer draws it. Under the browser renderer this template is
+            // refused (see above); under the print engine it is the document.
+            blocks: [...TEMPLATE_ROW.schema.pages[0].blocks, { id: 'b2', type: 'gantt', props: {} }],
+          }],
+        },
+      },
+      engine: 'weasyprint',
+      source: 'global',
+    };
+    const result = await routeReportThroughTemplate(REPORT_ID, {
+      reportType: 'portfolio', renderer: 'weasyprint',
+    });
+    expect(result?.renderer).toBe('weasyprint_final');
+    expect(h.invokeCalls).toHaveLength(1);
+  });
+
+  it('refuses — null, never a throw, and no render — a block no renderer can draw', async () => {
+    h.resolved = {
+      template: {
+        ...TEMPLATE_ROW,
+        schema: {
+          ...TEMPLATE_ROW.schema,
+          pages: [{
+            ...TEMPLATE_ROW.schema.pages[0],
+            blocks: [...TEMPLATE_ROW.schema.pages[0].blocks, { id: 'b2', type: 'no-such-block', props: {} }],
+          }],
+        },
+      },
+      engine: 'weasyprint',
+      source: 'global',
+    };
+    const refusals: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await routeReportThroughTemplate(REPORT_ID, {
+      reportType: 'portfolio', renderer: 'weasyprint', onRefusal: (r) => refusals.push(r),
+    });
+    warn.mockRestore();
+    expect(result).toBeNull();
+    expect(refusals).toContain('template_not_renderable');
+    // A hole in a page is worse than the standard document, and nothing was
+    // spent finding that out.
+    expect(h.invokeCalls).toEqual([]);
+  });
+
+  it('a render the engine refuses is a null, never a throw — the caller falls back', async () => {
+    h.invokeResult = { data: null, error: { message: 'report_not_client_ready' } };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = await routeReportThroughTemplate(REPORT_ID, {
+      reportType: 'portfolio', renderer: 'weasyprint',
+    });
+    warn.mockRestore();
+    expect(result).toBeNull();
+    expect(h.invokeCalls).toHaveLength(1);
+  });
+
+  it('is never chosen by default — an unspecified renderer is the browser', async () => {
+    const result = await routeReportThroughTemplate(REPORT_ID, { reportType: 'portfolio' });
+    expect(result?.renderer).toBe('browser_template_jspdf');
+    expect(result?.storagePath).toBeNull();
+    expect(h.invokeCalls).toEqual([]);
+    expect(fetched).not.toHaveBeenCalled();
   });
 });

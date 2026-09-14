@@ -1,5 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 import {
   absBoxStyle, esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
 } from './_shared.html';
@@ -29,6 +30,17 @@ export function renderTextBlockHtml(block: Block, ctx: HtmlBlockContext): string
   const eyebrow = resolveBindable(p.eyebrow, ctx);
   const heading = resolveBindable(p.heading, ctx);
   const body = resolveBindable(p.body, ctx);
+  /*
+   * A heading and a body that are bound and received nothing leave an eyebrow
+   * over nothing: `RECOMMENDATION` with no headline and no sentence under it
+   * (measured on a record with no risks and no recommendation, RS-3, 14 Sep
+   * 2026). The block draws nothing. A static heading or body is an author's
+   * own words and is always kept; so is a bound part that resolved.
+   */
+  const bound = (v: unknown) => typeof v === 'string' && v.includes('{{');
+  const headingSaysNothing = !heading || (bound(p.heading) && !boundValueResolved(p.heading, ctx));
+  const bodySaysNothing = !body || (bound(p.body) && !boundValueResolved(p.body, ctx));
+  if ((bound(p.heading) || bound(p.body)) && headingSaysNothing && bodySaysNothing) return '';
   const eyebrowColor = resolveBindableColor(p.eyebrowColor ?? 'token:primary', ctx, '#BF9B50');
   const headingColor = resolveBindableColor(p.headingColor ?? 'token:primary', ctx, '#BF9B50');
   const color = resolveBindableColor(p.color ?? 'token:text', ctx, '#1A1A1A');

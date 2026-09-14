@@ -16,7 +16,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  routed: null as { blob: Blob; fileName: string; templateId: string } | null,
+  routed: null as {
+    blob: Blob; fileName: string; templateId: string; renderer?: string; storagePath?: string | null;
+  } | null,
   routeCalls: [] as Array<[string, string, unknown]>,
   routeThrows: false,
   selections: [] as Array<{ id: string; report_type: string; template_id: string }>,
@@ -128,6 +130,62 @@ describe("the person's chosen template", () => {
     expect(h.selectionCalls).toBe(1);
     // Still no render attempt — there is no record to render.
     expect(h.routeCalls).toHaveLength(0);
+  });
+});
+
+describe('the renderer and the stored path', () => {
+  it('forwards the caller\'s renderer to the route, and asks for none by default', async () => {
+    await tryTemplateDocument('portfolio', 'p-1', { renderer: 'weasyprint' });
+    expect(h.routeCalls[0][2]).toMatchObject({ renderer: 'weasyprint' });
+    await tryTemplateDocument('portfolio', 'p-1');
+    // Undefined, not 'browser': the route owns the default, and a caller that
+    // did not choose must not look like one that chose the preview renderer.
+    expect((h.routeCalls[1][2] as { renderer?: unknown }).renderer).toBeUndefined();
+  });
+
+  it('carries the renderer and the stored path back to the caller', async () => {
+    h.routed = {
+      blob: pdf('%PDF-1.7 final'), fileName: 'x.pdf', templateId: 'tpl-1',
+      renderer: 'weasyprint_final', storagePath: 'template-builder/2026-09-14/x.pdf',
+    };
+    const doc = await tryTemplateDocument('investment', 'r-1', { renderer: 'weasyprint' });
+    expect(doc?.renderer).toBe('weasyprint_final');
+    expect(doc?.storagePath).toBe('template-builder/2026-09-14/x.pdf');
+  });
+
+  it('a document drawn in this tab has no stored path — null, never undefined', async () => {
+    h.routed = { blob: pdf('%PDF-1.7 rendered'), fileName: 'x.pdf', templateId: 'tpl-1', renderer: 'browser_template_jspdf' };
+    const doc = await tryTemplateDocument('portfolio', 'p-1');
+    expect(doc?.storagePath).toBeNull();
+  });
+});
+
+describe('a choice the caller already read', () => {
+  /**
+   * The Investment finalisation keys its memo on the chosen template, so it
+   * reads the selection itself and hands it down — otherwise the memo's key
+   * and the template actually rendered would come from two reads that are
+   * free to disagree. Handed down means NOT read again here.
+   */
+  it('is used as given, without a second read', async () => {
+    h.selections = [{ id: 's1', report_type: 'investment', template_id: 'tpl-stale' }];
+    await tryTemplateDocument('investment', 'r-1', { selectedTemplateId: 'tpl-handed' });
+    expect(h.selectionCalls).toBe(0);
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: 'tpl-handed' });
+  });
+
+  it('null is a choice too — "nothing chosen", and still no read', async () => {
+    h.selections = [{ id: 's1', report_type: 'investment', template_id: 'tpl-stale' }];
+    await tryTemplateDocument('investment', 'r-1', { selectedTemplateId: null });
+    expect(h.selectionCalls).toBe(0);
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: null });
+  });
+
+  it('undefined is "not read yet", so the shared question reads it', async () => {
+    h.selections = [{ id: 's1', report_type: 'investment', template_id: 'tpl-read' }];
+    await tryTemplateDocument('investment', 'r-1', { selectedTemplateId: undefined });
+    expect(h.selectionCalls).toBe(1);
+    expect(h.routeCalls[0][2]).toMatchObject({ templateId: 'tpl-read' });
   });
 });
 

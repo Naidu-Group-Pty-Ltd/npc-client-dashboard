@@ -1,4 +1,4 @@
-# The Investment report is drawn in the browser, and chosen in the browser
+# The Investment report: chosen in the browser, previewed in the browser, finalised by the print engine
 
 Read this before touching `src/lib/reports/investment/deliverInvestmentPdf.ts`,
 `investmentPdfDocument.ts`, `src/lib/reportTemplate/pdfRenderer.ts` or anything
@@ -10,8 +10,9 @@ One report truth, several approved presentations:
 Report Engine        → generates and validates the report
 Report Editing       → persists the operator's approved edits
 Templates page       → selects the presentation
-Presentation         → applies presentation only
-Export / Delivery    → Blob → Supabase Storage → download / send / portal
+Browser preview      → the same template, drawn here, at no cost
+FINALISE             → compileTemplateHtmlForPdf → render-template-pdf → WeasyPrint
+Export / Delivery    → stored PDF → download / send / portal
 ```
 
 `produceInvestmentDocument` is the one contract. Every surface that hands a
@@ -22,34 +23,85 @@ truth to choose between by pressing a different button**, which is what there
 used to be: three controls produced three different artefacts, and only one of
 them honoured the operator's template selection.
 
-Nothing on this path reaches a render service. `render-investment-report-pdf`,
-`render-template-pdf`, `WEASYPRINT_SERVICE_URL` and every `*.run.app` host are
-unreachable from it, asserted over the module graph rather than by grepping a
-directory (`investmentJourneyNoRenderService.spec.ts`) — the repository still
-holds WeasyPrint clients and a Cloud Run export dialog, and the point is that
-they belong to **Template Builder**, which a client PDF must never require
-anybody to open.
+**The print engine is reached from exactly one place, for exactly one purpose.**
+RC-3.1 took WeasyPrint off this journey; RS-2 (14 Sep 2026) brought it back
+for the FINAL document alone, after RV-1 measured why the browser renderer
+could not be the last step: jsPDF embeds no fonts, so a chosen template's
+headline figures drew illegibly, and it cannot draw text on a filled panel at
+all. The reason it was taken off still stands — a render service reached from
+a preview, an edit or a page load is a cost with no deliberate act behind it —
+so what is pinned now is the BOUNDARY rather than the absence
+(`investmentFinalRender.spec.ts`, asked of the module graph): one client module
+names the function (`weasyRenderClient`), one journey module imports it
+(`routeReportThroughTemplate`), one call site asks for a `final` render, no
+preview surface can reach it, and no Cloud Run host is addressed from the
+browser at all — the engine sits behind the edge function, which applies the
+client-readiness gate a second time and stamps the job with the report it was
+of. `render-investment-report-pdf` stays unreachable. Template Builder's own
+preview and export paths are in the same repository and are still not on this
+journey.
 
 ## Two presentations, one payload
 
-| | standard | selected template |
-| --- | --- | --- |
-| renderer | pdf-lib, `investmentPdfDocument.ts` | jsPDF, `reportTemplate/pdfRenderer.ts` |
-| telemetry | `browser_pdf_lib` | `browser_template_jspdf` |
-| drawn from | the report's own Markdown | the adapter's frozen binding payload |
+| | standard | selected template — preview | selected template — FINAL |
+| --- | --- | --- | --- |
+| renderer | pdf-lib, `investmentPdfDocument.ts` | jsPDF, `reportTemplate/pdfRenderer.ts` | WeasyPrint (pinned), `render-template-pdf` |
+| telemetry | `browser_pdf_lib` | `browser_template_jspdf` | `weasyprint_final` |
+| drawn from | the report's own Markdown | the adapter's frozen binding payload | the same payload, compiled by `compileTemplateHtmlForPdf` |
+| stored by | `publishInvestmentPdf` uploads it | never stored | the engine, in `investment-reports`; the path travels back |
 
-Both identities are exported constants rather than literals at the logging call
-site, because telemetry has exactly one question to answer — *which renderer
-produced these exact bytes* — and it used to answer `premium_weasyprint` on
-every download, long after WeasyPrint had stopped being reachable. A telemetry
-value naming a retired service is worse than none, because it is read as
-evidence.
+All three identities are exported constants rather than literals at the logging
+call site, because telemetry has exactly one question to answer — *which
+renderer produced these exact bytes* — and it used to answer
+`premium_weasyprint` on every download, long after WeasyPrint had stopped being
+reachable. A telemetry value naming a retired service is worse than none,
+because it is read as evidence. `routeReportThroughTemplate` takes the choice
+as `renderer: 'browser' | 'weasyprint'`; the Investment finalisation passes
+`weasyprint` and every other caller gets the browser default, so no format
+reaches the engine by omission.
 
 **The readiness gate sits above both.** `assertInvestmentReportClientReady`
 refuses a report carrying a blocking `governed_authority` flag whichever
 presentation it would have come out in, because the defect is in the report and
 not in the layout. It used to live inside the two render services, which meant
 removing them would have deleted it.
+
+## One finalisation → one PDF
+
+A final render is asked for by a deliberate act — Generate, Download, Send,
+Publish — and never by typing, an edit, a preview refresh, opening the
+Templates page, a hover or a page load. Two protections in
+`produceInvestmentDocument` keep one act to one render, and both are pinned by
+`deliverInvestmentPdf.spec.ts` rather than trusted:
+
+* **Concurrent asks share one production.** A double-click, a re-rendered
+  button, two surfaces asking at once: the in-flight promise is keyed on
+  `(report, request)` and handed to every caller.
+* **A completed finalisation is remembered, per tab.** The key is everything
+  the document is drawn from — the record as read (every column but `pdf_url`,
+  which publishing itself writes), the chosen template, the hero-image set, the
+  variant, the five controls and the design options — so Download after
+  Generate, and Send after Download, reuse the document. An edit, a different
+  template, a toggled control or a changed image moves the key and the next ask
+  draws again. The row is keyed whole rather than by a version stamp because the
+  detail projection carries `current_version` and not `updated_at`, and an edit
+  moves only the latter. The memo holds eight documents and forgets the oldest;
+  `forgetFinalisedInvestmentDocuments()` empties it.
+* **Publishing reuses the stored bytes.** The engine stores the final PDF in
+  `investment-reports` — the bucket the portal reads — and answers its `path`;
+  `publishInvestmentPdf` points `pdf_url` and the portal row at that path
+  instead of uploading a second copy. A document drawn in this tab (the
+  standard presentation, or a template the browser drew) is uploaded exactly as
+  before. Measured through the real journey on three reports (14 Sep 2026):
+  one `render-template-pdf` call per finalisation, zero on Send, and the portal
+  row's `storage_path` equal to the render's path.
+
+The one thing the key does not see is a change to the TEMPLATE's own schema
+made in the same tab between two asks — Template Builder is an authoring tool,
+and a person editing a master and immediately finalising a client report from
+the same tab would receive the document drawn before the edit. It is recorded
+here rather than guarded, because the guard would be a read of the template on
+every ask to protect an author from their own tab.
 
 ## Five controls, and the two kinds they are
 
@@ -250,14 +302,19 @@ geometry work, not to the presentation's content policy.
 operator is told which gate closed. The standard presentation then draws the
 **same** payload — the same content rules already applied, the same record, the
 same readiness gate — so a refused template costs the chosen design and nothing
-else. There is no partial PDF, no placeholder panel, no raster, no render
-service and no regeneration, and the operator's edits are not lost because
-nothing is re-read.
+else. There is no partial PDF, no placeholder panel, no raster and no
+regeneration, and the operator's edits are not lost because nothing is re-read.
+A final render the engine refuses (its own readiness gate, a resource the
+boundary will not admit, an outage) is one more of those nulls, so the client
+still receives the standard document rather than an error.
 
-Compatibility is asked of the RENDERER (`judgeBrowserProductionExport`), not of
-the template's `engine` column: that column records which service a template was
-authored for, not whether it can be drawn. All four selectable Investment
-templates pass it, with zero block types lacking a full jsPDF renderer.
+Compatibility is asked of the RENDERER, not of the template's `engine` column:
+that column records which service a template was authored for, not whether it
+can be drawn. The browser preview asks `judgeBrowserProductionExport` (a block
+without a full jsPDF drawing refuses the template); the final render asks the
+block registry's HTML capability, and refuses only a type no renderer has at
+all (`template_not_renderable`). All four selectable Investment templates pass
+both.
 
 ## The selectable Investment catalogue
 

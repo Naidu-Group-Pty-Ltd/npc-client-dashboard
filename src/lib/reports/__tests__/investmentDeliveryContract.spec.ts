@@ -14,7 +14,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
   row: {} as Record<string, unknown>,
-  templateResult: null as { blob: Blob; fileName: string; templateId: string } | null,
+  templateResult: null as {
+    blob: Blob; fileName: string; templateId: string; renderer: string; storagePath: string | null;
+  } | null,
   templateCalls: [] as Array<[string, string, Record<string, unknown> | undefined]>,
   standardCalls: [] as Array<Record<string, unknown>>,
   heroCalls: [] as string[],
@@ -31,6 +33,7 @@ vi.mock('@/lib/reports/investment/investmentPdfSource', () => ({
 
 vi.mock('@/lib/reportTemplate/templateDocument', () => ({
   saveTemplateDocument: () => {},
+  selectedTemplateFor: async () => null,
   tryTemplateDocument: async (
     reportType: string, reportId: string, opts?: Record<string, unknown>,
   ) => {
@@ -63,7 +66,10 @@ vi.mock('@/lib/reports/investment/investmentHeroImages', () => ({
 vi.mock('@/lib/secureInvoke', () => ({ invokeSecureFunction: async () => ({ data: null, error: null }) }));
 vi.mock('@/hooks/useSecureStorage', () => ({ secureStorageUpload: async () => ({ success: true, path: 'p' }) }));
 
-import { produceInvestmentDocument } from '../investment/deliverInvestmentPdf';
+import {
+  forgetFinalisedInvestmentDocuments,
+  produceInvestmentDocument,
+} from '../investment/deliverInvestmentPdf';
 import { ReportNotClientReadyError } from '../investment/clientReadiness';
 
 const CONTENT = [
@@ -78,6 +84,8 @@ const CONTENT = [
 ].join('\n\n');
 
 beforeEach(() => {
+  // A finalisation is remembered per report; every test here starts unremembered.
+  forgetFinalisedInvestmentDocuments();
   h.row = { id: 'r1', report_content: CONTENT, validation_flags: [] };
   h.templateResult = null;
   h.templateCalls = [];
@@ -108,7 +116,10 @@ describe('the readiness gate is above the presentation', () => {
         value: { blocking: true, category: 'demographics' },
       }],
     };
-    h.templateResult = { blob: new Blob(['x']), fileName: 't.pdf', templateId: 'tpl-1' };
+    h.templateResult = {
+      blob: new Blob(['x']), fileName: 't.pdf', templateId: 'tpl-1',
+      renderer: 'weasyprint_final', storagePath: 'template-builder/2026-09-14/x.pdf',
+    };
 
     await expect(produceInvestmentDocument('r1')).rejects.toBeInstanceOf(ReportNotClientReadyError);
     // Neither presentation was even asked.
@@ -196,11 +207,18 @@ describe('the presentation that is chosen', () => {
       blob: new Blob(['%PDF-1.7 templated'], { type: 'application/pdf' }),
       fileName: 'templated.pdf',
       templateId: 'tpl-1',
+      renderer: 'weasyprint_final',
+      storagePath: 'template-builder/2026-09-14/templated.pdf',
     };
     const doc = await produceInvestmentDocument('r1');
-    expect(doc.engine).toBe('browser_template_jspdf');
+    // Drawn by the print engine, from the same final payload, and already
+    // stored where the portal reads.
+    expect(doc.engine).toBe('weasyprint_final');
     expect(doc.templateId).toBe('tpl-1');
+    expect(doc.storagePath).toBe('template-builder/2026-09-14/templated.pdf');
     expect(h.standardCalls).toEqual([]);
+    // The route was asked for the FINAL renderer — never the browser preview.
+    expect(h.templateCalls[0][2]).toMatchObject({ renderer: 'weasyprint' });
   });
 
   /**

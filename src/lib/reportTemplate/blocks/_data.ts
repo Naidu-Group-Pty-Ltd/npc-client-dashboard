@@ -7,6 +7,7 @@
  * when a template-style string is provided, otherwise applies the simple format.
  */
 import { evalConditional, formatIsoDate, resolveBindable, type ResolveContext } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 
 /**
  * A figure a reader would call negative.
@@ -97,6 +98,65 @@ export function visibleTableRows(rows: TableRow[], ctx: ResolveContext): Array<{
     .filter(({ row }) => (row && typeof row.when === 'string' && row.when.trim() !== ''
       ? evalConditional(row.when, ctx)
       : true));
+}
+
+/** True when a cell's source carries a binding. */
+const isBoundCell = (cell: unknown): boolean => typeof cell === 'string' && cell.includes('{{');
+
+/**
+ * The rows that say something, and whether the table as a whole does.
+ *
+ * A row whose bound cells all resolved to nothing is a label beside an empty
+ * cell — `Stamp duty · · State schedule` — which a client cannot tell from a
+ * table that failed to render. Measured on a record with no financials (RS-3,
+ * 14 Sep 2026): the acquisition table drew seven such rows, the cash-flow
+ * table seven more, and the page was three-quarters white below a filled
+ * "basis" column describing figures that were not there. Such rows are
+ * dropped. A row with no binding at all — a band, a static note — is kept as
+ * authored, because an author who typed it said what they meant.
+ *
+ * `saysSomething` is false when the table HAD bound rows and none survived:
+ * what is left is a column head over static labels, a frame around nothing,
+ * and the caller draws nothing for it. It is also false when a table built
+ * for many rows kept ONE — the Dictionary structure's property table carried
+ * eight attributes and, on a record with none, drew its address row alone on
+ * a page that was otherwise 83% white; that row is the address already in the
+ * running head above it, and one line is not the table the author designed.
+ * `LONE_SURVIVOR_FLOOR` is the size a table has to have been for a single
+ * survivor to count as a loss rather than as the table. A wholly static table
+ * is always drawn.
+ *
+ * Shared by the HTML renderer and its jsPDF twin, so the preview and the
+ * final document agree about which rows exist.
+ */
+export const LONE_SURVIVOR_FLOOR = 3;
+
+export function rowsWithSomethingToSay(
+  authored: TableRow[],
+  ctx: ResolveContext,
+): { rows: Array<{ row: TableRow; index: number }>; saysSomething: boolean } {
+  // A row whose presence depends on the record is one with a bound cell or a
+  // `when`. The floor is counted over the rows the AUTHOR designed, before the
+  // `when` filter: a row hidden by its own condition is a row built for a fact
+  // the record lacks, exactly like a bound row that received nothing. Counting
+  // only the survivors of that filter let the Dictionary property table — eight
+  // `when`-gated attributes — draw its address row alone, because by the time
+  // it was counted it was a table of one.
+  const visible = visibleTableRows(authored, ctx);
+  let dependent = authored.length - visible.length;
+  let kept = 0;
+  const rows = visible.filter(({ row }) => {
+    const cells = Array.isArray(row?.cells) ? row.cells : [];
+    const bound = cells.filter(isBoundCell);
+    const gated = typeof row?.when === 'string' && row.when.trim() !== '';
+    if (bound.length === 0 && !gated) return true;
+    dependent += 1;
+    const resolved = bound.length === 0 || bound.some((c) => boundValueResolved(c, ctx));
+    if (resolved) kept += 1;
+    return resolved;
+  });
+  const loneSurvivor = dependent >= LONE_SURVIVOR_FLOOR && kept === 1;
+  return { rows, saysSomething: dependent === 0 || (kept > 0 && !loneSurvivor) };
 }
 
 export function resolveDataPath(path: unknown, ctx: ResolveContext): any {

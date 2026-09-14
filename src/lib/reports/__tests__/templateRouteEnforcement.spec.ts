@@ -133,8 +133,11 @@ describe("the person's chosen template reaches the document", () => {
     // otherwise keep ignoring the choice.
     expect(code).toMatch(/fetchTemplateSelections/);
     // Resolved once, forwarded by name: the id is also compared against the
-    // route's answer so a fallback to the ranking can be said out loud.
-    expect(code).toMatch(/const selectedId = await selectedTemplateFor\(reportType\)/);
+    // route's answer so a fallback to the ranking can be said out loud. A
+    // caller that has already read the choice (the Investment finalisation
+    // keys its memo on it) hands it down instead, and the shared question
+    // still resolves it for everybody else — one read either way.
+    expect(code).toMatch(/const selectedId = [\s\S]{0,160}?await selectedTemplateFor\(reportType\)/);
     expect(code).toMatch(/templateId:\s*selectedId/);
   });
 

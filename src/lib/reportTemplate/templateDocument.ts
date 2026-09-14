@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import { tryRouteThroughTemplateBuilderFor } from './compassRoute';
 import {
   TEMPLATE_ROUTE_REFUSAL_TEXT,
+  type TemplateRenderer,
   type TemplateRouteRefusal,
 } from './routeReportThroughTemplate';
 import {
@@ -47,6 +48,10 @@ export interface TemplateDocument {
   fileName: string;
   /** Which template rendered it, for the caller that wants to say. */
   templateId: string;
+  /** Which engine drew it — the route's own identifier. */
+  renderer: string;
+  /** Where a render service stored it, or null for a document drawn in this tab. */
+  storagePath: string | null;
 }
 
 /**
@@ -72,7 +77,7 @@ export interface TemplateDocument {
  * is the cheaper side of that trade. A failed read answers null and the format
  * resolves by ranking, exactly as it did before selections existed.
  */
-async function selectedTemplateFor(reportType: string): Promise<string | null> {
+export async function selectedTemplateFor(reportType: string): Promise<string | null> {
   try {
     const rows = await fetchTemplateSelections();
     const key = normaliseReportType(reportType);
@@ -101,7 +106,11 @@ export async function hasTemplateSelection(reportType: string): Promise<boolean>
  * an in-flight download when the URL disappears underneath it — the same
  * reason every `deliver*` module in the programme delays its own.
  */
-export function saveTemplateDocument(doc: TemplateDocument): void {
+export function saveTemplateDocument(
+  // The bytes and the name are all a download needs; a caller holding the
+  // standard document (no template, no stored path) hands over the same two.
+  doc: Pick<TemplateDocument, 'blob' | 'fileName'> & { templateId?: string | null },
+): void {
   const url = URL.createObjectURL(doc.blob);
   const a = document.createElement('a');
   a.href = url;
@@ -150,6 +159,14 @@ export async function tryTemplateDocument(
      * it (the 10 Year Cash Flow — see `payload` on `ReportTemplateAdapter`).
      */
     payload?: Record<string, unknown> | null;
+    /** Which engine draws it. `browser` unless the caller is producing the FINAL document. */
+    renderer?: TemplateRenderer;
+    /**
+     * The person's choice, when the caller has already read it — so the
+     * fingerprint a caller keys a finalisation on and the template the route
+     * renders are the SAME read, and this does not read it a second time.
+     */
+    selectedTemplateId?: string | null;
   },
 ): Promise<TemplateDocument | null> {
   /*
@@ -173,7 +190,9 @@ export async function tryTemplateDocument(
     return null;
   }
 
-  const selectedId = await selectedTemplateFor(reportType);
+  const selectedId = opts?.selectedTemplateId !== undefined
+    ? opts.selectedTemplateId
+    : await selectedTemplateFor(reportType);
   // Which gate closed, when one does — so the notice below names the cause
   // rather than saying the same thing for every one of them.
   let refusal: TemplateRouteRefusal | null = null;
@@ -186,6 +205,7 @@ export async function tryTemplateDocument(
       // ones that remembered to ask. See `selectedTemplateFor`.
       templateId: selectedId,
       payload: opts?.payload ?? null,
+      renderer: opts?.renderer,
     });
     if (!routed?.blob) {
       if (selectedId) {
@@ -213,7 +233,10 @@ export async function tryTemplateDocument(
      * produced is the blob that is delivered, and the emptiness check lives
      * once, beside the render.
      */
-    return { blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId };
+    return {
+      blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId,
+      renderer: routed.renderer, storagePath: routed.storagePath ?? null,
+    };
   } catch {
     if (selectedId) notifySelectionNotUsed();
     return null;

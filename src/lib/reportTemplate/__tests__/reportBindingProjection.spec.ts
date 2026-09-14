@@ -16,6 +16,7 @@ import {
   applyInvestmentProjection,
 } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
+import { OVERALL_GRADE_UNAVAILABLE } from '../../../../supabase/functions/_shared/reports/market/scoringInputPolicy.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
 
 /** Shaped exactly like a stored row. See the header. */
@@ -241,6 +242,27 @@ describe('after projection', () => {
     expect(data.risks[0].risk).toBe('Interest rate exposure at 80% LVR');
     expect(data.summary.strength[0]).toBe('Land-led inner-west holding');
     expect(data.summary.watch[0]).toBe('Negative cash flow in years 1-3');
+  });
+
+  it('sets the ungraded statement as a headline and a sentence, never as a five-line headline', () => {
+    // The scorer writes the policy's explanation where a recommendation would
+    // go. Every master binds `headline` at display size, so the two-sentence
+    // explanation used to set at 27pt over the KPI band. The policy's own short
+    // `value` is the headline; its explanation is the sentence under it.
+    const ungraded = projectInvestmentReport({
+      ...ROW,
+      investment_score: {
+        grade: 'N/A',
+        recommendation: OVERALL_GRADE_UNAVAILABLE.explanation,
+        policy: { gradeIssued: false },
+      },
+    });
+    expect(ungraded.recommendation.headline).toBe(OVERALL_GRADE_UNAVAILABLE.value);
+    expect(ungraded.recommendation.gradedLine).toBe(OVERALL_GRADE_UNAVAILABLE.explanation);
+    expect(ungraded.recommendation.grade).toBeUndefined();
+    expect(ungraded.recommendation.score).toBeUndefined();
+    // A graded record's own recommendation is untouched.
+    expect(data.recommendation.headline).toBe('Proceed to offer at or below $1.29m');
   });
 
   it('converts units without inventing a model', () => {

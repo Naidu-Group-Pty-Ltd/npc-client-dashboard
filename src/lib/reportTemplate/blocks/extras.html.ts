@@ -7,7 +7,7 @@ import type { Block } from '../templateSchema';
 import { evalConditional, resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { boundValueResolved } from '../boundValuePresence';
 import { esc, type HtmlBlockContext } from './_shared.html';
-import { resolveDataPath } from './_data';
+import { LONE_SURVIVOR_FLOOR, resolveDataPath } from './_data';
 
 type R = Record<string, unknown>;
 
@@ -379,6 +379,11 @@ export function renderDefinitionListHtml(block: Block, ctx: HtmlBlockContext): s
     return definitionSource === undefined || boundValueResolved(definitionSource, ctx);
   });
   if (authored.length > 0 && items.length === 0) return '';
+  // A list built for several terms that kept ONE is a lone line, not the list
+  // — the same floor the data table applies (`LONE_SURVIVOR_FLOOR`).
+  const boundAuthored = authored.filter((it) => [it.definition, it.value, it.description]
+    .some((c) => typeof c === 'string' && c.includes('{{'))).length;
+  if (boundAuthored >= LONE_SURVIVOR_FLOOR && items.length === 1) return '';
   const rows = items
     .map(
       (it) => `<div style="display:grid;grid-template-columns:160pt 1fr;gap:14pt;padding:8pt 0;border-bottom:1pt solid ${line(ctx)};">
@@ -431,6 +436,9 @@ function sparklineSeries(p: R, ctx: HtmlBlockContext): number[] {
 export function renderSparklineHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as R;
   const raw = sparklineSeries(p, ctx);
+  // No series, no figure — an empty frame looks like a chart, which is why
+  // the masters that bound `dataPath` went unnoticed for so long.
+  if (!raw.length) return '';
   const w = Number(p.width ?? 240);
   const h = Number(p.height ?? 60);
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');

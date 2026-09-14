@@ -221,6 +221,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const variant: PdfVariant = toPdfVariant(payload.pdfVariant);
     const tagged: boolean = payload.tagged !== false;
     const optimizeImages: boolean = payload.optimizeImages !== false;
+    // The report a FINAL document is of, for the ledger. The gate above read
+    // it already; recording it on the job row is what lets a finalisation be
+    // found again by report rather than by guessing from a file name.
+    const reportIdForLedger: string | null = boundReportId;
     const themeId: string | null = payload.themeId ? String(payload.themeId).slice(0, 80) : null;
     const pageMasterId: string | null = payload.pageMasterId ? String(payload.pageMasterId).slice(0, 80) : null;
     const pageCount: number | null = Number.isFinite(payload.pageCount) ? Number(payload.pageCount) : null;
@@ -245,6 +249,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         metadata: {
           optimize_images: optimizeImages,
           html_bytes: html.length,
+          ...(reportIdForLedger ? { report_id: reportIdForLedger } : {}),
         },
       })
       .select('id')
@@ -302,6 +307,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     return new Response(
       JSON.stringify({
         url: signed.signedUrl,
+        // The storage path as well as the signed URL: a caller that publishes
+        // the document points a portal at THIS path rather than uploading the
+        // same bytes a second time. One finalisation, one stored PDF.
+        path,
         fileName,
         mode,
         templateId,

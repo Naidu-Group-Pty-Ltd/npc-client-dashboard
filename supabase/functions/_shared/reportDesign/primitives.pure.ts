@@ -434,6 +434,37 @@ export function renderPullQuote(text: string, attribution?: string): string {
       }</blockquote>`;
 }
 
+/**
+ * A stat card — the generator's `::: stat` and `::: divider` blocks.
+ *
+ * A label, one figure at display size with its unit, a caption; a divider
+ * states its figure over a headline. The card states nothing on its own: the
+ * caller decides whether there is a value to state (`statCardHasValue`) and
+ * does not draw one without.
+ */
+export interface StatCardParts {
+  value: string;
+  label?: string;
+  unit?: string;
+  sub?: string;
+  /** Already-rendered inline HTML for a divider's headline; escaped by its renderer. */
+  headlineHtml?: string;
+  divider?: boolean;
+}
+
+export function renderStatCard(parts: StatCardParts): string {
+  const label = (parts.label ?? '').trim();
+  const unit = (parts.unit ?? '').trim();
+  const sub = (parts.sub ?? '').trim();
+  return `
+      <div class="stat-card${parts.divider ? ' stat-divider' : ''}">
+        ${label ? `<span class="stat-label">${escapeHtml(label)}</span>` : ''}
+        <div class="stat-value">${escapeHtml(parts.value.replace(/\s+/g, ' ').trim())}${unit ? `<span class="stat-unit">${escapeHtml(unit)}</span>` : ''}</div>
+        ${sub ? `<span class="stat-sub">${escapeHtml(sub)}</span>` : ''}
+        ${parts.headlineHtml ? `<p class="stat-headline">${parts.headlineHtml}</p>` : ''}
+      </div>`;
+}
+
 export function renderSidenote(label: string, bodyHtml: string): string {
   return `
       <aside class="sidenote">

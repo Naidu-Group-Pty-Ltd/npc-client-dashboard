@@ -125,6 +125,7 @@ import { reconcileStoredFinancials } from './reports/investment/financialEngine.
 import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
 import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
+import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -541,8 +542,21 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // field, so `recommendation.rationale` stays absent rather than echoing the
   // headline back at the reader.
   const recommendation: Record<string, unknown> = {};
-  put(recommendation, 'headline', str(score.recommendation));
-  put(recommendation, 'action', recommendationAction(str(score.recommendation)));
+  // On a record that may state no grade, the scorer writes the client-facing
+  // EXPLANATION where a recommendation would go — two sentences, 143
+  // characters. Every selectable master binds `headline` at display size
+  // (27pt on the verdict page) and `gradedLine` as the sentence under it, so
+  // the explanation set as a five-line headline over the KPI band (measured on
+  // the long reference report, RS-3, 14 Sep 2026: "analysis is shown below"
+  // printed through "PURCHASE PRICE"). The statement is split the way the
+  // policy already words it: its short `value` is the headline and its
+  // explanation is the sentence — nothing is reworded, and a graded record is
+  // untouched.
+  const storedRecommendation = str(score.recommendation);
+  const ungradedStatement = storedRecommendation?.trim() === OVERALL_GRADE_UNAVAILABLE.explanation;
+  const headline = ungradedStatement ? OVERALL_GRADE_UNAVAILABLE.value : storedRecommendation;
+  put(recommendation, 'headline', headline);
+  put(recommendation, 'action', recommendationAction(headline));
   // The grade and its score go through the ONE rule that decides whether this
   // record may state a grade at all. This used to be `str(score.grade)`, which
   // published the scorer's own `'N/A'` sentinel verbatim: every selectable
@@ -564,7 +578,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // scores, whose dimensions are not the composite five. `gradedLine` names
   // the dimensions this score actually carries; absent grade or score, the
   // binding is absent and the sentence is not drawn.
-  put(recommendation, 'gradedLine', gradedLine(score));
+  put(recommendation, 'gradedLine', ungradedStatement ? OVERALL_GRADE_UNAVAILABLE.explanation : gradedLine(score));
   put(recommendation, 'gradedDetailLine', gradedDetailLine(score));
 
   const strengths = strArray(score.strengths);

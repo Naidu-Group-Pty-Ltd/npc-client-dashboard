@@ -20,13 +20,31 @@
  * premium button, the flatten copy) asks this module, so a client receives
  * the same document the operator reviewed.
  *
- * ## One report, two presentations
+ * ## One report, two presentations, one final renderer
  *
  * The record is read once and checked for client readiness once, and only
  * then is a presentation chosen: the template the person selected for this
- * format, or the standard one. Both draw the SAME validated report, both draw
- * it in this browser, and neither is a second version of the document — which
- * is why the readiness gate sits above both rather than inside either.
+ * format, or the standard one. Both draw the SAME validated report and neither
+ * is a second version of the document — which is why the readiness gate sits
+ * above both rather than inside either.
+ *
+ * A chosen template is drawn by the pinned WeasyPrint engine through
+ * `render-template-pdf` (RV-1, 14 Sep 2026): the browser renderer embeds no
+ * fonts and drew the executive dashboard's headline figures illegibly. The
+ * browser still draws the standard presentation (pdf-lib, which does embed its
+ * faces) when no template applies, and it still draws every PREVIEW. Nothing
+ * here is the render service's to decide — it prints the completed report.
+ *
+ * ## One finalisation → one PDF
+ *
+ * A final render is asked for by a deliberate action — Generate, Download,
+ * Send, Publish — and never by an edit, a preview or a page load. Two
+ * protections keep one action to one render: concurrent calls for the same
+ * report share one in-flight production, and a completed finalisation is
+ * remembered (per tab) under a fingerprint of the record's version, the
+ * chosen template and the five controls, so Download after Generate, or Send
+ * after Download, reuse the document rather than drawing it again. Change the
+ * report, the template or a control and the fingerprint moves.
  *
  * ## Every failure is a fallback, never an error — until there is nothing
  *
@@ -39,10 +57,10 @@
  *
  * ## Coverage
  *
- * Both presentations are drawn here, so neither leaves a server-side trace to
- * be counted: `engine` on the returned document is what a render event
- * records, and it names the renderer that actually drew the bytes rather than
- * a service that no longer runs.
+ * `engine` on the returned document names the renderer that actually drew the
+ * bytes: the final engine for a templated document, one of the two browser
+ * renderers otherwise. A final render also leaves its own row in
+ * `template_render_jobs`, stamped with the report it was of.
  *
  * ## `pdf_url` has one meaning now
  *
@@ -54,9 +72,13 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   saveTemplateDocument,
+  selectedTemplateFor,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
-import { BROWSER_PRESENTATION_RENDERER } from '@/lib/reportTemplate/routeReportThroughTemplate';
+import {
+  BROWSER_PRESENTATION_RENDERER,
+  WEASYPRINT_FINAL_RENDERER,
+} from '@/lib/reportTemplate/routeReportThroughTemplate';
 import {
   generateInvestmentPdfBlob,
   BROWSER_PDF_RENDERER,
@@ -64,6 +86,7 @@ import {
 import {
   loadInvestmentReportForPdf,
   projectRowForPdf,
+  type StoredInvestmentReportRow,
 } from '@/lib/reports/investment/investmentPdfSource';
 import { assertInvestmentReportClientReady } from '@/lib/reports/investment/clientReadiness';
 import {
@@ -89,9 +112,14 @@ export interface InvestmentDocument {
    * naming a retired service is worse than none, because it is read as
    * evidence.
    */
-  engine: typeof BROWSER_PRESENTATION_RENDERER | typeof BROWSER_PDF_RENDERER;
+  engine: typeof WEASYPRINT_FINAL_RENDERER | typeof BROWSER_PRESENTATION_RENDERER | typeof BROWSER_PDF_RENDERER;
   /** The template that rendered it, when the template engine did. */
   templateId: string | null;
+  /**
+   * Where the render service stored these exact bytes, when one did. Null for
+   * a document drawn in this tab, which exists only until somebody stores it.
+   */
+  storagePath: string | null;
 }
 
 export interface ProduceInvestmentOptions extends Partial<InvestmentPresentationOptions> {
@@ -100,6 +128,61 @@ export interface ProduceInvestmentOptions extends Partial<InvestmentPresentation
   designOptions?: PdfDesignOptions;
 }
 
+
+/**
+ * What a finalisation is OF: everything the document is drawn from.
+ *
+ * The record as read (every column but `pdf_url`, which publishing itself
+ * writes and which changes nothing on the page), the template chosen for it,
+ * the imagery that will be placed, the variant, the five controls and the
+ * design options. Two calls with the same fingerprint ask for the same
+ * document; anything that changes the document changes the fingerprint.
+ *
+ * The row is keyed whole rather than by a version stamp because the detail
+ * projection the row is read through carries `current_version` and not
+ * `updated_at` — and an edit moves only the latter. Keying on the content
+ * cannot miss an edit, whatever the projection carries.
+ */
+function finalisationFingerprint(
+  row: StoredInvestmentReportRow,
+  selectedTemplateId: string | null,
+  heroImages: ReadonlyArray<{ sectionKey: string; bytes: Uint8Array }>,
+  options: ProduceInvestmentOptions,
+  presentation: InvestmentPresentationOptions,
+): string {
+  const { pdf_url: _published, ...content } = row;
+  return JSON.stringify([
+    content, selectedTemplateId,
+    heroImages.map((h) => [h.sectionKey, h.bytes.byteLength]),
+    options.variant ?? null, presentation, options.designOptions ?? null,
+  ]);
+}
+
+interface Finalised { fingerprint: string; doc: InvestmentDocument }
+
+/**
+ * Per report, the last completed finalisation in this tab — bounded, because
+ * each one holds a document's bytes.
+ */
+const finalised = new Map<string, Finalised>();
+const FINALISED_LIMIT = 8;
+/** Per (report, request), the production already running. */
+const inFlight = new Map<string, Promise<InvestmentDocument>>();
+
+function rememberFinalised(reportId: string, entry: Finalised): void {
+  finalised.delete(reportId);
+  finalised.set(reportId, entry);
+  while (finalised.size > FINALISED_LIMIT) {
+    const oldest = finalised.keys().next().value;
+    if (oldest === undefined) break;
+    finalised.delete(oldest);
+  }
+}
+
+/** Forget every remembered finalisation — for tests, and for a signed-out tab. */
+export function forgetFinalisedInvestmentDocuments(): void {
+  finalised.clear();
+}
 
 /**
  * The document, template-first.
@@ -112,6 +195,23 @@ export async function produceInvestmentDocument(
   options: ProduceInvestmentOptions = {},
 ): Promise<InvestmentDocument> {
   if (!reportId) throw new Error('A report is required to produce the document.');
+
+  // A double-click, a re-rendered button, two surfaces asking at once: one
+  // production, shared. Keyed on the request as well as the report, so a
+  // genuinely different request is not handed somebody else's document.
+  const flightKey = `${reportId}|${JSON.stringify(options)}`;
+  const running = inFlight.get(flightKey);
+  if (running) return running;
+  const production = produceInvestmentDocumentOnce(reportId, options)
+    .finally(() => { inFlight.delete(flightKey); });
+  inFlight.set(flightKey, production);
+  return production;
+}
+
+async function produceInvestmentDocumentOnce(
+  reportId: string,
+  options: ProduceInvestmentOptions,
+): Promise<InvestmentDocument> {
 
   /*
    * The record is read ONCE, before a presentation is chosen, and the
@@ -156,9 +256,21 @@ export async function produceInvestmentDocument(
     ),
   };
 
+  /*
+   * The person's template choice, read ONCE here and handed down, so the
+   * fingerprint below and the template actually rendered come from the same
+   * read. A failed read is null — the route then resolves by ranking, exactly
+   * as it does when nothing was chosen.
+   */
+  const selectedTemplateId = await selectedTemplateFor('investment');
+
   const heroImages = presentation.includeHeroImages
     ? await loadInvestmentHeroImages(reportId)
     : [];
+
+  const fingerprint = finalisationFingerprint(row, selectedTemplateId, heroImages, options, presentation);
+  const remembered = finalised.get(reportId);
+  if (remembered && remembered.fingerprint === fingerprint) return remembered.doc;
 
   const templated = await tryTemplateDocument('investment', reportId, {
     variant: options.variant ?? null,
@@ -166,14 +278,22 @@ export async function produceInvestmentDocument(
     // the record itself for everything else; this is the one thing the
     // operator's switches changed, so it is the one thing that travels.
     payload: { reportContent: presentedRow.report_content },
+    // The FINAL document: the chosen template drawn by the pinned engine.
+    renderer: 'weasyprint',
+    selectedTemplateId,
   });
   if (templated) {
-    return {
+    const doc: InvestmentDocument = {
       blob: templated.blob,
       fileName: templated.fileName,
-      engine: BROWSER_PRESENTATION_RENDERER,
+      engine: templated.renderer === WEASYPRINT_FINAL_RENDERER
+        ? WEASYPRINT_FINAL_RENDERER
+        : BROWSER_PRESENTATION_RENDERER,
       templateId: templated.templateId,
+      storagePath: templated.storagePath ?? null,
     };
+    rememberFinalised(reportId, { fingerprint, doc });
+    return doc;
   }
 
   // The standard document, drawn HERE.
@@ -181,8 +301,10 @@ export async function produceInvestmentDocument(
   // This used to POST to `render-investment-report-pdf`, which composed HTML
   // and handed it to WeasyPrint on Cloud Run. The drawing is now
   // `investmentPdfDocument` — the same pdf-lib implementation that produced
-  // 263 of the 275 Investment PDFs this product has delivered — so the
-  // document reaches a client without leaving the browser and Supabase.
+  // 263 of the 275 Investment PDFs this product has delivered. It is the
+  // presentation a report gets when no template applies, and the only one
+  // the print engine is not asked for: pdf-lib embeds its faces, and there is
+  // no template to compile.
   //
   // The projection is shared with `ClientPDFGenerator` rather than repeated,
   // because it is where stored financials are healed and an historic row's
@@ -195,12 +317,15 @@ export async function produceInvestmentDocument(
     heroImages,
   });
   if (!drawn.blob.size) throw new Error('The rendered PDF was empty.');
-  return {
+  const doc: InvestmentDocument = {
     blob: drawn.blob,
     fileName: drawn.fileName,
     engine: drawn.renderer,
     templateId: null,
+    storagePath: null,
   };
+  rememberFinalised(reportId, { fingerprint, doc });
+  return doc;
 }
 
 /** Produce and save to the browser's downloads. */
@@ -258,10 +383,11 @@ export interface PublishedInvestmentPdf {
  *
  * There used to be a shortcut: the server route persisted its own render and
  * wrote the path to the row, so this read it back rather than uploading the
- * same bytes twice. Nothing persists a render behind our back any more — the
- * document is drawn in this browser and exists only as a Blob until it is
- * stored — so the shortcut is gone rather than left to return a stale path
- * from whichever render happened to run last.
+ * same bytes twice. That shortcut read the ROW, so it returned whichever render
+ * happened to run last. What replaces it reads the DOCUMENT: a final render
+ * carries the path the engine stored it at, and the bytes in hand are the bytes
+ * at that path, so the portal is pointed at them and nothing is uploaded twice.
+ * A document drawn in this tab has no such path and is uploaded here.
  */
 export async function publishInvestmentPdf(
   reportId: string,
@@ -269,17 +395,25 @@ export async function publishInvestmentPdf(
 ): Promise<PublishedInvestmentPdf> {
   const doc = await produceInvestmentDocument(reportId, options);
 
-  const safeName = doc.fileName.replace(/[^a-zA-Z0-9._-]+/g, '-');
-  const path = `${reportId}_${Date.now()}_${safeName}`;
-  const upload = await secureStorageUpload(STORAGE_BUCKET, path, doc.blob, {
-    contentType: 'application/pdf',
-    upsert: true,
-    resourceId: reportId,
-  });
-  if (!upload.success) {
-    throw new Error(upload.error || 'The document rendered but could not be stored.');
+  let storedPath: string;
+  if (doc.storagePath) {
+    // The render service already stored these bytes; the portal is pointed
+    // at that object. Uploading them again would make a second copy of the
+    // same document, and the second copy is the one that can differ.
+    storedPath = doc.storagePath;
+  } else {
+    const safeName = doc.fileName.replace(/[^a-zA-Z0-9._-]+/g, '-');
+    const path = `${reportId}_${Date.now()}_${safeName}`;
+    const upload = await secureStorageUpload(STORAGE_BUCKET, path, doc.blob, {
+      contentType: 'application/pdf',
+      upsert: true,
+      resourceId: reportId,
+    });
+    if (!upload.success) {
+      throw new Error(upload.error || 'The document rendered but could not be stored.');
+    }
+    storedPath = upload.path || path;
   }
-  const storedPath = upload.path || path;
   await rememberInvestmentPdfPath(reportId, storedPath);
   return {
     path: storedPath,

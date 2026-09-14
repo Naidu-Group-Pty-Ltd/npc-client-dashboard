@@ -154,8 +154,15 @@ export default function InvestmentReportView() {
     if (!report || downloadBusy) return;
     setDownloadBusy(true);
     try {
+      // All five controls, every time. This passed three of them and left
+      // Sources and Scoring to their defaults, so the page's primary button
+      // ignored two of the switches drawn beside it while the panel's
+      // "Generate Client PDF" honoured all five — two documents from one
+      // screen, depending on which button was pressed.
       await deliverInvestmentPdf(report.id, {
         variant: report.report_variant ?? null,
+        includeSources,
+        includeScoring,
         includeCharts,
         includeHeroImages,
         includeSparklines,

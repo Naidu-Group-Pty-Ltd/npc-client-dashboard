@@ -69,11 +69,18 @@ import {
   renderCallout,
   renderDataTable,
   renderPage,
+  renderPullQuote,
   renderSidenote,
+  renderStatCard,
   type TableColumn,
   type TableRow,
 } from '../reportDesign/primitives.pure.ts';
 import { countUrlTokens, neutraliseUrls } from './text.pure.ts';
+import {
+  codeCharge, headingCharge, listCharge, paragraphCharge, pullQuoteCharge, sidenoteCharge, statCharge, tableCharge,
+  type NarrativeGeometry,
+} from './narrativeGeometry.pure.ts';
+import { statCardHasValue } from './investment/blockHygiene.pure.ts';
 import {
   directiveOnlyBlock,
   scanVizDirectives,
@@ -177,6 +184,13 @@ export const MEASURED_CHARS_PER_LINE = 95;
  * row, packed onto a page it could not fit, and clipped mid-row.
  */
 export type ChargeModel = 'legacy' | 'measured';
+
+/**
+ * The third model is not a member of `ChargeModel`: it is selected by passing
+ * a `geometry` (see `MarkdownOptions.geometry`), because it is not a set of
+ * constants but a function of ONE template's page — its measure, body size,
+ * leading and face — and there is no meaningful value of it without one.
+ */
 
 /**
  * Body lines that fit one page.
@@ -379,6 +393,17 @@ export interface MarkdownOptions {
    */
   charging?: ChargeModel;
   /**
+   * Charge every block by the geometry of the page it will print on — the
+   * template's own measure, body size, leading and face — through the
+   * formulas in `narrativeGeometry.pure.ts`, which are checked against the
+   * pinned engine block by block. When set, `charging` is ignored: the
+   * geometry IS the charge model. A caller passing this must draw its figures
+   * with `vizDirectiveRenderer(ctx, geometry)` so a figure's lines come from
+   * its printed height at that measure, and must pack with the same geometry
+   * (`packNarrativeGeometry`), or the count and the buckets disagree.
+   */
+  geometry?: NarrativeGeometry;
+  /**
    * Drop a heading that has no content before the next heading of the same or
    * shallower level (or the end of the document). Default true: a heading
    * whose body is missing promises analysis the page does not deliver, and a
@@ -503,6 +528,14 @@ export interface MarkdownTableMeta {
   headLines: number;
 }
 
+/** A list's items, kept so a list taller than a page can be split by item. */
+export interface MarkdownListMeta {
+  /** `chars` is what the item prints (`printedChars`), which is what a charge reads. */
+  items: Array<{ depth: number; text: string; chars?: number }>;
+  ordered: boolean;
+  start: number;
+}
+
 export interface MarkdownBlock {
   kind: MarkdownBlockKind;
   html: string;
@@ -510,6 +543,8 @@ export interface MarkdownBlock {
   lines: number;
   /** Present on `table` blocks only; see `MarkdownTableMeta`. */
   table?: MarkdownTableMeta;
+  /** Set on a `list` block built from source items (never on a synthesised one). */
+  list?: MarkdownListMeta;
 }
 
 /** Every departure from the source, counted. Zero on a clean answer. */
@@ -705,11 +740,14 @@ let activeFootnotes: {
 function applyFootnoteRefs(html: string): string {
   const reg = activeFootnotes;
   if (!reg) return html;
-  return html.replace(/\[\^([A-Za-z0-9_-]{1,40})\]/g, (m, id: string) => {
+  return html.replace(/\[\^([^\]\s]{1,40})\]/g, (m, id: string) => {
     if (!reg.defs.has(id)) {
       // Only a citation-shaped id strips (letter-led, two-plus characters, no
-      // dash). `a[^2]` and `[^a-z]` are prose and stay exactly as written.
-      if (!/^[A-Za-z][A-Za-z0-9_]{1,39}$/.test(id)) return m;
+      // dash). `a[^2]` and `[^a-z]` are prose and stay exactly as written. A
+      // model's escaped marker — `[^\*graceSchools]` reached a client's page
+      // verbatim on 14 Sep 2026 — is the same citation with a stray escape,
+      // so the shape is judged with escapes and asterisks removed.
+      if (!/^[A-Za-z][A-Za-z0-9_]{1,39}$/.test(id.replace(/[\\*]/g, ''))) return m;
       reg.notices.footnoteRefsDropped++;
       return '';
     }
@@ -718,6 +756,35 @@ function applyFootnoteRefs(html: string): string {
     reg.notices.footnotesRendered++;
     return `<sup class="fn-ref">${n + 1}</sup>`;
   });
+}
+
+/**
+ * How many characters of a source span PRINT.
+ *
+ * Every charge used to count the source — `it.text.length`, `joined.length` —
+ * and the source carries what the page does not: `**` around a lead-in, the
+ * URL inside `[text](url)`, a footnote marker. Measured on the long reference
+ * report (RS-4, 14 Sep 2026): a location list whose items cite their sources
+ * charged 29.9 lines and set in 24, because each item's URL was counted as
+ * prose; the page under it was 45% white. The charge counts what the inline
+ * renderer emits, tags stripped and entities read as the one glyph they print.
+ */
+export function printedText(value: string): string {
+  return renderInlineMarkdown(value)
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&(?:amp|lt|gt|quot|#39);/g, 'x');
+}
+export function printedChars(value: string): number {
+  return printedText(value).length;
+}
+
+/** The plain text a span of inline Markdown prints — for a primitive that escapes its own input. */
+export function inlinePlainText(value: string): string {
+  return renderInlineMarkdown(value)
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 
 export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): string {
@@ -901,6 +968,18 @@ const slugify = (value: string): string =>
  * **Pass 1** segments blocks in one left-to-right walk. **Pass 2** runs inline
  * only where inline is legal — never inside a fence.
  */
+/** `key="value"` and `key=value` pairs on a directive fence's opening line. */
+export function fenceAttrs(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const m of String(raw ?? '').matchAll(/([A-Za-z][\w-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g)) {
+    attrs[m[1].toLowerCase()] = (m[2] ?? m[3] ?? m[4] ?? '').trim();
+  }
+  return attrs;
+}
+
+/** The fence kinds the generator's prompt asks for, and what each draws here. */
+export const FENCE_KINDS = ['pullquote', 'quote-page', 'sidenote', 'stat', 'divider'] as const;
+
 export function renderMarkdown(source: string, options: MarkdownOptions = {}): MarkdownResult {
   const notices = emptyNotices();
   const base = options.baseHeadingLevel ?? 2;
@@ -976,26 +1055,33 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   // not yet on a calibrated narrative profile; `measured` is the 2026-09
   // calibration (see `ChargeModel`). Half-line rounding matters at `measured`:
   // integer rounding inflated a heading-dense page by up to one line per block.
-  const measured = options.charging === 'measured';
-  const cpl = measured ? MEASURED_CHARS_PER_LINE : CHARS_PER_LINE;
-  const paraMargin = measured ? 0.4 : 0.5;
+  const geometry = options.geometry ?? null;
+  const measured = geometry !== null || options.charging === 'measured';
+  const cpl = geometry ? geometry.charsPerLine : measured ? MEASURED_CHARS_PER_LINE : CHARS_PER_LINE;
   const headingCost = measured ? 1.5 : 2;
-  const roundCharge = (n: number) => (measured
-    ? Math.max(0.5, Math.round(n * 2) / 2)
-    : Math.max(1, Math.round(n)));
+  // Geometry charges are exact to the point and are kept to the hundredth;
+  // the two constant models keep their own rounding byte for byte.
+  const roundCharge = (n: number) => (geometry
+    ? Math.max(0.25, Math.round(n * 100) / 100)
+    : measured
+      ? Math.max(0.5, Math.round(n * 2) / 2)
+      : Math.max(1, Math.round(n)));
 
-  const push = (kind: MarkdownBlockKind, html: string, lineCount: number, table?: MarkdownTableMeta): boolean => {
+  const push = (kind: MarkdownBlockKind, html: string, lineCount: number, table?: MarkdownTableMeta, list?: MarkdownListMeta): boolean => {
     if (!html) return true;
     if (blocks.length >= MAX_BLOCKS) { notices.truncatedAtBlocks = true; return false; }
     const entry: MarkdownBlock = { kind, html, lines: roundCharge(lineCount) };
     if (table) entry.table = table;
+    if (list) entry.list = list;
     blocks.push(entry);
     return true;
   };
 
-  const textLines = (s: string) => (measured
-    ? Math.max(1, s.length / cpl)
-    : Math.ceil(Math.max(1, s.length) / cpl));
+  const textLines = (s: string) => (geometry
+    ? Math.max(1, Math.ceil(s.length / cpl))
+    : measured
+      ? Math.max(1, s.length / cpl)
+      : Math.ceil(Math.max(1, s.length) / cpl));
 
   /**
    * How many lines a list actually sets.
@@ -1037,12 +1123,78 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     const joined = paragraph.join('\n');
     paragraph = [];
     const html = paragraphHtml(joined, notices);
-    return push('paragraph', html, textLines(joined) + 0.5);
+    return push('paragraph', html, geometry ? paragraphCharge(geometry, printedChars(joined)) : textLines(joined) + 0.5);
   };
 
   scan: while (i < lines.length) {
     const line = lines[i];
     const trimmed = line.trim();
+
+    // A fenced directive the generator writes: `::: kind attr="…"` … `:::`.
+    //
+    // The prompt asks for five of them (pull quote, sidenote, stat block,
+    // section divider, quote page) and the flowing route draws all five;
+    // this renderer drew none, so every one printed RAW — fences, attributes
+    // and all — in the client document on every structure (RS-4, 14 Sep
+    // 2026: `::: stat label="Mining share of workforce" unit="%" …` set as
+    // body copy on page 14 of the medium reference report). A kind with no
+    // drawing here (columns, dashboard, signature, anything new) is unwrapped
+    // and its body read as ordinary Markdown, so nothing a fence carries is
+    // lost and no fence is ever printed.
+    const directive = /^:::\s*([A-Za-z][\w-]*)\s*(.*)$/.exec(trimmed);
+    if (directive) {
+      if (!flushParagraph()) break scan;
+      const kind = directive[1].toLowerCase();
+      const attrs = fenceAttrs(directive[2]);
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && !/^:::\s*$/.test(lines[i].trim())) { body.push(lines[i]); i++; }
+      if (i < lines.length) i++;
+      const inner = body.join('\n').trim();
+      const oneLine = renderInlineMarkdown(inner.replace(/\s*\n+\s*/g, ' '), notices);
+      const innerChars = printedChars(inner.replace(/\s*\n+\s*/g, ' '));
+      if (kind === 'pullquote' || kind === 'quote-page') {
+        if (!inner) continue;
+        const attribution = (attrs.attribution ?? '').trim();
+        // The primitive escapes what it is handed, so it is handed the plain
+        // sentence — a pull quote is one line of type, not a run of markup.
+        const html = renderPullQuote(inlinePlainText(inner.replace(/\s*\n+\s*/g, ' ')), attribution || undefined);
+        const cost = geometry
+          ? pullQuoteCharge(geometry, innerChars, printedChars(attribution))
+          : textLines(inner) * 1.4 + (attribution ? 1 : 0) + 2;
+        if (!push('blockquote', html, cost)) break scan;
+        continue;
+      }
+      if (kind === 'sidenote') {
+        if (!inner) continue;
+        const html = renderSidenote(attrs.label || 'Note', `<p>${oneLine}</p>`);
+        const cost = geometry ? sidenoteCharge(geometry, [innerChars]) : textLines(inner) + 2;
+        if (!push('notice', html, cost)) break scan;
+        continue;
+      }
+      if (kind === 'stat' || kind === 'divider') {
+        // A stat card states its body; a divider states its `stat` attribute
+        // and carries its body as the headline. A card with nothing to state
+        // is not drawn — not a dash, not the unit on its own: the rule
+        // `blockHygiene` already enforces at the write path, shared so the two
+        // ends cannot disagree about "empty".
+        const value = kind === 'stat' ? inner : (attrs.stat ?? '');
+        if (!statCardHasValue(value)) continue;
+        const label = kind === 'stat' ? (attrs.label ?? '') : (attrs.eyebrow ?? '');
+        const sub = kind === 'stat' ? (attrs.sub ?? '') : (attrs.label ?? '');
+        const headline = kind === 'divider' ? oneLine : '';
+        const unit = kind === 'stat' ? (attrs.unit ?? '') : '';
+        const html = renderStatCard({ value, label, unit, sub, headlineHtml: headline || undefined, divider: kind === 'divider' });
+        const cost = geometry
+          ? statCharge(geometry, { label: Boolean(label), sub: Boolean(sub), headlineChars: headline ? innerChars : 0 })
+          : 4 + (label ? 1 : 0) + (sub ? 1 : 0) + (headline ? textLines(inner) : 0);
+        if (!push('notice', html, cost)) break scan;
+        continue;
+      }
+      // Unknown kind: the fence goes, the body stays and is read as Markdown.
+      lines.splice(i, 0, ...body);
+      continue;
+    }
 
     // Fenced code.
     const fence = /^([`~]{3,})\s*([\w+-]*)\s*$/.exec(trimmed);
@@ -1067,7 +1219,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
         // not `<pre>`, so ordinary leading spaces would collapse away.
         .map((l) => escapeHtml(l).replace(/^ +/, (sp) => '\u00a0'.repeat(sp.length)))
         .join('<br>');
-      if (!push('code', renderCallout('informative', label, `<p><code>${inner}</code></p>`), kept.length + 2)) break scan;
+      if (!push('code', renderCallout('informative', label, `<p><code>${inner}</code></p>`), geometry ? codeCharge(geometry, kept.length) : kept.length + 2)) break scan;
       continue;
     }
 
@@ -1243,7 +1395,13 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       const kept = items.slice(0, MAX_LIST_ITEMS);
       notices.listItemsDropped += items.length - kept.length;
       if (mergedRuns) notices.listRunsMerged += mergedRuns;
-      if (!push('list', listHtml(kept, ordered, notices, startNum), listLines(kept) + 1)) break scan;
+      const listCost = geometry
+        ? listCharge(geometry, kept.map((it) => ({ chars: printedChars(it.text), depth: it.depth })))
+        : listLines(kept) + 1;
+      const listMeta: MarkdownListMeta = {
+        items: kept.map((it) => ({ depth: it.depth, text: it.text, chars: printedChars(it.text) })), ordered, start: startNum,
+      };
+      if (!push('list', listHtml(kept, ordered, notices, startNum), listCost, undefined, listMeta)) break scan;
       continue;
     }
 
@@ -1278,7 +1436,11 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       .map((def, idx) => `<li value="${idx + 1}">${renderInlineMarkdown(def, notices)}</li>`);
     if (items.length) {
       const html = `<h4>Notes</h4><ol class="fn-notes">${items.join('')}</ol>`;
-      push('list', html, items.length + 2);
+      const notesCost = geometry
+        ? headingCharge(geometry, 4, 5)
+          + listCharge(geometry, footnoteOrder.map((id) => ({ chars: printedChars(footnoteDefs.get(id) ?? ''), depth: 0 })))
+        : items.length + 2;
+      push('list', html, notesCost);
     }
   }
   activeFootnotes = null;
@@ -1371,7 +1533,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
 
     const html = `<h${level} id="${id}">${renderInlineMarkdown(raw, notices)}</h${level}>`;
     const index = blocks.length;
-    if (!push('heading', html, headingCost)) return false;
+    if (!push('heading', html, geometry ? headingCharge(geometry, level, plain.length) : headingCost)) return false;
     headings.push({ level, sourceLevel, text: plain, id, blockIndex: index });
     return true;
   }
@@ -1424,7 +1586,11 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     if (width === 1) {
       const items = cells.map((r) => ({ depth: 0, text: r[0] })).filter((it) => it.text);
       const head = cols[0].label ? `<h4>${escapeHtml(cols[0].label)}</h4>` : '';
-      return push('list', head + listHtml(items, false, notices), listLines(items) + 2);
+      const singleCost = geometry
+        ? (head ? headingCharge(geometry, 4, cols[0].label.length) : 0)
+          + listCharge(geometry, items.map((it) => ({ chars: printedChars(it.text), depth: 0 })))
+        : listLines(items) + 2;
+      return push('list', head + listHtml(items, false, notices), singleCost);
     }
 
     const rows: TableRow[] = cells.map((r) => {
@@ -1488,15 +1654,21 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     // characters against the full measure tracks what auto layout actually
     // sets, with a floor for padding-dominated narrow rows and a small cost
     // per extra column for cell padding.
-    const rowLines = rows.map((row) => {
-      const totalChars = Object.values(row)
-        .filter((v): v is string => typeof v === 'string')
-        .reduce((n, v) => n + v.length, 0);
-      return measured
+    const rowCharCounts = rows.map((row) => Object.values(row)
+      .filter((v): v is string => typeof v === 'string')
+      .reduce((n, v) => n + v.length, 0));
+    // The geometry model reads the row's characters against the measure at
+    // the table's own scale, padded and ruled as the block styles the cells
+    // (`narrativeGeometry.pure.ts`); the two constant models keep theirs.
+    // The table model reads each cell's words (its longest word sets the
+    // column's floor), so it is handed the printed text rather than a count.
+    const geometryTable = geometry ? tableCharge(geometry, cells.map((r) => r.slice(0, width).map(printedText)), width) : null;
+    const rowLines = geometryTable
+      ? geometryTable.rowLines
+      : rowCharCounts.map((totalChars) => (measured
         ? Math.max(1.35, totalChars / cpl + 0.35 + Math.max(0, width - 1) * 0.08)
-        : 1;
-    });
-    const headLines = 3;
+        : 1));
+    const headLines = geometryTable ? geometryTable.headLines : 3;
     const bodyCharge = measured ? rowLines.reduce((a, b) => a + b, 0) : rows.length;
     const meta: MarkdownTableMeta = {
       cols, rows, signedKeys: cols.filter((c) => c.align === 'right').map((c) => c.key),
@@ -1581,6 +1753,138 @@ function listHtml(items: readonly ListItem[], ordered: boolean, notices: Markdow
   return `${out}</${tag}>`;
 }
 
+/**
+ * Split a paragraph at a sentence boundary so its head fills the room left on
+ * a page and its tail opens the next.
+ *
+ * A packer that only pushes leaves the room a paragraph did not fit into
+ * empty — measured on the long reference report (14 Sep 2026) the narrative
+ * pages ended 60-140pt above the bottom the master sets, a whole paragraph's
+ * worth on most of them, which is what "large unused sections" looked like
+ * once nothing overflowed any more. A sentence is the unit every typeset book
+ * breaks a page inside.
+ *
+ * The cut is taken only where it is honest: after sentence punctuation, with
+ * every inline tag opened in the head closed in it (a `<strong>` cannot span
+ * the break), and with at least `minLines` on either side so neither page
+ * carries a widow or an orphan. `charge` is the caller's paragraph charge —
+ * the geometry model's, so the head is charged exactly as any paragraph is.
+ * Nothing is reworded; the two parts concatenate to the original.
+ */
+export function splitParagraphBlock(
+  block: MarkdownBlock,
+  firstBudget: number,
+  charge: (chars: number) => number,
+  minLines = 2,
+): MarkdownBlock[] {
+  if (block.kind !== 'paragraph') return [block];
+  const m = /^<p>([\s\S]*)<\/p>$/.exec(block.html.trim());
+  if (!m || m[1].includes('<p>')) return [block];
+  const inner = m[1];
+  const plainLength = (html: string) => html.replace(/<[^>]+>/g, '').length;
+  const balanced = (html: string) => ['strong', 'em', 'a', 'code', 'span', 'b', 'i', 'u', 's', 'sub', 'sup', 'mark']
+    .every((tag) => (html.match(new RegExp(`<${tag}[\\s>]`, 'g')) ?? []).length === (html.match(new RegExp(`</${tag}>`, 'g')) ?? []).length);
+  const boundary = /[.!?…][”"’')\]]*\s+(?=[A-Z0-9“"(])/g;
+  let best: number | null = null;
+  for (const hit of inner.matchAll(boundary)) {
+    const cut = (hit.index ?? 0) + hit[0].length;
+    const head = inner.slice(0, cut).trimEnd();
+    if (!balanced(head)) continue;
+    const headLines = charge(plainLength(head));
+    if (headLines > firstBudget) break;
+    if (headLines < minLines || charge(plainLength(inner.slice(cut))) < minLines) continue;
+    best = cut;
+  }
+  if (best === null) return [block];
+  const head = inner.slice(0, best).trimEnd();
+  const tail = inner.slice(best);
+  return [
+    { kind: 'paragraph', html: `<p>${head}</p>`, lines: charge(plainLength(head)) },
+    { kind: 'paragraph', html: `<p>${tail}</p>`, lines: charge(plainLength(tail)) },
+  ];
+}
+
+/**
+ * Split a list taller than the room it has into page-sized chunks, by
+ * top-level item.
+ *
+ * A list block was never split: a 28-item nested list on the long reference
+ * report (14 Sep 2026) charged 81 lines against a 40-line page, was given a
+ * page of its own, and was clipped at the page's edge — its last eleven
+ * items, "Public transport & road access" among them, were drawn below the
+ * paper and never seen. A top-level item travels with its nested items, so
+ * a chunk never opens on a sub-point whose parent is on the page before;
+ * a chunk carries at least two top-level items unless only one remains. An
+ * ordered list's numbering continues across chunks.
+ *
+ * `charge` is the caller's list charge — the geometry model's — so each
+ * chunk is charged exactly as any list is. The chunk is re-set through
+ * `listHtml` with notices nobody reads: the original render counted them.
+ */
+export function splitListBlock(
+  block: MarkdownBlock,
+  firstBudget: number,
+  contBudget: number,
+  charge: (items: readonly { depth: number; text: string }[]) => number,
+): MarkdownBlock[] {
+  const meta = block.list;
+  if (block.kind !== 'list' || !meta || meta.items.length < 2) return [block];
+  const items = meta.items;
+  const minDepth = Math.min(...items.map((it) => it.depth));
+  // Where the list may be cut: before a top-level item always; inside a
+  // top-level item's run of nested items only where at least
+  // `NESTED_CUT_MIN` nested items stay on each side, so a lead-in never
+  // stands over nothing and a continuation never opens with a lone child.
+  // Cutting only between top-level groups was measured on the Chancery
+  // render (RS-4, 14 Sep 2026): a group of a lead-in and four three-line
+  // children did not fit the fourteen lines left, the whole list moved on,
+  // and the page under it was 45% white.
+  const cuts: number[] = [];
+  for (let k = 1; k < items.length; k++) {
+    if (items[k].depth === minDepth) { cuts.push(k); continue; }
+    // k is inside a group: count nested items before and after the cut.
+    let start = k - 1;
+    while (start >= 0 && items[start].depth !== minDepth) start--;
+    let end = k;
+    while (end < items.length && items[end].depth !== minDepth) end++;
+    const before = k - start - 1;
+    const after = end - k;
+    if (before >= NESTED_CUT_MIN && after >= NESTED_CUT_MIN) cuts.push(k);
+  }
+  if (!cuts.length) return [block];
+
+  const notices = emptyNotices();
+  const out: MarkdownBlock[] = [];
+  let index = 0;
+  let ordinal = meta.start;
+  while (index < items.length) {
+    const budget = Math.max(2, out.length === 0 ? firstBudget : contBudget);
+    // The furthest cut whose head fits the budget; failing that, the nearest
+    // cut, so every chunk carries at least one whole piece.
+    const candidates = cuts.filter((c) => c > index);
+    let end = items.length;
+    if (candidates.length) {
+      const fitting = candidates.filter((c) => charge(items.slice(index, c)) <= budget);
+      if (fitting.length && charge(items.slice(index)) > budget) end = fitting[fitting.length - 1];
+      else if (!fitting.length && charge(items.slice(index)) > budget) end = candidates[0];
+    }
+    const chunk = items.slice(index, end);
+    const topLevel = chunk.filter((it) => it.depth === minDepth).length;
+    out.push({
+      kind: 'list',
+      html: listHtml(chunk, meta.ordered, notices, ordinal),
+      lines: charge(chunk),
+      list: { items: chunk, ordered: meta.ordered, start: ordinal },
+    });
+    ordinal += topLevel;
+    index = end;
+  }
+  return out;
+}
+
+/** Nested items that must stay on each side of a cut inside a top-level item. */
+export const NESTED_CUT_MIN = 2;
+
 /** Sum of block lines. The caller divides by its own lines-per-page. */
 export function estimateLines(blocks: readonly MarkdownBlock[]): number {
   return blocks.reduce((n, b) => n + b.lines, 0);
@@ -1598,15 +1902,26 @@ export function estimateLines(blocks: readonly MarkdownBlock[]): number {
  *
  * `firstBudget` is the room left on the page the table starts on; `contBudget`
  * sizes every later chunk. A chunk always carries at least two rows so a
- * lone orphan row never opens a page, except when only one row remains.
+ * lone orphan row never opens a page, except when only one row remains — or
+ * when the row is a paragraph in its own right. A row of `TALL_ROW_LINES` or
+ * more (a risk register's "why it matters" wraps to eleven) stands alone
+ * under a repeated head without reading as an orphan, and a two-row table of
+ * such rows is the one measured on the sparse reference report (RS-3c,
+ * 14 Sep 2026): pushed whole, it left 47% of one page white and stood alone
+ * on the next.
  */
+export const TALL_ROW_LINES = 4;
+
 export function splitTableBlock(
   block: MarkdownBlock,
   firstBudget: number,
   contBudget: number,
 ): MarkdownBlock[] {
   const t = block.table;
-  if (!t || t.rows.length <= 2) return [block];
+  if (!t || t.rows.length < 2) return [block];
+  const tall = (row: number) => (t.rowLines[row] ?? 1) >= TALL_ROW_LINES;
+  // A two-row table splits only when its rows are tall enough to stand alone.
+  if (t.rows.length === 2 && !(tall(0) && tall(1))) return [block];
 
   const out: MarkdownBlock[] = [];
   let index = 0;
@@ -1615,14 +1930,16 @@ export function splitTableBlock(
     const budget = Math.max(t.headLines + 2, (first ? firstBudget : contBudget));
     let charge = t.headLines;
     let take = 0;
+    // The chunk's first row decides how many it must hold: a tall row stands alone.
+    const minRows = tall(index) ? 1 : 2;
     while (index + take < t.rows.length) {
       const rowCost = t.rowLines[index + take] ?? 1;
-      if (take >= 2 && charge + rowCost > budget) break;
+      if (take >= minRows && charge + rowCost > budget) break;
       charge += rowCost;
       take++;
     }
-    // Never strand a single row in the final chunk: pull one back.
-    if (index + take === t.rows.length - 1 && take > 2) { take--; charge -= t.rowLines[index + take] ?? 1; }
+    // Never strand a single short row in the final chunk: pull one back.
+    if (index + take === t.rows.length - 1 && take > 2 && !tall(t.rows.length - 1)) { take--; charge -= t.rowLines[index + take] ?? 1; }
     const rows = t.rows.slice(index, index + take);
     const rowLines = t.rowLines.slice(index, index + take);
     const html = renderDataTable(t.cols, rows, {

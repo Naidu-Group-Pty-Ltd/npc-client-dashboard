@@ -10,6 +10,7 @@
 import type { Block } from '../templateSchema';
 import type { BlockRenderContext } from './index';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 
 interface KpiItem { label: string; value: string; accent?: string }
 
@@ -20,10 +21,14 @@ export function drawKpiGridBlock(block: Block, ctx: BlockRenderContext): void {
   const y = Number(p.y ?? 24);
   const w = Number(p.width ?? page.width - 48);
   const h = Number(p.height ?? 90);
-  const items = Array.isArray(p.items) ? (p.items as KpiItem[]) : [];
+  // The same tile rule the HTML twin applies — a bound value that received
+  // nothing is no tile — so the preview and the final document agree about
+  // which figures exist. See `renderKpiGridHtml`.
+  const authored = Array.isArray(p.items) ? (p.items as KpiItem[]) : [];
+  const items = authored.filter((it) => boundValueResolved(it.value, ctx));
   if (items.length === 0) return;
 
-  const cols = Math.min(Number(p.columns ?? items.length), 6);
+  const cols = Math.min(Number(p.columns ?? items.length), 6, items.length);
   const gap = Number(p.gap ?? 12);
   const tileW = (w - gap * (cols - 1)) / cols;
 

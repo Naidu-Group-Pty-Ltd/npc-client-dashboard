@@ -4,6 +4,7 @@ import {
   absBoxStyle, fontFamilyDecl, type HtmlBlockContext,
 } from './_shared.html';
 import { packMarkdownPages } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
+import { MARKDOWN_TYPE } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
 import { resolveMarkdownBlockContent, DEFAULT_LINES_PER_PAGE } from './markdownBlockContent';
 
 export { packMarkdownPages, DEFAULT_LINES_PER_PAGE };
@@ -18,16 +19,44 @@ export { packMarkdownPages, DEFAULT_LINES_PER_PAGE };
  * leading from the container; the tags below are the ones that do not inherit
  * what they need.
  *
+ * A rule may name a class as well as a tag, because the Markdown renderer's
+ * figures and callouts are told apart only by class — `figure.chart-compact`
+ * prints at the compact fraction of the measure, `div.callout` carries a rule
+ * and padding — and until these rules existed the template path had no
+ * stylesheet for them at all: a gauge drawn for 60% of the measure was set
+ * across the whole of it, with the user agent's own 40px figure indent, and
+ * the charge model was told a shorter figure than the page got.
+ *
  * The regex is safe against the content because the HTML being matched is our
  * own renderer's output and every character of model text inside it has already
  * been escaped — `<` in an answer is `&lt;` long before this runs.
  */
-function styleTags(html: string, styles: Record<string, string>): string {
+interface TagStyle {
+  tag: string;
+  /** When set, the rule applies only to a tag carrying this class. */
+  cls?: string;
+  style: string;
+}
+
+function styleTags(html: string, rules: readonly TagStyle[]): string {
+  const byTag = new Map<string, TagStyle[]>();
+  for (const rule of rules) {
+    const list = byTag.get(rule.tag) ?? [];
+    list.push(rule);
+    byTag.set(rule.tag, list);
+  }
   let out = html;
-  for (const [tag, style] of Object.entries(styles)) {
+  for (const [tag, list] of byTag) {
+    // Class-specific rules first, so `figure.chart-compact` wins over `figure`.
+    const ordered = [...list].sort((a, b) => Number(Boolean(b.cls)) - Number(Boolean(a.cls)));
     out = out.replace(
       new RegExp(`<${tag}(\\s[^>]*)?>`, 'g'),
-      (_m, attrs) => `<${tag}${attrs ?? ''} style="${style}">`,
+      (m, attrs: string | undefined) => {
+        const classes = /class="([^"]*)"/.exec(attrs ?? '')?.[1]?.split(/\s+/) ?? [];
+        const rule = ordered.find((r) => !r.cls || classes.includes(r.cls));
+        if (!rule) return m;
+        return `<${tag}${attrs ?? ''} style="${rule.style}">`;
+      },
     );
   }
   return out;
@@ -86,25 +115,80 @@ export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): st
   const bodyFont = fontFamilyDecl(p.bodyFont, '--font-body');
   const headingFont = fontFamilyDecl(p.headingFont, '--font-heading');
 
-  const html = styleTags(page.map((b) => b.html).join(''), {
-    h2: `${headingFont}color:${headingColor};font-size:${(bodySize * 1.5).toFixed(1)}pt;`
-      + 'font-weight:600;margin:0 0 6pt;line-height:1.25;',
-    h3: `${headingFont}color:${headingColor};font-size:${(bodySize * 1.2).toFixed(1)}pt;`
-      + 'font-weight:600;margin:8pt 0 4pt;line-height:1.3;',
-    h4: `${headingFont}color:${color};font-size:${bodySize.toFixed(1)}pt;`
-      + 'font-weight:700;margin:8pt 0 3pt;line-height:1.3;',
-    p: 'margin:0 0 6pt;',
-    ul: 'margin:0 0 6pt;padding-left:12pt;',
-    ol: 'margin:0 0 6pt;padding-left:12pt;',
-    li: 'margin:0 0 2pt;',
-    table: `width:100%;border-collapse:collapse;margin:0 0 8pt;font-size:${(bodySize * 0.92).toFixed(1)}pt;`,
-    th: `text-align:left;padding:3pt 4pt;border-bottom:0.75pt solid ${ruleColor};`
-      + `color:${headingColor};font-weight:600;`,
-    td: `padding:3pt 4pt;border-bottom:0.5pt solid ${ruleColor};vertical-align:top;`,
-    blockquote: `margin:0 0 6pt;padding-left:8pt;border-left:1.5pt solid ${ruleColor};`,
-    pre: `margin:0 0 6pt;padding:5pt;background:rgba(0,0,0,0.03);font-size:${(bodySize * 0.85).toFixed(1)}pt;`
-      + 'white-space:pre-wrap;',
-  });
+  const mutedColor = resolveBindableColor(p.mutedColor ?? 'token:muted', ctx, '#666666');
+  const toneColor = (name: string, fallback: string) => resolveBindableColor(`token:${name}`, ctx, fallback);
+
+  // Every dimension below is `MARKDOWN_TYPE`'s, which is also what the charge
+  // model reads (`narrativeGeometry.pure.ts`): the block cannot style a heading
+  // one way and charge it another.
+  const T = MARKDOWN_TYPE;
+  const pt = (n: number) => `${n.toFixed(2).replace(/\.?0+$/, '')}pt`;
+  const heading = (level: 2 | 3 | 4) => {
+    const h = T.heading[level];
+    return `font-size:${(bodySize * h.scale).toFixed(1)}pt;line-height:${h.lineHeight};`
+      + `margin:${pt(h.marginTopPt)} 0 ${pt(h.marginBottomPt)};`;
+  };
+  const chrome = `margin:0 0 ${pt(T.callout.marginBottomPt)};padding:${pt(T.callout.paddingPt)} ${pt(T.callout.paddingPt + 2)};`
+    + `border-left:${pt(T.callout.rulePt)} solid `;
+  const label = `display:block;font-size:${(bodySize * T.callout.labelScale).toFixed(1)}pt;font-weight:700;`
+    + `letter-spacing:0.06em;text-transform:uppercase;color:${headingColor};margin:0 0 ${pt(T.callout.labelGapPt)};`;
+
+  const html = styleTags(page.map((b) => b.html).join(''), [
+    { tag: 'h2', style: `${headingFont}color:${headingColor};${heading(2)}font-weight:600;` },
+    { tag: 'h3', style: `${headingFont}color:${headingColor};${heading(3)}font-weight:600;` },
+    { tag: 'h4', style: `${headingFont}color:${color};${heading(4)}font-weight:700;` },
+    { tag: 'p', style: `margin:0 0 ${pt(T.paragraph.marginBottomPt)};` },
+    { tag: 'ul', cls: 'marked', style: `margin:0;padding-left:${pt(T.list.indentPt)};list-style:none;` },
+    { tag: 'ul', style: `margin:0 0 ${pt(T.list.marginBottomPt)};padding-left:${pt(T.list.indentPt)};` },
+    { tag: 'ol', style: `margin:0 0 ${pt(T.list.marginBottomPt)};padding-left:${pt(T.list.indentPt)};` },
+    { tag: 'li', style: `margin:0 0 ${pt(T.list.itemMarginBottomPt)};` },
+    { tag: 'table', style: `width:100%;border-collapse:collapse;margin:0 0 ${pt(T.table.marginBottomPt)};font-size:${(bodySize * T.table.scale).toFixed(1)}pt;` },
+    { tag: 'th', style: `text-align:left;padding:${pt(T.table.cellPaddingPt)} 4pt;border-bottom:${pt(T.table.headRulePt)} solid ${ruleColor};`
+      + `color:${headingColor};font-weight:600;` },
+    { tag: 'td', style: `padding:${pt(T.table.cellPaddingPt)} 4pt;border-bottom:${pt(T.table.rowRulePt)} solid ${ruleColor};vertical-align:top;` },
+    { tag: 'blockquote', style: `margin:0 0 ${pt(T.blockquote.marginBottomPt)};padding-left:${pt(T.blockquote.paddingLeftPt)};border-left:${pt(T.blockquote.rulePt)} solid ${ruleColor};` },
+    { tag: 'pre', style: `margin:0 0 ${pt(T.code.marginBottomPt)};padding:${pt(T.code.paddingPt)};background:rgba(0,0,0,0.03);font-size:${(bodySize * T.code.scale).toFixed(1)}pt;`
+      + 'white-space:pre-wrap;' },
+    // Figures: the compact fraction the chart was drawn for, the block's own
+    // margins, the image across the figure, and a caption in the label style.
+    { tag: 'figure', cls: 'chart-compact', style: `margin:${pt(T.figure.marginTopPt)} 0 ${pt(T.figure.marginBottomPt)};width:${(T.figure.compactFraction * 100).toFixed(1)}%;` },
+    { tag: 'figure', style: `margin:${pt(T.figure.marginTopPt)} 0 ${pt(T.figure.marginBottomPt)};` },
+    { tag: 'img', style: 'display:block;width:100%;height:auto;' },
+    { tag: 'figcaption', style: `margin-top:${pt(T.figure.captionGapPt)};font-size:${(bodySize * T.figure.captionScale).toFixed(1)}pt;`
+      + `letter-spacing:0.06em;text-transform:uppercase;color:${mutedColor};` },
+    // Callouts, sidenotes and decision boxes: a rule in the tone's colour, the
+    // label in the heading colour, no user-agent chrome of their own.
+    { tag: 'div', cls: 'tone-positive', style: `${chrome}${toneColor('positive', ruleColor)};` },
+    { tag: 'div', cls: 'tone-caution', style: `${chrome}${toneColor('caution', ruleColor)};` },
+    { tag: 'div', cls: 'tone-negative', style: `${chrome}${toneColor('negative', ruleColor)};` },
+    { tag: 'div', cls: 'tone-informative', style: `${chrome}${toneColor('info', ruleColor)};` },
+    { tag: 'div', cls: 'callout', style: `${chrome}${ruleColor};` },
+    { tag: 'div', cls: 'decision-box', style: `${chrome}${headingColor};` },
+    { tag: 'aside', cls: 'sidenote', style: `${chrome}${ruleColor};` },
+    { tag: 'span', cls: 'callout-label', style: label },
+    { tag: 'span', cls: 'decision-label', style: label },
+    { tag: 'span', cls: 'sidenote-label', style: label },
+    // The generator's fenced blocks: a pull quote behind a rule at the quote
+    // scale, and a stat card — label, figure at display size, caption —
+    // between two hairlines. Every dimension is `MARKDOWN_TYPE`'s, as above.
+    { tag: 'blockquote', cls: 'pull-quote', style: `margin:${pt(T.pullquote.marginTopPt)} 0 ${pt(T.pullquote.marginBottomPt)};`
+      + `padding:0 0 0 ${pt(T.pullquote.paddingLeftPt)};border-left:${pt(T.pullquote.rulePt)} solid ${headingColor};`
+      + `${headingFont}font-size:${(bodySize * T.pullquote.scale).toFixed(1)}pt;line-height:${T.pullquote.lineHeight};`
+      + `font-style:italic;color:${headingColor};` },
+    { tag: 'cite', style: `display:block;margin-top:${pt(T.pullquote.attributionGapPt)};`
+      + `${bodyFont}font-size:${(bodySize * T.pullquote.attributionScale).toFixed(1)}pt;line-height:${lineHeight};`
+      + `font-style:normal;letter-spacing:0.06em;text-transform:uppercase;color:${mutedColor};` },
+    { tag: 'div', cls: 'stat-card', style: `margin:${pt(T.stat.marginTopPt)} 0 ${pt(T.stat.marginBottomPt)};`
+      + `padding:${pt(T.stat.paddingPt)} 0;border-top:${pt(T.stat.rulePt)} solid ${ruleColor};`
+      + `border-bottom:${pt(T.stat.rulePt)} solid ${ruleColor};` },
+    { tag: 'span', cls: 'stat-label', style: `${label}margin:0 0 ${pt(T.stat.gapPt)};` },
+    { tag: 'div', cls: 'stat-value', style: `${headingFont}font-size:${(bodySize * T.stat.valueScale).toFixed(1)}pt;`
+      + `line-height:${T.stat.valueLineHeight};font-weight:700;color:${headingColor};` },
+    { tag: 'span', cls: 'stat-unit', style: `font-size:${(bodySize * 1.1).toFixed(1)}pt;font-weight:600;margin-left:2pt;` },
+    { tag: 'span', cls: 'stat-sub', style: `display:block;margin-top:${pt(T.stat.gapPt)};`
+      + `font-size:${(bodySize * T.stat.subScale).toFixed(1)}pt;line-height:${lineHeight};color:${mutedColor};` },
+    { tag: 'p', cls: 'stat-headline', style: `margin:${pt(T.stat.gapPt)} 0 0;` },
+  ]);
 
   const box = absBoxStyle(p, { x: 40, y: 120, w: 515 });
   const container = `${box};${bodyFont}font-size:${bodySize}pt;line-height:${lineHeight};`

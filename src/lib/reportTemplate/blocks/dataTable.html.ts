@@ -1,20 +1,21 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { isNegativeFigure, typesetFigure, visibleTableRows, type TableRow } from './_data';
+import { isNegativeFigure, rowsWithSomethingToSay, typesetFigure, type TableRow } from './_data';
 import { absBoxStyle, esc, type HtmlBlockContext } from './_shared.html';
 
 export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
   const headers = Array.isArray(p.headers) ? (p.headers as string[]) : [];
   const authored = Array.isArray(p.rows) ? (p.rows as TableRow[]) : [];
-  // A row may carry its own `when`. See `visibleTableRows` for why the choice
-  // is made per row rather than per table.
-  const rows = visibleTableRows(authored, ctx);
   if (headers.length === 0) return '';
+  // A row may carry its own `when`, and a row is drawn only if it says
+  // something — see `rowsWithSomethingToSay`, which applies both rules.
+  const { rows, saysSomething } = rowsWithSomethingToSay(authored, ctx);
   // A column head is a promise too. When every row of a table is conditional
-  // and none of them holds, the honest output is nothing — not a ruled header
-  // band over white space, which reads as a table whose body failed to render.
-  if (authored.length > 0 && rows.length === 0) return '';
+  // and none of them holds, or every bound row received nothing, the honest
+  // output is nothing — not a ruled header band over white space, which reads
+  // as a table whose body failed to render.
+  if (authored.length > 0 && (rows.length === 0 || !saysSomething)) return '';
 
   const headerBg = resolveBindableColor(p.headerBg ?? 'token:primary', ctx, '#BF9B50');
   const headerFg = resolveBindableColor(p.headerFg ?? '#FFFFFF', ctx, '#FFFFFF');

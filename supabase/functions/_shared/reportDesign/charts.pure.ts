@@ -28,7 +28,7 @@
  * Pure: sibling `.pure` imports only, no I/O, no clock, no randomness — so the
  * same data draws the same bytes, which is what makes a golden PDF meaningful.
  */
-import { hexToRgb01 } from './color.pure.ts';
+import { contrastRatio, hexToRgb01, mixHex } from './color.pure.ts';
 import type { ResolvedReportPalette } from './roles.pure.ts';
 import { PRINT_SCALE } from './tokens.pure.ts';
 import { PRINT_STACK } from './typography.pure.ts';
@@ -376,6 +376,51 @@ function text(
   return `<text ${attrs}>${content}</text>`;
 }
 
+/**
+ * Break a label into at most `maxLines` lines that fit `maxUnits`, by word.
+ *
+ * There is no text measurement in a pure module, so the width of a line is
+ * estimated from an average advance (`unitsPerChar`), the same way
+ * `renderBars` sizes its label column. What does not fit the last line is
+ * cut with an ellipsis rather than allowed to run: a caption printed past
+ * the viewBox is clipped mid-word by the viewer, which is what "… TOWNSHIP
+ * WITH PRACTICAL GROW" was on every gauge of the reference renders (RS-3,
+ * 14 Sep 2026), and a legend label printed into its own value is what
+ * "Professionals & small households" did to "20%".
+ */
+export function fitLines(label: string, maxUnits: number, unitsPerChar: number, maxLines = 2): string[] {
+  const perLine = Math.max(4, Math.floor(maxUnits / Math.max(0.1, unitsPerChar)));
+  const words = String(label ?? '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const lines: string[] = [];
+  let line = '';
+  let i = 0;
+  for (; i < words.length; i++) {
+    const word = words[i];
+    const candidate = line ? `${line} ${word}` : word;
+    if (candidate.length <= perLine || !line) {
+      line = candidate;
+      continue;
+    }
+    lines.push(line);
+    line = word;
+    if (lines.length === maxLines) break;
+  }
+  if (lines.length < maxLines) {
+    lines.push(line);
+  } else {
+    // Room ran out with words left over: the last line says so.
+    const last = lines[maxLines - 1];
+    lines[maxLines - 1] = `${last.slice(0, Math.max(1, perLine - 1)).trimEnd()}…`;
+  }
+  return lines.map((l) => (l.length > perLine ? `${l.slice(0, Math.max(1, perLine - 1)).trimEnd()}…` : l));
+}
+
+/** Estimated horizontal advance of one character at a text size, in viewBox units. */
+function unitsPerChar(ctx: ChartContext, vb: number, pt: keyof typeof CHART_TEXT_PT, uppercase = false): number {
+  return ptToUnits(CHART_TEXT_PT[pt], vb, ctx.widthMm) * (uppercase ? 0.72 : 0.55);
+}
+
 const svgOpen = (w: number, h: number, extra = '') =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" `
   + `preserveAspectRatio="xMidYMid meet"${extra ? ` ${extra}` : ''}>`;
@@ -399,8 +444,13 @@ export function renderGauge(
   // through by the track. Every caller before this one passed a label alone or
   // nothing, so the collision only appeared when a caller finally used the
   // parameter the signature had always offered.
-  const top = 18 + (opts.label ? 22 : 0) + (opts.caption ? 18 : 0);
   const w = CHART_WIDTH.compact;
+  // The caption is set in at most two lines across the drawing, never past
+  // its edge; the arc moves down by whatever the caption takes.
+  const captionLines = opts.caption
+    ? fitLines(opts.caption.toUpperCase(), w - 32, unitsPerChar(ctx, w, 'micro', true) + ptToUnits(0.9, w, ctx.widthMm), 2)
+    : [];
+  const top = 18 + (opts.label ? 22 : 0) + captionLines.length * 18;
   const cx = w / 2, r = 130;
   const cy = top + r + 10;
   const h = cy + 80;
@@ -447,7 +497,7 @@ export function renderGauge(
     ${text(ctx, w, { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.6 }, svgEscape(`/${max}  ·  ${band}`.toUpperCase()))}
     <rect x="${cx - 38}" y="${cy + 30}" width="76" height="3" fill="${bandColor}" rx="1.5"/>
     ${opts.label ? text(ctx, w, { x: cx, y: 26, pt: 'title', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700 }, svgEscape(opts.label)) : ''}
-    ${opts.caption ? text(ctx, w, { x: cx, y: opts.label ? 46 : 26, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.9 }, svgEscape(opts.caption.toUpperCase())) : ''}
+    ${captionLines.map((line, i) => text(ctx, w, { x: cx, y: (opts.label ? 46 : 26) + i * 16, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.9 }, svgEscape(line))).join('')}
   </svg>`;
 }
 
@@ -588,9 +638,19 @@ export function renderHeatmap(
       const v = grid[r][c];
       const x = padL + c * cellW, y = padT + r * cellH;
       const t = (v - lo) / span;
+      const alpha = 0.08 + t * 0.82;
+      // The value is set in whichever of the two page colours reads against
+      // the cell it sits on. The cell is the accent over the ground at this
+      // alpha; the ink was drawn unconditionally, and on a structure whose
+      // accent is its ink (Dictionary: #312A21 on #FFFDFA) a full cell is as
+      // dark as the figure printed on it — six "1"s on the medium reference
+      // report read as ILLEGIBLE (RS-4, 14 Sep 2026).
+      const cell = mixHex(ctx.palette.ground, ctx.palette.accent, alpha);
+      const valueInk = contrastRatio(cell, ctx.palette.ink) >= contrastRatio(cell, ctx.palette.ground)
+        ? ctx.palette.ink : ctx.palette.ground;
       cells += `<rect x="${x}" y="${y}" width="${cellW - 2}" height="${cellH - 2}" rx="1.5" `
-        + `fill="${withAlpha(ctx.palette.accent, 0.08 + t * 0.82)}" stroke="${ctx.palette.ground}" stroke-width="1"/>`
-        + text(ctx, w, { x: x + cellW / 2, y: y + cellH / 2 + 3.5, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: 600, tabular: true },
+        + `fill="${withAlpha(ctx.palette.accent, alpha)}" stroke="${ctx.palette.ground}" stroke-width="1"/>`
+        + text(ctx, w, { x: x + cellW / 2, y: y + cellH / 2 + 3.5, pt: 'micro', fill: valueInk, anchor: 'middle', weight: 600, tabular: true },
           svgEscape(cellText(v)));
     }
   }
@@ -1006,9 +1066,20 @@ export function renderPictograph(
   const cols = Math.min(opts.cols ?? Math.min(t, 10), 20);
   const rows = Math.ceil(t / cols);
   const cell = 38;
-  const padT = opts.label ? 40 : 14;
-  const padB = opts.sub ? 26 : 12;
   const w = cols * cell + 24;
+  // The title shares its line with the count, which is anchored to the right
+  // edge — so the title's measure is what is left of the width once the count
+  // and a gap are taken out, and it wraps to a second line rather than
+  // running under the figure. Read off a render: "Approximate share of core
+  // family houses in Cowra" set straight through "7 / 10" (RS-3c, 14 Sep 2026).
+  const countText = `${f} / ${t}`;
+  const countUnits = countText.length * unitsPerChar(ctx, w, 'caption');
+  const titleLines = opts.label ? fitLines(opts.label, w - 24 - countUnits - 10, unitsPerChar(ctx, w, 'title'), 2) : [];
+  const titleStep = ptToUnits(CHART_TEXT_PT.title * 1.25, w, ctx.widthMm);
+  const padT = titleLines.length ? 22 + (titleLines.length - 1) * titleStep + 18 : 14;
+  const subLines = opts.sub ? fitLines(opts.sub, w - 24, unitsPerChar(ctx, w, 'micro'), 2) : [];
+  const subStep = 12;
+  const padB = subLines.length ? 26 + (subLines.length - 1) * subStep : 12;
   const h = padT + rows * cell + padB;
 
   const glyphs: Record<string, string> = {
@@ -1026,13 +1097,14 @@ export function renderPictograph(
     return `<g transform="translate(${x} ${y})" ${isStroke ? `stroke="${color}"` : `fill="${color}"`} color="${color}">${glyphs[icon]}</g>`;
   }).join('');
 
-  const label = opts.label
-    ? text(ctx, w, { x: 12, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.label))
-      + text(ctx, w, { x: w - 12, y: 22, pt: 'caption', fill: ctx.palette.accentDeep, anchor: 'end', weight: 700, tabular: true }, `${f} / ${t}`)
+  const label = titleLines.length
+    ? titleLines.map((line, k) => text(ctx, w,
+      { x: 12, y: 22 + k * titleStep, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(line))).join('')
+      + text(ctx, w, { x: w - 12, y: 22, pt: 'caption', fill: ctx.palette.accentDeep, anchor: 'end', weight: 700, tabular: true }, countText)
     : '';
-  const sub = opts.sub
-    ? text(ctx, w, { x: 12, y: h - 8, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.4 }, svgEscape(opts.sub))
-    : '';
+  const subTop = padT + rows * cell + 18;
+  const sub = subLines.map((line, k) => text(ctx, w,
+    { x: 12, y: subTop + k * subStep, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.4 }, svgEscape(line))).join('');
   return `${svgOpen(w, h)}${label}${tiles}${sub}</svg>`;
 }
 
@@ -1103,10 +1175,12 @@ export function renderDonut(
   const w = CHART_WIDTH.compact;
   const R = stacked ? 74 : 92, r = stacked ? 44 : 56;
   const cx = stacked ? w / 2 : 120;
-  const ringTop = opts.title ? 40 : 12;
+  const titleX = stacked ? 16 : 250;
+  const titleLines = opts.title ? fitLines(opts.title, w - 12 - titleX, unitsPerChar(ctx, w, 'title'), 2) : [];
+  const ringTop = opts.title ? 40 + (titleLines.length - 1) * 20 : 12;
   const cy = ringTop + R;
   const rowH = 26;
-  const h = stacked
+  const baseH = stacked
     ? cy + R + 14 + segments.length * rowH
     : 240;
   const TAU = Math.PI * 2;
@@ -1125,27 +1199,52 @@ export function renderDonut(
   }).join('');
 
   const legendX = stacked ? 16 : 250;
-  const legendTop = stacked ? cy + R + 26 : 48;
+  // Stacked, the ring already sits below the whole title (`cy` grew with it).
+  const legendTop = stacked ? cy + R + 26 : 48 + (titleLines.length - 1) * 20;
+  // A label runs to the value column and no further: two lines at most, the
+  // row grows with it, and the value keeps its own column.
+  const valueColumn = 44;
+  const labelUnits = (w - 12) - (legendX + 16) - valueColumn;
+  const microChar = unitsPerChar(ctx, w, 'micro');
+  const legendRows = segments.map((s) => fitLines(s.label, labelUnits, microChar, 2));
+  const rowPitch = stacked ? rowH : 22;
+  const lineStep = 13;
+  let legendY = legendTop;
   const legend = segments.map((s, i) => {
     const pct = Math.round((Math.max(0, s.value) / total) * 100);
-    const y = legendTop + i * (stacked ? rowH : 22);
+    const lines = legendRows[i].length ? legendRows[i] : [''];
+    const y = legendY;
+    legendY += rowPitch + (lines.length - 1) * lineStep;
     return `<rect x="${legendX}" y="${y - 9}" width="10" height="10" rx="2" fill="${series[i % series.length]}"/>`
-      + text(ctx, w, { x: legendX + 16, y, pt: 'micro', fill: ctx.palette.ink }, svgEscape(s.label))
+      + lines.map((line, j) => text(ctx, w, { x: legendX + 16, y: y + j * lineStep, pt: 'micro', fill: ctx.palette.ink }, svgEscape(line))).join('')
       + text(ctx, w, { x: w - 12, y, pt: 'micro', fill: ctx.palette.ink, anchor: 'end', weight: 700, tabular: true }, `${pct}%`);
   }).join('');
+  const legendBottom = legendY - rowPitch + 14;
 
-  const title = opts.title
-    ? text(ctx, w, { x: stacked ? 16 : 250, y: 26, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
-      + `<line x1="${stacked ? 16 : 250}" x2="${w - 12}" y1="32" y2="32" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`
+  const titleRule = 32 + (titleLines.length - 1) * 20;
+  const title = titleLines.length
+    ? titleLines.map((line, i) => text(ctx, w, { x: titleX, y: 26 + i * 20, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(line))).join('')
+      + `<line x1="${titleX}" x2="${w - 12}" y1="${titleRule}" y2="${titleRule}" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`
     : '';
 
   const centerVal = opts.centerLabel ?? `${Math.round(((segments[0]?.value ?? 0) / total) * 100)}%`;
   // The sub-label only fits inside the hole at full size; in the stacked
-  // layout the ring is smaller and it would overlap the figure.
-  const centerSub = stacked ? '' : text(ctx, w,
-    { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1 },
-    svgEscape((opts.centerSub ?? segments[0]?.label ?? '').toUpperCase()));
+  // layout the ring is smaller and it would overlap the figure. It is fitted
+  // to the hole's width, on up to two lines, rather than drawn through the ring.
+  const subLines = stacked ? [] : fitLines(
+    (opts.centerSub ?? segments[0]?.label ?? '').toUpperCase(),
+    2 * r - 12,
+    unitsPerChar(ctx, w, 'micro', true) + ptToUnits(1, w, ctx.widthMm),
+    2,
+  );
+  const centerSub = subLines.map((line, i) => text(ctx, w,
+    { x: cx, y: cy + 20 + i * 13, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1 },
+    svgEscape(line))).join('');
 
+  // The legend may have grown past the ring (wrapped labels, many segments):
+  // the drawing is as tall as whichever is lower.
+  const grown = stacked ? baseH : baseH + (titleLines.length - 1) * 20;
+  const h = Math.max(grown, legendBottom);
   return `${svgOpen(w, h)}${title}${arcs}
     ${text(ctx, w, { x: cx, y: cy + (stacked ? 6 : -2), pt: 'hero', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, svgEscape(centerVal))}
     ${centerSub}${legend}</svg>`;
@@ -1287,20 +1386,45 @@ export function renderTiles(
   if (!tiles.length) return '';
   const cols = Math.min(opts.cols ?? Math.min(tiles.length, 4), 6);
   const rows = Math.ceil(tiles.length / cols);
-  const cellW = 130, cellH = 88, gap = 8;
+  const cellW = 130, gap = 8;
   const padL = 12, padT = opts.title ? 38 : 12, padB = 12;
   const w = padL * 2 + cols * cellW + (cols - 1) * gap;
+  const inner = cellW - 24;
+
+  // Every line of text is fitted to the cell — a label, a value or a sub-line
+  // that ran past its tile ran into the next tile's ("Regional service hub"
+  // printed through "Regional city" on the reference render). A value the
+  // models write as a phrase rather than a figure is set at the label size,
+  // on up to two lines; the cell height is what the tallest tile needs.
+  const labelChar = unitsPerChar(ctx, w, 'micro', true) + ptToUnits(0.9, w, ctx.widthMm);
+  const microChar = unitsPerChar(ctx, w, 'micro');
+  const fitted = tiles.map((t) => {
+    const label = fitLines((t.label ?? '').toUpperCase(), inner, labelChar, 2);
+    const valueText = String(t.value ?? '');
+    const asFigure = valueText.length <= Math.floor(inner / unitsPerChar(ctx, w, 'value'));
+    const value = asFigure ? [valueText] : fitLines(valueText, inner, unitsPerChar(ctx, w, 'label'), 2);
+    const sub = t.sub ? fitLines(t.sub, inner, microChar, 2) : [];
+    return { label, value, asFigure, sub };
+  });
+  const labelStep = 12, valueStep = 18, subStep = 12;
+  const cellH = Math.max(88, ...fitted.map((f) =>
+    20 + (f.label.length - 1) * labelStep + 14 + (f.asFigure ? 22 : f.value.length * valueStep) + 8 + f.sub.length * subStep + 12));
   const h = padT + rows * cellH + (rows - 1) * gap + padB;
 
   const cells = tiles.map((t, i) => {
     const r = Math.floor(i / cols), c = i % cols;
     const x = padL + c * (cellW + gap), y = padT + r * (cellH + gap);
+    const f = fitted[i];
     const alpha = 0.08 + Math.max(0, Math.min(1, t.intensity ?? 0.5)) * 0.42;
+    const valueTop = y + 20 + (f.label.length - 1) * labelStep + 14;
+    const valueBottom = valueTop + (f.asFigure ? 22 : f.value.length * valueStep);
     return `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="4" `
       + `fill="${withAlpha(ctx.palette.accent, alpha)}" stroke="${ctx.palette.rule}" stroke-width="0.6"/>`
-      + text(ctx, w, { x: x + 12, y: y + 20, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.9 }, svgEscape((t.label ?? '').toUpperCase()))
-      + text(ctx, w, { x: x + 12, y: y + 52, pt: 'value', fill: ctx.palette.ink, stack: 'display', weight: 700, tabular: true }, svgEscape(t.value))
-      + (t.sub ? text(ctx, w, { x: x + 12, y: y + cellH - 12, pt: 'micro', fill: ctx.palette.inkMuted }, svgEscape(t.sub)) : '');
+      + f.label.map((line, j) => text(ctx, w, { x: x + 12, y: y + 20 + j * labelStep, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.9 }, svgEscape(line))).join('')
+      + (f.asFigure
+        ? text(ctx, w, { x: x + 12, y: valueTop + 18, pt: 'value', fill: ctx.palette.ink, stack: 'display', weight: 700, tabular: true }, svgEscape(f.value[0] ?? ''))
+        : f.value.map((line, j) => text(ctx, w, { x: x + 12, y: valueTop + 14 + j * valueStep, pt: 'label', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(line))).join(''))
+      + f.sub.map((line, j) => text(ctx, w, { x: x + 12, y: valueBottom + 10 + j * subStep, pt: 'micro', fill: ctx.palette.inkMuted }, svgEscape(line))).join('');
   }).join('');
 
   const title = opts.title
@@ -1319,8 +1443,19 @@ export function renderTimelineRibbon(
   opts: { title?: string } = {},
 ): string {
   const phases = ['Existing', '0-2y', '3-5y', '5y+'];
-  const w = CHART_WIDTH.wide, h = 176, padX = 44, axisY = 86;
+  const w = CHART_WIDTH.wide, axisY = 86;
+  // The markers sit where every one of them gets the same measure for its
+  // labels: an interior label is centred and may reach halfway to either
+  // neighbour, an end label is anchored to the edge and may reach halfway to
+  // its one neighbour. With the stops at 44 the end measures were 136 units
+  // against the interior 208, and with no fitting at all "Further road and
+  // transport…" (centred on the 3-5Y stop) set straight through "Ongoing
+  // renewal of communit…" (anchored to the right edge) on the reference
+  // render (RS-3c, 14 Sep 2026).
+  const padX = 98, edge = 12, gap = 8, lineStep = 15;
   const step = (w - padX * 2) / (phases.length - 1);
+  const labelUnits = step - gap * 2;
+  const labelChar = unitsPerChar(ctx, w, 'micro');
 
   const phaseOf = (p: string) => {
     const s = p.toLowerCase();
@@ -1345,14 +1480,21 @@ export function renderTimelineRibbon(
     // edge by the same amount.
     const last = phases.length - 1;
     const anchor = i === 0 ? 'start' : i === last ? 'end' : 'middle';
-    const labelX = i === 0 ? 12 : i === last ? w - 12 : x;
-    const labels = list.map((it, j) => text(ctx, w,
-      { x: labelX, y: axisY + 36 + j * 15, pt: 'micro', fill: ctx.palette.ink, anchor, weight: j === 0 ? 700 : 500 },
-      svgEscape(it.label.length > 28 ? `${it.label.slice(0, 26)}…` : it.label))).join('');
-    return `<circle cx="${x.toFixed(1)}" cy="${axisY}" r="8" fill="${i === 0 ? ctx.palette.ink : ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
+    const labelX = i === 0 ? edge : i === last ? w - edge : x;
+    // Each item wraps to at most two lines of the marker's measure; what does
+    // not fit is cut with an ellipsis by `fitLines` rather than allowed to run.
+    const rows = list.flatMap((it, j) => fitLines(it.label, labelUnits, labelChar, 2).map((line) => ({ line, weight: j === 0 ? 700 : 500 })));
+    const labels = rows.map((row, k) => text(ctx, w,
+      { x: labelX, y: axisY + 36 + k * lineStep, pt: 'micro', fill: ctx.palette.ink, anchor, weight: row.weight },
+      svgEscape(row.line))).join('');
+    return { rows: rows.length, svg: `<circle cx="${x.toFixed(1)}" cy="${axisY}" r="8" fill="${i === 0 ? ctx.palette.ink : ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
       + text(ctx, w, { x, y: axisY - 24, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', weight: 700, tracking: 1 }, svgEscape(phase.toUpperCase()))
-      + labels;
-  }).join('');
+      + labels };
+  });
+  const deepest = Math.max(2, ...markers.map((m) => m.rows));
+  // The drawing grows with the deepest label stack, so a fourth line is never
+  // set past the bottom of the ground.
+  const h = axisY + 36 + (deepest - 1) * lineStep + 30;
 
   const ribbon = `M ${padX} ${axisY} C ${padX + step * 0.5} ${axisY - 18}, ${padX + step * 0.5} ${axisY + 18}, ${padX + step} ${axisY} `
     + `S ${padX + step * 1.5} ${axisY + 18}, ${padX + step * 2} ${axisY} `
@@ -1363,6 +1505,6 @@ export function renderTimelineRibbon(
     ${text(ctx, w, { x: 24, y: 26, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title ?? 'Infrastructure pipeline'))}
     <path d="${ribbon}" fill="none" stroke="${ctx.palette.rule}" stroke-width="8" stroke-linecap="round"/>
     <path d="${ribbon}" fill="none" stroke="${ctx.palette.accent}" stroke-width="3" stroke-linecap="round"/>
-    ${markers}
+    ${markers.map((m) => m.svg).join('')}
   </svg>`;
 }

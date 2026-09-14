@@ -1,5 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 import {
   esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
 } from './_shared.html';
@@ -39,6 +40,14 @@ export function renderDecisionBoxHtml(block: Block, ctx: HtmlBlockContext): stri
   const heading = resolveBindable(p.heading ?? 'What this means', ctx);
   const maxWords = Number(p.maxWords) > 0 ? Number(p.maxWords) : MAX_WORDS;
   const body = cap(resolveBindable(p.body ?? '', ctx), maxWords);
+  // A box whose heading and body are bound and received nothing is a tinted
+  // panel with an accent bar and no recommendation in it — measured on a
+  // record with none (RS-3, 14 Sep 2026). It draws nothing; a static heading
+  // or body is an author's own words and keeps the box.
+  const bound = (v: unknown) => typeof v === 'string' && v.includes('{{');
+  const headingSaysNothing = !heading || (bound(p.heading) && !boundValueResolved(p.heading, ctx));
+  const bodySaysNothing = !body || (bound(p.body) && !boundValueResolved(p.body, ctx));
+  if ((bound(p.heading) || bound(p.body)) && headingSaysNothing && bodySaysNothing) return '';
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
 
   const bg = resolveBindableColor(p.bg ?? '#FCFAF6', ctx, '#FCFAF6');

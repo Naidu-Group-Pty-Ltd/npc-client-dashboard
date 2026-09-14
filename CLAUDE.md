@@ -1692,6 +1692,54 @@ paragraph but **never a figure or a table**, and a report banked under a
 different section list is **regenerated rather than resumed**, because
 `last_completed_section` is an index into whichever list is current.
 
+**The report body is packed by the template's own geometry, and the renderer
+counts its pages.** Read
+[`NARRATIVE_PACKING.md`](./docs/reports/NARRATIVE_PACKING.md) before touching
+`_shared/reports/narrativeGeometry.pure.ts`, `markdownPaging.pure.ts`, the
+markdown block's styles or `narrativePlan.ts`. The charge model was
+calibrated once, on one family's face over one measure, and held back 16% to
+survive the pages it still got wrong — measured through the real journey on
+14 Sep 2026, the long reference report ran its narrative through the running
+foot on sixteen consecutive pages of a Midnight render: a gauge was charged
+at 62% of its printed height, compact figures had no stylesheet in the
+template path at all, and the budget packed to the foot rather than to the
+master's own `contentBottom`. Three rules carry the fix. **A block is charged
+what it will draw on the page it will print on** — `MARKDOWN_TYPE` is one
+declaration the block styles from and the charges read, every formula is
+checked against the pinned engine by `measureNarrativeMetrics.py`, and a
+face not in the measured table is charged WIDER so an unknown family packs
+sparser rather than overflowing. **One geometry per run, computed by the
+renderer** — no single instance can see both the first box and the
+continuation box, and a bucket boundary that differs between instances
+prints a line twice or loses it; the same pre-pass writes the true page count
+over the projection's template-blind estimate before any conditional is
+read. And **a page is filled, never merely not overflowed**: a paragraph is
+cut at a sentence, a table meets the boundary and repeats its head, a figure
+floats past the prose to the next page, a three-line tail is folded back, and a last page is never a stub (a cut
+that would leave one is made shorter, and a short last page draws whole
+blocks down from the page before it) — each off unless asked for, so the
+legacy packer is byte-identical. Two more
+from the same renders. **A dropped block leaves no hole**: the masters
+position every block absolutely at the `y` their flow assigned, so a register
+whose conditional is false left a third of a page white between a heading and
+the recommendation under it; `closeDroppedBlocks` moves the column under a
+dropped block up to where it began, refuses whenever anything drawn sits in
+that band or beside the column, and never moves furniture or an editor page.
+And **a chart label fits the drawing it belongs to** — `fitLines` wraps a
+label into the units it may use and the drawing grows for the lines, because
+a gauge caption, a donut legend, a timeline stop and a pictograph title were
+each found set past their own drawing, and the template chart block draws
+its ink from the template's tokens rather than the flowing route's literals.
+The Chancery and Dictionary journeys then found four more: **a charge counts
+what prints** (`printedChars`), never the source's `**` or a link's URL; **a
+list is cut where the reader would not notice**, inside a group with two
+children on each side; **a chunk is cut for the page it lands on**; and **the
+engine reads attributes on SVG text, not `style`** — `font-size="6.5"` sets
+6.5pt where `style="font-size:6.5pt"` set the inherited body size. And the
+five `:::` fences the generator's prompt asks for (pull quote, sidenote, stat,
+divider, quote page) are DRAWN by `renderMarkdown` now — they printed raw on
+every structure — with an unknown kind unwrapped rather than printed.
+
 `INVESTMENT.md` is the one to read before touching anything the *model* draws. Its prose carries a chart vocabulary the generator's
 prompt demands and the renderer had never parsed: **3,753 `{{bars: ...}}`-style
 directives, about 107 a report**, every one of which set as body copy on a

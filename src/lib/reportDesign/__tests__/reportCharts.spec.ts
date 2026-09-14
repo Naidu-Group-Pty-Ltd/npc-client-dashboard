@@ -49,6 +49,7 @@ import {
   renderTiles,
   renderTimelineRibbon,
   renderWaterfall,
+  fitLines,
   stableId,
   svgEscape,
   unitsToPt,
@@ -353,5 +354,144 @@ describe('helpers', () => {
     expect(fig).toContain('<figcaption>Trend</figcaption>');
     expect(fig).not.toMatch(/\n/);
     expect(chartFigure('', 'Trend')).toBe('');
+  });
+});
+
+describe('a label never runs past the drawing it belongs to', () => {
+  // The primitives have no text measurement, so a label is fitted by an
+  // estimated advance and cut with an ellipsis rather than left to run —
+  // measured on the reference renders (RS-3, 14 Sep 2026): every gauge
+  // caption was clipped at the viewBox edge ("… TOWNSHIP WITH PRACTICAL GROW"),
+  // a donut legend label printed into its own value, and a tile's label
+  // printed through the next tile's.
+  const textsOf = (svg: string) => [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+
+  it('fitLines wraps by word to the line count asked for and says when it cut', () => {
+    expect(fitLines('A home in a stable regional township', 200, 10, 2)).toEqual(['A home in a stable', 'regional township']);
+    expect(fitLines('short', 200, 10, 2)).toEqual(['short']);
+    expect(fitLines('', 200, 10, 2)).toEqual([]);
+    const cut = fitLines('one two three four five six seven eight nine ten eleven twelve', 100, 10, 2);
+    expect(cut).toHaveLength(2);
+    expect(cut[1].endsWith('…')).toBe(true);
+    for (const line of cut) expect(line.length).toBeLessThanOrEqual(10);
+  });
+
+  it('a gauge caption is set on at most two lines and the arc moves down for them', () => {
+    const long = renderGauge(ctx, 72, { label: 'Location & Property Fit', caption: 'A home in a stable regional township with practical growth prospects and a settled, family-led rental market' });
+    const short = renderGauge(ctx, 72, { label: 'Location & Property Fit', caption: 'Weighted' });
+    const captionRuns = textsOf(long).filter((t) => t === t.toUpperCase() && !t.startsWith('/') && t.length > 8);
+    expect(captionRuns.length).toBeGreaterThanOrEqual(2);
+    expect(captionRuns.length).toBeLessThanOrEqual(3);
+    // Every run fits the drawing: nothing longer than the width allows at micro size.
+    // The estimate allows ~75 tracked capitals across the 428 units the caption may use.
+    for (const run of captionRuns) expect(run.length).toBeLessThanOrEqual(76);
+    const heightOf = (svg: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(svg)![1]);
+    expect(heightOf(long)).toBeGreaterThan(heightOf(short));
+  });
+
+  it('a donut legend label wraps clear of its value, and the drawing grows to hold it', () => {
+    const segments = [
+      { label: 'Family renters', value: 45 },
+      { label: 'Local owner-occupiers', value: 35 },
+      { label: 'Professionals and small households with longer names', value: 20 },
+    ];
+    const svg = renderDonut(ctx, segments, { title: 'Likely occupier mix for this locality' });
+    const texts = textsOf(svg);
+    expect(texts.some((t) => t.startsWith('Professionals'))).toBe(true);
+    expect(texts.every((t) => t.length <= 40)).toBe(true);
+    expect(texts).toContain('20%');
+    const heightOf = (s: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(s)![1]);
+    const plain = renderDonut(ctx, [{ label: 'Owned', value: 60 }, { label: 'Rented', value: 40 }], { title: 'Tenure' });
+    expect(heightOf(svg)).toBeGreaterThanOrEqual(heightOf(plain));
+  });
+
+  it('a tile fits its label, its value and its sub-line, and every tile grows to the tallest', () => {
+    // Four columns, as the model's positioning tiles are drawn: 130 units a cell.
+    const svg = renderTiles(ctx, [
+      { label: 'Cowra LGA', value: 'Regional service hub', sub: 'Highway junction · Lachlan Valley' },
+      { label: 'Bathurst', value: 'Regional city', sub: 'Larger centre 100+ km' },
+      { label: 'Young', value: 'Nearby rural service centre', sub: 'Agriculture-anchored' },
+      { label: 'Cowra surrounds', value: 'Rural hinterland', sub: 'Agriculture-anchored' },
+    ]);
+    const texts = textsOf(svg);
+    expect(texts.every((t) => t.length <= 22)).toBe(true);
+    // The phrase-value is set at the label size on two lines rather than run across the next tile.
+    expect(texts).toContain('Regional');
+    expect(texts).toContain('service hub');
+    const rects = [...svg.matchAll(/<rect [^>]*height="([\d.]+)"/g)].map((m) => Number(m[1]));
+    expect(new Set(rects).size).toBe(1);
+    expect(rects[0]).toBeGreaterThanOrEqual(88);
+  });
+
+  it('a timeline marker\'s labels are wrapped to the room between markers, and the ribbon grows for them', () => {
+    // The long report's pipeline, as the model wrote it: two items a phase,
+    // each longer than the measure between two stops.
+    const items = [
+      { phase: 'existing', label: 'Rail within 900m of the property' },
+      { phase: 'existing', label: 'Established bus corridor on the main road' },
+      { phase: '0-2y', label: 'Incremental health and education upgrades' },
+      { phase: '3-5y', label: 'Further road and transport corridor investment' },
+      { phase: '5y+', label: 'Ongoing renewal of community facilities and services' },
+    ];
+    const svg = renderTimelineRibbon(ctx, items, { title: 'Infrastructure pipeline' });
+    const texts = textsOf(svg).filter((t) => t !== 'Infrastructure pipeline' && !/^(EXISTING|0-2Y|3-5Y|5Y\+)$/.test(t));
+    // The old renderer cut every label at 26 characters and set it on one line;
+    // a 46-character label now wraps whole, and only the one that cannot be
+    // held on two lines of the measure is cut, with the cut shown.
+    expect(texts).toContain('Further road and transport');
+    expect(texts).toContain('corridor investment');
+    expect(texts).toContain('Ongoing renewal of');
+    expect(texts.filter((t) => t.endsWith('…'))).toHaveLength(1);
+    // Each stop's measure is 172 units; at micro size that is about 27 characters.
+    for (const t of texts) expect(t.length).toBeLessThanOrEqual(28);
+    // The end labels are anchored to the edges and the interior ones centred
+    // on their stops, which sit at equal measures from the edges and each other.
+    const xs = [...svg.matchAll(/<circle cx="([\d.]+)"/g)].map((m) => Number(m[1]));
+    expect(xs).toEqual([98, 286, 474, 662]);
+    const heightOf = (s: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(s)![1]);
+    const short = renderTimelineRibbon(ctx, [{ phase: 'existing', label: 'Rail' }], {});
+    expect(heightOf(svg)).toBeGreaterThan(heightOf(short));
+    // Every label row sits above the bottom of the ground.
+    const ys = [...svg.matchAll(/<text x="[\d.]+" y="([\d.]+)"/g)].map((m) => Number(m[1]));
+    expect(Math.max(...ys)).toBeLessThan(heightOf(svg) - 10);
+  });
+
+  it('a heatmap value is set in whichever page colour reads against its cell', () => {
+    // A structure whose accent is its ink (Dictionary): a full cell is dark,
+    // so the value on it is set in the ground; an empty cell is the ground,
+    // so the value on it is set in the ink. Six "1"s on the medium reference
+    // report read as ILLEGIBLE before this (RS-4, 14 Sep 2026).
+    const dictionary = { ...ctx, palette: { ...ctx.palette, accent: '#312A21', ground: '#FFFDFA', ink: '#3D3429' } };
+    const svg = renderHeatmap(dictionary, [[0, 1]], { rowLabels: ['Planning'], colLabels: ['High', 'Limited'] });
+    const values = [...svg.matchAll(/<text[^>]*font-weight="600"[^>]*fill="([^"]+)"[^>]*>([^<]*)<\/text>/g)].map((m) => [m[2], m[1]]);
+    expect(values).toContainEqual(['0', '#3D3429']);
+    expect(values).toContainEqual(['1', '#FFFDFA']);
+    // The default (light accent on a light ground) keeps the ink on every cell.
+    const plain = renderHeatmap(ctx, [[0, 1]], { rowLabels: ['Planning'], colLabels: ['High', 'Limited'] });
+    const plainValues = [...plain.matchAll(/<text[^>]*font-weight="600"[^>]*fill="([^"]+)"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+    expect(new Set(plainValues).size).toBe(1);
+  });
+
+  it('a pictograph title wraps clear of its count, and the array moves down for the second line', () => {
+    // A pictograph is a compact figure: the router draws it for the compact
+    // fraction of the measure, so its type is larger in viewBox units.
+    const compact = chartContext(palette, ctx.widthMm * (CHART_WIDTH.compact / CHART_WIDTH.wide));
+    const long = renderPictograph(compact, 7, 10, { label: 'Approximate share of core family houses in Cowra', sub: 'Illustrative — per ten dwellings in the locality, from the census tenure mix' });
+    const short = renderPictograph(compact, 7, 10, { label: 'Owner-occupied', sub: 'per ten dwellings' });
+    const texts = textsOf(long);
+    expect(texts).toContain('7 / 10');
+    const title = texts.filter((t) => /Approximate|houses|Cowra/.test(t));
+    expect(title.length).toBe(2);
+    expect(title.join(' ')).toBe('Approximate share of core family houses in Cowra');
+    // The count is right-aligned at the width; the title's lines stop short of it.
+    const countUnits = '7 / 10'.length * ptToUnits(CHART_TEXT_PT.caption, 404, compact.widthMm) * 0.55;
+    const titleChar = ptToUnits(CHART_TEXT_PT.title, 404, compact.widthMm) * 0.55;
+    for (const line of title) expect(line.length * titleChar).toBeLessThanOrEqual(404 - 24 - countUnits - 10);
+    const heightOf = (s: string) => Number(/viewBox="0 0 [\d.]+ ([\d.]+)"/.exec(s)![1]);
+    expect(heightOf(long)).toBeGreaterThan(heightOf(short));
+    // The first icon row starts below the second title line.
+    const firstTile = Number(/<g transform="translate\(12 ([\d.]+)\)"/.exec(long)![1]);
+    const titleYs = [...long.matchAll(/<text x="12\.0" y="([\d.]+)"[^>]*font-weight="700"/g)].map((m) => Number(m[1]));
+    expect(firstTile).toBeGreaterThan(Math.max(...titleYs));
   });
 });

@@ -3,59 +3,10 @@ import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import {
   absBoxStyle, fontFamilyDecl, type HtmlBlockContext,
 } from './_shared.html';
-import { renderMarkdown } from '../../../../supabase/functions/_shared/reports/markdown.pure';
-import {
-  packMarkdownPages, packNarrativePages, resolveNarrativeProfile, DEFAULT_LINES_PER_PAGE,
-} from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
-import { stripBakedCover } from '../../../../supabase/functions/_shared/reports/investment/narrativeClean.pure';
-import { vizDirectiveRenderer } from '../../../../supabase/functions/_shared/reports/vizFigures.pure';
-import { CHART_TARGET_WIDTH_MM, type ChartContext } from '../../../../supabase/functions/_shared/reportDesign/charts.pure';
+import { packMarkdownPages } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
+import { resolveMarkdownBlockContent, DEFAULT_LINES_PER_PAGE } from './markdownBlockContent';
 
 export { packMarkdownPages, DEFAULT_LINES_PER_PAGE };
-
-/**
- * Model-authored Markdown, set as structure.
- *
- * ## Why this block takes source rather than HTML
- *
- * Every other block in this vocabulary escapes its body, and that is what keeps
- * a language model from injecting markup into a document a client receives. A
- * block that accepted rendered HTML would be a hole in
- * `PRODUCTION_SAFE_BLOCK_TYPES` for exactly the content least able to be
- * trusted — and the allow-list is a security boundary, not a formatting one.
- *
- * So this takes **Markdown source** and renders it here. Safety is a property
- * of the renderer rather than of the caller: `_shared/reports/markdown.pure.ts`
- * is escape-first — `escapeHtml` runs at one auditable call before any parsing —
- * so `<script>alert(1)</script>` in the source becomes `&lt;script&gt;` in the
- * page no matter who bound it or what they bound. There is no input to this
- * block that produces markup the model chose. That is why it is safe to add to
- * the allow-list, and it is the whole reason for the extra render.
- *
- * The renderer is the programme's only Markdown implementation, shared with the
- * flowing `render-report-qa-pdf` route. A second one would be a second set of
- * escaping decisions.
- *
- * ## Why it pages itself
- *
- * A family master declares every block's height when the template is built.
- * This content has no shape until it is read: across the 565 stored answers the
- * body runs 2,193 characters at the median and 33,377 at the longest, which is
- * about one page and about thirteen.
- *
- * The block therefore renders the whole source, packs the resulting blocks into
- * buckets of `linesPerPage`, and emits bucket `pageIndex`. A master declares a
- * fixed run of pages, each carrying the same source at a different `pageIndex`,
- * and each conditional on that bucket existing — and a conditional page that
- * does not render costs nothing, because `visiblePages` filters before layout.
- * A median answer therefore produces a short document and the longest produces
- * a long one, from one set of masters. This is the Client Details Form pattern.
- *
- * Packing never splits a Markdown block across pages. A table that is taller
- * than one page therefore overflows its bucket rather than being cut in half,
- * which is the lesser of the two wrongs: a split table loses its header and
- * reads as two different tables.
- */
 
 /**
  * Inline styles onto the tags the renderer emits.
@@ -82,91 +33,55 @@ function styleTags(html: string, styles: Record<string, string>): string {
   return out;
 }
 
+/**
+ * Model-authored Markdown, set as structure.
+ *
+ * ## Why this block takes source rather than HTML
+ *
+ * Every other block in this vocabulary escapes its body, and that is what keeps
+ * a language model from injecting markup into a document a client receives. A
+ * block that accepted rendered HTML would be a hole in
+ * `PRODUCTION_SAFE_BLOCK_TYPES` for exactly the content least able to be
+ * trusted — and the allow-list is a security boundary, not a formatting one.
+ *
+ * So this takes **Markdown source** and renders it here. Safety is a property
+ * of the renderer rather than of the caller: `_shared/reports/markdown.pure.ts`
+ * is escape-first — `escapeHtml` runs at one auditable call before any parsing —
+ * so `<script>alert(1)</script>` in the source becomes `&lt;script&gt;` in the
+ * page no matter who bound it or what they bound. There is no input to this
+ * block that produces markup the model chose. That is why it is safe to add to
+ * the allow-list, and it is the whole reason for the extra render.
+ *
+ * The renderer is the programme's only Markdown implementation, shared with the
+ * flowing `render-report-qa-pdf` route. A second one would be a second set of
+ * escaping decisions.
+ *
+ * ## Where the paging decision lives
+ *
+ * Not here. `markdownBlockContent.ts` resolves the profile, renders the
+ * source and packs it into buckets, and the browser PDF renderer reads the
+ * same module — so the bucket set as markup and the bucket drawn as runs are
+ * one decision rather than two that agree.
+ */
 export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
 
   const source = resolveBindable(p.source ?? p.body, ctx);
   if (!source || !String(source).trim()) return '';
 
-  const pageIndex = Math.max(0, Number(p.pageIndex ?? 0));
-  const linesPerPage = Math.max(1, Number(p.linesPerPage ?? DEFAULT_LINES_PER_PAGE));
+  // The bucket, the profile, the charge model and the directive context are
+  // all resolved by `markdownBlockContent` — the module the browser PDF
+  // renderer reads too. Two resolutions of the same block is how one surface
+  // comes to draw a bucket the other's page count says does not exist.
+  const content = resolveMarkdownBlockContent(block, ctx);
+  const page = content?.page ?? [];
+  if (!page.length) return '';
 
   const bodySize = Number(p.bodySize ?? 9.5);
   const lineHeight = Number(p.lineHeight ?? 1.5);
   const color = resolveBindableColor(p.color ?? 'token:text', ctx, '#1A1A1A');
   const headingColor = resolveBindableColor(p.headingColor ?? 'token:primary', ctx, '#BF9B50');
   const ruleColor = resolveBindableColor(p.ruleColor ?? 'token:border', ctx, '#E4E4E7');
-
-  // The calibrated narrative profile, resolved EXACTLY as the projection
-  // resolves it (`resolveNarrativeProfile` is the single authority), so the
-  // page count a master's conditionals read and the buckets this block draws
-  // are the same arithmetic. The profile also carries the baked-cover strip:
-  // the projection publishes the stripped source, but a master bound straight
-  // at raw content must not disagree with one bound at `narrative.source`.
-  const reportType = String((ctx.data as Record<string, any> | undefined)?.report?.type ?? '');
-  const profile = resolveNarrativeProfile(reportType);
-  const cleanSource = profile ? stripBakedCover(String(source)).text : String(source);
-
-  /**
-   * The chart directives the generator's prompt demands, drawn in the
-   * template's own palette.
-   *
-   * This call passed no `renderDirective`, and `renderMarkdown` treats a
-   * shortcode as an instruction either way — so every directive in a templated
-   * body was REMOVED and drawn as nothing. Measured on a real Compass render
-   * (1/27D Mitchell Street, 2026-09-04): the stored body carries 43 directives
-   * — 13 glance strips, 6 bars, 6 donuts, 6 gauges, 4 timelines, a wheel, tiles,
-   * a heatmap, a pictograph — and the PDF contained none of them; the
-   * Disclaimer, whose whole content is one glance strip, printed as a heading
-   * over nothing.
-   *
-   * `widthMm` is deliberately left at the renderer's own default
-   * (`CHART_TARGET_WIDTH_MM`) rather than derived from this block's box: the
-   * projection charges the SAME directives through `planningChartContext()`,
-   * whose width is that same default, and `figureLines` reads geometry alone —
-   * so the two sides charge identical line counts whatever palette each draws
-   * with. A width computed from the box here would put the page count and the
-   * buckets on different arithmetic, which is the drift this file exists to
-   * prevent.
-   */
-  // CSS keywords as fallbacks, the `planningChartContext` convention: every
-  // family master defines these tokens, so a keyword only paints where a
-  // template is missing its palette — and a keyword is visibly not a palette
-  // decision, which also keeps the hex-literal ratchet honest.
-  const tok = (name: string, fallback: string) =>
-    resolveBindableColor(`token:${name}`, ctx, fallback);
-  const accent = tok('primary', 'darkgoldenrod');
-  const ink = tok('ink', 'black');
-  const muted = tok('muted', 'grey');
-  const positive = tok('positive', 'seagreen');
-  const caution = tok('caution', 'darkgoldenrod');
-  const negative = tok('negative', 'firebrick');
-  const chartCtx: ChartContext = {
-    widthMm: CHART_TARGET_WIDTH_MM,
-    palette: {
-      ground: tok('surface', 'white'),
-      groundAlt: tok('panel', 'gainsboro'),
-      rule: tok('line', 'silver'),
-      ink,
-      inkMuted: muted,
-      accent,
-      accentDeep: tok('accentInk', accent),
-      positive,
-      caution,
-      negative,
-      informative: tok('info', accent),
-      series: [accent, tok('accentInk', accent), muted, positive, caution, negative],
-    },
-  };
-  const result = renderMarkdown(cleanSource, {
-    charging: profile?.charging,
-    renderDirective: vizDirectiveRenderer(chartCtx),
-  });
-  const pages = profile
-    ? packNarrativePages(result.blocks, profile, linesPerPage)
-    : packMarkdownPages(result.blocks, linesPerPage);
-  const page = pages[pageIndex];
-  if (!page || !page.length) return '';
 
   const bodyFont = fontFamilyDecl(p.bodyFont, '--font-body');
   const headingFont = fontFamilyDecl(p.headingFont, '--font-heading');

@@ -154,6 +154,37 @@ function breakdownEntries(score: unknown): BreakdownEntry[] {
  * due-diligence variant score describes its own weights rather than the
  * composite's.
  */
+/**
+ * The grade a client document may print, or `undefined`.
+ *
+ * One rule, stated here because it was stated in two places and skipped in a
+ * third. The Report Fact Contract already refused a grade whose policy did not
+ * issue one AND refused the literal `'N/A'`; `gradedLine` refused on the
+ * policy alone; and `reportBindingProjection` published `str(score.grade)`
+ * verbatim — so on the certification record, whose `investment_score` carries
+ * `grade: 'N/A'` beside `policy.gradeIssued: false`, every selectable template
+ * printed **"Assessment grade  N/A · out of 100"** on the client's method
+ * page.
+ *
+ * `'N/A'` is refused HERE, on this one field, rather than in `presenceOf` —
+ * which deliberately treats `n/a` as possible real content, because a zoning
+ * of "None" and a street called "Na" exist. A scoring grade is a closed
+ * vocabulary; a stored `'N/A'` in it is the scorer's own sentinel for "no
+ * grade was issued", never a grade.
+ */
+export function publishableGrade(score: unknown): string | undefined {
+  if (!isRecord(score)) return undefined;
+  if (!overallGradeMayBeShown(score)) return undefined;
+  const grade = str(score.grade);
+  if (!grade || grade.trim().toUpperCase() === 'N/A') return undefined;
+  return grade;
+}
+
+/** Whether this record's authority permits publishing an overall grade at all. */
+export function gradeMayBePublished(score: unknown): boolean {
+  return isRecord(score) && overallGradeMayBeShown(score);
+}
+
 export function gradedLine(score: unknown): string | undefined {
   if (!isRecord(score)) return undefined;
   // An unauthorised engine states no verdict, whatever it computed.

@@ -101,13 +101,12 @@ describe('the production route consults it', () => {
       'utf8',
     );
     expect(src).toContain('refuseUnboundReconstruction');
-    // Before the HTML is built, not after. The route no longer renders the
-    // HTML itself — it goes through `compileTemplateHtmlForPdf`, the one
-    // compiler for the PDF renderer — so the ordering is asserted against
-    // that call. See `printFontPolicy.spec.ts` for why the route stopped
-    // hand-rolling the compile step.
-    const compileAt = src.indexOf('compileTemplateHtmlForPdf(');
-    expect(compileAt, 'the route no longer compiles HTML at all').toBeGreaterThan(-1);
-    expect(src.indexOf('refuseUnboundReconstruction(')).toBeLessThan(compileAt);
+    // Before the document is drawn, not after. What draws it has changed —
+    // the route compiled HTML for a render service and now calls the
+    // presentation renderer in this browser — so the ordering is asserted
+    // against whatever produces the bytes.
+    const renderAt = src.indexOf('renderTemplateToBlob(');
+    expect(renderAt, 'the route no longer draws a document at all').toBeGreaterThan(-1);
+    expect(src.indexOf('refuseUnboundReconstruction(')).toBeLessThan(renderAt);
   });
 });

@@ -1,12 +1,34 @@
 /**
- * Generic Template Builder routing helper.
+ * The presentation layer's one entry point: a validated report plus the
+ * template chosen for its format, drawn in the browser.
  *
- * Resolves a production-capable adapter for the report, resolves the best
- * matching active template, renders through HTML/WeasyPrint, and returns null
- * so callers can fall back to legacy generators whenever routing is not ready.
+ * Resolves a production-capable adapter for the report, resolves the chosen or
+ * best-matching active template, renders it through the Report Presentation
+ * Renderer, and returns null so callers fall back to the standard presentation
+ * whenever this is not ready.
+ *
+ * ## The template never becomes a second source of truth
+ *
+ * `adapter.buildBindingContext` produces ONE frozen payload describing the
+ * report after generation, calculation, reconciliation, validation and the
+ * user's own edits. Everything below binds against that payload and nothing
+ * else: no calculation runs here, no geography is resolved, no model is
+ * called and nothing is fetched from a source table. One validated report,
+ * several approved presentations.
+ *
+ * ## Why there is no render service
+ *
+ * This used to compile the template to HTML and post it to a Cloud Run
+ * WeasyPrint container, and the document came back as a signed URL the caller
+ * then had to fetch. The renderer is in the browser now, so the result IS the
+ * blob — one fewer network hop, one fewer credential, and nothing to keep
+ * running.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { compileTemplateHtmlForPdf } from '@/lib/reportTemplate/compileTemplateForPdf';
+import { SUPABASE_URL } from '@/integrations/supabase/env';
+import { preloadImagesWithReport } from '@/lib/reportTemplate/imagePreloader';
+import { renderTemplateToBlob } from '@/lib/reportTemplate/pdfRenderer';
+import { judgeBrowserProductionExport } from '@/lib/reportTemplate/browserExportGuard';
 import { parseTemplate } from '@/lib/reportTemplate/templateSchema';
 import { resolveReportTemplate, type ReportVariant } from '@/lib/reportTemplate/resolveTemplate';
 import { refuseUnboundReconstruction } from '@/lib/reportTemplate/rendering/productionTemplateGuard';
@@ -35,8 +57,17 @@ export type TemplateRouteRefusal =
   | 'report_type_not_allowed'
   /** Nothing active is published for the format, and nothing was chosen. */
   | 'no_active_template'
-  /** The resolved template is a jsPDF one; the design system does not draw it. */
-  | 'template_not_weasyprint'
+  /**
+   * The renderer cannot draw one of this template's blocks, so the document
+   * would carry a placeholder panel where a client expects content.
+   *
+   * This used to be `template_not_weasyprint` and was decided by the
+   * template's `engine` column — a fact about which service had been chosen
+   * for it, not about whether it can be drawn. Compatibility is asked of the
+   * renderer itself now (`judgeBrowserProductionExport`), which is the only
+   * thing that actually knows.
+   */
+  | 'template_not_browser_renderable'
   /** The adapter loaded the record but published nothing bindable. */
   | 'adapter_published_no_data'
   /** The template's schema does not parse against the current contract. */
@@ -54,7 +85,7 @@ export const TEMPLATE_ROUTE_REFUSAL_TEXT: Readonly<Record<TemplateRouteRefusal, 
   adapter_declined_record: 'This record could not be read, or holds nothing this format can draw',
   report_type_not_allowed: 'This report type is not routed through the design system here',
   no_active_template: 'No active template is published for this format',
-  template_not_weasyprint: 'The chosen template is not drawn by the design system',
+  template_not_browser_renderable: 'The chosen template uses layout blocks this renderer cannot draw yet',
   adapter_published_no_data: 'This record published no data for the template to bind',
   template_schema_invalid: 'The template could not be read against the current schema',
   template_unbound_reconstruction: 'The template is a fixed copy of one report and cannot be reused',
@@ -63,12 +94,30 @@ export const TEMPLATE_ROUTE_REFUSAL_TEXT: Readonly<Record<TemplateRouteRefusal, 
 };
 
 export interface TemplateBuilderRouteResult {
-  fileUrl: string;
+  /** The document itself. There is no service to fetch it back from. */
+  blob: Blob;
   fileName: string;
-  renderer: 'weasyprint';
+  /**
+   * What actually drew it. A literal is how telemetry comes to claim a
+   * renderer the product stopped using, so this is the renderer's own
+   * identifier rather than a string written here.
+   */
+  renderer: typeof BROWSER_PRESENTATION_RENDERER;
   templateId: string;
   source: string;
 }
+
+/**
+ * Named once, and imported by anything that reports which engine drew a file.
+ *
+ * It is NOT the same identity as the standard presentation's. Both draw in the
+ * browser, and they are different renderers drawing different documents —
+ * `investmentPdfDocument` composes the standard document with pdf-lib, this
+ * draws a chosen template with jsPDF. Telemetry has one question to answer:
+ * which renderer produced these exact bytes. One name for two answers is how
+ * that question stops being answerable.
+ */
+export const BROWSER_PRESENTATION_RENDERER = 'browser_template_jspdf' as const;
 
 function candidateAdapters(reportType?: string | null): ReportTemplateAdapter[] {
   const explicit = getAdapter(reportType);
@@ -198,12 +247,6 @@ export async function routeReportThroughTemplate(
         refuse('no_active_template', `nothing active is published for ${routing.reportType}`);
         continue;
       }
-      if (resolved.engine !== 'weasyprint') {
-        refuse('template_not_weasyprint',
-          `${resolved.template?.name ?? resolved.template?.id} is a ${resolved.engine} template`);
-        continue;
-      }
-
       const tplRow = resolved.template;
       // The same variant the routing call received: the two answers must
       // describe one document, and the adapter is the one that knows whether
@@ -264,33 +307,21 @@ export async function routeReportThroughTemplate(
         continue;
       }
 
-      // Through the one compiler, not a second hand-rolled copy of it.
-      //
-      // This called `preloadImages` and `renderTemplateToHtml` itself, which is
-      // exactly the shape `compileTemplateForPdf.ts` was written to retire —
-      // and it repeated the omission that module documents. It resolved the
-      // rasters (so imported pages were not blank here), but it never set
-      // `fontSource: 'container'`, so the HTML carried a Google Fonts
-      // `@import` from `tokens.fontFaces` and `render-template-pdf` rejected
-      // every document at its resource boundary. That is why the production
-      // route rendered nothing at all while the editor's preview of the same
-      // template worked: the preview path already went through the compiler.
-      let html: string;
-      try {
-        ({ html } = await compileTemplateHtmlForPdf(schema, {
-          data: bindingData,
-          customCss: tplRow.custom_css ?? undefined,
-          title: `${tplRow.name} — ${routing.title ?? ''}`.trim(),
-          cascadeMetadata: true,
-        }));
-      } catch (e) {
-        // Guarded on its own rather than left to the outer catch: a signing or
-        // compile failure for one template must fall through to the next
-        // candidate adapter, and be reported as the render gate it is instead
-        // of as `unexpected_error`. The route's contract is that every failure
-        // is a fallback.
-        refuse('render_failed',
-          `compiling ${tplRow.id}: ${e instanceof Error ? e.message : String(e)}`);
+      /*
+       * Compatibility is asked of the RENDERER, not of a column.
+       *
+       * The gate here used to be `engine !== 'weasyprint'`, which is a record
+       * of which service a template was authored for rather than a fact about
+       * whether it can be drawn. What matters to a client is that no page
+       * carries a placeholder panel where content belongs, and only the block
+       * registry knows that. `judgeBrowserProductionExport` refuses, names the
+       * blocks for the operator, and never falls back to a render service or
+       * to a raster — both of which would ship a worse document quietly.
+       */
+      const drawable = judgeBrowserProductionExport(schema);
+      if (drawable.ok === false) {
+        refuse('template_not_browser_renderable',
+          `${tplRow.name ?? tplRow.id}: ${drawable.blockTypes.join(', ')}`);
         continue;
       }
 
@@ -299,32 +330,44 @@ export async function routeReportThroughTemplate(
         .slice(0, 60);
       const fileName = `${routing.reportType}-${safeLabel}-${reportId.slice(0, 8)}.pdf`;
 
-      const { data: pdfData, error: pdfErr } = await invokeSecureFunction<{
-        url: string;
-        fileName: string;
-      }>('render-template-pdf', {
-        html,
-        fileName,
-        templateId: tplRow.id,
-        mode: 'final',
-        // Which record this document IS, so the renderer can refuse to issue
-        // one the report itself is not cleared to produce. This route is tried
-        // BEFORE the legacy renderer, so a client-readiness gate that only the
-        // legacy renderer applied was a gate on the path nobody takes first.
-        // The renderer reads the verdict from the row; nothing about the
-        // decision travels in this payload.
-        reportId,
-      });
-      if (pdfErr || !pdfData?.url) {
+      let blob: Blob;
+      try {
+        /*
+         * Assets are resolved through the same module the HTML path uses, in
+         * `inline` mode because this renderer cannot fetch: jsPDF draws from
+         * the bytes it is handed. The other half of that module's rule travels
+         * with it — an asset that cannot be brought inside is DROPPED and
+         * named rather than carried in, so one unreachable picture thins a
+         * page instead of failing the document.
+         */
+        const { template: prepared } = await preloadImagesWithReport(schema, {
+          mode: 'inline',
+          data: bindingData,
+          tokens: undefined,
+          supabaseUrl: SUPABASE_URL,
+        });
+        blob = renderTemplateToBlob(prepared, { data: bindingData });
+      } catch (e) {
+        // Guarded on its own rather than left to the outer catch: a failure
+        // drawing one template must fall through to the next candidate adapter
+        // and be reported as the render gate it is. The route's contract is
+        // that every failure is a fallback.
         refuse('render_failed',
-          `render-template-pdf failed for ${tplRow.id}: ${pdfErr?.message ?? 'no url returned'}`);
+          `drawing ${tplRow.id}: ${e instanceof Error ? e.message : String(e)}`);
+        continue;
+      }
+
+      // A zero-byte document is not a document. It would save as a file that
+      // opens to an error, which is worse than the standard presentation.
+      if (!blob.size) {
+        refuse('render_failed', `${tplRow.id} produced an empty document`);
         continue;
       }
 
       return {
-        fileUrl: pdfData.url,
-        fileName: pdfData.fileName ?? fileName,
-        renderer: 'weasyprint',
+        blob,
+        fileName,
+        renderer: BROWSER_PRESENTATION_RENDERER,
         templateId: tplRow.id,
         source: `${resolved.source}:${adapter.reportType}`,
       };

@@ -18,7 +18,6 @@ import { CASH_FLOW_ANALYSIS_PATH } from '@/lib/navigation/cashFlowOrigin';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { InvestmentReportEditor } from './InvestmentReportEditor';
-import { ClientPDFGenerator } from './ClientPDFGenerator';
 import { PremiumPdfButton } from './PremiumPdfButton';
 import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
@@ -625,12 +624,12 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                       formatLabel={INVESTMENT_REPORT_FORMAT.label}
                     />
                   </div>
-                  {/* Unified delivery first; the browser generator is the
-                      named legacy layout beside it. */}
-                  <PremiumPdfButton
-                    reportId={report.id}
-                    propertyAddress={report.property_address}
-                  />
+                  {/* ONE client-PDF action. The "legacy layout" generator that
+                      used to sit beside it took a different half of the five
+                      controls, so the document a client received depended on
+                      which button was pressed. This screen offers two of them
+                      and passes exactly those two; the other three take the
+                      documented defaults rather than a value invented here. */}
                   <ErrorBoundary
                     fallback={
                       <div className="text-sm text-muted-foreground">
@@ -638,7 +637,12 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                       </div>
                     }
                   >
-                    <ClientPDFGenerator report={report} includeSources={includeSources} includeScoring={includeScoring} appearance="legacy" />
+                    <PremiumPdfButton
+                      reportId={report.id}
+                      propertyAddress={report.property_address}
+                      includeSources={includeSources}
+                      includeScoring={includeScoring}
+                    />
                   </ErrorBoundary>
                   <RegenerateWithPerplexityButton
                     reportId={report.id}

@@ -169,9 +169,32 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     };
   },
 
-  async buildBindingContext({ reportId, brand }: { reportId: string; brand?: BrandContext | null }): Promise<TemplateBindingContext | null> {
-    const row = await loadInvestmentReport(reportId);
-    if (!row) return null;
+  async buildBindingContext({ reportId, brand, payload }: {
+    reportId: string;
+    brand?: BrandContext | null;
+    /**
+     * The caller's already-presented report content.
+     *
+     * `deliverInvestmentPdf` applies the two CONTENT rules — Sources and
+     * Scoring — to the report's Markdown before it chooses a presentation, so
+     * that a chosen template and the standard document contain the same
+     * sections. Without this the switches reached the standard document alone
+     * and a templated report carried whatever the operator had turned off.
+     *
+     * It is the report's own content with sections removed, never new content:
+     * a caller cannot use this to put anything into a document that the record
+     * does not already say.
+     */
+    payload?: Record<string, unknown> | null;
+  }): Promise<TemplateBindingContext | null> {
+    const loaded = await loadInvestmentReport(reportId);
+    if (!loaded) return null;
+    const presentedContent = typeof payload?.reportContent === 'string'
+      ? payload.reportContent
+      : null;
+    const row = presentedContent === null
+      ? loaded
+      : { ...loaded, report_content: presentedContent };
 
     const reportType = getReportType(row);
     const variant = (row.report_variant ?? null) as string | null;

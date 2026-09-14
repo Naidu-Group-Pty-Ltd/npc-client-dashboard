@@ -12,68 +12,94 @@
  *    legacy server route *or* the browser html2canvas generator, whichever
  *    ran last — or minted a fresh browser raster on the spot;
  *  * only `PremiumPdfButton`, low in a collapsible panel, produced the real
- *    chain: chosen template → legacy WeasyPrint route.
+ *    chain: chosen template → a render service.
  *
- * That chain — the person's template selection honoured first, the route
- * that has produced this document for the life of the product as the
- * fallback — was correct and lived inside one button. It lives here now, and
- * every surface (the primary download, the send, the premium button, the
- * flatten copy) asks this module, so a client receives the same document the
- * operator reviewed.
+ * That chain — the person's template selection honoured first, a standard
+ * document as the fallback — was correct and lived inside one button. It
+ * lives here now, and every surface (the primary download, the send, the
+ * premium button, the flatten copy) asks this module, so a client receives
+ * the same document the operator reviewed.
+ *
+ * ## One report, two presentations
+ *
+ * The record is read once and checked for client readiness once, and only
+ * then is a presentation chosen: the template the person selected for this
+ * format, or the standard one. Both draw the SAME validated report, both draw
+ * it in this browser, and neither is a second version of the document — which
+ * is why the readiness gate sits above both rather than inside either.
  *
  * ## Every failure is a fallback, never an error — until there is nothing
  *
- * A refused template, no selection, a stale choice: the legacy route still
- * renders (`tryTemplateDocument`'s own contract). Only when BOTH engines
- * fail does this throw, with the message in front of the person who clicked.
+ * A refused template, no selection, a stale choice, a template carrying a
+ * block this renderer cannot draw: the standard presentation still renders
+ * (`tryTemplateDocument`'s own contract). Only when neither can produce the
+ * document does this throw, with the message in front of the person who
+ * clicked. A report that is not client-ready is the one exception: it is
+ * refused rather than fallen back from, because the defect is in the report.
  *
  * ## Coverage
  *
- * Neither leg logs here: the template route writes `template_render_jobs`
- * server-side, and the legacy invoke is auto-tagged by `secureInvoke`
- * (engine `legacy_server`). A manual event would double-count.
+ * Both presentations are drawn here, so neither leaves a server-side trace to
+ * be counted: `engine` on the returned document is what a render event
+ * records, and it names the renderer that actually drew the bytes rather than
+ * a service that no longer runs.
  *
  * ## `pdf_url` has one meaning now
  *
  * "The storage path of the most recent standard-delivery document." Every
- * write goes through the `manage-investment-reports` broker (this module and
- * the legacy generator's own upload path both use it) or the legacy route's
- * internal bookkeeping — and after `publishInvestmentPdf`, the row points at
- * the exact bytes that were just published to a portal.
+ * write goes through the `manage-investment-reports` broker, and after
+ * `publishInvestmentPdf` the row points at the exact bytes that were just
+ * published to a portal — because nothing else persists a render any more.
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   saveTemplateDocument,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
-import { fetchPdfBlob } from '@/lib/pdf/downloadPdf';
+import { BROWSER_PRESENTATION_RENDERER } from '@/lib/reportTemplate/routeReportThroughTemplate';
+import {
+  generateInvestmentPdfBlob,
+  BROWSER_PDF_RENDERER,
+} from '@/lib/reports/investment/investmentPdfDocument';
+import {
+  loadInvestmentReportForPdf,
+  projectRowForPdf,
+} from '@/lib/reports/investment/investmentPdfSource';
+import { assertInvestmentReportClientReady } from '@/lib/reports/investment/clientReadiness';
+import {
+  applyPresentationOptionsToContent,
+  resolvePresentationOptions,
+  type InvestmentPresentationOptions,
+} from '@/lib/reports/investment/presentationOptions';
+import { loadInvestmentHeroImages } from '@/lib/reports/investment/investmentHeroImages';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import type { PdfDesignOptions } from '@/components/reports/premiumPdfDesign';
 
 export interface InvestmentDocument {
   blob: Blob;
   fileName: string;
-  /** Which machinery produced the bytes. */
-  engine: 'template' | 'legacy_server';
+  /**
+   * Which renderer produced these exact bytes.
+   *
+   * Two browser renderers, two identities, because they draw two different
+   * documents: `browser_pdf_lib` is the standard presentation composed with
+   * pdf-lib, `browser_template_jspdf` is a chosen template drawn by the Report
+   * Presentation Renderer. Neither is a render service — `legacy_server` and
+   * `premium_weasyprint` named one that no longer runs, and a telemetry value
+   * naming a retired service is worse than none, because it is read as
+   * evidence.
+   */
+  engine: typeof BROWSER_PRESENTATION_RENDERER | typeof BROWSER_PDF_RENDERER;
   /** The template that rendered it, when the template engine did. */
   templateId: string | null;
 }
 
-export interface ProduceInvestmentOptions {
+export interface ProduceInvestmentOptions extends Partial<InvestmentPresentationOptions> {
   /** The report's variant (financial / briefing / snapshot), for the adapter. */
   variant?: string | null;
-  /** Legacy-route presentation switches, forwarded untouched. */
-  includeCharts?: boolean;
-  includeHeroImages?: boolean;
-  includeSparklines?: boolean;
   designOptions?: PdfDesignOptions;
 }
 
-interface LegacyRenderResponse {
-  fileUrl: string;
-  fileName: string;
-  renderer?: string;
-}
 
 /**
  * The document, template-first.
@@ -87,38 +113,92 @@ export async function produceInvestmentDocument(
 ): Promise<InvestmentDocument> {
   if (!reportId) throw new Error('A report is required to produce the document.');
 
+  /*
+   * The record is read ONCE, before a presentation is chosen, and the
+   * client-readiness gate is applied to it.
+   *
+   * That gate used to live inside `render-template-pdf` and
+   * `render-investment-report-pdf` — two render services, both now off this
+   * path. Applying it here restores it to the template route and extends it to
+   * the standard one, which never had it: a report that asserts a governed
+   * fact it does not hold is refused whichever presentation it would have come
+   * out in, because the defect is in the report and not in the layout.
+   *
+   * The read is not wasted on the template path: `tryTemplateDocument`'s
+   * adapter reads the same row again, and one extra call is the price of a
+   * gate that cannot be skipped by choosing a template.
+   */
+  const row = await loadInvestmentReportForPdf(reportId);
+  assertInvestmentReportClientReady(row);
+
+  /*
+   * The five controls, resolved once and applied once.
+   *
+   * Two of them — Sources and Scoring — decide what the report CONTAINS, and
+   * the other three decide what is DRAWN. The content rules are applied to the
+   * report's own Markdown here, above the choice of presentation, so a chosen
+   * template and the standard document agree about which sections belong in
+   * this client's copy. They were inside the standard generator before, which
+   * meant a report delivered through a template carried its source notes and
+   * its scoring sections however the switches were set. See
+   * `presentationOptions.ts` for why the two kinds are kept apart.
+   *
+   * Nothing here recalculates, re-scores or re-narrates anything. A section
+   * that is not included is not printed; every figure in every section that IS
+   * printed is the figure the record holds.
+   */
+  const presentation = resolvePresentationOptions(options);
+  const presentedRow = {
+    ...row,
+    report_content: applyPresentationOptionsToContent(
+      typeof row.report_content === 'string' ? row.report_content : '',
+      presentation,
+    ),
+  };
+
+  const heroImages = presentation.includeHeroImages
+    ? await loadInvestmentHeroImages(reportId)
+    : [];
+
   const templated = await tryTemplateDocument('investment', reportId, {
     variant: options.variant ?? null,
+    // The SAME payload the standard presentation would draw. The adapter reads
+    // the record itself for everything else; this is the one thing the
+    // operator's switches changed, so it is the one thing that travels.
+    payload: { reportContent: presentedRow.report_content },
   });
   if (templated) {
     return {
       blob: templated.blob,
       fileName: templated.fileName,
-      engine: 'template',
+      engine: BROWSER_PRESENTATION_RENDERER,
       templateId: templated.templateId,
     };
   }
 
-  const { data, error } = await invokeSecureFunction<LegacyRenderResponse>(
-    'render-investment-report-pdf',
-    {
-      reportId,
-      includeCharts: options.includeCharts ?? true,
-      includeHeroImages: options.includeHeroImages ?? false,
-      includeSparklines: options.includeSparklines ?? true,
-      designOptions: options.designOptions,
-    },
-    { timeoutMs: 240_000 },
-  );
-  if (error || !data?.fileUrl) {
-    throw new Error(error?.message || 'PDF generation failed');
-  }
-  const blob = await fetchPdfBlob(data.fileUrl);
-  if (!blob.size) throw new Error('The rendered PDF was empty.');
+  // The standard document, drawn HERE.
+  //
+  // This used to POST to `render-investment-report-pdf`, which composed HTML
+  // and handed it to WeasyPrint on Cloud Run. The drawing is now
+  // `investmentPdfDocument` — the same pdf-lib implementation that produced
+  // 263 of the 275 Investment PDFs this product has delivered — so the
+  // document reaches a client without leaving the browser and Supabase.
+  //
+  // The projection is shared with `ClientPDFGenerator` rather than repeated,
+  // because it is where stored financials are healed and an historic row's
+  // overrides are overlaid. One transform, one set of numbers.
+  const { report, reportTier } = projectRowForPdf(presentedRow);
+  const drawn = await generateInvestmentPdfBlob({
+    report,
+    reportTier,
+    presentation,
+    heroImages,
+  });
+  if (!drawn.blob.size) throw new Error('The rendered PDF was empty.');
   return {
-    blob,
-    fileName: data.fileName || `investment-report-${reportId}.pdf`,
-    engine: 'legacy_server',
+    blob: drawn.blob,
+    fileName: drawn.fileName,
+    engine: drawn.renderer,
     templateId: null,
   };
 }
@@ -135,9 +215,6 @@ export async function deliverInvestmentPdf(
 
 const STORAGE_BUCKET = 'investment-reports';
 
-/** True for a stored storage path (as opposed to an external URL or nothing). */
-const isStoragePath = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && !/^https?:\/\//i.test(value);
 
 /**
  * Record the published path on the row, through the one broker every client
@@ -161,39 +238,36 @@ export interface PublishedInvestmentPdf {
   path: string;
   engine: InvestmentDocument['engine'];
   templateId: string | null;
+  /**
+   * The bytes that were stored.
+   *
+   * Carried back so a caller that both publishes and hands the file to the
+   * person can do it from ONE render. The alternative is producing the
+   * document twice, or downloading back what was just uploaded — and the
+   * second copy is the one that can differ.
+   */
+  blob: Blob;
+  fileName: string;
 }
 
 /**
  * Produce the document and make it a stored artefact a portal can serve.
  *
- * The legacy route persists its own render and records the path on the row,
- * so that path is reused rather than uploading the same bytes twice; a
- * template render (and the route's external-URL fallback) is uploaded here
- * and recorded through the same broker. Either way the returned path IS what
- * `pdf_url` now names.
+ * Every document is uploaded here and recorded through the same broker, and
+ * the returned path IS what `pdf_url` names.
+ *
+ * There used to be a shortcut: the server route persisted its own render and
+ * wrote the path to the row, so this read it back rather than uploading the
+ * same bytes twice. Nothing persists a render behind our back any more — the
+ * document is drawn in this browser and exists only as a Blob until it is
+ * stored — so the shortcut is gone rather than left to return a stale path
+ * from whichever render happened to run last.
  */
 export async function publishInvestmentPdf(
   reportId: string,
   options: ProduceInvestmentOptions = {},
 ): Promise<PublishedInvestmentPdf> {
   const doc = await produceInvestmentDocument(reportId, options);
-
-  if (doc.engine === 'legacy_server') {
-    // The route's WeasyPrint leg has just written the persisted path to the
-    // row; read it back rather than re-uploading the same document.
-    try {
-      const { data } = await invokeSecureFunction('get-investment-reports', {
-        reportId,
-        listOptions: { select: 'id, pdf_url' },
-      });
-      const stored = (data?.report as { pdf_url?: unknown } | undefined)?.pdf_url;
-      if (isStoragePath(stored)) {
-        return { path: stored, engine: doc.engine, templateId: null };
-      }
-    } catch {
-      // Fall through to uploading the bytes we already hold.
-    }
-  }
 
   const safeName = doc.fileName.replace(/[^a-zA-Z0-9._-]+/g, '-');
   const path = `${reportId}_${Date.now()}_${safeName}`;
@@ -207,5 +281,11 @@ export async function publishInvestmentPdf(
   }
   const storedPath = upload.path || path;
   await rememberInvestmentPdfPath(reportId, storedPath);
-  return { path: storedPath, engine: doc.engine, templateId: doc.templateId };
+  return {
+    path: storedPath,
+    engine: doc.engine,
+    templateId: doc.templateId,
+    blob: doc.blob,
+    fileName: doc.fileName,
+  };
 }

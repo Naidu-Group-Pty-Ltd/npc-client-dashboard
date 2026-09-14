@@ -59,6 +59,7 @@ import { snapshotBlob } from '@/lib/reports/borrowingCapacity/deliverSnapshot';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { useClientReportInventory } from '@/hooks/useClientReportInventory';
 import { publishReportToPortal } from '@/lib/reports/publishReportToPortal';
+import { publishInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
 import type { UnifiedReport } from '@/lib/reports/clientReportInventory.pure';
 import { useAuth } from '@/hooks/useAuth';
 import { PORTFOLIO_REPORT_LABEL } from '@/lib/reports/portfolio/label';
@@ -297,28 +298,25 @@ export function ClientReportsTab({
   };
 
   /**
-   * Render an investment report that has no stored file, and download it.
+   * Produce an investment report that has no stored file, store it, and hand
+   * it to the person.
    *
-   * The same edge function the Premium PDF button uses. It now records the
-   * storage path on the row, so the next visit finds the file instead of
-   * rendering it again.
+   * This used to POST to `render-investment-report-pdf` and then fetch the
+   * signed URL it answered with. It goes through `publishInvestmentPdf` now —
+   * the one module every Investment surface asks — so this row's download is
+   * the same document the report page, the portal send and the premium button
+   * produce, drawn in this browser. The stored bytes and the downloaded bytes
+   * come from ONE render rather than two.
    */
   const handleGenerateInvestmentPdf = async (report: UnifiedReport) => {
     setGeneratingReportId(report.id);
     try {
-      const { data, error } = await invokeSecureFunction<{ fileUrl: string; fileName: string }>(
-        'render-investment-report-pdf',
-        { reportId: report.id },
-        { timeoutMs: 240_000 },
-      );
-      if (error || !data?.fileUrl) throw new Error(error?.message || 'PDF generation failed');
+      const published = await publishInvestmentPdf(report.id);
 
-      const res = await fetch(data.fileUrl);
-      if (!res.ok) throw new Error(`Download failed (${res.status})`);
-      const url = URL.createObjectURL(await res.blob());
+      const url = URL.createObjectURL(published.blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = data.fileName || `${report.name}.pdf`;
+      a.download = published.fileName || `${report.name}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

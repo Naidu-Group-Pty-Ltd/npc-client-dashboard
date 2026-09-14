@@ -1,75 +1,112 @@
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Loader2 } from "lucide-react";
+import { FileDown, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { logActivityDirect } from "@/hooks/useActivityLogger";
 import { FlattenPdfIconButton } from "@/components/common/FlattenPdfIconButton";
 import { saveTemplateDocument } from "@/lib/reportTemplate/templateDocument";
-import { produceInvestmentDocument } from "@/lib/reports/investment/deliverInvestmentPdf";
+import {
+  produceInvestmentDocument,
+  type InvestmentDocument,
+  type ProduceInvestmentOptions,
+} from "@/lib/reports/investment/deliverInvestmentPdf";
+import { BROWSER_PRESENTATION_RENDERER } from "@/lib/reportTemplate/routeReportThroughTemplate";
 import type { PdfDesignOptions } from "./premiumPdfDesign";
 
-interface PremiumPdfButtonProps {
+interface ClientPdfButtonProps extends Pick<
+  ProduceInvestmentOptions,
+  'includeSources' | 'includeScoring' | 'includeCharts' | 'includeHeroImages' | 'includeSparklines'
+> {
   reportId: string;
   propertyAddress: string;
-  includeCharts?: boolean;
-  includeHeroImages?: boolean;
-  includeSparklines?: boolean;
+  variant?: string | null;
   designOptions?: PdfDesignOptions;
 }
 
 /**
- * Premium PDF — the standard delivery chain, from the panel.
+ * The one control that produces the client's Investment PDF.
  *
- * This button used to carry the chain itself (chosen template →
- * `render-investment-report-pdf`), and it was the only surface in the product
- * that had it; the page's primary Download shipped a `.txt` and Send-to-Client
- * shipped whatever `pdf_url` held. The chain lives in
- * `deliverInvestmentPdf.ts` now and every surface asks it — this button is one
- * caller among equals, keeping its design controls and the flatten companion.
+ * ## Why there is only one
+ *
+ * There used to be two, side by side: this, and a separately mounted browser
+ * generator labelled "Download (legacy layout)". They took DIFFERENT switches
+ * — this one carried Charts, Hero images and Sparklines, that one carried
+ * Sources and Scoring — so which of the five a client's document honoured
+ * depended on which button had been pressed, and neither honoured all five.
+ * Two buttons meant two documents, which meant two truths.
+ *
+ * `produceInvestmentDocument` is the one contract now: it reads the record
+ * once, applies the client-readiness gate, applies the content rules, and then
+ * chooses a presentation — the template the person selected, or the standard
+ * one. Every surface asks it, so a client receives the document the operator
+ * reviewed whichever control they reached for.
  */
 export function PremiumPdfButton({
   reportId,
   propertyAddress,
+  variant = null,
+  includeSources = true,
+  includeScoring = true,
   includeCharts = true,
   includeHeroImages = false,
   includeSparklines = true,
   designOptions,
-}: PremiumPdfButtonProps) {
+}: ClientPdfButtonProps) {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  /** All five, every time. A control the caller drops is a control that lies. */
+  const options = useCallback((): ProduceInvestmentOptions => ({
+    variant,
+    includeSources,
+    includeScoring,
+    includeCharts,
+    includeHeroImages,
+    includeSparklines,
+    designOptions,
+  }), [variant, includeSources, includeScoring, includeCharts, includeHeroImages,
+    includeSparklines, designOptions]);
+
+  /**
+   * What the evidence records is the renderer that drew THESE bytes.
+   *
+   * It used to record `premium_weasyprint` on every download, including after
+   * WeasyPrint had stopped being reachable from this path at all — false
+   * production telemetry, which is worse than none because it is read as
+   * evidence of what happened.
+   */
+  const logDownload = (doc: InvestmentDocument, flattened?: boolean) => logActivityDirect({
+    actionType: "report_pdf_downloaded",
+    entityType: "investment_report",
+    entityId: reportId,
+    entityName: propertyAddress,
+    metadata: {
+      format: "pdf",
+      source: doc.engine,
+      templateId: doc.templateId,
+      ...(flattened ? { flattened: true } : {}),
+      designOptions,
+    },
+  });
 
   const handleClick = async () => {
     if (loading) return;
     setLoading(true);
     try {
-      const doc = await produceInvestmentDocument(reportId, {
-        includeCharts,
-        includeHeroImages,
-        includeSparklines,
-        designOptions,
-      });
-
-      logActivityDirect({
-        actionType: "report_pdf_downloaded",
-        entityType: "investment_report",
-        entityId: reportId,
-        entityName: propertyAddress,
-        metadata: { format: "pdf", source: "premium_weasyprint", designOptions },
-      });
-
+      const doc = await produceInvestmentDocument(reportId, options());
+      await logDownload(doc);
       saveTemplateDocument({ blob: doc.blob, fileName: doc.fileName, templateId: doc.templateId ?? "" });
-
       toast({
-        title: "Premium PDF ready",
-        description: doc.engine === "template"
-          ? "Rendered with your report template. Your download should begin shortly."
-          : "Rendered with the standard layout. Your download should begin shortly.",
+        title: "Client PDF ready",
+        description: doc.engine === BROWSER_PRESENTATION_RENDERER
+          ? "Rendered with your selected template. Your download should begin shortly."
+          : "Rendered with the standard presentation. Your download should begin shortly.",
       });
     } catch (err: any) {
-      console.error("[PremiumPdfButton]", err);
+      console.error("[ClientPdfButton]", err);
       toast({
-        title: "Premium PDF failed",
-        description: err?.message || "Try the standard PDF or retry shortly.",
+        title: "The client PDF could not be produced",
+        description: err?.message || "Please retry shortly.",
         variant: "destructive",
       });
     } finally {
@@ -77,22 +114,13 @@ export function PremiumPdfButton({
     }
   };
 
-  const renderForFlatten = useCallback(async (): Promise<{ blob: Blob; fileName: string }> => {
-    const doc = await produceInvestmentDocument(reportId, {
-      includeCharts,
-      includeHeroImages,
-      includeSparklines,
-      designOptions,
-    });
-    await logActivityDirect({
-      actionType: "report_pdf_downloaded",
-      entityType: "investment_report",
-      entityId: reportId,
-      entityName: propertyAddress,
-      metadata: { format: "pdf", source: "premium_weasyprint", flattened: true, designOptions },
-    });
-    return { blob: doc.blob, fileName: doc.fileName };
-  }, [reportId, propertyAddress, includeCharts, includeHeroImages, includeSparklines, designOptions]);
+  const renderForFlatten = useCallback(async (): Promise<Blob> => {
+    const doc = await produceInvestmentDocument(reportId, options());
+    await logDownload(doc, true);
+    return doc.blob;
+    // `logDownload` closes over the same values `options` does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportId, options]);
 
   return (
     <div className="inline-flex items-center gap-1">
@@ -106,12 +134,12 @@ export function PremiumPdfButton({
         {loading ? (
           <Loader2 className="h-4 w-4 mr-1 animate-spin" />
         ) : (
-          <Sparkles className="h-4 w-4 mr-1" />
+          <FileDown className="h-4 w-4 mr-1" />
         )}
-        {loading ? "Rendering…" : "Premium PDF"}
+        {loading ? "Rendering…" : "Generate Client PDF"}
       </Button>
       <FlattenPdfIconButton
-        getPdfBlob={async () => (await renderForFlatten()).blob}
+        getPdfBlob={renderForFlatten}
         filename={`investment-report-${reportId}.pdf`}
         disabled={loading}
       />

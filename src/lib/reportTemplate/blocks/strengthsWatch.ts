@@ -24,8 +24,25 @@ export function drawStrengthsWatchBlock(block: Block, ctx: BlockRenderContext): 
 
   const strengthsTitle = resolveBindable(p.strengthsTitle ?? 'Strengths', ctx);
   const watchTitle = resolveBindable(p.watchTitle ?? 'Watch Points', ctx);
-  const strengths = Array.isArray(p.strengths) ? (p.strengths as string[]) : [];
-  const watch = Array.isArray(p.watch) ? (p.watch as string[]) : [];
+  /*
+   * Resolved and emptied here, not inside the draw.
+   *
+   * The items are bindings, and `investment_score.strengths` /
+   * `.weaknesses` are `[]` on a report whose evidence was insufficient to
+   * grade — which is the ordinary state, not an error. The draw placed the
+   * glyph badge BEFORE the text, so an item that resolved to nothing put a
+   * coloured dot under the heading bar and no words beside it: on the
+   * certification render, "STRENGTHS" and "CONSIDERATIONS" were two title
+   * bars each with one stray bullet. The rule is `definition-list`'s — a
+   * list with nothing in it draws nothing at all, no heading rule hanging
+   * over empty space and above all no placeholder.
+   */
+  const resolveItems = (raw: unknown): string[] => (Array.isArray(raw) ? raw : [])
+    .map((it) => resolveBindable(it, ctx).trim())
+    .filter((t) => t.length > 0);
+  const strengths = resolveItems(p.strengths);
+  const watch = resolveItems(p.watch);
+  if (strengths.length === 0 && watch.length === 0) return;
 
   const drawColumn = (
     cx: number,
@@ -34,6 +51,8 @@ export function drawStrengthsWatchBlock(block: Block, ctx: BlockRenderContext): 
     accent: { r: number; g: number; b: number },
     glyph: '+' | '!',
   ) => {
+    // A column with nothing in it draws nothing — not even its title bar.
+    if (items.length === 0) return;
     // Title bar
     doc.setFillColor(accent.r, accent.g, accent.b);
     doc.rect(cx, y, colW, 22, 'F');
@@ -43,8 +62,7 @@ export function drawStrengthsWatchBlock(block: Block, ctx: BlockRenderContext): 
     doc.text(String(title).toUpperCase(), cx + 12, y + 15);
 
     let iy = y + 22 + 12;
-    items.forEach((it, idx) => {
-      const text = resolveBindable(it, ctx);
+    items.forEach((text, idx) => {
       const lines = doc.splitTextToSize(text, colW - 30);
       // Glyph badge
       doc.setFillColor(accent.r, accent.g, accent.b);

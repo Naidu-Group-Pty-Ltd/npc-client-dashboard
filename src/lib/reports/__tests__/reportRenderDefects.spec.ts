@@ -72,12 +72,26 @@ const ROW = {
 };
 
 describe('a templated body draws the figures the model asked for', () => {
-  const block = code('src/lib/reportTemplate/blocks/markdownBlock.html.ts');
+  // The block's directive rendering moved into `markdownBlockContent.ts` when
+  // the browser PDF renderer began drawing the same bucket: both surfaces now
+  // read one resolution rather than two that agree. The rule is unchanged and
+  // is asserted against whichever module owns it, not against a line of it.
+  const block = code('src/lib/reportTemplate/blocks/markdownBlockContent.ts');
   const projection = code('supabase/functions/_shared/reportBindingProjection.pure.ts');
 
   it('the markdown block passes a directive renderer in the template palette', () => {
-    expect(block).toContain('renderDirective: vizDirectiveRenderer(chartCtx)');
+    expect(block).toContain('vizDirectiveRenderer');
     expect(block).toContain('CHART_TARGET_WIDTH_MM');
+  });
+
+  it('and neither renderer resolves that content for itself', () => {
+    for (const path of [
+      'src/lib/reportTemplate/blocks/markdownBlock.html.ts',
+      'src/lib/reportTemplate/blocks/markdownBlock.ts',
+    ]) {
+      expect(code(path)).toContain('resolveMarkdownBlockContent');
+      expect(code(path)).not.toContain('vizDirectiveRenderer(');
+    }
   });
 
   it('the projection charges the same directives, so the page count agrees', () => {

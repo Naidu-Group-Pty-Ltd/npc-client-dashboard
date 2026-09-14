@@ -124,7 +124,7 @@ import { planningChartContext, vizDirectiveRenderer } from './reports/vizFigures
 import { reconcileStoredFinancials } from './reports/investment/financialEngine.pure.ts';
 import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
 import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
-import { gradedDetailLine, gradedLine } from './reports/investment/scoreSections.pure.ts';
+import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -543,8 +543,19 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   const recommendation: Record<string, unknown> = {};
   put(recommendation, 'headline', str(score.recommendation));
   put(recommendation, 'action', recommendationAction(str(score.recommendation)));
-  put(recommendation, 'grade', str(score.grade));
-  put(recommendation, 'score', num(score.totalScore));
+  // The grade and its score go through the ONE rule that decides whether this
+  // record may state a grade at all. This used to be `str(score.grade)`, which
+  // published the scorer's own `'N/A'` sentinel verbatim: every selectable
+  // template bound it into `'{{recommendation.grade}} · {{…score}} out of
+  // 100'` and printed "Assessment grade  N/A · out of 100" on the client's
+  // method page, on a record whose `policy.gradeIssued` is `false`.
+  //
+  // The score travels with it. A number out of 100 beside no grade is the
+  // same claim wearing one fewer word, and `gradedLine` has always refused
+  // both together.
+  const gradePublishable = publishableGrade(score);
+  put(recommendation, 'grade', gradePublishable);
+  put(recommendation, 'score', gradePublishable === undefined ? undefined : num(score.totalScore));
   // The verdict sentence, composed here so it exists only when the record can
   // say it. The templates used to interpolate grade and score into a literal
   // ("Graded {{grade}} at {{score}} out of 100, weighted across growth,

@@ -64,7 +64,9 @@ const FROZEN = new Map<string, number>([
   ['src/components/clients/PropertyReportGenerator.tsx', 3],
   ['src/components/clients/review-wizard/useReviewWizard.ts', 3],
   ['src/components/finance-portal/CalculatorsTab.tsx', 1],
-  ['src/components/reports/PixelPerfectPDFGenerator.tsx', 1],
+  // RC-3.1 moved the Investment drawing out of the React component into this
+  // module, unchanged. The definition MOVED — the ratchet does not go up.
+  ['src/lib/reports/investment/investmentPdfDocument.ts', 1],
   ['src/components/reports/manual-inputs/IncomeExpensesTab.tsx', 1],
   ['src/lib/cashFlow/investmentMetrics.pure.ts', 1],
   ['src/lib/cashFlow/projectionEngine.pure.ts', 4],

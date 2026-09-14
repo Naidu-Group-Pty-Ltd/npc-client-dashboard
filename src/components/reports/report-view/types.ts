@@ -50,7 +50,6 @@ export interface ExportPanelProps {
   includeHeroImages: boolean;
   includeSparklines: boolean;
   pdfDesignOptions: PdfDesignOptions;
-  pdfGeneratorRef: RefObject<PixelPerfectPDFGeneratorHandle | null>;
   onIncludeSourcesChange: (checked: boolean) => void;
   onIncludeScoringChange: (checked: boolean) => void;
   onIncludeChartsChange: (checked: boolean) => void;

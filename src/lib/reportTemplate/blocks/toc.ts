@@ -8,7 +8,7 @@ import type { BlockRenderContext } from './index';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 
 export function drawTocBlock(block: Block, ctx: BlockRenderContext): void {
-  const { doc, page, pages = [] } = ctx as BlockRenderContext & { pages?: { name: string }[] };
+  const { doc, page, pages = [] } = ctx;
   const p = block.props as Record<string, unknown>;
   const x = Number(p.x ?? 24);
   let y = Number(p.y ?? 80);
@@ -32,7 +32,7 @@ export function drawTocBlock(block: Block, ctx: BlockRenderContext): void {
   // A continuation folds into the entry above it, exactly as the HTML renderer
   // does — the Builder preview must not disagree with the printed document
   // about how many sections a report has. See `PageSchema.tocContinues`.
-  const entries = (pages as Array<{ name?: string; tocContinues?: boolean }>)
+  const entries = pages
     .map((pg, i) => ({ pg, i }))
     .filter(({ pg, i }) => i === 0 || pg.tocContinues !== true);
 

@@ -105,7 +105,10 @@ const TEMPLATE_ROW = {
     tokens: { colors: {}, fonts: {}, spacing: {} },
     pages: [{
       id: 'p1', name: 'Cover', size: { width: 595, height: 842 }, background: {},
-      blocks: [{ id: 'b1', type: 'text', props: { body: '{{portfolio.review.summary}}' } }],
+      // A block type the browser renderer actually draws: the route refuses a
+      // template whose blocks it cannot draw whole, which is the point of the
+      // capability gate that replaced the `engine` column check.
+      blocks: [{ id: 'b1', type: 'text-block', props: { body: '{{portfolio.review.summary}}', x: 40, y: 100, width: 500 } }],
     }],
   },
 };
@@ -202,19 +205,21 @@ describe('the generic entry point', () => {
       variant: 'optimistic',
     });
     expect(result).toMatchObject({
-      fileUrl: 'https://cdn.example/x.pdf',
-      renderer: 'weasyprint',
+      renderer: 'browser_template_jspdf',
       templateId: TEMPLATE_ROW.id,
       source: 'global:portfolio',
     });
+    expect(result?.blob.size).toBeGreaterThan(0);
     expect(h.routingCalls[0].variant).toBe('optimistic');
     expect(h.bindingCalls[0]).toMatchObject({ variant: 'optimistic' });
-    // The proof the binding data flowed: the rendered HTML the PDF call
-    // received carries the review sentence the fake adapter published.
-    const [fnName, payload] = h.invokeCalls[0];
-    expect(fnName).toBe('render-template-pdf');
-    expect(String(payload.html)).toContain('All good.');
-    expect(String(payload.html)).not.toContain('{{');
+    // The proof the binding data flowed, read off the DOCUMENT rather than off
+    // a payload posted to a render service: the drawn PDF carries the review
+    // sentence the fake adapter published, and no unresolved binding.
+    const drawn = Buffer.from(await result!.blob.arrayBuffer()).toString('latin1');
+    expect(drawn).toContain('All good.');
+    expect(drawn).not.toContain('{{');
+    // Nothing was sent anywhere to draw it.
+    expect(h.invokeCalls).toEqual([]);
   });
 
   it('normalises the caller\'s spelling through the real alias map', async () => {
@@ -245,8 +250,32 @@ describe('the generic entry point', () => {
     expect(h.invokeCalls).toEqual([]);
   });
 
-  it('resolves null — never throws — when the PDF render fails', async () => {
-    h.invokeResult = { data: null, error: { message: 'render container is down' } };
+  /**
+   * This used to simulate the render CONTAINER failing. There is no container
+   * — the document is drawn in this browser — so the reachable failure is a
+   * template the renderer cannot draw whole, and the answer is the same: null,
+   * never a throw, so the caller falls back to the standard presentation.
+   *
+   * A placeholder panel is worse than a missing block, because it looks
+   * deliberate. The refusal is the point.
+   */
+  it('resolves null — never throws — for a template it cannot draw whole', async () => {
+    h.resolved = {
+      template: {
+        ...TEMPLATE_ROW,
+        schema: {
+          ...TEMPLATE_ROW.schema,
+          pages: [{
+            ...TEMPLATE_ROW.schema.pages[0],
+            // `gantt` has never had a browser renderer; it would paint a
+            // dashed placeholder box on a client's page.
+            blocks: [...TEMPLATE_ROW.schema.pages[0].blocks, { id: 'b2', type: 'gantt', props: {} }],
+          }],
+        },
+      },
+      engine: 'weasyprint',
+      source: 'global',
+    };
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = await tryRouteThroughTemplateBuilderFor('portfolio', REPORT_ID);
     expect(result).toBeNull();

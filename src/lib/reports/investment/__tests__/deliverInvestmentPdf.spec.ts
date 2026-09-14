@@ -1,7 +1,14 @@
 /**
- * The investment delivery chain: template first, legacy route fallback, one
- * implementation for every surface. Behavioural, with the engines mocked —
- * what is pinned is the ORDER, the forwarding, and what publish stores.
+ * The investment delivery chain: template first, the browser's own renderer
+ * behind it, one implementation for every surface. Behavioural, with the
+ * engines mocked — what is pinned is the ORDER and what publish stores.
+ *
+ * RC-3.1 replaced the second engine. It was `render-investment-report-pdf`,
+ * which composed HTML and handed it to WeasyPrint on Cloud Run; it is
+ * `generateInvestmentPdfBlob` now, the pdf-lib implementation that has drawn
+ * almost every Investment PDF this product has delivered. The contract around
+ * it — template wins, something always draws, the result names its engine, one
+ * upload through one broker — is unchanged, and that is what these pin.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,12 +17,28 @@ vi.mock('@/lib/reportTemplate/templateDocument', () => ({
   tryTemplateDocument: vi.fn(),
   saveTemplateDocument: vi.fn(),
 }));
-vi.mock('@/lib/pdf/downloadPdf', () => ({ fetchPdfBlob: vi.fn() }));
+vi.mock('@/lib/reports/investment/investmentPdfDocument', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>(
+    '@/lib/reports/investment/investmentPdfDocument',
+  );
+  return { ...actual, generateInvestmentPdfBlob: vi.fn() };
+});
+vi.mock('@/lib/reports/investment/investmentPdfSource', () => ({
+  loadInvestmentReportForPdf: vi.fn(),
+  projectRowForPdf: vi.fn(() => ({ report: { id: 'r-1' }, reportTier: 'compass' })),
+}));
 vi.mock('@/hooks/useSecureStorage', () => ({ secureStorageUpload: vi.fn() }));
 
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { saveTemplateDocument, tryTemplateDocument } from '@/lib/reportTemplate/templateDocument';
-import { fetchPdfBlob } from '@/lib/pdf/downloadPdf';
+import {
+  generateInvestmentPdfBlob,
+  BROWSER_PDF_RENDERER,
+} from '@/lib/reports/investment/investmentPdfDocument';
+// Two browser renderers, two identities: telemetry has to answer WHICH one
+// produced these exact bytes, and one name for both answers ends that.
+import { BROWSER_PRESENTATION_RENDERER } from '@/lib/reportTemplate/routeReportThroughTemplate';
+import { loadInvestmentReportForPdf } from '@/lib/reports/investment/investmentPdfSource';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 import {
   deliverInvestmentPdf,
@@ -25,7 +48,8 @@ import {
 
 const invoke = vi.mocked(invokeSecureFunction);
 const tryTemplate = vi.mocked(tryTemplateDocument);
-const fetchBlob = vi.mocked(fetchPdfBlob);
+const draw = vi.mocked(generateInvestmentPdfBlob);
+const loadRow = vi.mocked(loadInvestmentReportForPdf);
 const upload = vi.mocked(secureStorageUpload);
 const save = vi.mocked(saveTemplateDocument);
 
@@ -33,59 +57,71 @@ const pdfBlob = (content = '%PDF-1.7 test') => new Blob([content], { type: 'appl
 
 beforeEach(() => {
   vi.resetAllMocks();
+  /*
+   * The record is read ONCE, before a presentation is chosen, because the
+   * client-readiness gate and the two content rules both apply above that
+   * choice. Every test here therefore needs a row — a template-path test that
+   * supplied none used to pass by never reading one.
+   */
+  loadRow.mockResolvedValue({
+    id: 'r-1',
+    report_content: '# 1. Summary\n\nThe property was purchased for $700,000.\n',
+    validation_flags: [],
+  } as never);
 });
 
 describe('produceInvestmentDocument', () => {
-  it('the chosen/ranked template wins, and the legacy route is never asked', async () => {
+  it('the chosen/ranked template wins, and nothing else is drawn', async () => {
     tryTemplate.mockResolvedValue({ blob: pdfBlob(), fileName: 'doc.pdf', templateId: 't-1' });
 
     const doc = await produceInvestmentDocument('r-1', { variant: 'briefing' });
 
-    expect(doc.engine).toBe('template');
+    expect(doc.engine).toBe(BROWSER_PRESENTATION_RENDERER);
     expect(doc.templateId).toBe('t-1');
-    expect(tryTemplate).toHaveBeenCalledWith('investment', 'r-1', { variant: 'briefing' });
+    // The route is handed the report's presented content — the record's own
+    // Markdown with the operator's content rules already applied — so the
+    // template draws the same sections the standard presentation would.
+    expect(tryTemplate).toHaveBeenCalledWith('investment', 'r-1', {
+      variant: 'briefing',
+      payload: { reportContent: expect.stringContaining('$700,000') },
+    });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(draw).not.toHaveBeenCalled();
+  });
+
+  it('draws the standard document in the browser when no template applies', async () => {
+    tryTemplate.mockResolvedValue(null);
+    draw.mockResolvedValue({
+      blob: pdfBlob(), fileName: 'r-1_Cowra_NSW_1.pdf',
+      suburb: 'Cowra', state: 'NSW', renderer: BROWSER_PDF_RENDERER,
+    });
+
+    const doc = await produceInvestmentDocument('r-1');
+
+    expect(doc.engine).toBe(BROWSER_PDF_RENDERER);
+    expect(doc.templateId).toBeNull();
+    expect(doc.fileName).toBe('r-1_Cowra_NSW_1.pdf');
+    // The row is read through the broker, and the drawing happens here — no
+    // render route is invoked at all.
+    expect(loadRow).toHaveBeenCalledWith('r-1');
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('falls back to the legacy route with the presentation switches forwarded', async () => {
+  it('a report that cannot be read is an error, not an empty document', async () => {
     tryTemplate.mockResolvedValue(null);
-    invoke.mockResolvedValue({ data: { fileUrl: 'https://x/y.pdf', fileName: 'legacy.pdf', renderer: 'weasyprint' }, error: null } as any);
-    fetchBlob.mockResolvedValue(pdfBlob());
+    loadRow.mockRejectedValue(new Error('The report could not be read.'));
 
-    const doc = await produceInvestmentDocument('r-1', {
-      includeCharts: false,
-      includeHeroImages: true,
-      includeSparklines: false,
-      designOptions: { accent: 'x' } as any,
+    await expect(produceInvestmentDocument('r-1')).rejects.toThrow(/could not be read/i);
+    expect(draw).not.toHaveBeenCalled();
+  });
+
+  it('an empty drawing is a failure, not a document', async () => {
+    tryTemplate.mockResolvedValue(null);
+    loadRow.mockResolvedValue({ id: 'r-1' } as any);
+    draw.mockResolvedValue({
+      blob: new Blob([], { type: 'application/pdf' }), fileName: 'x.pdf',
+      suburb: '', state: '', renderer: BROWSER_PDF_RENDERER,
     });
-
-    expect(doc.engine).toBe('legacy_server');
-    expect(doc.templateId).toBeNull();
-    expect(invoke).toHaveBeenCalledWith(
-      'render-investment-report-pdf',
-      expect.objectContaining({
-        reportId: 'r-1',
-        includeCharts: false,
-        includeHeroImages: true,
-        includeSparklines: false,
-        designOptions: { accent: 'x' },
-      }),
-      expect.objectContaining({ timeoutMs: 240_000 }),
-    );
-    expect(fetchBlob).toHaveBeenCalledWith('https://x/y.pdf');
-  });
-
-  it('throws the failing engine message when nothing can produce the document', async () => {
-    tryTemplate.mockResolvedValue(null);
-    invoke.mockResolvedValue({ data: null, error: { message: 'renderer down' } } as any);
-
-    await expect(produceInvestmentDocument('r-1')).rejects.toThrow('renderer down');
-  });
-
-  it('an empty legacy body is a failure, not a document', async () => {
-    tryTemplate.mockResolvedValue(null);
-    invoke.mockResolvedValue({ data: { fileUrl: 'https://x/y.pdf', fileName: 'legacy.pdf' }, error: null } as any);
-    fetchBlob.mockResolvedValue(new Blob([], { type: 'application/pdf' }));
 
     await expect(produceInvestmentDocument('r-1')).rejects.toThrow(/empty/i);
   });
@@ -115,7 +151,7 @@ describe('publishInvestmentPdf', () => {
 
     const published = await publishInvestmentPdf('r-1');
 
-    expect(published).toMatchObject({ path: 'stored/My-Doc-v2.pdf', engine: 'template', templateId: 't-1' });
+    expect(published).toMatchObject({ path: 'stored/My-Doc-v2.pdf', engine: BROWSER_PRESENTATION_RENDERER, templateId: 't-1' });
     expect(upload).toHaveBeenCalledWith(
       'investment-reports',
       expect.stringContaining('r-1_'),
@@ -129,46 +165,31 @@ describe('publishInvestmentPdf', () => {
     }));
   });
 
-  it('reuses the path the legacy route just persisted rather than re-uploading', async () => {
+  it('uploads a browser-drawn document too — there is no persisted path to reuse', async () => {
+    // The shortcut this replaces read `pdf_url` back, because the server route
+    // had already written it. Nothing writes a render behind our back now, so
+    // reading it back could only return whichever render happened to run last.
     tryTemplate.mockResolvedValue(null);
-    fetchBlob.mockResolvedValue(pdfBlob());
-    invoke.mockImplementation(async (fn: string) => {
-      if (fn === 'render-investment-report-pdf') {
-        return { data: { fileUrl: 'https://signed/x.pdf', fileName: 'x.pdf' }, error: null } as any;
-      }
-      if (fn === 'get-investment-reports') {
-        return { data: { report: { id: 'r-1', pdf_url: 'investment-report-x.pdf' } }, error: null } as any;
-      }
-      throw new Error(`unexpected invoke ${fn}`);
+    loadRow.mockResolvedValue({ id: 'r-1' } as any);
+    draw.mockResolvedValue({
+      blob: pdfBlob(), fileName: 'r-1_Cowra_NSW_1.pdf',
+      suburb: 'Cowra', state: 'NSW', renderer: BROWSER_PDF_RENDERER,
     });
+    upload.mockResolvedValue({ success: true, path: 'r-1_123_r-1_Cowra_NSW_1.pdf' } as any);
+    invoke.mockResolvedValue({ data: { success: true }, error: null } as any);
 
     const published = await publishInvestmentPdf('r-1');
 
-    expect(published).toMatchObject({ path: 'investment-report-x.pdf', engine: 'legacy_server' });
-    expect(upload).not.toHaveBeenCalled();
-  });
-
-  it('uploads when the legacy route left only an external URL behind', async () => {
-    tryTemplate.mockResolvedValue(null);
-    fetchBlob.mockResolvedValue(pdfBlob());
-    invoke.mockImplementation(async (fn: string) => {
-      if (fn === 'render-investment-report-pdf') {
-        return { data: { fileUrl: 'https://api2pdf/x.pdf', fileName: 'x.pdf' }, error: null } as any;
-      }
-      if (fn === 'get-investment-reports') {
-        return { data: { report: { id: 'r-1', pdf_url: 'https://api2pdf/x.pdf' } }, error: null } as any;
-      }
-      if (fn === 'manage-investment-reports') {
-        return { data: { success: true }, error: null } as any;
-      }
-      throw new Error(`unexpected invoke ${fn}`);
+    expect(published).toMatchObject({
+      path: 'r-1_123_r-1_Cowra_NSW_1.pdf', engine: BROWSER_PDF_RENDERER,
     });
-    upload.mockResolvedValue({ success: true, path: 'r-1_123_x.pdf' } as any);
-
-    const published = await publishInvestmentPdf('r-1');
-
     expect(upload).toHaveBeenCalled();
-    expect(published.path).toBe('r-1_123_x.pdf');
+    // One write, through the one broker every client write uses.
+    expect(invoke).toHaveBeenCalledWith('manage-investment-reports', expect.objectContaining({
+      action: 'update',
+      reportId: 'r-1',
+      data: { pdf_url: 'r-1_123_r-1_Cowra_NSW_1.pdf' },
+    }));
   });
 
   it('a failed upload is an error the caller hears about', async () => {

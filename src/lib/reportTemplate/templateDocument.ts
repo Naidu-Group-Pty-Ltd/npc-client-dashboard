@@ -187,7 +187,7 @@ export async function tryTemplateDocument(
       templateId: selectedId,
       payload: opts?.payload ?? null,
     });
-    if (!routed?.fileUrl) {
+    if (!routed?.blob) {
       if (selectedId) {
         notifySelectionNotUsed(refusal ? TEMPLATE_ROUTE_REFUSAL_TEXT[refusal] : undefined);
       }
@@ -205,22 +205,15 @@ export async function tryTemplateDocument(
       });
     }
 
-    // Fetched rather than followed, for the reason every `deliver*` module
-    // gives: a PDF that opens in a tab is a PDF someone has to find again.
-    const response = await fetch(routed.fileUrl);
-    if (!response.ok) {
-      if (selectedId) notifySelectionNotUsed('The rendered file could not be fetched');
-      return null;
-    }
-    const blob = await response.blob();
-    // A zero-byte body is not a document. It would save as a file that opens
-    // to an error, which is worse than the legacy layout.
-    if (!blob.size) {
-      if (selectedId) notifySelectionNotUsed('The rendered file was empty');
-      return null;
-    }
-
-    return { blob, fileName: routed.fileName, templateId: routed.templateId };
+    /*
+     * The document is here. It used to be a signed URL this fetched back from
+     * the storage bucket a render service had written it to — one more hop, one
+     * more thing to be unreachable, and a second place that had to agree the
+     * file was not empty. The renderer runs in this tab now, so the blob it
+     * produced is the blob that is delivered, and the emptiness check lives
+     * once, beside the render.
+     */
+    return { blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId };
   } catch {
     if (selectedId) notifySelectionNotUsed();
     return null;

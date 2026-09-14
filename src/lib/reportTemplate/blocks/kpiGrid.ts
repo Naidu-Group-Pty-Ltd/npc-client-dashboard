@@ -56,7 +56,11 @@ export function drawKpiGridBlock(block: Block, ctx: BlockRenderContext): void {
     doc.setTextColor(lab.r, lab.g, lab.b);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(String(item.label || '').toUpperCase(), tx + 12, y + h - 10, { maxWidth: tileW - 24 });
+    // Bindable for the same reason `value` is: a master is free to bind a
+    // tile's caption, and a caption that renders as `{{…}}` is the defect this
+    // renderer's contract names. Today's masters author them as literals, so
+    // this changes no drawn document.
+    doc.text(resolveBindable(item.label ?? '', ctx).toUpperCase(), tx + 12, y + h - 10, { maxWidth: tileW - 24 });
   });
 }
 

@@ -61,7 +61,11 @@ describe('the legacy path still exists', () => {
     // is the only way anything outside can reach the generated blob.
     expect(source).toContain('export const PixelPerfectPDFGenerator = forwardRef');
     expect(source).toContain('export interface PixelPerfectPDFGeneratorHandle');
-    expect(source).toContain("from 'pdf-lib'");
+    // The drawing moved to `investmentPdfDocument` in RC-3.1 so that
+    // `deliverInvestmentPdf` and this component share ONE implementation. What
+    // this test protects is the comparison path's reach into it, which is the
+    // imperative handle — unchanged.
+    expect(source).toContain('generateInvestmentPdfBlob');
     expect(source).toContain('generateAndUpload');
   });
 

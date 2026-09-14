@@ -58,7 +58,6 @@ export default function InvestmentReportView() {
   const [includeSparklines, setIncludeSparklines] = useState(true);
   const [pdfDesignOptions, setPdfDesignOptions] = useState<PdfDesignOptions>(DEFAULT_PDF_DESIGN_OPTIONS);
   const [showOverrides, setShowOverrides] = useState(true);
-  const pdfGeneratorRef = useRef<PixelPerfectPDFGeneratorHandle>(null);
 
   const isClientReport = report?.is_client_report === true;
 
@@ -271,7 +270,6 @@ export default function InvestmentReportView() {
                 includeHeroImages={includeHeroImages}
                 includeSparklines={includeSparklines}
                 pdfDesignOptions={pdfDesignOptions}
-                pdfGeneratorRef={pdfGeneratorRef}
                 onIncludeSourcesChange={setIncludeSources}
                 onIncludeScoringChange={setIncludeScoring}
                 onIncludeChartsChange={setIncludeCharts}
@@ -345,28 +343,27 @@ export default function InvestmentReportView() {
         reportTitle={report.property_address}
         reportTier={report.report_tier || undefined}
         storagePath={null}
+        /*
+         * The same contract the download button asks, with the same five
+         * controls. There used to be a second generator behind this on
+         * failure — a different document, drawn from a different projection
+         * and honouring a different half of the switches — so a send that
+         * fell back delivered something the operator had never seen. The one
+         * contract already falls back from a chosen template to the standard
+         * presentation; a failure past that is a failure worth surfacing.
+         */
         onGeneratePDF={async () => {
-          try {
-            const published = await publishInvestmentPdf(report.id, {
-              variant: report.report_variant ?? null,
-              includeCharts,
-              includeHeroImages,
-              includeSparklines,
-              designOptions: pdfDesignOptions,
-            });
-            setReport((prev) => prev ? { ...prev, pdf_url: published.path } : prev);
-            return published.path;
-          } catch (err) {
-            console.warn('[InvestmentReportView] standard publish failed; falling back to browser generator', err);
-            if (pdfGeneratorRef.current) {
-              const url = await pdfGeneratorRef.current.generateAndUpload();
-              if (url) {
-                setReport((prev) => prev ? { ...prev, pdf_url: url } : prev);
-              }
-              return url;
-            }
-            return null;
-          }
+          const published = await publishInvestmentPdf(report.id, {
+            variant: report.report_variant ?? null,
+            includeSources,
+            includeScoring,
+            includeCharts,
+            includeHeroImages,
+            includeSparklines,
+            designOptions: pdfDesignOptions,
+          });
+          setReport((prev) => prev ? { ...prev, pdf_url: published.path } : prev);
+          return published.path;
         }}
       />
 

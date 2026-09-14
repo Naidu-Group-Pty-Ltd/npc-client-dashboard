@@ -39,7 +39,6 @@ import { CashFlowAnalysisModal } from '@/components/reports/CashFlowAnalysisModa
 import { RegenerateReportButton } from '@/components/reports/RegenerateReportButton';
 import { ReportVersionHistory } from '@/components/reports/ReportVersionHistory';
 import { ComparisonViewer } from '@/components/reports/ComparisonViewer';
-import { ClientPDFGenerator } from '@/components/reports/ClientPDFGenerator';
 import { deliverInvestmentPdf } from '@/lib/reports/investment/deliverInvestmentPdf';
 import { ReportTemplateSelector } from '@/components/reports/ReportTemplateSelector';
 import { INVESTMENT_REPORT_FORMAT } from '@/lib/reportTemplate/reportFormats';
@@ -665,8 +664,13 @@ export function ClientPropertyInvestmentReport({
                 reportType={INVESTMENT_REPORT_FORMAT.reportType}
                 formatLabel={INVESTMENT_REPORT_FORMAT.label}
               />
-              {/* The unified template-first delivery leads; the browser
-                  generator is the named legacy layout under it. */}
+              {/* ONE client-PDF action. A separately mounted browser
+                  generator used to sit under this as "Download (legacy
+                  layout)" with `includeSources` and `includeScoring` HARD-CODED
+                  true — so this sheet offered two buttons that produced two
+                  documents, and the second one ignored the template chosen
+                  directly above it. `deliverInvestmentPdf` is the same contract
+                  every other Investment surface asks. */}
               <Button
                 className="gap-2"
                 disabled={isDownloadingUnifiedPdf}
@@ -690,22 +694,6 @@ export function ClientPropertyInvestmentReport({
                 <Download className="h-4 w-4" />
                 {isDownloadingUnifiedPdf ? 'Preparing…' : 'Download PDF'}
               </Button>
-              <ClientPDFGenerator
-                report={{
-                  id: selectedReportForPDF.id,
-                  property_address: selectedReportForPDF.property_address,
-                  report_content: selectedReportForPDF.report_content,
-                  demographics_data: selectedReportForPDF.demographics_data,
-                  economic_data: selectedReportForPDF.economic_data,
-                  financial_calculations: selectedReportForPDF.financial_calculations,
-                  investment_score: selectedReportForPDF.investment_score,
-                  location_intelligence: selectedReportForPDF.location_intelligence,
-                  manual_overrides: selectedReportForPDF.manual_overrides,
-                }}
-                includeSources={true}
-                includeScoring={true}
-                appearance="legacy"
-              />
             </div>
           </SheetContent>
         </Sheet>

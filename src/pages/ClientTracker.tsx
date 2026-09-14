@@ -209,7 +209,6 @@ interface PipelineSyncOutcome {
  * one screen syncs further than the other.
  */
 async function runPipelineSyncToCompletion(): Promise<PipelineSyncOutcome> {
-  let resumeAfterContactId: string | null = null;
   let runStartedAt: string | null = null;
   let passes = 0;
   let pipelinesFound = 0;
@@ -218,8 +217,16 @@ async function runPipelineSyncToCompletion(): Promise<PipelineSyncOutcome> {
 
   while (passes < MAX_PIPELINE_SYNC_PASSES) {
     passes++;
+    /*
+     * `runStartedAt` is the whole resume.
+     *
+     * There used to be a contact-id cursor beside it. The server re-derives
+     * the position now, by ordering contacts on how long ago their
+     * opportunities were last stamped and taking those not yet stamped in
+     * this run — which is what lets the hourly cron make progress too, since
+     * a static cron body has nowhere to put a cursor.
+     */
     const payload: Record<string, unknown> = {};
-    if (resumeAfterContactId) payload.resumeAfterContactId = resumeAfterContactId;
     if (runStartedAt) payload.runStartedAt = runStartedAt;
 
     const { data, error } = await invokeSecureFunction<any>('sync-ghl-pipelines', payload);
@@ -234,20 +241,21 @@ async function runPipelineSyncToCompletion(): Promise<PipelineSyncOutcome> {
 
     if (!data.hasMore) return { ok: true, passes, pipelinesFound, opportunitiesStored, clientsUpdated };
 
-    const next = typeof data.nextResumeAfterContactId === 'string' ? data.nextResumeAfterContactId : null;
     /*
-     * No cursor, or one that has not moved. Stop rather than spin.
+     * A pass that moved nothing ends the loop.
      *
-     * This is also what a deployment running the PREVIOUS version of the
-     * function looks like from here: it answers with no `hasMore` at all, so
-     * the check above already returned, and this guard catches the narrower
-     * case where the field arrives without a usable cursor beside it.
+     * With the cursor gone, progress is measured rather than inferred: a pass
+     * that processed no contacts will process none on the next attempt
+     * either, and looping on it is a spin against GHL. This also covers a
+     * deployment running the PREVIOUS version of the function, which answers
+     * without `stats.contactsProcessed` at all.
      */
-    if (!next || next === resumeAfterContactId) {
+    const moved = typeof data.stats?.contactsProcessed === 'number' ? data.stats.contactsProcessed : 0;
+    const nextRunStartedAt = typeof data.runStartedAt === 'string' ? data.runStartedAt : null;
+    if (moved <= 0 || !nextRunStartedAt) {
       return { ok: true, incomplete: true, passes, pipelinesFound, opportunitiesStored, clientsUpdated };
     }
-    resumeAfterContactId = next;
-    runStartedAt = typeof data.runStartedAt === 'string' ? data.runStartedAt : runStartedAt;
+    runStartedAt = nextRunStartedAt;
   }
 
   return { ok: true, incomplete: true, passes, pipelinesFound, opportunitiesStored, clientsUpdated };

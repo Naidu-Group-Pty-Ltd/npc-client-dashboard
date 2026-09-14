@@ -1,7 +1,14 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { sectionCountForTier, normaliseReportTier } from '@/lib/reports/compassSectionRegistry';
+import {
+  cancellationReason,
+  cancelledReportId,
+  DEFAULT_CANCELLATION_REASON,
+  REPORT_GENERATION_CANCELLED_EVENT,
+  REPORT_GENERATION_STARTED_EVENT,
+} from '@/lib/reports/generationSignals.pure';
 import { resolveGenerationEngine, type GenerationEngine } from '@/lib/reports/generationEngine.pure';
 
 export type RegenerationPhase = 'idle' | 'generate' | 'condense' | 'qa' | 'done';
@@ -44,6 +51,26 @@ export function useChunkedRegeneration() {
   });
 
   const abortRef = useRef(false);
+  /** The report this instance is driving, so a Stop elsewhere aborts the right run. */
+  const activeReportIdRef = useRef<string | null>(null);
+  /** What the stop should record. Set by the signal; `abort()` alone carries none. */
+  const abortReasonRef = useRef<string>(DEFAULT_CANCELLATION_REASON);
+
+  /* The progress widget's Stop is the caller `abort()` never had. Several
+     instances of this hook are mounted at once — every report card carries a
+     Regenerate button — so the id is compared: a Stop on one report must not
+     abort another card's regeneration. */
+  useEffect(() => {
+    const onCancelled = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      const id = cancelledReportId(detail);
+      if (!id || id !== activeReportIdRef.current) return;
+      abortReasonRef.current = cancellationReason(detail);
+      abortRef.current = true;
+    };
+    window.addEventListener(REPORT_GENERATION_CANCELLED_EVENT, onCancelled);
+    return () => window.removeEventListener(REPORT_GENERATION_CANCELLED_EVENT, onCancelled);
+  }, []);
 
   const regenerate = useCallback(async (options: ChunkedRegenerationOptions) => {
     const {
@@ -58,6 +85,8 @@ export function useChunkedRegeneration() {
     } = options;
 
     abortRef.current = false;
+    abortReasonRef.current = DEFAULT_CANCELLATION_REASON;
+    activeReportIdRef.current = reportId;
 
     const toastId = toast.loading('Starting regeneration...', {
       description: 'Preparing to regenerate report in chunks...'
@@ -149,11 +178,21 @@ export function useChunkedRegeneration() {
         throw new Error(`Failed to start regeneration: ${resetErr?.message || 'unknown error'}`);
       }
 
+      // The row is now 'processing' server-side. Wake the floating progress
+      // widget so the interactive surface — per-report progress, Stop, Pause,
+      // auto-continue, ETA, history — is on screen for the whole run rather
+      // than this hook's toast being the only feedback.
+      window.dispatchEvent(new Event(REPORT_GENERATION_STARTED_EVENT));
+
       const effectivePropertyAddress = propertyAddress || report?.property_address || '';
       const startSection = shouldResumeGeneration || shouldResumePostProcessing ? existingCompletedSection : 0;
 
       // ── Phase 1: Generate sections ────────────────────────────────────────
       let allSectionsComplete = false;
+      /* Sections banked by this run. A local, never `state.currentSection`:
+         `regenerate` is dependency-free by design, so `state` here is the value
+         captured on first render and would report 0 for ever. */
+      let sectionsDone = startSection;
       for (let section = startSection; section < totalSections; section++) {
         if (abortRef.current) {
           console.log('[ChunkedRegeneration] Aborted by user');
@@ -218,6 +257,8 @@ export function useChunkedRegeneration() {
           throw new Error(`Failed to generate section ${section + 1}: ${lastError}`);
         }
 
+        sectionsDone = allSectionsComplete ? totalSections : section + 1;
+
         // The edge function reports completion the moment the last section
         // lands. Without this the outer loop kept calling for section indices
         // that were already generated — every one of them a full round-trip
@@ -226,27 +267,62 @@ export function useChunkedRegeneration() {
         if (allSectionsComplete) break;
       }
 
-      // ── Phase 2: Condense + page-pressure trim ────────────────────────────
-      if (!abortRef.current) {
-        setState(prev => ({ ...prev, phase: 'condense', currentSection: totalSections }));
-        onProgress?.(totalSections, totalSections, 'condense');
-        toast.loading('Condensing report (word caps + page pressure)…', { id: toastId });
-
-        try {
-          await invokeSecureFunction('condense-investment-report', { reportId, tier }, { timeoutMs: 180000 });
-        } catch (e: any) {
-          console.warn('[ChunkedRegeneration] Condense step soft-failed:', e?.message);
+      // A stop is not a failure. Leaving it to fall through meant the final
+      // check below found an incomplete report, threw 'Report regeneration
+      // incomplete', and told the operator their own Stop had failed — then
+      // wrote `status: 'failed'` a second time over the reason the widget had
+      // already recorded ("Cancelled by <user>"). Say what happened and leave
+      // the row as the surface that stopped it left it.
+      if (abortRef.current) {
+        console.log('[ChunkedRegeneration] Stopped by user');
+        // Re-assert the stop, because this is the last writer by construction.
+        // The section already in flight when Stop was pressed keeps running,
+        // and on a budgeted hand-off it writes `status: 'processing'` as it
+        // returns — landing after the stopping surface's write and undoing it,
+        // so Stop reverted to "Processing" on the next poll. We only get here
+        // once that call has resolved.
+        //
+        // Never on a run that finished: the last section can land in the same
+        // beat as the Stop, and marking a completed report failed destroys it.
+        // Contained: a re-assert that fails must not fall into the catch below
+        // and report the operator's own Stop as a failed regeneration. The
+        // stopping surface has already written the row; this only defends it.
+        if (!allSectionsComplete) {
+          try {
+            await invokeSecureFunction('manage-investment-reports', {
+              action: 'update',
+              reportId,
+              data: { status: 'failed', error_message: abortReasonRef.current },
+            });
+          } catch (e: any) {
+            console.warn('[ChunkedRegeneration] Could not re-assert the stop:', e?.message);
+          }
         }
+        toast.info('Generation stopped', {
+          id: toastId,
+          description: `${effectivePropertyAddress || 'The report'} kept ${sectionsDone} of ${totalSections} sections and can be resumed.`,
+        });
+        setState(prev => ({ ...prev, isRegenerating: false, currentSection: sectionsDone, phase: 'idle' }));
+        return;
+      }
+
+      // ── Phase 2: Condense + page-pressure trim ────────────────────────────
+      setState(prev => ({ ...prev, phase: 'condense', currentSection: totalSections }));
+      onProgress?.(totalSections, totalSections, 'condense');
+      toast.loading('Condensing report (word caps + page pressure)…', { id: toastId });
+
+      try {
+        await invokeSecureFunction('condense-investment-report', { reportId, tier }, { timeoutMs: 180000 });
+      } catch (e: any) {
+        console.warn('[ChunkedRegeneration] Condense step soft-failed:', e?.message);
       }
 
       // ── Phase 3: QA validation (server returns qaReport inside condense response;
       //              we surface the phase for UX even though the work happens
       //              inside the same edge call). ───────────────────────────────
-      if (!abortRef.current) {
-        setState(prev => ({ ...prev, phase: 'qa' }));
-        onProgress?.(totalSections, totalSections, 'qa');
-        toast.loading('Running QA checks…', { id: toastId });
-      }
+      setState(prev => ({ ...prev, phase: 'qa' }));
+      onProgress?.(totalSections, totalSections, 'qa');
+      toast.loading('Running QA checks…', { id: toastId });
 
       // Final status check
       const { data: finalData } = await invokeSecureFunction('get-investment-reports', {
@@ -288,6 +364,10 @@ export function useChunkedRegeneration() {
       });
 
       onError?.(errorMessage);
+    } finally {
+      // Stop answering cancellations for a run that is over — including on the
+      // early return above, which `finally` still reaches.
+      activeReportIdRef.current = null;
     }
   }, []);
 

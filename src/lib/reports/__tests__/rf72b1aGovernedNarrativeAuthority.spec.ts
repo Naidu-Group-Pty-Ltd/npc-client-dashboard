@@ -551,14 +551,16 @@ describe('RF-7.2B.1A — the template route is gated too, and it is tried first'
   });
 
   /**
-   * The gate used to be the render SERVICE's: the route named the report to
-   * `render-template-pdf`, which read `validation_flags` and answered 409.
-   * Both render services are off the Investment path now, so a gate inside one
-   * of them would be a gate on nothing.
+   * The gate used to be the render SERVICE's alone: the route named the report
+   * to `render-template-pdf`, which read `validation_flags` and answered 409,
+   * and the browser's standard generator never asked — so a blocked report
+   * drew a PDF and saved it whenever no template was active.
    *
-   * It sits above both presentations instead, which is strictly stronger: the
-   * template route had it and the browser's standard generator never did, so a
-   * blocked report drew a PDF and saved it whenever no template was active.
+   * It sits above both presentations now, which is strictly stronger. The
+   * service still keeps its own reading for a `final` render (RS-2 brought
+   * the print engine back for the templated document), and that is a second
+   * gate behind the first rather than the only one: a client can be handed a
+   * stale row, a server cannot.
    */
   it('the readiness gate runs before a presentation is chosen at all', () => {
     const gate = produce.indexOf('assertInvestmentReportClientReady(');
@@ -578,8 +580,12 @@ describe('RF-7.2B.1A — the template route is gated too, and it is tried first'
     expect(readiness).toContain('governedNarrativeAuthority.pure');
   });
 
-  it('the route no longer asks a render service about the report', () => {
+  it('the route never names the render service itself — one client, one transport', () => {
+    // The final render goes through `weasyRenderClient`, the one module that
+    // names the function, so the route cannot address it by a second spelling
+    // or a hand-rolled fetch.
     expect(route).not.toContain("'render-template-pdf'");
+    expect(route).toContain("from '@/lib/reportTemplate/weasyRenderClient'");
   });
 
   it('the renderer reads the stored verdict and refuses with the same 409', () => {

@@ -51,6 +51,9 @@ import {
 } from '../reportDesign/charts.pure.ts';
 import { escapeHtml, renderCallout, renderSidenote } from '../reportDesign/primitives.pure.ts';
 import type { VizDirective } from './vizDirectives.pure.ts';
+import {
+  calloutCharge, figureCharge, sidenoteCharge, type NarrativeGeometry,
+} from './narrativeGeometry.pure.ts';
 
 /**
  * One body line, in millimetres.
@@ -88,6 +91,19 @@ export function figureLines(html: string, widthMm: number, captioned = false): n
   const heightMm = (h / w) * widthMm;
   return Math.max(2, Math.ceil(heightMm / MM_PER_LINE) + (captioned ? 1 : 0));
 }
+
+/** Height over width of the emitted `viewBox`, or null when there is none. */
+export function viewBoxRatio(svg: string): number | null {
+  const m = VIEW_BOX.exec(svg);
+  if (!m) return null;
+  const w = Number(m[1]) || 0;
+  const h = Number(m[2]) || 0;
+  return w > 0 && h > 0 ? h / w : null;
+}
+
+/** Characters of each item, for a callout charge. */
+const itemChars = (items: readonly { text: string; symbol?: string }[]): number[] =>
+  items.map((i) => `${i.symbol ?? ''} ${i.text}`.length);
 
 /** A short, bounded description for the `alt` a tagged PDF needs. */
 function describe(d: VizDirective): string {
@@ -139,6 +155,7 @@ function describe(d: VizDirective): string {
 export function renderVizDirective(
   ctx: ChartContext,
   d: VizDirective,
+  geometry: NarrativeGeometry | null = null,
 ): VizFigure | null {
   // Four kinds are drawn at `CHART_WIDTH.compact` and print at that width.
   // Stretching a gauge across the measure spends 136mm of a 253mm text block on
@@ -149,12 +166,19 @@ export function renderVizDirective(
     ? { ...ctx, widthMm: ctx.widthMm * COMPACT_FIGURE_FRACTION }
     : ctx;
 
+  // With a geometry the charge is the figure's printed height on THAT page —
+  // its aspect ratio at the block's measure (or the compact fraction of it),
+  // plus the block's own figure margins and caption — rather than the
+  // `MM_PER_LINE` constant, which is one family's leading and charged a gauge
+  // on a 14.7pt pitch at 62% of what it drew.
   const wrap = (svg: string, caption = ''): VizFigure | null => {
     if (!svg) return null;
     const html = chartFigure(svg, caption, describe(d), compact ? 'compact' : 'full');
-    return html
-      ? { html, lines: figureLines(svg, drawCtx.widthMm, Boolean(caption)) }
-      : null;
+    if (!html) return null;
+    const lines = geometry
+      ? figureCharge(geometry, viewBoxRatio(svg) ?? 0.5, compact, Boolean(caption))
+      : figureLines(svg, drawCtx.widthMm, Boolean(caption));
+    return { html, lines };
   };
 
   switch (d.kind) {
@@ -185,7 +209,7 @@ export function renderVizDirective(
       if (!items) return null;
       // `marked`: each item already leads with its own glyph. See the rule.
       const html = renderCallout('neutral', 'At a glance', `<ul class="marked">${items}</ul>`);
-      return { html, lines: d.items.length + 2 };
+      return { html, lines: geometry ? calloutCharge(geometry, itemChars(d.items)) : d.items.length + 2 };
     }
 
     case 'heatmap':
@@ -202,7 +226,11 @@ export function renderVizDirective(
         + spark;
       if (!body) return null;
       const html = renderSidenote(d.label ?? 'Context', body);
-      return { html, lines: figureLines(html, ctx.widthMm) };
+      const lines = geometry
+        ? sidenoteCharge(geometry, [d.heading ?? '', d.note ?? ''].filter(Boolean).map((t) => t.length))
+          + (spark ? figureCharge(geometry, viewBoxRatio(spark) ?? 0.25, false, false) : 0)
+        : figureLines(html, ctx.widthMm);
+      return { html, lines };
     }
 
     case 'pictograph':
@@ -281,6 +309,7 @@ export function planningChartContext(widthMm = CHART_TARGET_WIDTH_MM): ChartCont
  */
 export function vizDirectiveRenderer(
   ctx: ChartContext,
+  geometry: NarrativeGeometry | null = null,
 ): (d: VizDirective) => VizFigure | null {
-  return (d) => renderVizDirective(ctx, d);
+  return (d) => renderVizDirective(ctx, d, geometry);
 }

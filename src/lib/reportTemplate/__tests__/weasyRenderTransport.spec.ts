@@ -63,6 +63,70 @@ describe('render-template-pdf transport', () => {
       .rejects.toThrow(/no document URL/);
   });
 
+  /**
+   * The FINAL document goes through the same transport and the same function,
+   * in `final` mode, naming the report — that is what lets the function apply
+   * its client-readiness gate and stamp the job with the report it was of. It
+   * answers a signed URL and the path it stored; the bytes are fetched back so
+   * the caller holds one document and one path.
+   */
+  it('renderFinalHtmlToPdf asks for a final render by name, and returns the bytes with the stored path', async () => {
+    invokeSecureFunction.mockResolvedValue({
+      data: { url: 'https://signed/final.pdf', path: 'template-builder/2026-09-14/ab-final.pdf', bytes: 3, jobId: 'job-1' },
+      error: null,
+    });
+    const fetchSpy = vi.fn(async () => ({
+      ok: true, status: 200,
+      blob: async () => new Blob(['%PDF-1.7 final'], { type: 'application/pdf' }),
+    }));
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const { renderFinalHtmlToPdf } = await import('../weasyRenderClient');
+      const doc = await renderFinalHtmlToPdf({
+        html: '<p>x</p>', fileName: 'final.pdf', mode: 'final',
+        reportId: 'r-1', reportType: 'investment', templateId: 'tpl-1', templateName: 'Chancery', pageCount: 50,
+      });
+
+      expect(invokeSecureFunction).toHaveBeenCalledTimes(1);
+      const [fnName, body] = invokeSecureFunction.mock.calls[0];
+      expect(fnName).toBe('render-template-pdf');
+      expect(body).toMatchObject({
+        html: '<p>x</p>', fileName: 'final.pdf', mode: 'final',
+        reportId: 'r-1', reportType: 'investment', templateId: 'tpl-1', templateName: 'Chancery', pageCount: 50,
+      });
+      expect(fetchSpy).toHaveBeenCalledWith('https://signed/final.pdf', expect.anything());
+      expect(doc.path).toBe('template-builder/2026-09-14/ab-final.pdf');
+      expect(doc.jobId).toBe('job-1');
+      expect(await doc.blob.text()).toBe('%PDF-1.7 final');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('a final render whose document cannot be fetched back is an error, not a document', async () => {
+    invokeSecureFunction.mockResolvedValue({ data: { url: 'https://signed/final.pdf', path: 'p' }, error: null });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 403, blob: async () => new Blob([]) })));
+    try {
+      const { renderFinalHtmlToPdf } = await import('../weasyRenderClient');
+      await expect(renderFinalHtmlToPdf({ html: '<p>x</p>', fileName: 'f.pdf', mode: 'final', reportId: 'r-1' }))
+        .rejects.toThrow(/HTTP 403/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('an empty final document is refused', async () => {
+    invokeSecureFunction.mockResolvedValue({ data: { url: 'https://signed/final.pdf', path: 'p' }, error: null });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, blob: async () => new Blob([]) })));
+    try {
+      const { renderFinalHtmlToPdf } = await import('../weasyRenderClient');
+      await expect(renderFinalHtmlToPdf({ html: '<p>x</p>', fileName: 'f.pdf', mode: 'final', reportId: 'r-1' }))
+        .rejects.toThrow(/empty/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('no render module builds a Supabase host from import.meta.env', () => {
     // Comments are stripped first: these files DOCUMENT the outage by naming
     // the variables, and a guard that fired on the explanation would push the

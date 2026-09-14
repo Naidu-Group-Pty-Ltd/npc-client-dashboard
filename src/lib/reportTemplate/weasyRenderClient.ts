@@ -32,9 +32,66 @@ export interface WeasyRenderRequest {
   html: string;
   fileName: string;
   templateId?: string;
-  mode?: 'preview' | 'production';
+  /**
+   * `final` is the word the edge function checks (`payload.mode === 'final'`).
+   * This used to be typed `'production'`, which the function has never
+   * recognised — every "production" render was recorded as a preview, and
+   * the client-readiness gate the function applies to a final document was
+   * never reached from here.
+   */
+  mode?: 'preview' | 'final';
   /** Abort a superseded render (the editor supersedes previews as you type). */
   signal?: AbortSignal;
+}
+
+/** What a FINAL render is about, so the ledger and the gate can read it. */
+export interface WeasyFinalRenderRequest extends WeasyRenderRequest {
+  mode: 'final';
+  /** The report the document is of — the function's client-readiness gate reads it. */
+  reportId: string;
+  /**
+   * The format, in the adapters' vocabulary (`investment`, `portfolio`, …).
+   * Read by the transport's render-coverage telemetry, which tags every
+   * `render-template-pdf` call with the format it drew; without it the event
+   * is filed under `unknown`, which is how the coverage figure came to be a
+   * proxy in the first place.
+   */
+  reportType?: string | null;
+  templateName?: string | null;
+  pageCount?: number;
+}
+
+export interface WeasyRenderedDocument {
+  blob: Blob;
+  /** The path the function stored the PDF at, in the `investment-reports` bucket. */
+  path: string | null;
+  bytes: number;
+  jobId: string | null;
+}
+
+/**
+ * The FINAL client document: HTML in, the bytes and the stored path out.
+ *
+ * The function renders, stores the PDF and answers a signed URL plus the
+ * storage path it wrote. The bytes are fetched back here so the caller holds
+ * ONE document to hand to the person and ONE path to point a portal at —
+ * without uploading the same bytes a second time.
+ */
+export async function renderFinalHtmlToPdf(
+  req: WeasyFinalRenderRequest,
+): Promise<WeasyRenderedDocument> {
+  const { signal, ...body } = req;
+  const { data, error } = await invokeSecureFunction<{
+    url?: string; path?: string; bytes?: number; jobId?: string | null;
+  }>('render-template-pdf', body, { timeoutMs: RENDER_TIMEOUT_MS, signal });
+  if (error) throw new Error(describeAuthError(error.message) ?? error.message);
+  const url = data?.url;
+  if (!url) throw new Error('WeasyPrint render returned no document URL');
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`The rendered document could not be fetched (HTTP ${res.status})`);
+  const blob = await res.blob();
+  if (!blob.size) throw new Error('The rendered document was empty');
+  return { blob, path: data?.path ?? null, bytes: data?.bytes ?? blob.size, jobId: data?.jobId ?? null };
 }
 
 /** Renders HTML via the WeasyPrint edge function; resolves to the PDF URL. */

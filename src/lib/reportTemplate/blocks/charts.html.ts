@@ -21,11 +21,43 @@ function safeChartColor(input: unknown, ctx: HtmlBlockContext, fallback = '#BF9B
   return resolveBindableColor(input, ctx, fallback);
 }
 
+/**
+ * The ink a chart's furniture is drawn in — titles, tick labels, captions,
+ * grid rules — read from the template's own tokens.
+ *
+ * These were literal (`#1A1A1A` titles, `#666` ticks, `#EAE3CB` grid), which
+ * is the ink of a light page. On the Midnight structure every chart title
+ * and every axis figure printed near-black on an obsidian ground: "Projected
+ * equity position" and its `Equity` axis title read as ILLEGIBLE on the
+ * long reference report (RS-3, 14 Sep 2026). The fallbacks are the old
+ * literals, so a template without the tokens draws exactly as before.
+ */
+function chartInk(ctx: HtmlBlockContext): { ink: string; muted: string; line: string; onField: string } {
+  return {
+    ink: resolveBindableColor('token:ink', ctx, '#1A1A1A'),
+    muted: resolveBindableColor('token:muted', ctx, '#666666'),
+    line: resolveBindableColor('token:line', ctx, '#EAE3CB'),
+    onField: resolveBindableColor('token:onPrimary', ctx, '#FFFFFF'),
+  };
+}
+
 function readSeries(p: Record<string, unknown>, ctx: HtmlBlockContext): Series[] {
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.data;
   const items = toArray(raw);
   const labelKey = String(p.labelKey ?? 'label');
   const valueKey = String(p.valueKey ?? 'value');
+  // Absent is never zero. A series whose every value is missing is no series,
+  // and a chart drawn from it is an axis with nothing on it — measured on a
+  // record with no financials (RS-3, 14 Sep 2026): the ten-year equity chart
+  // drew a `$1 / $0 / $-1` scale around an empty plot. Every renderer below
+  // draws nothing for an empty series rather than a frame.
+  const carriesValue = (it: any): boolean => {
+    if (typeof it === 'number') return Number.isFinite(it);
+    if (it == null || typeof it !== 'object') return false;
+    const v = it[valueKey] ?? it.y ?? it.count;
+    return v !== null && v !== undefined && v !== '';
+  };
+  if (!items.some(carriesValue)) return [];
   return items.map((it: any, i: number): Series => {
     if (typeof it === 'number') return { label: String(i + 1), value: it };
     return {
@@ -45,21 +77,24 @@ function chartBox(p: Record<string, unknown>, ctx: HtmlBlockContext) {
 }
 
 function titleAndCaption(p: Record<string, unknown>, ctx: HtmlBlockContext): { titleHtml: string; captionHtml: string; reserveTop: number; reserveBottom: number } {
+  const c = chartInk(ctx);
   const title = resolveBindable(p.title, ctx);
   const caption = resolveBindable(p.caption, ctx);
   const titleHtml = title
-    ? `<div style="font-size:11pt;font-weight:600;margin-bottom:4pt;color:#1A1A1A;">${esc(title)}</div>`
+    ? `<div style="font-size:11pt;font-weight:600;margin-bottom:4pt;color:${c.ink};">${esc(title)}</div>`
     : '';
   const captionHtml = caption
-    ? `<div style="text-align:center;font-style:italic;font-size:8pt;color:#9b8d6a;margin-top:4pt;">${esc(caption)}</div>`
+    ? `<div style="text-align:center;font-style:italic;font-size:8pt;color:${c.muted};margin-top:4pt;">${esc(caption)}</div>`
     : '';
   return { titleHtml, captionHtml, reserveTop: title ? 18 : 0, reserveBottom: caption ? 14 : 0 };
 }
 
 // ─── Bar chart ───────────────────────────────────────────────────────────────
 export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const palette = (p.palette as string[]) ?? undefined;
@@ -123,9 +158,9 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
       const len = (Math.abs(s.value) / span) * (innerW - 60);
       const xStart = s.value < 0 ? zeroX - len : zeroX;
       return `<g>
-        <text x="0" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:#1A1A1A;">${esc(s.label)}</text>
+        <text x="0" y="${yPos + rowH / 2 + 3}" font-size="8" fill="${c.ink}">${esc(s.label)}</text>
         <rect x="${xStart.toFixed(1)}" y="${yPos}" width="${len.toFixed(1)}" height="${rowH - 8}" fill="${color}" rx="2"/>
-        <text x="${(xStart + len + 4).toFixed(1)}" y="${yPos + rowH / 2 + 3}" style="font-size:8pt;fill:#1A1A1A;font-variant-numeric:tabular-nums;">${label}</text>
+        <text x="${(xStart + len + 4).toFixed(1)}" y="${yPos + rowH / 2 + 3}" font-size="8" fill="${c.ink}">${label}</text>
       </g>`;
     }
     const xPos = barGap + i * (barW + barGap);
@@ -135,15 +170,15 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
     const valueY = s.value < 0 ? yPos + height + 9 : yPos - 3;
     return `<g>
       <rect x="${xPos}" y="${yPos.toFixed(1)}" width="${barW}" height="${height.toFixed(1)}" fill="${color}" rx="2"/>
-      <text x="${xPos + barW / 2}" y="${innerH + 12}" style="font-size:7pt;fill:#666;text-anchor:middle;">${esc(s.label)}</text>
-      <text x="${xPos + barW / 2}" y="${valueY.toFixed(1)}" style="font-size:7pt;fill:#1A1A1A;text-anchor:middle;font-variant-numeric:tabular-nums;">${label}</text>
+      <text x="${xPos + barW / 2}" y="${innerH + 12}" font-size="7" fill="${c.muted}" text-anchor="middle">${esc(s.label)}</text>
+      <text x="${xPos + barW / 2}" y="${valueY.toFixed(1)}" font-size="7" fill="${c.ink}" text-anchor="middle">${label}</text>
     </g>`;
   }).join('');
 
   // Only where zero is inside the plot rather than on its edge, which is the
   // case a reader cannot infer from the bars alone.
   const zeroRule = !horizontal && lo < 0 && hi > 0
-    ? `<line x1="0" x2="${innerW}" y1="${zeroY.toFixed(1)}" y2="${zeroY.toFixed(1)}" stroke="#666" stroke-width="0.75"/>`
+    ? `<line x1="0" x2="${innerW}" y1="${zeroY.toFixed(1)}" y2="${zeroY.toFixed(1)}" stroke="${c.muted}" stroke-width="0.75"/>`
     : '';
 
   return `<div style="${box.style}">${meta.titleHtml}
@@ -219,8 +254,10 @@ const Y_TICKS = 4;
  * their own fan chart with, so `$1.1m` is spelled one way in this programme.
  */
 function renderLineOrAreaHtml(block: Block, ctx: HtmlBlockContext, fill: boolean): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
@@ -270,22 +307,22 @@ function renderLineOrAreaHtml(block: Block, ctx: HtmlBlockContext, fill: boolean
 
   const grid = ticks.map((v, t) => {
     const y = py(v);
-    return `<line x1="${padL}" x2="${(padL + plotW).toFixed(1)}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="#EAE3CB"${t === 0 ? '' : ' stroke-dasharray="2 3"'}/>`
-      + `<text x="${(padL - 4).toFixed(1)}" y="${(y + 2.5).toFixed(1)}" text-anchor="end" style="font-size:6.5pt;fill:#666;font-variant-numeric:tabular-nums lining-nums;">${esc(tickText[t])}</text>`;
+    return `<line x1="${padL}" x2="${(padL + plotW).toFixed(1)}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${c.line}"${t === 0 ? '' : ' stroke-dasharray="2 3"'}/>`
+      + `<text x="${(padL - 4).toFixed(1)}" y="${(y + 2.5).toFixed(1)}" text-anchor="end" font-size="6.5" fill="${c.muted}">${esc(tickText[t])}</text>`;
   }).join('');
 
   // The axis itself, so the labels read as a scale rather than as loose figures.
-  const axisRule = `<line x1="${padL}" x2="${padL}" y1="${padT}" y2="${innerH}" stroke="#EAE3CB"/>`;
+  const axisRule = `<line x1="${padL}" x2="${padL}" y1="${padT}" y2="${innerH}" stroke="${c.line}"/>`;
 
   const axisTitleSvg = axisTitle
-    ? `<text transform="translate(6,${(padT + plotH / 2).toFixed(1)}) rotate(-90)" text-anchor="middle" style="font-size:6.5pt;fill:#666;letter-spacing:0.06em;text-transform:uppercase;">${esc(axisTitle)}</text>`
+    ? `<text transform="translate(6,${(padT + plotH / 2).toFixed(1)}) rotate(-90)" text-anchor="middle" font-size="6.5" fill="${c.muted}" letter-spacing="0.39">${esc(String(axisTitle).toUpperCase())}</text>`
     : '';
 
   // End labels anchor to the edge; only the interior ones centre. See the note
   // above — a centred label at either end of the plot is set half outside it.
   const labels = points.map((pt, i) => {
     const anchor = i === 0 ? 'start' : i === points.length - 1 ? 'end' : 'middle';
-    return `<text x="${pt.x.toFixed(1)}" y="${innerH + 12}" text-anchor="${anchor}" style="font-size:7pt;fill:#666;">${esc(pt.s.label)}</text>`;
+    return `<text x="${pt.x.toFixed(1)}" y="${innerH + 12}" text-anchor="${anchor}" font-size="7" fill="${c.muted}">${esc(pt.s.label)}</text>`;
   }).join('');
   const dots = points.map((pt) => `<circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="2.5" fill="${accent}"/>`).join('');
 
@@ -312,8 +349,10 @@ export function renderDonutChartHtml(block: Block, ctx: HtmlBlockContext): strin
 }
 
 function renderPieOrDonutHtml(block: Block, ctx: HtmlBlockContext, innerRatio: number): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const palette = (p.palette as string[]) ?? undefined;
@@ -350,10 +389,10 @@ function renderPieOrDonutHtml(block: Block, ctx: HtmlBlockContext, innerRatio: n
   const legend = series.map((s, i) => {
     const color = safeChartColor(s.color ?? colorFromPalette(i, palette), ctx);
     const pct = ((s.value / total) * 100).toFixed(1);
-    return `<div style="display:flex;align-items:center;gap:6pt;font-size:8pt;color:#1A1A1A;">
+    return `<div style="display:flex;align-items:center;gap:6pt;font-size:8pt;color:${c.ink};">
       <span style="width:9pt;height:9pt;background:${color};border-radius:2pt;display:inline-block;"></span>
       <span style="flex:1;">${esc(s.label)}</span>
-      <span style="font-variant-numeric:tabular-nums;color:#666;">${pct}%</span>
+      <span style="font-variant-numeric:tabular-nums;color:${c.muted};">${pct}%</span>
     </div>`;
   }).join('');
 
@@ -368,6 +407,7 @@ function renderPieOrDonutHtml(block: Block, ctx: HtmlBlockContext, innerRatio: n
 
 // ─── Scatter ─────────────────────────────────────────────────────────────────
 export function renderScatterChartHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.data;
   const items = toArray(raw);
@@ -386,13 +426,13 @@ export function renderScatterChartHtml(block: Block, ctx: HtmlBlockContext): str
   const sx = (x: number) => ((x - xMin) / (xMax - xMin || 1)) * innerW;
   const sy = (y: number) => innerH - ((y - yMin) / (yMax - yMin || 1)) * innerH;
   const dots = points.map((pt) => `<circle cx="${sx(pt.x).toFixed(1)}" cy="${sy(pt.y).toFixed(1)}" r="3" fill="${accent}" fill-opacity="0.7"/>`).join('');
-  const grid = [0.25, 0.5, 0.75].map((g) => `<line x1="0" x2="${innerW}" y1="${innerH * g}" y2="${innerH * g}" stroke="#EAE3CB" stroke-dasharray="2 3"/>`).join('');
+  const grid = [0.25, 0.5, 0.75].map((g) => `<line x1="0" x2="${innerW}" y1="${innerH * g}" y2="${innerH * g}" stroke="${c.line}" stroke-dasharray="2 3"/>`).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
     <svg viewBox="0 0 ${innerW} ${innerH + 16}" style="width:100%;height:${innerH + 16}pt;display:block;">
       ${grid}
-      <line x1="0" y1="${innerH}" x2="${innerW}" y2="${innerH}" stroke="#666"/>
-      <line x1="0" y1="0" x2="0" y2="${innerH}" stroke="#666"/>
+      <line x1="0" y1="${innerH}" x2="${innerW}" y2="${innerH}" stroke="${c.muted}"/>
+      <line x1="0" y1="0" x2="0" y2="${innerH}" stroke="${c.muted}"/>
       ${dots}
     </svg>
     ${meta.captionHtml}
@@ -401,8 +441,10 @@ export function renderScatterChartHtml(block: Block, ctx: HtmlBlockContext): str
 
 // ─── Radar ───────────────────────────────────────────────────────────────────
 export function renderRadarChartHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const series = readSeries(p, ctx);
+  if (!series.length) return '';
   const box = chartBox(p, ctx);
   const meta = titleAndCaption(p, ctx);
   const accent = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
@@ -421,10 +463,10 @@ export function renderRadarChartHtml(block: Block, ctx: HtmlBlockContext): strin
     return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ') + ' Z';
 
-  const rings = [0.25, 0.5, 0.75, 1].map((f) => `<path d="${ringPath(f)}" fill="none" stroke="#EAE3CB" stroke-width="0.5"/>`).join('');
+  const rings = [0.25, 0.5, 0.75, 1].map((f) => `<path d="${ringPath(f)}" fill="none" stroke="${c.line}" stroke-width="0.5"/>`).join('');
   const axes = Array.from({ length: n }, (_, i) => {
     const a = angleAt(i);
-    return `<line x1="${cx}" y1="${cy}" x2="${(cx + r * Math.cos(a)).toFixed(1)}" y2="${(cy + r * Math.sin(a)).toFixed(1)}" stroke="#EAE3CB" stroke-width="0.5"/>`;
+    return `<line x1="${cx}" y1="${cy}" x2="${(cx + r * Math.cos(a)).toFixed(1)}" y2="${(cy + r * Math.sin(a)).toFixed(1)}" stroke="${c.line}" stroke-width="0.5"/>`;
   }).join('');
   const points = series.map((s, i) => {
     const a = angleAt(i);
@@ -435,7 +477,7 @@ export function renderRadarChartHtml(block: Block, ctx: HtmlBlockContext): strin
     const a = angleAt(i);
     const lx = cx + (r + 14) * Math.cos(a);
     const ly = cy + (r + 14) * Math.sin(a);
-    return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" style="font-size:7pt;fill:#1A1A1A;">${esc(s.label)}</text>`;
+    return `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" font-size="7" fill="${c.ink}">${esc(s.label)}</text>`;
   }).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
@@ -450,11 +492,13 @@ export function renderRadarChartHtml(block: Block, ctx: HtmlBlockContext): strin
 
 // ─── Heatmap ─────────────────────────────────────────────────────────────────
 export function renderHeatmapHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.data;
   let matrix: number[][] = [];
   if (Array.isArray(raw) && Array.isArray(raw[0])) matrix = raw as number[][];
   else if (Array.isArray(raw)) matrix = [raw.map((v: any) => toNumber(v))];
+  if (!matrix.length || !matrix.some((r) => r.length)) return '';
   const rowLabels = Array.isArray(p.rowLabels) ? (p.rowLabels as string[]) : matrix.map((_, i) => String(i + 1));
   const colLabels = Array.isArray(p.colLabels) ? (p.colLabels as string[]) : (matrix[0] ?? []).map((_, i) => String(i + 1));
   const box = chartBox(p, ctx);
@@ -472,11 +516,11 @@ export function renderHeatmapHtml(block: Block, ctx: HtmlBlockContext): string {
     row.forEach((v, ci) => {
       const t = (v - min) / (max - min || 1);
       cells.push(`<rect x="${40 + ci * cellW}" y="${14 + ri * cellH}" width="${cellW - 1}" height="${cellH - 1}" fill="${accent}" fill-opacity="${Math.max(0.05, t).toFixed(2)}"/>
-        <text x="${40 + ci * cellW + cellW / 2}" y="${14 + ri * cellH + cellH / 2 + 3}" text-anchor="middle" style="font-size:6pt;fill:${t > 0.55 ? '#fff' : '#1A1A1A'};">${esc(String(v))}</text>`);
+        <text x="${40 + ci * cellW + cellW / 2}" y="${14 + ri * cellH + cellH / 2 + 3}" text-anchor="middle" font-size="6" fill="${t > 0.55 ? c.onField : c.ink}">${esc(String(v))}</text>`);
     });
   });
-  const colHeads = colLabels.map((l, i) => `<text x="${40 + i * cellW + cellW / 2}" y="10" text-anchor="middle" style="font-size:7pt;fill:#666;">${esc(l)}</text>`).join('');
-  const rowHeads = rowLabels.map((l, i) => `<text x="36" y="${14 + i * cellH + cellH / 2 + 3}" text-anchor="end" style="font-size:7pt;fill:#666;">${esc(l)}</text>`).join('');
+  const colHeads = colLabels.map((l, i) => `<text x="${40 + i * cellW + cellW / 2}" y="10" text-anchor="middle" font-size="7" fill="${c.muted}">${esc(l)}</text>`).join('');
+  const rowHeads = rowLabels.map((l, i) => `<text x="36" y="${14 + i * cellH + cellH / 2 + 3}" text-anchor="end" font-size="7" fill="${c.muted}">${esc(l)}</text>`).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
     <svg viewBox="0 0 ${box.w} ${innerH}" style="width:100%;height:${innerH}pt;display:block;">
@@ -488,6 +532,7 @@ export function renderHeatmapHtml(block: Block, ctx: HtmlBlockContext): string {
 
 // ─── KPI strip ───────────────────────────────────────────────────────────────
 export function renderKpiStripHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.items;
   const items = toArray(raw);
@@ -501,8 +546,8 @@ export function renderKpiStripHtml(block: Block, ctx: HtmlBlockContext): string 
     const dir = toNumber(delta) >= 0 ? '▲' : '▼';
     const deltaColor = toNumber(delta) >= 0 ? '#1F8A4C' : '#C0392B';
     return `<div style="flex:1;background:${tileBg};border-left:2pt solid ${accent};padding:8pt 10pt;border-radius:4pt;">
-      <div style="font-size:8pt;color:#9b8d6a;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">${esc(label)}</div>
-      <div style="font-size:16pt;font-weight:700;color:#1A1A1A;margin-top:2pt;font-variant-numeric:tabular-nums;">${esc(value)}</div>
+      <div style="font-size:8pt;color:${c.muted};text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">${esc(label)}</div>
+      <div style="font-size:16pt;font-weight:700;color:${c.ink};margin-top:2pt;font-variant-numeric:tabular-nums;">${esc(value)}</div>
       ${delta != null ? `<div style="font-size:8pt;color:${deltaColor};margin-top:1pt;">${dir} ${esc(formatCell(Math.abs(toNumber(delta)), 'auto'))}</div>` : ''}
     </div>`;
   }).join('');
@@ -511,6 +556,7 @@ export function renderKpiStripHtml(block: Block, ctx: HtmlBlockContext): string 
 
 // ─── Legend ──────────────────────────────────────────────────────────────────
 export function renderLegendHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const items = toArray(p.items);
   const palette = (p.palette as string[]) ?? undefined;
@@ -518,7 +564,7 @@ export function renderLegendHtml(block: Block, ctx: HtmlBlockContext): string {
   const dir = p.direction === 'vertical' ? 'column' : 'row';
   const swatches = items.map((it: any, i: number) => {
     const color = safeChartColor(it?.color ?? colorFromPalette(i, palette), ctx);
-    return `<div style="display:flex;align-items:center;gap:6pt;font-size:8pt;color:#1A1A1A;">
+    return `<div style="display:flex;align-items:center;gap:6pt;font-size:8pt;color:${c.ink};">
       <span style="width:10pt;height:10pt;background:${color};border-radius:2pt;display:inline-block;"></span>
       <span>${esc(it?.label ?? it)}</span>
     </div>`;
@@ -528,9 +574,11 @@ export function renderLegendHtml(block: Block, ctx: HtmlBlockContext): string {
 
 // ─── Stacked bar ─────────────────────────────────────────────────────────────
 export function renderStackedBarChartHtml(block: Block, ctx: HtmlBlockContext): string {
+  const c = chartInk(ctx);
   const p = block.props as Record<string, unknown>;
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.data;
   const rows = toArray(raw);
+  if (!rows.length) return '';
   const stackKeys = Array.isArray(p.stackKeys) ? (p.stackKeys as string[]) : [];
   const labelKey = String(p.labelKey ?? 'label');
   const palette = (p.palette as string[]) ?? undefined;
@@ -555,7 +603,7 @@ export function renderStackedBarChartHtml(block: Block, ctx: HtmlBlockContext): 
     }).join('');
     return `<g>
       ${segs}
-      <text x="${xPos + bw / 2}" y="${innerH + 12}" text-anchor="middle" style="font-size:7pt;fill:#666;">${esc(String(row?.[labelKey] ?? ''))}</text>
+      <text x="${xPos + bw / 2}" y="${innerH + 12}" text-anchor="middle" font-size="7" fill="${c.muted}">${esc(String(row?.[labelKey] ?? ''))}</text>
     </g>`;
   }).join('');
   const legend = stackKeys.map((k, si) => `<div style="display:flex;align-items:center;gap:4pt;font-size:8pt;"><span style="width:8pt;height:8pt;background:${safeChartColor(colorFromPalette(si, palette), ctx)};border-radius:1pt;"></span>${esc(k)}</div>`).join('');

@@ -11,7 +11,7 @@
 import type { Block } from '../templateSchema';
 import type { BlockRenderContext } from './index';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { visibleTableRows, type TableRow } from './_data';
+import { rowsWithSomethingToSay, type TableRow } from './_data';
 
 export function drawDataTableBlock(block: Block, ctx: BlockRenderContext): void {
   const { doc, page } = ctx;
@@ -26,9 +26,12 @@ export function drawDataTableBlock(block: Block, ctx: BlockRenderContext): void 
   // so the Builder preview cannot disagree with the printed document about
   // which rows exist.
   const authored = Array.isArray(p.rows) ? (p.rows as TableRow[]) : [];
-  const rows = visibleTableRows(authored, ctx).map(({ row }) => row);
+  // The same row rule the HTML twin applies, so the preview and the final
+  // document agree about which rows exist. See `rowsWithSomethingToSay`.
+  const said = rowsWithSomethingToSay(authored, ctx);
+  if (authored.length > 0 && (said.rows.length === 0 || !said.saysSomething)) return;
+  const rows = said.rows.map(({ row }) => row);
   if (headers.length === 0) return;
-  if (authored.length > 0 && rows.length === 0) return;
 
   const widths: number[] = Array.isArray(p.columnWidths) && (p.columnWidths as number[]).length === headers.length
     ? (p.columnWidths as number[]).map((f) => f * w)

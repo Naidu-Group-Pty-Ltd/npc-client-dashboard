@@ -996,6 +996,41 @@ ${options.showDropCaps
   .eyebrow.on-field { color: ${palette.accentOnField}; }
 
   /* ── Pull quote ─────────────────────────────────────────────────────── */
+  /* Stat card — the generator's ::: stat and ::: divider blocks: a label, one
+     figure at display size with its unit, a caption, between two hairlines. */
+  .stat-card {
+    margin: ${pt(d.blockGapPt)} 0;
+    padding: ${pt(d.cellPadPt + 5)} 0;
+    border-top: 0.75pt solid ${palette.rule};
+    border-bottom: 0.75pt solid ${palette.rule};
+    page-break-inside: avoid;
+  }
+  .stat-card .stat-label {
+    display: block;
+    font-family: ${PRINT_STACK.mono};
+    font-size: ${pt(type.micro)};
+    letter-spacing: ${PRINT_TRACKING.eyebrow};
+    text-transform: uppercase;
+    color: ${palette.accentOnPaper};
+    margin-bottom: 3pt;
+  }
+  .stat-card .stat-value {
+    font-family: ${PRINT_STACK.display};
+    font-size: ${pt(type.h2 + 8)};
+    line-height: 1.1;
+    font-weight: 700;
+    color: ${palette.bodyInk};
+    font-variant-numeric: lining-nums tabular-nums;
+  }
+  .stat-card .stat-unit { font-size: ${pt(type.body + 1)}; font-weight: 600; margin-left: 2pt; }
+  .stat-card .stat-sub {
+    display: block;
+    margin-top: 3pt;
+    font-size: ${pt(type.caption)};
+    color: ${palette.mutedInk};
+  }
+  .stat-card .stat-headline { margin: 4pt 0 0; }
+
   .pull-quote {
     font-family: ${PRINT_STACK.display};
     font-style: italic;

@@ -44,6 +44,7 @@ import { getBlockRenderer, type BlockRenderContext } from './blocks';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
 import { shouldRenderBlock, shouldRenderOverlay } from './renderVisibility';
+import { applyNarrativePlan, planNarrative } from './narrativePlan';
 
 export interface RenderOptions {
   /** The frozen presentation payload the template binds against. */
@@ -59,7 +60,10 @@ export function renderTemplateToBlob(
 ): Blob {
   const template = parseTemplate(rawTemplate);
   const tokens = mergeTokens(template.tokens, options.tokenOverrides);
-  const ctxBase: ResolveContext = { data: options.data ?? {}, tokens };
+  // The same narrative pre-pass the HTML renderer makes, so both draw the
+  // same buckets on the same pages. See `narrativePlan.ts`.
+  const ctxSeed: ResolveContext = { data: options.data ?? {}, tokens };
+  const ctxBase = applyNarrativePlan(ctxSeed, planNarrative(template, ctxSeed));
 
   const visiblePages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
   if (visiblePages.length === 0) {

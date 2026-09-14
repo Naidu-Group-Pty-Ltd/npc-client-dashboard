@@ -183,23 +183,25 @@ describe('the paths that send HTML to the renderer', () => {
     .replace(/^\s*\/\/.*$/gm, '');
 
   /**
-   * The production route sends HTML nowhere now — it draws the document in
-   * the browser. The rule this test protects is therefore stated the other
-   * way round: the route must not grow its own compile step back, because a
-   * second path to a render service is how the font policy came to be
-   * bypassed the first time. `compileTemplateHtmlForPdf` is still the one
-   * compiler for the surfaces that DO produce HTML (the editor preview and
-   * the converter), and the test below still pins its font source.
+   * The production route sends HTML to the renderer again (RS-2, 14 Sep 2026:
+   * the FINAL client document is drawn by the print engine), and the rule this
+   * test protects is the one that bit the first time: the route must never
+   * grow its OWN compile step, because a second path to the render service is
+   * how the font policy came to be bypassed. It compiles through
+   * `compileTemplateHtmlForPdf` — the one compiler, whose font source the test
+   * below pins — and addresses the engine through the one client, never by
+   * name. The browser preview keeps its own draw.
    */
-  it('the production route sends no HTML to a renderer at all', () => {
+  it('the production route reaches the renderer only through the one compiler', () => {
     const code = withoutComments(readFileSync(
       join(__dirname, '../routeReportThroughTemplate.ts'), 'utf8',
     ));
     expect(code, 'the route renders its own HTML again — read this file\'s header')
       .not.toMatch(/renderTemplateToHtml\s*\(/);
-    expect(code).not.toContain('compileTemplateHtmlForPdf(');
+    expect(code).toContain('compileTemplateHtmlForPdf(');
     expect(code).not.toContain('render-template-pdf');
-    // What it does instead.
+    expect(code).toContain("from '@/lib/reportTemplate/weasyRenderClient'");
+    // The preview renderer, drawn here.
     expect(code).toContain('renderTemplateToBlob(');
   });
 

@@ -19,8 +19,9 @@ import {
   renderMarkdown, type MarkdownBlock,
 } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import {
-  packMarkdownPages, packNarrativePages, resolveNarrativeProfile, DEFAULT_LINES_PER_PAGE,
+  packMarkdownPages, packNarrativeGeometry, packNarrativePages, resolveNarrativeProfile, DEFAULT_LINES_PER_PAGE,
 } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
+import type { NarrativeGeometry } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
 import { stripBakedCover } from '../../../../supabase/functions/_shared/reports/investment/narrativeClean.pure';
 import { vizDirectiveRenderer } from '../../../../supabase/functions/_shared/reports/vizFigures.pure';
 import { CHART_TARGET_WIDTH_MM, type ChartContext } from '../../../../supabase/functions/_shared/reportDesign/charts.pure';
@@ -35,14 +36,15 @@ export { DEFAULT_LINES_PER_PAGE };
  * template is missing its palette — and a keyword is visibly not a palette
  * decision, which also keeps the hex-literal ratchet honest.
  *
- * `widthMm` is deliberately the renderer's own default rather than derived
- * from the block's box: the projection charges the SAME directives through
- * `planningChartContext()`, whose width is that default, and `figureLines`
- * reads geometry alone — so both sides charge identical line counts whatever
- * palette each draws with. A width computed from the box would put the page
- * count and the buckets on different arithmetic.
+ * `widthMm` defaults to the renderer's own width rather than the block's box
+ * because the profile path charges the SAME directives the projection charges
+ * through `planningChartContext()`, whose width is that default — so both
+ * sides charge identical line counts whatever palette each draws with. The
+ * geometry path passes the block's real measure instead (`narrativeChartContext`),
+ * and its count is computed by the renderer's own pre-pass at that same
+ * measure, so the two arithmetics never meet.
  */
-export function templateChartContext(ctx: ResolveContext): ChartContext {
+export function templateChartContext(ctx: ResolveContext, widthMm: number = CHART_TARGET_WIDTH_MM): ChartContext {
   const tok = (name: string, fallback: string) => resolveBindableColor(`token:${name}`, ctx, fallback);
   const accent = tok('primary', 'darkgoldenrod');
   const ink = tok('ink', 'black');
@@ -51,7 +53,7 @@ export function templateChartContext(ctx: ResolveContext): ChartContext {
   const caution = tok('caution', 'darkgoldenrod');
   const negative = tok('negative', 'firebrick');
   return {
-    widthMm: CHART_TARGET_WIDTH_MM,
+    widthMm,
     palette: {
       ground: tok('surface', 'white'),
       groundAlt: tok('panel', 'gainsboro'),
@@ -99,6 +101,74 @@ export interface MarkdownBlockContent {
   linesPerPage: number;
 }
 
+/**
+ * ## Packing by the template's own geometry
+ *
+ * The profile's calibrated budgets are one family's arithmetic. When the
+ * renderer has the template in hand it derives, once per narrative run, the
+ * geometry every instance of that run must pack with — measure, body size,
+ * leading, face, and the line capacity of the first and the continuation
+ * boxes against the master's own content bottom (`narrativeGeometry.pure.ts`)
+ * — and publishes it on the context under `NARRATIVE_GEOMETRY_KEY`, keyed by
+ * the block's source binding. An instance that finds its geometry there packs
+ * with it; one that does not (a block rendered on its own, a format whose
+ * profile is not geometry-aware) packs exactly as before.
+ *
+ * The buckets are memoised on (source, geometry, palette): a master carries
+ * forty instances of the same run and each used to render the whole source
+ * again, and the renderer's own pre-pass needs the count before the first
+ * page is drawn. One render serves them all.
+ */
+export const NARRATIVE_GEOMETRY_KEY = '_narrativeGeometry';
+
+export type NarrativeGeometryByBinding = Readonly<Record<string, NarrativeGeometry>>;
+
+/** The binding a markdown block draws, as written — the key its geometry is filed under. */
+export function narrativeBindingKey(props: Record<string, unknown>): string {
+  return String(props.source ?? props.body ?? '').trim();
+}
+
+export function geometryForBlock(block: Block, ctx: ResolveContext): NarrativeGeometry | null {
+  const map = (ctx as unknown as Record<string, unknown>)[NARRATIVE_GEOMETRY_KEY] as NarrativeGeometryByBinding | undefined;
+  const key = narrativeBindingKey(block.props as Record<string, unknown>);
+  return (map && key && map[key]) || null;
+}
+
+const MM_PER_PT = 25.4 / 72;
+const BUCKET_MEMO = new Map<string, MarkdownBlock[][]>();
+const BUCKET_MEMO_LIMIT = 8;
+
+/** The buckets of one source at one geometry, drawn in one palette — memoised. */
+export function narrativeBuckets(
+  cleanSource: string,
+  geometry: NarrativeGeometry,
+  chart: ChartContext,
+): MarkdownBlock[][] {
+  const key = JSON.stringify([geometry, chart]) + '\u0000' + cleanSource;
+  const hit = BUCKET_MEMO.get(key);
+  if (hit) return hit;
+  const blocks = renderMarkdown(cleanSource, {
+    geometry,
+    renderDirective: vizDirectiveRenderer(chart, geometry),
+  }).blocks;
+  const pages = packNarrativeGeometry(blocks, geometry);
+  if (BUCKET_MEMO.size >= BUCKET_MEMO_LIMIT) {
+    const oldest = BUCKET_MEMO.keys().next().value;
+    if (oldest !== undefined) BUCKET_MEMO.delete(oldest);
+  }
+  BUCKET_MEMO.set(key, pages);
+  return pages;
+}
+
+export function forgetNarrativeBuckets(): void {
+  BUCKET_MEMO.clear();
+}
+
+/** The chart context a block draws its figures in: the template's palette at the block's own measure. */
+export function narrativeChartContext(ctx: ResolveContext, geometry: NarrativeGeometry): ChartContext {
+  return templateChartContext(ctx, geometry.widthPt * MM_PER_PT);
+}
+
 /** Resolve the packed bucket this block instance is responsible for. */
 export function resolveMarkdownBlockContent(
   block: Block, ctx: ResolveContext,
@@ -118,6 +188,21 @@ export function resolveMarkdownBlockContent(
   const reportType = String((ctx.data as Record<string, any> | undefined)?.report?.type ?? '');
   const profile = resolveNarrativeProfile(reportType);
   const cleanSource = profile ? stripBakedCover(String(source)).text : String(source);
+
+  // The template's own geometry, when the renderer published one for this
+  // run. It outranks a hand-tuned `linesPerPage`: that tuning existed to
+  // correct a constant model, and the geometry is the page it was correcting
+  // towards.
+  const geometry = profile?.geometryAware ? geometryForBlock(block, ctx) : null;
+  if (geometry) {
+    const pages = narrativeBuckets(cleanSource, geometry, narrativeChartContext(ctx, geometry));
+    return {
+      page: pages[pageIndex] ?? [],
+      pageCount: pages.length,
+      pageIndex,
+      linesPerPage: geometry.contLines,
+    };
+  }
 
   const result = renderMarkdown(cleanSource, {
     charging: profile?.charging,

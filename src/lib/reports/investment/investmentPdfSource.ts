@@ -39,6 +39,13 @@ export interface StoredInvestmentReportRow {
   report_variant?: string | null;
   pdf_url?: string | null;
   created_at?: string | null;
+  /**
+   * The record's version, in the two forms the row carries it: the server
+   * stamps `updated_at` on every edit, and `current_version` moves when the
+   * report is regenerated. A finalisation is remembered against both.
+   */
+  updated_at?: string | null;
+  current_version?: number | null;
 }
 
 export interface ProjectedInvestmentReport {

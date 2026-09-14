@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { SearchInput } from '@/components/ui/search-input';
-import { Loader2, Send, User, CheckCircle2, AlertCircle, BarChart3, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, Loader2, Send, User, CheckCircle2, AlertCircle, BarChart3, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -337,6 +337,8 @@ export function SendToClientModal({
                       return (
                         <button
                           key={client.id}
+                          type="button"
+                          aria-pressed={isSelected}
                           onClick={() => toggleClient(client.id)}
                           className={cn(
                             'w-full flex items-center gap-3 px-3 py-2 rounded-md text-left text-sm transition-colors',
@@ -345,7 +347,20 @@ export function SendToClientModal({
                               : 'hover:bg-muted'
                           )}
                         >
-                          <Checkbox checked={isSelected} className="pointer-events-none" />
+                          {/* The row IS the control. A <Checkbox> here is a second
+                              <button> inside this one — invalid nesting that React
+                              reports on every open and that a browser may dispatch
+                              to either element — so the tick is drawn, not mounted,
+                              and the row's own aria-pressed carries the state. */}
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              'flex h-5 w-5 sm:h-4 sm:w-4 shrink-0 items-center justify-center rounded-sm border border-primary',
+                              isSelected && 'bg-primary text-primary-foreground',
+                            )}
+                          >
+                            {isSelected && <Check className="h-4 w-4" />}
+                          </span>
                           <div className="flex-1 min-w-0">
                             <p className="font-medium truncate">
                               {client.primary_first_name} {client.primary_surname}
@@ -373,27 +388,33 @@ export function SendToClientModal({
                     const clientName = getClientName(clientId);
                     return (
                       <div key={clientId} className="rounded-md border bg-muted/30 overflow-hidden">
-                        <button
-                          onClick={() => setExpandedNoteClient(isExpanded ? null : clientId)}
-                          className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span className="font-medium truncate">{clientName}</span>
-                            {entry.notes && (
-                              <Badge variant="outline" className="text-[10px] h-4 shrink-0">has note</Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); toggleClient(clientId); }}
-                              className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                            {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
-                          </div>
-                        </button>
+                        {/* Two controls side by side — expand, and remove — rather
+                            than a remove button nested inside the expand button. */}
+                        <div className="flex items-center gap-1 pr-2 hover:bg-muted/50 transition-colors">
+                          <button
+                            type="button"
+                            aria-expanded={isExpanded}
+                            onClick={() => setExpandedNoteClient(isExpanded ? null : clientId)}
+                            className="flex min-w-0 flex-1 items-center justify-between px-3 py-2 text-left text-sm"
+                          >
+                            <span className="flex items-center gap-2 min-w-0">
+                              <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <span className="font-medium truncate">{clientName}</span>
+                              {entry.notes && (
+                                <Badge variant="outline" className="text-[10px] h-4 shrink-0">has note</Badge>
+                              )}
+                            </span>
+                            {isExpanded ? <ChevronUp className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Remove ${clientName}`}
+                            onClick={() => toggleClient(clientId)}
+                            className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                         {isExpanded && (
                           <div className="px-3 pb-3 pt-1 space-y-2 border-t">
                             <Textarea

@@ -382,3 +382,53 @@ configuration name, infrastructure vocabulary or a digit; and that no caller
 spells the exhausted-quota claim itself. The last is judged on **code with
 comments stripped** — a comment may quote the false claim in order to forbid
 it, which is `rf72b1b0GeocodeRefusal`'s own rule.
+
+---
+
+## §7 — RS-2 (14 Sep 2026): the Investment FINAL document returns to the existing WeasyPrint container
+
+This section supersedes §1–§3 for **one path**: the Investment report's final
+client document when a template is selected. Everything else in this document
+stands.
+
+RV-1 compared the two renderers on one frozen payload and measured what §3
+could only argue: the browser renderer embeds no fonts (every face becomes
+Helvetica), draws no block the registry marks partial, and cannot draw text on
+a filled panel legibly — the executive dashboard's headline figures were
+illegible in every browser render and legible in every WeasyPrint render. The
+owner's decision (RS mandate, 14 Sep 2026) is the hybrid: **browser for
+preview, WeasyPrint for the final document**, on the existing Cloud Run
+`weasyprint-service` (`--min-instances 0`, roughly 34 renders a month), invoked
+only by a deliberate final action. No new renderer, no migration, no second
+hosted runtime; RC-6's decommissioning of `weasyprint-service` is withdrawn,
+and the Docling sidecar is a separate question this does not touch.
+
+What changed, and only this:
+
+* `routeReportThroughTemplate` takes `renderer: 'browser' | 'weasyprint'`. The
+  Investment finalisation (`produceInvestmentDocument`) passes `weasyprint`;
+  every other caller keeps the browser default until its own format is moved
+  deliberately (RS-5). Under `weasyprint` the route compiles the template with
+  `compileTemplateHtmlForPdf` — the same compiler every design-system render
+  uses, fonts sourced from the container, assets resolved to what the engine may
+  fetch — and hands the HTML to `render-template-pdf` in `final` mode, naming
+  the report. The engine draws the completed report; it calculates, regenerates,
+  queries and decides nothing.
+* `render-template-pdf` answers the storage `path` beside the signed URL and
+  stamps `template_render_jobs.metadata.report_id`, so one finalisation is
+  findable by report and its bytes are stored once.
+* `publishInvestmentPdf` points the portal at that path instead of uploading a
+  copy; concurrent asks share one production and a completed finalisation is
+  remembered per tab. `docs/reports/BROWSER_PRESENTATION.md` §"One finalisation
+  → one PDF" carries the rules and the measurements.
+* The boundary is pinned by `investmentFinalRender.spec.ts` over the module
+  graph — one client, one importer, one `final` call site, no preview surface,
+  no Cloud Run host addressed from the browser — replacing the two specs that
+  pinned the absence.
+
+**Asserted by effect.** `npm run verify:journey -- --report <id>` drives the real
+page in Chromium against an intercepting double and fulfils `render-template-pdf`
+with the pinned engine locally: on reports A, B and C (14 Sep 2026) each
+finalisation made exactly one render call in `final` mode naming the report,
+Send made none, the portal row's `storage_path` equalled the render's path, and
+the edit written in the same journey appeared in the final PDF.

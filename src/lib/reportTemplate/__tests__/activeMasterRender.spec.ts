@@ -87,8 +87,11 @@ describe('a real production master, drawn in the browser', () => {
   });
 
   it('grows with the narrative rather than drawing a fixed document', async () => {
+    // The renderer counts the narrative's pages itself (`planNarrative`), so
+    // the projection's estimate cannot shrink the document — only a shorter
+    // narrative can. A one-paragraph body against the full one.
     const short = renderTemplateToBlob(master().schema, {
-      data: { ...DATA, narrative: { source: NARRATIVE, pages: 0 } },
+      data: { ...DATA, narrative: { source: NARRATIVE.split('\n\n')[0], pages: 0 } },
     });
     const long = renderTemplateToBlob(master().schema, { data: DATA });
     expect(long.size).toBeGreaterThan(short.size);

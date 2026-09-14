@@ -1,5 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 import {
   esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
 } from './_shared.html';
@@ -83,7 +84,12 @@ export function renderRiskRegisterHtml(block: Block, ctx: HtmlBlockContext): str
   const y = Number(p.y ?? 80);
   const w = Number(p.width ?? ctx.page.width - 48);
   const title = resolveBindable(p.title ?? 'Risk Register', ctx);
-  const items = Array.isArray(p.items) ? (p.items as RiskItem[]) : [];
+  // A hazard row whose name is bound and received nothing is no hazard; a
+  // register with none left is a titled frame around nothing and draws
+  // nothing. The same rule the data table and the definition list apply.
+  const authored = Array.isArray(p.items) ? (p.items as RiskItem[]) : [];
+  const items = authored.filter((it) => boundValueResolved(it.risk ?? '', ctx));
+  if (authored.length > 0 && items.length === 0) return '';
 
   // Defaults are the previous hardcoded literals, so an untouched template is
   // untouched output.

@@ -4,6 +4,7 @@ import {
   absBoxStyle, esc, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
 } from './_shared.html';
 import { isNegativeFigure, typesetFigure } from './_data';
+import { boundValueResolved } from '../boundValuePresence';
 
 interface KpiItem {
   label: string;
@@ -44,9 +45,18 @@ interface KpiItem {
  */
 export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
-  const items = Array.isArray(p.items) ? (p.items as KpiItem[]) : [];
+  const authored = Array.isArray(p.items) ? (p.items as KpiItem[]) : [];
+  /*
+   * A tile whose value is bound and received nothing is dropped. A label over
+   * an em dash is a figure the record does not hold, and four of them in a
+   * band — measured on a record with no financials, RS-3, 14 Sep 2026 — is a
+   * verdict page a client cannot tell from a broken one. A static value is
+   * kept as authored. When nothing survives, nothing is drawn; when some do,
+   * the band closes up around them rather than leaving their cells empty.
+   */
+  const items = authored.filter((it) => boundValueResolved(it.value, ctx));
   if (items.length === 0) return '';
-  const cols = Math.min(Number(p.columns ?? items.length), 6);
+  const cols = Math.min(Number(p.columns ?? items.length), 6, items.length);
   const gap = Number(p.gap ?? 12);
   const tileBg = resolveBindableColor(p.tileBg ?? 'token:bg', ctx, '#1A1A1A');
   const accentDefault = resolveBindableColor(p.accent ?? 'token:primary', ctx, '#BF9B50');
@@ -128,8 +138,26 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   const valueTone = (item: KpiItem, colour: string) =>
     (negativeColor && isNegativeFigure(valueText(item)) ? negativeColor : colour);
 
-  const figure = (item: KpiItem, size: number, colour: string) =>
-    `<div style="color:${valueTone(item, colour)};font-size:${size}pt;line-height:1;margin-top:8pt;font-weight:${valueWeight};${figures}${valueFont}">${esc(valueText(item))}</div>`;
+  /**
+   * A sentence in a value slot is set as prose, never as a figure.
+   *
+   * The cover band binds the graded verdict line into a tile beside GRADE and
+   * SCORE, and on a record whose grade is withheld that line is the withholding
+   * sentence — 150 characters at 20pt in an 87pt column, one word a line,
+   * running out of the tile and over the band below it (measured: report A,
+   * page 3, `OFF-PAGE` and `OVERLAP`). A figure has no spaces and is short; a
+   * value that is neither is copy, and copy is set at reading size.
+   */
+  const isProse = (text: string) => text.length > 24 && /\s/.test(text.trim());
+  const proseSize = Math.max(8.5, noteSize + 1.5);
+
+  const figure = (item: KpiItem, size: number, colour: string) => {
+    const text = valueText(item);
+    if (isProse(text)) {
+      return `<div style="color:${colour};font-size:${proseSize}pt;line-height:1.4;margin-top:8pt;${noteFont}">${esc(text)}</div>`;
+    }
+    return `<div style="color:${valueTone(item, colour)};font-size:${size}pt;line-height:1;margin-top:8pt;font-weight:${valueWeight};${figures}${valueFont}">${esc(text)}</div>`;
+  };
 
   // ── ruled: a band of hairline-separated columns ──────────────────────────
   if (variant === 'ruled' || variant === 'display') {
@@ -193,9 +221,12 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
   const tiles = items.slice(0, cols).map((item) => {
     const value = valueText(item);
     const accent = item.accent ? resolveBindableColor(item.accent, ctx, accentDefault) : accentDefault;
+    const valueStyle = isProse(value)
+      ? `color:${accent};font-size:${proseSize}pt;line-height:1.4;${noteFont}`
+      : `color:${accent};font-weight:700;font-size:${valueSize}pt;line-height:1.1;font-variant-numeric:tabular-nums;`;
     return `<div style="position:relative;background:${tileBg};border-radius:${radius}pt;padding:12pt 12pt 10pt 16pt;overflow:hidden;">
       <div style="position:absolute;left:0;top:0;bottom:0;width:3pt;background:${accent};"></div>
-      <div style="color:${accent};font-weight:700;font-size:${valueSize}pt;line-height:1.1;font-variant-numeric:tabular-nums;">${esc(value)}</div>
+      <div style="${valueStyle}">${esc(value)}</div>
       <div style="color:${labelColor};font-size:8pt;text-transform:uppercase;letter-spacing:0.08em;margin-top:8pt;">${esc(resolveBindable(String(item.label || ''), ctx))}</div>
     </div>`;
   }).join('');

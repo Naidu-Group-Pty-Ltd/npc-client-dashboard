@@ -10,7 +10,6 @@ import {
   type InvestmentDocument,
   type ProduceInvestmentOptions,
 } from "@/lib/reports/investment/deliverInvestmentPdf";
-import { BROWSER_PRESENTATION_RENDERER } from "@/lib/reportTemplate/routeReportThroughTemplate";
 import type { PdfDesignOptions } from "./premiumPdfDesign";
 
 interface ClientPdfButtonProps extends Pick<
@@ -98,7 +97,10 @@ export function PremiumPdfButton({
       saveTemplateDocument({ blob: doc.blob, fileName: doc.fileName, templateId: doc.templateId ?? "" });
       toast({
         title: "Client PDF ready",
-        description: doc.engine === BROWSER_PRESENTATION_RENDERER
+        // A template drew it, whichever engine did the drawing — the
+        // browser's preview renderer or the print engine that draws the
+        // final document.
+        description: doc.templateId
           ? "Rendered with your selected template. Your download should begin shortly."
           : "Rendered with the standard presentation. Your download should begin shortly.",
       });

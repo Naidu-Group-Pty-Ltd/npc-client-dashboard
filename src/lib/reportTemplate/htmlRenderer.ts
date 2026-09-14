@@ -8,6 +8,7 @@
  * exact; HTML reflows). Both walk the same schema.
  */
 import {
+  type Block,
   type ReportTemplate,
   type Page,
   type Tokens,
@@ -15,6 +16,9 @@ import {
 } from './templateSchema';
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks, pageContainedRegions } from './rendering/pdfImportPagePolicy';
 import { shouldRenderBlock } from './renderVisibility';
+import { applyNarrativePlan, planNarrative } from './narrativePlan';
+import { closeDroppedBlocks } from './closeDroppedBlocks';
+import { NARRATIVE_GEOMETRY_KEY } from './blocks/markdownBlockContent';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -496,6 +500,123 @@ function renderBlockWithRepeat(block: any, ctxBase: ResolveContext, blockCtx: Ht
 }
 
 
+/**
+ * Page furniture — what a page carries whether or not it has anything to say.
+ *
+ * The running foot and the page number by TYPE; the running head, the part
+ * marker and the section opener by the NAME the shared Investment Compass
+ * master gives them (`investmentCompass/blocks.ts`), which every active row
+ * copied. A page whose every other block drew nothing is a heading over white
+ * space, and it is dropped — see `pagesWithContent`.
+ */
+const FURNITURE_TYPES = new Set(['footer', 'page-number', 'divider', 'spacer']);
+const FURNITURE_NAMES = new Set(['Running head', 'Part marker', 'Section opener']);
+const isFurniture = (block: Block): boolean =>
+  FURNITURE_TYPES.has(String(block.type)) || FURNITURE_NAMES.has(String(block.name ?? ''));
+
+/** Would this block put anything on the page? Asked of its renderer. */
+function blockDrawsContent(block: Block, ctxBase: ResolveContext, blockCtx: HtmlBlockContext): boolean {
+  if (!shouldRenderBlock(block, ctxBase)) return false;
+  // An imported page is overlays on a container whose own renderer draws
+  // nothing; the overlays are the page.
+  if ((block.overlays ?? []).some((o) => !(o as { hidden?: boolean }).hidden)) return true;
+  const r = (block as any).repeat;
+  if (r?.path) {
+    const raw = String(r.path).split('.').reduce((acc: any, k: string) => (acc == null ? acc : acc[k.trim()]), ctxBase.data);
+    return Array.isArray(raw) && raw.length > 0;
+  }
+  const renderer = getHtmlBlockRenderer(block.type);
+  // A type this renderer has no drawing for is not known to be empty. A page
+  // is dropped on evidence that its blocks drew nothing, never on the absence
+  // of a way to look — the page loop still emits the wrapper (and any bookmark
+  // anchor) for such a block, and a reader reaching that anchor needs a page.
+  if (!renderer) return true;
+  return renderer(block, blockCtx).trim() !== '';
+}
+
+/**
+ * The pages that have something on them.
+ *
+ * Measured on a record with no financials (RS-3, 14 Sep 2026): the Financial
+ * position, Ten-year projection and Risk pages each drew their running head,
+ * their part marker, a section opener and a foot — and, once the blocks that
+ * had nothing to say stopped drawing, nothing else. Three consecutive pages of
+ * a client document that were a heading over white space. A page is dropped
+ * when it has at least one block that is not furniture and every such block
+ * draws nothing. A page made only of furniture, a page with a background
+ * raster (a plate is its picture), and every page in the editor — where an
+ * author needs to see what they are building — are kept.
+ *
+ * This is the conditional-page capability applied by what the page turns out
+ * to hold rather than by an expression the master remembered to write; the
+ * `conditional` pages are already gone by the time this runs.
+ */
+function pagesWithContent(pages: Page[], template: ReportTemplate, ctxBase: ResolveContext): Page[] {
+  return pages.filter((page) => {
+    if ((page.background as { imageUrl?: unknown } | undefined)?.imageUrl) return true;
+    const content = page.blocks.filter((b) => !isFurniture(b));
+    if (content.length === 0) return true;
+    // The page-scoped values every rendered page receives (`renderTemplateToHtml`
+    // sets them per page, after this pass has decided which pages exist). A
+    // block that binds only these — "Part {{partNumber}} of {{partCount}}" in
+    // a body — always resolves at paint time, so the check must see them as
+    // present: their values are counted later, their presence is certain now.
+    const checkCtx: ResolveContext = {
+      ...ctxBase,
+      data: {
+        ...ctxBase.data,
+        pageNumber: 1, pageCount: 1, partNumber: 1, partCount: 1, __tocEntries: [],
+      },
+    };
+    const blockCtx: HtmlBlockContext = {
+      ...checkCtx,
+      page: { width: page.size.width, height: page.size.height },
+      pageIndex: 0,
+      pages: pages.map((p) => ({ id: p.id, name: p.name, tocContinues: p.tocContinues === true })),
+      slots: template.slots ?? {},
+    };
+    return content.some((b) => blockDrawsContent(b, checkCtx, blockCtx));
+  });
+}
+
+/**
+ * The part number a static part marker should carry, per visible page.
+ *
+ * The composer binds `{{partNumber}}` now, but the active rows predate that
+ * and bake `Part 04 · Financials` into the marker — so a dropped page left the
+ * running heads counting 01, 02, 03, 07. Healed on read, the way the counted
+ * part is: one number per run of pages sharing a marker label, in the order
+ * the pages are drawn. A marker that binds its number is left to the binding.
+ */
+const STATIC_PART_RE = /^Part\s+\d+/i;
+function staticPartMarkerBody(page: Page): string | null {
+  for (const b of page.blocks) {
+    if (String(b.name ?? '') !== 'Part marker') continue;
+    const body = (b.props as { body?: unknown } | undefined)?.body;
+    if (typeof body === 'string' && !body.includes('{{') && STATIC_PART_RE.test(body)) return body;
+  }
+  return null;
+}
+function healedPartNumbers(pages: Page[]): Array<number | null> {
+  let count = 0;
+  let previous: string | null = null;
+  return pages.map((page) => {
+    const body = staticPartMarkerBody(page);
+    if (body === null) return null;
+    const label = body.replace(STATIC_PART_RE, '').trim();
+    if (label !== previous) { count += 1; previous = label; }
+    return count;
+  });
+}
+/** The marker block with its static number replaced by the healed one. */
+function healPartMarker(block: Block, part: number | null): Block {
+  if (part === null || String(block.name ?? '') !== 'Part marker') return block;
+  const body = (block.props as { body?: unknown } | undefined)?.body;
+  if (typeof body !== 'string' || body.includes('{{') || !STATIC_PART_RE.test(body)) return block;
+  const numeral = String(part).padStart(2, '0');
+  return { ...block, props: { ...(block.props as Record<string, unknown>), body: body.replace(STATIC_PART_RE, `Part ${numeral}`) } } as Block;
+}
+
 function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, template: ReportTemplate, pages: Page[], editorMode = false): string {
   const blockCtx: HtmlBlockContext = {
     ...ctxBase,
@@ -613,8 +734,15 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // empty one. See `shouldFallBackToNativeBlocks`.
   const renderNativeBlocks = pageRenderPlan.renderNativeBlocks
     || shouldFallBackToNativeBlocks(pageRenderPlan, sourceRasterPainted);
+  const healedPart = (ctxBase.data as { __healedPartNumber?: number | null } | undefined)?.__healedPartNumber ?? null;
   if (renderNativeBlocks) {
-    for (const block of sortBlocksForPaint(page.blocks)) {
+    // A dropped block leaves no hole: the blocks under it in its column move
+    // up to where it began. Never in the editor. See `closeDroppedBlocks`.
+    const laid = editorMode
+      ? page.blocks
+      : closeDroppedBlocks(page.blocks, (b) => !blockDrawsContent(b, blockCtxBase, blockCtx), isFurniture);
+    for (const authored of sortBlocksForPaint(laid)) {
+      const block = healPartMarker(authored, healedPart);
       if (!shouldRenderBlock(block, ctxBase)) continue;
       blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));
     }
@@ -780,10 +908,19 @@ export function renderTemplateToHtml(
   const themes = (template as any).themes as Record<string, any> | undefined;
   const activeTheme = themes && (template as any).activeThemeId ? themes[(template as any).activeThemeId] : null;
   const baseTokens = mergeTokens(template.tokens, activeTheme?.tokens, options.tokenOverrides);
-  const ctxBase: ResolveContext = { data: options.data ?? {}, tokens: baseTokens };
+  // The narrative pre-pass runs before any page conditional is read: it files
+  // the geometry every markdown instance packs with and writes each run's
+  // true page count over the projection's template-blind estimate. See
+  // `narrativePlan.ts`.
+  const ctxSeed: ResolveContext = { data: options.data ?? {}, tokens: baseTokens };
+  const ctxBase = applyNarrativePlan(ctxSeed, planNarrative(template, ctxSeed));
   (ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks = options.includeBookmarks !== false;
 
-  const visiblePages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
+  const conditionalPages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
+  // Then the pages that turned out to hold something — never in the editor,
+  // where an author needs to see every page they are building.
+  const visiblePages = options.editorMode ? conditionalPages : pagesWithContent(conditionalPages, template, ctxBase);
+  const healedParts = healedPartNumbers(visiblePages);
 
   // Part numbers, counted over the pages that actually render. A composer
   // that bakes "Part 07" into a page's furniture keeps counting pages a
@@ -834,6 +971,7 @@ export function renderTemplateToHtml(
         // A page part number depends on which PRECEDING pages opted in,
         // which the per-page cache key cannot see.
         partNumbers.join(','),
+        healedParts.join(','),
       ].join('\u0002')
     : '';
   const liveCacheKeys = pageCache ? new Set<string>() : null;
@@ -864,9 +1002,15 @@ export function renderTemplateToHtml(
         pageCount: visiblePages.length,
         partNumber: partNumbers[idx],
         partCount,
+        __healedPartNumber: healedParts[idx],
         __tocEntries: tocEntries,
       },
     };
+    // pageCtx is built fresh (see the note on `_includeBookmarks` below), so
+    // the narrative geometry the pre-pass filed has to be carried across too,
+    // or every markdown instance would pack on the profile's constants while
+    // the page conditionals were evaluated on the geometry's count.
+    (pageCtx as any)[NARRATIVE_GEOMETRY_KEY] = (ctxBase as any)[NARRATIVE_GEOMETRY_KEY];
     (pageCtx as any)._cascadeMetadata = !!options.cascadeMetadata;
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;

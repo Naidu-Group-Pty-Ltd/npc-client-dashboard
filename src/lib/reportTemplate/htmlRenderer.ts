@@ -14,6 +14,7 @@ import {
   parseTemplate,
 } from './templateSchema';
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage, shouldFallBackToNativeBlocks, pageContainedRegions } from './rendering/pdfImportPagePolicy';
+import { shouldRenderBlock } from './renderVisibility';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -328,19 +329,6 @@ const SHADOW_PRESETS: Record<string, string> = {
   xl: '0 16pt 40pt rgba(15,23,42,0.18)',
 };
 
-function evalBlockVisibility(v: any, ctx: ResolveContext): boolean {
-  if (!v || !v.mode || v.mode === 'always') return true;
-  const expr = String(v.expr ?? '').trim();
-  if (!expr) return true;
-  const truthy = evalConditional(expr, ctx);
-  return v.mode === 'unless' ? !truthy : truthy;
-}
-
-function shouldRenderBlock(block: Page['blocks'][number], ctx: ResolveContext): boolean {
-  return !block.hidden
-    && evalConditional(block.conditional, ctx)
-    && evalBlockVisibility(block.visibility, ctx);
-}
 
 function decorationBackdrop(block: any, ctx: ResolveContext): string {
   const s = block.style;

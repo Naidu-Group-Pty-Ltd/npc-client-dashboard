@@ -538,19 +538,48 @@ describe('RF-7.2B.1A — the template route is gated too, and it is tried first'
     'utf-8',
   );
 
-  it('the template route really is attempted before the gated legacy route', () => {
+  it('the template route really is attempted before the standard renderer', () => {
+    // The ORDER is the rule: a person's chosen template wins, and the standard
+    // document is what happens when there isn't one. RC-3.1 replaced the
+    // standard renderer (Cloud Run WeasyPrint → the browser's pdf-lib
+    // generator) and left that order exactly as it was.
     const templated = produce.indexOf('tryTemplateDocument(');
-    const legacy = produce.indexOf("'render-investment-report-pdf'");
+    const standard = produce.indexOf('generateInvestmentPdfBlob(');
     expect(templated).toBeGreaterThan(-1);
-    expect(legacy).toBeGreaterThan(-1);
-    expect(templated).toBeLessThan(legacy);
+    expect(standard).toBeGreaterThan(-1);
+    expect(templated).toBeLessThan(standard);
   });
 
-  it('the caller names the report, so the renderer can ask about it', () => {
-    const call = route.indexOf("'render-template-pdf'");
-    expect(call).toBeGreaterThan(-1);
-    // `reportId` must appear inside the payload object of that call.
-    expect(route.slice(call, call + 900)).toMatch(/\breportId,/);
+  /**
+   * The gate used to be the render SERVICE's: the route named the report to
+   * `render-template-pdf`, which read `validation_flags` and answered 409.
+   * Both render services are off the Investment path now, so a gate inside one
+   * of them would be a gate on nothing.
+   *
+   * It sits above both presentations instead, which is strictly stronger: the
+   * template route had it and the browser's standard generator never did, so a
+   * blocked report drew a PDF and saved it whenever no template was active.
+   */
+  it('the readiness gate runs before a presentation is chosen at all', () => {
+    const gate = produce.indexOf('assertInvestmentReportClientReady(');
+    const templated = produce.indexOf('tryTemplateDocument(');
+    const standard = produce.indexOf('generateInvestmentPdfBlob(');
+    expect(gate, 'nothing checks client readiness before the document is produced')
+      .toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(templated);
+    expect(gate).toBeLessThan(standard);
+    // And it is the SAME rule the portal applies, imported rather than
+    // re-implemented — two readings of one row is how they come to disagree.
+    const readiness = readFileSync(
+      resolve(__dirname, '../investment/clientReadiness.ts'),
+      'utf-8',
+    );
+    expect(readiness).toContain('governedAuthorityBlockFromFlags');
+    expect(readiness).toContain('governedNarrativeAuthority.pure');
+  });
+
+  it('the route no longer asks a render service about the report', () => {
+    expect(route).not.toContain("'render-template-pdf'");
   });
 
   it('the renderer reads the stored verdict and refuses with the same 409', () => {

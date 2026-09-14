@@ -5,6 +5,7 @@
  */
 import type { Block } from '../templateSchema';
 import { evalConditional, resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { boundValueResolved } from '../boundValuePresence';
 import { esc, type HtmlBlockContext } from './_shared.html';
 import { resolveDataPath } from './_data';
 
@@ -365,10 +366,18 @@ export function renderDefinitionListHtml(block: Block, ctx: HtmlBlockContext): s
   // its single money axis). Dropping items only shortens the list, which is
   // the safe direction: the declared height was sized for every slot.
   const authored = Array.isArray(p.items) ? (p.items as R[]) : [];
-  const items = authored.filter((it) =>
-    (typeof it.when === 'string' && String(it.when).trim() !== ''
-      ? evalConditional(String(it.when), ctx)
-      : true));
+  const items = authored.filter((it) => {
+    if (typeof it.when === 'string' && String(it.when).trim() !== ''
+      && !evalConditional(String(it.when), ctx)) return false;
+    // And an item whose definition is bound but received nothing is dropped
+    // for the same reason the `when` items are — a term with no definition is
+    // a promise unkept. The jsPDF twin asks the same function, because two
+    // presentations deciding presence differently is how one record comes to
+    // say two things. See `boundValuePresence`.
+    const definitionSource = [it.definition, it.value, it.description]
+      .find((c) => c !== undefined && c !== null);
+    return definitionSource === undefined || boundValueResolved(definitionSource, ctx);
+  });
   if (authored.length > 0 && items.length === 0) return '';
   const rows = items
     .map(

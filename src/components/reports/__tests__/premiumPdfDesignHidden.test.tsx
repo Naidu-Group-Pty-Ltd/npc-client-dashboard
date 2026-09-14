@@ -28,11 +28,10 @@ import { DEFAULT_PDF_DESIGN_OPTIONS } from '../premiumPdfDesign';
 
 // The export panel's siblings reach for the network and the session; this
 // screen is being examined for what it DRAWS, so they stand in as markers.
-vi.mock('@/components/reports/ClientPDFGenerator', () => ({
-  ClientPDFGenerator: () => <div>legacy generator</div>,
-}));
+// The separately mounted legacy generator is gone from this panel — there is
+// one client-PDF action now — so the marker below is the only one left.
 vi.mock('@/components/reports/PremiumPdfButton', () => ({
-  PremiumPdfButton: () => <div>Premium PDF</div>,
+  PremiumPdfButton: () => <div>Generate Client PDF</div>,
 }));
 vi.mock('@/components/reports/RegenerateWithPerplexityButton', () => ({
   RegenerateWithPerplexityButton: () => <div>Regenerate</div>,
@@ -102,7 +101,6 @@ describe('the premium-PDF design controls are hidden', () => {
         includeHeroImages
         includeSparklines
         pdfDesignOptions={DEFAULT_PDF_DESIGN_OPTIONS}
-        pdfGeneratorRef={{ current: null } as never}
         onIncludeSourcesChange={() => {}}
         onIncludeScoringChange={() => {}}
         onIncludeChartsChange={() => {}}
@@ -121,7 +119,7 @@ describe('the premium-PDF design controls are hidden', () => {
     expect(queryByText('Reset')).toBeNull();
     // Still there: everything else the screen is for.
     expect(getByText('Publishing & Export')).toBeTruthy();
-    expect(getByText('Premium PDF')).toBeTruthy();
+    expect(getByText('Generate Client PDF')).toBeTruthy();
     expect(getByText('Download raw text')).toBeTruthy();
     expect(getByText('Include scoring')).toBeTruthy();
   });

@@ -182,17 +182,25 @@ describe('the paths that send HTML to the renderer', () => {
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/^\s*\/\/.*$/gm, '');
 
-  it('the production route compiles through the one compiler, not its own copy', () => {
-    // It had its own `preloadImages` + `renderTemplateToHtml` pair — the exact
-    // shape `compileTemplateForPdf.ts` exists to retire — and so it inherited
-    // none of what that module guarantees. It resolved the rasters, which is
-    // the omission that module was written for, and missed the next one.
+  /**
+   * The production route sends HTML nowhere now — it draws the document in
+   * the browser. The rule this test protects is therefore stated the other
+   * way round: the route must not grow its own compile step back, because a
+   * second path to a render service is how the font policy came to be
+   * bypassed the first time. `compileTemplateHtmlForPdf` is still the one
+   * compiler for the surfaces that DO produce HTML (the editor preview and
+   * the converter), and the test below still pins its font source.
+   */
+  it('the production route sends no HTML to a renderer at all', () => {
     const code = withoutComments(readFileSync(
       join(__dirname, '../routeReportThroughTemplate.ts'), 'utf8',
     ));
     expect(code, 'the route renders its own HTML again — read this file\'s header')
       .not.toMatch(/renderTemplateToHtml\s*\(/);
-    expect(code).toContain('compileTemplateHtmlForPdf(');
+    expect(code).not.toContain('compileTemplateHtmlForPdf(');
+    expect(code).not.toContain('render-template-pdf');
+    // What it does instead.
+    expect(code).toContain('renderTemplateToBlob(');
   });
 
   it('the compiler decides the font source; a caller cannot pass one through', () => {

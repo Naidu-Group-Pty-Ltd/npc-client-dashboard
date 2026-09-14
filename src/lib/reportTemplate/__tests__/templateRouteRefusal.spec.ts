@@ -38,7 +38,7 @@ const REASONS: TemplateRouteRefusal[] = [
   'adapter_declined_record',
   'report_type_not_allowed',
   'no_active_template',
-  'template_not_weasyprint',
+  'template_not_browser_renderable',
   'adapter_published_no_data',
   'template_schema_invalid',
   'template_unbound_reconstruction',

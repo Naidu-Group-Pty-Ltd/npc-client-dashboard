@@ -467,8 +467,11 @@ describe('§30.20–24 — reconciliation, leakage and preservation', () => {
       expect(() => read(p), p).not.toThrow();
     }
     const delivery = read('src/lib/reports/investment/deliverInvestmentPdf.ts');
+    // Template selection is what this pins, and it is untouched. The renderer
+    // BEHIND it changed in RC-3.1 (Cloud Run → browser), which is a different
+    // question and has its own tests.
     expect(delivery).toContain("tryTemplateDocument('investment'");
-    expect(delivery).toContain("'render-investment-report-pdf'");
+    expect(delivery).toContain('generateInvestmentPdfBlob');
   });
 });
 

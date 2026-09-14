@@ -5,7 +5,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Switch } from '@/components/ui/switch';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
-import { ClientPDFGenerator } from '@/components/reports/ClientPDFGenerator';
 import { PremiumPdfButton } from '@/components/reports/PremiumPdfButton';
 import { RegenerateWithPerplexityButton } from '@/components/reports/RegenerateWithPerplexityButton';
 import { PremiumPdfDesignPanel } from '@/components/reports/PremiumPdfDesignPanel';
@@ -46,7 +45,6 @@ export function InvestmentReportExportPanel({
   includeHeroImages,
   includeSparklines,
   pdfDesignOptions,
-  pdfGeneratorRef,
   onIncludeSourcesChange,
   onIncludeScoringChange,
   onIncludeChartsChange,
@@ -79,7 +77,11 @@ export function InvestmentReportExportPanel({
           <section className="space-y-3">
             <div>
               <h3 className="text-sm font-semibold">PDF Content</h3>
-              <p className="text-xs text-muted-foreground">Choose which report elements are included in generated outputs.</p>
+              <p className="text-xs text-muted-foreground">
+                Scoring and sources decide what the report <em>contains</em>, in every
+                presentation. Charts, hero images and sparklines decide what is <em>drawn</em>
+                — the figures they illustrate stay on the page either way.
+              </p>
             </div>
             <ToggleRow
               icon={<TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />}
@@ -98,12 +100,14 @@ export function InvestmentReportExportPanel({
             <ToggleRow
               icon={<FileText className="h-3.5 w-3.5 text-muted-foreground" />}
               label="Charts"
+              description="Draw the charts the report's own figures support."
               checked={includeCharts}
               onCheckedChange={onIncludeChartsChange}
             />
             <ToggleRow
               icon={<Images className="h-3.5 w-3.5 text-muted-foreground" />}
               label="Hero images"
+              description="Place the imagery already stored against this report."
               checked={includeHeroImages}
               onCheckedChange={onIncludeHeroImagesChange}
             />
@@ -114,6 +118,7 @@ export function InvestmentReportExportPanel({
             <ToggleRow
               icon={<Sparkles className="h-3.5 w-3.5 text-muted-foreground" />}
               label="Sparklines"
+              description="Draw the ten-year shape beside the financial figures."
               checked={includeSparklines}
               onCheckedChange={onIncludeSparklinesChange}
             />
@@ -122,7 +127,7 @@ export function InvestmentReportExportPanel({
           <section className="space-y-3 rounded-xl border bg-muted/20 p-3">
             <div>
               <h3 className="text-sm font-semibold">Generation</h3>
-              <p className="text-xs text-muted-foreground">Create standard or premium PDFs and refresh the report content.</p>
+              <p className="text-xs text-muted-foreground">Produce the client document and refresh the report content.</p>
             </div>
             {/* Before the buttons, deliberately: which template the document
                 comes out in is a decision about the document, and it used to be
@@ -133,19 +138,23 @@ export function InvestmentReportExportPanel({
               formatLabel={INVESTMENT_REPORT_FORMAT.label}
             />
             <div className="grid gap-2">
-              {/* The unified template-first delivery leads; the browser
-                  generator stays mounted beneath it as the named legacy
-                  layout, and its ref keeps serving the send fallback. */}
-              <PremiumPdfButton
-                reportId={report.id}
-                propertyAddress={report.property_address}
-                includeCharts={includeCharts}
-                includeHeroImages={includeHeroImages}
-                includeSparklines={includeSparklines}
-                designOptions={pdfDesignOptions}
-              />
+              {/* ONE client-PDF action. A second, separately mounted generator
+                  used to sit beneath this one as "Download (legacy layout)",
+                  and the two took different halves of the five controls above
+                  — so which switches a client's document honoured depended on
+                  which button was pressed. See `PremiumPdfButton`. */}
               <ErrorBoundary fallback={<div className="text-sm text-muted-foreground">PDF tools are unavailable.</div>}>
-                <ClientPDFGenerator ref={pdfGeneratorRef} report={report} includeSources={includeSources} includeScoring={includeScoring} appearance="legacy" />
+                <PremiumPdfButton
+                  reportId={report.id}
+                  propertyAddress={report.property_address}
+                  variant={report.report_variant ?? null}
+                  includeSources={includeSources}
+                  includeScoring={includeScoring}
+                  includeCharts={includeCharts}
+                  includeHeroImages={includeHeroImages}
+                  includeSparklines={includeSparklines}
+                  designOptions={pdfDesignOptions}
+                />
               </ErrorBoundary>
               <RegenerateWithPerplexityButton
                 reportId={report.id}

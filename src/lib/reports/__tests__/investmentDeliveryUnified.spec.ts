@@ -52,13 +52,28 @@ describe('Send to Client (F12)', () => {
     expect(modalRegion).toContain('publishInvestmentPdf(');
   });
 
-  it('the browser generator survives as the last resort only', () => {
-    // Reachability is the programme's standing rule; primacy is the defect.
-    expect(modalRegion).toContain('generateAndUpload');
-    const publishAt = modalRegion.indexOf('publishInvestmentPdf(');
-    const rasterAt = modalRegion.indexOf('generateAndUpload');
-    expect(publishAt).toBeGreaterThan(-1);
-    expect(rasterAt).toBeGreaterThan(publishAt);
+  /**
+   * The send had a SECOND generator behind it on failure — a different
+   * document, drawn from a different projection and honouring a different half
+   * of the five export controls — so a send that fell back delivered something
+   * the operator had never seen. Reachability was the argument for keeping it
+   * and it was the wrong one: the canonical contract already falls back from a
+   * chosen template to the standard presentation, both drawn from the same
+   * final payload, and a failure past that is worth surfacing rather than
+   * papering over with a third document.
+   */
+  it('has ONE producer, with no second document behind it', () => {
+    expect(modalRegion).toContain('publishInvestmentPdf(');
+    expect(modalRegion).not.toContain('generateAndUpload');
+    expect(code(VIEW_PAGE)).not.toContain('pdfGeneratorRef');
+  });
+
+  it('carries all five export controls into the send', () => {
+    for (const flag of [
+      'includeSources', 'includeScoring', 'includeCharts', 'includeHeroImages', 'includeSparklines',
+    ]) {
+      expect(modalRegion, `${flag} must reach the published document`).toContain(flag);
+    }
   });
 });
 

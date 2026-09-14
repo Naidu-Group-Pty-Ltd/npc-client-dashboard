@@ -4,17 +4,21 @@
  * The rule this file exists to hold: **a templated document is an improvement
  * on a working path, so it may never be the reason somebody cannot get their
  * file.** A refused adapter, no activated template, a render that failed, a
- * signed URL that will not fetch, an empty body — every one of them has to
- * answer null, because the caller's next line is the route that has produced
- * this document for the life of the product.
+ * template carrying a block this renderer cannot draw — every one of them has
+ * to answer null, because the caller's next line is the standard presentation.
+ *
+ * The document is a Blob now rather than a signed URL. It used to be written
+ * to a bucket by a render service and fetched back here, so "the URL will not
+ * fetch" and "the body was empty" were two more ways to end up with no file;
+ * the renderer runs in this tab, so there is nothing to fetch and emptiness is
+ * checked once, beside the render.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const h = vi.hoisted(() => ({
-  routed: null as { fileUrl: string; fileName: string; templateId: string } | null,
+  routed: null as { blob: Blob; fileName: string; templateId: string } | null,
   routeCalls: [] as Array<[string, string, unknown]>,
   routeThrows: false,
-  fetchImpl: null as null | ((url: string) => Promise<Response>),
   selections: [] as Array<{ id: string; report_type: string; template_id: string }>,
   selectionsThrow: false,
   selectionCalls: 0,
@@ -46,22 +50,15 @@ vi.mock('@/lib/reportTemplate/compassRoute', () => ({
 
 import { tryTemplateDocument } from '../templateDocument';
 
-const body = (text: string, ok = true) => ({
-  ok,
-  blob: async () => new Blob([text], { type: 'application/pdf' }),
-}) as unknown as Response;
+const pdf = (text: string) => new Blob([text], { type: 'application/pdf' });
 
 beforeEach(() => {
-  h.routed = { fileUrl: 'https://cdn.example/x.pdf', fileName: 'x.pdf', templateId: 'tpl-1' };
+  h.routed = { blob: pdf('%PDF-1.7 rendered'), fileName: 'x.pdf', templateId: 'tpl-1' };
   h.routeCalls = [];
   h.routeThrows = false;
-  h.fetchImpl = null;
   h.selections = [];
   h.selectionsThrow = false;
   h.selectionCalls = 0;
-  vi.stubGlobal('fetch', async (url: string) => (h.fetchImpl
-    ? h.fetchImpl(url)
-    : body('%PDF-1.7 rendered')));
 });
 
 describe("the person's chosen template", () => {
@@ -170,23 +167,15 @@ describe('asking for the templated document', () => {
     expect(await tryTemplateDocument('portfolio', 'p-1')).toBeNull();
   });
 
-  it('falls back when the signed URL will not fetch', async () => {
-    h.fetchImpl = async () => body('', false);
+  it('falls back when the route produced no document', async () => {
+    // A zero-byte document saves as a file that opens to an error, which is
+    // worse than the standard presentation. The route refuses it there and
+    // answers null; this is the caller honouring that.
+    h.routed = null;
     expect(await tryTemplateDocument('portfolio', 'p-1')).toBeNull();
   });
 
-  it('falls back when the render came back empty', async () => {
-    // A zero-byte body saves as a file that opens to an error, which is worse
-    // than the legacy layout.
-    h.fetchImpl = async () => body('');
-    expect(await tryTemplateDocument('portfolio', 'p-1')).toBeNull();
-  });
-
-  it('falls back — never throws — when the network or the router fails', async () => {
-    h.fetchImpl = async () => { throw new Error('offline'); };
-    await expect(tryTemplateDocument('portfolio', 'p-1')).resolves.toBeNull();
-
-    h.fetchImpl = null;
+  it('falls back — never throws — when the router fails', async () => {
     h.routeThrows = true;
     await expect(tryTemplateDocument('portfolio', 'p-1')).resolves.toBeNull();
   });

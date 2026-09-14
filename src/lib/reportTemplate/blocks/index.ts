@@ -38,6 +38,9 @@ import { drawDDChecklistBlock } from './ddChecklist';
 import { drawDecisionBoxBlock } from './decisionBox';
 import { drawStrengthsWatchBlock } from './strengthsWatch';
 import { drawExtrasPlaceholder } from './extras';
+import { drawDefinitionListBlock } from './definitionList';
+import { drawChartLineBlock } from './chartLine';
+import { drawMarkdownBlock } from './markdownBlock';
 
 export type RendererCapability = 'full' | 'partial' | 'unsupported';
 export type RendererEngine = 'html' | 'weasyprint' | 'jspdf';
@@ -95,7 +98,6 @@ export const HTML_FIRST_BLOCK_TYPES = new Set<string>([
   'testimonials',
   'ribbon',
   'metric-delta',
-  'definition-list',
   'sparkline',
   'before-after',
   'image-text',
@@ -103,7 +105,6 @@ export const HTML_FIRST_BLOCK_TYPES = new Set<string>([
   'pivot-table',
   'chart-bar',
   'chart-stacked-bar',
-  'chart-line',
   'chart-area',
   'chart-pie',
   'chart-donut',
@@ -118,8 +119,12 @@ export const HTML_FIRST_BLOCK_TYPES = new Set<string>([
 export interface BlockRenderContext extends ResolveContext {
   doc: jsPDF;
   page: { width: number; height: number };
-  /** All visible pages in render order — used by TOC and similar blocks. */
-  pages?: Array<{ name: string; id: string }>;
+  /**
+   * All visible pages in render order — used by TOC and similar blocks.
+   * `tocContinues` travels with them because the contents block reads it to
+   * fold a section that runs over two pages into one entry.
+   */
+  pages?: Array<{ name: string; id: string; tocContinues?: boolean }>;
   /** Reusable slots (Header/Footer/etc) keyed by slotKey. */
   slots?: Record<string, Block>;
   /** Internal: draw a single overlay (provided by pdfRenderer). */
@@ -175,7 +180,7 @@ export const BLOCK_RENDERERS: Record<string, BlockRenderer> = {
   testimonials: drawExtrasPlaceholder,
   ribbon: drawExtrasPlaceholder,
   'metric-delta': drawExtrasPlaceholder,
-  'definition-list': drawExtrasPlaceholder,
+  'definition-list': drawDefinitionListBlock,
   sparkline: drawExtrasPlaceholder,
   'before-after': drawExtrasPlaceholder,
   'image-text': drawExtrasPlaceholder,
@@ -184,7 +189,8 @@ export const BLOCK_RENDERERS: Record<string, BlockRenderer> = {
   'pivot-table': drawExtrasPlaceholder,
   'chart-bar': drawExtrasPlaceholder,
   'chart-stacked-bar': drawExtrasPlaceholder,
-  'chart-line': drawExtrasPlaceholder,
+  'chart-line': drawChartLineBlock,
+  'markdown-block': drawMarkdownBlock,
   'chart-area': drawExtrasPlaceholder,
   'chart-pie': drawExtrasPlaceholder,
   'chart-donut': drawExtrasPlaceholder,

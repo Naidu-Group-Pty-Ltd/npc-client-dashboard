@@ -27,7 +27,7 @@
       "exposure_class": "internal-service",
       "owner": "reporting-engine-program",
       "reviewed": true,
-      "notes": "ABS Regional population (ERP by SA2) ingest — fetches the release datacube from abs.gov.au itself (measured reachable from this project); parsing server-side with refusal-shaped bounds incl. the national-total plausibility anchor. Gateway JWT on; inside, internal edge secret (bearer or X-Cron-Secret) or the self-sealing empty-table bootstrap. Writes only abs_sa2_meta/abs_sa2_population/abs_regional_sync."
+      "notes": "ABS Regional population (ERP by SA2) ingest \u2014 fetches the release datacube from abs.gov.au itself (measured reachable from this project); parsing server-side with refusal-shaped bounds incl. the national-total plausibility anchor. Gateway JWT on; inside, internal edge secret (bearer or X-Cron-Secret) or the self-sealing empty-table bootstrap. Writes only abs_sa2_meta/abs_sa2_population/abs_regional_sync."
     },
     "abs-regional-service": {
       "verify_jwt": false,
@@ -410,6 +410,13 @@
       "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
+    },
+    "builder-network-inbound": {
+      "verify_jwt": false,
+      "exposure_class": "webhook-secret",
+      "owner": "builder-network",
+      "reviewed": true,
+      "notes": "Builders Network -> workspace delivery door (extraction plan Phase 3; dark until feature_flags.builder_network_enabled, which it reads server-side and fails closed on, answering a named retryable 503 while off). Authenticated by a per-connection symmetric HMAC-SHA256 over `${timestamp}.${rawBody}` with a +/-300s window and constant-time comparison; the secret is RLS-closed in builder_network_connections and never appears in a URL or log. One generic refusal covers the whole ladder (unknown connection, inactive, missing secret, bad signature) so a probing caller cannot enumerate connections. The privacy contract (builderNetworkPrivacy.pure.ts) runs on ARRIVAL and throws rather than filters -- a payload naming client PII, internal notes, staff identity, cost/margin or AML content is refused 422 and nothing is stored. Landing is idempotent by dedupe_key (a redelivery gets the 200 the sender lost); application to domain tables is a separate sweep, never this door. Carries no Supabase identity because the caller is the network's outbox worker, not a person."
     },
     "builder-portal-accept-invite": {
       "verify_jwt": false,
@@ -2587,7 +2594,7 @@
       "exposure_class": "internal-service",
       "owner": "reporting-engine-program",
       "reviewed": true,
-      "notes": "Per-section index over stored investment reports (Phase 3). Derives an addressable projection of investment_reports.report_content with _shared/reports/investment/sectionStorage.pure.ts and writes ONLY investment_report_sections / investment_report_section_index — never a client report. Gateway JWT on; inside, the internal edge secret (bearer or X-Cron-Secret) or the per-REPORT self-sealing arm (a report with no index row may be indexed once without it; force always needs the secret). An index is written only where re-assembly proves it lossless, and the stored counts describe what is stored."
+      "notes": "Per-section index over stored investment reports (Phase 3). Derives an addressable projection of investment_reports.report_content with _shared/reports/investment/sectionStorage.pure.ts and writes ONLY investment_report_sections / investment_report_section_index \u2014 never a client report. Gateway JWT on; inside, the internal edge secret (bearer or X-Cron-Secret) or the per-REPORT self-sealing arm (a report with no index row may be indexed once without it; force always needs the secret). An index is written only where re-assembly proves it lossless, and the stored counts describe what is stored."
     },
     "request-lead-magnet": {
       "verify_jwt": false,

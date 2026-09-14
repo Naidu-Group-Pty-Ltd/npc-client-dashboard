@@ -532,7 +532,7 @@ CI: `typecheck:builder-edge`, `test:builder-portal`, `security:builder-portal`,
 `_shared/builderNetwork.ts`; `builder-network-inbound`; outbox aggregate; all behind
 `feature_flags.builder_network_enabled`, default false, fails closed, **read server-side**.
 
-**Phase 4 — move the data.** Re-measure first (it grows while we work — stock testing is
+**Phase 4 — move the data.** Runbook with fresh measurements: [`46-phase4-data-move-runbook.md`](./46-phase4-data-move-runbook.md). Re-measure first (it grows while we work — stock testing is
 live). Two orgs, three users, the stock corpus (1,014+ items, 3,069+ image rows, 749 MB+
 objects across 3 buckets), the E3/E4/E5 rows. Re-issue invitations rather than porting
 password hashes. Strip `selected_by_user_id` / `internal_notes`. **Reconcile the soft-delete
@@ -648,23 +648,24 @@ added to the marketing site.
 
 ## 10. Open items and logistics
 
-1. **Repo access.** The live MC (`Naidu-Group-Pty-Ltd/aurixa-mission-control-12b89885`) is
-   readable from this session but not pushable (cross-owner attach refused — session
-   sources are pinned to the `lavan96` tier). The reserved-slugs migration is committed on
-   a local branch and **delivered as a git patch** (`git am` it, or start a session with
-   that repo as a source and I'll land it + PR there directly). Phases 1's MC work has the
-   same constraint until then. `aurixa-builders` should be created under
-   `Naidu-Group-Pty-Ltd` and added to a session the same way.
+1. **Repo access** — RESOLVED: the live MC is a session source and Phase 0–1 landed there
+   directly (PR #175); `aurixa-builders` exists under `Naidu-Group-Pty-Ltd` (public, CI
+   green, PR #1) with the network's Supabase project `htfluofznhxeumblwbww` provisioned
+   and its schema applied and fingerprint-verified against the committed baseline.
 2. **Old MC repo**: PR #87 closed as superseded. If the old repo is fully retired, consider
    archiving it so the two stop diverging silently — the branch protections and the org
    redirect made this session's first MC work land in the wrong place without a single
    error message.
-3. **Metering identity for the network** (unchanged question): one MC tenant, or one tenant
-   per builder org (`ensureTenant(cloneId=null, external_ref)` already supports it)? Settle
-   before the operator console is built.
+3. **Metering identity for the network** — **DECIDED 2026-09-14: one tenant PER BUILDER
+   ORGANISATION** (owner's call). Implemented: MC's `approveNetworkOrganisation` runs
+   `ensureTenant(null, 'builders-network:<org uuid>', legal name)`, so the ledger exists
+   from the day of approval, through the existing tenant machinery rather than a parallel
+   one.
 4. **Assertion vs introspection**: confirm the identity/JWKS endpoint generalises to a
    second audience cleanly; fall back to hash introspection if not. Either way the raw key
    never reaches the network.
-5. **Storage move** (unchanged): move objects to preserve paths vs re-create + rewrite —
-   decide in Phase 4 against the then-current corpus size.
+5. **Storage move** — **DECIDED 2026-09-14: RE-KEY to a network-native scheme** (owner's
+   call): objects are re-created under network paths and every `storage_path` column is
+   rewritten in the same Phase 4 pass, with counts asserted before and after — a bigger
+   move than preserving paths, chosen for the clean long-term layout.
 6. **Native in-network AML compliance** stays deferred behind the server-side call (E4).

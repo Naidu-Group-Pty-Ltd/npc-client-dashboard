@@ -68,6 +68,7 @@
     "builder:db:verify:collaboration": "node scripts/builder-portal/local-db/verify-collaboration.mjs",
     "builder:db:verify:workspace": "node scripts/builder-portal/local-db/verify-workspace.mjs",
     "builder:db:verify:release": "node scripts/builder-portal/local-db/verify-release-control.mjs",
+    "builder:db:network-check": "node scripts/builder-portal/local-db/network-standalone-check.mjs",
     "builder:types": "node scripts/builder-portal/local-db/generate-builder-types.mjs",
     "builder:types:check": "node scripts/builder-portal/local-db/generate-builder-types.mjs --check",
     "test:cross-portal-contracts": "node --test tests/cross-portal-contracts/*.test.mjs",

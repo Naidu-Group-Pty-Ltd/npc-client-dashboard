@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1043,
+  "migration_files": 1044,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -2520,6 +2520,7 @@
     "table:public.workflows",
     "table:skips",
     "table:to",
+    "table:with",
     "trigger:acceptance_scenarios_touch",
     "trigger:agent_memory_feedback_aiud",
     "trigger:agent_plan_steps_touch",

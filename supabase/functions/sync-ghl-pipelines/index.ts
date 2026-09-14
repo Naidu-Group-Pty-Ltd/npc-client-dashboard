@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { enforceRawBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 
@@ -11,6 +12,16 @@ const corsHeaders = {
 };
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
+
+/**
+ * A wall-clock budget, because this walk does not fit.
+ *
+ * `config.toml` declares `request_timeout = 120` for this function. 95s
+ * leaves room to write a response that says how far the pass got, which is
+ * the whole point: a run cut off by the platform reports nothing, and the
+ * caller cannot tell it from one that finished.
+ */
+const BUDGET_MS = 95_000;
 
 interface GHLOpportunity {
   id: string;
@@ -87,6 +98,9 @@ Deno.serve(async (req) => {
   const __csrf = enforceCsrf(req);
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
+  const startedAt = Date.now();
+  const stop = () => Date.now() - startedAt > BUDGET_MS;
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -114,14 +128,53 @@ Deno.serve(async (req) => {
       });
     }
 
-    const body = await req.json().catch(() => ({}));
-    
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
-    if (authError) {
-      console.log('[sync-ghl-pipelines] Auth failed:', authError);
-      return createUnauthorizedResponse(authError, corsHeaders);
+    // The signature covers a hash of the raw bytes, so the body is read once
+    // as text and parsed from that — `req.json()` consumes the stream and
+    // leaves nothing for `verifySignedInternal` to hash.
+    const bounded = await enforceRawBodyLimit(req, 8192);
+    if (!bounded.ok) return bounded.error;
+    let body: any = {};
+    try { body = bounded.raw ? JSON.parse(bounded.raw) : {}; } catch { body = {}; }
+
+    /*
+     * Where a previous pass stopped, and when the RUN began.
+     *
+     * `syncRunStartedAt` above is this PASS. The reconciliations at the end
+     * judge rows against the start of the run, so that timestamp has to
+     * survive the resume — a pass-local one marks everything the previous
+     * pass wrote as stale and deletes it.
+     */
+    const resumeAfterContactId: string | null =
+      typeof body?.resumeAfterContactId === 'string' && body.resumeAfterContactId.length > 0
+        ? body.resumeAfterContactId
+        : null;
+    const runStartedAt: string =
+      typeof body?.runStartedAt === 'string' && body.runStartedAt.length > 0
+        ? body.runStartedAt
+        : syncRunStartedAt;
+
+    /*
+     * A scheduled caller, because the resume above needs a driver.
+     *
+     * This function had no cron at all: it ran when somebody opened the Client
+     * Tracker, and a pass cut off by the platform was never picked back up. A
+     * budget with nothing to call it again is just a quieter truncation.
+     *
+     * `cron_invoke_signed_function` sends a signed internal envelope and the
+     * anon key for the gateway — no user JWT — so `verifyAuth` alone could
+     * never have admitted it. The human path is untouched.
+     */
+    const internal = await verifySignedInternal(supabase, req, bounded.raw, ['pg_cron']);
+    if (!internal.ok) {
+      const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+      if (authError) {
+        console.log('[sync-ghl-pipelines] Auth failed:', authError);
+        return createUnauthorizedResponse(authError, corsHeaders);
+      }
+      console.log(`[sync-ghl-pipelines] Authenticated user: ${userId}`);
+    } else {
+      console.log(`[sync-ghl-pipelines] Signed internal caller: ${internal.actorId}`);
     }
-    console.log(`[sync-ghl-pipelines] Authenticated user: ${userId}`);
 
     const headers = {
       'Authorization': `Bearer ${apiKey}`,
@@ -406,149 +459,239 @@ Deno.serve(async (req) => {
     console.log(`Unique contacts with opportunities: ${uniqueContacts}`);
     console.log(`========================================`);
 
-    // Step 5: Upsert ALL opportunities into ghl_client_opportunities table
+    /*
+     * Steps 5 and 6, as ONE pass over contacts, under a wall-clock budget.
+     *
+     * They used to be two loops over the same key set, and each began by
+     * finding the client for a contact — step 5 with
+     * `.select('id').eq('ghl_contact_id', …).single()`, step 6 with
+     * `.update(…).eq('ghl_contact_id', …).select(…).single()`. Every contact
+     * in `contactAllOpportunities` has an entry in `contactBestOpportunity`,
+     * so that was two sequential round trips per contact to answer one
+     * question, on top of one upsert per opportunity.
+     *
+     * WHAT THAT COST, WHILE THE FUNCTION ANSWERED 200
+     *
+     * Measured on the NPC Client Dashboard, 13 Sep 2026. The run started at
+     * 09:47:00 and `ghl_client_opportunities.synced_at` ran to 09:50:10 —
+     * 190 seconds against the 120 this function declares in `config.toml`.
+     * It was cut off inside step 5, so step 6 never ran, and step 6 is the
+     * ONLY writer of `clients.pipeline_status`, `current_pipeline_id`,
+     * `current_stage_id` and `ghl_opportunity_id`. All 500 client rows were
+     * left holding their column DEFAULTS — `pipeline_status` reading
+     * 'New Lead' on every one of them — while 367 opportunities sat correctly
+     * stored beside them.
+     *
+     * Nothing in the product could see it. The Client Tracker's board places
+     * clients from `ghl_client_opportunities`, which was complete, so the
+     * stage columns filled correctly; the card badge reads `pipeline_status`,
+     * so all 500 cards said "New Lead" anyway; and the Active tab filters
+     * `is_favorite`, which had never been written either, so it was empty. A
+     * half-finished run and a healthy one are indistinguishable from the
+     * response, which is 200 either way.
+     *
+     * So: one batched lookup serves both writes, and the pass stops on a
+     * clock it can see rather than on a timeout it cannot.
+     */
     let opportunitiesUpserted = 0;
     let opportunitiesSkipped = 0;
-
-    for (const [contactId, opps] of Object.entries(contactAllOpportunities)) {
-      // First find the client by ghl_contact_id
-      const { data: clientData, error: clientLookupError } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('ghl_contact_id', contactId)
-        .single();
-
-      if (clientLookupError || !clientData) {
-        opportunitiesSkipped += opps.length;
-        continue;
-      }
-
-      for (const opp of opps) {
-        const stageInfo = stageIdMap[opp.pipelineStageId];
-        
-        const oppRecord: Record<string, any> = {
-          client_id: clientData.id,
-          ghl_opportunity_id: opp.id,
-          ghl_contact_id: contactId,
-          pipeline_id: stageInfo?.pipelineUuid || pipelineIdMap[opp.pipelineId] || null,
-          stage_id: stageInfo?.uuid || null,
-          pipeline_name: stageInfo?.pipelineName || ghlPipelines.find(p => p.id === opp.pipelineId)?.name || null,
-          stage_name: stageInfo?.stageName || opp.status || 'Unknown Stage',
-          opportunity_status: opp.status || 'open',
-          monetary_value: opp.monetaryValue || 0,
-          opportunity_name: opp.name || null,
-          follow_up_date: opp.followUpDate || null,
-          notes: opp.notes || null,
-          custom_fields: opp.customFields ? JSON.stringify(opp.customFields) : null,
-          ghl_created_at: opp.createdAt || null,
-          ghl_updated_at: opp.updatedAt || null,
-          synced_at: new Date().toISOString(),
-        };
-
-        const { error: upsertError } = await supabase
-          .from('ghl_client_opportunities')
-          .upsert(oppRecord, { onConflict: 'client_id,ghl_opportunity_id' });
-
-        if (upsertError) {
-          console.error(`Error upserting opportunity ${opp.id}:`, upsertError);
-        } else {
-          opportunitiesUpserted++;
-        }
-      }
-    }
-
-    console.log(`Opportunities upserted: ${opportunitiesUpserted}, skipped (no client): ${opportunitiesSkipped}`);
-
-    // Step 5b: Purge stale opportunities (legacy rows from old GHL account or deleted opps)
-    // Any row not touched by this sync run (synced_at < syncRunStartedAt) no longer exists in GHL.
-    let staleOpportunitiesDeleted = 0;
-    {
-      const { data: deleted, error: purgeError } = await supabase
-        .from('ghl_client_opportunities')
-        .delete()
-        .lt('synced_at', syncRunStartedAt)
-        .select('id');
-      if (purgeError) {
-        console.error('Error purging stale opportunities:', purgeError);
-      } else {
-        staleOpportunitiesDeleted = deleted?.length || 0;
-        console.log(`Purged ${staleOpportunitiesDeleted} stale opportunities not present in current GHL account`);
-      }
-    }
-
-
-    // Step 6: Update clients table with the "best" opportunity (legacy fields)
     let updatedCount = 0;
     let notFoundCount = 0;
     const notFoundContacts: string[] = [];
+    let contactsProcessed = 0;
+    let stoppedEarly = false;
+    let cursor: string | null = resumeAfterContactId;
 
-    for (const [contactId, { opp }] of Object.entries(contactBestOpportunity)) {
-      const stageInfo = stageIdMap[opp.pipelineStageId];
-      const pipelineStatus = stageInfo 
-        ? stageInfo.stageName
-        : opp.status || 'Unknown Stage';
+    /*
+     * A TOTAL order, so a cursor over it means the same thing on every pass.
+     *
+     * `Object.keys` is insertion order, which here follows the order GHL
+     * happened to return opportunities in — not a property of the data. A
+     * resumable cursor over an order that can move between passes skips a
+     * contact and visits another twice. `sync-ghl-conversations` records the
+     * same lesson about an unordered `select`; this is the in-memory form of
+     * it.
+     */
+    const orderedContactIds = Object.keys(contactAllOpportunities).sort();
+    const pending = resumeAfterContactId
+      ? orderedContactIds.filter((id) => id > resumeAfterContactId)
+      : orderedContactIds;
 
-      let borrowingCapacity: number | null = null;
-      let proposedRentalIncome: number | null = null;
-      let equityRelease: number | null = null;
+    console.log(
+      `[sync-ghl-pipelines] ${orderedContactIds.length} contacts with opportunities, ` +
+        `${pending.length} pending this pass` +
+        (resumeAfterContactId ? ` (resuming after ${resumeAfterContactId})` : ''),
+    );
 
-      if (opp.customFields) {
-        for (const field of opp.customFields) {
-          const key = (field.key || '').toLowerCase();
-          if (key.includes('borrowing') || key.includes('capacity')) {
-            borrowingCapacity = parseFloat(field.value) || null;
-          } else if (key.includes('rental') || key.includes('income')) {
-            proposedRentalIncome = parseFloat(field.value) || null;
-          } else if (key.includes('equity') || key.includes('release')) {
-            equityRelease = parseFloat(field.value) || null;
+    /** One read for up to this many contacts, rather than one `.single()` each. */
+    const LOOKUP_CHUNK = 200;
+
+    contactPass:
+    for (let i = 0; i < pending.length; i += LOOKUP_CHUNK) {
+      const chunk = pending.slice(i, i + LOOKUP_CHUNK);
+
+      const { data: clientRows, error: lookupError } = await supabase
+        .from('clients')
+        .select('id, ghl_contact_id')
+        .in('ghl_contact_id', chunk);
+
+      if (lookupError) {
+        /*
+         * A read that FAILED is not a set of rows that are ABSENT. Treating it
+         * as absence would count every contact in this chunk as "no client",
+         * finish the pass, and let the reconciliation below clear the pipeline
+         * fields of clients that are perfectly fine. Stop instead, leave the
+         * cursor where it is, and let the next pass retry exactly these.
+         */
+        console.error(`[sync-ghl-pipelines] client lookup failed: ${lookupError.message}`);
+        stoppedEarly = true;
+        break;
+      }
+
+      const clientByContact = new Map<string, string>();
+      for (const row of clientRows ?? []) {
+        const contactId = (row as Record<string, unknown>).ghl_contact_id;
+        const id = (row as Record<string, unknown>).id;
+        if (typeof contactId === 'string' && typeof id === 'string') clientByContact.set(contactId, id);
+      }
+
+      for (const contactId of chunk) {
+        // Asked BEFORE a contact starts, so a contact is never left with its
+        // opportunities written and its client row unwritten — which is the
+        // exact split this whole change exists to stop.
+        if (stop()) {
+          stoppedEarly = true;
+          break contactPass;
+        }
+
+        const opps = contactAllOpportunities[contactId] ?? [];
+        const clientId = clientByContact.get(contactId);
+
+        if (!clientId) {
+          opportunitiesSkipped += opps.length;
+          notFoundCount++;
+          const best = contactBestOpportunity[contactId];
+          notFoundContacts.push(best?.opp.contact?.name || contactId);
+          cursor = contactId;
+          contactsProcessed++;
+          continue;
+        }
+
+        // ── The opportunities themselves ────────────────────────────────
+        for (const opp of opps) {
+          const stageInfo = stageIdMap[opp.pipelineStageId];
+
+          const oppRecord: Record<string, any> = {
+            client_id: clientId,
+            ghl_opportunity_id: opp.id,
+            ghl_contact_id: contactId,
+            pipeline_id: stageInfo?.pipelineUuid || pipelineIdMap[opp.pipelineId] || null,
+            stage_id: stageInfo?.uuid || null,
+            pipeline_name: stageInfo?.pipelineName || ghlPipelines.find(p => p.id === opp.pipelineId)?.name || null,
+            stage_name: stageInfo?.stageName || opp.status || 'Unknown Stage',
+            opportunity_status: opp.status || 'open',
+            monetary_value: opp.monetaryValue || 0,
+            opportunity_name: opp.name || null,
+            follow_up_date: opp.followUpDate || null,
+            notes: opp.notes || null,
+            custom_fields: opp.customFields ? JSON.stringify(opp.customFields) : null,
+            ghl_created_at: opp.createdAt || null,
+            ghl_updated_at: opp.updatedAt || null,
+            synced_at: new Date().toISOString(),
+          };
+
+          const { error: upsertError } = await supabase
+            .from('ghl_client_opportunities')
+            .upsert(oppRecord, { onConflict: 'client_id,ghl_opportunity_id' });
+
+          if (upsertError) {
+            console.error(`Error upserting opportunity ${opp.id}:`, upsertError);
+          } else {
+            opportunitiesUpserted++;
           }
         }
-      }
 
-      if (!borrowingCapacity && opp.monetaryValue) {
-        borrowingCapacity = opp.monetaryValue;
-      }
+        // ── The client's own pipeline fields, from its BEST opportunity ──
+        const best = contactBestOpportunity[contactId];
+        if (best) {
+          const opp = best.opp;
+          const stageInfo = stageIdMap[opp.pipelineStageId];
+          const pipelineStatus = stageInfo
+            ? stageInfo.stageName
+            : opp.status || 'Unknown Stage';
 
-      const updateData: Record<string, any> = {
-        pipeline_status: pipelineStatus,
-        pipeline_updated_at: new Date().toISOString(),
-        ghl_opportunity_id: opp.id,
-        opportunity_status: opp.status || 'open',
-      };
+          let borrowingCapacity: number | null = null;
+          let proposedRentalIncome: number | null = null;
+          let equityRelease: number | null = null;
 
-      if (stageInfo) {
-        updateData.current_pipeline_id = stageInfo.pipelineUuid;
-        updateData.current_stage_id = stageInfo.uuid;
-      } else if (pipelineIdMap[opp.pipelineId]) {
-        updateData.current_pipeline_id = pipelineIdMap[opp.pipelineId];
-      }
+          if (opp.customFields) {
+            for (const field of opp.customFields) {
+              const key = (field.key || '').toLowerCase();
+              if (key.includes('borrowing') || key.includes('capacity')) {
+                borrowingCapacity = parseFloat(field.value) || null;
+              } else if (key.includes('rental') || key.includes('income')) {
+                proposedRentalIncome = parseFloat(field.value) || null;
+              } else if (key.includes('equity') || key.includes('release')) {
+                equityRelease = parseFloat(field.value) || null;
+              }
+            }
+          }
 
-      if (opp.followUpDate) updateData.follow_up_date = opp.followUpDate;
-      if (borrowingCapacity) updateData.borrowing_capacity = borrowingCapacity;
-      if (proposedRentalIncome) updateData.proposed_rental_income = proposedRentalIncome;
-      if (equityRelease) updateData.equity_release = equityRelease;
-      if (opp.notes) updateData.pipeline_notes = opp.notes;
+          if (!borrowingCapacity && opp.monetaryValue) {
+            borrowingCapacity = opp.monetaryValue;
+          }
 
-      const { data: updatedClient, error: updateError } = await supabase
-        .from('clients')
-        .update(updateData)
-        .eq('ghl_contact_id', contactId)
-        .select('id, primary_first_name, primary_surname')
-        .single();
+          const updateData: Record<string, any> = {
+            pipeline_status: pipelineStatus,
+            pipeline_updated_at: new Date().toISOString(),
+            ghl_opportunity_id: opp.id,
+            opportunity_status: opp.status || 'open',
+          };
 
-      if (updateError) {
-        if (updateError.code === 'PGRST116') {
-          notFoundCount++;
-          notFoundContacts.push(opp.contact.name || contactId);
-        } else {
-          console.error(`Error updating client for contact ${contactId}:`, updateError);
+          if (stageInfo) {
+            updateData.current_pipeline_id = stageInfo.pipelineUuid;
+            updateData.current_stage_id = stageInfo.uuid;
+          } else if (pipelineIdMap[opp.pipelineId]) {
+            updateData.current_pipeline_id = pipelineIdMap[opp.pipelineId];
+          }
+
+          if (opp.followUpDate) updateData.follow_up_date = opp.followUpDate;
+          if (borrowingCapacity) updateData.borrowing_capacity = borrowingCapacity;
+          if (proposedRentalIncome) updateData.proposed_rental_income = proposedRentalIncome;
+          if (equityRelease) updateData.equity_release = equityRelease;
+          if (opp.notes) updateData.pipeline_notes = opp.notes;
+
+          // By `id`, which the lookup above already resolved. The old form
+          // matched on `ghl_contact_id` and asked for the row back with
+          // `.single()`, so a contact with no client answered PGRST116 and was
+          // counted as "not found" a second time.
+          const { error: updateError } = await supabase
+            .from('clients')
+            .update(updateData)
+            .eq('id', clientId);
+
+          if (updateError) {
+            console.error(`Error updating client for contact ${contactId}:`, updateError);
+          } else {
+            updatedCount++;
+          }
         }
-      } else {
-        updatedCount++;
+
+        // Set only once the contact is FULLY written. A cursor that moved
+        // before the client update would let a budget stop skip exactly the
+        // write this function exists for.
+        cursor = contactId;
+        contactsProcessed++;
       }
     }
 
-    console.log(`Pipeline sync complete. Updated: ${updatedCount}, Not found: ${notFoundCount}, Opportunities stored: ${opportunitiesUpserted}`);
+    const hasMore = stoppedEarly;
+
+    console.log(
+      `Pipeline sync pass complete. Contacts: ${contactsProcessed}/${pending.length}, ` +
+        `Updated: ${updatedCount}, Not found: ${notFoundCount}, ` +
+        `Opportunities stored: ${opportunitiesUpserted}, hasMore: ${hasMore}`,
+    );
 
     // Build response with full pipeline structure
     const pipelinesWithStages = ghlPipelines.map(p => ({
@@ -564,9 +707,36 @@ Deno.serve(async (req) => {
       })),
     }));
 
-    // Step 6b: Clear stale pipeline fields on clients whose ghl_opportunity_id no longer exists
+    /*
+     * The two RECONCILIATIONS, and why they wait for the last pass.
+     *
+     * Both are statements about the whole account — "no GHL opportunity
+     * corresponds to this row any more" — so neither can be judged from a
+     * pass that has seen part of it. Run on a partial pass they would delete
+     * every opportunity this pass had not yet reached and clear the pipeline
+     * fields of every client behind the cursor, which is worse than the
+     * truncation they would be repairing.
+     *
+     * They compare against `runStartedAt`, which is the start of the RUN and
+     * travels through the resume, not the start of this pass. A pass-local
+     * timestamp would make every row the previous pass wrote look stale.
+     */
+    let staleOpportunitiesDeleted = 0;
     let orphanClientsCleared = 0;
-    {
+
+    if (!hasMore) {
+      const { data: deleted, error: purgeError } = await supabase
+        .from('ghl_client_opportunities')
+        .delete()
+        .lt('synced_at', runStartedAt)
+        .select('id');
+      if (purgeError) {
+        console.error('Error purging stale opportunities:', purgeError);
+      } else {
+        staleOpportunitiesDeleted = deleted?.length || 0;
+        console.log(`Purged ${staleOpportunitiesDeleted} stale opportunities not present in current GHL account`);
+      }
+
       const { data: orphans, error: orphanErr } = await supabase
         .from('clients')
         .update({
@@ -588,12 +758,23 @@ Deno.serve(async (req) => {
         orphanClientsCleared = orphans?.length || 0;
         console.log(`Cleared pipeline fields on ${orphanClientsCleared} orphan clients`);
       }
+    } else {
+      console.log('[sync-ghl-pipelines] reconciliation deferred — this pass did not finish the contact list');
     }
 
     return new Response(
       JSON.stringify({
         success: true,
-        message: `Pipeline sync complete! Synced ${ghlPipelines.length} pipelines, ${opportunitiesUpserted} opportunities stored, ${updatedCount} clients updated, ${staleOpportunitiesDeleted} stale opps purged.`,
+        message: hasMore
+          ? `Pipeline sync in progress — ${contactsProcessed} of ${pending.length} contacts this pass, ` +
+            `${opportunitiesUpserted} opportunities stored, ${updatedCount} clients updated. Call again to continue.`
+          : `Pipeline sync complete! Synced ${ghlPipelines.length} pipelines, ${opportunitiesUpserted} opportunities stored, ${updatedCount} clients updated, ${staleOpportunitiesDeleted} stale opps purged.`,
+        // The caller resumes by sending these two back verbatim. `null` on a
+        // finished run, so "there is more" is a fact rather than an inference
+        // from a cursor that is always present.
+        hasMore,
+        nextResumeAfterContactId: hasMore ? cursor : null,
+        runStartedAt: hasMore ? runStartedAt : null,
         stats: {
           pipelinesFound: ghlPipelines.length,
           stagesSynced: Object.keys(stageIdMap).length,
@@ -604,6 +785,9 @@ Deno.serve(async (req) => {
           orphanClientsCleared,
           clientsUpdated: updatedCount,
           contactsNotFound: notFoundCount,
+          contactsProcessed,
+          contactsPending: pending.length,
+          durationMs: Date.now() - startedAt,
         },
         pipelines: pipelinesWithStages,
         notFoundContacts: notFoundContacts.slice(0, 10),

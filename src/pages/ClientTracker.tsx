@@ -172,6 +172,87 @@ const getOpportunityStatusBadgeClass = (status?: string | null, compact = false)
   );
 };
 
+/**
+ * How many passes one "Sync" is allowed to make.
+ *
+ * Twelve passes at the function's 95s budget is about nineteen minutes of
+ * work, comfortably past what this account needs and short of a loop that
+ * could run all day if the server ever stopped advancing its cursor.
+ */
+const MAX_PIPELINE_SYNC_PASSES = 12;
+
+interface PipelineSyncOutcome {
+  ok: boolean;
+  error?: string;
+  /** The passes ran out before the walk did. What was written still stands. */
+  incomplete?: boolean;
+  passes: number;
+  pipelinesFound: number;
+  opportunitiesStored: number;
+  clientsUpdated: number;
+}
+
+/**
+ * Run `sync-ghl-pipelines` to completion, rather than once.
+ *
+ * That function stops at a wall-clock budget and hands back a cursor — it has
+ * to, because one pass over this account did not fit inside the 120 seconds
+ * it declares. The pass that was cut off had already stored every opportunity
+ * and had not yet reached the step that writes `clients.pipeline_status`,
+ * `current_pipeline_id`, `current_stage_id` and `ghl_opportunity_id`, so a
+ * caller that made one call and reported success is how five hundred client
+ * rows came to sit on their column defaults — every card badge reading
+ * "New Lead" — while the board beside them placed those same clients into
+ * named stages from the opportunities that HAD been written.
+ *
+ * Both call sites go through here, because two copies of a resume loop is how
+ * one screen syncs further than the other.
+ */
+async function runPipelineSyncToCompletion(): Promise<PipelineSyncOutcome> {
+  let resumeAfterContactId: string | null = null;
+  let runStartedAt: string | null = null;
+  let passes = 0;
+  let pipelinesFound = 0;
+  let opportunitiesStored = 0;
+  let clientsUpdated = 0;
+
+  while (passes < MAX_PIPELINE_SYNC_PASSES) {
+    passes++;
+    const payload: Record<string, unknown> = {};
+    if (resumeAfterContactId) payload.resumeAfterContactId = resumeAfterContactId;
+    if (runStartedAt) payload.runStartedAt = runStartedAt;
+
+    const { data, error } = await invokeSecureFunction<any>('sync-ghl-pipelines', payload);
+    if (error) return { ok: false, error: error.message, passes, pipelinesFound, opportunitiesStored, clientsUpdated };
+    if (!data?.success) return { ok: false, error: data?.error || 'Sync failed', passes, pipelinesFound, opportunitiesStored, clientsUpdated };
+
+    // Pipelines and stages are re-read every pass, so this is a reading rather
+    // than a running total. Opportunities and clients are per-pass work.
+    pipelinesFound = data.stats?.pipelinesFound ?? pipelinesFound;
+    opportunitiesStored += data.stats?.opportunitiesStored ?? 0;
+    clientsUpdated += data.stats?.clientsUpdated ?? 0;
+
+    if (!data.hasMore) return { ok: true, passes, pipelinesFound, opportunitiesStored, clientsUpdated };
+
+    const next = typeof data.nextResumeAfterContactId === 'string' ? data.nextResumeAfterContactId : null;
+    /*
+     * No cursor, or one that has not moved. Stop rather than spin.
+     *
+     * This is also what a deployment running the PREVIOUS version of the
+     * function looks like from here: it answers with no `hasMore` at all, so
+     * the check above already returned, and this guard catches the narrower
+     * case where the field arrives without a usable cursor beside it.
+     */
+    if (!next || next === resumeAfterContactId) {
+      return { ok: true, incomplete: true, passes, pipelinesFound, opportunitiesStored, clientsUpdated };
+    }
+    resumeAfterContactId = next;
+    runStartedAt = typeof data.runStartedAt === 'string' ? data.runStartedAt : runStartedAt;
+  }
+
+  return { ok: true, incomplete: true, passes, pipelinesFound, opportunitiesStored, clientsUpdated };
+}
+
 export default function ClientTracker() {
   const queryClient = useQueryClient();
   const { canEdit: canEditTracker } = useModulePermissions('client_tracker');
@@ -325,9 +406,9 @@ export default function ClientTracker() {
       
       setIsAutoSyncing(true);
       try {
-        const { data, error } = await invokeSecureFunction('sync-ghl-pipelines', {});
+        const outcome = await runPipelineSyncToCompletion();
 
-        if (!error && data?.success) {
+        if (outcome.ok) {
           setLastSyncTime(new Date());
           queryClient.invalidateQueries({ queryKey: ['ghl-pipelines'] });
           queryClient.invalidateQueries({ queryKey: ['ghl-pipeline-stages'] });
@@ -761,20 +842,25 @@ export default function ClientTracker() {
   const handleSyncPipelines = async () => {
     setIsSyncingPipelines(true);
     try {
-      const { data, error } = await invokeSecureFunction('sync-ghl-pipelines', {});
+      const outcome = await runPipelineSyncToCompletion();
 
-      if (error) throw error;
-
-      if (data?.success) {
+      if (outcome.ok) {
         setLastSyncTime(new Date());
         queryClient.invalidateQueries({ queryKey: ['ghl-pipelines'] });
         queryClient.invalidateQueries({ queryKey: ['ghl-pipeline-stages'] });
         queryClient.invalidateQueries({ queryKey: ['ghl-client-opportunities'] });
         queryClient.invalidateQueries({ queryKey: ['client-tracker'] });
         queryClient.invalidateQueries({ queryKey: ['clients'] });
-        toast.success(`Synced ${data.stats?.pipelinesFound || 0} pipelines, ${data.stats?.opportunitiesStored || 0} opportunities, ${data.stats?.clientsUpdated || 0} clients`);
+        const summary = `Synced ${outcome.pipelinesFound} pipelines, ${outcome.opportunitiesStored} opportunities, ${outcome.clientsUpdated} clients`;
+        // An unfinished walk is said out loud. Reporting it as a clean sync is
+        // what let a partial run look identical to a complete one.
+        if (outcome.incomplete) {
+          toast.warning(`${summary} — still more to sync. Run it again to continue.`);
+        } else {
+          toast.success(summary);
+        }
       } else {
-        throw new Error(data?.error || 'Sync failed');
+        throw new Error(outcome.error || 'Sync failed');
       }
     } catch (err: any) {
       console.error('Pipeline sync error:', err);

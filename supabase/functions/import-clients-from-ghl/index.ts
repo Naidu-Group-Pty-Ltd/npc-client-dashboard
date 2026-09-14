@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { enforceRawBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
@@ -12,6 +13,18 @@ const corsHeaders = {
 };
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
+
+/**
+ * A wall-clock budget, so `maxPages` stops being the only thing that ends a
+ * walk.
+ *
+ * A page is four statements plus a bounded-concurrency set of updates, so a
+ * few thousand contacts fit comfortably — but an account this never finishes
+ * must say so rather than be cut off by the platform mid-page, because a run
+ * the platform kills reports nothing at all and the caller cannot tell it
+ * from one that completed.
+ */
+const BUDGET_MS = 95_000;
 
 /** Non-destructive patches differ per row, so they are parallelised rather than batched. */
 const UPDATE_CONCURRENCY = 8;
@@ -67,6 +80,9 @@ Deno.serve(async (req) => {
   const __csrf = enforceCsrf(req);
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
+  const startedAt = Date.now();
+  const outOfBudget = () => Date.now() - startedAt > BUDGET_MS;
+
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -92,40 +108,78 @@ Deno.serve(async (req) => {
       });
     }
 
-    const body = await req.json().catch(() => ({}));
-    
-    // SECURITY: Verify authentication (admin-only for import operations)
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
-    if (authError) {
-      console.log('[import-clients-from-ghl] Auth failed:', authError);
-      return createUnauthorizedResponse(authError, corsHeaders);
+    // The signature covers a hash of the raw bytes, so the body is read once
+    // as text and parsed from that — `req.json()` consumes the stream and
+    // leaves nothing for `verifySignedInternal` to hash.
+    const bounded = await enforceRawBodyLimit(req, 8192);
+    if (!bounded.ok) return bounded.error;
+    let body: any = {};
+    try { body = bounded.raw ? JSON.parse(bounded.raw) : {}; } catch { body = {}; }
+
+    /*
+     * A scheduled caller, because nothing scheduled could reach this before.
+     *
+     * This import ran only when somebody opened the Clients page, and the
+     * periodic auto-sync beside it asked for five pages — exactly the 500
+     * contacts the NPC Client Dashboard held on 13 Sep 2026, against 776 in
+     * the same GHL location on the prime. The conversation sync follows
+     * contacts, so 276 missing clients were also ~960 missing conversations.
+     *
+     * `cron_invoke_signed_function` sends a signed internal envelope and the
+     * anon key for the gateway — no user JWT — so the admin path below could
+     * never have admitted it. The admin path is untouched: a person running
+     * this by hand still has to be an admin.
+     */
+    const internal = await verifySignedInternal(supabase, req, bounded.raw, ['pg_cron']);
+    if (!internal.ok) {
+      // SECURITY: Verify authentication (admin-only for import operations)
+      const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+      if (authError) {
+        console.log('[import-clients-from-ghl] Auth failed:', authError);
+        return createUnauthorizedResponse(authError, corsHeaders);
+      }
+      console.log('[import-clients-from-ghl] Authenticated user:', userId);
+
+      // Check if user is admin (import operations should be admin-only)
+      const { data: roleData } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .in('role', ['superadmin', 'admin'])
+        .single();
+
+      if (!roleData) {
+        console.log('[import-clients-from-ghl] User is not admin');
+        return new Response(JSON.stringify({
+          error: 'Unauthorized: Admin access required',
+          success: false
+        }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    } else {
+      console.log(`[import-clients-from-ghl] Signed internal caller: ${internal.actorId}`);
     }
-    console.log('[import-clients-from-ghl] Authenticated user:', userId);
-    
-    // Check if user is admin (import operations should be admin-only)
-    const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .in('role', ['superadmin', 'admin'])
-      .single();
-    
-    if (!roleData) {
-      console.log('[import-clients-from-ghl] User is not admin');
-      return new Response(JSON.stringify({ 
-        error: 'Unauthorized: Admin access required',
-        success: false 
-      }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
+
     const {
-      clearExisting = false,
       resumeFromId = null,
       resumeFrom = null,
-      maxPages = 10,
+      // 50 pages is 5,000 contacts. The old 10 was chosen against a page that
+      // cost 200-400 serialized queries; a page is four statements now, so the
+      // wall clock above is the real limit and this is only a ceiling.
+      maxPages = 50,
     } = body;
+
+    /*
+     * Clearing is a HUMAN act, and never a scheduled one.
+     *
+     * `clearExisting` deletes every client before re-importing. A scheduled
+     * caller that could ask for that turns one bad GHL response into an empty
+     * Clients page with nobody watching, so the flag is read from the body
+     * only on the operator path.
+     */
+    const clearExisting: boolean = internal.ok ? false : (body?.clearExisting === true);
 
     console.log(
       `Starting GHL contact import. Clear existing: ${clearExisting}, Resume from: ${resumeFromId || 'start'} (${resumeFrom || 'no-timestamp'}), Max pages: ${maxPages}`,
@@ -169,7 +223,17 @@ Deno.serve(async (req) => {
     const errors: string[] = [];
     let totalFromApi = 0;
 
+    let stoppedOnBudget = false;
+
     while (pageCount < maxPages) {
+      // Asked BEFORE a page is fetched, so a page is never half-written. The
+      // cursor below still points at the last page that completed, so the
+      // caller resumes exactly here.
+      if (outOfBudget()) {
+        stoppedOnBudget = true;
+        console.log(`[import-clients-from-ghl] wall-clock budget reached after ${pageCount} page(s)`);
+        break;
+      }
       pageCount++;
 
       // Build request using both cursors (startAfter + startAfterId)
@@ -502,6 +566,12 @@ Deno.serve(async (req) => {
           pagesProcessed: pageCount,
         },
         hasMore,
+        // Which of the three stops ended this pass. `pagesProcessed ===
+        // maxPages` and a budget stop are different facts about the same
+        // unfinished walk, and an operator reading "More contacts available"
+        // cannot tell them apart without this.
+        stoppedOnBudget,
+        durationMs: Date.now() - startedAt,
         nextResumeId: startAfterId,
         nextResume: startAfter,
         errors: errors.length > 0 ? errors.slice(0, 10) : undefined,

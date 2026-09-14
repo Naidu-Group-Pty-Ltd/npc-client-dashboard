@@ -69,6 +69,16 @@ interface CalendarData {
     start: string;
     end: string;
   };
+  /**
+   * Calendars the fan-out could not read this request.
+   *
+   * Added to `ghl-calendar`'s two responses when the fan-outs stopped
+   * swallowing a failed calendar, and read by `setFailedCalendars` below —
+   * but never declared here, so the read was a TS2339 the whole time. It did
+   * not break the page, because Vite strips types rather than checking them,
+   * and CI's typecheck does not see `src/`.
+   */
+  failedCalendars?: string[];
 }
 
 const normalizeTimestampToISO = (value: unknown): string | null => {

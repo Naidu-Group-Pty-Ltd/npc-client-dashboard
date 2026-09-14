@@ -263,9 +263,27 @@ export default function ClientManagement() {
       
       setIsAutoSyncing(true);
       try {
-        const { data, error } = await invokeSecureFunction('import-clients-from-ghl', {
+        /*
+         * NO `maxPages` HERE ANY MORE.
+         *
+         * It used to ask for five, and GHL's page is a hundred — so this asked
+         * for exactly 500 contacts, from the start of the list, every five
+         * minutes, for ever. It carries no cursor, so it was not even a
+         * freshness nudge: it re-walked the SAME first 500 each time.
+         *
+         * Measured 13 Sep 2026: the NPC Client Dashboard held exactly 500
+         * clients against 776 in the same GHL location on the prime, and
+         * nothing else on that deployment ever imported a contact. The
+         * conversation sync follows contacts, so the same 276 were ~960
+         * missing conversations too.
+         *
+         * The function's own wall-clock budget is the stop now, and it reports
+         * an unfinished walk rather than presenting one as complete. A
+         * scheduled full walk runs independently of whether anybody has this
+         * page open.
+         */
+        const { data, error } = await invokeSecureFunction<any>('import-clients-from-ghl', {
           clearExisting: false,
-          maxPages: 5, // Lighter sync for background updates
         });
 
         if (!error && data?.success) {
@@ -273,6 +291,13 @@ export default function ClientManagement() {
           refetch();
           if (data.stats?.imported > 0) {
             toast.success(`Auto-sync: ${data.stats.imported} clients updated`, { duration: 3000 });
+          }
+          if (data.hasMore) {
+            console.warn(
+              `[ClientManagement] auto-sync stopped with more to fetch ` +
+                `(pages=${data.stats?.pagesProcessed}, budget=${data.stoppedOnBudget === true}); ` +
+                'the scheduled import continues from here.',
+            );
           }
         }
       } catch (err) {

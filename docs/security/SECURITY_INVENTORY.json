@@ -591,6 +591,7 @@
       "cleanup-stale-calls/index.ts",
       "client-legal-workspace/index.ts",
       "commercial-bc-scenario-agent/index.ts",
+      "conversation-sync-cron/index.ts",
       "dispatch-marketing-reports/index.ts",
       "dispatch-workflow-triggers/index.ts",
       "estimate-commercial-caprate/index.ts",
@@ -602,6 +603,7 @@
       "finance-portal-snoozes/index.ts",
       "google-fonts-catalog/index.ts",
       "google-places-autocomplete/index.ts",
+      "import-clients-from-ghl/index.ts",
       "market-news-archive-v2/index.ts",
       "market-qa-digest-runner/index.ts",
       "market-qa-quality-report/index.ts",
@@ -623,6 +625,8 @@
       "resume-investment-reports/index.ts",
       "security-step-up/index.ts",
       "send-web-push/index.ts",
+      "sync-ghl-marketing-assets/index.ts",
+      "sync-ghl-pipelines/index.ts",
       "update-stamp-duty-rates/index.ts"
     ]
   },

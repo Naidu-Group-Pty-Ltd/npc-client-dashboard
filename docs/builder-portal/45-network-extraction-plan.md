@@ -502,7 +502,15 @@ zero-row re-point; the stock corpus is the real data move.
   idempotent; warns-not-fails on a squatting clone), **delivered as a patch** for the new
   repo; old-repo PR #87 closed as superseded.
 - ⬜ Land the patch in `aurixa-mission-control-12b89885` (blocked on session access, §10).
-- ⬜ Extraction manifest (row counts + storage inventory script), re-run at each phase.
+- ✅ **Extraction manifest**: `npm run builder:manifest` — exact row counts per builder
+  table, the storage corpus, E1–E6 sized by live rows, the `pg_constraint` boundary with
+  its delete rules, and the Phase 4 debris, written as a diffable JSON document.
+  `--compare latest` reports what moved; `--fail-on-drift` fails when the SHAPE moved (a
+  table, a view, a boundary edge, a migration between the two) rather than when the corpus
+  grew. Every reading is a value or an explicit null with a reason — a manifest carrying a
+  failed read exits non-zero and says it must not authorise a copy or a delete, because a
+  count that silently failed and printed `0` reads exactly like an empty table. Re-run it
+  before every phase that moves or deletes anything.
 
 **Phase 1 — MC trust anchor.** In the new MC repo: `builders:federate` + `builders:operate`
 scopes; generalise the identity/JWKS endpoint to a `builders` audience (or add

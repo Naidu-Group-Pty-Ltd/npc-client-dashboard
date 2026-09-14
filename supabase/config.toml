@@ -1654,3 +1654,11 @@ verify_jwt = false
 # reports which market-data credential NAMES are set (never a value) and probes
 # a fixed allow-list of source URLs. It writes nothing.
 verify_jwt = true
+
+[functions.builder-network-inbound]
+# Builders Network -> this workspace delivery door (Phase 3 mirror). Its
+# authentication is the per-connection symmetric HMAC over the raw body,
+# never a JWT — the caller is the network's outbox worker holding the
+# connection secret. Flag-gated: while builder_network_enabled is false it
+# answers 503 network_disabled, which the sender treats as retryable.
+verify_jwt = false

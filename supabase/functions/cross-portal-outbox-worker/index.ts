@@ -3,6 +3,90 @@ import { buildPartnerNotification, partnerEventDeliveryDecision } from '../_shar
 import { processVerificationEvent } from './verificationConsumer.ts';
 import { processScreeningEvent } from '../_shared/aml/screeningConsumer.ts';
 import { verifyInternal, logSecurityEvent } from '../_shared/auth_v2.ts';
+
+// ── Builders Network aggregate (extraction plan §7 Phase 3) ────────────────
+import { builderNetworkEnabled } from '../_shared/builderNetwork.ts';
+import {
+  HMAC_CONNECTION_HEADER,
+  HMAC_SIGNATURE_HEADER,
+  HMAC_TIMESTAMP_HEADER,
+  signDelivery,
+} from '../_shared/builderNetworkHmac.ts';
+import {
+  BuilderNetworkPrivacyViolation,
+  assertPayloadCrossesClean,
+} from '../_shared/builderNetworkPrivacy.pure.ts';
+
+/**
+ * Drain this workspace's builder_network outbox to the network's inbound
+ * door. The clone worker's own idiom, applied to the new aggregate: rpc
+ * claim with SKIP LOCKED and a lock lease, exponential backoff capped at an
+ * hour, terminal at ten attempts — and the privacy contract at the LAST
+ * step before the wire, throwing rather than filtering, so a payload
+ * composed wrong dead-letters loudly with a critical operational event
+ * instead of shipping its survivable subset.
+ *
+ * Flag-gated at the top: while builder_network_enabled is false this whole
+ * aggregate is a silent skip — queued rows WAIT for the flag.
+ */
+async function drainBuilderNetworkOutbox(db: any, workerIdValue: string): Promise<Record<string, unknown>> {
+  if (!(await builderNetworkEnabled(db))) return { skipped: 'network_disabled' };
+  const { data: events, error } = await db.rpc('builder_network_claim_outbox', { _worker_id: workerIdValue, _limit: 25 });
+  if (error) return { error: 'claim_failed' };
+  let delivered = 0, retried = 0, dead = 0;
+  const release = async (event: any, message: string, opts: { dead?: boolean } = {}) => {
+    const terminal = opts.dead || event.attempts >= 10;
+    await db.from('builder_network_outbox').update({
+      status: terminal ? 'dead' : 'pending',
+      available_at: new Date(Date.now() + Math.min(3600, 2 ** event.attempts) * 1000).toISOString(),
+      locked_at: null, locked_by: null,
+      last_error: message.slice(0, 2000),
+    }).eq('id', event.id).eq('locked_by', workerIdValue);
+    if (terminal) {
+      await db.rpc('record_portal_operational_event', { _event_name: 'builder_network_delivery_dead', _severity: 'critical', _correlation_id: crypto.randomUUID(), _request_id: event.id, _actor_type: 'worker', _actor_id: null, _portal: 'integration_worker', _case_id: null, _matter_id: null, _firm_id: null, _duration_ms: null, _success: false, _metadata: { event_type: event.event_type, attempt: event.attempts, error_code: message.slice(0, 120) } });
+    }
+  };
+  for (const event of events || []) {
+    try {
+      const { data: connection } = await db.from('builder_network_connections')
+        .select('id, state, outbound_hmac_secret, network_inbound_url, network_connection_id')
+        .eq('id', event.connection_id).maybeSingle();
+      if (!connection || connection.state === 'revoked') { await release(event, 'connection_revoked', { dead: true }); dead++; continue; }
+      if (!connection.network_inbound_url || !connection.outbound_hmac_secret) {
+        // Not yet deliverable is not failure: transport arrives with
+        // configuration, and the queue simply waits.
+        await release(event, connection.network_inbound_url ? 'no_hmac_secret' : 'no_inbound_url'); retried++; continue;
+      }
+      assertPayloadCrossesClean(event.payload ?? {});
+      const rawBody = JSON.stringify({ event_type: event.event_type, dedupe_key: event.dedupe_key, payload: event.payload ?? {}, source_version: Number(event.source_version ?? 0) });
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const signature = await signDelivery(connection.outbound_hmac_secret, timestamp, rawBody);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      let response: Response;
+      try {
+        response = await fetch(connection.network_inbound_url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', [HMAC_CONNECTION_HEADER]: connection.network_connection_id, [HMAC_TIMESTAMP_HEADER]: timestamp, [HMAC_SIGNATURE_HEADER]: signature },
+          body: rawBody, signal: controller.signal,
+        });
+      } finally { clearTimeout(timer); }
+      if (response.ok) {
+        await db.from('builder_network_outbox').update({ status: 'delivered', delivered_at: new Date().toISOString(), locked_at: null, locked_by: null, last_error: null }).eq('id', event.id).eq('locked_by', workerIdValue);
+        delivered++;
+      } else { await release(event, `http_${response.status}`); retried++; }
+    } catch (error) {
+      if (error instanceof BuilderNetworkPrivacyViolation) {
+        await db.from('builder_network_outbox').update({ status: 'dead', locked_at: null, locked_by: null, last_error: error.message.slice(0, 2000) }).eq('id', event.id).eq('locked_by', workerIdValue);
+        await db.rpc('record_portal_operational_event', { _event_name: 'builder_network_outbound_privacy_violation', _severity: 'critical', _correlation_id: crypto.randomUUID(), _request_id: event.id, _actor_type: 'worker', _actor_id: null, _portal: 'integration_worker', _case_id: null, _matter_id: null, _firm_id: null, _duration_ms: null, _success: false, _metadata: { event_type: event.event_type, forbidden_path_count: error.paths.length, forbidden_paths: error.paths.slice(0, 20) } });
+        dead++; continue;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      await release(event, message); retried++;
+    }
+  }
+  return { claimed: (events || []).length, delivered, retried, dead };
+}
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
 
@@ -239,5 +323,6 @@ Deno.serve(async req=>{
     }
   }
   const amlSweep=await sweepAmlTimeBasedEvents(db).catch(()=>({expired:0,reviews:0}));
-  return json({claimed:(events||[]).length,succeeded,failed,notification_delivered:notificationDelivered,notification_failed:notificationFailed,aml_sweep:amlSweep});
+  const builderNetwork=await drainBuilderNetworkOutbox(db,id).catch((error)=>({error:error instanceof Error?error.message.slice(0,200):'drain_failed'}));
+  return json({claimed:(events||[]).length,succeeded,failed,notification_delivered:notificationDelivered,notification_failed:notificationFailed,aml_sweep:amlSweep,builder_network:builderNetwork});
 });

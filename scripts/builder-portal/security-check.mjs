@@ -59,6 +59,16 @@ const EXPECTED_FUNCTIONS = [
     'builder-delivery-admin',
     'builder-document-processor',
     'builder-inventory-admin',
+    // Builders Network -> workspace delivery door (extraction plan Phase 3),
+    // dark until feature_flags.builder_network_enabled and refusing by name
+    // while off. Authenticated by a per-connection symmetric HMAC over the
+    // raw body — the caller is the network's outbox worker, not a person —
+    // with one generic refusal across the whole ladder, the privacy contract
+    // enforced on arrival (throws, never filters), and idempotent landing.
+    // Like the settler and the callback it is deliberately NOT a
+    // portal-reachable surface. Declared in config.toml and reviewed in
+    // SECURITY_REGISTRY.json, both re-checked by this list's own loop.
+    'builder-network-inbound',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',

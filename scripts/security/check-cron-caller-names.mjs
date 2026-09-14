@@ -29,9 +29,36 @@
  * cannot come back silently.
  *
  * What is judged: the last `cron.schedule` for each job name across the
- * migrations in filename order (which is the order they apply), and only
- * bodies that call `cron_invoke_signed_function`. A job scheduled with
- * `net.http_post` directly carries its own headers and is out of scope.
+ * migrations in filename order (which is the order they apply). A body that
+ * calls `cron_invoke_signed_function` is checked for caller agreement; EVERY
+ * body, including one that calls `net.http_post` directly, is checked for a
+ * hardcoded deployment identity.
+ *
+ * ## The second check, and what it is for
+ *
+ * `sync-ghl-marketing-assets-6h` passed the caller check by being out of
+ * scope, and had never run anywhere. Its last `cron.schedule` in this
+ * repository posts to a literal `https://dduzbchuswwbefdunfct.supabase.co`
+ * URL with a literal anon-key bearer for that same project — and the function
+ * it calls compared the bearer against the SAME literal, so repo-side the pair
+ * agreed with itself.
+ *
+ * Both halves are wrong on a clone, in opposite directions. A clone replaying
+ * that migration gets a job pointed at the PRIME's Edge Function with the
+ * PRIME's key; and where the live job has since been re-written to
+ * `cron_invoke_signed_function` — which is what all four deployments were
+ * measured running on 14 Sep 2026 — it sends that deployment's own anon key,
+ * which the literal comparison can never match, so every run answered 401 on
+ * the prime and on all three clones.
+ *
+ * An anon key is safe to PUBLISH; it is not safe to AUTHENTICATE with, and it
+ * is never safe to inherit. This is the rule `src/lib/turnstileSiteKey.ts`
+ * already states for a site key, applied to a cron body.
+ *
+ * The identity check is a RATCHET, not a ban: seventeen migration files carry
+ * one, all naming the prime, and rewriting settled history would be a larger
+ * and riskier change than the defect. `cron-hardcoded-identity.txt` freezes
+ * what is there so a new one fails.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
@@ -105,13 +132,39 @@ const unquote = (s) => {
  */
 function readSchedulingOps(sql) {
   const ops = [];
-  const re = /cron\.(schedule|unschedule)\s*\(/gi;
+  const re = /cron\.(schedule|unschedule|alter_job)\s*\(/gi;
   let m;
   while ((m = re.exec(sql)) !== null) {
     const bal = balancedArgs(sql, re.lastIndex - 1);
     if (!bal) continue;
     const args = splitArgs(bal.args);
     const kind = m[1].toLowerCase();
+
+    /*
+     * `cron.alter_job` REWRITES a body, so a job whose command it replaces is
+     * live under the new text — and this repository uses it deliberately,
+     * because `cron.schedule` recreates a job ACTIVE and would reinstate one a
+     * deployment has paused on purpose.
+     *
+     * It takes a `job_id`, so the name is not in the call. Every use here sits
+     * inside `FOR jid IN SELECT jobid FROM cron.job WHERE jobname = '…'`, so
+     * the nearest PRECEDING `jobname = '…'` is the subject. That is a
+     * heuristic, and it is the same one the `unschedule` branch below already
+     * makes in the other direction; an alter whose subject cannot be read is
+     * skipped rather than guessed at.
+     */
+    if (kind === 'alter_job') {
+      const setsCommand = /\bcommand\s*:?=/.test(bal.args);
+      if (!setsCommand) continue;
+      const before = sql.slice(Math.max(0, m.index - 600), m.index);
+      const names = [...before.matchAll(/jobname\s*=\s*'([^']+)'/gi)];
+      const subject = names.length ? names[names.length - 1][1] : null;
+      if (!subject) continue;
+      const cmd = /\bcommand\s*:?=\s*/.exec(bal.args);
+      ops.push({ kind: 'schedule', name: subject, body: cmd ? bal.args.slice(cmd.index + cmd[0].length) : '' });
+      continue;
+    }
+
     const name = unquote(args[0] ?? '');
     // `cron.unschedule(jobid) FROM cron.job WHERE jobname = '…'` is the other
     // spelling, and it names the job in the predicate rather than the call.
@@ -205,15 +258,58 @@ for (const file of files) {
   for (const op of readSchedulingOps(sql)) {
     if (op.kind === 'unschedule') { live.delete(op.name); continue; }
     const invocations = invocationsIn(op.body);
-    if (!invocations.length) { live.delete(op.name); continue; }
-    live.set(op.name, { file, invocations });
+    // Kept even with no invocations: a job re-scheduled with `net.http_post`
+    // supersedes an earlier signed one for the caller check (there is nothing
+    // to compare), and is still judged for a hardcoded identity below.
+    live.set(op.name, { file, invocations, body: op.body });
   }
 }
 
+/**
+ * A deployment identity written into a cron body as a literal.
+ *
+ * Two shapes, both measured in this repository:
+ *   - a JWT (`Bearer eyJ…`), which is one project's key
+ *   - `https://<ref>.supabase.co`, which is one project's API host
+ *
+ * The vault spellings — `(SELECT decrypted_secret FROM vault.decrypted_secrets
+ * WHERE name = 'supabase_url')` and friends — resolve per deployment and are
+ * exactly what a body should use instead, so they are not findings.
+ */
+function hardcodedIdentityIn(body) {
+  const found = [];
+  if (/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/.test(body)) found.push('jwt-literal');
+  const host = /https:\/\/([a-z]{20})\.supabase\.co/.exec(body);
+  if (host) found.push(`project-host:${host[1]}`);
+  return found;
+}
+
+const BASELINE = join(ROOT, 'scripts', 'security', 'cron-hardcoded-identity.txt');
+const frozen = new Set(
+  existsSync(BASELINE)
+    ? readFileSync(BASELINE, 'utf8')
+        .split('\n')
+        .map((l) => l.replace(/#.*$/, '').trim())
+        .filter(Boolean)
+    : [],
+);
+
 const failures = [];
 let checked = 0;
+const identitySeen = [];
 
-for (const [jobname, { file, invocations }] of [...live.entries()].sort()) {
+for (const [jobname, { file, invocations, body }] of [...live.entries()].sort()) {
+  for (const kind of hardcodedIdentityIn(body ?? '')) {
+    const key = `${jobname}\t${kind}`;
+    identitySeen.push(key);
+    if (frozen.has(key)) continue;
+    failures.push(
+      `${jobname} (${file})\n  writes a deployment identity into the cron body as a literal (${kind}).\n` +
+      `  That value belongs to ONE project and every clone replays this migration, so the job\n` +
+      `  points at somebody else's function or presents a key its own function cannot match.\n` +
+      `  Use cron_invoke_signed_function, or read the value from vault.decrypted_secrets.`,
+    );
+  }
   for (const inv of invocations) {
     checked += 1;
     const where = `${jobname} (${file})`;
@@ -252,4 +348,16 @@ if (failures.length) {
   process.exit(1);
 }
 
-console.log(`Cron caller-name check passed (${checked} scheduled invocations across ${live.size} jobs).`);
+const stale = [...frozen].filter((k) => !identitySeen.includes(k));
+if (stale.length) {
+  console.error('Cron caller-name check FAILED: the hardcoded-identity baseline names entries that no longer exist.\n');
+  for (const s of stale) console.error(`  ${s.replace('\t', ' -> ')}`);
+  console.error('\nRemove them from scripts/security/cron-hardcoded-identity.txt. A baseline that');
+  console.error('outlives what it froze stops being a ratchet and starts hiding the next one.');
+  process.exit(1);
+}
+
+console.log(
+  `Cron caller-name check passed (${checked} scheduled invocations across ${live.size} jobs; ` +
+    `${identitySeen.length} frozen hardcoded-identity entries).`,
+);

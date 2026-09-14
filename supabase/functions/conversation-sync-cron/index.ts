@@ -5,6 +5,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { internalError } from '../_shared/errorResponse.ts';
+import { enforceRawBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { tokenKeyFor } from '../_shared/ghl-rate-limiter.ts';
 import { mapWithConcurrency } from '../_shared/boundedConcurrency.pure.ts';
 import {
@@ -149,7 +150,6 @@ function tally(counters: BandCounters, w: GhlWindow<Row>, kind: 'search' | 'mess
 }
 
 Deno.serve(async (req) => {
-  // This function is called by pg_cron — no auth needed
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -174,6 +174,34 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
+
+    /*
+     * WHO IS ALLOWED TO START THIS.
+     *
+     * The header used to read "called by pg_cron — no auth needed", and
+     * `config.toml` declares `verify_jwt = false`, so the two together made
+     * this a worker anybody on the internet could start. It spends the
+     * deployment's GoHighLevel rate budget — three bands, hundreds of requests
+     * a tick — and writes to `ghl_conversations` and
+     * `ghl_conversation_messages`, so "no auth needed" was a statement about
+     * who DOES call it rather than about who CAN.
+     *
+     * It is the only caller, so the check costs nothing: pg_cron already
+     * invokes it through `cron_invoke_signed_function`, which signs an HMAC
+     * over the request and names itself in `X-Internal-Caller`.
+     *
+     * Found by `check-cron-caller-names.mjs` once that gate learned to read
+     * `cron.alter_job`, which is how this job's body is written.
+     */
+    const bounded = await enforceRawBodyLimit(req, 8192);
+    if (!bounded.ok) return bounded.error;
+    const internal = await verifySignedInternal(supabase, req, bounded.raw, ['pg_cron']);
+    if (!internal.ok) {
+      console.warn(`[conversation-sync-cron] refused: ${internal.errorCode ?? 'unauthenticated'}`);
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     const _ghlCreds = await getEffectiveGhlCredentials(supabase);
     // Typed `string` at the declaration rather than narrowed by the guard
     // below: `syncContact` is a hoisted function declaration, and TypeScript

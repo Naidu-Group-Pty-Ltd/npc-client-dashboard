@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { enforceRawBodyLimit, verifySignedInternal } from '../_shared/requestSecurity.ts';
 import { internalError } from '../_shared/errorResponse.ts';
 /**
  * Sync GHL marketing assets (workflows, forms/quizzes/surveys, funnels & pages)
@@ -261,24 +262,42 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // The signature covers a hash of the raw bytes, so the body is read once
+    // as text and parsed from that — `req.json()` consumes the stream and
+    // leaves nothing for `verifySignedInternal` to hash.
+    const bounded = await enforceRawBodyLimit(req, 8192);
+    if (!bounded.ok) return bounded.error;
     let body: any = {};
-    try {
-      body = await req.json();
-    } catch {
-      /* empty body = cron */
-    }
+    try { body = bounded.raw ? JSON.parse(bounded.raw) : {}; } catch { body = {}; }
 
-    // Auth strategy:
-    //   - Cron path: pg_cron sends bearer = anon key with empty body (no session token).
-    //     We treat this as a privileged cron request.
-    //   - Service-role bearer: verifyAuth returns authMethod='service_role'.
-    //   - User JWT: must additionally have admin/superadmin role.
-    const authHeader = req.headers.get('authorization') || '';
-    const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
-    // Public anon key (safe to hardcode — also injected by Supabase runtime, but not always)
-    const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
-    const sessionToken = req.headers.get('x-session-token') || body?.session_token;
-    const isCronCall = bearer === ANON_KEY && !sessionToken;
+    /*
+     * THE CRON PATH USED TO BE A HARDCODED ANON KEY, AND IT REFUSED EVERY RUN.
+     *
+     * It compared the request's bearer against a literal anon key for the
+     * PRIME's Supabase project (`ref: dduzbchuswwbefdunfct`), and treated a
+     * match with no session token as the scheduled caller. Two things follow,
+     * and both were measured on 13-14 Sep 2026.
+     *
+     * On a CLONE the comparison can never hold: `cron_signed_internal_headers`
+     * sends that deployment's OWN anon key, which is a different string, so
+     * the call fell through to `verifyAuth`, which has no user behind an anon
+     * key, and answered 401. On the PRIME it answered 401 too — the vault's
+     * `supabase_anon_key` and this literal are not the same value — so
+     * `sync-ghl-marketing-assets-6h` had never once run anywhere.
+     *
+     * The comment called the literal "safe to hardcode", and as a PUBLISHED
+     * value it is: an anon key is meant to be in every browser bundle. What is
+     * not safe is AUTHENTICATING with it. It identifies a project, not a
+     * caller, and the same rule this repo already applies to the Turnstile
+     * site key applies here — a literal belonging to one deployment, inherited
+     * verbatim by every clone, is wrong on all of them.
+     *
+     * The scheduled caller is now verified the way every other one is: a
+     * signed envelope naming `pg_cron`, which is what the job already sends.
+     * The human path below is untouched.
+     */
+    const internal = await verifySignedInternal(supabase, req, bounded.raw, ['pg_cron']);
+    const isCronCall = internal.ok;
 
     if (!isCronCall) {
       const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
@@ -300,7 +319,7 @@ Deno.serve(async (req) => {
         }
       }
     } else {
-      console.log('[sync-ghl-marketing-assets] Cron invocation accepted (anon-key bearer, no session)');
+      console.log(`[sync-ghl-marketing-assets] Signed internal caller: ${internal.actorId}`);
     }
 
     const apiKey = Deno.env.get('GOHIGHLEVEL_API_KEY');

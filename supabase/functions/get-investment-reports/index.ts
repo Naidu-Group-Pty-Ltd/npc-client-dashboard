@@ -22,6 +22,14 @@ interface RequestBody {
   listOptions?: {
     status?: string | string[]; isArchived?: boolean; isClientReport?: boolean | null;
     clientPropertyId?: string; clientPropertyIds?: string[]; createdAfter?: string; createdBefore?: string;
+    /**
+     * Activity window: rows whose `updated_at` is at or after this instant.
+     * The generation-progress widget filters by this rather than `createdAfter`
+     * because a regeneration moves `updated_at` (the table trigger stamps every
+     * update and the generator stamps every section) and never `created_at` —
+     * so a creation window hid every regeneration of a report older than it.
+     */
+    updatedAfter?: string;
     hasPropertyListingId?: boolean; page?: number; pageSize?: number;
     /** Deprecated and deliberately ignored: callers cannot define database projections. */
     select?: string;
@@ -70,7 +78,7 @@ const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = 
   generated_reports: 'id,title,created_at',
   property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
 };
-const FUNCTION_VERSION = '2026-08-15.2';
+const FUNCTION_VERSION = '2026-09-14.1';
 const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
   status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
 });
@@ -244,7 +252,7 @@ Deno.serve(async (req) => {
     }
 
     const options = body.listOptions || {};
-    if (!validIso(options.createdAfter) || !validIso(options.createdBefore) || (options.createdAfter && options.createdBefore && Date.parse(options.createdAfter) > Date.parse(options.createdBefore)))
+    if (!validIso(options.createdAfter) || !validIso(options.createdBefore) || !validIso(options.updatedAfter) || (options.createdAfter && options.createdBefore && Date.parse(options.createdAfter) > Date.parse(options.createdBefore)))
       return failure('INVALID_REPORT_QUERY', 'Date filters must be valid ISO timestamps in chronological order.', false, 400, corsHeaders, correlationId);
     const page = options.page ?? 1, pageSize = options.pageSize ?? 50;
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200)
@@ -277,6 +285,9 @@ Deno.serve(async (req) => {
       else if (options.clientPropertyIds?.length) query = query.in('client_property_id', options.clientPropertyIds);
       if (options.createdAfter) query = query.gte('created_at', options.createdAfter);
       if (options.createdBefore) query = query.lte('created_at', options.createdBefore);
+      // `updated_at` is NOT NULL DEFAULT now() and trigger-stamped on every
+      // update, so a plain gte never drops a freshly inserted row.
+      if (options.updatedAfter) query = query.gte('updated_at', options.updatedAfter);
       if (options.hasPropertyListingId === true) query = query.not('property_listing_id', 'is', null);
       if (options.hasPropertyListingId === false) query = query.is('property_listing_id', null);
     }

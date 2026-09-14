@@ -2,6 +2,11 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { invokeSecureFunction, isAuthExhausted } from '@/lib/secureInvoke';
 import { nextPollDelayMs } from '@/lib/reports/progressPollCadence.pure';
+import {
+  REPORT_GENERATION_CANCELLED_EVENT,
+  REPORT_GENERATION_STARTED_EVENT,
+  type ReportGenerationCancelledDetail,
+} from '@/lib/reports/generationSignals.pure';
 import { useAuth } from '@/hooks/useAuth';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -46,7 +51,12 @@ interface RetryState {
 type Corner = 'br' | 'bl' | 'tr' | 'tl';
 const POSITION_KEY = 'report-progress-position-v1';
 const COLLAPSED_KEY = 'report-progress-collapsed-v1';
-/** How far back to look for in-flight work. Applied server-side. */
+/** How far back to look for in-flight work. Applied server-side, on
+ *  `updated_at` — activity, never creation. Regenerating a report only moves
+ *  `updated_at` (the table trigger stamps every update, the generator stamps
+ *  every section), so a `created_at` window made every regeneration of a
+ *  report older than a day invisible here: the widget rendered null and the
+ *  only thing in the corner was the hook's passive toast. */
 const ACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DRAWER_SNAP_POINTS: (string | number)[] = [0.45, 0.92];
 
@@ -515,7 +525,8 @@ function ReportGenerationProgressInner() {
           // `status` sits at the top level of listOptions; nesting it under
           // `filters` (as this did) meant no status filter was applied at all.
           status: ['pending', 'processing', 'failed'],
-          createdAfter: new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString(),
+          // Activity window, not creation window — see ACTIVE_WINDOW_MS.
+          updatedAfter: new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString(),
           pageSize: 20,
         },
       });
@@ -571,8 +582,8 @@ function ReportGenerationProgressInner() {
     emptyPollsRef.current = records.length > 0 ? 0 : emptyPollsRef.current + 1;
     nextDueAtRef.current = now + nextPollDelayMs(emptyPollsRef.current);
 
-    // The 24h window is applied server-side now (`createdAfter`), so this only
-    // has to drop what the user hid locally.
+    // The 24h activity window is applied server-side (`updatedAfter`), so this
+    // only has to drop what the user hid locally.
     const visibleRecords = records.filter((report) => !dismissedIdsRef.current.has(report.id));
 
     // Prune dismissed IDs the server no longer reports, so the set can't grow
@@ -730,6 +741,22 @@ function ReportGenerationProgressInner() {
     };
   }, [fetchActiveReports]);
 
+  /* A generation started in THIS tab is announced (the regeneration hook
+     dispatches it once the row is in flight server-side), so the widget appears
+     at once instead of up to 30s later on the idle backoff. Same principle as
+     the visibility reset above: the person just acted, answer now. This
+     component stays mounted while rendering null, so the listener is live even
+     when nothing is on screen. */
+  useEffect(() => {
+    const onStarted = () => {
+      emptyPollsRef.current = 0;
+      nextDueAtRef.current = 0;
+      fetchActiveReports();
+    };
+    window.addEventListener(REPORT_GENERATION_STARTED_EVENT, onStarted);
+    return () => window.removeEventListener(REPORT_GENERATION_STARTED_EVENT, onStarted);
+  }, [fetchActiveReports]);
+
   /* Retire completed rows once their success moment has passed. A 1s tick is
      enough for a 30s window and keeps the elapsed-time readouts moving even
      while polling is paused — the row used to freeze because nothing re-rendered. */
@@ -818,8 +845,21 @@ function ReportGenerationProgressInner() {
   const killReport = useCallback(
     async (reportId: string, opts: { silent?: boolean } = {}) => {
       const r = reports.find((x) => x.id === reportId);
+      const reason = `Cancelled by ${currentUserLabel}`;
       cancelScheduledRetry(reportId);
       cancelledIdsRef.current.add(reportId);
+      // Stop the OTHER driver too. A regeneration started on this page is
+      // pumped by useChunkedRegeneration, whose loop never reads the row — so
+      // marking it failed below stopped nothing and its next section wrote the
+      // row straight back to 'processing'. Fired before the write so the pump
+      // stops at the earliest section boundary rather than one call later, and
+      // it carries the reason because the hook re-asserts the stop once its
+      // in-flight section has landed (it is the only party that knows when).
+      window.dispatchEvent(
+        new CustomEvent<ReportGenerationCancelledDetail>(REPORT_GENERATION_CANCELLED_EVENT, {
+          detail: { reportId, reason },
+        }),
+      );
       // Reflect the cancellation in the active list immediately so the user
       // sees the status flip before the next polling cycle removes the row.
       setReports((prev) =>
@@ -828,7 +868,7 @@ function ReportGenerationProgressInner() {
             ? {
                 ...x,
                 status: 'failed',
-                error_message: `Cancelled by ${currentUserLabel}`,
+                error_message: reason,
                 lastUpdated: new Date(),
               }
             : x,
@@ -840,7 +880,7 @@ function ReportGenerationProgressInner() {
           reportId,
           data: {
             status: 'failed',
-            error_message: `Cancelled by ${currentUserLabel}`,
+            error_message: reason,
             updated_at: new Date().toISOString(),
           },
         });
@@ -861,7 +901,7 @@ function ReportGenerationProgressInner() {
             totalSections: r.totalSections,
             sectionsCompleted: r.sectionsCompleted,
             durationMs: Date.now() - r.createdAt.getTime(),
-            error_message: `Cancelled by ${currentUserLabel}`,
+            error_message: reason,
             finishedAt: Date.now(),
             cancelledBy: currentUserLabel,
           });

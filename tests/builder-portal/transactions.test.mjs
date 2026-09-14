@@ -9,7 +9,7 @@
  * DENY overrides, fail-closed auditing, stale-write rejection, lifecycle
  * transitions, the transaction-case guard (MIG-02) and the unsold-inventory rule
  * — is executed against a live PostgreSQL database by
- * `scripts/builder-portal/local-db/verify-transactions.mjs`, which asserts 111
+ * `scripts/builder-portal/local-db/verify-transactions.mjs`, which asserts 113
  * conditions. These tests assert the shape that verification depends on, so a
  * change that would invalidate it fails here first.
  */

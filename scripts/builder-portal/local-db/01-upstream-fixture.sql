@@ -14,6 +14,8 @@
 --   supabase/migrations/20260730190000_*.sql   portal_terms_versions/_acceptances
 --   supabase/migrations/20260730221326_*.sql   cross_portal_* cutover control plane
 --   supabase/migrations/20251224033443_*.sql   dashboard_modules
+--   supabase/migrations/20260612120538_*.sql   feature_flags (the network mirror
+--                                              migration seeds its flag row here)
 --
 -- It is a TEST HARNESS only. It is never applied to any hosted environment and
 -- is not part of supabase/migrations.
@@ -21,6 +23,18 @@
 -- --------------------------------------------------------------------------
 -- Command Centre internal permission surface
 -- --------------------------------------------------------------------------
+-- Production shape read from dduzbchuswwbefdunfct via information_schema:
+-- key PK, jsonb value, both NOT NULL. The network mirror migration
+-- (20261121000000) seeds builder_network_enabled here ON CONFLICT (key).
+CREATE TABLE IF NOT EXISTS public.feature_flags (
+  key text PRIMARY KEY,
+  value jsonb NOT NULL,
+  description text,
+  updated_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS public.dashboard_modules (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   module_key text NOT NULL UNIQUE,

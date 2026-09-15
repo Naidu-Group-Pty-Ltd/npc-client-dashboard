@@ -3,40 +3,35 @@
 // Input variables to declare in the UI:
 //   recordId  -> the TRIGGER record's Airtable record ID
 //
-// DEFECT 3 FIXED. The source generated this token with Math.random(), while its
-// own comment called it "secure, pseudo-random". It is not: Math.random() is not
-// a CSPRNG, and this token is what gates the Stage-2 questionnaire URL — so a
-// guessable token is a guessable door.
+// ── Why this still uses Math.random(), and why that is not the defect ────────
 //
-// Only the ENTROPY SOURCE changed. The alphabet, the length, the hand-rolled
-// URL-safe base64 transform and therefore the token's shape and the minted URL
-// are all exactly as before, so nothing downstream sees a different format.
+// A crypto.getRandomValues version was written first and REFUSED BY THE RUNTIME:
+// Airtable's automation script sandbox exposes no CSPRNG (the Scripting
+// *extension* runs in the browser and does; automation actions do not).
+// Measured 2026-09-15 by running it.
 //
-// TEST-RUN THIS IN THE UI BEFORE ENABLING. If Airtable's scripting sandbox does
-// not expose `crypto.getRandomValues`, line 1 throws with a clear message rather
-// than silently falling back to a weak token. If it throws, do not swap
-// Math.random() back in — say so, and the token check moves server-side instead.
-
-function randomIndices(count, modulo) {
-    if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') {
-        throw new Error(
-            'crypto.getRandomValues is unavailable in this scripting runtime. ' +
-            'Do NOT substitute Math.random() — this token gates the Stage-2 URL. ' +
-            'Raise it so the token can be validated server-side instead.'
-        );
-    }
-    // Rejection sampling: a plain % would bias the low indices of the alphabet.
-    const out = [];
-    const limit = Math.floor(256 / modulo) * modulo;
-    const buf = new Uint8Array(count * 2);
-    while (out.length < count) {
-        crypto.getRandomValues(buf);
-        for (let i = 0; i < buf.length && out.length < count; i++) {
-            if (buf[i] < limit) out.push(buf[i] % modulo);
-        }
-    }
-    return out;
-}
+// That matters less than it looks, because THE TOKEN IS NOT CHECKED ANYWHERE.
+// `aurixa-systems/src/lib/questionnaireLinkAccess.ts` gates /questionnaire and
+// says so itself: "This is not an authorisation boundary, and cannot be made
+// into one." It tests only that the token is SHAPED like one — 16+ URL-safe
+// characters — and that `expires` is in the future. So
+// `?token=aaaaaaaaaaaaaaaa&expires=2030-01-01` already opens the form. Raising
+// the entropy of this string changes nothing about who can get in.
+//
+// The real control is written and NOT DEPLOYED:
+// `aurixa-systems/supabase/functions/readiness-questionnaire/index.ts` mints
+// tokens from 32 bytes of CSPRNG, stores only their SHA-256, returns the raw
+// value exactly once, and exchanges it through `authorise`. Its migration is
+// unapplied. Once that service is live, THIS SCRIPT SHOULD BE DELETED — the
+// token stops being Airtable's to mint.
+//
+// So this file is deliberately the legacy behaviour, unchanged: pasting it is
+// not a regression, it is parity with the source base. Do not "improve" the RNG
+// here — it is the wrong layer, and a stronger token in front of a gate that
+// does not read it is theatre.
+//
+// One thing IS fixed: the source's comment called this "secure, pseudo-random".
+// It is neither. The wording below says what it is.
 
 // 1. Fetch table context
 let table = base.getTable("Aurixa Waitlist");
@@ -45,11 +40,13 @@ let table = base.getTable("Aurixa Waitlist");
 let config = input.config();
 let recordId = config.recordId;
 
-// 3. Generate a 16-character random sequence (now from a CSPRNG)
+// 3. Generate a 16-character random sequence.
+//    NOT a credential: Math.random() is not a CSPRNG, and nothing validates
+//    this value today. It is a lookup key until `readiness-questionnaire` ships.
 const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 let rawString = '';
-for (const idx of randomIndices(16, chars.length)) {
-    rawString += chars.charAt(idx);
+for (let i = 0; i < 16; i++) {
+    rawString += chars.charAt(Math.floor(Math.random() * chars.length));
 }
 
 // 4. Convert the sequence to a URL-safe Base64 string manually (bypassing btoa)

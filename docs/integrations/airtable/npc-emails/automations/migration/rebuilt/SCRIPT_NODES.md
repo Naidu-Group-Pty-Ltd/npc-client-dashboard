@@ -112,21 +112,52 @@ Read the clock section above before enabling.
 
 ## 3 and 4 — `wflEQ1wsJH1x7GQhL` · Aurixa Lead Capture
 
+**One script, not two.**
+
 **First script** — paste
 [`aurixa-lead-capture-token.PASTE.js`](../../scripts/aurixa-lead-capture-token.PASTE.js),
 one input variable `recordId` bound to the **trigger record's** Airtable record
 ID. Everything else it addresses by name, so no id remapping applies.
 
-That file carries **defect 3 fixed**: the source minted the Stage-2 gate token
-with `Math.random()` while calling it "secure, pseudo-random". Only the entropy
-source changed — `crypto.getRandomValues` with rejection sampling, so a plain `%`
-cannot bias the low indices. The alphabet, the length, the hand-rolled URL-safe
-base64 transform and therefore the token's shape are untouched: both mint a
-22-character token over the same alphabet, checked by execution. **Test-run it in
-the Airtable UI before enabling** — if that sandbox does not expose
-`crypto.getRandomValues` the script throws on the first call with a message
-saying so, rather than quietly falling back to a weak token. If it throws, do not
-put `Math.random()` back; the token check moves server-side instead.
+### Defect 3 is real, and it is not where the snapshot said
+
+The snapshot called the Stage-2 gate token "guessable, not secure" and a
+`crypto.getRandomValues` version of this script was written to fix it. **Airtable
+refused it**, measured by running it on 2026-09-15:
+
+```
+Error: crypto.getRandomValues is unavailable in this scripting runtime.
+```
+
+Airtable's automation script sandbox exposes no CSPRNG. The Scripting
+*extension* runs in the browser and does; automation **actions** do not. So
+there is no way to mint a strong token from inside Airtable.
+
+**That matters less than it looks, because nothing checks the token.**
+`aurixa-systems/src/lib/questionnaireLinkAccess.ts` gates `/questionnaire` and
+says so in its own header: *"This is not an authorisation boundary, and cannot
+be made into one."* It tests only that the token is SHAPED like one — 16+
+URL-safe characters — and that `expires` is a future date. So
+`?token=aaaaaaaaaaaaaaaa&expires=2030-01-01` already opens the form to anyone
+who types it. Raising this script's entropy would change nothing about who gets
+in: it is a stronger lock on a door that is not latched.
+
+**The correct system exists and was never switched on.**
+`aurixa-systems/supabase/functions/readiness-questionnaire/index.ts` — 616 lines,
+**not deployed**, its migration **not applied** — mints tokens from 32 bytes of
+CSPRNG, stores only their SHA-256, returns the raw value exactly once to the
+caller that emails it, exchanges it through `authorise`, and answers unknown,
+revoked and mismatched tokens identically so it cannot be used to probe whether
+an application exists.
+
+So the shipped file is **deliberately the legacy behaviour, unchanged**. Pasting
+it is parity with the source base, not a regression — the exposure it carries is
+the one production already has. Do not "improve" the RNG here; it is the wrong
+layer. **When `readiness-questionnaire` is deployed this script should be
+DELETED**, because minting the token stops being Airtable's job.
+
+The one thing the file does fix is the wording: the source's comment called this
+"secure, pseudo-random". It is neither, and the new comment says what it is.
 
 **Second script — do not add it.** Defect 2 is that it busy-waits rather than
 sleeping, and its comment says 60 seconds while `delayDuration = 10000` says ten.

@@ -17,6 +17,12 @@ own experience of it: `create_automation` and `update_automation` both reject
 `customScript` with `readOnlyNodeType`, by design. A script node has to be added
 in the Airtable UI by hand.
 
+**Re-tested 2026-09-15 on the paid account: it still refuses.** The accounts
+being paid does not move this — the limit is in the MCP automation API, not the
+licence. The probe, and a paste runbook with every new-base id already resolved,
+are in
+[`migration/rebuilt/SCRIPT_NODES.md`](./migration/rebuilt/SCRIPT_NODES.md).
+
 That is why every script body is extracted to a real `.js` file under
 `scripts/` rather than left inside JSON. A script escaped into a JSON string is
 not pasteable; a file is. Each carries a header naming its source automation,

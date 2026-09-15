@@ -122,3 +122,56 @@ Step 3 is worth doing selectively rather than wholesale for the two voice
 stores. Replaying the malformed rows described above just reinstates the defect,
 and the call-scoped rows in `GHL Contact IDs` are spent — they refer to calls
 that ended months ago.
+
+## The target account, as of 2026-09-15
+
+This directory stays a record of the **legacy** account (eu2, org `1620547`,
+team `528268`) as it stood on 2026-08-18. Nothing above is rewritten. What
+follows is where those three stores ended up in the new account (us2, org
+`8699071`, team `2731020`), because the mapping is otherwise only inferable.
+
+| Legacy | Rebuilt | Records | Ceiling |
+| --- | --- | ---: | --- |
+| `GHL Contact IDs` (162851) | **133627** | 2 | 1 MB |
+| `Vapi Calls Human Transfer` (163613) | **150577** | 0 | 50 MB |
+| `Property Posting Tracker` (27908) | **150578** | 0 | 1 MB |
+
+The two new stores were created on 2026-09-15. They had been blocked since the
+migration by the Free plan's `dslimit: 1` and its 1 MB org-wide `dsslimit`,
+which together produced `Not enough space in storage.`; the organisation is now
+on **Core** (`dslimit: 1000`, `dsslimit: 157,286,400`) and both limits are gone.
+Their data structures already existed and are byte-faithful to the legacy spec,
+so only the stores themselves were missing.
+[`../make/MAKE_CUTOVER.md`](../make/MAKE_CUTOVER.md) carries the detail and the
+two scenarios that were unblocked with them.
+
+**`GHL Contact IDs` kept the 1 MB ceiling** it was created with under the old
+plan, rather than the legacy store's 100 MB. It holds 665 bytes, so this is
+noted rather than changed — but it is a difference from the legacy record above.
+
+### What was loaded, and the row that changed the answer
+
+The record counts are the whole of the selective load this README recommends,
+and they are now settled rather than pending.
+
+`GHL Contact IDs`' two rows are the two the section above identifies as correct:
+of 74 legacy rows, exactly two are keyed by a phone number
+(`+61480845459`, `+61433005110`). The other 72 are keyed by `vapiCallId` and are
+spent. Nothing further should be loaded.
+
+`Vapi Calls Human Transfer` is **empty on purpose**, which goes further than the
+advice above. Five of its eight legacy rows are malformed. The remaining three
+were also withheld, because the consuming scenario decides on
+`twilioParentCallSid` existing and reads neither `expiresAt` nor `status` — so a
+row from May carrying `status: "active"` is indistinguishable from a live one,
+and replaying the three would make a transfer request from those numbers redirect
+against a call that ended months ago. Empty is the state that behaves correctly.
+
+### There is an API route now
+
+The three-step rebuild above ("no bulk import in the Make UI") describes the UI.
+Both stores here were instead created through the API —
+`data-stores_create` against the existing structure, with the ceiling passed as
+`maxSizeMB` — and records can be written one at a time with
+`data-store-records_create`. For a store of this size that is quicker than a
+throwaway scenario, and it leaves the field spec untouched.

@@ -19,9 +19,13 @@ file covers what is not done and what has to change outside Make.
 
 | | Why | Who can do it |
 | --- | --- | --- |
-| 6 scenarios still to import | blueprint too large to pass as an inline tool argument | a person, via **Import Blueprint** |
-| 2 scenarios cannot be created | their data store does not fit on the Free plan | needs a plan decision |
-| every external caller | the zone changed, so every webhook URL changed | a person, in Vapi / GHL / the website |
+| ~~6 scenarios still to import~~ | ~~blueprint too large to pass as an inline tool argument~~ | **Already done** — all six exist and are valid; verified 2026-09-15 |
+| ~~2 scenarios cannot be created~~ | ~~their data store does not fit on the Free plan~~ | **Done 2026-09-15** — see below |
+| every external caller | the zone changed, so every webhook URL changed | a person, in Vapi / Twilio / GHL / the website |
+
+**Nothing structural is outstanding in Make.** What is left is the re-pointing
+of external callers, and one decision that sits above all of it — see
+"The base question" below.
 
 ## The six UI imports are now fully wired
 
@@ -59,29 +63,126 @@ plan position, and `Aurixa Waitlist`'s computed tail was created in dependency
 order (counts, then rollups, then formulas) rather than plan order. Naive
 order-zipping silently produced wrong ids for those; the checks caught it.
 
-## The two scenarios that cannot be created
+## The two scenarios that could not be created — created 2026-09-15
 
 `NPC Twilio - Store Active Call Context` and
 `NPC Vapi - Transfer Caller to Human via Twilio Redirect` both read a data store
-called **`Vapi Calls Human Transfer`**, and it cannot exist on this plan.
+called **`Vapi Calls Human Transfer`**, and on the Free plan it could not exist.
+Creating it returned, verbatim: **`Not enough space in storage.`** Two limits
+produced that — `dsslimit` of 1,048,576 bytes total against a 1 MB minimum
+allocation, and `dslimit: 1`, one data store whatever its size.
 
-Creating it returns, verbatim: **`Not enough space in storage.`**
+**The organisation is now on Core and both limits are gone**: `dslimit` is
+**1000** and `dsslimit` is **157,286,400**. The blocked half of the migration
+was completed on 2026-09-15.
 
-Two independent limits produce that. The org's `dsslimit` is **1,048,576 bytes
-of data-store storage in total**, and a data store's minimum allocation is 1 MB —
-so the one store that already exists (`GHL Contact IDs`, 133627, holding 665
-bytes of its 1 MB) claims the entire org allowance. Separately the licence sets
-**`dslimit: 1`**: one data store, whatever its size. Shrinking the existing store
-would not help, because the count limit still binds.
+| | Created | Notes |
+| --- | --- | --- |
+| Data structure `My data structure` (`463357`) | already existed | byte-faithful to the legacy `583111` |
+| Data structure `Key Field` (`463358`) | already existed | byte-faithful to the legacy `104789` |
+| Data store **`Vapi Calls Human Transfer`** | **`150577`** | 50 MB, matching the legacy `163613` ceiling |
+| Data store **`Property Posting Tracker`** | **`150578`** | 1 MB, matching the legacy `27908` ceiling |
+| Scenario **`NPC Twilio - Store Active Call Context`** | **`6279258`** | hook `2704905`, the orphan minted for it |
+| Scenario **`NPC Vapi - Transfer Caller to Human via Twilio Redirect`** | **`6279259`** | hook **`2815231`**, newly minted |
 
-So this is a plan decision, not a migration step. Either upgrade Make, or accept
-that the human-transfer path does not migrate. Note the second scenario's hook
-already exists (`ydaccnot9sfslqi255w651nmc428umpn`) and currently belongs to no
-scenario.
+Only the structures pre-existed; the stores had never been creatable. Both
+scenarios are **inactive**, as every other clone is.
 
-While checking: `"scenarios": 2` also caps **active** scenarios at two, and
-`activeScenarios` is currently 0. Everything cloned so far is inactive, so
-nothing has hit that yet — but only two of them can ever run at once on Free.
+The rewrite was three id substitutions, verified the same way the blueprint
+rewrite was: masking each rewritten id in the before and after makes the
+remainder byte-identical, so nothing but ids moved.
+
+| Token | Old (eu2) | New (us2) | Occurrences |
+| --- | --- | --- | ---: |
+| `datastore` | `163613` | `150577` | 3 |
+| `hook` (store context) | `4141282` | `2704905` | 1 |
+| `hook` (transfer) | `4141547` | `2815231` | 1 |
+| `__IMTCONN__` (Twilio) | `13284122` | `10496977` | 1 |
+
+**`{{SECRET:TWILIO_ACCOUNT_SID}}` had to be restored in the transfer scenario.**
+It is a repository redaction placeholder rather than Make syntax — see
+[`../blueprints/make/SECRETS.md`](../blueprints/make/SECRETS.md), which records
+that it is substituted only because GitHub push protection classes the SID as a
+secret, and "needs restoring on import but not rotating". It sits in a live
+mapper (`/2010-04-01/Accounts/<SID>/Calls/{{2.twilioParentCallSid}}`), so left
+as the placeholder the Twilio redirect would have POSTed to a path that 404s.
+The value was taken from the `uid` of the Twilio connection the module already
+authenticates as (`10496977`), which is correct by construction — the URL has to
+name the account the call is made against. It was written straight into Make and
+deliberately not into any file here.
+
+The store-context scenario carried the same placeholder only inside
+`metadata.designer.samples`, which slimming drops, so it needed no restoration.
+
+### The stores were migrated as archives, not replayed
+
+`GHL Contact IDs` (`133627`) already held **2** records, and they are the right
+two: the legacy store's 74 rows contain exactly two keyed by phone number
+(`+61480845459`, `+61433005110`), and those are the ones the README identifies as
+"what the intended behaviour looks like". The other 72 are keyed by `vapiCallId`,
+so they are call-scoped, spent, and cannot be matched on phone by anything.
+Nothing to do.
+
+`Property Posting Tracker` is empty in the legacy account too. Correct as created.
+
+**`Vapi Calls Human Transfer` was deliberately created empty**, and that is a
+change of plan from "load the three well-formed rows". Five of the eight legacy
+rows are malformed and were never in question. The other three are not loadable
+either, for a reason the blueprint settles: the transfer scenario's router
+branches on **`twilioParentCallSid` existing** and reads neither `expiresAt` nor
+`status`. All three rows carry `status: "active"` with an `expiresAt` one hour
+after a `createdAt` in May, July and August. A stale row is therefore
+indistinguishable from a live one, and loading them would make a transfer request
+from any of those three numbers redirect against a Twilio call that ended months
+ago. An empty store takes the "no active call" branch and answers correctly.
+
+## Activated 2026-09-15, and what was deliberately left off
+
+The thirteen scenarios the Vapi tools will point at are **live**. Activating a
+webhook scenario is inert on its own — nothing runs until something calls the
+hook, and nothing calls these until Vapi is re-pointed — so this is the
+prerequisite done, not the cutover.
+
+| Active now | Serves |
+| --- | --- |
+| `Vapi - GHL Contact Resolver v4` | `ghl_resolve_contact` |
+| `NPC Vapi - get_call_context v1` | `get_call_context` |
+| `NPC Vapi - Transfer Caller to Human` | `transfer_to_human` |
+| `NPC Twilio - Store Active Call Context` | the write half of the transfer pair |
+| `Vapi - GHL Availability Intent Router (Native)` | `ghl_check_availability` |
+| `Vapi - GHL Booking Intent Router (Native)` **and** `(Generic HTTP PIT)` | `ghl_create_booking` — both, because which one the eu2 tool belongs to is unresolved; whichever it is, it is live |
+| `NPC Delete Booking Test` | `ghl_delete_event_npc` |
+| `NPC Delete Strategy Session` / `(Zoom)` | `ghl_delete_event_npc_2` / `_2_1` |
+| `NPC Delete IFC Session` / `(Zoom)` | `ghl_delete_event_npc_3` / `_3_1` |
+
+**Everything that touches Airtable was left off, on purpose.** None of the
+thirteen holds the Airtable connection — they are GoHighLevel, Twilio and OpenAI
+only — which is what makes them safe to switch on while the base question is
+open. Still inactive and staying that way: `NPC Delete Opt In Call`,
+`NPC Delete Quiz Sub Call`, `Aurixa Stage 3 Access`, `Aurixa Waitlist Stage 1`,
+`2` and `3`, `NPC Opt-In Follow Up Test`, `NPC Quiz Submission Follow Up Test`,
+and the three `NPC Email` intake scenarios.
+
+They have **not been tested**. A real test fires real GoHighLevel and Twilio
+calls — creating contacts, bookings and redirects — so it needs a controlled
+payload and a person watching, not an automated run.
+
+## The base question, which sits above all of it
+
+All six import-ready scenarios point at **`appFNPL7iYiuQyHAO`**, the rebuild, and
+at the live base zero times. Counted in the blueprints: 26 references each in the
+three `NPC Email` scenarios, 3 / 1 / 3 in the Aurixa trio.
+
+**That base receives nothing.** Measured 2026-09-15: `Property Intake Master`
+holds 148 rows all stamped `2026-08-18T13:20:37`, and `Aurixa Waitlist` holds 10
+rows all stamped `2026-08-18T13:22:03` with a newest `Date Added` of
+**2026-08-15**. Both frozen at the copy.
+
+So activating any of the six does one of two harmful things: moves listing
+intake to a base nothing reads, or drives the Aurixa invite funnel off ten stale
+applicants while missing every new one. Neither is a Make problem and neither has
+a Make fix — the decision is which Airtable base is authoritative, and until it
+is made those six stay off.
 
 ## Webhook re-pointing
 
@@ -100,7 +201,7 @@ read back. Match those by scenario name.
 | Aurixa Waitlist Stage 1 | — | `https://hook.us2.make.com/eku2vhixkfc8uw3ua43a6apuri9x45fc` |
 | Aurixa Waitlist Stage 2 | — | `https://hook.us2.make.com/xqat3ism55qanlbhu67qqx4t31yvcy6h` |
 | Aurixa Waitlist Stage 3 | — | `https://hook.us2.make.com/gu22njaaq9smhe87feuflr4aksd7wnnp` |
-| Discovery Call Handoff | `…/2ubukyatwc0ig8zinphjjc4dciwhigqg` | `https://hook.us2.make.com/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw` |
+| Discovery Call Handoff | — (see note) | `https://hook.us2.make.com/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw` |
 | GHL MCP - Get Contact By Phone via HTTP | — | `https://hook.us2.make.com/eexehoud6y1tfoinmepbvp8fcv1qfuj1` |
 | Integration Webhooks, PDFMonkey | — | `https://hook.us2.make.com/l8laqb9a7y3kegqxe8a1b64eic1yxt74` |
 | NPC Active Nurturing | — | `https://hook.us2.make.com/q4qyrh4kdblw23bwsa2rdltkkngv1snm` |
@@ -123,6 +224,7 @@ read back. Match those by scenario name.
 | NPC Strategy Session Follow Up Zoom | — | `https://hook.us2.make.com/s8ny42w7po89hat5zplc1oj8nn7ovzvw` |
 | NPC Strategy Session No Show | — | `https://hook.us2.make.com/6o13hcomme3bighypclz2d7m1b0k8g2v` |
 | NPC Twilio - Store Active Call Context | — | `https://hook.us2.make.com/ydaccnot9sfslqi255w651nmc428umpn` |
+| NPC Vapi - Transfer Caller to Human via Twilio Redirect | `…/jb85m14jchgktf09sfxt4jmf8yggaw32` | `https://hook.us2.make.com/a783hucnh5qyxwq8o5cclbf2edwkr5up` |
 | NPC Vapi - get_call_context v1 | `…/o51u3jb5g1nn1lxiluziezpr7gh5vvt8` | `https://hook.us2.make.com/7lw416w6whh5gfat56o9190vbbqc10pj` |
 | Vapi - GHL Availability Intent Router (Native) | — | `https://hook.us2.make.com/ik45qbx1lvykjpndcfkdsy6ljqt9y9v9` |
 | Vapi - GHL Booking Intent Router (Generic HTTP PIT) | — | `https://hook.us2.make.com/017xspgxrpxqh93feqi7bms3pmxmv19e` |
@@ -135,6 +237,27 @@ read back. Match those by scenario name.
 `Discovery Call Handoff` are Vapi *app* hooks, bound to an assistant id
 (`cc46d882-…` and `bfff143e-…`) through connection `10496920`. They are not
 editable as plain URLs — re-pointing those means updating the assistant in Vapi.
+
+### One row in this table was wrong, and why
+
+**`2ubukyatwc0ig8zinphjjc4dciwhigqg` was never `Discovery Call Handoff`'s hook.**
+It is the server URL of the Vapi tool `phoneNumber_inject` (`9789b720…`),
+confirmed against the live Vapi API on 2026-09-15 and already agreed by six other
+files in this repository. The row above is corrected to blank.
+
+The error came from the method described below, and the method is the lesson:
+searching the blueprints for an eu2 udid finds it, but **every occurrence of
+every such udid sits inside `metadata.designer.samples`** and none sits in live
+configuration. A sample is a cached Vapi payload, so a sample in scenario A
+routinely carries scenario B's URL — `9inh27jw…` appears in the samples of five
+different delete scenarios, which one tool cannot own. A blueprint hit shows
+that a scenario *saw* a URL, never that it *owns* one.
+
+The eu2 hook→scenario binding is readable only from the legacy account, whose
+token is zone-bound. It cannot be recovered from these exports.
+[`../vapi/npc-services/VAPI_REPOINT.md`](../vapi/npc-services/VAPI_REPOINT.md)
+carries the map that could be resolved without it — ten of thirteen — and names
+the one that could not.
 
 ### Where the eu2 URLs were found, and what that means
 

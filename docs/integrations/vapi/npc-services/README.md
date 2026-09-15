@@ -5,6 +5,15 @@ taken **2026-08-18**, shaped so the set can be rebuilt in a new Vapi account.
 
 **15 assistants · 15 tools (12 managed + 3 inline) · 1 squad · 1 workflow · 4 phone numbers · 2 knowledge files.**
 
+> **The webhook re-point map is filled in now.**
+> [`webhook-repoint.json`](./webhook-repoint.json) shipped with every `newUrl`
+> blank; ten of its thirteen entries resolve, and
+> [`VAPI_REPOINT.md`](./VAPI_REPOINT.md) carries the basis for each, the one that
+> does not resolve, and the ordering constraint — **every target scenario in the
+> new Make account is inactive, so nothing may be re-pointed until they are
+> switched on and tested.** Verified against the live Vapi API on 2026-09-15:
+> nothing has drifted since this capture.
+
 ## Read this before trusting the scope
 
 **Vapi's API has no folder concept.** `/folder`, `/folders`, `/workspace`, `/workspaces`,

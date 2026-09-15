@@ -51,7 +51,12 @@ re-pointed to the new keys as part of the same call. That is why verification
 canonicalises keys positionally rather than comparing them: a diff that expects
 the keys to survive will report five false failures.
 
-**`_id-map.json` covers 24 of the 54 ids the bundle references.** The other 30
-belong to `Properties`, `Property Intake Master` and the extra `Aurixa Waitlist`
-columns that only the four script-bearing automations touch. Extend the map
-before rebuilding those; the five here need nothing more.
+**~~`_id-map.json` covers 24 of the 54 ids the bundle references.~~ Corrected
+2026-09-15 — the map is complete and nothing needs extending.** Counted:
+`id-references.json` holds 54 ids (1 base, 6 tables, 37 fields, **10
+automations**) and `_id-map.json` holds 44 — the base, all 6 tables and all 37
+fields. **Zero `tbl…`/`fld…` ids are unmapped.** The 10 left over are `wfl…`
+automation ids, which are not remappable references: each rebuilt automation was
+minted a fresh id, listed in the tables above. The four script-bearing
+automations can be finished without adding a single mapping. See
+[`SCRIPT_NODES.md`](./SCRIPT_NODES.md).

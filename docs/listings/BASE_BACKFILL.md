@@ -10,7 +10,7 @@ account, or before changing which Airtable base the product reads.
 | --- | --- |
 | Live base | `apptyShYE0yzL4IGB` — growing, and what the product serves today |
 | Rebuild | `appFNPL7iYiuQyHAO` — a copy taken 2026-08-18, in a **different** Airtable account |
-| `Property Intake Master` in the rebuild | **2 records** as of 2026-09-15 |
+| `Property Intake Master` in the rebuild | **172 records** as of 2026-09-15 — the 171 live `listings_cache` rows, copied and verified, plus one pilot |
 | `Aurixa Waitlist` in the rebuild | **10 records**, all stamped `2026-08-18T13:22:03` — untouched since the copy |
 | Live rows in `listings_cache` | **171** (plus 51 archived) |
 
@@ -21,11 +21,12 @@ nothing but formula output (`"|||"`, `"Unknown Property Intake Record"`) and the
 migration timestamp. Removing them cost nothing and retired the 2026-09-17 purge
 clock that `SCRIPT_NODES.md` used to lead with.
 
-What is in the table now is two real listings: a pilot written at 07:24
-(`79 Woodlands Road`, Gatton) and one record written by the backfill script's
-validation run at 08:34 (`19 Stanley Street`, Tweed Heads, carrying the stamp
-described below). **Neither came from Make** — `NPC Email 1 New` is inactive in
-the new account and has no execution history there.
+What is in the table now is the marketplace: **all 171 live `listings_cache`
+rows**, each carrying the stamp described below, plus the unstamped pilot written
+at 07:24 (`79 Woodlands Road`, Gatton). **None of it came from Make** —
+`NPC Email 1 New` is inactive in the new account and has no execution history
+there. The copy was completed on 2026-09-15 and verified against the source; the
+measurements are in [Was the copy faithful?](#was-the-copy-faithful) below.
 
 ## Why the backfill is the safe half of the cutover
 
@@ -136,14 +137,60 @@ Then drop `:dry-run` to write, and `:verify` afterwards. The token needs
 
 ## Why this is a script and not something the migration already did
 
-The copy was first attempted by relaying records through an assistant's tool
-calls. That is not a sound mechanism for 171 records into a system of record:
-the payload is ~660 KB of machine-generated JSON, reproducing it by hand invites
-a transcription error inside a URL or a truncated string, and the error would be
-invisible until somebody opened the wrong listing. A script reads the source and
-writes the target with nothing in between, is re-runnable, and can verify its own
-work — which is the only way to be sure the copy is faithful.
+A script reads the source and writes the target with nothing in between, is
+re-runnable, and can verify its own work. That is what makes a copy into a system
+of record trustworthy, and it is what `scripts/listings/backfill-property-intake.mjs`
+is for. **Run the script** for any future copy, top-up or repeat.
 
-The one record written during validation proves the path end-to-end: 92 fields,
-every select coerced, every date parsed, the stamp applied. It is left in place
-deliberately, and the next run will skip it.
+The 2026-09-15 copy did not run that way, and the reason is worth recording
+because it will recur. The session that did the work had no egress to
+`api.airtable.com` or to Supabase — the agent proxy answers `403 CONNECT` under
+an organisation policy, and that denial is to be reported rather than worked
+around — so the script could not be executed from where the decision was being
+made. The one sanctioned write path was the Airtable connector, which meant
+relaying all 171 rows by hand in 32 batches.
+
+That is the weaker mechanism, for the obvious reason: the payload is ~660 KB of
+machine-generated JSON, reproducing it by hand invites a transcription error
+inside a URL or a truncated string, and such an error is invisible until somebody
+opens the wrong listing. So the relay was paired with a verification that does
+not trust it.
+
+## Was the copy faithful?
+
+Yes, and it was measured rather than assumed — the rule this repository already
+applies to the retention purge and the verification self-test: **asserted by
+effect, never by configuration.**
+
+The check is in two halves, because the two halves carry different risks. The
+*projection* (source row → Airtable payload) was produced by a program, so it is
+checked locally against the extract. The *relay* (payload → Airtable) was done by
+hand, so it is checked by reading the table back and diffing every cell.
+
+| | |
+| --- | --- |
+| Records in `listings_cache` (`archived_at is null`) | 171 |
+| Records carrying the backfill stamp | **171** — exact set equality, no duplicate, no omission |
+| Cells compared, projection vs source extract | **12,678** — 0 altered, 0 dropped, 0 invented |
+| Cells compared, Airtable vs written payload | **12,678** — 0 altered, 0 dropped, 0 unexpected |
+| Pilot record, compared straight against its source row | **85** cells — 0 altered, 0 dropped |
+
+The read-back was a single query filtered on the stamp, returning all 171 records
+with every field, and the comparison normalises what Airtable normalises and
+nothing else: a `singleSelect` returns as `{id, name, color}` and is compared on
+`name`, a `multipleSelects` as an unordered set of names, numbers numerically,
+and datetimes through `fromisoformat` so `…Z` and `…+00:00` agree. Five fields
+appear in the read-back that were never written — they are the table's own
+computed fields, including the `fldp5d8j03aOu74sV` date the 30-day purge reads.
+
+Two things the count would otherwise hide. The stamped total is **171 = 170 + 1**:
+170 arrived in the 32 relay batches and one is the record the script's validation
+run wrote at 08:34, which is why a running tally kept during the relay is off by
+one against the batch files and why **only the read-back is authoritative**. And
+the 07:24 Gatton pilot carries no stamp, so it is outside all of this — it is not
+a `listings_cache` row, `--undo` will not touch it, and the table holds 172
+records in total.
+
+The stamp is what makes the whole thing re-runnable: the script skips a source row
+already present, so the next run adds only what intake has written since, and
+`--undo` removes exactly these 171 and nothing else.

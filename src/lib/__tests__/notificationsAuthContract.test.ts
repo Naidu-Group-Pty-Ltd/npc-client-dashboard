@@ -157,8 +157,40 @@ describe('refused inbound webhooks are recorded', () => {
 
   it('still fails closed', () => {
     // The point is visibility, NOT letting unauthenticated callers through.
-    expect(webhook).toMatch(/if \(!verifyWebhookSecret\(webhookSecret, providedSecret\)\)/);
+    expect(webhook).toMatch(/if \(!secretAccepted\)/);
+    expect(webhook).toMatch(/verifyWebhookSecret\(webhookSecret, providedSecret\)/);
     expect(webhook).toMatch(/status: 401/);
+  });
+
+  it('reads every header name this estate actually sends', () => {
+    // `x-vapi-webhook-secret` is the name 13 assistants and a phone number were
+    // configured with. Reading only the other two is what stopped call logging
+    // dead on 2026-07-22 and cost 171 refusals that nothing acted on, every one
+    // of them classified `secret_not_presented`.
+    for (const header of ['x-vapi-secret', 'x-webhook-secret', 'x-vapi-webhook-secret']) {
+      expect(webhook).toContain(`req.headers.get('${header}')`);
+    }
+  });
+
+  it('accepts a previous secret so a rotation can be reconciled', () => {
+    // Without it, the minutes between setting the new value and sweeping the
+    // senders are indistinguishable from a rotation that failed outright.
+    expect(webhook).toMatch(/VAPI_WEBHOOK_SECRET_PREVIOUS/);
+    expect(webhook).toMatch(/verifyWebhookSecret\(previousWebhookSecret, providedSecret\)/);
+  });
+
+  it('never stamps a hardcoded squad identity onto a call', () => {
+    // The squad id is a property of whichever VAPI org this deployment talks
+    // to. Hardcoded, it goes stale the moment the estate moves and splits one
+    // squad's call history in two, because CallLogs filters and
+    // SquadAnalyticsDashboard groups on these columns.
+    const code = webhook
+      .split('\n')
+      .filter((l) => !l.trim().startsWith('//'))
+      .join('\n');
+    expect(code).not.toMatch(/a9656ea1-3575-4ac6-b985-fd138be06cc5/);
+    expect(code).not.toMatch(/Inbound Reception Squad/);
+    expect(code).toMatch(/resolveSquadIdentity/);
   });
 
   it('distinguishes an unset secret from a wrong one', () => {

@@ -983,6 +983,32 @@ function extractAssistantsInvolved(
   return Array.from(assistantMap.values());
 }
 
+// ---- Inbound squad identity ----
+// This used to be three literals, declared twice, and force-stamped onto every
+// inbound call whatever VAPI actually sent: squad `a9656ea1-3575-4ac6-b985-fd138be06cc5`
+// named "Inbound Reception Squad". Both halves were wrong to hardcode. The id is
+// a property of whichever VAPI org this deployment talks to, so it goes stale the
+// moment the estate moves; the name was already wrong (the squad is "NPC Sales
+// Force"). CallLogs filters and SquadAnalyticsDashboard groups on these columns,
+// so a stale literal splits one squad's history in two at the cutover instant.
+//
+// Read what the call carries. Fall back to configuration. Never to a literal.
+const INBOUND_SQUAD_ID_FALLBACK = Deno.env.get('VAPI_INBOUND_SQUAD_ID')?.trim() || null;
+const INBOUND_SQUAD_NAME_FALLBACK = Deno.env.get('VAPI_INBOUND_SQUAD_NAME')?.trim() || null;
+const INBOUND_AGENT_NAME_FALLBACK = Deno.env.get('VAPI_INBOUND_AGENT_NAME')?.trim() || null;
+
+function resolveSquadIdentity(
+  call: { squadId?: string | null; squad?: { id?: string | null; name?: string | null } | null; assistant?: { name?: string | null } | null } | null | undefined,
+  isInbound: boolean,
+): { squadId: string | null; squadName: string | null; agentName: string | null } {
+  return {
+    squadId: call?.squadId || call?.squad?.id || (isInbound ? INBOUND_SQUAD_ID_FALLBACK : null),
+    squadName: call?.squad?.name || (isInbound ? INBOUND_SQUAD_NAME_FALLBACK : null),
+    agentName: call?.assistant?.name || (isInbound ? INBOUND_AGENT_NAME_FALLBACK : null),
+  };
+}
+
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -992,9 +1018,25 @@ Deno.serve(async (req) => {
     // FAIL CLOSED: refuse unless a strong VAPI_WEBHOOK_SECRET is configured AND
     // the caller presents it (constant-time). The previous check validated the
     // secret only "if configured", so an unset secret accepted any caller.
+    //
+    // THREE header names are read, not one. Vapi's own docs call it
+    // `x-vapi-secret`, but every object in this estate was configured with
+    // `x-vapi-webhook-secret` - a name this handler did not read. That is why
+    // `vapi_call_logs` took nothing at all between 2026-07-22 and this change
+    // while `webhook_rejections` counted 171 refusals, every one of them
+    // `secret_not_presented`. The CORS allow-list above already named all
+    // three; only the READ was wrong.
     const webhookSecret = Deno.env.get('VAPI_WEBHOOK_SECRET');
-    const providedSecret = req.headers.get('x-vapi-secret') || req.headers.get('x-webhook-secret');
-    if (!verifyWebhookSecret(webhookSecret, providedSecret)) {
+    // A rotation needs both values accepted for the minutes it takes to sweep
+    // the senders, or a half-finished sweep cannot be told apart from a
+    // rotation that failed outright. Unset PREVIOUS once the sweep reconciles.
+    const previousWebhookSecret = Deno.env.get('VAPI_WEBHOOK_SECRET_PREVIOUS');
+    const providedSecret = req.headers.get('x-vapi-secret')
+      || req.headers.get('x-webhook-secret')
+      || req.headers.get('x-vapi-webhook-secret');
+    const secretAccepted = verifyWebhookSecret(webhookSecret, providedSecret)
+      || verifyWebhookSecret(previousWebhookSecret, providedSecret);
+    if (!secretAccepted) {
       // Failing closed is right. Failing closed in SILENCE is what cost six
       // weeks of call logs: this warned to a console nobody reads, VAPI saw a
       // 401 and moved on, and the Call Logs page simply stopped growing. Record
@@ -1058,15 +1100,10 @@ Deno.serve(async (req) => {
         const isInbound = call.type === 'inboundPhoneCall' || call.type === 'webCall';
         const callDirection = isInbound ? 'inbound' : 'outbound';
         
-        // Squad detection for inbound calls
-        const INBOUND_SQUAD_ID = 'a9656ea1-3575-4ac6-b985-fd138be06cc5';
-        const INBOUND_SQUAD_NAME = 'Inbound Reception Squad';
-        const PRIMARY_INBOUND_AGENT = 'NPC Inbound Agent';
-        
+        // Squad detection for inbound calls - identity read from the call,
+        // never from a literal. See resolveSquadIdentity.
         const isSquadCall = isInbound || !!(call.squadId || call.squad);
-        const squadId = isInbound ? INBOUND_SQUAD_ID : (call.squadId || call.squad?.id || null);
-        const squadName = isInbound ? INBOUND_SQUAD_NAME : (call.squad?.name || null);
-        const agentName = isInbound ? PRIMARY_INBOUND_AGENT : (call.assistant?.name || null);
+        const { squadId, squadName, agentName } = resolveSquadIdentity(call, isInbound);
 
         // Upsert replaces columns wholesale, so preserve non-sensitive metadata
         // while removing monitor capability URLs stored by older versions.
@@ -1167,10 +1204,6 @@ Deno.serve(async (req) => {
     const rawStatus = message.status || call.status;
     const rawEndedReason = message.endedReason || call.endedReason;
 
-    // Hardcoded squad configuration for inbound calls
-    const INBOUND_SQUAD_ID = 'a9656ea1-3575-4ac6-b985-fd138be06cc5';
-    const INBOUND_SQUAD_NAME = 'Inbound Reception Squad';
-    const PRIMARY_INBOUND_AGENT = 'NPC Inbound Agent';
     
     // Primary frontdesk agent (always involved in inbound squad calls)
     const FRONTDESK_AGENT: SquadAssistant = { 
@@ -1212,8 +1245,7 @@ Deno.serve(async (req) => {
 
     // Detect if this is a Squad call - for inbound calls, always use the hardcoded squad
     const isSquadCall = Boolean(isInboundCall || call.squadId || call.squad);
-    const squadId = isInboundCall ? INBOUND_SQUAD_ID : (call.squadId || call.squad?.id || null);
-    const squadName = isInboundCall ? INBOUND_SQUAD_NAME : (call.squad?.name || null);
+    const { squadId, squadName } = resolveSquadIdentity(call, isInboundCall);
     
     console.log('[Vapi Webhook] Squad detection:', { isSquadCall, squadId, squadName, isInboundCall, callType });
 
@@ -1338,9 +1370,9 @@ Deno.serve(async (req) => {
 
     // Get agent info - for inbound squad calls, always use NPC inbound agent as primary
     const agentId = call.assistant?.id || call.assistantId || (assistantsInvolved[0]?.id) || null;
-    let agentName = isInboundCall && isSquadCall 
-      ? PRIMARY_INBOUND_AGENT 
-      : (call.assistant?.name || (assistantsInvolved[0]?.name) || null);
+    let agentName = call.assistant?.name
+      || (assistantsInvolved[0]?.name)
+      || (isInboundCall && isSquadCall ? INBOUND_AGENT_NAME_FALLBACK : null);
     
     // Priority 1: Check if we have an existing GHL contact ID in the database for this phone number
     // and fetch the contact's first name directly from GHL (most reliable)

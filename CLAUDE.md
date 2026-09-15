@@ -197,14 +197,33 @@ a caller naming rows and a caller asking questions.
 
 **And there are two `NPC Emails` bases.** `apptyShYE0yzL4IGB` is live and
 growing; `appFNPL7iYiuQyHAO` is a rebuild of it in a DIFFERENT Airtable account,
-copied on 2026-08-18, whose 148 records all carry that one timestamp and which
-has taken nothing since — the cutover was never completed, and both
+copied on 2026-08-18 — the cutover was never completed, and both
 `REBUILT_BASE.md` and `MAKE_CUTOVER.md` read as though it had been. Two things
 follow: **re-pointing anything at the rebuild replaces a growing marketplace
-with a frozen one** (171 of the prime's cached listings were created after the
-copy), and **a perfectly valid token can be refused across the boundary** —
-a personal access token reaches only its own account's bases, so the first
-question on a 401 is which account minted it, not whether the token is good.
+with a nearly empty one**, and **a perfectly valid token can be refused across
+the boundary** — a personal access token reaches only its own account's bases,
+so the first question on a 401 is which account minted it, not whether the token
+is good.
+
+Read [`BASE_BACKFILL.md`](./docs/listings/BASE_BACKFILL.md) before running
+`npm run listings:backfill-intake`, activating a re-pointed intake scenario, or
+changing which base the product reads. The rebuild's 148 migrated rows were
+empty shells and were deleted on 2026-09-15; it holds 2 real listings against
+the live base's 171. The reason that blocks a cutover is not just that the
+rebuild is thin — **`listings_cache` DELETES a cached row that vanished from the
+source while still inside the retention window**, so re-pointing the sync at a
+base without today's listings presents all 171 as vanished at once. The 10%
+destructive cap archives rather than part-deletes a batch that large, so it is
+recoverable, but the marketplace empties with nothing reporting it. Three rules
+bite. **Only what the product reads travels** — the include set is parsed from
+`airtableIntakeFields.pure.ts` at runtime rather than copied, and the full column
+set is 3.3 MB against 385 KB for the product-read plus provenance set, 76% of the
+difference being `Email Body Plain Text` alone. **A copied row cannot carry its
+own creation date** — `Created Time` is a `CREATED_TIME()` formula in the
+rebuild, so provenance travels in `Email Received At` and `First Seen At`
+instead, and attachments do not travel at all because an Airtable attachment URL
+expires within hours. And **every written record is stamped in `Internal Notes`**,
+which is what makes the copy idempotent, resumable and undoable in one command.
 
 That card used to alias its `AIRTABLE_API_KEY` field onto `AIRTABLE_TOKEN` and
 write it into the project environment through the Management API — so a key

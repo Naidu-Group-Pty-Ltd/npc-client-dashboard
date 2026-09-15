@@ -19,9 +19,13 @@ file covers what is not done and what has to change outside Make.
 
 | | Why | Who can do it |
 | --- | --- | --- |
-| 6 scenarios still to import | blueprint too large to pass as an inline tool argument | a person, via **Import Blueprint** |
+| ~~6 scenarios still to import~~ | ~~blueprint too large to pass as an inline tool argument~~ | **Already done** — all six exist and are valid; verified 2026-09-15 |
 | ~~2 scenarios cannot be created~~ | ~~their data store does not fit on the Free plan~~ | **Done 2026-09-15** — see below |
-| every external caller | the zone changed, so every webhook URL changed | a person, in Vapi / GHL / the website |
+| every external caller | the zone changed, so every webhook URL changed | a person, in Vapi / Twilio / GHL / the website |
+
+**Nothing structural is outstanding in Make.** What is left is the re-pointing
+of external callers, and one decision that sits above all of it — see
+"The base question" below.
 
 ## The six UI imports are now fully wired
 
@@ -131,6 +135,54 @@ after a `createdAt` in May, July and August. A stale row is therefore
 indistinguishable from a live one, and loading them would make a transfer request
 from any of those three numbers redirect against a Twilio call that ended months
 ago. An empty store takes the "no active call" branch and answers correctly.
+
+## Activated 2026-09-15, and what was deliberately left off
+
+The thirteen scenarios the Vapi tools will point at are **live**. Activating a
+webhook scenario is inert on its own — nothing runs until something calls the
+hook, and nothing calls these until Vapi is re-pointed — so this is the
+prerequisite done, not the cutover.
+
+| Active now | Serves |
+| --- | --- |
+| `Vapi - GHL Contact Resolver v4` | `ghl_resolve_contact` |
+| `NPC Vapi - get_call_context v1` | `get_call_context` |
+| `NPC Vapi - Transfer Caller to Human` | `transfer_to_human` |
+| `NPC Twilio - Store Active Call Context` | the write half of the transfer pair |
+| `Vapi - GHL Availability Intent Router (Native)` | `ghl_check_availability` |
+| `Vapi - GHL Booking Intent Router (Native)` **and** `(Generic HTTP PIT)` | `ghl_create_booking` — both, because which one the eu2 tool belongs to is unresolved; whichever it is, it is live |
+| `NPC Delete Booking Test` | `ghl_delete_event_npc` |
+| `NPC Delete Strategy Session` / `(Zoom)` | `ghl_delete_event_npc_2` / `_2_1` |
+| `NPC Delete IFC Session` / `(Zoom)` | `ghl_delete_event_npc_3` / `_3_1` |
+
+**Everything that touches Airtable was left off, on purpose.** None of the
+thirteen holds the Airtable connection — they are GoHighLevel, Twilio and OpenAI
+only — which is what makes them safe to switch on while the base question is
+open. Still inactive and staying that way: `NPC Delete Opt In Call`,
+`NPC Delete Quiz Sub Call`, `Aurixa Stage 3 Access`, `Aurixa Waitlist Stage 1`,
+`2` and `3`, `NPC Opt-In Follow Up Test`, `NPC Quiz Submission Follow Up Test`,
+and the three `NPC Email` intake scenarios.
+
+They have **not been tested**. A real test fires real GoHighLevel and Twilio
+calls — creating contacts, bookings and redirects — so it needs a controlled
+payload and a person watching, not an automated run.
+
+## The base question, which sits above all of it
+
+All six import-ready scenarios point at **`appFNPL7iYiuQyHAO`**, the rebuild, and
+at the live base zero times. Counted in the blueprints: 26 references each in the
+three `NPC Email` scenarios, 3 / 1 / 3 in the Aurixa trio.
+
+**That base receives nothing.** Measured 2026-09-15: `Property Intake Master`
+holds 148 rows all stamped `2026-08-18T13:20:37`, and `Aurixa Waitlist` holds 10
+rows all stamped `2026-08-18T13:22:03` with a newest `Date Added` of
+**2026-08-15**. Both frozen at the copy.
+
+So activating any of the six does one of two harmful things: moves listing
+intake to a base nothing reads, or drives the Aurixa invite funnel off ten stale
+applicants while missing every new one. Neither is a Make problem and neither has
+a Make fix — the decision is which Airtable base is authoritative, and until it
+is made those six stay off.
 
 ## Webhook re-pointing
 

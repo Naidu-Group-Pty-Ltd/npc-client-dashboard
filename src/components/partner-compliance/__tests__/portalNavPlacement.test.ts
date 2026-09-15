@@ -50,13 +50,6 @@ const PORTALS = [
     compliance: "/finance/compliance",
   },
   {
-    name: "Builder / Developer",
-    file: "src/components/builder-portal/BuilderPortalLayout.tsx",
-    constName: "NAV",
-    dashboard: "/builder",
-    compliance: "/builder/compliance",
-  },
-  {
     name: "Solicitor",
     file: "src/components/solicitor-portal/SolicitorPortalLayout.tsx",
     constName: "NAV_ITEMS",
@@ -84,7 +77,9 @@ describe("compliance sits directly under the Dashboard, in every portal", () => 
   }
 
   it("the partner portals still name it in the regulator's words", () => {
-    for (const portal of PORTALS.slice(0, 3)) {
+    // The two surviving partner portals; the Builder portal's nav left with
+    // the portal (network extraction Phase 7).
+    for (const portal of PORTALS.slice(0, 2)) {
       expect(read(portal.file), portal.name).toContain("'AML/CTF Compliance'");
     }
   });

@@ -83,9 +83,12 @@ BEGIN
   LOOP
     EXECUTE format(
       'ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS portal text NOT NULL DEFAULT ''solicitor''', t);
+    -- [Phase 7, network extraction] builder_organisation_id used to carry an
+    -- inline FK to builder_organisations; 20261122000000 released those five
+    -- constraints live and 20261124000000 drops the table, so a fresh clone
+    -- must not recreate them. The column stays as recorded history.
     EXECUTE format(
-      'ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS builder_organisation_id uuid
-         REFERENCES public.builder_organisations(id) ON DELETE CASCADE', t);
+      'ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS builder_organisation_id uuid', t);
     EXECUTE format(
       'ALTER TABLE public.%I DROP CONSTRAINT IF EXISTS %I', t, t || '_portal_check');
     EXECUTE format(
@@ -246,19 +249,24 @@ COMMENT ON FUNCTION public.resolve_cross_portal_feature_mode_for(text, uuid, tex
 -- ===========================================================================
 -- 6. Reconciliation view
 -- ===========================================================================
+-- [Phase 7, network extraction] The builder_organisations join left with the
+-- portal (a view is validated at creation, so a fresh clone could not build
+-- the old definition against a dropped table). A historic builder rollout row
+-- reads owner_name NULL and therefore orphaned_owner = true — the view's own
+-- vocabulary for an owner it can no longer resolve. Same definition the
+-- decommission migration installs on databases that predate this edit.
 CREATE OR REPLACE VIEW public.cross_portal_rollout_reconciliation AS
 SELECT r.portal,
        COALESCE(r.firm_id, r.builder_organisation_id) AS owner_id,
        CASE WHEN r.firm_id IS NOT NULL THEN 'solicitor_firm' ELSE 'builder_organisation' END AS owner_kind,
-       COALESCE(f.name, b.legal_name) AS owner_name,
+       f.name AS owner_name,
        r.feature_key, d.portal AS feature_portal, r.mode, d.default_mode,
        r.changed_at, r.stable_since,
        (d.portal <> 'shared' AND d.portal IS DISTINCT FROM r.portal) AS portal_mismatch,
-       (COALESCE(f.name, b.legal_name) IS NULL) AS orphaned_owner
+       (f.name IS NULL) AS orphaned_owner
 FROM public.cross_portal_firm_rollouts r
 LEFT JOIN public.cross_portal_feature_definitions d ON d.feature_key = r.feature_key
-LEFT JOIN public.solicitor_firms f ON f.id = r.firm_id
-LEFT JOIN public.builder_organisations b ON b.id = r.builder_organisation_id;
+LEFT JOIN public.solicitor_firms f ON f.id = r.firm_id;
 
 COMMENT ON VIEW public.cross_portal_rollout_reconciliation IS
   'Reconciliation surface for the generalised rollout plane. portal_mismatch and orphaned_owner must both be false for every row.';

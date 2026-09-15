@@ -14,6 +14,8 @@ import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSaf
 import { collectFootnoteDefinitions } from "./footnotes.ts";
 import { statCardHasValue } from "../_shared/reports/investment/blockHygiene.pure.ts";
 import { dimensionWasScored } from "../_shared/reports/investment/scoreSections.pure.ts";
+import { publishableGrade } from "../_shared/reports/investment/scoreSections.pure.ts";
+import { presentStoredMarkdown } from "../_shared/reports/investment/derivedHygiene.pure.ts";
 import { PLATFORM_ISSUER_NAME, resolveReportDisclaimer, resolveReportIssuer } from "../_shared/reports/issuerIdentity.pure.ts";
 import { governedAuthorityBlockFromFlags } from "../_shared/reports/contract/governedNarrativeAuthority.pure.ts";
 // Both are called by `wrapInsightSections` below and neither was imported, so
@@ -3006,8 +3008,10 @@ export async function buildHtml(
   // are converted into shortcodes (heatmap / bars / gauge / tiles / sparkline) that
   // applyEditorialMarkdown then expands. This makes the renderer self-sufficient
   // even when the LLM emits pure prose + tables.
+  // Through the read-path placeholder scrub every renderer applies
+  // (`presentStoredMarkdown`): a stored "N/A" cell is never drawn.
   const mdRaw = escapeRawHtmlInMarkdown(
-    cleanReportMarkdown(String(report.report_content || ""), address),
+    cleanReportMarkdown(presentStoredMarkdown(String(report.report_content || "")), address),
   );
   const mdWithVisuals = autoInjectVisualShortcodes(mdRaw);
   console.log("[visuals] shortcodes injected:", {
@@ -3069,8 +3073,11 @@ export async function buildHtml(
 
   const scoreOverall =
     score?.overall_score ?? score?.overallScore ?? score?.score ?? null;
+  // `score.grade` is the scorer's own sentinel — `'N/A'` beside
+  // `policy.gradeIssued: false` — so the grade goes through the one rule that
+  // decides whether this record may state one at all, never verbatim.
   const scoreBand =
-    score?.band ?? score?.grade ?? (typeof scoreOverall === "number"
+    score?.band ?? publishableGrade(score) ?? (typeof scoreOverall === "number"
       ? scoreOverall >= 80 ? "Strong" : scoreOverall >= 65 ? "Solid" : scoreOverall >= 50 ? "Mixed" : "Cautious"
       : null);
 

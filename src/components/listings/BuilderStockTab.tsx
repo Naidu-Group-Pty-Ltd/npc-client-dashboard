@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Bed, Bath, Building2, Car, CheckCircle2, ChevronLeft, ChevronRight,
   ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, UserPlus,
@@ -20,7 +20,6 @@ import { SearchInput } from '@/components/ui/search-input';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { useSupplyStockImageForBuilder } from '@/lib/marketplaceBuilderStock';
 import { cn } from '@/lib/utils';
 import { StockPicture } from '@/components/stock/StockPicture';
 import {
@@ -39,10 +38,11 @@ import {
 /**
  * Property Marketplace — Builder Stock.
  *
- * Properties builders uploaded through their own portal, and the place a
- * Command Centre user selects one for a client. Selecting is the write that
- * activates the supplying builder: the record it creates is what appears on
- * their Stock List page and in their notification feed.
+ * Properties builders supplied through the Builders Network — served from the
+ * `builder_network_stock_*` mirror since the portal moved off this deployment
+ * (network extraction Phase 7) — and the place a Command Centre user selects
+ * one for a client. Selecting writes the Command Centre's own record; telling
+ * the builder is the network connection's job, not a feed on this side.
  *
  * Every card names the builder it came from, because the whole point of this
  * tab is that the property has an owner on the other side of the link.
@@ -72,9 +72,6 @@ const SURFACE = 'min-w-0 rounded-[1.5rem] border border-border/60 bg-card/65 p-4
 export function BuilderStockTab() {
   const { toast } = useToast();
   const { canEdit: canEditClients } = useModulePermissions('clients');
-  // Supplying a picture is a LISTINGS write, not a client one: it changes what
-  // the marketplace shows, never who a property is offered to.
-  const { canEdit: canEditListings } = useModulePermissions('listings');
 
   const [search, setSearch] = useState('');
   const [organisationId, setOrganisationId] = useState('all');
@@ -209,7 +206,6 @@ export function BuilderStockTab() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {records.map((item) => (
               <StockCard
-                canSupplyImage={canEditListings}
                 key={item.id}
                 item={item}
                 canSelect={canEditClients}
@@ -255,7 +251,7 @@ export function BuilderStockTab() {
               : 'Property selected',
             description: alreadySelected
               ? 'This property was already linked to that client.'
-              : 'The supplying builder has been notified.',
+              : 'The selection is recorded against the client.',
           });
           setSelecting(null);
           void stockQuery.refetch();
@@ -266,16 +262,12 @@ export function BuilderStockTab() {
 }
 
 function StockCard({
-  item, canSelect, onSelect, canSupplyImage,
+  item, canSelect, onSelect,
 }: {
   item: BuilderStockItem;
   canSelect: boolean;
   onSelect: () => void;
-  canSupplyImage: boolean;
 }) {
-  const { toast } = useToast();
-  const supply = useSupplyStockImageForBuilder();
-  const fileInput = useRef<HTMLInputElement | null>(null);
   const image = primaryStockImage(item);
   const price = stockItemPrice(item);
   const configuration = stockItemConfiguration(item);
@@ -289,33 +281,7 @@ function StockCard({
 
   return (
     <Card className="flex flex-col overflow-hidden rounded-2xl border-border/70 bg-card/90 shadow-[0_10px_30px_rgba(15,23,42,0.06)] dark:border-white/10 dark:bg-background/80">
-      <input
-        ref={fileInput}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          event.target.value = '';
-          if (!file) return;
-          supply.mutate({ stockItemId: item.id, file }, {
-            onSuccess: () => toast({
-              title: 'Picture supplied',
-              description: `${stockItemTitle(item)} now shows the picture you added.`,
-            }),
-            onError: (error) => toast({
-              title: 'That picture could not be saved',
-              description: error instanceof Error ? error.message : 'Please try again shortly.',
-              variant: 'destructive',
-            }),
-          });
-        }}
-      />
-      <StockCardImage
-        image={image}
-        onSupply={canSupplyImage ? () => fileInput.current?.click() : undefined}
-        supplying={supply.isPending}
-      />
+      <StockCardImage image={image} />
       <CardContent className="flex flex-1 flex-col gap-3 p-4">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{stockItemTitle(item)}</p>
@@ -418,10 +384,8 @@ function StockCard({
  * web search or from Street View. That is the whole reason a fallback is
  * allowed to reach a card at all: it is shown as what it is.
  */
-function StockCardImage({ image, onSupply, supplying }: {
+function StockCardImage({ image }: {
   image: BuilderStockImage | null;
-  onSupply?: () => void;
-  supplying?: boolean;
 }) {
   const provenance = image ? stockImageProvenance(image) : null;
   const fallback = provenance === 'web_sourced' || provenance === 'street_view';
@@ -433,24 +397,19 @@ function StockCardImage({ image, onSupply, supplying }: {
       className="border-b border-border/60"
       alt={image ? STOCK_IMAGE_STAGE_LABELS[image.source_stage] : ''}
       emptyLabel="No image found"
-      emptyAction={onSupply ? (
+      emptyAction={(
         /*
-          A blank card costs a sale today, and a builder who has not answered
-          an email is not a reason to keep showing nothing — staff routinely
-          hold the marketing pack first. The record says staff supplied it,
-          because acting for somebody is a different act from acting for
-          yourself.
+          "Add a picture" used to sit here — staff supplying imagery on the
+          builder's behalf. That act wrote the portal's image pipeline, which
+          retired with the portal (network extraction Phase 7): imagery is the
+          builder's own to manage on the Builders Network, and the marketplace
+          serves what the network delivers. A disclosure replaces the control,
+          because a button that can only fail is worse than none.
         */
-        <button
-          type="button"
-          className="mt-2 text-[11px] font-medium text-primary underline-offset-2 hover:underline
-            disabled:opacity-60"
-          disabled={supplying}
-          onClick={onSupply}
-        >
-          {supplying ? 'Adding\u2026' : 'Add a picture'}
-        </button>
-      ) : undefined}
+        <span className="mt-2 block text-[11px] text-muted-foreground">
+          The builder manages photographs on the Builders Network.
+        </span>
+      )}
       overlay={image ? (
         <>
           <span
@@ -517,8 +476,9 @@ function SelectForClientDialog({
                 {item.builder_organisation.trading_name || item.builder_organisation.legal_name}.
               </>
             ) : null}
-            {' '}The builder will be notified that one of their properties has been selected.
-            They are not told who the client is.
+            {' '}The selection is recorded here for your client. The builder is
+            not notified automatically — their workspace is on the Builders
+            Network now.
           </DialogDescription>
         </DialogHeader>
 

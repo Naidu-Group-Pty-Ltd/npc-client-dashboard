@@ -30,12 +30,12 @@ import {
 /** The API's own ceiling. A `.limit()` above it is not a request, it is a hope. */
 const SERVER_ROW_CAP = 1000;
 
+/* The settler, the link callback and the portal's own stock function left
+   with the portal (network extraction Phase 7); the marketplace and the
+   shared modules it still imports are the surviving read surface. */
 const ROOTS = [
   'supabase/functions/_shared/builderStock',
-  'supabase/functions/builder-stock-image-settler',
-  'supabase/functions/builder-stock-link-callback',
   'supabase/functions/builder-stock-marketplace',
-  'supabase/functions/builder-portal-stock',
 ];
 
 function sourceFiles(root: string): string[] {

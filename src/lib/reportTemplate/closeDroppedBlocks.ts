@@ -25,6 +25,18 @@
  * beside the column is never crossed. Furniture (running heads, part markers,
  * the section opener, feet and page numbers) never moves and never counts.
  * In the editor nothing moves either: an author needs to see what they built.
+ *
+ * And one hole is closed ONCE. Two dropped blocks with nothing drawn between
+ * them are one hole, from the first's top to the first drawn follower, and
+ * the first closes it — the second was carried up with the followers, to a
+ * position ABOVE the first's top, and used to be processed there as a hole of
+ * its own, pulling the followers up a second time into the block above.
+ * Measured on the long reference report (RS-5a, 14 Sep 2026): the assessment
+ * page's scorecard dropped (one scored dimension of five), the unscored
+ * Location definition under it dropped too, and the Yield definition landed
+ * at 137pt — inside the section opener at 114pt — instead of at the
+ * scorecard's 228pt. A dropped block whose own top lies inside a hole already
+ * closed is skipped.
  */
 import type { Block } from './templateSchema';
 
@@ -53,9 +65,14 @@ export function closeDroppedBlocks(
   const drawn = content.filter((b) => !droppedIds.has(b.id));
   const shift = new Map<string, number>();
   const yOf = (b: Block) => geometryOf(b)!.y + (shift.get(b.id) ?? 0);
+  // The holes already closed, in the coordinates the master assigned: a
+  // dropped block whose own top lies inside one was carried up with that
+  // hole's followers and has no hole of its own.
+  const closed: Array<[number, number]> = [];
 
   for (const d of dropped) {
     const g = geometryOf(d)!;
+    if (closed.some(([from, to]) => g.y > from + 0.5 && g.y < to - 0.5)) continue;
     const top = yOf(d);
     const inColumn = (b: Block) => {
       const bg = geometryOf(b)!;
@@ -79,6 +96,8 @@ export function closeDroppedBlocks(
     });
     if (occupied) continue;
     const delta = first - top;
+    const firstBlock = followers.find((b) => yOf(b) === first)!;
+    closed.push([g.y, geometryOf(firstBlock)!.y]);
     for (const b of movers) shift.set(b.id, (shift.get(b.id) ?? 0) - delta);
   }
   if (!shift.size) return [...blocks];

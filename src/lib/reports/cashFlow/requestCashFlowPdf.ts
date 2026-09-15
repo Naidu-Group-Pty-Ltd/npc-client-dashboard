@@ -84,6 +84,14 @@ export interface CashFlowPdfResult {
   pageCount: number | null;
   /** What the tenant's brand snapshot was missing. Empty for a complete one. */
   brandGaps: string[];
+  /**
+   * Where the route stored these exact bytes (in `client-files`), or null for
+   * a document nothing stored — the in-browser generator on the deployment-gap
+   * fallback. A caller that publishes the document points the portal at it,
+   * so the file a client opens is the one that was reviewed and it exists
+   * once (RS-5c.2).
+   */
+  storagePath: string | null;
   /** `server` for the new path, `legacy` when the route is not deployed yet. */
   source: 'server' | 'legacy';
 }
@@ -128,6 +136,7 @@ export async function requestCashFlowPdf(
 ): Promise<CashFlowPdfResult> {
   const { data, error } = await invokeSecureFunction<{
     url: string;
+    path?: string;
     fileName: string;
     bytes: number;
     pageCount: number | null;
@@ -145,6 +154,7 @@ export async function requestCashFlowPdf(
       bytes: Number(data.bytes ?? 0),
       pageCount: Number.isFinite(data.pageCount) ? Number(data.pageCount) : null,
       brandGaps: Array.isArray(data.brandGaps) ? data.brandGaps.map(String) : [],
+      storagePath: typeof data.path === 'string' && data.path ? data.path : null,
       source: 'server',
     };
   }
@@ -155,7 +165,7 @@ export async function requestCashFlowPdf(
       + 'generator. Deploy the function and apply migration 20260815000000 to use the new report.',
     );
     const legacy = await legacyFallback();
-    if (legacy) return { ...legacy, pageCount: null, brandGaps: [], source: 'legacy' };
+    if (legacy) return { ...legacy, pageCount: null, brandGaps: [], storagePath: null, source: 'legacy' };
   }
 
   throw new Error(error?.message || 'Could not generate the Cash Flow Analysis');

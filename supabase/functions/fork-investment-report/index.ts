@@ -36,7 +36,7 @@ import {
   composeFinancialChapters,
   type ComposedChapter,
 } from '../_shared/reports/investment/financialChapters.pure.ts';
-import { stripPlaceholderRows } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { dropEmptySections, stripPlaceholderRows } from '../_shared/reports/investment/derivedHygiene.pure.ts';
 import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
@@ -196,10 +196,12 @@ function finaliseVariantMarkdown(md: string): {
 } {
   const stripped = stripEditorialLabelsFromMarkdown(md);
   const scrubbed = stripPlaceholderRows(stripped.markdown);
+  // A heading the scrub leaves over nothing goes with its table.
+  const sections = dropEmptySections(scrubbed.markdown);
   // The two block types the row scrubber cannot see. A fork routes the
   // parent's own prose, so a card the parent left empty and a chart the parent
   // drew twice both arrive here intact.
-  const blocks = scrubBlocks(scrubbed.markdown);
+  const blocks = scrubBlocks(sections.markdown);
   return {
     markdown: blocks.markdown,
     editorialBlocksRemoved: stripped.removedBlocks,

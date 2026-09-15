@@ -17,19 +17,26 @@ import {
 const enrolled = { surfaceEnabled: true, hasActiveMembership: true };
 
 describe("which portal, and whether to offer it at all", () => {
-  it("a builder organisation is sent to the Builder / Developer Portal", () => {
+  it("the builder door is closed — the portal moved to the Builders Network", () => {
+    /* Phase 6 of the extraction: /builder/* redirects off this origin, and
+       the network has no in-portal Passport surface until E4's server-side
+       call ships. Enrolment and the flag change nothing — a moved portal is
+       unavailable whatever this deployment's configuration says. The emailed
+       link stays the builder partner's way in. */
     const h = portalHandoff({ partnerOrgType: "builder", partnerCaseLinkId: "L1", ...enrolled });
-    expect(h.available).toBe(true);
-    expect(h.path).toBe("/builder/compliance?matter=L1");
+    expect(h.available).toBe(false);
+    expect(h.reason).toBe("portal_moved");
+    expect(h.path).toBeNull();
     expect(h.label).toBe("Builder / Developer Portal");
   });
 
-  it("a DEVELOPER organisation is sent to the same page — there is no /developer", () => {
-    /* One shared portal. The absence of a standalone Developer Portal must
-       fail into the Builder page, never into a route that 404s. */
+  it("a DEVELOPER organisation is the same closed door — there is no /developer", () => {
+    /* One shared portal, one shared fate. The route table still maps both
+       onto the Builder page: it is the history and the revival, not the
+       offer. */
     const h = portalHandoff({ partnerOrgType: "developer", partnerCaseLinkId: "L1", ...enrolled });
-    expect(h.available).toBe(true);
-    expect(h.path).toBe("/builder/compliance?matter=L1");
+    expect(h.available).toBe(false);
+    expect(h.reason).toBe("portal_moved");
     expect(PORTAL_ROUTES.developer.path).toBe(PORTAL_ROUTES.builder.path);
   });
 
@@ -50,7 +57,7 @@ describe("which portal, and whether to offer it at all", () => {
   it("a door that would refuse is never offered", () => {
     // Enrolment missing: the page exists but answers "not enrolled".
     const notEnrolled = portalHandoff({
-      partnerOrgType: "builder", partnerCaseLinkId: "L1",
+      partnerOrgType: "finance", partnerCaseLinkId: "L1",
       surfaceEnabled: true, hasActiveMembership: false,
     });
     expect(notEnrolled.available).toBe(false);
@@ -58,7 +65,7 @@ describe("which portal, and whether to offer it at all", () => {
 
     // Surface off: the page does not exist on this deployment.
     const off = portalHandoff({
-      partnerOrgType: "builder", partnerCaseLinkId: "L1",
+      partnerOrgType: "finance", partnerCaseLinkId: "L1",
       surfaceEnabled: false, hasActiveMembership: true,
     });
     expect(off.available).toBe(false);
@@ -66,27 +73,27 @@ describe("which portal, and whether to offer it at all", () => {
   });
 
   it("no matter is named rather than a matter being invented", () => {
-    const h = portalHandoff({ partnerOrgType: "builder", partnerCaseLinkId: null, ...enrolled });
+    const h = portalHandoff({ partnerOrgType: "finance", partnerCaseLinkId: null, ...enrolled });
     expect(h.available).toBe(true);
-    expect(h.path).toBe("/builder/compliance");
+    expect(h.path).toBe("/finance/compliance");
     expect(h.path).not.toContain("matter=");
   });
 
   it("an absolute URL is built only when an origin is supplied", () => {
     const withOrigin = portalHandoff(
-      { partnerOrgType: "builder", partnerCaseLinkId: "L1", ...enrolled },
+      { partnerOrgType: "finance", partnerCaseLinkId: "L1", ...enrolled },
       "https://command-centre.npcservices.com.au/",
     );
     expect(withOrigin.url).toBe(
-      "https://command-centre.npcservices.com.au/builder/compliance?matter=L1");
-    expect(portalHandoff({ partnerOrgType: "builder", partnerCaseLinkId: "L1", ...enrolled }).url)
+      "https://command-centre.npcservices.com.au/finance/compliance?matter=L1");
+    expect(portalHandoff({ partnerOrgType: "finance", partnerCaseLinkId: "L1", ...enrolled }).url)
       .toBeNull();
   });
 });
 
 describe("the deep link is a destination, never a credential", () => {
   it("carries a matter identifier and nothing else", () => {
-    const h = portalHandoff({ partnerOrgType: "builder", partnerCaseLinkId: "L1", ...enrolled });
+    const h = portalHandoff({ partnerOrgType: "finance", partnerCaseLinkId: "L1", ...enrolled });
     /* A bearer token in a browser address bar survives in history, referrers
        and screenshots. The portal session decides what may be read; the
        matter id grants nothing and resolves to "not found" for a partner it
@@ -97,8 +104,8 @@ describe("the deep link is a destination, never a credential", () => {
   });
 
   it("a matter id is URL-encoded rather than concatenated", () => {
-    const h = portalHandoff({ partnerOrgType: "builder", partnerCaseLinkId: "a b&c=d", ...enrolled });
-    expect(h.path).toBe("/builder/compliance?matter=a%20b%26c%3Dd");
+    const h = portalHandoff({ partnerOrgType: "finance", partnerCaseLinkId: "a b&c=d", ...enrolled });
+    expect(h.path).toBe("/finance/compliance?matter=a%20b%26c%3Dd");
   });
 });
 
@@ -138,19 +145,20 @@ describe("coming back after signing in", () => {
 describe("wired at the source", () => {
   const read = (p: string) => readFileSync(p, "utf8");
 
-  it("all three portals record the destination, and all three honour it", () => {
-    /* Two of them lost it: the Builder guard recorded the pathname alone and
-       its login ignored the record entirely; the Solicitor guard recorded
-       nothing at all. Finance was already correct and is the reference. */
-    const builderGuard = read("src/components/builder-portal/BuilderPortalProtectedRoute.tsx");
+  it("both surviving portals record the destination, and both honour it", () => {
+    /* Two of the original three lost it: the Builder guard recorded the
+       pathname alone and its login ignored the record entirely; the
+       Solicitor guard recorded nothing at all. Finance was already correct
+       and is the reference. The Builder portal then left this repository
+       with the portal (network extraction Phase 7) — its handoff surface
+       answers `portal_moved` and there is no builder login to honour a
+       destination — so the rule is pinned on the two that remain. */
     const solicitorGuard = read("src/components/solicitor-portal/SolicitorPortalProtectedRoute.tsx");
     const financeGuard = read("src/components/finance-portal/FinancePortalProtectedRoute.tsx");
-    expect(builderGuard).toContain("returnToPath(location.pathname, location.search)");
     expect(solicitorGuard).toContain("returnToPath(location.pathname, location.search)");
     expect(financeGuard).toContain("${location.pathname}${location.search}");
 
     for (const login of [
-      "src/pages/builder/BuilderLogin.tsx",
       "src/pages/solicitor/SolicitorLogin.tsx",
     ]) {
       const source = read(login);
@@ -169,7 +177,6 @@ describe("wired at the source", () => {
 
   it("every portal names the page the same thing the email does", () => {
     for (const layout of [
-      "src/components/builder-portal/BuilderPortalLayout.tsx",
       "src/components/finance-portal/FinancePortalLayout.tsx",
       "src/components/solicitor-portal/SolicitorPortalLayout.tsx",
     ]) {

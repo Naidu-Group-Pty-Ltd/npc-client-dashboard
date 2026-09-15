@@ -59,6 +59,29 @@ import type {
  * so. Raising it multiplies across eight layers and fifty masters, which is a
  * seed-size decision as much as a design one.
  */
+/**
+ * Characters of a source name that fit on one line of the sources table.
+ *
+ * Measured on the printed document (Private Banking — Chancery, 9pt): a
+ * 88-character URL wrapped at the column's edge, so 84 leaves a margin for the
+ * narrower families. A URL breaks at hyphens and slashes, never mid-word, so
+ * the estimate errs long rather than short.
+ */
+export const CITATION_CHARS_PER_LINE = 84;
+
+/** The sources that fit `rows` lines, each taking the lines its length needs. */
+export function fitCitationRows(citations: string[], rows: number, charsPerLine: number): string[] {
+  const out: string[] = [];
+  let used = 0;
+  for (const name of citations) {
+    const lines = Math.max(1, Math.ceil(name.length / Math.max(1, charsPerLine)));
+    if (used + lines > rows) break;
+    out.push(name);
+    used += lines;
+  }
+  return out;
+}
+
 export const CAPS = {
   layerPages: 3,
   layers: 8,
@@ -359,11 +382,21 @@ export function projectMarketIntelligence(
   const citations = (Array.isArray(r.citations) ? r.citations : [])
     .map(str).filter(Boolean) as string[];
   if (citations.length) {
-    marketIntel.citations = citations.slice(0, CAPS.citations).map((name) => ({ name }));
+    /*
+     * The sources table has `CAPS.citations` ROWS of one line each, and the
+     * block under it is positioned at the height those rows take. A source is a
+     * URL, and a URL longer than the column wraps: measured 14 Sep 2026 on a
+     * stored report, three of twelve wrapped and the twelfth row was drawn
+     * under the "Further sources" callout. So the budget is spent in LINES —
+     * a source that needs two takes two — and what does not fit is counted in
+     * the callout rather than hidden behind it.
+     */
+    const shown = fitCitationRows(citations, CAPS.citations, CITATION_CHARS_PER_LINE);
+    marketIntel.citations = shown.map((name) => ({ name }));
     put(marketIntel, 'citationCount', citations.length);
-    if (citations.length > CAPS.citations) {
+    if (citations.length > shown.length) {
       put(marketIntel, 'citationsOmitted',
-        `${citations.length - CAPS.citations} further sources are listed in the full edition.`);
+        `${citations.length - shown.length} further sources are listed in the full edition.`);
     }
   }
 

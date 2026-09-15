@@ -33,11 +33,21 @@ export interface DeliveredMarketIntelligence {
   /** The document itself, for the preview and attachment paths. */
   blob: Blob;
   /**
-   * Rendered from an activated template. Only ever true for a call that asked
-   * not to persist — see the note in `deliverMarketIntelligencePdf` — and the
-   * diagnostics above are left empty rather than measured.
+   * Rendered from an activated template, by the final renderer. The
+   * diagnostics above describe the flowing render and are left empty rather
+   * than measured.
    */
   templated?: boolean;
+  /**
+   * Where `render-template-pdf` stored a templated final (`investment-reports`),
+   * or null for the flowing route, whose stored copy is `storagePath`.
+   */
+  templatePath?: string | null;
+  /**
+   * Whether the caller asked for the stored copy — said back, so a templated
+   * document can tell the person that the scheduled email was not fed.
+   */
+  persistRequested?: boolean;
 }
 
 /** Save a file the way a browser saves files. */
@@ -65,47 +75,52 @@ export async function deliverMarketIntelligencePdf(
   options: RequestMarketIntelligenceOptions & { save?: boolean } = {},
 ): Promise<DeliveredMarketIntelligence> {
   /**
-   * An activated template wins for the document a person is asking for — but
-   * **only when they are not asking for the stored copy**.
+   * An activated template wins for every call — whether or not the caller
+   * asked for the stored copy to be refreshed.
    *
-   * `persist` writes the PDF into `marketing-reports` and sets
+   * It used to win only for `persist: false`, and the button that produces
+   * this document defaults `persist` ON — so on the one control that matters
+   * a chosen template was never drawn, silently, while the picker beside it
+   * said the choice was kept (RS-5c.4). The gate existed to protect
    * `pdf_storage_path`, which `dispatch-marketing-reports` attaches to a
-   * scheduled email. It defaults to on, and that default is the whole reason
-   * the column is ever written. The template route does not write it, so
-   * routing a persisting call would quietly stop feeding the email — the
-   * dispatch would still send (it generates its own report when no recent one
-   * carries a path), but it would generate rather than reuse, and the emailed
-   * document would be the flowing layout while the person who pressed the
-   * button saw the templated one.
+   * scheduled email and which the template route does not write. That column
+   * is still the flowing route's alone: a templated final is stored by
+   * `render-template-pdf` (`templatePath`), the column is left untouched,
+   * `persisted` is false, and the caller is told — a person who asked for the
+   * stored copy hears that the standard layout is what the email would attach.
    *
-   * So the template serves the explicit no-persist calls — a preview, an
-   * attachment, a download someone wants in their hands — and the stored copy
-   * stays the flowing route's job. `persisted: false` below is therefore a
-   * fact rather than a shrug.
+   * Measured 14 Sep 2026 before choosing this: 8 market intelligence reports,
+   * none with a stored PDF, no render ledger row ever, no schedule ever
+   * created and no dispatch ever logged. Nothing downstream is starved by
+   * honouring the choice here. Making the dispatch reuse a templated final
+   * (the render ledger carries `report_id` since RS-2) is the step to take the
+   * day a schedule exists, and is recorded in RUNTIME_CONSOLIDATION §9.
    */
-  if (options.persist === false) {
-    const templated = await tryTemplateDocument('market_intelligence', reportId, {
-      // The audience edition is this format's variant: the same row is three
-      // documents, and the adapter picks the closing panels from it.
-      variant: options.audience ?? null,
-    });
-    if (templated) {
-      if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);
-      return {
-        fileName: templated.fileName,
-        pageCount: null,
-        brandGaps: [],
-        sections: [],
-        dropped: [],
-        emptyLayers: [],
-        reportPeriod: '',
-        audienceSegment: String(options.audience ?? ''),
-        persisted: false,
-        storagePath: null,
-        blob: templated.blob,
-        templated: true,
-      };
-    }
+  const templated = await tryTemplateDocument('market_intelligence', reportId, {
+    // The audience edition is this format's variant: the same row is three
+    // documents, and the adapter picks the closing panels from it.
+    variant: options.audience ?? null,
+    // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+    renderer: 'weasyprint',
+  });
+  if (templated) {
+    if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);
+    return {
+      fileName: templated.fileName,
+      pageCount: null,
+      brandGaps: [],
+      sections: [],
+      dropped: [],
+      emptyLayers: [],
+      reportPeriod: '',
+      audienceSegment: String(options.audience ?? ''),
+      persisted: false,
+      storagePath: null,
+      templatePath: templated.storagePath,
+      persistRequested: options.persist !== false,
+      blob: templated.blob,
+      templated: true,
+    };
   }
 
   const result = await requestMarketIntelligencePdf(reportId, options);

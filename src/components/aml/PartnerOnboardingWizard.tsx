@@ -88,7 +88,12 @@ type InviteOutcome =
   | { state: "sent"; email: string }
   | { state: "already"; email: string }
   | { state: "failed"; email: string; detail: string }
-  | { state: "skipped" };
+  | { state: "skipped" }
+  /* Phase 6/7 of the network extraction: the Builder / Developer Portal
+     left this workspace for the Builders Network, so there is no workspace
+     portal to invite a builder partner into — the emailed Passport link is
+     their channel until E4's in-network compliance surface ships. */
+  | { state: "portal_moved" };
 
 /** The portal's own user table for a portal choice — never invented here. */
 const PORTAL_USER_SOURCE: Record<string, "finance_portal_users" | "builder_portal_users" | "solicitor_portal_users"> = {
@@ -229,6 +234,7 @@ export function PartnerOnboardingWizard({
     | { state: "enrolled"; surfaceEnabled: boolean; bound: "already" | "set" }
     | { state: "failed"; detail: string }
     | { state: "skipped" }
+    | { state: "portal_moved" }
     | null
   >(null);
 
@@ -419,6 +425,13 @@ export function PartnerOnboardingWizard({
    */
   const provisionPortalAccess = async (): Promise<InviteOutcome> => {
     if (portal === "other") return { state: "skipped" };
+    /* The Builder / Developer Portal moved to the Builders Network (Phase 6)
+       and its admin plane here is a frozen archive: provisioning an
+       organisation, user or membership would be refused by the server, and
+       an invite would open a portal that redirects away. No call is made —
+       a doomed step must not be walked. The grant and its emailed link are
+       untouched below. */
+    if (portal === "builder" || portal === "developer") return { state: "portal_moved" };
     const cache = provisionCache.current;
     const email = (chosenContact?.email ?? contactEmail).toLowerCase().trim();
     const name = (chosenContact?.name ?? contactName).trim();
@@ -569,6 +582,13 @@ export function PartnerOnboardingWizard({
    */
   const enrolPortalAccess = async (orgId: string) => {
     if (portal === "other") { setPortalAccess({ state: "skipped" }); return; }
+    // No in-portal compliance page exists here for builder partners any
+    // more — the portal moved, and enrolment would map an identity into a
+    // surface this workspace no longer serves.
+    if (portal === "builder" || portal === "developer") {
+      setPortalAccess({ state: "portal_moved" });
+      return;
+    }
     const source = PORTAL_USER_SOURCE[portal];
     const cache = provisionCache.current;
     /* A finance CONTACT id is not a portal USER id, and a solicitor firm is
@@ -1057,9 +1077,11 @@ export function PartnerOnboardingWizard({
                 <>
                   <div>
                     <span className="font-medium">Portal access:</span>{" "}
-                    {chosenContact?.active
-                      ? `${chosenContact.email} already has ${portalChoice.label} access — no invite is sent.`
-                      : `${(chosenContact?.email ?? contactEmail) || "—"} receives the ${portalChoice.label} invite email.`}
+                    {portal === "builder" || portal === "developer"
+                      ? "the Builder / Developer Portal has moved to the Builders Network — no workspace portal invite is sent; the emailed Passport link is how this partner reads the record."
+                      : chosenContact?.active
+                        ? `${chosenContact.email} already has ${portalChoice.label} access — no invite is sent.`
+                        : `${(chosenContact?.email ?? contactEmail) || "—"} receives the ${portalChoice.label} invite email.`}
                   </div>
                   {/* Said BEFORE the click, because the invite and the
                       Passport are two different emails and a partner who
@@ -1206,6 +1228,16 @@ export function PartnerOnboardingWizard({
                 </Button>
               </div>
             )}
+            {inviteOutcome?.state === "portal_moved" && (
+              <div className="flex items-start gap-2 rounded-md border border-border/60 p-3">
+                <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <p className="text-xs">
+                  No workspace portal invite was sent: the Builder / Developer Portal now lives at
+                  the Builders Network. The emailed Passport link below is how this partner reads
+                  the record — nothing more is needed from you.
+                </p>
+              </div>
+            )}
 
             {/* ── the artefact a PERSON is given ───────────────────────
                 The link, held as a real value in a read-only field: it can
@@ -1272,6 +1304,16 @@ export function PartnerOnboardingWizard({
                 <p className="text-xs">
                   The Passport was issued and emailed. They could not be enrolled for the
                   in-portal compliance page: {portalAccess.detail} The link above works regardless.
+                </p>
+              </div>
+            )}
+            {portalAccess?.state === "portal_moved" && (
+              <div className="flex items-start gap-2 rounded-md border border-border/60 p-3">
+                <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                <p className="text-xs">
+                  There is no in-portal compliance page for builder partners on this workspace any
+                  more — the portal moved to the Builders Network, and its in-network compliance
+                  view arrives with the network connection. The link above is their way in.
                 </p>
               </div>
             )}

@@ -82,12 +82,12 @@ describe('the template path gets a record to render', () => {
   it('resolves the most recent assessment when the caller names none', async () => {
     await deliverSnapshot(input());
     // The bug: this used to be called with `undefined` and bail immediately.
-    expect(tryTemplateDocument).toHaveBeenCalledWith('borrowing_capacity', 'assessment-9');
+    expect(tryTemplateDocument).toHaveBeenCalledWith('borrowing_capacity', 'assessment-9', { renderer: 'weasyprint' });
   });
 
   it('uses the assessment the caller named, when it named one', async () => {
     await deliverSnapshot(input('assessment-explicit'));
-    expect(tryTemplateDocument).toHaveBeenCalledWith('borrowing_capacity', 'assessment-explicit');
+    expect(tryTemplateDocument).toHaveBeenCalledWith('borrowing_capacity', 'assessment-explicit', { renderer: 'weasyprint' });
     // No lookup when the caller already answered the question.
     expect(maybeSingle).not.toHaveBeenCalled();
   });
@@ -97,7 +97,7 @@ describe('the template path gets a record to render', () => {
     // failed one. The server route resolves the assessment itself.
     maybeSingle.mockResolvedValue({ data: null, error: { message: 'denied' } });
     const result = await deliverSnapshot(input());
-    expect(tryTemplateDocument).toHaveBeenCalledWith('borrowing_capacity', null);
+    expect(tryTemplateDocument).toHaveBeenCalledWith('borrowing_capacity', null, { renderer: 'weasyprint' });
     expect(result.source).toBe('server');
   });
 

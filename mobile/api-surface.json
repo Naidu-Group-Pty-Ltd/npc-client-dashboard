@@ -5,10 +5,10 @@
     "supabase/config.toml"
   ],
   "counts": {
-    "staff": 240,
-    "public": 40,
-    "portal": 69,
-    "server-only": 67
+    "staff": 237,
+    "public": 37,
+    "server-only": 76,
+    "portal": 59
   },
   "functions": [
     {
@@ -19,6 +19,24 @@
     },
     {
       "name": "abs-employment-service",
+      "exposure_class": "public",
+      "mobileScope": "public",
+      "verify_jwt": false
+    },
+    {
+      "name": "abs-poa-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
+    },
+    {
+      "name": "abs-regional-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
+    },
+    {
+      "name": "abs-regional-service",
       "exposure_class": "public",
       "mobileScope": "public",
       "verify_jwt": false
@@ -45,7 +63,7 @@
       "name": "agent-insights-runner",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "agent-models-read",
@@ -57,13 +75,13 @@
       "name": "agent-planner",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "agent-skill-marketplace",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "agent-task-runner",
@@ -117,6 +135,12 @@
       "name": "aml-finance",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
+      "verify_jwt": false
+    },
+    {
+      "name": "aml-idv-retention",
+      "exposure_class": "cron-worker",
+      "mobileScope": "server-only",
       "verify_jwt": false
     },
     {
@@ -198,6 +222,12 @@
       "verify_jwt": false
     },
     {
+      "name": "aml-verification-processor",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": false
+    },
+    {
       "name": "analytics-query",
       "exposure_class": "module-gated",
       "mobileScope": "staff",
@@ -259,9 +289,9 @@
     },
     {
       "name": "backfill-investment-scores",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
-      "verify_jwt": false
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": true
     },
     {
       "name": "backfill-lead-attributions",
@@ -271,8 +301,8 @@
     },
     {
       "name": "backfill-message-directions",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
       "verify_jwt": true
     },
     {
@@ -285,13 +315,13 @@
       "name": "backfill-opportunity-mappings",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "bc-scenario-agent",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "bootstrap-cron-vault",
@@ -303,151 +333,19 @@
       "name": "build-conversations-export-worker",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
-      "name": "builder-collaboration-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-construction-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-delivery-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-document-processor",
-      "exposure_class": "cron-worker",
+      "name": "builder-network-inbound",
+      "exposure_class": "webhook-secret",
       "mobileScope": "server-only",
       "verify_jwt": false
     },
     {
-      "name": "builder-inventory-admin",
+      "name": "builder-stock-marketplace",
       "exposure_class": "module-gated",
       "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-portal-accept-invite",
-      "exposure_class": "public-auth",
-      "mobileScope": "public",
       "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-portal-change-password",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-collaboration",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-construction",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-delivery",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-forgot-password",
-      "exposure_class": "public-auth",
-      "mobileScope": "public",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-inventory",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-invite",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-portal-login",
-      "exposure_class": "public-auth",
-      "mobileScope": "public",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-logout",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-projects",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-reset-password",
-      "exposure_class": "public-auth",
-      "mobileScope": "public",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-transactions",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-verify",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-portal-workspace",
-      "exposure_class": "portal-authenticated",
-      "mobileScope": "portal",
-      "verify_jwt": false
-    },
-    {
-      "name": "builder-projects-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-transactions-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
-    },
-    {
-      "name": "builder-workspace-admin",
-      "exposure_class": "module-gated",
-      "mobileScope": "staff",
-      "verify_jwt": true
     },
     {
       "name": "calculate-borrowing-capacity",
@@ -471,7 +369,7 @@
       "name": "check-model-availability",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "clean-note-transcript",
@@ -507,7 +405,7 @@
       "name": "client-portal-batch6",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "client-portal-comms",
@@ -519,7 +417,7 @@
       "name": "client-portal-finance-hub",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "client-portal-forgot-password",
@@ -597,24 +495,30 @@
       "name": "conversation-sync-cron",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "convert-template-document",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "cotality-service",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "create-advanced-client",
       "exposure_class": "module-gated",
       "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
+      "name": "crime-data-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
       "verify_jwt": true
     },
     {
@@ -678,7 +582,19 @@
       "verify_jwt": true
     },
     {
+      "name": "didit-webhook",
+      "exposure_class": "webhook-secret",
+      "mobileScope": "server-only",
+      "verify_jwt": false
+    },
+    {
       "name": "dispatch-marketing-reports",
+      "exposure_class": "cron-worker",
+      "mobileScope": "server-only",
+      "verify_jwt": false
+    },
+    {
+      "name": "dispatch-workflow-triggers",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
       "verify_jwt": false
@@ -691,8 +607,8 @@
     },
     {
       "name": "email-body-backfill",
-      "exposure_class": "cron-worker",
-      "mobileScope": "server-only",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
       "verify_jwt": true
     },
     {
@@ -705,7 +621,7 @@
       "name": "email-copilot-extras",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "email-sync-cron",
@@ -801,49 +717,49 @@
       "name": "finance-portal-audit-timeline",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-automations",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-batch6",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-batch7",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-batch8",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-batch9-10",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-briefing-runner",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-broker-kpis",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-bulk-actions",
@@ -855,7 +771,7 @@
       "name": "finance-portal-change-password",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-client-comms",
@@ -873,13 +789,13 @@
       "name": "finance-portal-client-mirror",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-client-tasks",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-commissions",
@@ -891,19 +807,19 @@
       "name": "finance-portal-dashboard-metrics",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-deal-trackers",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-document-requirements",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-documents",
@@ -915,13 +831,13 @@
       "name": "finance-portal-engagement",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-forecasting",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-forgot-password",
@@ -957,7 +873,7 @@
       "name": "finance-portal-lender-packet",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-login",
@@ -1011,25 +927,25 @@
       "name": "finance-portal-saved-views",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-settings",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-settlement-runway",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-snoozes",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-templates",
@@ -1041,7 +957,7 @@
       "name": "finance-portal-tri-portal-health",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "finance-portal-verify",
@@ -1083,7 +999,7 @@
       "name": "generate-brand-design-system",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "generate-bulk-reports",
@@ -1191,13 +1107,13 @@
       "name": "get-token-event-trail",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "get-user-names",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "get-vapid-public-key",
@@ -1245,13 +1161,13 @@
       "name": "ghl-legacy-wipe-orchestrator",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-legacy-wipe-worker",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-marketing-dump-enqueue",
@@ -1275,7 +1191,7 @@
       "name": "ghl-marketing-raw-dump",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-migrate-bookings-worker",
@@ -1311,7 +1227,7 @@
       "name": "ghl-migrate-conversations-reset-phantoms",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-migrate-conversations-worker",
@@ -1335,19 +1251,19 @@
       "name": "ghl-migrate-workflow-enrollments-worker",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-migrate-workflow-reenroll-worker",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-migrate-workflows-snapshot-worker",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "ghl-test-credentials",
@@ -1365,7 +1281,13 @@
       "name": "ghl-workflow-visualizer",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
+    },
+    {
+      "name": "google-fonts-catalog",
+      "exposure_class": "authenticated-staff",
+      "mobileScope": "staff",
+      "verify_jwt": false
     },
     {
       "name": "google-places-autocomplete",
@@ -1377,13 +1299,13 @@
       "name": "healthcheck-ping",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "hero-image-studio",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "import-clients-from-ghl",
@@ -1401,7 +1323,7 @@
       "name": "import-schools-data",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "import-suburb-directory",
@@ -1419,7 +1341,7 @@
       "name": "internal-messaging",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "investment-scoring-service",
@@ -1437,19 +1359,19 @@
       "name": "legal-matters-admin",
       "exposure_class": "module-gated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "list-token-audit",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "list-token-usage",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "listing-enrichment",
@@ -1491,7 +1413,7 @@
       "name": "manage-agent-models",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-automation-settings",
@@ -1527,7 +1449,7 @@
       "name": "manage-ci-assessments",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-client-data",
@@ -1539,7 +1461,7 @@
       "name": "manage-commercial-data",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-commission-ledger",
@@ -1569,7 +1491,7 @@
       "name": "manage-industrial-data",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-investment-reports",
@@ -1581,25 +1503,25 @@
       "name": "manage-lead-magnets",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-lender-favourites",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-lender-rate-alerts",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-lender-submissions",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-loan-writer-undertakings",
@@ -1608,16 +1530,10 @@
       "verify_jwt": false
     },
     {
-      "name": "manage-partner-agreements",
-      "exposure_class": "human-authenticated",
-      "mobileScope": "staff",
-      "verify_jwt": false
-    },
-    {
       "name": "manage-partner-referrals",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "manage-portal-client-data",
@@ -1686,10 +1602,16 @@
       "verify_jwt": false
     },
     {
+      "name": "market-source-probe",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
       "name": "market-source-relay",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "market-updates-archive",
@@ -1755,7 +1677,7 @@
       "name": "mcp",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "message-governance",
@@ -1779,7 +1701,7 @@
       "name": "migration-job-control",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "migration-job-status",
@@ -1797,7 +1719,7 @@
       "name": "migration-upload-source",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "mission-control-balance",
@@ -1819,6 +1741,12 @@
     },
     {
       "name": "mission-control-feedback-prompt",
+      "exposure_class": "human-authenticated",
+      "mobileScope": "staff",
+      "verify_jwt": false
+    },
+    {
+      "name": "mission-control-gate",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
       "verify_jwt": false
@@ -1887,19 +1815,19 @@
       "name": "notifications-feed",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "notifications-feed-v2",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "one-time-bulk-conversation-sync",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "outlook-calendar",
@@ -1953,7 +1881,7 @@
       "name": "partner-compliance",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "partner-consent-portal",
@@ -2013,13 +1941,19 @@
       "name": "pdf-parse-recover-stuck-jobs",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "phase6-quality-ops",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
+    },
+    {
+      "name": "planning-data-service",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": false
     },
     {
       "name": "portal-book-appointment",
@@ -2031,19 +1965,19 @@
       "name": "portal-upload-file",
       "exposure_class": "portal-authenticated",
       "mobileScope": "portal",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "prepare-report-hero-images",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "process-scheduled-emails",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "public-transport-service",
@@ -2076,10 +2010,16 @@
       "verify_jwt": false
     },
     {
+      "name": "rba-tables-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
+    },
+    {
       "name": "reclassify-property",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "regenerate-report-qualitative",
@@ -2097,19 +2037,19 @@
       "name": "render-cash-flow-comparison-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-cash-flow-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-client-details-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-commercial-capacity-pdf",
@@ -2127,25 +2067,25 @@
       "name": "render-market-intelligence-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-portfolio-review-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-property-comparison-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-report-qa-pdf",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "render-source",
@@ -2169,13 +2109,13 @@
       "name": "report-engine-agent",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "report-engine-inspector",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "report-qa",
@@ -2187,6 +2127,12 @@
       "name": "report-schema-validator",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
+      "verify_jwt": true
+    },
+    {
+      "name": "report-sections-index",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
       "verify_jwt": true
     },
     {
@@ -2202,10 +2148,16 @@
       "verify_jwt": false
     },
     {
+      "name": "resolve-report-geography",
+      "exposure_class": "cron-worker",
+      "mobileScope": "server-only",
+      "verify_jwt": true
+    },
+    {
       "name": "resume-bulk-generation",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "resume-investment-reports",
@@ -2385,7 +2337,7 @@
       "name": "staff-client-portal-handoff-create",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "staff-client-portal-messages",
@@ -2397,7 +2349,7 @@
       "name": "start-conversations-export",
       "exposure_class": "internal-service",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "street-view",
@@ -2421,7 +2373,7 @@
       "name": "sync-ghl-marketing-assets",
       "exposure_class": "human-authenticated",
       "mobileScope": "staff",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "sync-ghl-pipelines",
@@ -2457,7 +2409,7 @@
       "name": "template-import-finalize-worker",
       "exposure_class": "cron-worker",
       "mobileScope": "server-only",
-      "verify_jwt": true
+      "verify_jwt": false
     },
     {
       "name": "template-import-pdf",
@@ -2470,6 +2422,12 @@
       "exposure_class": "public-auth",
       "mobileScope": "public",
       "verify_jwt": false
+    },
+    {
+      "name": "transport-gtfs-ingest",
+      "exposure_class": "internal-service",
+      "mobileScope": "server-only",
+      "verify_jwt": true
     },
     {
       "name": "update-ghl-opportunity-stage",

@@ -15,7 +15,11 @@ is a depth setting, not a different machine.
    Authored prose may discuss a figure it was handed, never introduce one.
 2. **A labelled row is a promise that a figure follows it.** Absent means the
    row is omitted and coverage disclosed — no N/A, TBD or placeholder, in any
-   tier, ever.
+   tier, ever. Enforced where content is WRITTEN and where it is READ
+   (`presentStoredMarkdown`, RS-5a): the derived reports stored before the
+   write-path scrub render clean for every reader, with no stored byte
+   changed. The owner's rule extends it to the words themselves — a client
+   document never says "N/A", "unavailable" or "not available".
 3. **One registry is the constitution.** Structure is selected by section id,
    never by matching heading strings; a declared section with no producer
    fails CI. (Shipped — `_shared/reports/investment/sectionRegistry.pure.ts`.)

@@ -218,8 +218,14 @@ describe('RC-2 — every billable production caller is accounted for', () => {
    * "location-intelligence-service is the only uncapped site" and was wrong
    * twice over, because nothing checked it.
    */
+  // `_shared/builderStock/images.ts` WAS on this list and is deleted: the
+  // Builder Stock image pipeline left with the Builder Portal (network
+  // extraction Phase 7), along with the two Edge Functions that dispatched it.
+  // It was a real Maps caller — a geocoder and a Street View consumer — and it
+  // now makes those calls on the Builders Network, against that deployment's
+  // own allowance. Removed here rather than guarded, because a file this scan
+  // cannot open is a scan that reports nothing.
   const CALLERS = [
-    '_shared/builderStock/images.ts',
     'google-places-autocomplete/index.ts',
     'location-intelligence-service/index.ts',
     'parse-property-pdf/index.ts',
@@ -252,7 +258,6 @@ describe('RC-2 — every billable production caller is accounted for', () => {
     // functions happen to geocode", which is not a ceiling anybody can reason
     // about — and it is the "configure N/2" workaround this replaces.
     const geocoders = [
-      '_shared/builderStock/images.ts',
       'location-intelligence-service/index.ts',
       'parse-property-pdf/index.ts',
       'resolve-listing-coordinates/index.ts',
@@ -322,11 +327,12 @@ describe('RC-2 — a refusal is reported for what it actually was', () => {
     // The defect this replaces: `street-view` and `google-places-autocomplete`
     // answered `daily_quota_exceeded` for every refusal, and
     // `builderStock/images.ts` PERSISTED "the daily limit ... has been reached"
-    // onto the row, where it outlives the incident.
+    // onto the row, where it outlives the incident. That third file is gone
+    // with the Builder Portal; the rule it taught is kept here, and travels
+    // with the pipeline to the network's own copy of this suite.
     const callers = [
       'supabase/functions/google-places-autocomplete/index.ts',
       'supabase/functions/street-view/index.ts',
-      'supabase/functions/_shared/builderStock/images.ts',
     ];
     for (const caller of callers) {
       const code = codeOnly(read(caller));

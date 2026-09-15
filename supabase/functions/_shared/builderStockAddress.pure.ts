@@ -372,3 +372,31 @@ export function builderStockAddress(row: {
   });
   return { ...composed, parsed };
 }
+
+/**
+ * Strip the leading lot/unit designation a stock list writes into its own
+ * address line, so a card that already leads with "Lot 324" does not read
+ * "Lot 324, Lot 324 Hillcrest Estate".
+ *
+ * Moved here from the intake normaliser when the portal's import pipeline
+ * left with the portal (network extraction Phase 7) — the Command Centre
+ * card titles in `src/lib/builderStock.ts` are its remaining reader, and an
+ * address rule belongs with the address module.
+ */
+export function addressWithoutLeadingDesignation(
+  addressLine: string | null | undefined,
+  designation: 'Lot' | 'Unit',
+  number: string | null | undefined,
+): string {
+  const address = String(addressLine ?? '').trim();
+  const value = String(number ?? '').trim();
+  if (!address || !value) return address;
+  const pattern = new RegExp(
+    `^${designation}\\s*\\.?\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b[\\s,\\-]*`,
+    'i',
+  );
+  const stripped = address.replace(pattern, '').trim();
+  // Never answer an empty address: an address that was ONLY the designation
+  // still says where the property is once the label restores it.
+  return stripped || address;
+}

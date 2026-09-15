@@ -246,7 +246,6 @@ describe('the advanced governance surfaces are untouched', () => {
     for (const page of [
       'src/pages/finance-portal/FinancePortalComplianceWorkspace.tsx',
       'src/pages/solicitor/SolicitorCompliance.tsx',
-      'src/pages/builder/BuilderCompliance.tsx',
     ]) {
       expect(read(page), page).toContain('PartnerComplianceWorkspace');
     }

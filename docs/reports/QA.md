@@ -584,3 +584,21 @@ adapter's `legacyFallback` says so rather than implying the template replaces it
 `reportQaOnTheFamilies.spec.ts` replaces `reportQaNotOnTheFamilies.spec.ts` and
 keeps its central assertion — that **`text-block` still escapes**. The fix was to
 add a block that renders safely, not to relax the one that escapes.
+
+---
+
+## Addendum (RS-5c.5b, 14 Sep 2026) — the structured write-up stays on the flowing route
+
+The templated path (`tryTemplateDocument('qa', …, { variant: 'structured' })`)
+used to route the structured subject whenever a write-up was stored, and the
+document it produced was a shell: the projection never publishes
+`structured_report` (see "What it deliberately does not publish" in
+`reportQaProjection.pure.ts`) and every content page of the Q&A masters binds
+`qa.answer`, so a conversation holding a 5,460-character write-up came out as a
+cover, "The question" with *"This document carries 0 of 4 exchanges; 4 are not
+shown"*, the sources page and the back cover. `qaAdapter.resolveRoutingContext`
+now declines the structured subject; `deliverReportQaPdf` falls through to
+`render-report-qa-pdf`, which draws the write-up; and
+`qaStructuredNotTemplated.spec.ts` holds the refusal exactly while no master
+binds the write-up. `docs/reports/RUNTIME_CONSOLIDATION.md` §9 RS-5c.5b carries
+the measurement.

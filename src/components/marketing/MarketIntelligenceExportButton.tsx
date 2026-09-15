@@ -220,13 +220,18 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
           </PopoverContent>
         </Popover>
 
+        {/* Icon-only, so the name is declared: an unnamed button is one a
+            screen reader announces as "button" and an automated journey
+            cannot find at all (found by the RS-5c.5 format journey). */}
         <Button
           variant="ghost"
           size="icon"
           className="h-8 w-8"
           onClick={() => setHistoryOpen(true)}
+          aria-label="Market intelligence report history"
+          title="Report history"
         >
-          <History className="h-3.5 w-3.5" />
+          <History className="h-3.5 w-3.5" aria-hidden="true" />
         </Button>
         <TokenCostEstimate estimate={miEstimate} compact className="ml-1" />
       </div>

@@ -48,6 +48,14 @@ export interface PortfolioReviewResult {
   pageCount: number | null;
   /** What the tenant's brand snapshot was missing. Empty for a complete one. */
   brandGaps: string[];
+  /**
+   * Where the route stored these exact bytes (in `client-files`), or null for
+   * a document nothing stored — the in-browser generator on the deployment-gap
+   * fallback. A caller that publishes the document points the portal at it,
+   * so the file a client opens is the one that was reviewed and it exists
+   * once (RS-5c.3).
+   */
+  storagePath: string | null;
   /** Whether a review was folded in, so the UI can say which document it made. */
   reviewIncluded: boolean;
 }
@@ -82,6 +90,7 @@ export async function requestPortfolioReview(
       bytes: Number(data.bytes ?? 0),
       pageCount: Number.isFinite(data.pageCount) ? Number(data.pageCount) : null,
       brandGaps: Array.isArray(data.brandGaps) ? data.brandGaps.map(String) : [],
+      storagePath: typeof data.path === 'string' && data.path ? String(data.path) : null,
       reviewIncluded: data.reviewIncluded === true,
     };
   }

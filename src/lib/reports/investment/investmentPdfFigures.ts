@@ -91,6 +91,13 @@ export function readScoreComponents(investmentScore: unknown): ScoreComponent[] 
   if (typeof breakdown !== 'object' || breakdown === null) return [];
   const out: ScoreComponent[] = [];
   for (const [key, raw] of Object.entries(breakdown as Record<string, unknown>)) {
+    // A dimension the engine did not score carries a placeholder `score` of
+    // 50 beside `excluded: true` / `hasData: false` (measured 2026-08-16: 9 of
+    // 988 scored reports). The templated scorecard refuses it; so does this.
+    if (typeof raw === 'object' && raw !== null) {
+      const flags = raw as Record<string, unknown>;
+      if (flags.excluded === true || flags.hasData === false) continue;
+    }
     const value = typeof raw === 'object' && raw !== null
       ? finite((raw as Record<string, unknown>).score)
       : finite(raw);

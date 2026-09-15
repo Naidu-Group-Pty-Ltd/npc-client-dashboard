@@ -4,6 +4,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
+import { publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
@@ -1651,16 +1652,26 @@ async function generateReportSection(
       recommendation: score.recommendation
     });
     
+    // No placeholder is handed to the model, because a placeholder handed to
+    // a model is one it copies into the client's prose ("N/A/100" on real
+    // reports). A dimension the engine did not score is left out, and a record
+    // whose policy issued no grade states no grade and no total —
+    // `publishableGrade` is the one rule that decides.
+    const publishedGrade = publishableGrade(score);
+    const dimensionLines = ([
+      ['Growth', 'growthScore', 40], ['Location', 'locationScore', 25], ['Yield', 'yieldScore', 15],
+      ['Demand', 'demandScore', 15], ['Risk', 'riskScore', 5],
+    ] as const).map(([label, key, defaultWeight]) => {
+      const d = score.breakdown?.[key];
+      const scored = typeof d?.score === 'number' && d?.excluded !== true && d?.hasData !== false;
+      return scored ? `- ${label} Score: ${d.score}/100 (Weight: ${d.weight ?? defaultWeight}%)` : null;
+    }).filter((line): line is string => line !== null);
     investmentScoreContext = `
 **INVESTMENT SCORE DATA (USE THESE EXACT VALUES):**
-- Total Investment Score: ${score.totalScore}/100
-- Investment Grade: ${score.grade}
-- Recommendation: ${score.recommendation}
-- Growth Score: ${score.breakdown?.growthScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.growthScore?.weight || 40}%)
-- Location Score: ${score.breakdown?.locationScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.locationScore?.weight || 25}%)
-- Yield Score: ${score.breakdown?.yieldScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.yieldScore?.weight || 15}%)
-- Demand Score: ${score.breakdown?.demandScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.demandScore?.weight || 15}%)
-- Risk Score: ${score.breakdown?.riskScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.riskScore?.weight || 5}%)
+${publishedGrade
+    ? `- Total Investment Score: ${score.totalScore}/100\n- Investment Grade: ${publishedGrade}\n- Recommendation: ${score.recommendation}`
+    : '- No overall grade or total score is issued for this property. Do NOT state a grade, a score out of 100, or that a grade is unavailable — write the section without one.'}
+${dimensionLines.join('\n')}
 ${score.strengths?.length ? `- Strengths: ${score.strengths.join(', ')}` : ''}
 ${score.weaknesses?.length ? `- Weaknesses: ${score.weaknesses.join(', ')}` : ''}
 ${score.opportunities?.length ? `- Opportunities: ${score.opportunities.join(', ')}` : ''}
@@ -4400,7 +4411,7 @@ A major infrastructure advancement occurred with the opening of [Station Name] i
 
 **Commute Performance:**
 
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A".
 
 **Population & Development Trends:**
 
@@ -4412,7 +4423,7 @@ Write this from the population-trend table above, the Planning & Development blo
 
 # Current Market Performance
 
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A".
 
 **Market Commentary (150+ words required):**
 
@@ -4539,7 +4550,7 @@ Additional parks include [Park 1] and [Park 2], both offering picnic areas, walk
 |--------|-------|---------|
 | Nearest Station | ${enhancedData.locationIntelligence?.transport?.nearestStation || '[Station Name]'} | [Location details] |
 
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available. Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A". Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
 - Transport Types: ${enhancedData.locationIntelligence?.transport?.transportTypes?.join(', ') || 'Train, Bus, Light Rail'}
 - Primary Lines: [Line names]
 - Bus Connections: Services to [destinations list]
@@ -5217,7 +5228,7 @@ This report synthesizes publicly available data and ${documentContent ? 'provide
 2. **EVERY SECTION REQUIRED**: Include ALL sections exactly as specified above - do not skip any
 3. **SUBSTANTIAL CONTENT**: Each section must meet the minimum word counts specified in parentheses
 4. **TABLE FORMAT**: Use markdown tables EXACTLY as shown with proper column alignment
-5. **NO PLACEHOLDERS**: NEVER use "N/A", "TBD", "data unavailable", or "XX" placeholders - use real data or realistic estimates
+5. **NO PLACEHOLDERS**: NEVER use "N/A", "TBD", "data unavailable", "not available" or "XX" placeholders, and never tell the reader that a figure is missing — where a figure is not supplied, leave it out together with the sentence, row or cell that would have carried it
 6. **ALL 10 YEARS**: Projection tables MUST include all 10 years of data
 7. **DOLLAR AMOUNTS**: All amounts in AUD with $ symbol and proper comma formatting
 8. **CITATIONS**: Include [citation] markers where data is sourced from external references
@@ -5842,7 +5853,7 @@ WRITING STYLE RULES:
 5. Replace jargon with plain language or briefly define technical terms on first use (e.g., "gross rental yield — the annual rent as a percentage of the property price")
 6. Use contextual comparisons to make numbers meaningful (e.g., "This is 15% above the state average" rather than just stating the number)
 7. Include brief connecting sentences between sections for narrative flow
-8. Never use placeholders like "N/A" or "XX" — provide real data or clearly labelled estimates
+8. Never use placeholders like "N/A", "not available" or "XX", and never tell the reader that data is missing — state only the figures supplied and leave out any that are not
 9. Use the EXACT expense values provided in the PRE-CALCULATED ANNUAL COSTS section — do not substitute with defaults
 10. Every section is MANDATORY — do not skip any
 

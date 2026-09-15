@@ -175,10 +175,21 @@ describe('RF-7.2B.1A.2 — post-remediation audit and client-facing wording', ()
     expect(out.flags.every((f) => (f.value as Record<string, unknown>).blocking === false)).toBe(true);
   });
 
-  it('the disclosure replaces the claim in place and names the evidence gap', () => {
+  it('the disclosure replaces the claim in place and states what the analysis rests on', () => {
     const out = lifecycle('The area has 13,795 residents.');
-    expect(out.content).toMatch(/Authoritative postcode-level demographic information was not available/);
+    expect(out.content).toMatch(/This analysis does not rely on postcode-level demographic statistics/);
     expect(out.content).not.toContain('13,795');
+  });
+
+  it('the disclosure never tells the client that data was unavailable', () => {
+    // The owner's rule (14 Sep 2026): neither "N/A" nor "unavailable" reaches a
+    // client document. Measured on the newest production reports (12 Sep
+    // 2026), this sentence's previous wording — "was not available for this
+    // analysis" — was the commonest "not available" a client saw.
+    const out = lifecycle(
+      'The area has 13,795 residents, a SEIFA score of 947 and an unemployment rate of 4.2%.',
+    );
+    expect(out.content).not.toMatch(/not available|unavailable|N\/A|not provided/i);
   });
 
   it('the disclosure carries no figure, so it can never be condemned itself', () => {
@@ -204,15 +215,16 @@ describe('RF-7.2B.1A.2 — post-remediation audit and client-facing wording', ()
       'The median age of residents is 36 years.',
       'Median household income sits at $1,450 per week.',
     ].join(' '));
-    const n = out.content.split('Authoritative postcode-level demographic information').length - 1;
+    const n = out.content.split('This analysis does not rely on postcode-level demographic statistics').length - 1;
     expect(n).toBe(1);
   });
 
   it('does not add a second copy of a disclosure the document already makes', () => {
-    const already = 'Authoritative postcode-level demographic information was not available for '
-      + 'this analysis, so no quantitative demographic conclusions have been relied upon.';
+    const already = 'This analysis does not rely on postcode-level demographic statistics; conclusions '
+      + 'about the resident profile are drawn from the area\'s observed character and local '
+      + 'market evidence.';
     const out = lifecycle(`${already}\n\nThe area has 13,795 residents.`);
-    expect(out.content.split('Authoritative postcode-level demographic').length - 1).toBe(1);
+    expect(out.content.split('This analysis does not rely on postcode-level demographic').length - 1).toBe(1);
   });
 
   it('a structural unit is deleted, and the disclosure finds a prose host', () => {
@@ -221,14 +233,14 @@ describe('RF-7.2B.1A.2 — post-remediation audit and client-facing wording', ()
       + 'The area has 13,795 residents.',
     );
     expect(out.content).not.toContain('{{donut');
-    expect(out.content).toMatch(/Authoritative postcode-level demographic information/);
+    expect(out.content).toMatch(/This analysis does not rely on postcode-level demographic statistics/);
     expect(out.faults).toHaveLength(0);
   });
 
   it('a document of ONLY structural claims still discloses the gap', () => {
     const out = lifecycle('{{donut: Family households 50, Older residents 25 | title=Mix}}');
     expect(out.content).not.toContain('{{donut');
-    expect(out.content).toMatch(/Authoritative postcode-level demographic information/);
+    expect(out.content).toMatch(/This analysis does not rely on postcode-level demographic statistics/);
     expect(out.faults).toHaveLength(0);
   });
 });
@@ -395,7 +407,7 @@ describe('RF-7.2B.1A.2 — the real production fabrication, replayed', () => {
 
   it('replaces it with a disclosure and keeps every legitimate line', () => {
     const { content } = lifecycle(REPORT);
-    expect(content).toContain('was not available for this analysis');
+    expect(content).toContain('does not rely on postcode-level demographic statistics');
     // The model's own, correct absence disclosure is not touched.
     expect(content).toContain('could not be established from authoritative sources');
     // Subject-property measurements, its own tenancy, the crime evidence and

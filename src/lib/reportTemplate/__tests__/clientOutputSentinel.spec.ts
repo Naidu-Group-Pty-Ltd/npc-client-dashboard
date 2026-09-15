@@ -110,6 +110,30 @@ function project(row: unknown): Record<string, any> {
 
 describe('the client-facing output states no missing-data placeholder', () => {
   /**
+   * The ungraded record as the scorer actually stores it: the policy's
+   * explanation sits in `recommendation`. RS-3 published its short form,
+   * "Not available — insufficient verified evidence", as the verdict headline;
+   * the owner's rule (14 Sep 2026) is that neither "N/A" nor "unavailable"
+   * reaches a client document, so no verdict element is published at all.
+   */
+  it('publishes no verdict element that says the grade was unavailable', () => {
+    const data = project({
+      ...UNGRADED_ROW,
+      investment_score: {
+        ...UNGRADED_ROW.investment_score,
+        recommendation: 'An overall investment grade is only issued when sufficient verified property '
+          + 'evidence is available. Available measured analysis is shown below.',
+      },
+    });
+    expect(data.recommendation?.headline).toBeUndefined();
+    expect(data.recommendation?.action).toBeUndefined();
+    expect(data.recommendation?.gradedLine).toBeUndefined();
+    const { sections, ...structured } = data;
+    void sections;
+    expect(statesPlaceholder(JSON.stringify(structured))).toBeNull();
+  });
+
+  /**
    * The projection is where both presentations get their facts, so a sentinel
    * published here reaches every one of them. §9 — the same presence decision
    * feeds all presentations.

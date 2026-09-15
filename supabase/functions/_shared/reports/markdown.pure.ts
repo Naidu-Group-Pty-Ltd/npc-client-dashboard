@@ -530,8 +530,12 @@ export interface MarkdownTableMeta {
 
 /** A list's items, kept so a list taller than a page can be split by item. */
 export interface MarkdownListMeta {
-  /** `chars` is what the item prints (`printedChars`), which is what a charge reads. */
-  items: Array<{ depth: number; text: string; chars?: number }>;
+  /**
+   * `chars` is what the item prints (`printedChars`), which is what a charge
+   * reads. `ordered` is the kind of the item's own marker, so a chunk cut from
+   * this list re-renders its bulleted sub-points under their numbered step.
+   */
+  items: Array<{ depth: number; text: string; chars?: number; ordered?: boolean }>;
   ordered: boolean;
   start: number;
 }
@@ -586,6 +590,15 @@ export interface MarkdownNotices {
   footnoteRefsDropped: number;
   /** Loose list runs (items separated by blank lines) merged into one list. */
   listRunsMerged: number;
+  /**
+   * Table delimiter rows rewritten to their canonical width before the
+   * character cap. A delimiter row carries alignment and nothing else, so its
+   * length is never information — and a stored Market Intelligence layer
+   * (14 Sep 2026) carried one cell of 123,913 dashes, which spent the whole
+   * budget: the cap fell inside that row, every row after it was cut, and the
+   * header printed raw.
+   */
+  delimiterRowsNormalised: number;
 }
 
 /**
@@ -686,6 +699,7 @@ const emptyNotices = (): MarkdownNotices => ({
   footnotesRendered: 0,
   footnoteRefsDropped: 0,
   listRunsMerged: 0,
+  delimiterRowsNormalised: 0,
 });
 
 // ── Inline ──────────────────────────────────────────────────────────────────
@@ -949,7 +963,8 @@ const isDelimiterRow = (line: string): boolean => {
 
 // ── The scan ────────────────────────────────────────────────────────────────
 
-interface ListItem { depth: number; text: string }
+/** `ordered` is the kind of the item's OWN marker — a bulleted sub-point under a numbered step. */
+interface ListItem { depth: number; text: string; ordered?: boolean }
 
 const slugify = (value: string): string =>
   value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'section';
@@ -998,6 +1013,17 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
 
   // ── Pass 0 ────────────────────────────────────────────────────────────────
   let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  // Delimiter rows first, so the character cap is spent on words. Only a row
+  // longer than an ordinary hand-written one is touched, which keeps a clean
+  // document byte-identical. See `MarkdownNotices.delimiterRowsNormalised`.
+  if (text.includes('-|') || text.includes('|-') || text.includes('| :') || text.includes('|:')) {
+    text = text.split('\n').map((line) => {
+      if (line.length <= 96 || !line.includes('|') || !isDelimiterRow(line)) return line;
+      notices.delimiterRowsNormalised++;
+      const cells = splitRow(line).map((c) => `${c.startsWith(':') ? ':' : ''}---${c.endsWith(':') ? ':' : ''}`);
+      return `| ${cells.join(' | ')} |`;
+    }).join('\n');
+  }
   if (text.length > MAX_MARKDOWN_CHARS) {
     const cut = text.lastIndexOf('\n', MAX_MARKDOWN_CHARS);
     const at = cut > MAX_MARKDOWN_CHARS / 2 ? cut : MAX_MARKDOWN_CHARS;
@@ -1310,10 +1336,17 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
           i = j;
           continue;
         }
-        // Header and delimiter but no body. `renderDataTable` returns '' on an
-        // empty row set (`primitives.pure.ts:426`), so building one here would
-        // make the block silently vanish. Fall through to paragraphs instead.
+        // Header and delimiter but no body: a table the model started and
+        // never filled (a stored Market Intelligence layer ends exactly so —
+        // the generation ran out inside the delimiter row). This used to fall
+        // through to the paragraph path, which printed `| Factor | Risk Level |
+        // … | :--- | :--- |` raw on a client's page. A table with nothing in it
+        // is nothing to show; the two lines are consumed and the loss is
+        // counted where every other degradation is.
         notices.tablesRejected++;
+        if (!flushParagraph()) break scan;
+        i += 2;
+        continue;
       } else {
         notices.tablesRejected++;
       }
@@ -1357,6 +1390,14 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       if (!flushParagraph()) break scan;
       const ordered = /\d/.test(listMark[2]);
       const startNum = ordered ? parseInt(listMark[2], 10) : 1;
+      // The run's own depth. An item of the OTHER kind nested deeper than this
+      // is a child of the item above it — a numbered step with bulleted
+      // sub-points, which is how a model writes a plan — and stays in the run.
+      // The same kind at the run's depth is a sibling, and the run ends. This
+      // used to end the run on any change of kind, so every numbered step
+      // with sub-points opened a new list and every one was numbered "1."
+      // (measured on a Market Intelligence layer, RS-5c.6).
+      const floorDepth = Math.floor(listMark[1].replace(/\t/g, '  ').length / 2);
       const items: ListItem[] = [];
       let mergedRuns = 0;
       while (i < lines.length) {
@@ -1377,7 +1418,8 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
             let j = i;
             while (j < lines.length && !lines[j].trim()) j++;
             const next = j < lines.length ? /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(lines[j]) : null;
-            if (next && /\d/.test(next[2]) === ordered) {
+            const nextDepth = next ? Math.floor(next[1].replace(/\t/g, '  ').length / 2) : 0;
+            if (next && (/\d/.test(next[2]) === ordered || nextDepth > floorDepth)) {
               mergedRuns++;
               i = j;
               continue;
@@ -1385,13 +1427,20 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
           }
           break;
         }
-        if (/\d/.test(m[2]) !== ordered) break;
+        const itemOrdered = /\d/.test(m[2]);
         const rawDepth = Math.floor(m[1].replace(/\t/g, '  ').length / 2);
+        if (itemOrdered !== ordered && rawDepth <= floorDepth) break;
         const depth = Math.min(rawDepth, MAX_LIST_DEPTH - 1);
         if (rawDepth > MAX_LIST_DEPTH - 1) notices.listsFlattened++;
-        items.push({ depth, text: m[3] });
+        items.push({ depth, text: m[3], ordered: itemOrdered });
         i++;
       }
+      // Nesting is by RANK of indentation, not by columns: a four-space child
+      // (CommonMark's own indent) is one level under its step, not two — the
+      // column count opened two `<ul>`s for one sub-point and charged the
+      // measure twice over.
+      const levels = [...new Set(items.map((it) => it.depth))].sort((a, b) => a - b);
+      for (const it of items) it.depth = levels.indexOf(it.depth);
       const kept = items.slice(0, MAX_LIST_ITEMS);
       notices.listItemsDropped += items.length - kept.length;
       if (mergedRuns) notices.listRunsMerged += mergedRuns;
@@ -1399,7 +1448,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
         ? listCharge(geometry, kept.map((it) => ({ chars: printedChars(it.text), depth: it.depth })))
         : listLines(kept) + 1;
       const listMeta: MarkdownListMeta = {
-        items: kept.map((it) => ({ depth: it.depth, text: it.text, chars: printedChars(it.text) })), ordered, start: startNum,
+        items: kept.map((it) => ({ depth: it.depth, text: it.text, chars: printedChars(it.text), ordered: it.ordered })), ordered, start: startNum,
       };
       if (!push('list', listHtml(kept, ordered, notices, startNum), listCost, undefined, listMeta)) break scan;
       continue;
@@ -1715,42 +1764,53 @@ function inlineWithBreaks(paragraph: string, notices: MarkdownNotices): string {
  */
 function listHtml(items: readonly ListItem[], ordered: boolean, notices: MarkdownNotices, start = 1): string {
   if (!items.length) return '';
-  const tag = ordered ? 'ol' : 'ul';
+  const tagOf = (o: boolean) => (o ? 'ol' : 'ul');
+  const topTag = tagOf(ordered);
   // `start` carries the source's own first ordinal, so a numbered run the
-  // author opened at 4 (after prose interrupted it) keeps counting from 4.
+  // author opened at 4 (after prose interrupted it), or a chunk the packer
+  // cut from a longer list, keeps counting from there. The pinned engine
+  // reads neither `start` nor `<li value>` (WeasyPrint 69.0, measured:
+  // `<ol start="2">` set "1."), and does read the CSS counter the attribute
+  // stands for — so both are written: the attribute for any reader that
+  // honours it, the counter for the one that does not.
+  const first = Math.min(9999, Math.max(2, Math.floor(start)));
   const openTag = ordered && start > 1 && Number.isFinite(start)
-    ? `<ol start="${Math.min(9999, Math.max(2, Math.floor(start)))}">`
-    : `<${tag}>`;
+    ? `<ol start="${first}" style="counter-reset:list-item ${first - 1}">`
+    : `<${topTag}>`;
   // A list that opens indented still starts at depth zero; the author's absolute
   // indentation is not the document's.
   const floor = Math.min(...items.map((it) => it.depth));
   let out = openTag;
-  let depth = 0;
+  // The open list tags, by depth. A nested run takes the kind of ITS marker
+  // (bullets under a numbered step), not its parent's.
+  const stack: string[] = [topTag];
   let itemOpen = false;
   for (const item of items) {
     const want = item.depth - floor;
-    if (want > depth) {
+    if (want > stack.length - 1) {
       // Opened while the parent item is still open, so it nests inside it.
-      while (depth < want) { out += `<${tag}>`; depth++; }
+      while (stack.length - 1 < want) {
+        const tag = tagOf(item.ordered ?? ordered);
+        out += `<${tag}>`;
+        stack.push(tag);
+      }
       itemOpen = false;
     } else {
-      while (depth > want) {
+      while (stack.length - 1 > want) {
         if (itemOpen) { out += '</li>'; itemOpen = false; }
-        out += `</${tag}></li>`;
-        depth--;
+        out += `</${stack.pop()}></li>`;
       }
       if (itemOpen) { out += '</li>'; itemOpen = false; }
     }
     out += `<li>${renderInlineMarkdown(item.text, notices)}`;
     itemOpen = true;
   }
-  while (depth > 0) {
+  while (stack.length > 1) {
     if (itemOpen) { out += '</li>'; itemOpen = false; }
-    out += `</${tag}></li>`;
-    depth--;
+    out += `</${stack.pop()}></li>`;
   }
   if (itemOpen) out += '</li>';
-  return `${out}</${tag}>`;
+  return `${out}</${stack[0]}>`;
 }
 
 /**

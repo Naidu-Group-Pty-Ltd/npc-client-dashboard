@@ -159,16 +159,8 @@
     {
       "version": "20260803000000",
       "files": [
-        "20260803000000_builder_portal_phase3_projects.sql",
         "20260803000000_market_qa_deep_research.sql",
         "20260803000000_rbac_crud_audit_close_permission_gaps.sql"
-      ]
-    },
-    {
-      "version": "20260807000000",
-      "files": [
-        "20260807000000_builder_portal_delivery.sql",
-        "20260807000000_no_simulator_idv_in_production.sql"
       ]
     },
     {
@@ -214,46 +206,11 @@
       ]
     },
     {
-      "version": "20260816140000",
-      "files": [
-        "20260816140000_builder_stock_source_image_settlement.sql",
-        "20260816140000_seed_template_library_v8_investment_narrative.sql"
-      ]
-    },
-    {
       "version": "20260817000000",
       "files": [
         "20260817000000_commercial_capacity_render_path.sql",
         "20260817000000_listing_image_library.sql",
         "20260817000000_property_comparison_render_path.sql"
-      ]
-    },
-    {
-      "version": "20260820000000",
-      "files": [
-        "20260820000000_builder_admin_safe_deletion.sql",
-        "20260820000000_report_qa_render_path.sql"
-      ]
-    },
-    {
-      "version": "20260821000000",
-      "files": [
-        "20260821000000_builder_admin_blocker_array_fix.sql",
-        "20260821000000_market_intelligence_render_path.sql"
-      ]
-    },
-    {
-      "version": "20260822000000",
-      "files": [
-        "20260822000000_builder_deletion_lifecycle.sql",
-        "20260822000000_investment_report_render_path.sql"
-      ]
-    },
-    {
-      "version": "20260823000000",
-      "files": [
-        "20260823000000_builder_deletion_audit_constraints.sql",
-        "20260823000000_template_converter.sql"
       ]
     },
     {
@@ -275,34 +232,6 @@
       "files": [
         "20260901000300_api_usage_mission_control_forwarding.sql",
         "20260901000300_solicitor_portal_access_agreement.sql"
-      ]
-    },
-    {
-      "version": "20260916000000",
-      "files": [
-        "20260916000000_builder_stock_url_sources_and_deletion.sql",
-        "20260916000000_cross_portal_outbox_worker_schedule.sql"
-      ]
-    },
-    {
-      "version": "20260927000000",
-      "files": [
-        "20260927000000_aml_pep_officeholder_index.sql",
-        "20260927000000_builder_stock_eligibility_v2.sql"
-      ]
-    },
-    {
-      "version": "20261005000000",
-      "files": [
-        "20261005000000_builder_stock_cron_gate_fallback.sql",
-        "20261005000000_direct_acknowledgement_issuer_required.sql"
-      ]
-    },
-    {
-      "version": "20261109000000",
-      "files": [
-        "20261109000000_builder_stock_upload_completion_liveness.sql",
-        "20261109000000_report_linkage_backfill_and_brand_trim.sql"
       ]
     },
     {

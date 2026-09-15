@@ -74,8 +74,13 @@ describe("partner workspace schema (Phase 4 migration)", () => {
 describe("session-derived organisation scoping (aml-reliance)", () => {
   it("identity comes only from the portal session resolvers", () => {
     expect(resolverSection).toContain("resolveFinancePartner");
-    expect(resolverSection).toContain("resolveBuilderSession");
     expect(resolverSection).toContain("resolveSolicitorSession");
+    /* The builder resolver left with the portal (network extraction
+       Phase 7): there is no builder portal cookie to resolve any more, so
+       the builder surface answers the moved refusal instead of resolving —
+       and never reaches a membership walk it could get wrong. */
+    expect(resolverSection).not.toContain("resolveBuilderSession");
+    expect(resolverSection).toContain('"portal_moved"');
     // The request body never contributes an organisation or tenant.
     expect(stripComments(resolverSection)).not.toMatch(/body\.(partner_org_id|tenant_id|organisation_id|org_id|firm_id)/);
     expect(stripComments(workspaceSection)).not.toMatch(/body\.(partner_org_id|tenant_id|organisation_id|org_id|firm_id)/);
@@ -85,7 +90,6 @@ describe("session-derived organisation scoping (aml-reliance)", () => {
     expect(resolverSection).toContain('eq("portal_user_source", source)');
     expect(resolverSection).toContain('eq("status", "active")');
     expect(resolverSection).toContain("membership_missing");
-    expect(resolverSection).toMatch(/builder_organisation_id === sessionBuilderOrgId/);
     expect(resolverSection).toMatch(/solicitor_firm_id === sessionSolicitorFirmId/);
     expect(resolverSection).toMatch(/finance_agent_contact_id === sessionFinanceContactId/);
     // Ambiguity fails closed — organisations are never guessed.

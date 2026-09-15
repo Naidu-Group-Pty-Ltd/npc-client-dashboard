@@ -2,6 +2,7 @@ import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { extractStructureHeadings, selectStructureTemplate } from '@/lib/reportTemplate/cascadeMap';
 import { chunkReportContent } from '@/lib/reportTemplate/reportSections';
+import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
 import { applyInvestmentProjection } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import type { BrandContext, ReportListing, ReportTemplateAdapter, RoutingContext, TemplateBindingContext } from './types';
 import { applyOrganisationAndBrand } from './organisation';
@@ -192,9 +193,15 @@ export const investmentReportAdapter: ReportTemplateAdapter = {
     const presentedContent = typeof payload?.reportContent === 'string'
       ? payload.reportContent
       : null;
-    const row = presentedContent === null
-      ? loaded
-      : { ...loaded, report_content: presentedContent };
+    // Through the read-path placeholder scrub every renderer applies
+    // (`presentStoredMarkdown`): a derived report stored before the write-path
+    // hygiene carries its "N/A" cells verbatim, and the templated document is
+    // drawn from this row twice — `sections` below and the projection's own
+    // narrative — so the row is presented once, here, for both.
+    const row = {
+      ...loaded,
+      report_content: presentStoredMarkdown(presentedContent === null ? loaded.report_content : presentedContent),
+    };
 
     const reportType = getReportType(row);
     const variant = (row.report_variant ?? null) as string | null;

@@ -10,7 +10,7 @@
  * where one already exists, so the browser cannot offer a value the server
  * would reject.
  */
-import { addressWithoutLeadingDesignation } from '../../supabase/functions/_shared/builderStock/normalise.pure';
+import { addressWithoutLeadingDesignation } from '../../supabase/functions/_shared/builderStockAddress.pure';
 import { parseBuilderAddressLine } from '../../supabase/functions/_shared/builderStockAddress.pure';
 /*
  * The five figures a builder may state, and the rules for each, imported

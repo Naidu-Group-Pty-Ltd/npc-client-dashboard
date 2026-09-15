@@ -56,6 +56,18 @@ async function latestAssessmentId(clientId: string | null | undefined): Promise<
   }
 }
 
+/**
+ * The assessment a request is about: the one it names, or the client's most
+ * recent. Both paths resolve it the same way, because no Borrowing Capacity
+ * surface in the product names one (`{ clientId, clientName }` everywhere) —
+ * and the publish path used to hand the bare request through, so the template
+ * ask answered null on every publish and the choice fired its own "not used"
+ * notice while the download beside it honoured it (RS-5c.3).
+ */
+async function resolveAssessmentId(request: SnapshotRequest): Promise<string | null> {
+  return request.assessmentId ?? await latestAssessmentId(request.clientId);
+}
+
 /** Which renderer produces the document. */
 export type SnapshotVariant = 'server' | 'legacy';
 
@@ -142,9 +154,10 @@ export async function deliverSnapshot(input: DeliverSnapshotInput): Promise<Deli
   // Resolving "most recent" is the render route's job against the server's view
   // of the data, and it still is for the legacy path below. The adapter needs
   // the row it is rendering, so resolve the same thing here rather than give up.
-  const assessmentId = input.request.assessmentId
-    ?? await latestAssessmentId(input.request.clientId);
-  const templated = await tryTemplateDocument('borrowing_capacity', assessmentId);
+  const assessmentId = await resolveAssessmentId(input.request);
+  // The FINAL document: a chosen template is drawn by the pinned engine, the
+  // same one this format's own route uses, never by the browser's jsPDF (RS-5c).
+  const templated = await tryTemplateDocument('borrowing_capacity', assessmentId, { renderer: 'weasyprint' });
   if (templated) {
     saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName, true);
     return { source: 'server', fileName: templated.fileName, brandGaps: [], templated: true };
@@ -177,18 +190,30 @@ export async function deliverSnapshot(input: DeliverSnapshotInput): Promise<Deli
 }
 
 /**
- * The Snapshot as bytes, for a caller that uploads it rather than saving it.
+ * The Snapshot as bytes — and where they already are — for a caller that
+ * publishes rather than saves.
  *
- * `ClientReportsTab`'s publish-to-portal path is the only one of these: it puts
- * the file in `client-files/portal-reports/<clientId>/…` and has never handed it
- * to the browser. The contract that path needs is a blob and a filename,
- * produced without a download side effect — which is exactly what this returns.
+ * The portal publish (`publishReportToPortal`) is the only one of these, and
+ * it has never handed the file to the browser. It used to upload the bytes to
+ * `client-files/portal-reports/<clientId>/…` on every publish: a second copy of
+ * a document the render route had ALREADY stored and ledgered, which doubles
+ * the bytes and diverges from the ledger the moment the document is produced
+ * again. Since RS-5c.3 the publish points the portal at `storagePath` whenever
+ * the renderer stored the document, and uploads only what nothing stored —
+ * the in-browser generator on the deployment-gap fallback.
  */
 export async function snapshotBlob(input: DeliverSnapshotInput): Promise<{
   blob: Blob;
   fileName: string;
   source: 'server' | 'legacy';
   brandGaps: string[];
+  /**
+   * Where the final renderer stored these exact bytes, when a chosen template
+   * was drawn by it — so a portal publish can point at the object rather than
+   * upload a second copy. Null or absent for a document drawn in this tab or
+   * by the format's own route (which answers a signed URL, not a path).
+   */
+  storagePath?: string | null;
 }> {
   if (input.variant === 'legacy') {
     const produced = await input.legacy();
@@ -196,12 +221,13 @@ export async function snapshotBlob(input: DeliverSnapshotInput): Promise<{
     return { blob: produced.blob, fileName: produced.fileName, source: 'legacy', brandGaps: [] };
   }
 
-  // The same rule as the download path: this is the file a broker portal
-  // uploads, and it should be the document the tenant activated.
-  const templated = await tryTemplateDocument('borrowing_capacity', input.request.assessmentId);
+  // The same rule as the download path, resolved the same way: this is the
+  // document a client will open, and it should be the one the tenant chose.
+  const templated = await tryTemplateDocument('borrowing_capacity', await resolveAssessmentId(input.request), { renderer: 'weasyprint' });
   if (templated) {
     return {
       blob: templated.blob, fileName: templated.fileName, source: 'server', brandGaps: [],
+      storagePath: templated.storagePath,
     };
   }
 
@@ -226,5 +252,7 @@ export async function snapshotBlob(input: DeliverSnapshotInput): Promise<{
     fileName: result.fileName,
     source: 'server',
     brandGaps: result.brandGaps,
+    // Where `render-borrowing-capacity-pdf` stored and ledgered these bytes.
+    storagePath: result.storagePath,
   };
 }

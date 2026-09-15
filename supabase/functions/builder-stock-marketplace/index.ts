@@ -1,9 +1,13 @@
 /**
  * Command Centre — Builder Stock in the Property Marketplace.
  *
- * The internal half of the Stock List feature. Reads the stock builders
- * uploaded through their portal, and writes the selection that activates the
- * builder when a Command Centre user picks a property for a client.
+ * The internal half of the Stock List feature. Since Phase 7 of the network
+ * extraction it reads the `builder_network_stock_*` MIRROR tables — the same
+ * rows under the same ids, seeded from the portal tables before those are
+ * dropped, and written by the Builders Network sync from then on. It still
+ * writes the selection that activates the builder when a Command Centre user
+ * picks a property for a client: `builder_stock_selections` is the Command
+ * Centre's own record and never left.
  *
  * THREE GATES, IN ORDER, ON EVERY OPERATION:
  *   1. the internal session (`verifyAuth`), plus CSRF on mutations;
@@ -19,6 +23,13 @@
  * property, which upload it came from and which builder user uploaded it are
  * all re-read from the database at write time, because a browser cannot be the
  * source of a relationship.
+ *
+ * WHAT MOVED WITH THE PORTAL. Supplying imagery on a builder's behalf wrote
+ * the portal's image pipeline (upload registration, verification, the
+ * settler's queue), and that pipeline retires with the portal — mirror rows
+ * arrive already processed. Both image-supply operations refuse with the
+ * network's address rather than writing to tables scheduled for deletion, and
+ * the in-portal notification on a selection went with the portal it notified.
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import {
@@ -30,14 +41,6 @@ import { internalError } from '../_shared/errorResponse.ts';
 import { STOCK_IMAGE_BUCKET } from '../_shared/builderStock/fileTypes.pure.ts';
 import { rankImage } from '../_shared/builderStock/imagePriority.pure.ts';
 import { readAllRows } from '../_shared/builderStock/pagedRead.ts';
-import {
-  isBuilderSuppliedPath, propertyImageStoragePath,
-} from '../_shared/builderStock/builderSuppliedImage.pure.ts';
-import { attachBuilderImage } from '../_shared/builderStock/attachBuilderImage.ts';
-import { roleFromBuilderProperty } from '../_shared/builderStock/sourceImageRole.pure.ts';
-import { validateSourceImageBytes } from '../_shared/builderStock/sourceAssets.pure.ts';
-import { sha256Hex } from '../_shared/builderStock/rasterPng.ts';
-import { safeObjectName } from '../_shared/builderStock/fileTypes.pure.ts';
 import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
   STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
@@ -126,11 +129,11 @@ Deno.serve(async (req) => {
       }, 403);
     }
 
-    /** Load one stock item with its organisation. Active stock only. */
+    /** Load one stock item from the network mirror. Active stock only. */
     const loadItem = async (itemId: string) => {
       if (!itemId) return null;
       const { data } = await supabase
-        .from('builder_stock_items')
+        .from('builder_network_stock_items')
         .select('*')
         .eq('id', itemId)
         .eq('lifecycle_status', 'active')
@@ -150,7 +153,7 @@ Deno.serve(async (req) => {
       const state = cleanText(body.state, 8);
 
       let query = supabase
-        .from('builder_stock_items')
+        .from('builder_network_stock_items')
         .select(STOCK_ITEM_SELECT, { count: 'exact' })
         .eq('lifecycle_status', 'active');
       if (organisationId) query = query.eq('organisation_id', organisationId);
@@ -197,14 +200,14 @@ Deno.serve(async (req) => {
       // and a truncated read here drops builders out of the filter entirely.
       const builderPage = await readAllRows<{ organisation_id: string }>(
         () => supabase
-          .from('builder_stock_items')
+          .from('builder_network_stock_items')
           .select('organisation_id')
           .eq('lifecycle_status', 'active')
           .order('id', { ascending: true }));
       const ids = Array.from(new Set(builderPage.rows.map((row) => row.organisation_id)));
       if (!ids.length) return json({ success: true, records: [] });
       const { data: organisations } = await supabase
-        .from('builder_organisations')
+        .from('builder_network_stock_organisations')
         .select('id, legal_name, trading_name')
         .in('id', ids);
       return json({ success: true, records: organisations ?? [] });
@@ -212,7 +215,7 @@ Deno.serve(async (req) => {
 
     if (operation === 'image_url') {
       const { data: image } = await supabase
-        .from('builder_stock_item_images')
+        .from('builder_network_stock_item_images')
         .select('id, stock_item_id, source_stage, verification_status, processing_status, storage_bucket, storage_path, external_url, source_detail')
         .eq('id', cleanText(body.image_id, 64))
         .maybeSingle();
@@ -252,7 +255,7 @@ Deno.serve(async (req) => {
        */
       if (!image.stock_item_id) return json({ error: 'Image not found' }, 404);
       const { data: owner } = await supabase
-        .from('builder_stock_items')
+        .from('builder_network_stock_items')
         .select('id')
         .eq('id', image.stock_item_id)
         .eq('lifecycle_status', 'active')
@@ -361,14 +364,14 @@ Deno.serve(async (req) => {
 
       const [{ data: items }, { data: clients }, { data: organisations }] = await Promise.all([
         itemIds.length
-          ? supabase.from('builder_stock_items').select(STOCK_ITEM_SELECT).in('id', itemIds)
+          ? supabase.from('builder_network_stock_items').select(STOCK_ITEM_SELECT).in('id', itemIds)
           : Promise.resolve({ data: [] }),
         clientIds.length
           ? supabase.from('clients')
             .select('id, primary_first_name, primary_surname').in('id', clientIds)
           : Promise.resolve({ data: [] }),
         organisationIds.length
-          ? supabase.from('builder_organisations')
+          ? supabase.from('builder_network_stock_organisations')
             .select('id, legal_name, trading_name').in('id', organisationIds)
           : Promise.resolve({ data: [] }),
       ]);
@@ -394,111 +397,30 @@ Deno.serve(async (req) => {
 
     /*
      * =====================================================================
-     * Supplying a picture on the builder's behalf
+     * Supplying a picture on the builder's behalf — MOVED
      * =====================================================================
      *
-     * The same act as the Builder Portal's, performed by NPC staff, and the
-     * same three modules do the work — so the two surfaces cannot come to
-     * disagree about what a builder-supplied image is.
-     *
-     * WHY THE COMMAND CENTRE NEEDS IT AT ALL. A blank card costs NPC a sale
-     * today, and a builder who has not answered an email is not a reason to
-     * keep showing nothing: staff routinely hold the marketing pack before the
-     * builder gets round to uploading it. The record says which of them
-     * supplied it, because acting for somebody is a different act from acting
-     * for yourself.
-     *
-     * `listings` edit, deny by default, like every other write here.
+     * These two operations were the Command Centre performing the Builder
+     * Portal's own act: registering an object with the portal's image
+     * pipeline (upload row, verification, the settler's queue). Phase 7 of
+     * the network extraction deletes that pipeline with the portal — the
+     * mirror's rows arrive already processed from the Builders Network — so
+     * writing to it here would be writing to tables scheduled for deletion,
+     * work nothing would ever settle. The permission gate stays so an
+     * unauthorised probe sees exactly what it always saw.
      */
-    if (operation === 'supply_builder_image') {
+    if (operation === 'supply_builder_image' || operation === 'create_builder_image_upload') {
       const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
       if (!listingsEdit.ok) {
         return createForbiddenResponse(
           listingsEdit.error || 'Listing edit access required', corsHeaders);
       }
-
-      const stockItemId = cleanText(body.stock_item_id, 64);
-      const item = await loadItem(stockItemId);
-      if (!item) return json({ error: 'Property not found' }, 404);
-
-      const storagePath = cleanText(body.storage_path, 400);
-      /*
-       * The path is a LOOKUP KEY and never authority — the organisation it
-       * names must be the one that owns the property, or staff could register
-       * one builder's object against another's card.
-       */
-      if (!isBuilderSuppliedPath(storagePath)
-        || !storagePath.includes(`/${item.organisation_id}/`)) {
-        return json({ error: 'That image location is not allowed' }, 400);
-      }
-
-      const { data: blob, error: downloadError } = await supabase.storage
-        .from(STOCK_IMAGE_BUCKET).download(storagePath);
-      if (downloadError || !blob) {
-        return json({ error: 'That image was not uploaded. Please try again.' }, 400);
-      }
-      const bytes = new Uint8Array(await blob.arrayBuffer());
-      // Validated out of storage, so what is registered is what was stored.
-      const checked = validateSourceImageBytes(bytes);
-      if (checked.ok !== true) {
-        await supabase.storage.from(STOCK_IMAGE_BUCKET).remove([storagePath]);
-        return json({ error: checked.reason }, 400);
-      }
-
-      const attached = await attachBuilderImage(supabase, {
-        organisationId: String(item.organisation_id),
-        stockItemId,
-        uploadId: (item.upload_id as string | null) ?? null,
-        storageBucket: STOCK_IMAGE_BUCKET,
-        storagePath,
-        contentType: checked.contentType,
-        byteSize: bytes.length,
-        sha256: await sha256Hex(bytes),
-        role: roleFromBuilderProperty({
-          suppliedBy: 'staff',
-          property: [item.lot_number ? `Lot ${item.lot_number}` : '', item.address_line]
-            .filter(Boolean).join(', ') || 'this property',
-        }),
-      });
-      if ('error' in attached) return json({ error: 'The image could not be stored.' }, 500);
-
-      /*
-       * `attachBuilderImage` puts the property back in front of the ladder
-       * itself — see its header. Nothing here writes `primary_image_id` or
-       * touches the image pipeline's own columns: this function SERVES the
-       * marketplace, and what it serves is decided by lifecycle alone.
-       */
-      return json({ success: true, properties: 1 });
-    }
-
-    if (operation === 'create_builder_image_upload') {
-      const listingsEdit = await requireModulePermission(supabase, actor, 'listings', 'can_edit');
-      if (!listingsEdit.ok) {
-        return createForbiddenResponse(
-          listingsEdit.error || 'Listing edit access required', corsHeaders);
-      }
-      const item = await loadItem(cleanText(body.stock_item_id, 64));
-      if (!item) return json({ error: 'Property not found' }, 404);
-
-      const storagePath = propertyImageStoragePath({
-        organisationId: String(item.organisation_id),
-        stockItemId: String(item.id),
-        filename: safeObjectName(cleanText(body.filename, 200) || 'image'),
-      });
-      const { data: signed, error: signError } = await supabase.storage
-        .from(STOCK_IMAGE_BUCKET)
-        .createSignedUploadUrl(storagePath);
-      if (signError || !signed?.signedUrl) {
-        return json({ error: 'Storage could not accept the image.' }, 502);
-      }
-      const raw = signed.signedUrl;
       return json({
-        success: true,
-        storage_path: storagePath,
-        upload_url: raw.startsWith('http')
-          ? raw
-          : `${Deno.env.get('SUPABASE_URL')}/storage/v1${raw.startsWith('/') ? '' : '/'}${raw}`,
-      });
+        error: 'Stock imagery is managed on the Builders Network now. '
+          + 'Ask the builder to update their property\'s photographs at '
+          + 'builders.aurixasystems.com.au — the marketplace serves the network\'s imagery.',
+        code: 'builder_stock_images_moved',
+      }, 410);
     }
 
     // =====================================================================
@@ -530,14 +452,6 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (!client) return json({ error: 'Client not found' }, 404);
 
-      // The upload this property came from, and who uploaded it. Both read
-      // from the item's own row — the request supplied neither.
-      const { data: upload } = item.upload_id
-        ? await supabase.from('builder_stock_uploads')
-          .select('id, uploaded_by_builder_user_id, organisation_id')
-          .eq('id', item.upload_id).maybeSingle()
-        : { data: null };
-
       // A live selection already exists for this pair.
       const { data: existing } = await supabase
         .from('builder_stock_selections')
@@ -559,10 +473,12 @@ Deno.serve(async (req) => {
           // Resolved, not accepted. The database trigger checks it again.
           organisation_id: item.organisation_id,
           source_upload_id: item.upload_id ?? null,
-          // Also resolved from the item, never from the request.
+          // Also resolved from the item, never from the request. The mirror
+          // carries the uploader on the item itself (`created_by_builder_user_id`,
+          // stamped at intake) — the upload row it once cross-read retires with
+          // the portal's pipeline.
           builder_project_id: item.builder_project_id ?? null,
-          originating_builder_user_id:
-            upload?.uploaded_by_builder_user_id ?? item.created_by_builder_user_id ?? null,
+          originating_builder_user_id: item.created_by_builder_user_id ?? null,
           client_id: client.id,
           selected_by_user_id: userId,
           status: 'selected',
@@ -576,16 +492,13 @@ Deno.serve(async (req) => {
         return json({ error: 'The selection could not be saved.' }, 400);
       }
 
-      // The builder's activation signal. It is a notification in their portal,
-      // written with the shared notification writer so it appears in the same
-      // feed as everything else they are told.
-      await notifyBuilder(supabase, {
-        organisationId: item.organisation_id,
-        builderUserId: selection.originating_builder_user_id,
-        stockItemId: item.id,
-        selectionId: selection.id,
-      });
-
+      /*
+       * The in-portal notification went with the portal: `builder_notifications`
+       * had no reader once /builder/* moved to the Builders Network, so writing
+       * one would tell nobody anything. The selection row IS the activation —
+       * telling the builder over the network connection is the sync's job once
+       * E4 ships, not a write into a feed nobody can open.
+       */
       return json({ success: true, record: selection });
     }
 
@@ -651,11 +564,11 @@ async function decorate(supabase: any, items: any[]): Promise<any[]> {
   const organisationIds = Array.from(new Set(items.map((item) => item.organisation_id)));
 
   const [{ data: images }, { data: organisations }, { data: selections }] = await Promise.all([
-    supabase.from('builder_stock_item_images')
+    supabase.from('builder_network_stock_item_images')
       .select(STOCK_IMAGE_SELECT)
       .in('stock_item_id', ids)
       .order('position', { ascending: true }),
-    supabase.from('builder_organisations')
+    supabase.from('builder_network_stock_organisations')
       .select('id, legal_name, trading_name')
       .in('id', organisationIds),
     // No `client_id`. The card needs to know a property IS spoken for and at
@@ -689,53 +602,4 @@ async function decorate(supabase: any, items: any[]): Promise<any[]> {
     builder_organisation: organisationById.get(item.organisation_id) ?? null,
     selections: selectionsByItem.get(item.id) ?? [],
   }));
-}
-
-/**
- * Tell the builder. Best-effort by design: a notification that will not write
- * must not roll back a selection that did — the selection row IS the
- * activation, and the builder's Stock List reads it directly.
- */
-async function notifyBuilder(
-  supabase: any,
-  input: {
-    organisationId: string; builderUserId: string | null;
-    stockItemId: string; selectionId: string;
-  },
-): Promise<void> {
-  try {
-    // Everyone with a live membership of the supplying organisation, so the
-    // signal does not depend on one uploader still being active.
-    const { data: members } = await supabase
-      .from('builder_organisation_memberships')
-      .select('builder_user_id')
-      .eq('organisation_id', input.organisationId)
-      .is('revoked_at', null)
-      .limit(50);
-
-    const recipients = new Set<string>(
-      (members ?? []).map((row: any) => row.builder_user_id).filter(Boolean));
-    if (input.builderUserId) recipients.add(input.builderUserId);
-    if (!recipients.size) return;
-
-    await supabase.from('builder_notifications').insert(
-      Array.from(recipients).map((builderUserId) => ({
-        builder_user_id: builderUserId,
-        organisation_id: input.organisationId,
-        // `general` is the only type this table accepts for an event outside
-        // its enumerated list. Adding a value to that CHECK would be a change
-        // to the collaboration module, which this feature does not own.
-        notification_type: 'general',
-        // No client name, no adviser name, no price. The builder is told that
-        // one of their properties has been selected; the rest is not theirs.
-        title: 'A property from your stock list has been selected',
-        body: 'A Command Centre adviser has selected one of your uploaded properties for a buyer. Open Stock List to acknowledge it.',
-        entity_kind: 'stock_selection',
-        entity_id: input.selectionId,
-      })),
-    );
-  } catch (error) {
-    console.warn('[builder-stock-marketplace] builder notification failed',
-      String((error as { message?: string })?.message ?? error));
-  }
 }

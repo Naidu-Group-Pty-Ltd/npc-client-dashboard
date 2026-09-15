@@ -61,8 +61,25 @@ console.log(`${FILE}: ${(Buffer.byteLength(src) / 1048576).toFixed(2)} MB, ${lin
 // The target table, so the run can report what it changed rather than just
 // claiming success.
 const target = src.match(/INSERT INTO\s+(public\.[a-z0-9_]+)/i)?.[1] ?? null;
+/**
+ * A migration may CREATE the table it seeds — the builder_network stock
+ * mirror is create-and-seed in one file so a database that still holds the
+ * source self-seeds and a post-deletion clone no-ops. `count(*) from X` is
+ * parsed before it is executed, so the before-count 42P01'd on exactly that
+ * shape (run #50) and the job failed having applied nothing. Existence is
+ * its own round trip now; a table this migration is about to create counts
+ * as absent, not as an error.
+ */
 const countRows = async (when) => {
   if (!target) return null;
+  const reg = await run(
+    `select to_regclass('${target.replace(/'/g, "''")}')::text as reg;`,
+    `count (${when}) probe`);
+  const exists = (Array.isArray(reg) ? reg[0]?.reg : reg?.[0]?.reg) != null;
+  if (!exists) {
+    console.log(`${target} rows ${when}: (relation absent)`);
+    return null;
+  }
   const r = await run(`select count(*)::int as n from ${target};`, `count (${when})`);
   const n = Array.isArray(r) ? r[0]?.n : r?.[0]?.n;
   console.log(`${target} rows ${when}: ${n}`);
@@ -191,7 +208,7 @@ const summary = [
   `### Applied \`${FILE}\``,
   '',
   `- ${statements.length} statement(s)`,
-  target ? `- \`${target}\`: ${before} → ${after} rows` : '',
+  target ? `- \`${target}\`: ${before ?? 'absent'} → ${after ?? 'absent'} rows` : '',
   '',
 ].filter(Boolean).join('\n');
 console.log(summary);

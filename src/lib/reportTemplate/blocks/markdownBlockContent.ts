@@ -19,9 +19,11 @@ import {
   renderMarkdown, type MarkdownBlock,
 } from '../../../../supabase/functions/_shared/reports/markdown.pure';
 import {
-  packMarkdownPages, packNarrativeGeometry, packNarrativePages, resolveNarrativeProfile, DEFAULT_LINES_PER_PAGE,
+  packMarkdownPages, packNarrativeGeometry, packNarrativePages, resolveNarrativeProfile, geometryAwareFormat,
+  DEFAULT_LINES_PER_PAGE, type PageReserve,
 } from '../../../../supabase/functions/_shared/reports/markdownPaging.pure';
-import type { NarrativeGeometry } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
+import { calloutCharge, type NarrativeGeometry } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
+import { escapeHtml, renderCallout } from '../../../../supabase/functions/_shared/reportDesign/primitives.pure';
 import { stripBakedCover } from '../../../../supabase/functions/_shared/reports/investment/narrativeClean.pure';
 import { vizDirectiveRenderer } from '../../../../supabase/functions/_shared/reports/vizFigures.pure';
 import { CHART_TARGET_WIDTH_MM, type ChartContext } from '../../../../supabase/functions/_shared/reportDesign/charts.pure';
@@ -134,6 +136,66 @@ export function geometryForBlock(block: Block, ctx: ResolveContext): NarrativeGe
   return (map && key && map[key]) || null;
 }
 
+/**
+ * ## The note a master gave a page of its own
+ *
+ * Where a run exceeds the pages a master allows it, the Market Intelligence
+ * and Report Q&A masters draw the omission on a page of its own — one
+ * callout on an otherwise empty sheet ("This section continues for 9 further
+ * pages…", "Not the whole answer"). Measured on the Chancery Market
+ * Intelligence render (14 Sep 2026): 4 of 41 pages carried nothing else.
+ *
+ * The renderer's pre-pass (`narrativePlan.ts`) recognises that page, clears
+ * its key from the data so it never draws, and files the note here by the
+ * run's binding. The block drawing the LAST allowed page packs with that
+ * much room held back (`PageReserve`) and sets the note as a callout at its
+ * foot — the same words, on the page the reader is already looking at. The
+ * count in the note is the renderer's true count, never the projection's
+ * estimate.
+ */
+export const NARRATIVE_NOTES_KEY = '_narrativeNotes';
+
+export interface ContinuationNote {
+  /** Pages the master allows this run; the note sits on the last of them. */
+  allowance: number;
+  /** The callout's label, as the master's own page wrote it. */
+  label: string;
+  /** The sentence, with the renderer's true counts in it. */
+  text: string;
+}
+
+export function notesForBlock(block: Block, ctx: ResolveContext): ContinuationNote | null {
+  const map = (ctx as unknown as Record<string, unknown>)[NARRATIVE_NOTES_KEY] as Record<string, ContinuationNote> | undefined;
+  const key = narrativeBindingKey(block.props as Record<string, unknown>);
+  return (map && key && map[key]) || null;
+}
+
+/** The folded note as a markdown block: a neutral callout, charged as one. */
+export function continuationNotice(geometry: NarrativeGeometry, label: string, text: string): MarkdownBlock {
+  const html = renderCallout('neutral', label, `<p>${escapeHtml(text)}</p>`);
+  return { kind: 'notice', html, lines: Math.ceil(calloutCharge(geometry, [text.length]) * 10) / 10 };
+}
+
+/**
+ * The buckets a run draws, with the continuation note folded onto the last
+ * allowed page where the run overruns it. `tail` is the note block, to be
+ * drawn after that page's own blocks — only by the instance that holds it.
+ */
+export function foldedNarrativeBuckets(
+  cleanSource: string,
+  geometry: NarrativeGeometry,
+  chart: ChartContext,
+  note: ContinuationNote | null,
+): { pages: MarkdownBlock[][]; tail: MarkdownBlock | null } {
+  const pages = narrativeBuckets(cleanSource, geometry, chart);
+  if (!note || pages.length <= note.allowance) return { pages, tail: null };
+  const notice = continuationNotice(geometry, note.label, note.text);
+  const reserved = narrativeBuckets(cleanSource, geometry, chart, { pageIndex: note.allowance - 1, lines: notice.lines });
+  // Holding room back cannot shorten a document, so the overrun still stands
+  // and the note is drawn where the room was held.
+  return { pages: reserved, tail: reserved.length > note.allowance ? notice : null };
+}
+
 const MM_PER_PT = 25.4 / 72;
 const BUCKET_MEMO = new Map<string, MarkdownBlock[][]>();
 const BUCKET_MEMO_LIMIT = 8;
@@ -143,15 +205,16 @@ export function narrativeBuckets(
   cleanSource: string,
   geometry: NarrativeGeometry,
   chart: ChartContext,
+  reserve: PageReserve | null = null,
 ): MarkdownBlock[][] {
-  const key = JSON.stringify([geometry, chart]) + '\u0000' + cleanSource;
+  const key = JSON.stringify([geometry, chart, reserve]) + '\u0000' + cleanSource;
   const hit = BUCKET_MEMO.get(key);
   if (hit) return hit;
   const blocks = renderMarkdown(cleanSource, {
     geometry,
     renderDirective: vizDirectiveRenderer(chart, geometry),
   }).blocks;
-  const pages = packNarrativeGeometry(blocks, geometry);
+  const pages = packNarrativeGeometry(blocks, geometry, reserve);
   if (BUCKET_MEMO.size >= BUCKET_MEMO_LIMIT) {
     const oldest = BUCKET_MEMO.keys().next().value;
     if (oldest !== undefined) BUCKET_MEMO.delete(oldest);
@@ -193,11 +256,13 @@ export function resolveMarkdownBlockContent(
   // run. It outranks a hand-tuned `linesPerPage`: that tuning existed to
   // correct a constant model, and the geometry is the page it was correcting
   // towards.
-  const geometry = profile?.geometryAware ? geometryForBlock(block, ctx) : null;
+  const geometry = (profile?.geometryAware || geometryAwareFormat(reportType)) ? geometryForBlock(block, ctx) : null;
   if (geometry) {
-    const pages = narrativeBuckets(cleanSource, geometry, narrativeChartContext(ctx, geometry));
+    const note = notesForBlock(block, ctx);
+    const { pages, tail } = foldedNarrativeBuckets(cleanSource, geometry, narrativeChartContext(ctx, geometry), note);
+    const own = pages[pageIndex] ?? [];
     return {
-      page: pages[pageIndex] ?? [],
+      page: tail && note && pageIndex === note.allowance - 1 ? [...own, tail] : own,
       pageCount: pages.length,
       pageIndex,
       linesPerPage: geometry.contLines,

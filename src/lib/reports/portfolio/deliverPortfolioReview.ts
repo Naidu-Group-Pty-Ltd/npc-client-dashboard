@@ -119,7 +119,8 @@ export async function deliverPortfolioReview(
   // adapter always joins the client's newest completed review, exactly as this
   // route does by default, so it cannot produce the without-review document.
   if (input.request.includeReview !== false) {
-    const templated = await tryTemplateDocument('portfolio', input.request.reportId);
+    // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+    const templated = await tryTemplateDocument('portfolio', input.request.reportId, { renderer: 'weasyprint' });
     if (templated) {
       saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName);
       return {
@@ -150,19 +151,29 @@ export async function deliverPortfolioReview(
 }
 
 /**
- * The review as bytes, for a caller that uploads it rather than saving it.
+ * The review as bytes — and where they already are — for a caller that
+ * publishes rather than saves.
  *
- * Nothing publishes the typeset review to the client portal today — that path
- * reads `pdf_file_path`, which this work deliberately does not write. This
- * exists so that when someone decides to change that, the contract they need
- * (a blob and a filename, produced without a download side effect) is already
- * here rather than invented at the call site.
+ * `publishReportToPortal` is that caller (audit item 6: a stored analysis
+ * whose PDF upload failed in the 403 era has `report_data` and no file, so
+ * publishing renders the review from the record). It used to upload the
+ * bytes a second time to `client-files/portal-reports/…`; since RS-5c.3 it
+ * points the portal at `storagePath` whenever the renderer stored the
+ * document, and still never writes `pdf_file_path` — that column is the
+ * legacy generator's file, and substituting a document from a renderer the
+ * person did not choose is this module's own never.
  */
 export async function portfolioReviewBlob(input: DeliverPortfolioInput): Promise<{
   blob: Blob;
   fileName: string;
   source: PortfolioVariant;
   brandGaps: string[];
+  /**
+   * Where the renderer stored these exact bytes: the templated final's object
+   * (`investment-reports`) or the route's (`client-files`). Null for the
+   * `stored` variant, which is a file somebody else placed and named.
+   */
+  storagePath: string | null;
 }> {
   if (input.variant === 'stored') {
     const ref = parseStorageRef(input.storedPath);
@@ -176,15 +187,18 @@ export async function portfolioReviewBlob(input: DeliverPortfolioInput): Promise
       fileName: input.storedFileName || 'Portfolio_Analysis.pdf',
       source: 'stored',
       brandGaps: [],
+      storagePath: null,
     };
   }
 
   // The same two guards as the download path above.
   if (input.request.includeReview !== false) {
-    const templated = await tryTemplateDocument('portfolio', input.request.reportId);
+    // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+    const templated = await tryTemplateDocument('portfolio', input.request.reportId, { renderer: 'weasyprint' });
     if (templated) {
       return {
         blob: templated.blob, fileName: templated.fileName, source: 'server', brandGaps: [],
+        storagePath: templated.storagePath,
       };
     }
   }
@@ -197,5 +211,7 @@ export async function portfolioReviewBlob(input: DeliverPortfolioInput): Promise
     fileName: result.fileName,
     source: 'server',
     brandGaps: result.brandGaps,
+    // Where `render-portfolio-review-pdf` stored and ledgered these bytes.
+    storagePath: result.storagePath,
   };
 }

@@ -72,7 +72,7 @@ describe('item 14 — a failure that names itself', () => {
   it('never returns a bare null for a fault', () => {
     const fn = modal.slice(
       modal.indexOf('const generateAndUploadCashFlowPDF'),
-      modal.indexOf('}, [report, baseFinancialData, exportSingleReportPDF]);'),
+      modal.indexOf('}, [report, baseFinancialData, finalCashFlowDocument, describeReviewedProjection, produceFinalCashFlowDocument]);'),
     );
     expect(fn).not.toMatch(/^\s*return null;/m);
   });

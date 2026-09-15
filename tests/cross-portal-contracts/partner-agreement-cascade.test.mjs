@@ -11,12 +11,16 @@ const sharedContract = read('supabase/functions/_shared/portalAgreement.ts');
 const sharedClient = read('src/lib/portalAgreement.ts');
 const consentWall = read('src/components/portal/PortalAgreementConsent.tsx');
 
+/* The Builder Portal's verify function and terms page left this repository
+   with the portal (network extraction Phase 7) — a builder accepts the
+   network's terms on the network now, and the builder rows this cascade once
+   wrote were archived and deleted by 20261124000000. The cascade migration
+   itself still carries its builder vocabulary verbatim: it is applied
+   history, and the CHECKs it installed still admit the value. */
 const solicitorVerify = read('supabase/functions/solicitor-portal-verify/index.ts');
-const builderVerify = read('supabase/functions/builder-portal-verify/index.ts');
 const financeVerify = read('supabase/functions/finance-portal-verify/index.ts');
 
 const solicitorPage = read('src/pages/solicitor/SolicitorTerms.tsx');
-const builderPage = read('src/pages/builder/BuilderTerms.tsx');
 // The Finance Portal presented the agreement in a modal mounted inside the
 // portal layout until it was made a route like the other two. `financeGuard` is
 // where the gating decision now lives; `financePage` is the wall itself.
@@ -104,7 +108,7 @@ test('all three portals enforce the same four acknowledgments, server-side', () 
 
   // Each portal reads the one list rather than keeping its own.
   for (const [name, source] of [
-    ['solicitor', solicitorVerify], ['builder', builderVerify], ['finance', financeVerify],
+    ['solicitor', solicitorVerify], ['finance', financeVerify],
   ]) {
     assert.match(source, /readAcknowledgements/, `${name} does not read the shared acknowledgments`);
     assert.match(source, /ACKNOWLEDGEMENTS_INCOMPLETE/, `${name} does not refuse an incomplete acceptance`);
@@ -116,11 +120,11 @@ test('all three portals enforce the same four acknowledgments, server-side', () 
 });
 
 test('an acceptance records which acknowledgments were asserted, in every portal', () => {
-  // Solicitor and Finance insert directly; Builder goes through its RPC, which
-  // is why the acknowledgments had to become a parameter of that function.
+  // Solicitor and Finance insert directly. (Builder went through its RPC
+  // until the portal moved; the RPC's parameter shape survives in the
+  // applied migration below and the RPC itself is dropped by 20261124000000.)
   assert.match(solicitorVerify, /portal_terms_acceptances'\)\.insert\(\{[^}]*acknowledgements/);
   assert.match(financeVerify, /finance_user_id: portalUser\.id,\s*\n\s*acknowledgements,/);
-  assert.match(builderVerify, /_acknowledgements: acknowledgements/);
   assert.match(cascade, /_acknowledgements jsonb DEFAULT NULL/);
   assert.match(cascade, /terms_version_id, portal, builder_user_id, acknowledgements, ip_hash, user_agent_hash/);
   assert.match(cascade, /'acknowledgements', COALESCE\(_acknowledgements, '\[\]'::jsonb\)/);
@@ -128,7 +132,7 @@ test('an acceptance records which acknowledgments were asserted, in every portal
 
 test('all three portals present the agreement through one wall', () => {
   for (const [name, source] of [
-    ['solicitor', solicitorPage], ['builder', builderPage], ['finance', financePage],
+    ['solicitor', solicitorPage], ['finance', financePage],
   ]) {
     assert.match(source, /<PortalAgreementConsent/, `${name} does not use the shared consent wall`);
   }
@@ -136,7 +140,7 @@ test('all three portals present the agreement through one wall', () => {
   // The wall renders the stored Markdown; no portal restates the agreement.
   assert.match(consentWall, /terms\.content_markdown/);
   for (const [name, source] of [
-    ['builder', builderPage], ['finance', financePage],
+    ['finance', financePage],
   ]) {
     assert.doesNotMatch(source, /Terms of Use\n/, `${name} still carries its own terms text`);
   }
@@ -150,7 +154,7 @@ test('all three portals present the agreement on a page, not squeezed into a dia
   // and the agreement ran off the top and bottom of the viewport with no way to
   // scroll it. Whatever else changes here, the wall does not go back in a modal.
   for (const [name, source] of [
-    ['solicitor', solicitorPage], ['builder', builderPage], ['finance', financePage],
+    ['solicitor', solicitorPage], ['finance', financePage],
   ]) {
     assert.doesNotMatch(source, /<DialogContent/, `${name} presents the agreement in a dialog again`);
     assert.match(source, /min-h-screen/, `${name} does not lay the agreement out as a page`);
@@ -175,11 +179,11 @@ test('the Finance Portal gate is version-aware', () => {
  * pin the two places where that assumption would take a portal down.
  */
 
-test('a not-yet-deployed function can still record a builder acceptance', () => {
-  // The deployed `builder-portal-verify` calls the RPC with four named
-  // arguments. The cascade migration replaces that function with a five-argument
-  // one, so the fifth must carry a default or every builder acceptance fails
-  // with "function does not exist" until the function deploys.
+test('the cascade RPC kept its deploy-order default while it lived', () => {
+  // The deployed `builder-portal-verify` called the RPC with four named
+  // arguments, so the fifth had to carry a default or every builder
+  // acceptance failed until the function deployed. Both sides are retired
+  // now; the applied migration still shows the shape the rule demanded.
   assert.match(cascade, /_acknowledgements jsonb DEFAULT NULL\)/);
 });
 

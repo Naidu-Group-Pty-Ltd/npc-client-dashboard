@@ -19,6 +19,7 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { reconcileStoredFinancials } from '@/lib/reports/investment/financialEngine.pure';
 import { overlayOverridesForHistoricRow } from '@/lib/reports/investment/overrides.pure';
+import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
 import type {
   InvestmentReportData,
   ReportTier,
@@ -72,7 +73,11 @@ export function projectRowForPdf(row: StoredInvestmentReportRow): ProjectedInves
     report: {
       id: row.id,
       address: row.property_address || 'Property Report',
-      content: row.report_content || '',
+      // The stored content through the read-path placeholder scrub every
+      // renderer applies — see `presentStoredMarkdown`. A derived report
+      // stored before the write-path hygiene carries its "N/A" cells verbatim,
+      // and this projection is where both presentations read the prose.
+      content: presentStoredMarkdown(row.report_content),
       created_at: row.created_at || new Date().toISOString(),
       pdf_url: row.pdf_url,
       enhanced_data: {

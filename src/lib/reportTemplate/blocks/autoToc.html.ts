@@ -7,6 +7,7 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { esc, type HtmlBlockContext } from './_shared.html';
+import { fitTocEntries, splitTocColumns, tocOmittedLine } from './tocFit';
 
 type R = Record<string, unknown>;
 
@@ -31,17 +32,32 @@ export function renderAutoTocHtml(block: Block, ctx: HtmlBlockContext): string {
 
   const filtered = entries.filter((e) => p.maxLevel ? e.level <= Number(p.maxLevel) : true);
 
-  const rows = filtered
+  // Fits the page it is printed on, like `toc.html.ts` — see `tocFit.ts`.
+  const fit = fitTocEntries({
+    entries: filtered.length,
+    availablePt: ctx.page.height - y - Number(p.bottomReserve ?? 64),
+    titlePt: title ? titleSize + 14 : 0,
+    lineHeightPt: lineHeight, sizePt: size,
+  });
+  const leader = dotted
+    ? `<span style="flex:1;border-bottom:1pt dotted ${color}40;margin:0 6pt 4pt;"></span>`
+    : `<span style="flex:1;"></span>`;
+  const rowsOf = (list: typeof filtered) => list
     .map((e) => {
       const pad = (e.level - 1) * indent;
-      const leader = dotted
-        ? `<span style="flex:1;border-bottom:1pt dotted ${color}40;margin:0 6pt 4pt;"></span>`
-        : `<span style="flex:1;"></span>`;
-      return `<a href="#${esc(e.anchor)}" style="display:flex;align-items:flex-end;color:${color};text-decoration:none;font:${e.level === 1 ? '600' : '400'} ${size}pt Helvetica;line-height:${lineHeight}pt;padding-left:${pad}pt;">
-        <span>${esc(e.label)}</span>${leader}<span style="color:${accent};font-variant-numeric:tabular-nums;">${e.pageIndex + 1}</span>
+      return `<a href="#${esc(e.anchor)}" style="display:flex;align-items:flex-end;color:${color};text-decoration:none;font:${e.level === 1 ? '600' : '400'} ${fit.sizePt.toFixed(2)}pt Helvetica;line-height:${fit.lineHeightPt.toFixed(2)}pt;padding-left:${pad}pt;">
+        <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(e.label)}</span>${leader}<span style="color:${accent};font-variant-numeric:tabular-nums;">${e.pageIndex + 1}</span>
       </a>`;
     })
     .join('');
+  const shown = filtered.slice(0, fit.shown);
+  const columns = splitTocColumns(shown, fit.columns).map(rowsOf);
+  const omitted = fit.omitted
+    ? `<div style="font:400 ${fit.sizePt.toFixed(2)}pt Helvetica;line-height:${fit.lineHeightPt.toFixed(2)}pt;color:${color};">${esc(tocOmittedLine(fit.omitted))}</div>`
+    : '';
+  const rows = fit.columns === 1
+    ? columns[0] + omitted
+    : `<div style="display:flex;gap:18pt;align-items:flex-start;">${columns.map((c, ci) => `<div style="flex:1 1 0;min-width:0;">${c}${ci === columns.length - 1 ? omitted : ''}</div>`).join('')}</div>`;
 
   return `<div style="position:absolute;left:${x}pt;top:${y}pt;width:${w}pt;">
     ${title ? `<div style="font:700 ${titleSize}pt Helvetica;color:${color};margin-bottom:14pt;letter-spacing:0.4pt;">${esc(title)}</div>` : ''}

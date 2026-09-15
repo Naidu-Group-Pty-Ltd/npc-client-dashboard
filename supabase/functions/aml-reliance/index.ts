@@ -110,7 +110,6 @@ import {
   grantsNeedingForwardManifest, resolveAttestationForRead,
 } from "../_shared/aml/passport/attestationCurrency.pure.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
-import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import {
@@ -923,7 +922,6 @@ async function resolvePartnerPortalContext(
   let source = "";
   let portalUserId = "";
   let portalUserLabel: string | null = null;
-  let sessionBuilderOrgId: string | null = null;
   let sessionSolicitorFirmId: string | null = null;
   let sessionFinanceContactId: string | null = null;
 
@@ -940,17 +938,19 @@ async function resolvePartnerPortalContext(
       .select("finance_contact_id").eq("id", portalUserId).maybeSingle();
     sessionFinanceContactId = fpUser?.finance_contact_id ?? null;
   } else if (surface === "builder") {
-    const resolved: any = await resolveBuilderSession(admin, req);
-    if (!resolved.ok || !resolved.user) {
-      return { ok: false, status: resolved.status ?? 401, error: resolved.error ?? "Invalid or expired session", code: resolved.code };
-    }
-    source = "builder_portal_users";
-    portalUserId = String(resolved.user.id);
-    portalUserLabel = resolved.user.email ?? null;
-    sessionBuilderOrgId = resolved.active_organisation?.organisation_id ?? null;
-    if (!sessionBuilderOrgId) {
-      return { ok: false, status: 403, error: "Select an organisation before opening the compliance workspace.", code: "organisation_selection_required" };
-    }
+    /* Phase 7 of the network extraction: the Builder / Developer Portal moved
+       to the Builders Network and its session plane left this deployment with
+       it — there is no builder portal cookie to resolve any more, and the
+       tables one resolved against are gone. A builder partner's channel is
+       the emailed Passport link; the in-portal workspace returns over the
+       network connection (E4), authenticated by the network rather than by a
+       cookie this workspace no longer mints. Same vocabulary the portal
+       handoff has used since Phase 6. */
+    return {
+      ok: false, status: 410,
+      error: "The builder portal moved to the Builders Network. Builder partners read the Compliance Passport through the emailed link.",
+      code: "portal_moved",
+    };
   } else {
     const resolved: any = await resolveSolicitorSession(admin, req.headers, body);
     if (!resolved.ok || !resolved.user) {
@@ -982,9 +982,7 @@ async function resolvePartnerPortalContext(
   // Session-organisation cross-check: the canonical organisation must carry
   // the matching portal reference where the session names one.
   let candidates = orgRows;
-  if (surface === "builder") {
-    candidates = orgRows.filter((o) => o.builder_organisation_id === sessionBuilderOrgId);
-  } else if (surface === "solicitor_conveyancer") {
+  if (surface === "solicitor_conveyancer") {
     candidates = orgRows.filter((o) => o.solicitor_firm_id === sessionSolicitorFirmId);
   } else {
     candidates = orgRows.filter((o) =>
@@ -3610,6 +3608,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (!PARTNER_USER_SOURCES.includes(source)) {
           return jr({ error: `portal_user_source must be one of: ${PARTNER_USER_SOURCES.join(", ")}` }, 400);
         }
+        if (source === "builder_portal_users") {
+          // Recognised, and moved: the builder portal's identity tables left
+          // with the portal (network extraction Phase 7). Refusing here, by
+          // name, beats the "portal user not found" a read against a dropped
+          // table would fabricate.
+          return jr({
+            error: "The builder portal moved to the Builders Network — there is no builder portal identity here to enrol. Builder partners read the Compliance Passport through the emailed link.",
+            code: "portal_moved",
+          }, 410);
+        }
         if (!PARTNER_PORTAL_TYPES.includes(portalType)) {
           return jr({ error: `portal_type must be one of: ${PARTNER_PORTAL_TYPES.join(", ")}` }, 400);
         }
@@ -3687,6 +3695,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
         if (!PARTNER_USER_SOURCES.includes(source)) {
           return jr({ error: `portal_user_source must be one of: ${PARTNER_USER_SOURCES.join(", ")}` }, 400);
+        }
+        if (source === "builder_portal_users") {
+          // Recognised, and moved — same refusal the workspace session
+          // resolver gives, so enrolment cannot fabricate "portal user not
+          // found" from a read against a table Phase 7 dropped.
+          return jr({
+            error: "The builder portal moved to the Builders Network — there is no builder portal identity here to enrol. Builder partners read the Compliance Passport through the emailed link.",
+            code: "portal_moved",
+          }, 410);
         }
         if (!PARTNER_PORTAL_TYPES.includes(portalType)) {
           return jr({ error: `portal_type must be one of: ${PARTNER_PORTAL_TYPES.join(", ")}` }, 400);

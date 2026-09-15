@@ -148,7 +148,8 @@ const TRANSPORTS = [
   { name: 'invokeAmlFunction', module: 'src/lib/aml/invokeAmlFunction.ts' },
   { name: 'streamSecureFunction', module: 'src/lib/streamSecureFunction.ts' },
   { name: 'invokeSolicitorFunction', module: 'src/lib/solicitorPortal.ts' },
-  { name: 'invokeBuilderFunction', module: 'src/lib/builderPortal.ts' },
+  // invokeBuilderFunction left with the Builder Portal (network extraction
+  // Phase 7) — /builder/* is one redirect and no builder transport remains.
   { name: 'invokeFinanceFunction', module: 'src/hooks/useFinancePortalAuth.tsx' },
 ];
 

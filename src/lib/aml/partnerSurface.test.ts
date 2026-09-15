@@ -159,7 +159,6 @@ describe("wired at the source, and cascaded to every portal", () => {
     for (const page of [
       "src/pages/finance-portal/FinancePortalComplianceWorkspace.tsx",
       "src/pages/solicitor/SolicitorCompliance.tsx",
-      "src/pages/builder/BuilderCompliance.tsx",
     ]) {
       expect(read(page), page).toContain("PartnerComplianceWorkspace");
     }

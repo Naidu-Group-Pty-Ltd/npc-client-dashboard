@@ -96,6 +96,13 @@ export const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24;
 
 export interface CashFlowRenderResponse {
   url: string;
+  /**
+   * Where the PDF was stored, in `client-files` — the same bytes the signed
+   * `url` serves. A caller that puts the document in front of a client points
+   * the portal at THIS object rather than uploading a second copy of it; the
+   * portal signs `client-files` first, then `investment-reports` (RS-5c.2).
+   */
+  path: string;
   fileName: string;
   bytes: number;
   pageCount: number | null;

@@ -40,6 +40,14 @@ export interface SnapshotResult {
   pageCount: number | null;
   /** What the tenant's brand snapshot was missing. Empty for a complete one. */
   brandGaps: string[];
+  /**
+   * Where the route stored these exact bytes (in `client-files`), or null for
+   * a document nothing stored — the in-browser generator on the deployment-gap
+   * fallback. A caller that publishes the document points the portal at it,
+   * so the file a client opens is the one that was reviewed and it exists
+   * once (RS-5c.3).
+   */
+  storagePath: string | null;
   /** `server` for the new path, `legacy` when the route is not deployed yet. */
   source: 'server' | 'legacy';
 }
@@ -83,6 +91,7 @@ export async function requestBorrowingCapacitySnapshot(
       bytes: Number(data.bytes ?? 0),
       pageCount: Number.isFinite(data.pageCount) ? Number(data.pageCount) : null,
       brandGaps: Array.isArray(data.brandGaps) ? data.brandGaps.map(String) : [],
+      storagePath: typeof data.path === 'string' && data.path ? String(data.path) : null,
       source: 'server',
     };
   }
@@ -95,7 +104,7 @@ export async function requestBorrowingCapacitySnapshot(
     );
     const legacy = await legacyFallback();
     if (legacy) {
-      return { ...legacy, pageCount: null, brandGaps: [], source: 'legacy' };
+      return { ...legacy, pageCount: null, brandGaps: [], storagePath: null, source: 'legacy' };
     }
   }
 

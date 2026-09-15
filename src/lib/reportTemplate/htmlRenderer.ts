@@ -18,7 +18,7 @@ import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgro
 import { shouldRenderBlock } from './renderVisibility';
 import { applyNarrativePlan, planNarrative } from './narrativePlan';
 import { closeDroppedBlocks } from './closeDroppedBlocks';
-import { NARRATIVE_GEOMETRY_KEY } from './blocks/markdownBlockContent';
+import { NARRATIVE_GEOMETRY_KEY, NARRATIVE_NOTES_KEY } from './blocks/markdownBlockContent';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -30,6 +30,7 @@ import {
 } from './bindingResolver';
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
+import { pagesForDocument } from '../../../supabase/functions/_shared/reports/investment/tierPageSequence.pure';
 import { tokensToCssVariables, tokensToFontFaceCss, tokenCssDeclaration } from './cssTokens';
 import {
   substitutePrintFontFaces,
@@ -917,9 +918,17 @@ export function renderTemplateToHtml(
   (ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks = options.includeBookmarks !== false;
 
   const conditionalPages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
+  // A derived tier draws only the typed pages the registry gives it — the
+  // Snapshot printed seventeen pages of which six were Compass depth — and a
+  // record that issued no grade draws no page about how the grade was
+  // reached. See `tierPageSequence.pure.ts`; every other format is untouched,
+  // and the editor sees every page it is building.
+  const tierPages = options.editorMode
+    ? conditionalPages
+    : pagesForDocument(conditionalPages, ctxBase.data as Parameters<typeof pagesForDocument>[1]);
   // Then the pages that turned out to hold something — never in the editor,
   // where an author needs to see every page they are building.
-  const visiblePages = options.editorMode ? conditionalPages : pagesWithContent(conditionalPages, template, ctxBase);
+  const visiblePages = options.editorMode ? tierPages : pagesWithContent(tierPages, template, ctxBase);
   const healedParts = healedPartNumbers(visiblePages);
 
   // Part numbers, counted over the pages that actually render. A composer
@@ -1011,6 +1020,10 @@ export function renderTemplateToHtml(
     // or every markdown instance would pack on the profile's constants while
     // the page conditionals were evaluated on the geometry's count.
     (pageCtx as any)[NARRATIVE_GEOMETRY_KEY] = (ctxBase as any)[NARRATIVE_GEOMETRY_KEY];
+    // The folded continuation notes travel with the geometry they were
+    // planned against (RS-5c.6): a page context rebuilt without them draws
+    // the last allowed page of a run without its note.
+    (pageCtx as any)[NARRATIVE_NOTES_KEY] = (ctxBase as any)[NARRATIVE_NOTES_KEY];
     (pageCtx as any)._cascadeMetadata = !!options.cascadeMetadata;
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;

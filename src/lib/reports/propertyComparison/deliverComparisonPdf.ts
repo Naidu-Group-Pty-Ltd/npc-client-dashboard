@@ -56,7 +56,8 @@ function saveToBrowser(url: string, fileName: string): void {
 export async function deliverComparisonPdf(
   request: ComparisonPdfRequest,
 ): Promise<DeliveredComparison> {
-  const templated = await tryTemplateDocument('comparison', request.comparisonId);
+  // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+  const templated = await tryTemplateDocument('comparison', request.comparisonId, { renderer: 'weasyprint' });
   if (templated) {
     saveToBrowser(URL.createObjectURL(templated.blob), templated.fileName);
     return {
@@ -98,7 +99,8 @@ export async function comparisonPdfBlob(request: ComparisonPdfRequest): Promise<
   brandGaps: string[];
   recordComplete: boolean;
 }> {
-  const templated = await tryTemplateDocument('comparison', request.comparisonId);
+  // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+  const templated = await tryTemplateDocument('comparison', request.comparisonId, { renderer: 'weasyprint' });
   if (templated) {
     return {
       blob: templated.blob,

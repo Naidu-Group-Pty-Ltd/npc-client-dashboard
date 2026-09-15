@@ -3,7 +3,6 @@ import * as XLSX from 'xlsx';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
-import { useReportTemplateSelection } from '@/hooks/useReportTemplateSelection';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -49,8 +48,10 @@ import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
 import { matchStoredScenario } from '@/lib/reports/cashFlow/storedSeriesMatch';
 import {
   saveTemplateDocument,
+  selectedTemplateFor,
   tryTemplateDocument,
 } from '@/lib/reportTemplate/templateDocument';
+import { cashFlowFinalKey } from '@/lib/reports/cashFlow/finalDocumentKey';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
 import { ArrowLeft, Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
 import { ComposedChart, LineChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -269,7 +270,6 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
    * the reason rather than left to think the choice did nothing. The query is
    * the picker's own and is already cached, so this costs no extra request.
    */
-  const cashFlowTemplateChoice = useReportTemplateSelection('cashflow');
   const [hasChanges, setHasChanges] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [editingCell, setEditingCell] = useState<{ year: number; field: EditableFieldKey } | null>(null);
@@ -342,7 +342,15 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
   // Send to Client state
   const [sendToClientOpen, setSendToClientOpen] = useState(false);
-  const [cashFlowStoragePath, setCashFlowStoragePath] = useState<string | null>(null);
+  /**
+   * The FINAL Cash Flow document already produced in this sitting, filed under
+   * the key of the projection it was drawn from — so "Send to Client" points
+   * the portal at the same stored object rather than producing it again, and
+   * never at a document an override has since made stale (RS-5c.2).
+   */
+  const [finalCashFlowDocument, setFinalCashFlowDocument] = useState<{
+    key: string; storagePath: string; fileName: string;
+  } | null>(null);
 
   // Construction Progress Schedule state
   const [constructionScheduleOpen, setConstructionScheduleOpen] = useState(false);
@@ -2234,7 +2242,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
   // Export single report 10-year cash flow as PDF with charts
   // When returnBlob is true, returns the PDF blob instead of triggering a download
-  const exportSingleReportPDF = useCallback(async (options?: { returnBlob?: boolean; chartOverrides?: { cashFlowTrends: boolean; yieldChart: boolean; comparisonChart: boolean } }): Promise<Blob | void> => {
+  const exportSingleReportPDF = useCallback(async (options?: { returnBlob?: boolean }): Promise<Blob | void> => {
     if (!report || !baseFinancialData) return;
 
     try {
@@ -2296,8 +2304,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       const sectionBg = { r: 254, g: 249, b: 235 }; // Warmer cream #fef9eb
       const negativeRed = { r: 185, g: 28, b: 28 }; // Darker red for negatives #B91C1C
 
-      // Use chartOverrides if provided (from Send to Client), otherwise use the component's toggle state
-      const activeChartToggles = options?.chartOverrides || chartExportToggles;
+      // The export menu's own chart switches decide which charts the legacy
+      // document draws. Send to Client no longer runs this generator — it ships
+      // the FINAL document (see `produceFinalCashFlowDocument`).
+      const activeChartToggles = chartExportToggles;
       
       // Capture charts first (only if toggles are enabled)
       let cashFlowChartImage: string | null = null;
@@ -3417,40 +3427,183 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     }
   }, [report, baseFinancialData, projections, includeInputsSummaryInExport, includeConstructionScheduleInExport, constructionProgressSchedule, isNewBuild, chartExportToggles, excludeLandTaxFromCashFlow, toast]);
 
-  // Generate PDF and upload to storage (for Send to Client)
+  // ── The FINAL Cash Flow document — one producer for every exit (RS-5c.2) ──
   /**
-   * Audit item 14 — "Export → Send to Client" reported
-   * `PDF generation failed. Please try again.`
+   * Three exits used to make three documents. "Generate PDF" asked the chosen
+   * template and then the format's own WeasyPrint route; "Send to Client" ran
+   * the in-browser jsPDF generator with its own chart switches and uploaded
+   * THAT; the legacy menu item ran jsPDF a third way. So the file a client
+   * opened in their portal was never the document the adviser had generated
+   * and reviewed. Everything below is the one description and the one
+   * producer the download and the send now share.
    *
-   * That message is `SendToClientModal`'s reading of a falsy return, and this
-   * function had FIVE ways to produce one: no report, no financial data, no
-   * blob, an upload that was refused, and anything thrown. Two of them logged
-   * nothing at all, and the refused upload discarded `uploadResult.error`
-   * entirely — which is where the reported failure almost certainly came from,
-   * because until the `resourceId` below was added, `secure-storage` answered
-   * `Invalid upload resource` to every human upload on this bucket (audit
-   * items 5, 7 and 8; `client_files` recorded no upload at all after July).
+   * `describeReviewedProjection` names what the document is drawn from — the
+   * ten years on screen (overrides included), the stored scenario those years
+   * prove, and the template choice at this moment — and folds them into a
+   * `key`. A send reuses a document already produced only while its key still
+   * matches: one finalisation, one PDF, and never a stale one, because a moved
+   * override is a different document.
    *
-   * So the cause is very probably already fixed. What was not fixed is that
-   * five different faults arrived as one sentence that names none of them.
-   * Each failure now throws its own reason, and the modal's catch renders it —
-   * `Failed to send: …` — so the next occurrence says what went wrong.
+   * `produceFinalCashFlowDocument` answers where the bytes ALREADY are. A
+   * templated final is stored by `render-template-pdf` (`investment-reports`),
+   * a route render by `render-cash-flow-pdf` (`client-files`), and the client
+   * portal signs either bucket — so sending is pointing the portal at a stored
+   * object, never uploading a second copy. Only the deployment-gap fallback
+   * (the route absent, jsPDF drawing the document) has nothing stored, and
+   * says so with `storagePath: null`.
    */
-  const generateAndUploadCashFlowPDF = useCallback(async (chartOverrides?: { cashFlowTrends: boolean; yieldChart: boolean; comparisonChart: boolean }): Promise<string | null> => {
+  type ReviewedProjection = {
+    wire: ReturnType<typeof toWireProjection>;
+    storedScenario: ReturnType<typeof matchStoredScenario>;
+    selectedTemplateId: string | null;
+    key: string;
+  };
+  type ProducedCashFlowDocument = {
+    key: string;
+    /**
+     * `template` and `route` are the pinned engine; `legacy` is the browser's
+     * jsPDF, reached only when the route is not deployed.
+     */
+    source: 'template' | 'route' | 'legacy';
+    blob: Blob;
+    fileName: string;
+    storagePath: string | null;
+    brandGaps: string[];
+    pageCount: number | null;
+  };
+
+  const describeReviewedProjection = useCallback(async (): Promise<ReviewedProjection> => {
+    if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
+    if (!baseFinancialData || !projections.length) throw new Error('This report has no financial figures to render.');
+
+    // The projection that crosses the wire is the one on screen, unsaved
+    // overrides included, because that is the ten years the adviser just
+    // reviewed. See `requestCashFlowPdf` for why the server does not recompute it.
+    const wire = toWireProjection({
+      projections,
+      base: baseFinancialData,
+      firstCalendarYear: new Date().getFullYear() + 1,
+      notes: baseFinancialData.includeDepreciationInCashFlow
+        ? []
+        : ['Depreciation is excluded from this projection at the adviser\'s direction.'],
+    });
+    // When the series on screen IS a stored scenario the document may honestly
+    // say "Moderate"; otherwise it says "Adviser-reviewed" — never a scenario
+    // label the series does not satisfy.
+    const storedScenario = matchStoredScenario(wire, report);
+    // Read ONCE, here, so the key this document is filed under and the template
+    // the route renders are the same reading (`selectedTemplateId` below).
+    const selectedTemplateId = await selectedTemplateFor('cashflow');
+    return {
+      wire,
+      storedScenario,
+      selectedTemplateId,
+      key: cashFlowFinalKey({ wire, scenario: storedScenario, selectedTemplateId }),
+    };
+  }, [report, baseFinancialData, projections]);
+
+  const produceFinalCashFlowDocument = useCallback(async (
+    reviewed: ReviewedProjection,
+  ): Promise<ProducedCashFlowDocument> => {
+    if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
+    const { wire, storedScenario, selectedTemplateId, key } = reviewed;
+
+    // ALWAYS the series on screen, never a re-read. The payload used to be
+    // sent only when the screen and the store disagreed, which left the
+    // matched case depending on the adapter re-reading `investment_reports` —
+    // a read that can be refused, and whose refusal is indistinguishable from
+    // "this record cannot be templated", so the document silently came out of
+    // the standard composer. Everything the template needs is already here.
+    const templated = await tryTemplateDocument('cashflow', report.id, {
+      variant: storedScenario,
+      payload: {
+        wire,
+        propertyAddress: report.property_address ?? null,
+        scenario: storedScenario,
+      },
+      // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+      renderer: 'weasyprint',
+      selectedTemplateId,
+    });
+    if (templated) {
+      return {
+        key, source: 'template', blob: templated.blob, fileName: templated.fileName,
+        storagePath: templated.storagePath, brandGaps: [], pageCount: null,
+      };
+    }
+
+    // The format's own WeasyPrint route. `exportSingleReportPDF` is its
+    // fallback and is reached ONLY when the route is not deployed; the bytes
+    // are kept rather than saved, because the caller decides what happens to
+    // them — a download saves them, a send points the portal at them.
+    let legacyBlob: Blob | null = null;
+    const result = await requestCashFlowPdf(
+      { reportId: report.id, projection: wire },
+      async () => {
+        const blob = await exportSingleReportPDF({ returnBlob: true });
+        if (!blob || !(blob instanceof Blob)) return null;
+        legacyBlob = blob;
+        return {
+          url: '',
+          fileName: `Cash_Flow_Analysis_${(report.property_address || 'report').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`,
+          bytes: blob.size,
+        };
+      },
+    );
+
+    if (result.source === 'legacy') {
+      if (!legacyBlob) throw new Error('The PDF renderer produced no document.');
+      return {
+        key, source: 'legacy', blob: legacyBlob, fileName: result.fileName,
+        storagePath: null, brandGaps: [], pageCount: null,
+      };
+    }
+
+    // A signed link, fetched rather than followed, so the caller holds the bytes.
+    const res = await fetch(result.url);
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    return {
+      key, source: 'route', blob: await res.blob(), fileName: result.fileName,
+      storagePath: result.storagePath, brandGaps: result.brandGaps, pageCount: result.pageCount,
+    };
+  }, [report, exportSingleReportPDF]);
+
+  /**
+   * Audit item 14 — "Export → Send to Client" reported `PDF generation failed.
+   * Please try again.` That message is `SendToClientModal`'s reading of a
+   * falsy return, and this function had FIVE ways to produce one; two logged
+   * nothing, and a refused upload discarded its reason. Each fault still
+   * throws its own sentence, which the modal renders as `Failed to send: …`.
+   *
+   * What it answers is the storage path the portal row is written with. Since
+   * RS-5c.2 that is the FINAL document's own stored object — the same file
+   * "Generate PDF" downloads — reused when one was already produced for this
+   * exact projection. The upload below survives only for the deployment-gap
+   * fallback, whose document nothing has stored.
+   */
+  const generateAndUploadCashFlowPDF = useCallback(async (): Promise<string | null> => {
     if (!report) throw new Error('This report could not be resolved. Close the analysis and reopen it.');
     if (!baseFinancialData) throw new Error('This report has no financial figures to render.');
 
     try {
-      // Use the full PDF generator in blob mode, with optional chart overrides from Send to Client
-      const pdfBlob = await exportSingleReportPDF({ returnBlob: true, chartOverrides });
-      if (!pdfBlob || !(pdfBlob instanceof Blob)) {
-        throw new Error('The PDF renderer produced no document.');
+      const reviewed = await describeReviewedProjection();
+      if (finalCashFlowDocument && finalCashFlowDocument.key === reviewed.key) {
+        return finalCashFlowDocument.storagePath;
       }
 
+      const doc = await produceFinalCashFlowDocument(reviewed);
+      if (doc.storagePath) {
+        setFinalCashFlowDocument({ key: doc.key, storagePath: doc.storagePath, fileName: doc.fileName });
+        return doc.storagePath;
+      }
+
+      // Only the deployment-gap fallback reaches here: the route is absent, the
+      // in-browser generator drew the document, and nothing has stored it. It
+      // is uploaded exactly as the send always was, bound to its report.
       const cleanedAddress = report.property_address.replace(/[_\s]?Copy[_\s]?\d*$/i, '').trim();
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const fileName = `cashflow-analysis/${report.id}/${timestamp}_Cash_Flow_${cleanedAddress.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
-      const file = new File([pdfBlob], fileName.split('/').pop() || 'cashflow.pdf', { type: 'application/pdf' });
+      const file = new File([doc.blob], fileName.split('/').pop() || 'cashflow.pdf', { type: 'application/pdf' });
 
       const uploadResult = await secureStorageUpload('investment-reports', fileName, file, {
         contentType: 'application/pdf',
@@ -3459,7 +3612,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       });
 
       if (uploadResult?.success && uploadResult.path) {
-        setCashFlowStoragePath(uploadResult.path);
+        setFinalCashFlowDocument({ key: doc.key, storagePath: uploadResult.path, fileName: doc.fileName });
         return uploadResult.path;
       }
       // The refusal, said rather than swallowed. `secure-storage` answers with
@@ -3467,10 +3620,10 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       // reached an operator as "PDF generation failed".
       throw new Error(uploadResult?.error || 'The document could not be stored.');
     } catch (error) {
-      console.error('Error generating cash flow PDF for upload:', error);
+      console.error('Error producing the cash flow PDF for sending:', error);
       throw error instanceof Error ? error : new Error(String(error));
     }
-  }, [report, baseFinancialData, exportSingleReportPDF]);
+  }, [report, baseFinancialData, finalCashFlowDocument, describeReviewedProjection, produceFinalCashFlowDocument]);
 
   /**
    * The typeset PDF — built here, rendered by WeasyPrint, stored and signed.
@@ -3525,95 +3678,14 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
     setIsExportingServerPdf(true);
     try {
-      const wire = toWireProjection({
-        projections,
-        base: baseFinancialData,
-        firstCalendarYear: new Date().getFullYear() + 1,
-        notes: baseFinancialData.includeDepreciationInCashFlow
-          ? []
-          : ['Depreciation is excluded from this projection at the adviser\'s direction.'],
-      });
+      const reviewed = await describeReviewedProjection();
+      const doc = await produceFinalCashFlowDocument(reviewed);
 
-      // The template path always renders the series on screen. When it is the
-      // stored series, `matchStoredScenario` names the scenario and the
-      // document says "Moderate"; when the adviser has overridden anything,
-      // the same wire this composer call sends is handed to the adapter as
-      // `payload` and the document says "Adviser-reviewed" — never a scenario
-      // label the series does not satisfy. Before the payload channel existed
-      // the choice applied only in the matched case, which for this format is
-      // the exception: the modal recomputes ten years live, so a chosen
-      // template silently fell back to the standard layout on almost every
-      // download.
-      const storedScenario = matchStoredScenario(wire, report);
-      const templated = await tryTemplateDocument('cashflow', report.id, {
-        variant: storedScenario,
-        // ALWAYS the series on screen, never a re-read.
-        //
-        // The payload used to be sent only when the screen and the store
-        // disagreed. That left the matched case depending on the adapter
-        // re-reading `investment_reports` — a read that can be refused (RLS
-        // under this app's custom auth, a module permission, an unreachable
-        // broker) and whose refusal is indistinguishable from "this record
-        // cannot be templated", so the document silently came out of the
-        // standard composer. Everything the template needs is already here, so
-        // nothing is re-read: the ten years, the address for the title, and
-        // the scenario name when `matchStoredScenario` proved one.
-        payload: {
-          wire,
-          propertyAddress: report.property_address ?? null,
-          scenario: storedScenario,
-        },
-      });
-      if (templated) {
-        saveTemplateDocument(templated);
-        logActivityDirect({
-          actionType: 'report_pdf_downloaded',
-          entityType: 'investment_report',
-          entityId: report.id,
-          entityName: report.property_address,
-          metadata: { format: 'pdf', source: 'cash_flow_template', scenario: storedScenario },
-        });
-        toast({
-          title: 'Cash Flow Analysis ready',
-          description: 'Your download should begin shortly.',
-        });
-        return;
-      }
-
-      const result = await requestCashFlowPdf(
-        { reportId: report.id, projection: wire },
-        async () => {
-          const blob = await exportSingleReportPDF({ returnBlob: true });
-          if (!blob || !(blob instanceof Blob)) return null;
-          // The legacy generator hands back bytes rather than a link, so the
-          // download happens here and the caller is told which one it got.
-          const url = URL.createObjectURL(blob);
-          const fileName = `Cash_Flow_Analysis_${(report.property_address || 'report').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 1000);
-          return { url, fileName, bytes: blob.size };
-        },
-      );
-
-      if (result.source === 'server') {
-        // A signed link, so the file is fetched and saved rather than opened —
-        // a PDF that opens in a tab is a PDF the client has to find again.
-        const res = await fetch(result.url);
-        if (!res.ok) throw new Error(`Download failed (${res.status})`);
-        const blob = await res.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = result.fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      saveTemplateDocument({ blob: doc.blob, fileName: doc.fileName });
+      // Remembered for "Send to Client", which then points the portal at the
+      // same stored object instead of producing the document a second time.
+      if (doc.storagePath) {
+        setFinalCashFlowDocument({ key: doc.key, storagePath: doc.storagePath, fileName: doc.fileName });
       }
 
       logActivityDirect({
@@ -3621,31 +3693,27 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         entityType: 'investment_report',
         entityId: report.id,
         entityName: report.property_address,
-        metadata: { format: 'pdf', source: `cash_flow_${result.source}`, pages: result.pageCount },
+        metadata: {
+          format: 'pdf',
+          source: doc.source === 'template'
+            ? 'cash_flow_template'
+            : `cash_flow_${doc.source === 'route' ? 'server' : 'legacy'}`,
+          scenario: reviewed.storedScenario,
+          pages: doc.pageCount,
+        },
       });
 
-      // Said only to somebody it is news for: this person chose a template for
-      // this format, and did not get it. The reason is specific and worth
-      // hearing — their projection is not the stored one, so a template, which
-      // renders what is stored, would have printed different figures from the
-      // ones on screen. Without this the choice looks broken.
-      const chosenTemplateUnused = !storedScenario
-        && cashFlowTemplateChoice.state?.status === 'selected';
-      const notes = [
-        result.source === 'server'
-          ? (result.brandGaps.length
-            ? `Your download should begin shortly. Note: ${result.brandGaps.join('; ')}.`
-            : 'Your download should begin shortly.')
-          : 'The server renderer is not deployed yet, so the in-browser generator was used.',
-        chosenTemplateUnused
-          ? 'Your chosen template was not used: this projection includes adjustments, '
-            + 'and a template prints the saved projection instead.'
-          : null,
-      ].filter(Boolean);
-
+      // A chosen template that was not honoured is said by `tryTemplateDocument`
+      // itself, naming the gate that closed. The note this used to add here —
+      // "a template prints the saved projection instead" — described the world
+      // before the payload channel and had become untrue.
       toast({
-        title: result.source === 'server' ? 'Cash Flow Analysis ready' : 'Generated with the legacy layout',
-        description: notes.join(' '),
+        title: doc.source === 'legacy' ? 'Generated with the legacy layout' : 'Cash Flow Analysis ready',
+        description: doc.source === 'legacy'
+          ? 'The server renderer is not deployed yet, so the in-browser generator was used.'
+          : doc.brandGaps.length
+            ? `Your download should begin shortly. Note: ${doc.brandGaps.join('; ')}.`
+            : 'Your download should begin shortly.',
       });
     } catch (error) {
       console.error('[CashFlowAnalysisModal] server PDF failed', error);
@@ -3658,8 +3726,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
       setIsExportingServerPdf(false);
     }
   }, [
-    report, baseFinancialData, projections, isExportingServerPdf, exportSingleReportPDF, toast,
-    cashFlowTemplateChoice.state?.status,
+    report, baseFinancialData, projections, isExportingServerPdf, toast,
+    describeReviewedProjection, produceFinalCashFlowDocument,
   ]);
 
   // Print-friendly view in new window
@@ -6287,7 +6355,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
         reportId={report.id}
         reportTitle={`Cash Flow Analysis - ${report.property_address}`}
         reportTier="cashflow"
-        storagePath={cashFlowStoragePath}
+        storagePath={null}
         onGeneratePDF={generateAndUploadCashFlowPDF}
       />
     )}

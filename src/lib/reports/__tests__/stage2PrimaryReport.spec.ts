@@ -63,6 +63,7 @@ describe('a render that lost content says what it lost', () => {
       unmatchedEmphasis: 1, inlineSkipped: 2, figuresDrawn: 6, figuresDropped: 0,
       headingsDroppedEmpty: 0, footnotesRendered: 2, footnoteRefsDropped: 0,
       listRunsMerged: 1,
+      delimiterRowsNormalised: 0,
     };
     expect(contentLosses(transformed)).toEqual([]);
 
@@ -82,6 +83,7 @@ describe('a render that lost content says what it lost', () => {
       unmatchedEmphasis: 0, inlineSkipped: 0, figuresDrawn: 0, figuresDropped: 0,
       headingsDroppedEmpty: 0, footnotesRendered: 0, footnoteRefsDropped: 0,
       listRunsMerged: 0,
+      delimiterRowsNormalised: 0,
     });
     expect(base).toContain('1 table could not be parsed and was dropped');
     expect(base).toContain('2 list items dropped');

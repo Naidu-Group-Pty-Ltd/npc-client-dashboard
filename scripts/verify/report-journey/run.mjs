@@ -252,7 +252,7 @@ if (await sendBtn.isVisible().catch(() => false)) {
     await clientRow.click();
     const rendersBeforeSend = dbl.state.renders.length;
     const downloadsBeforeSend = downloads.length;
-    await sendDialog.getByRole('button', { name: /generate & send|^send/i }).first().click();
+    await sendDialog.getByRole('button', { name: /prepare & send|^send\b/i }).first().click();
     await page.waitForFunction(() => !document.querySelector('[role="dialog"] button:has(svg.animate-spin)'), null, { timeout: 180_000 }).catch(() => {});
     await page.waitForTimeout(1500);
     const sent = dbl.state.portalReports[dbl.state.portalReports.length - 1];

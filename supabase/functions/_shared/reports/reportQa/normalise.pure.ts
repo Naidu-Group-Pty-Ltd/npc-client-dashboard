@@ -54,6 +54,20 @@ export interface BuildInput {
   messageId?: string | null;
   /** ISO instant. Passed in — this module has no clock. */
   preparedOn: string;
+  /**
+   * Keep every turn of a transcript rather than applying the line budget.
+   *
+   * The budget bounds the FLOWING route's document, which sets every answer
+   * in full. The templated masters set the FIRST answer alone, bounded by
+   * their own answer pages, and list the further questions in a table — so
+   * the budget bought nothing there and cost the table its rows: a four-
+   * exchange conversation whose first answer ran 28,690 characters was cut
+   * to one turn, and the only place the other three questions appeared did
+   * not draw at all (measured on the Chancery render, 14 Sep 2026). The
+   * projection still caps the list (`CAPS.turns`) and every question is
+   * already bounded (`MAX_QUESTION_CHARS`), so nothing here is unbounded.
+   */
+  keepAllTurns?: boolean;
 }
 
 export type BuildResult =
@@ -398,7 +412,9 @@ export function buildReportQaDocument(input: BuildInput): BuildResult {
   }
 
   if (!allTurns.length) return { ok: false, error: 'this conversation has no messages' };
-  const { kept, charsOmitted } = applyBudget(allTurns);
+  const { kept, charsOmitted } = input.keepAllTurns
+    ? { kept: [...allTurns], charsOmitted: 0 }
+    : applyBudget(allTurns);
   const models = modelsOf(kept);
   return {
     ok: true,

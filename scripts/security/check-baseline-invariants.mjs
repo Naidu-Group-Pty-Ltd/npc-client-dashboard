@@ -168,11 +168,12 @@ const stripComments = (src) => src
 // unverified addresses through that portal only, which is exactly the kind of
 // gap that is invisible until somebody uses it.
 {
+  // (builder-portal-verify left with the Builder Portal — network
+  // extraction Phase 7; the Builders Network verifies its own addresses.)
   const REQUIRED = [
     'custom-auth-verify-v2',
     'client-portal-verify',
     'finance-portal-verify',
-    'builder-portal-verify',
   ];
   for (const fn of REQUIRED) {
     try {

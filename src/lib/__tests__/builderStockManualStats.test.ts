@@ -144,37 +144,15 @@ describe('laying the builder’s figures over the document’s', () => {
   });
 });
 
-/**
- * THE RULE THE WHOLE FEATURE RESTS ON.
- *
- * `writablePatch` names bedrooms, bathrooms, car_spaces, building_size_sqm and
- * land_size_sqm, and writes each whenever the incoming file states anything at
- * all. A figure typed into those columns would survive a silent stock list and
- * be destroyed by the next one that speaks — the builder's deliberate
- * correction losing to the document it was correcting, which is exactly what a
- * repaired image used to suffer against a re-upload (#2347).
+/*
+ * "A re-import cannot reach a builder's own figures" was pinned here against
+ * `importStock.ts`'s writablePatch until the import pipeline left with the
+ * portal (network extraction Phase 7). Nothing on this deployment writes the
+ * stock columns any more — mirror rows arrive from the Builders Network with
+ * the override column carried verbatim — so the surviving halves of the rule
+ * are the ones below: the read overlay, and the reading that separates a
+ * silent file from a lost number.
  */
-describe('a re-import cannot reach a builder’s own figures', () => {
-  const importer = () => readFileSync(
-    join(process.cwd(), 'supabase/functions/_shared/builderStock/importStock.ts'), 'utf8',
-  );
-  const stripComments = (source: string) => source
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-
-  it('writablePatch still names every column the override exists to outlive', () => {
-    // A guard on the guard: if these stop being patched, the override column
-    // is no longer load-bearing and this whole design should be revisited
-    // rather than silently kept.
-    const code = stripComments(importer());
-    for (const field of MANUAL_STAT_FIELDS) {
-      expect(code).toContain(`set('${field}'`);
-    }
-  });
-
-  it('and never names manual_stats', () => {
-    expect(stripComments(importer())).not.toContain('manual_stats');
-  });
-});
 
 /**
  * The overlay happens in the ONE place both audiences pass through. A read
@@ -183,8 +161,9 @@ describe('a re-import cannot reach a builder’s own figures', () => {
  * disagreeing about one house.
  */
 describe('every read path applies the overlay', () => {
+  /* The portal's own read left with the portal; the marketplace, reading the
+     builder_network_stock_* mirror since Phase 7 wave 2, is the read path. */
   const READ_PATHS = [
-    'supabase/functions/builder-portal-stock/index.ts',
     'supabase/functions/builder-stock-marketplace/index.ts',
   ];
 
@@ -220,59 +199,17 @@ describe('every read path applies the overlay', () => {
 
 });
 
-/**
- * A CHECK CONSTRAINT PASSES ON NULL AND FAILS ONLY ON FALSE.
- *
- * The first version of the column's constraint opened with
- * `jsonb_typeof(manual_stats -> 'values') = 'object'`. On an object with no
- * `values` key, `->` is SQL NULL, so that comparison is NULL rather than
- * false, the whole `and` chain evaluates to NULL, and Postgres ACCEPTS the
- * row — every test after it skipped for the same reason. Probed against the
- * live constraint, `{"recorded_at":"x"}` stored without complaint.
- *
- * No reader was fooled (`readManualStats` answers null for it, which the cases
- * above pin), but a constraint that does not enforce what its own comment
- * claims is the shape this repo has been burned by before: asserted by
- * configuration rather than by effect.
- *
- * This pins the fix at the source, because the effect can only be measured
- * against a live database and CI has none.
+/*
+ * The CHECK constraint that guarded manual_stats’ shape (“asserts the
+ * `values` KEY is present, not merely that its type is object” — a NULL
+ * from `->` on an absent key satisfies a CHECK) was pinned here against the
+ * migration that created it, and both left with the portal: the column the
+ * marketplace reads now lives on builder_network_stock_items, written by the
+ * network sync rather than by any operation of this deployment’s, so there
+ * is no local write path for a constraint to guard. What survives is the
+ * reader’s own refusal — `readManualStats` answers null for any malformed
+ * shape, which the cases above pin.
  */
-describe('the column\u2019s own constraint cannot be satisfied by a NULL', () => {
-  /*
-   * THE SQL, NOT THE PROSE ABOUT THE SQL. The migration's header quotes the
-   * broken expression verbatim in order to explain it, so a check over the
-   * raw file finds that quotation and reports the defect it documents — which
-   * is how the ordering case below failed on correct SQL the first time it
-   * ran. `--` comments go before anything is judged.
-   */
-  const migration = () => readFileSync(
-    join(process.cwd(),
-      'supabase/migrations/20261119170000_builder_stock_manual_stats.sql'),
-    'utf8',
-  ).replace(/^\s*--.*$/gm, '');
-
-  it('asserts the `values` KEY is present, not merely that its type is object', () => {
-    const sql = migration();
-    // `?` is strictly true or false, so it cannot leak a NULL into the chain.
-    expect(sql).toContain("manual_stats ? 'values'");
-  });
-
-  it('asserts presence BEFORE any expression that dereferences it', () => {
-    const sql = migration();
-    const presence = sql.indexOf("manual_stats ? 'values'");
-    const firstDeref = sql.indexOf("jsonb_typeof(manual_stats -> 'values')");
-    expect(presence).toBeGreaterThan(-1);
-    expect(firstDeref).toBeGreaterThan(-1);
-    // Order matters: `and` short-circuits left to right, so a dereference
-    // above the presence test is a NULL reaching the chain again.
-    expect(presence).toBeLessThan(firstDeref);
-  });
-
-  it('still admits a null column, which is what every existing row holds', () => {
-    expect(migration()).toContain('manual_stats is null');
-  });
-});
 
 describe('what the plate says about the figures', () => {
   const item = (over: Partial<BuilderStockItem> = {}) => ({

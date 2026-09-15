@@ -218,7 +218,12 @@ function readFlow(html: string): MarkdownItem[] {
       case 'ul': case 'ol':
         flushText();
         if (t.close) counts.pop();
-        else counts.push(t.tag === 'ol' ? 1 : 0);
+        else {
+          // `start` is where a continued run resumes (the emitter writes it
+          // beside the CSS counter the engine reads); the painter counts from it.
+          const start = Number(attr(t.attrs, 'start'));
+          counts.push(t.tag === 'ol' ? (Number.isFinite(start) && start > 0 ? start : 1) : 0);
+        }
         break;
       case 'li':
         flushText();

@@ -154,8 +154,10 @@ describe('cross-portal credential resolution', () => {
     );
   });
 
-  /** The Builder and Solicitor extractors were already clean — keep them so. */
-  it.each(['builderSessionToken.ts', 'solicitorSessionToken.ts'])(
+  /* The Solicitor extractor was already clean — keep it so. (The Builder
+     extractor was equally clean and left with the portal, network
+     extraction Phase 7.) */
+  it.each(['solicitorSessionToken.ts'])(
     '%s never reads the staff cookie',
     (module) => {
       expect(shared(module)).not.toMatch(new RegExp(`cookies\\['${STAFF_COOKIE}'\\]`));
@@ -243,7 +245,6 @@ describe('Command Centre password reset is reachable by a locked-out user', () =
       'client-portal-reset-password',
       'finance-portal-reset-password',
       'solicitor-portal-reset-password',
-      'builder-portal-reset-password',
     ]) {
       expect(fn(name)).not.toMatch(/\bawait verifyAuth\s*\(/);
     }

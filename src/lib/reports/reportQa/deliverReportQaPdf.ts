@@ -82,7 +82,8 @@ export async function deliverReportQaPdf(
   // structured report — and the adapter reads it to decide which of the three
   // documents a conversation makes. Passing it is what stops every templated
   // export being a transcript.
-  const templated = await tryTemplateDocument('qa', conversationId, { variant: subject });
+  // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+  const templated = await tryTemplateDocument('qa', conversationId, { variant: subject, renderer: 'weasyprint' });
   if (templated) {
     if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);
     return {

@@ -6,7 +6,7 @@ import {
   composeSwotSection,
   composeVerdictSection,
 } from '../_shared/reports/investment/scoreSections.pure.ts';
-import { stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { dropEmptySections, stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
 import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
 import { assembleInDeclaredOrder, type ComposedPlacement } from '../_shared/reports/investment/tierAssembly.pure.ts';
@@ -728,6 +728,11 @@ IMPORTANT:
       condensedContent = scrubbed.markdown;
       hygiene.placeholder_rows_removed = scrubbed.removedRows;
       hygiene.placeholder_tables_removed = scrubbed.removedTables;
+      // And the heading a scrubbed table leaves standing over nothing goes
+      // with it — a "Key Market Stats" with no stats is a promise unkept.
+      const sections = dropEmptySections(condensedContent);
+      condensedContent = sections.markdown;
+      hygiene.empty_sections_removed = sections.dropped.length;
 
       // The same rule for the two block types the row scrubber cannot see: a
       // stat card with no value (the renderer draws its UNIT in display type)

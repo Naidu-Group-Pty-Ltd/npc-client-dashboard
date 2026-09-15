@@ -220,7 +220,6 @@ describe("wired at the source", () => {
   it("all three portals get it, because there is one workspace", () => {
     for (const page of [
       "src/pages/finance-portal/FinancePortalComplianceWorkspace.tsx",
-      "src/pages/builder/BuilderCompliance.tsx",
       "src/pages/solicitor/SolicitorCompliance.tsx",
     ]) {
       expect(read(page), page).toContain("PartnerComplianceWorkspace");

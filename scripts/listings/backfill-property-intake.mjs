@@ -82,22 +82,29 @@
  * `AIRTABLE_IMAGE_LIBRARY_FIELD`). Passing a pipeline name here would be the
  * defect `update-integration-secret` already refuses.
  *
- * Node 22 or later: `createClient` builds a RealtimeClient that demands a
- * native WebSocket.
+ * Node 22 or later on the live path: `createClient` builds a RealtimeClient that
+ * demands a native WebSocket. `--from-file` needs neither.
  *
- * Usage:
+ * Usage — reading the cache live (needs the service-role key):
  *   SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \
  *   AIRTABLE_REBUILD_TOKEN=pat... AIRTABLE_REBUILD_BASE_ID=appFNPL7iYiuQyHAO \
  *     node scripts/listings/backfill-property-intake.mjs [options]
  *
+ * Usage — from a source extract (the Airtable token is the only secret):
+ *   AIRTABLE_REBUILD_TOKEN=pat... AIRTABLE_REBUILD_BASE_ID=appFNPL7iYiuQyHAO \
+ *     node scripts/listings/backfill-property-intake.mjs --from-file rows.json
+ *
  * Options:
- *   --dry-run      Resolve, map and report. Write nothing.
- *   --verify       Compare the target against the cache; write nothing.
- *   --limit <n>    Copy at most n source rows (for a staged first run).
- *   --batch <n>    Records per Airtable request (default 10, max 50).
- *   --undo         Delete exactly the records this script wrote, and nothing else.
+ *   --dry-run        Resolve, map and report. Write nothing.
+ *   --verify         Compare the target against the source; write nothing.
+ *   --limit <n>      Copy at most n source rows (for a staged first run).
+ *   --batch <n>      Records per Airtable request (default 10, max 50).
+ *   --from-file <p>  Read the source rows from a JSON extract rather than
+ *                    querying Supabase, so no service-role key is needed.
+ *   --undo           Delete exactly the records this script wrote, and nothing else.
  */
-import { createClient } from '@supabase/supabase-js';
+// `@supabase/supabase-js` is imported lazily, inside the live-read branch only,
+// so `--from-file` runs without the dependency and without a service-role key.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -132,7 +139,7 @@ const UNWRITABLE_TYPES = new Set([
 ]);
 
 function parseArgs(argv) {
-  const opts = { dryRun: false, verify: false, undo: false, limit: null, batch: 10 };
+  const opts = { dryRun: false, verify: false, undo: false, limit: null, batch: 10, fromFile: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--dry-run') opts.dryRun = true;
@@ -140,9 +147,49 @@ function parseArgs(argv) {
     else if (a === '--undo') opts.undo = true;
     else if (a === '--limit') opts.limit = Number(argv[++i]);
     else if (a === '--batch') opts.batch = Math.min(50, Math.max(1, Number(argv[++i])));
+    else if (a === '--from-file') opts.fromFile = argv[++i];
     else throw new Error(`Unknown option: ${a}`);
   }
   return opts;
+}
+
+/**
+ * Read the source rows from a file instead of querying Supabase.
+ *
+ * This exists so the only credential the run needs is the Airtable token. The
+ * live path needs `SUPABASE_SERVICE_ROLE_KEY`, which bypasses RLS on the whole
+ * database — a disproportionate thing to hand around for a read-only copy that
+ * anyone with ordinary read access can perform. `load-pep-officeholders.mjs`
+ * carries the same `--file` escape for the same shape of reason.
+ *
+ * The file is `{ rows: [{listing_id, created_time, fields}], dropped_columns }`.
+ * `dropped_columns` is not decoration: an extract narrowed before the script saw
+ * it can silently under-copy if `INTAKE_FIELDS` has widened since, so anything
+ * dropped that this run actually wants is reported rather than skipped quietly.
+ */
+function readSourceFile(path, wantedNames) {
+  const parsed = JSON.parse(readFileSync(path, 'utf8'));
+  const rows = Array.isArray(parsed) ? parsed : parsed.rows;
+  if (!Array.isArray(rows)) {
+    throw new Error(`${path} does not hold a rows array. Expected {rows:[…]} or a bare array.`);
+  }
+  for (const r of rows) {
+    if (typeof r?.listing_id !== 'string' || typeof r?.fields !== 'object' || r.fields === null) {
+      throw new Error(`${path} contains a row without a listing_id and a fields object.`);
+    }
+  }
+  const dropped = Array.isArray(parsed.dropped_columns) ? parsed.dropped_columns : [];
+  const lost = dropped.filter((c) => wantedNames.has(c));
+  if (lost.length) {
+    throw new Error(
+      `${path} was extracted without ${lost.length} column(s) this run needs: ${lost.join(', ')}. `
+      + 'Re-extract without dropping them, or run against Supabase directly.',
+    );
+  }
+  if (dropped.length) {
+    console.log(`Source file dropped ${dropped.length} column(s) at extraction, none of them wanted: ${dropped.join(', ')}`);
+  }
+  return rows;
 }
 
 /**
@@ -212,16 +259,17 @@ async function main() {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const token = process.env.AIRTABLE_REBUILD_TOKEN;
   const baseId = process.env.AIRTABLE_REBUILD_BASE_ID;
-  const missing = [
-    ['SUPABASE_URL', supabaseUrl], ['SUPABASE_SERVICE_ROLE_KEY', serviceKey],
-    ['AIRTABLE_REBUILD_TOKEN', token], ['AIRTABLE_REBUILD_BASE_ID', baseId],
-  ].filter(([, v]) => !v).map(([k]) => k);
+  const required = [['AIRTABLE_REBUILD_TOKEN', token], ['AIRTABLE_REBUILD_BASE_ID', baseId]];
+  // Supabase is only needed when the rows are being read live.
+  if (!opts.fromFile) {
+    required.push(['SUPABASE_URL', supabaseUrl], ['SUPABASE_SERVICE_ROLE_KEY', serviceKey]);
+  }
+  const missing = required.filter(([, v]) => !v).map(([k]) => k);
   if (missing.length) {
     console.error(`Missing required environment: ${missing.join(', ')}`);
     process.exit(2);
   }
 
-  const supabase = createClient(supabaseUrl, serviceKey);
   const { tableId, byName } = await resolveSchema(token, baseId);
 
   const stampField = byName.get(STAMP_COLUMN);
@@ -265,13 +313,23 @@ async function main() {
   console.log(`  absent from target:  ${droppedAbsent.length}  ${droppedAbsent.join(', ')}`);
 
   /* ---- Source -------------------------------------------------------- */
-  const { data: rows, error } = await supabase
-    .from('listings_cache')
-    .select('listing_id, fields, created_time')
-    .is('archived_at', null)
-    .order('listing_id');
-  if (error) throw new Error(`Reading listings_cache failed: ${error.message} (${error.code ?? 'no code'})`);
-  console.log(`Live rows in listings_cache: ${rows.length}`);
+  let rows;
+  if (opts.fromFile) {
+    rows = readSourceFile(opts.fromFile, new Set(wanted));
+    rows.sort((a, b) => a.listing_id.localeCompare(b.listing_id));
+    console.log(`Rows read from ${opts.fromFile}: ${rows.length}`);
+  } else {
+    const { createClient } = await import('@supabase/supabase-js');
+    const supabase = createClient(supabaseUrl, serviceKey);
+    const { data, error } = await supabase
+      .from('listings_cache')
+      .select('listing_id, fields, created_time')
+      .is('archived_at', null)
+      .order('listing_id');
+    if (error) throw new Error(`Reading listings_cache failed: ${error.message} (${error.code ?? 'no code'})`);
+    rows = data;
+    console.log(`Live rows in listings_cache: ${rows.length}`);
+  }
 
   /* ---- Skip what is already there ------------------------------------ */
   const existing = await listAllRecords(token, baseId, tableId, [stampField.id]);

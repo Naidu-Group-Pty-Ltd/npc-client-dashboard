@@ -3,12 +3,13 @@
 > **The Airtable half of this cutover was never thrown.** The blueprints below
 > are re-pointed at `appFNPL7iYiuQyHAO`, but the scenario that is actually
 > running still writes `apptyShYE0yzL4IGB`, and that is where every listing the
-> product serves comes from. `appFNPL7iYiuQyHAO` has held the same 148 records,
-> all stamped `2026-08-18T13:20:37`, ever since the copy. Importing these
-> blueprints as they stand therefore *moves* intake to a base nothing reads.
-> Read
-> [`AIRTABLE_KEY_OWNERSHIP.md`](../AIRTABLE_KEY_OWNERSHIP.md) before acting on
-> this file.
+> product serves comes from. `appFNPL7iYiuQyHAO` held 148 empty shells from the
+> copy until 2026-09-15, when they were deleted; it now holds **2** real
+> listings against the live base's 171. Importing these blueprints as they stand
+> therefore still *moves* intake to a base nothing reads. Read
+> [`AIRTABLE_KEY_OWNERSHIP.md`](../AIRTABLE_KEY_OWNERSHIP.md) and
+> [`BASE_BACKFILL.md`](../../listings/BASE_BACKFILL.md) before acting on this
+> file.
 
 
 State of the migration into the new Make account (team `2731020`, org `8699071`,
@@ -154,6 +155,14 @@ prerequisite done, not the cutover.
 | `NPC Delete Booking Test` | `ghl_delete_event_npc` |
 | `NPC Delete Strategy Session` / `(Zoom)` | `ghl_delete_event_npc_2` / `_2_1` |
 | `NPC Delete IFC Session` / `(Zoom)` | `ghl_delete_event_npc_3` / `_3_1` |
+| `Vapi - phoneNumber_inject v2` | `phoneNumber_inject` (`9789b720…`) |
+
+Re-counted live on 2026-09-15: **thirteen** scenarios in this team are active,
+and the row above is the thirteenth. It was resolved in
+[`VAPI_REPOINT.md`](../vapi/npc-services/VAPI_REPOINT.md) but omitted from this
+table, so the table said twelve while the account said thirteen. A fourteenth
+scenario, `Aurixa — Builder Stock Sheet Link Recovery` (`6102712`), is also
+active and belongs to a different piece of work.
 
 **Everything that touches Airtable was left off, on purpose.** None of the
 thirteen holds the Airtable connection — they are GoHighLevel, Twilio and OpenAI
@@ -173,16 +182,31 @@ All six import-ready scenarios point at **`appFNPL7iYiuQyHAO`**, the rebuild, an
 at the live base zero times. Counted in the blueprints: 26 references each in the
 three `NPC Email` scenarios, 3 / 1 / 3 in the Aurixa trio.
 
-**That base receives nothing.** Measured 2026-09-15: `Property Intake Master`
-holds 148 rows all stamped `2026-08-18T13:20:37`, and `Aurixa Waitlist` holds 10
-rows all stamped `2026-08-18T13:22:03` with a newest `Date Added` of
-**2026-08-15**. Both frozen at the copy.
+**That base receives almost nothing, and the Aurixa half is still frozen.**
+Re-measured 2026-09-15, and it has moved since the note above was written:
 
-So activating any of the six does one of two harmful things: moves listing
-intake to a base nothing reads, or drives the Aurixa invite funnel off ten stale
-applicants while missing every new one. Neither is a Make problem and neither has
-a Make fix — the decision is which Airtable base is authoritative, and until it
-is made those six stay off.
+- `Property Intake Master` — the 148 migrated shells were **deleted**, and the
+  table now holds **2 real listings** (a pilot, and one record from the backfill
+  script's validation run). Neither came from Make; `NPC Email 1 New` is inactive
+  and has no execution history in this account.
+- `Aurixa Waitlist` — still **10 rows**, all stamped `2026-08-18T13:22:03`,
+  newest `Date Added` **2026-08-15**. Unchanged. Frozen at the copy.
+
+So activating the three `NPC Email` scenarios moves listing intake to a base that
+holds two listings, and activating the Aurixa trio drives the invite funnel off
+ten stale applicants while missing every new one. Neither is a Make problem and
+neither has a Make fix.
+
+**The listings half now has a remedy, and it is a prerequisite rather than a
+decision.** `npm run listings:backfill-intake` copies the 171 live rows from
+`listings_cache` into the rebuild, so a cutover stops presenting the whole
+marketplace to `planReconciliation` as having vanished. Read
+[`BASE_BACKFILL.md`](../../listings/BASE_BACKFILL.md) before running it — it
+records what can and cannot travel, and why running it commits to nothing.
+
+The Aurixa half has no equivalent: those ten applicants are the only copy, and
+the live base has taken more since. That decision — which Airtable base is
+authoritative — is still open, and until it is made the six stay off.
 
 ## Webhook re-pointing
 

@@ -149,7 +149,7 @@ read back. Match those by scenario name.
 | Aurixa Waitlist Stage 1 | — | `https://hook.us2.make.com/eku2vhixkfc8uw3ua43a6apuri9x45fc` |
 | Aurixa Waitlist Stage 2 | — | `https://hook.us2.make.com/xqat3ism55qanlbhu67qqx4t31yvcy6h` |
 | Aurixa Waitlist Stage 3 | — | `https://hook.us2.make.com/gu22njaaq9smhe87feuflr4aksd7wnnp` |
-| Discovery Call Handoff | `…/2ubukyatwc0ig8zinphjjc4dciwhigqg` | `https://hook.us2.make.com/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw` |
+| Discovery Call Handoff | — (see note) | `https://hook.us2.make.com/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw` |
 | GHL MCP - Get Contact By Phone via HTTP | — | `https://hook.us2.make.com/eexehoud6y1tfoinmepbvp8fcv1qfuj1` |
 | Integration Webhooks, PDFMonkey | — | `https://hook.us2.make.com/l8laqb9a7y3kegqxe8a1b64eic1yxt74` |
 | NPC Active Nurturing | — | `https://hook.us2.make.com/q4qyrh4kdblw23bwsa2rdltkkngv1snm` |
@@ -185,6 +185,27 @@ read back. Match those by scenario name.
 `Discovery Call Handoff` are Vapi *app* hooks, bound to an assistant id
 (`cc46d882-…` and `bfff143e-…`) through connection `10496920`. They are not
 editable as plain URLs — re-pointing those means updating the assistant in Vapi.
+
+### One row in this table was wrong, and why
+
+**`2ubukyatwc0ig8zinphjjc4dciwhigqg` was never `Discovery Call Handoff`'s hook.**
+It is the server URL of the Vapi tool `phoneNumber_inject` (`9789b720…`),
+confirmed against the live Vapi API on 2026-09-15 and already agreed by six other
+files in this repository. The row above is corrected to blank.
+
+The error came from the method described below, and the method is the lesson:
+searching the blueprints for an eu2 udid finds it, but **every occurrence of
+every such udid sits inside `metadata.designer.samples`** and none sits in live
+configuration. A sample is a cached Vapi payload, so a sample in scenario A
+routinely carries scenario B's URL — `9inh27jw…` appears in the samples of five
+different delete scenarios, which one tool cannot own. A blueprint hit shows
+that a scenario *saw* a URL, never that it *owns* one.
+
+The eu2 hook→scenario binding is readable only from the legacy account, whose
+token is zone-bound. It cannot be recovered from these exports.
+[`../vapi/npc-services/VAPI_REPOINT.md`](../vapi/npc-services/VAPI_REPOINT.md)
+carries the map that could be resolved without it — ten of thirteen — and names
+the one that could not.
 
 ### Where the eu2 URLs were found, and what that means
 

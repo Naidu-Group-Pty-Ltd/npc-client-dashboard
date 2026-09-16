@@ -213,6 +213,28 @@ describe('where the write goes', () => {
     );
   });
 
+  it('says the broker serves provisioned workspaces, so the prime is not sent to it', () => {
+    // Naming the broker first is not the same as naming it for everyone, and
+    // the message used to read as though it were. Mission Control refuses a
+    // prime-scoped key 403 `not_a_clone_key` and refuses the prime's own
+    // project as a target, so an operator who followed this advice on the
+    // prime traded an honest 400 for a 403 that looks configured.
+    const r = resolveIntegrationSecretRoute({
+      managementToken: null,
+      supabaseUrl: `https://${CLONE_REF}.supabase.co`,
+      missionControlUrl: null,
+      cloneApiKey: null,
+    });
+    expect(r.via).toBe('unconfigured');
+    if (r.via !== 'unconfigured') return;
+    // Both routes are named, and the broker's audience is stated rather than
+    // implied. The assertions are on the CLAIM, not on the wording around it.
+    expect(r.why).toContain('MISSION_CONTROL_CLONE_API_KEY');
+    expect(r.why).toContain('SB_MANAGEMENT_ACCESS_TOKEN');
+    expect(r.why.toLowerCase()).toContain('provisioned');
+    expect(r.why.toLowerCase()).toContain('prime');
+  });
+
   it('reads a project ref only from a real project URL', () => {
     expect(ownProjectRefFromUrl(`https://${CLONE_REF}.supabase.co`)).toBe(CLONE_REF);
     expect(ownProjectRefFromUrl('https://short.supabase.co')).toBeNull();

@@ -10,7 +10,21 @@ const corsHeaders = {
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-// Map of integration IDs to their secret names
+// Map of integration IDs to their secret names.
+//
+// NOTE: `INTEGRATION_SECRET_MAP` (imported above, generated from
+// `src/lib/integrations/registry.ts`) is the source of truth for which
+// credentials a card declares. This local copy is a second literal of the same
+// fact, and the two have drifted: measured 2026-09-16, 37 integrations differ,
+// every difference being a name the generated map has and this one lacks. No
+// key exists only here, so this copy carries nothing unique.
+//
+// It is not simply replaced yet because `configured` below is all-or-nothing
+// (`configuredSecrets.length === secretNames.length`), so adopting the generated
+// map would make every card with an unset OPTIONAL name — RESEND_FROM_EMAIL,
+// TWILIO_FROM_NUMBER, the eight GOOGLE_*_DAILY_LIMIT names — start reporting as
+// incomplete. Reconciling the two is a change to `configured` first, then a
+// deletion of this map.
 const integrationSecretMap: Record<string, string[]> = {
   // Expanded library
   'groq': ['GROQ_API_KEY'],
@@ -149,7 +163,11 @@ const integrationSecretMap: Record<string, string[]> = {
   'resend': ['RESEND_API_KEY'],
   'microsoft': ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID', 'MICROSOFT_MAILBOX_EMAIL'],
   'twilio': ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
-  'vapi': ['VAPI_API_KEY'],
+  // VAPI_WEBHOOK_SECRET is named here because it is the one credential the call
+  // webhook actually verifies. Omitting it meant this endpoint could never place
+  // it in `missingSecrets`, so the page that exists to configure it could not
+  // report it unset — while call logging was dead from 2026-07-22 for want of it.
+  'vapi': ['VAPI_API_KEY', 'VAPI_WEBHOOK_SECRET'],
   'webpush': ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'],
   // Documents & rendering
   'docusign': ['DOCUSIGN_INTEGRATION_KEY', 'DOCUSIGN_USER_ID', 'DOCUSIGN_ACCOUNT_ID', 'DOCUSIGN_RSA_PRIVATE_KEY'],

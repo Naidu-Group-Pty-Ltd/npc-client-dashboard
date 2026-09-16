@@ -269,13 +269,33 @@ export function resolveIntegrationSecretRoute(input: {
     };
   }
 
+  /*
+   * Both routes, and who each one is for.
+   *
+   * The broker stays named FIRST, for the reason it always was: a clone told
+   * to go and fetch a Supabase personal access token is being sent after the
+   * one credential this arrangement exists to keep off its project.
+   *
+   * But naming it first is not the same as naming it for everyone, and the
+   * message used to read as though it were. Measured 16 Sep 2026 on the prime:
+   * the page said this, an operator followed it, and the broker would have
+   * refused twice over — Mission Control rejects a prime-scoped key
+   * (`clone_id` null) 403 `not_a_clone_key`, and `decideCloneSecretTarget`
+   * refuses any target equal to `prime_config.supabase_project_ref` with
+   * `target_is_prime`. Setting the pair would have moved the page from this
+   * honest 400 to a 403, which is worse: it looks configured.
+   */
   return {
     via: 'unconfigured',
     why:
       'This deployment can neither write its own secrets nor reach Mission Control. It needs ' +
-      'either MISSION_CONTROL_URL and MISSION_CONTROL_CLONE_API_KEY (the ordinary arrangement — ' +
-      'Mission Control holds the management credential and writes on this workspace\'s behalf), ' +
-      'or its own SB_MANAGEMENT_ACCESS_TOKEN.',
+      'either MISSION_CONTROL_URL and MISSION_CONTROL_CLONE_API_KEY — the ordinary arrangement ' +
+      'for a workspace Mission Control PROVISIONED, whose own key is what names the project it ' +
+      'may write to — or its own SB_MANAGEMENT_ACCESS_TOKEN, which is the route for a ' +
+      'deployment that holds a management token of its own, the prime included. The broker ' +
+      'serves provisioned workspaces only: it refuses a prime-scoped key, and refuses the ' +
+      'prime\'s own project as a target, so setting that pair here would replace this message ' +
+      'with a 403 rather than a working save.',
   };
 }
 

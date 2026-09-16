@@ -153,6 +153,54 @@ Copy is about the **account**, never the reader: the person looking at it may
 have joined last week and have no idea a payment was owed. It never says a
 payment failed — this build cannot know that — and a test asserts the wording.
 
+## It could not lock at all, and failing open is why nobody noticed
+
+From the day the routes shipped (8 Sep 2026) until 16 Sep, **every gate read
+answered 429** and the clone rendered the dashboard on every one of them.
+
+Mission Control gave the gate its own rate-limit bucket the only way the
+limiter allowed — by composing the bucket into the key:
+
+```ts
+checkRateLimit(`gate:${key.id}`, 120)          // clones.gate
+checkRateLimit(`gate:checkout:${key.id}`, 12)  // clones.gate.checkout
+```
+
+`check_api_rate_limit(_key_id uuid, …)` takes a **uuid**, and
+`'gate:550e8400-…'::uuid` is `22P02 invalid input syntax for type uuid`. The
+RPC errored on every call; `checkRateLimit` fails CLOSED on a DB error by
+design; the route returned 429; and `fetchGateVerdict` treats any non-ok status
+as unknown and renders the dashboard. Measured over 24h on 2026-09-16:
+
+| Deployment | Real gate reads | Answered 429 |
+| ---------- | --------------- | ------------ |
+| NPC Property Dashboard | 666 | 666 (100%) |
+| npc-client-dashboard | 519 | 519 (100%) |
+
+Three things are worth keeping.
+
+**The fail-open policy did exactly what it promises, and that is why this was
+invisible.** No customer was ever locked out by the fault — but a gate that can
+never lock is indistinguishable, from every surface, from a gate with nothing
+to lock. The lesson is not to fail closed; it is that *the open path needs its
+own signal.*
+
+**There was no such signal, because the one that exists sits downstream of the
+failure.** `recordGateCheck` stamps `last_checked_at` / `check_count` **after**
+the rate-limit return, so a gate being polled 666 times a day and refused every
+time reads in the operator console exactly like a gate nobody has ever opened.
+
+**The same defect was in both storefront purchase routes**, found by the test
+written for this one rather than by the investigation. `checkPublicRateLimit`
+and `public_rate_limits` exist for them: `h` is a handoff id and `uid` an
+arbitrary pricing-page string, so neither is a key and the keyed limiter's
+foreign key could never have been satisfied by one. Between the four, the whole
+payment path — the verdict, the pay-to-unlock CTA, and both purchase routes —
+was returning 429 to everything.
+
+The repair is `20260916170000_rate_limit_bucket_and_public.sql`; the guard is
+`rateLimitBucket.test.ts`, which fails any call site that composes its key id.
+
 ## Files
 
 **Mission Control**

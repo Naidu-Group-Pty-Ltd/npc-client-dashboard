@@ -8,12 +8,7 @@
  * Returns null when the caller is authorised (or bypass=true). Returns a Response
  * error when the token is missing, mismatched, revoked, or expired.
  */
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
-  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { createCorsHeaders } from "../auth.ts";
 
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -26,9 +21,21 @@ export interface RequireStepUpArgs {
   capability: "aml.report" | "aml.configure" | "aml.investigate" | "aml.view";
   token?: string | null;
   headers?: Headers;
+  /**
+   * The caller's own per-origin CORS headers. Optional: derived from
+   * `headers`' Origin when absent, so a caller that forgets still emits a
+   * refusal the browser will release to JS.
+   */
+  cors?: Record<string, string>;
 }
 
 export async function requireStepUpSession(args: RequireStepUpArgs): Promise<Response | null> {
+  // Per-origin headers, never a wildcard. This path is LIVE - AmlGuard mounts
+  // StepUpAuthDialog on ~20 routes - and a wildcard `Access-Control-Allow-Origin`
+  // on a `credentials: 'include'` request is refused by the browser, so the
+  // caller sees an opaque `Failed to fetch` instead of `step_up_required` and
+  // is sent to diagnose a deployment that is healthy.
+  const corsHeaders = args.cors ?? createCorsHeaders(args.headers?.get("origin") ?? null);
   const token = (args.token ?? args.headers?.get("x-aml-step-up-token") ?? "").toString().trim();
   if (!token) {
     return new Response(JSON.stringify({

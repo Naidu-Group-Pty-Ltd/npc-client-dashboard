@@ -7,8 +7,18 @@ plus index.json. Makes no network requests and never needs a credential: every
 environment by push.py at execute time.
 
 Faithfulness rules:
+- Scope comes from ../npc-services (which objects are NPC's); CONTENT comes from
+  ../snapshot where the same id is present, because the two are different pulls
+  of 2026-08-18 and npc-services is the EARLIER one. Reading both from
+  npc-services shipped four stale records, one of which mattered a great deal:
+  NPC Inbound Agent's server.url still named a Make hook rather than the
+  product's webhook, and assistant-level server URLs outrank the phone
+  number's, so the squad's entry assistant would have gone on posting its
+  end-of-call reports away from the product in the clean org. Nothing in the kit
+  could have caught it: url-map only rewrites eu2 URLs, and a read-back diff
+  compares what was sent against what came back.
 - A payload is the captured record minus only what the server assigns
-  (SERVER_FIELDS below, plus sipUri on vapi-provider numbers - minted per org).
+  (SERVER_FIELDS below). sipUri is CARRIED, as a {{REDACTED:*}} placeholder.
 - The nine assistant fields and three tool fields absent from the spec
   (CONTESTED below) are KEPT and flagged; whether a POST accepts them is what
   push.py --probe exists to settle. Dropping them here would silently change
@@ -36,12 +46,66 @@ CONTESTED = {
 }
 REDACT_RE = re.compile(r'\{\{REDACTED:([A-Z0-9_]+)\}\}')
 
+# Deliberate repairs applied ON TOP of the captured record. The snapshot stays a
+# verbatim account of what production held; a decision to change something is
+# made here, in code, with its reason - never by editing the evidence.
+REPAIRS = {
+    # NPC Discovery Call Follow Up is the only NPC assistant still pointing its
+    # server at the deprecated eu2 Make account, and the only one carrying no
+    # secret header at all - so even after the webhook accepts all three header
+    # names, this one would still be refused, forever, as secret_not_presented.
+    # VAPI_REPOINT.md line 54 already records the intended destination: the
+    # Supabase vapi-call-webhook, "matching its thirteen siblings".
+    #
+    # Safe despite its serverMessages including tool-calls: its only tool
+    # (ghl_delete_event_npc) carries its own server.url, and a tool's URL
+    # outranks the assistant's. It has no transfer tool and no transfer plan.
+    #
+    # This also retires one of the three unresolved url-map entries, because
+    # nothing then needs a us2 replacement for xoktvkk0wxyj8weopjeiqrqd914ad1jg.
+    '38e71746-75f8-4a7f-b527-f0b7528d76f0': {
+        'server': {
+            'headers': {'x-vapi-secret': '{{REDACTED:VAPI_WEBHOOK_SECRET}}'},
+            'staticIpAddressesEnabled': False,
+            'timeoutSeconds': 20,
+            'url': 'https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook',
+        },
+    },
+}
+
 def load(path):
     with open(path) as f:
         return json.load(f)
 
 def jload_dir(pattern):
     return sorted(glob.glob(pattern))
+
+# ../snapshot is the 17:29 pull; ../npc-services is the 12:44 one. Index the
+# later pull by id so scope can be read from one and content from the other.
+_SNAP_BY_ID = {}
+
+def index_snapshot():
+    for sub in ('assistants', 'tools', 'squads', 'phone-numbers', 'workflows'):
+        for p in sorted(glob.glob(os.path.join(SNAP, sub, '*.json'))):
+            try:
+                rec = load(p)
+            except Exception:
+                continue
+            if isinstance(rec, dict) and rec.get('id'):
+                _SNAP_BY_ID[rec['id']] = p
+
+def load_freshest(path):
+    """Content from the later pull where it exists; otherwise this file."""
+    rec = load(path)
+    alt = _SNAP_BY_ID.get(rec.get('id')) if isinstance(rec, dict) else None
+    if alt and os.path.abspath(alt) != os.path.abspath(path):
+        fresher = load(alt)
+        if fresher != rec:
+            FRESHENED.append((os.path.basename(path), os.path.relpath(alt, HERE)))
+        return fresher
+    return rec
+
+FRESHENED = []
 
 def walk(obj, path, fn):
     if isinstance(obj, dict):
@@ -54,6 +118,7 @@ def walk(obj, path, fn):
         fn(path, obj)
 
 def main():
+    index_snapshot()
     dtos = load(os.path.join(HERE, 'create-dtos.json'))['resources']
 
     # ---- gather sources, in dependency (phase) order --------------------------
@@ -63,7 +128,7 @@ def main():
         doc = p.replace('.metadata.json', '.doc.' + ('docx' if m['mimetype'].endswith('document') else 'pdf'))
         phases.append(('00-file', 'file', p, m, False, {'bytesFile': os.path.relpath(doc, HERE)}))
     for p in jload_dir(f'{NPC}/tools/*.json'):
-        phases.append(('01-tool', 'tool', p, load(p), False, {}))
+        phases.append(('01-tool', 'tool', p, load_freshest(p), False, {}))
     for p in jload_dir(f'{SNAP}/structured-outputs/*.json'):
         r = load(p)
         optional = r['id'] == '468022e7-2ba9-4154-8178-927586daf240'  # unreferenced byte-dup
@@ -71,13 +136,13 @@ def main():
     for p in jload_dir(f'{SNAP}/observability/scorecard.*.json'):
         phases.append(('03-scorecard', 'scorecard', p, load(p), False, {}))
     for p in jload_dir(f'{NPC}/assistants/*.json'):
-        phases.append(('04-assistant', 'assistant', p, load(p), False, {}))
+        phases.append(('04-assistant', 'assistant', p, load_freshest(p), False, {}))
     for p in jload_dir(f'{NPC}/squads/*.json'):
-        phases.append(('05-squad', 'squad', p, load(p), False, {}))
+        phases.append(('05-squad', 'squad', p, load_freshest(p), False, {}))
     for p in jload_dir(f'{NPC}/workflows/*.json'):
-        phases.append(('06-workflow', 'workflow', p, load(p), False, {}))
+        phases.append(('06-workflow', 'workflow', p, load_freshest(p), False, {}))
     for p in jload_dir(f'{NPC}/phone-numbers/*.json'):
-        phases.append(('07-phone-number', 'phone-number', p, load(p), False, {}))
+        phases.append(('07-phone-number', 'phone-number', p, load_freshest(p), False, {}))
     for p in jload_dir(f'{SNAP}/reporting/insight.*.json'):
         phases.append(('08-insight', 'insight', p, load(p), True, {}))
     for p in jload_dir(f'{SNAP}/reporting/board.default-dashboard.*.json'):
@@ -101,9 +166,25 @@ def main():
         warnings, refs, env, deferred = [], {}, set(), {}
         old_id = rec.get('id')
 
+        for _k, _v in REPAIRS.get(old_id or '', {}).items():
+            payload[_k] = json.loads(json.dumps(_v))
+            warnings.append(f'repaired `{_k}` - see REPAIRS in build_payloads.py for the reason')
+
         if res == 'phone-number' and rec.get('provider') == 'vapi':
-            if payload.pop('sipUri', None):
-                warnings.append('sipUri dropped: minted per org; SIP callers must be re-pointed at the new URI')
+            # A sipUri is CHOSEN, not minted: CreateVapiPhoneNumberDTO accepts it
+            # and the format is sip:<any username>@sip.vapi.ai. Dropping it left
+            # the cutover string unknowable until after the push. It is carried
+            # as a placeholder rather than a literal because a Vapi-hosted SIP
+            # URI needs no authentication, so the string IS the credential - and
+            # the outgoing one is published in this repository and in exported
+            # Make blueprints. Supply the new value in the environment; only the
+            # Make scenario that dials it should ever hold it literally.
+            if payload.get('sipUri'):
+                slug = ('SQUAD' if rec.get('squadId') else 'ASSISTANT')
+                payload['sipUri'] = '{{REDACTED:VAPI_SIP_URI_%s}}' % slug
+                warnings.append(
+                    f'sipUri replaced by VAPI_SIP_URI_{slug}: choose an unguessable username; '
+                    'the old URI cannot be reused while the source org holds it')
 
         # Break the assistant <-> structured-output/scorecard reference cycle.
         # Both Create DTOs accept assistantIds, but assistants are created two

@@ -258,6 +258,12 @@ Any container host that runs the Dockerfile works. Set the same two env vars
 (`WEASYPRINT_SERVICE_TOKEN` on the service, `WEASYPRINT_SERVICE_URL` +
 `WEASYPRINT_SERVICE_TOKEN` on Supabase) and you're done.
 
+Fly.io is wired: `fly.toml` beside this file is the machine shape (one
+`performance-1x` machine, one dedicated CPU, 2 GB, stopped when idle) and
+`.github/workflows/deploy-render-fly.yml` builds, deploys, proves the
+container and writes the two Supabase secrets from one repository secret,
+`FLY_API_TOKEN`. See `docs/reports/RENDER_SERVICE_AVAILABILITY.md`.
+
 ## Edge function wiring
 
 `supabase/functions/render-investment-report-pdf/index.ts` prefers WeasyPrint

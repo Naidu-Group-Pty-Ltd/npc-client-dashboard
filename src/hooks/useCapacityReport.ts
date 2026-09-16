@@ -75,7 +75,8 @@ export function useCapacityReport(): UseCapacityReport {
       }
       const templated = options?.refreshAnalysis === true
         ? null
-        : await tryTemplateDocument('commercial_capacity', assessmentId);
+        // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+        : await tryTemplateDocument('commercial_capacity', assessmentId, { renderer: 'weasyprint' });
       if (templated) {
         saveTemplateDocument(templated);
         toast({ title: 'Capacity report ready', description: templated.fileName });

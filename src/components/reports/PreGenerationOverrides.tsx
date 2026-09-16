@@ -12,6 +12,7 @@ import { BuildType } from '@/types/overrideFields';
 import { getLocalityGrowthEstimate, getDerivedCpiGrowth } from '@/utils/localityGrowthEstimates';
 
 import { PropertyTab, FinancialsTab, IncomeExpensesTab, AdvancedTab } from './manual-inputs';
+import type { CgrEstimateReading } from './manual-inputs/FinancialsTab';
 import { OverrideStepFooter, type OverrideStep } from './OverrideStepFooter';
 
 export interface PreGenerationData {
@@ -303,6 +304,11 @@ export function PreGenerationOverrides({
   
   // Loading state for expense estimation
   const [isEstimatingExpenses, setIsEstimatingExpenses] = useState(false);
+
+  // Estimate CGR: the register's reading for the typed address, shown under Growth.
+  const [isEstimatingCgr, setIsEstimatingCgr] = useState(false);
+  const [cgrEstimate, setCgrEstimate] = useState<CgrEstimateReading | null>(null);
+  const cgrEstimateAddressRef = useRef<string>('');
 
   // Locality-derived growth estimates for New Build auto-fill
   const localityGrowthEstimate = useMemo(() => {
@@ -628,6 +634,76 @@ export function PreGenerationOverrides({
     }
   }, [propertyAddress, buildType, landPrice, buildPrice, purchasePrice, weeklyRent, propertyType, toast]);
 
+  // Estimate CGR — the growth rate the ten-year cash flow assumes, read from
+  // the open sales register for the address typed at the top of the form.
+  // The field is filled only with a figure the register measured; where no
+  // series reaches the address the field is left as it was and the reading
+  // says so. What the button writes is the same `capitalGrowth` the cash
+  // flow already reads, so the estimate flows into the projection unchanged.
+  const estimateCgr = useCallback(async () => {
+    if (!propertyAddress) {
+      toast({ title: "Address Required", description: "Please enter a property address first.", variant: "destructive" });
+      return;
+    }
+    setIsEstimatingCgr(true);
+    try {
+      const { data, error } = await invokeSecureFunction('estimate-capital-growth', {
+        propertyAddress,
+        propertyType,
+      });
+      if (error) throw error;
+      if (data?.success && data?.found && data?.estimate) {
+        const e = data.estimate;
+        const reading: CgrEstimateReading = {
+          ratePct: Number(e.ratePct),
+          horizonYears: Number(e.horizonYears),
+          areaName: String(e.areaName ?? ''),
+          level: String(e.level ?? ''),
+          latestPeriod: e.latestPeriod ?? null,
+          latestPeriodLabel: typeof e.latestPeriodLabel === 'string' ? e.latestPeriodLabel : null,
+          loadedAt: typeof e.loadedAt === 'string' ? e.loadedAt : null,
+          basis: String(e.basis ?? ''),
+          caveats: Array.isArray(e.caveats) ? e.caveats.map(String) : [],
+          alternatives: Array.isArray(e.alternatives)
+            ? e.alternatives.map((a: { areaName?: unknown; horizonYears?: unknown; ratePct?: unknown }) => ({ areaName: String(a.areaName ?? ''), horizonYears: Number(a.horizonYears), ratePct: Number(a.ratePct) }))
+            : [],
+        };
+        setCapitalGrowth(reading.ratePct.toFixed(1));
+        setCgrEstimate(reading);
+        cgrEstimateAddressRef.current = propertyAddress;
+        toast({
+          title: "Capital growth estimated",
+          description: `${reading.ratePct}% a year — ${reading.horizonYears}-year compound growth, ${reading.areaName}. Review the basis under the field.`,
+        });
+      } else if (data?.success && data?.found === false) {
+        setCgrEstimate(null);
+        toast({
+          title: "No growth series for this address",
+          description: data?.reason ? `${data.reason}. The Growth field is unchanged.` : "The Growth field is unchanged.",
+          variant: "destructive",
+        });
+      } else {
+        throw new Error(data?.error || 'Failed to estimate capital growth');
+      }
+    } catch (error) {
+      console.error('Error estimating capital growth:', error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to estimate capital growth";
+      const isAuthError = errorMessage.includes('401') || errorMessage.includes('Authentication') || errorMessage.includes('Unauthorized');
+      toast({
+        title: "Estimate failed",
+        description: isAuthError
+          ? "Session expired. Please log out and log back in, then try again."
+          : errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsEstimatingCgr(false);
+    }
+  }, [propertyAddress, propertyType, toast]);
+
+  // A reading describes the address it was asked for; a new address hides it.
+  const cgrEstimateForAddress = cgrEstimate && cgrEstimateAddressRef.current === propertyAddress ? cgrEstimate : null;
+
   /**
    * Shared-field writers. These fields are also held by the report generator
    * (they feed the generation payload, validation and the scrape/parse fill),
@@ -863,6 +939,9 @@ export function PreGenerationOverrides({
                 setLoanType={setLoanType}
                 capitalGrowth={capitalGrowth}
                 setCapitalGrowth={setCapitalGrowth}
+                onEstimateCgr={estimateCgr}
+                isEstimatingCgr={isEstimatingCgr}
+                cgrEstimate={cgrEstimateForAddress}
                 stampDuty={stampDuty}
                 setStampDuty={setStampDuty}
                 solicitorFees={solicitorFees}

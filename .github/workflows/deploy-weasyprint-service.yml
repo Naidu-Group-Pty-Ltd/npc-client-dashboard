@@ -23,16 +23,27 @@ name: Deploy the render container
 # ordering constraint stays a human decision, which is what
 # `docs/reports/CONTAINER_RELEASE.md` says it is.
 #
-# ── No key exists ────────────────────────────────────────────────────────────
-# Authentication is Workload Identity Federation: GitHub mints a short-lived
-# OIDC token per run and Google exchanges it for a scoped access token. There is
-# no service account key to store, leak or rotate. `id-token: write` below is
-# what makes that possible and is the only unusual permission here.
+# ── Two ways in, and the one that needs no terminal ──────────────────────────
+# The designed authentication is Workload Identity Federation: GitHub mints a
+# short-lived OIDC token per run and Google exchanges it for a scoped access
+# token, so there is no service account key to store, leak or rotate.
+# `id-token: write` below is what makes that possible and is the only unusual
+# permission here. Its one-time setup is a gcloud session
+# (`docs/reports/CONTAINER_RELEASE.md`), and on 15 Sep 2026 that was the
+# whole problem: the render service stopped serving, nobody had gcloud, and
+# the three variables had never been set — so a workflow that existed to
+# remove the by-hand deploy could not deploy at all.
 #
-# Opt-in by configuration, the same posture as the Supabase workflow: without
-# the repository variables this reports what it would have done and stops, so
-# adding this file starts nothing and paints nothing red. Setup commands are in
-# `docs/reports/CONTAINER_RELEASE.md`.
+# So a service-account key is accepted as the second way in: one repository
+# secret, `GCP_SA_KEY`, holding the JSON key that the Google Cloud console
+# creates with clicks (IAM & Admin → Service Accounts → Keys). Its project is
+# read from the key itself. It is the less careful credential — it does not
+# expire, so it is rotated by hand — and it is deliberately second: when the
+# three federation variables are set they win, and the key can be deleted.
+#
+# Opt-in by configuration either way, the same posture as the Supabase
+# workflow: with neither configured this reports what it would have done and
+# stops, so this file starts nothing and paints nothing red.
 
 on:
   workflow_dispatch:
@@ -46,6 +57,17 @@ on:
       image_tag:
         description: 'Image tag. Defaults to the short commit SHA.'
         required: false
+        type: string
+      mode:
+        description: 'release = build a new image, stage, verify (and promote when asked). redeploy = no build: deploy the image the service ALREADY runs as a new revision and send it traffic — the remedy for a revision that stopped serving.'
+        required: false
+        default: release
+        type: choice
+        options: [release, redeploy]
+      memory:
+        description: 'redeploy only: the memory limit. 4Gi when the revision logs say the memory limit was exceeded.'
+        required: false
+        default: 2Gi
         type: string
   push:
     branches: [main]
@@ -79,12 +101,17 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ready: ${{ steps.check.outputs.ready }}
+      # `wif` or `key` — which sign-in the jobs below use.
+      auth: ${{ steps.check.outputs.auth }}
+      # The project, from the variable or from the key itself.
+      project: ${{ steps.check.outputs.project }}
     steps:
       - id: check
         env:
           PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           DEPLOYER: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
           set -euo pipefail
           missing=''
@@ -94,6 +121,24 @@ jobs:
 
           if [ -z "$missing" ]; then
             echo 'ready=true' >> "$GITHUB_OUTPUT"
+            echo 'auth=wif' >> "$GITHUB_OUTPUT"
+            echo "project=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -n "${SA_KEY:-}" ]; then
+            # The key is read from the environment and one field is printed;
+            # the key itself never reaches a log (secrets are masked, and this
+            # never echoes it).
+            project="${PROJECT_ID:-$(printf '%s' "$SA_KEY" | jq -r '.project_id // ""')}"
+            if [ -z "$project" ]; then
+              echo '::error::GCP_SA_KEY carries no project_id and GCP_PROJECT_ID is not set'
+              exit 1
+            fi
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+            echo 'auth=key' >> "$GITHUB_OUTPUT"
+            echo "project=$project" >> "$GITHUB_OUTPUT"
+            echo "signing in with the GCP_SA_KEY secret, project $project"
             exit 0
           fi
 
@@ -101,14 +146,114 @@ jobs:
           {
             echo '### The render container was NOT deployed'
             echo
-            echo 'Federated deploy is not configured, so this run changed nothing.'
+            echo 'No Google Cloud sign-in is configured, so this run changed nothing. Either:'
             echo
-            echo 'Missing repository variables (Settings → Secrets and variables → Actions → Variables):'
+            echo '- paste a service-account key (JSON, from the Google Cloud console) into the'
+            echo '  repository secret `GCP_SA_KEY` (Settings → Secrets and variables → Actions → Secrets) — no terminal needed; or'
+            echo '- set the federated-deploy variables (Settings → Secrets and variables → Actions → Variables), which need a one-time gcloud session:'
             echo
             for v in $missing; do echo "- \`$v\`"; done
             echo
-            echo 'The one-time Google Cloud setup is in `docs/reports/CONTAINER_RELEASE.md`.'
-            echo 'Until then the image ships by hand, using the same document.'
+            echo 'Both are described in `docs/reports/CONTAINER_RELEASE.md`.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Redeploy what already serves, with no build ─────────────────────────────
+  # The 15 Sep 2026 remedy (`docs/reports/RENDER_SERVICE_AVAILABILITY.md`): a
+  # revision stopped serving — Cloud Run's own 500 page to every request,
+  # including an unauthenticated GET / — while the image was fine. A new
+  # revision of the same image is what `gcloud run deploy` does from a
+  # terminal; this is that, from a workflow_dispatch, so nobody needs one.
+  # It names no environment variable, so WEASYPRINT_SERVICE_TOKEN survives,
+  # and it proves the result by effect: the front door after, and the engine
+  # version behind it.
+  redeploy:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true' && inputs.mode == 'redeploy'
+    runs-on: ubuntu-latest
+    env:
+      PROJECT: ${{ needs.gate.outputs.project }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - if: needs.gate.outputs.auth == 'wif'
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - if: needs.gate.outputs.auth == 'key'
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - id: before
+        name: What the front door answers before
+        run: |
+          set -euo pipefail
+          url=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.url)')
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          # GET / needs no token and no engine: a JSON listing means the app is
+          # up; an HTML "Server Error" page means no instance took the request.
+          curl -sS -o /tmp/before.txt -w "GET $url/ -> HTTP %{http_code} in %{time_total}s\n" "$url/" || true
+          head -c 300 /tmp/before.txt; echo
+          gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" \
+            --format='yaml(status.conditions,status.traffic,status.latestReadyRevisionName,status.latestCreatedRevisionName)'
+
+      - name: Why the revision cannot serve (the runbook's table reads these lines)
+        run: |
+          gcloud logging read "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\" AND severity>=ERROR" \
+            --project "$PROJECT" --limit 30 --freshness 3d --format='value(timestamp,textPayload)' || true
+
+      - id: deploy
+        name: Deploy the serving image as a new revision
+        run: |
+          set -euo pipefail
+          ready=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.latestReadyRevisionName)')
+          if [ -z "$ready" ]; then
+            ready=$(gcloud run revisions list --service "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(metadata.name)' --limit 1)
+          fi
+          image=$(gcloud run revisions describe "$ready" --project "$PROJECT" --region "$REGION" --format='value(spec.containers[0].image)')
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "redeploying $image (the image on $ready)"
+          gcloud run deploy "$SERVICE" --project "$PROJECT" --image "$image" --region "$REGION" --platform managed \
+            --allow-unauthenticated --memory "${{ inputs.memory || '2Gi' }}" --cpu 2 --concurrency 4 --timeout 600 \
+            --min-instances 0 --max-instances 10
+
+      - name: The front door answers, and the engine behind it is the pinned one
+        env:
+          URL: ${{ steps.before.outputs.url }}
+        run: |
+          set -euo pipefail
+          code=000
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /tmp/after.txt -w '%{http_code}' "$URL/" || echo 000)
+            [ "$code" = "200" ] && break
+            echo "GET / answered $code; waiting 10s ($i/6)"; sleep 10
+          done
+          echo "GET / -> HTTP $code"; head -c 300 /tmp/after.txt; echo
+          [ "$code" = "200" ] || { echo '::error::the service still does not serve — read the log lines above'; exit 1; }
+          token=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" \
+            --format=json | jq -r '[.spec.template.spec.containers[]?.env[]? | select(.name == "WEASYPRINT_SERVICE_TOKEN" or .name == "WEASYPRINT_API_KEY") | .value | select(. != null and . != "")] | first // ""')
+          echo "::add-mask::$token"
+          pinned=$(grep -oP '(?<=^weasyprint==)[\d.]+' weasyprint-service/requirements.txt)
+          got=$(curl -sf -H "Authorization: Bearer $token" "$URL/version" | jq -r '.weasyprint // ""')
+          echo "pinned=$pinned live=$got"
+          [ "$pinned" = "$got" ] || { echo "::error::engine drift: expected $pinned, live runs $got"; exit 1; }
+
+      - name: Say what was done
+        if: always()
+        run: |
+          {
+            echo '### Render container redeployed'
+            echo
+            echo "- image: \`${{ steps.deploy.outputs.image }}\`"
+            echo "- url: ${{ steps.before.outputs.url }}"
+            echo
+            echo 'Now generate one report with a chosen template: the toast'
+            echo '"Your chosen template was drawn in the browser" must NOT appear.'
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ── Build, and let the image check itself ───────────────────────────────────
@@ -119,7 +264,7 @@ jobs:
   # that does not validate as PDF/UA-1.
   build:
     needs: gate
-    if: needs.gate.outputs.ready == 'true'
+    if: needs.gate.outputs.ready == 'true' && inputs.mode != 'redeploy'
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.image.outputs.ref }}
@@ -130,7 +275,7 @@ jobs:
 
       - id: image
         env:
-          PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          PROJECT_ID: ${{ needs.gate.outputs.project }}
           # `gcr.io` is what `weasyprint-service/README.md` has always used.
           # It is on its way out in favour of Artifact Registry; set
           # WEASYPRINT_IMAGE to an `…-docker.pkg.dev/…` path to move, rather
@@ -144,10 +289,15 @@ jobs:
           echo "ref=${base}:${tag}" >> "$GITHUB_OUTPUT"
           echo "building ${base}:${tag}"
 
-      - uses: google-github-actions/auth@v3
+      - if: needs.gate.outputs.auth == 'wif'
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - if: needs.gate.outputs.auth == 'key'
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v3
 
@@ -157,7 +307,7 @@ jobs:
       - name: Build on Cloud Build
         run: |
           gcloud builds submit \
-            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --project "${{ needs.gate.outputs.project }}" \
             --tag "${{ steps.image.outputs.ref }}" \
             --timeout=1800s \
             ./weasyprint-service
@@ -165,16 +315,21 @@ jobs:
   # ── Stage a revision that serves nobody ─────────────────────────────────────
   stage:
     needs: [gate, build]
-    if: needs.gate.outputs.ready == 'true'
+    if: needs.gate.outputs.ready == 'true' && inputs.mode != 'redeploy'
     runs-on: ubuntu-latest
     outputs:
       canary: ${{ steps.deploy.outputs.canary }}
       previous: ${{ steps.previous.outputs.revision }}
     steps:
-      - uses: google-github-actions/auth@v3
+      - if: needs.gate.outputs.auth == 'wif'
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - if: needs.gate.outputs.auth == 'key'
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v3
 
@@ -190,7 +345,7 @@ jobs:
         run: |
           set -euo pipefail
           rev=$(gcloud run services describe "$SERVICE" \
-                  --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+                  --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
                   --format=json 2>/dev/null \
                 | jq -r '[.status.traffic[]? | select((.percent // 0) > 0)] | sort_by(.percent) | reverse | .[0].revisionName // ""' || true)
           echo "revision=${rev}" >> "$GITHUB_OUTPUT"
@@ -214,7 +369,7 @@ jobs:
           set -euo pipefail
           tag="ci${GITHUB_SHA::7}"
           gcloud run deploy "$SERVICE" \
-            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --project "${{ needs.gate.outputs.project }}" \
             --image "${{ needs.build.outputs.image }}" \
             --region "$REGION" \
             --platform managed \
@@ -225,7 +380,7 @@ jobs:
             --no-traffic --tag "$tag"
 
           url=$(gcloud run services describe "$SERVICE" \
-                  --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+                  --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
                   --format=json \
                 | jq -r --arg tag "$tag" '[.status.traffic[]? | select(.tag == $tag) | .url] | first // ""')
           # An empty URL means the tag did not attach, and every check below
@@ -240,7 +395,7 @@ jobs:
     # Without it that expression resolves to an empty string and the summary
     # reports a release of nothing in particular.
     needs: [gate, build, stage]
-    if: needs.gate.outputs.ready == 'true'
+    if: needs.gate.outputs.ready == 'true' && inputs.mode != 'redeploy'
     runs-on: ubuntu-latest
     env:
       CANARY: ${{ needs.stage.outputs.canary }}
@@ -249,10 +404,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: google-github-actions/auth@v3
+      - if: needs.gate.outputs.auth == 'wif'
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - if: needs.gate.outputs.auth == 'key'
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v3
 
@@ -268,7 +428,7 @@ jobs:
           # reach a log. `run:` scripts log the command rather than its output,
           # so the value does not appear from this substitution.
           value=$(gcloud run services describe "$SERVICE" \
-            --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+            --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
             --format=json | jq -r '[.spec.template.spec.containers[]?.env[]? | select(.name == "WEASYPRINT_SERVICE_TOKEN" or .name == "WEASYPRINT_API_KEY") | .value | select(. != null and . != "")] | first // ""')
           if [ -z "$value" ]; then
             echo '::error::WEASYPRINT_SERVICE_TOKEN is not set on the service — it fails closed and refuses every request'
@@ -370,13 +530,18 @@ jobs:
   # ── Send traffic, only when a person asked for it ───────────────────────────
   promote:
     needs: [gate, build, stage, verify]
-    if: needs.gate.outputs.ready == 'true' && inputs.promote == 'cutover'
+    if: needs.gate.outputs.ready == 'true' && inputs.promote == 'cutover' && inputs.mode != 'redeploy'
     runs-on: ubuntu-latest
     steps:
-      - uses: google-github-actions/auth@v3
+      - if: needs.gate.outputs.auth == 'wif'
+        uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - if: needs.gate.outputs.auth == 'key'
+        uses: google-github-actions/auth@v3
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - uses: google-github-actions/setup-gcloud@v3
 
@@ -393,10 +558,10 @@ jobs:
         run: |
           set -euo pipefail
           gcloud run services update-traffic "$SERVICE" \
-            --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+            --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
             --to-latest
           gcloud run services update-traffic "$SERVICE" \
-            --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+            --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
             --remove-tags "ci${GITHUB_SHA::7}"
 
       # The same check as on the canary, against the live URL. `--to-latest` can
@@ -407,10 +572,10 @@ jobs:
         run: |
           set -euo pipefail
           url=$(gcloud run services describe "$SERVICE" \
-                  --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+                  --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
                   --format='value(status.url)')
           token=$(gcloud run services describe "$SERVICE" \
-            --project "${{ vars.GCP_PROJECT_ID }}" --region "$REGION" \
+            --project "${{ needs.gate.outputs.project }}" --region "$REGION" \
             --format=json | jq -r '[.spec.template.spec.containers[]?.env[]? | select(.name == "WEASYPRINT_SERVICE_TOKEN" or .name == "WEASYPRINT_API_KEY") | .value | select(. != null and . != "")] | first // ""')
           echo "::add-mask::$token"
           got=$(curl -sf -H "Authorization: Bearer $token" "$url/version" | jq -r '.weasyprint // ""')
@@ -430,7 +595,7 @@ jobs:
             echo
             echo '```bash'
             echo "gcloud run services update-traffic ${SERVICE} \\"
-            echo "  --project ${{ vars.GCP_PROJECT_ID }} --region ${REGION} \\"
+            echo "  --project ${{ needs.gate.outputs.project }} --region ${REGION} \\"
             echo "  --to-revisions=${{ needs.stage.outputs.previous }}=100"
             echo '```'
             echo

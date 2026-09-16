@@ -26,8 +26,16 @@ import {
   admissibleInputs,
   policyStamp,
   ruleOn,
+  type LegacyScoringAuthority,
 } from '../market/scoringInputPolicy.pure';
 import { composeScoreDimensionsSection, gradedLine } from '../investment/scoreSections.pure';
+
+/*
+ * The stamp type cannot spell `v2` — this service is not V2 — but the policy
+ * has to be exercised as though an authorised engine had written it, so the
+ * cast is stated once here rather than at each call.
+ */
+const AUTHORISED = 'v2' as unknown as LegacyScoringAuthority;
 
 const ROOT = join(__dirname, '..', '..', '..', '..');
 const SERVICE = readFileSync(
@@ -81,12 +89,12 @@ describe('an overall grade requires sufficient verified evidence', () => {
     // would have supported. Under an authorised engine the evidence reason is
     // the one an operator can act on.
     expect(withheld.eligibility).toBe('no_authorised_scoring_system');
-    expect(policyStamp(['yield'], false, new Date(), 'v2').eligibility)
+    expect(policyStamp(['yield'], false, new Date(), AUTHORISED).eligibility)
       .toBe('insufficient_verified_evidence');
 
     // A grade is issued only where both hold.
     expect(policyStamp(['yield', 'growth', 'location'], true, new Date()).gradeIssued).toBe(false);
-    const issued = policyStamp(['yield', 'growth', 'location'], true, new Date(), 'v2');
+    const issued = policyStamp(['yield', 'growth', 'location'], true, new Date(), AUTHORISED);
     expect(issued.gradeIssued).toBe(true);
     expect(issued.eligibility).toBe('issued');
   });
@@ -281,8 +289,8 @@ describe('the production scoring authority', () => {
   });
 
   it('a grade is issued only when authority AND evidence both hold', () => {
-    expect(policyStamp(['yield'], false, new Date(), 'v2').gradeIssued).toBe(false);
-    expect(policyStamp(['yield', 'growth', 'location'], true, new Date(), 'v2').gradeIssued).toBe(true);
+    expect(policyStamp(['yield'], false, new Date(), AUTHORISED).gradeIssued).toBe(false);
+    expect(policyStamp(['yield', 'growth', 'location'], true, new Date(), AUTHORISED).gradeIssued).toBe(true);
     expect(policyStamp(['yield', 'growth', 'location'], true, new Date(), 'unavailable').gradeIssued)
       .toBe(false);
   });
@@ -493,10 +501,11 @@ describe('legacy V1 can never be activated as V2', () => {
     expect(POLICY_SRC).toMatch(/not a label change/i);
   });
 
-  it('V2 remains unwired — the legacy service never imports the V2 engine', () => {
+  it('the legacy service never imports the V2 engine itself — it reaches V2 only through the activation module (ME-8)', () => {
     expect(SERVICE).not.toContain('shadowScorer');
     expect(SERVICE).not.toContain('scoreOutputContract');
     expect(SERVICE).not.toContain('scoreInvestmentV2');
+    expect(SERVICE).toContain("from '../_shared/reports/market/scoringV2Production.pure.ts'");
   });
 });
 

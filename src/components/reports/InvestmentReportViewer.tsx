@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { MarkdownWithFigures } from '@/components/reports/report-view/InvestmentReportMarkdown';
 import remarkGfm from 'remark-gfm';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -7,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { OVERALL_GRADE_UNAVAILABLE } from '@/lib/reports/market/scoringInputPolicy.pure';
+import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
@@ -181,13 +183,23 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
 
   const overriddenFields = getOverriddenFields();
 
+  // What the operator reviews on screen is what the client's document is
+  // drawn from: the stored content through the same read-path placeholder
+  // scrub every renderer applies (`presentStoredMarkdown`), so a "N/A" cell a
+  // derived report stored before the write-path hygiene is neither shown here
+  // nor printed anywhere.
+  const presentedContent = useMemo(
+    () => presentStoredMarkdown(report.report_content),
+    [report.report_content],
+  );
+
   // Inject override badges into report content
   const reportContentWithBadges = useMemo(() => {
     if (!showOverrides || !hasOverrides) {
-      return report.report_content;
+      return presentedContent;
     }
 
-    let contentWithBadges = report.report_content;
+    let contentWithBadges = presentedContent;
     
     // Add badge marker after each overridden field value
     for (const [key, value] of Object.entries(report.manual_overrides)) {
@@ -203,10 +215,10 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
     }
 
     return contentWithBadges;
-  }, [report.report_content, report.manual_overrides, showOverrides, hasOverrides]);
+  }, [presentedContent, report.manual_overrides, showOverrides, hasOverrides]);
 
   const handleDownload = () => {
-    let content = report.report_content;
+    let content = presentedContent;
     
     // Include sources if toggle is enabled and sources exist
     if (includeSources && report.sources_content) {
@@ -668,9 +680,9 @@ export function InvestmentReportViewer({ report, isOpen, onClose, onReportUpdate
                         </div>
                       }
                     >
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                        {reportContentWithBadges}
-                      </ReactMarkdown>
+                      {/* The chart directives drawn, not printed — the same
+                          split the report page uses (`viewerFigures.ts`). */}
+                      <MarkdownWithFigures content={reportContentWithBadges} components={markdownComponents} />
 
                       {/* Show sources if they exist */}
                       {report.sources_content && (

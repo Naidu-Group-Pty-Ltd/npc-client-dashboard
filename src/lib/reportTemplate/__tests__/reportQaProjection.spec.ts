@@ -118,22 +118,40 @@ describe('absent means absent', () => {
 });
 
 describe('omissions are whole sentences or nothing', () => {
-  it('publishes no note when the document is complete', () => {
-    const { qa } = projectReportQa(doc());
+  it('publishes no note when the document is one exchange, set whole', () => {
+    const { qa } = projectReportQa(doc({ turns: [turn(1)], meta: { turnCount: 1, turnsShown: 1 } }));
     expect(qa.omissionNote).toBeUndefined();
     expect(qa.truncationNote).toBeUndefined();
   });
 
-  it('names how many exchanges are missing', () => {
+  it('says what the masters set: the first exchange in full, the further questions listed (RS-5c.6)', () => {
+    // Measured on the Chancery render (14 Sep 2026): "carries 1 of 4
+    // exchanges; 3 are not shown" over a document that set one answer and
+    // was about to list the other three questions. The sentence now names
+    // both halves.
+    const { qa } = projectReportQa(doc());
+    expect(qa.omissionNote).toBe(
+      'The first exchange is set in full; 1 further question is listed without its answer. '
+      + 'The complete transcript is in the Markdown export.',
+    );
+  });
+
+  it('names how many exchanges are neither set nor listed', () => {
     const { qa } = projectReportQa(doc({ meta: { turnCount: 9, turnsShown: 2 } }));
     expect(qa.omissionNote).toBe(
-      'This document carries 2 of 9 exchanges; 7 are not shown.',
+      'The first exchange is set in full; 1 further question is listed without its answer, and 7 more are not shown. '
+      + 'The complete transcript is in the Markdown export.',
     );
   });
 
   it('uses singular for one', () => {
     const { qa } = projectReportQa(doc({ meta: { turnCount: 3, turnsShown: 2 } }));
-    expect(qa.omissionNote).toContain('1 is not shown');
+    expect(qa.omissionNote).toContain('1 more is not shown');
+  });
+
+  it('keeps the plain count for a document that is not a transcript', () => {
+    const { qa } = projectReportQa(doc({ turns: [turn(1)], meta: { subject: 'answer', turnCount: 9, turnsShown: 1 } }));
+    expect(qa.omissionNote).toBe('This document carries 1 of 9 exchanges; 8 are not shown.');
   });
 
   it('reports characters cut by the transcript budget', () => {
@@ -149,7 +167,8 @@ describe('collections are capped, because the page model cannot paginate', () =>
     const many = Array.from({ length: 30 }, (_, i) => turn(i + 1));
     const { qa } = projectReportQa(doc({ turns: many, meta: { turnCount: 30, turnsShown: 30 } }));
     expect((qa.turns as any[]).length).toBe(CAPS.turns);
-    expect(qa.omissionNote).toContain('30 exchanges');
+    expect(qa.omissionNote).toContain(`${CAPS.turns - 1} further questions are listed`);
+    expect(qa.omissionNote).toContain(`${30 - CAPS.turns} more are not shown`);
   });
 
   it('caps citations and names the remainder', () => {

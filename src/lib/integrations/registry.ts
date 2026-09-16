@@ -220,8 +220,21 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
       { key: 'GOOGLE_PLACES_DAILY_LIMIT', label: 'Places Daily Cap (legacy)', placeholder: '250', type: 'text', required: false },
     ],
   },
-
-  // ── CRM & Marketing ────────────────────────────────────────────────────
+  {
+    id: 'mapillary',
+    name: 'Mapillary',
+    description:
+      'Free, crowd-photographed street-level imagery (CC BY-SA 4.0) — serves the listing Street View panel ahead of ' +
+      'Google when a client token is set. A token is minted free at mapillary.com/developer; without one the panel ' +
+      'uses Google Street View exactly as before.',
+    category: 'property_data',
+    tags: ['street view', 'imagery', 'openstreetmap', 'free'],
+    docsUrl: 'https://www.mapillary.com/developer/api-documentation',
+    fallbackIcon: 'map',
+    fields: [
+      { key: 'MAPILLARY_ACCESS_TOKEN', label: 'Client Access Token', placeholder: 'MLY|...', type: 'password', required: true },
+    ],
+  },
   {
     id: 'gohighlevel',
     name: 'GoHighLevel',

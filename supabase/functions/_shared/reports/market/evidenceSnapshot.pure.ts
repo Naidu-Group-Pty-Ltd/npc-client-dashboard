@@ -48,7 +48,7 @@
  * answers the question rather than each call site deciding.
  */
 
-import type { EvidencePoint, EvidenceProvider, LicensingStatus } from '../marketEvidence.pure.ts';
+import type { EvidencePoint, EvidenceProvider, LicensingStatus } from './marketEvidence.pure.ts';
 
 export const SNAPSHOT_SCHEMA_VERSION = 'me6.snapshot.1' as const;
 

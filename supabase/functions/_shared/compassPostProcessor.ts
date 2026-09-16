@@ -207,48 +207,68 @@ function truncateNarrativeToCap(bodyLines: string[], cap: number): { lines: stri
   // are dropped with what they promised. Figures and tables still never cut a
   // line in half: they are structural, so they either fit before the budget
   // ends or go with everything after it.
-  const out: string[] = [];
-  let budget = cap;
-  let removed = 0;
-  let spent = false;
-
+  //
+  // Two more rules, from the audit of 291 Stone Mason Drive (QA-33).
+  //
+  // **A block is the unit of a cut.** A list item and the sentences that
+  // continue it, a paragraph, a table, a fenced callout — each is kept whole
+  // or dropped whole. The second version charged a bullet's TITLE line
+  // nothing (it was "structural") and its explanation on the next line
+  // everything, so the cut landed between them: the audited Compass printed
+  // "• Residential Property form aligned with local housing preferences" and
+  // nothing under it. A bullet is narrative and is charged like one.
+  //
+  // **A sub-section keeps its share.** When a body carries two or more `###`
+  // sub-headings the budget is divided between them in proportion to what
+  // each held, so the first cannot spend the whole cap and leave the second
+  // a heading over nothing — which is how "Strengths and Limitations" came to
+  // print strengths and no limitations. A share a sub-section does not use
+  // rolls forward to the next.
+  //
   // After the budget is spent, DATA still survives: a chart directive or a
-  // table row is a figure, and the standing rule is that a label is stripped
+  // table is a figure, and the standing rule is that a label is stripped
   // with its paragraph but never a figure or a table. A heading survives the
-  // cut only as the label of data that follows it — buffered until the next
-  // kept line says which it is.
-  const isData = (t: string) => t.startsWith('{{') || t.startsWith('|');
-  let pendingHeading: string | null = null;
-
-  for (const line of bodyLines) {
-    const t = line.trim();
-    const w = line.split(/\s+/).filter(Boolean);
-    if (!spent) {
-      if (isStructuralLine(line)) { out.push(line); continue; }
-      if (w.length <= budget) {
-        out.push(line);
-        budget -= w.length;
-        if (budget <= 0) spent = true;
-      } else {
-        removed += w.length;
-        spent = true;
-      }
-      continue;
-    }
-    if (t === '') { out.push(line); continue; }
-    if (t.startsWith('#')) {
-      if (pendingHeading) removed += pendingHeading.split(/\s+/).filter(Boolean).length;
-      pendingHeading = line;
-      continue;
-    }
-    if (isData(t)) {
-      if (pendingHeading) { out.push(pendingHeading); pendingHeading = null; }
-      out.push(line);
-      continue;
-    }
-    removed += w.length;
+  // cut only as the label of something kept under it.
+  const blocks = narrativeBlocks(bodyLines);
+  const groups: NarrativeBlock[][] = [[]];
+  for (const b of blocks) {
+    if (b.kind === 'heading' && groups[groups.length - 1].length) groups.push([b]);
+    else groups[groups.length - 1].push(b);
   }
-  if (pendingHeading) removed += pendingHeading.split(/\s+/).filter(Boolean).length;
+  const proseWords = (g: NarrativeBlock[]) => g.reduce((s, b) => s + b.words, 0);
+  const totalProse = proseWords(blocks);
+  const headed = groups.filter((g) => g[0]?.kind === 'heading').length;
+  const shares = headed >= 2 && totalProse > 0
+    ? groups.map((g) => Math.floor((cap * proseWords(g)) / totalProse))
+    : null;
+
+  const out: string[] = [];
+  let removed = 0;
+  let remaining = shares ? 0 : cap;
+  const push = (b: NarrativeBlock) => { if (out.length) out.push(''); out.push(...b.lines); };
+
+  groups.forEach((group, gi) => {
+    if (shares) remaining += shares[gi];
+    let pendingHeading: NarrativeBlock | null = null;
+    let spent = false;
+    for (const b of group) {
+      if (b.kind === 'heading') { pendingHeading = b; continue; }
+      const keep = b.kind === 'data' || (!spent && b.words <= remaining);
+      if (!keep) {
+        // The first block that does not fit ends this group's prose: a
+        // later, shorter block kept after it would read as a cut mid-argument.
+        spent = true;
+        removed += b.words;
+        continue;
+      }
+      if (pendingHeading) { push(pendingHeading); pendingHeading = null; }
+      push(b);
+      if (b.kind !== 'data') remaining -= b.words;
+    }
+    // A heading nothing followed is dropped with what it promised.
+    if (pendingHeading) removed += pendingHeading.lines.join(' ').split(/\s+/).filter(Boolean).length;
+    remaining = Math.max(0, remaining);
+  });
 
   // A heading whose body was truncated away promises content the section no
   // longer holds. Pop structural tails until the last kept line is content.
@@ -263,6 +283,64 @@ function truncateNarrativeToCap(bodyLines: string[], cap: number): { lines: stri
     break;
   }
   return { lines: out, removed };
+}
+
+type NarrativeBlockKind = 'heading' | 'data' | 'prose';
+
+interface NarrativeBlock {
+  kind: NarrativeBlockKind;
+  lines: string[];
+  /** Words charged against the budget — zero for a heading or a figure. */
+  words: number;
+}
+
+const isListItemStart = (t: string): boolean => /^[-*+]\s+/.test(t) || /^\d+[.)]\s+/.test(t);
+const isHorizontalRule = (t: string): boolean => /^(-{3,}|\*{3,}|_{3,})$/.test(t);
+const startsDirective = (t: string): boolean => t.startsWith('{') && t.startsWith('{{');
+
+/**
+ * The body as blocks: a heading; a table (consecutive `|` lines); a chart
+ * directive; a horizontal rule; a `:::` fence with everything to its close;
+ * a list item with its continuation lines; a paragraph. Blank lines separate
+ * blocks and belong to none.
+ */
+function narrativeBlocks(bodyLines: string[]): NarrativeBlock[] {
+  const blocks: NarrativeBlock[] = [];
+  const countWordsIn = (ls: string[]) => ls.join(' ').split(/\s+/).filter(Boolean).length;
+  let i = 0;
+  while (i < bodyLines.length) {
+    const t = bodyLines[i].trim();
+    if (t === '') { i += 1; continue; }
+    if (t.startsWith('#')) { blocks.push({ kind: 'heading', lines: [bodyLines[i]], words: 0 }); i += 1; continue; }
+    if (startsDirective(t) || isHorizontalRule(t)) { blocks.push({ kind: 'data', lines: [bodyLines[i]], words: 0 }); i += 1; continue; }
+    if (t.startsWith('|')) {
+      const ls: string[] = [];
+      while (i < bodyLines.length && bodyLines[i].trim().startsWith('|')) ls.push(bodyLines[i++]);
+      blocks.push({ kind: 'data', lines: ls, words: 0 });
+      continue;
+    }
+    if (t.startsWith(':::')) {
+      const ls = [bodyLines[i++]];
+      while (i < bodyLines.length) {
+        ls.push(bodyLines[i]);
+        const closed = bodyLines[i].trim().startsWith(':::');
+        i += 1;
+        if (closed) break;
+      }
+      blocks.push({ kind: 'prose', lines: ls, words: countWordsIn(ls) });
+      continue;
+    }
+    // A list item or a paragraph: the lines that continue it, until a blank
+    // line or the start of another block.
+    const ls = [bodyLines[i++]];
+    while (i < bodyLines.length) {
+      const n = bodyLines[i].trim();
+      if (n === '' || n.startsWith('#') || startsDirective(n) || n.startsWith('|') || n.startsWith(':::') || isListItemStart(n) || isHorizontalRule(n)) break;
+      ls.push(bodyLines[i++]);
+    }
+    blocks.push({ kind: 'prose', lines: ls, words: countWordsIn(ls) });
+  }
+  return blocks;
 }
 
 // ─── Phase 5b: editorial-block removal ──────────────────────────────────────

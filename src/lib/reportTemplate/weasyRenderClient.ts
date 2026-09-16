@@ -24,6 +24,34 @@
  * not reintroduce a bare `fetch` here.
  */
 import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
+import { describeRenderFailure, readRenderFailure, type RenderFailureKind } from '@/lib/reports/renderFailure.pure';
+
+/**
+ * A failure the render service answered, as the edge function classified it
+ * (`code`, `upstreamStatus`) — so the route can tell an engine that did not
+ * answer from a document that could not be drawn, and the operator can be
+ * told which. `message` is the operator's sentence.
+ */
+export class RenderServiceError extends Error {
+  readonly kind: RenderFailureKind;
+  readonly upstreamStatus: number | null;
+  readonly retriable: boolean;
+  constructor(kind: RenderFailureKind, upstreamStatus: number | null, message: string, retriable: boolean) {
+    super(message);
+    this.name = 'RenderServiceError';
+    this.kind = kind;
+    this.upstreamStatus = upstreamStatus;
+    this.retriable = retriable;
+  }
+}
+
+/** The typed failure off a function answer, or null when the answer was not a classified render failure. */
+export function renderServiceErrorFrom(data: unknown, fallbackMessage?: string): RenderServiceError | null {
+  const wire = readRenderFailure(data);
+  if (!wire) return null;
+  const message = wire.error || fallbackMessage || describeRenderFailure({ kind: wire.code, upstreamStatus: wire.upstreamStatus });
+  return new RenderServiceError(wire.code, wire.upstreamStatus, message, wire.retriable);
+}
 
 /** A WeasyPrint render is minutes, not seconds, at print resolution. */
 const RENDER_TIMEOUT_MS = 10 * 60_000;
@@ -84,7 +112,13 @@ export async function renderFinalHtmlToPdf(
   const { data, error } = await invokeSecureFunction<{
     url?: string; path?: string; bytes?: number; jobId?: string | null;
   }>('render-template-pdf', body, { timeoutMs: RENDER_TIMEOUT_MS, signal });
-  if (error) throw new Error(describeAuthError(error.message) ?? error.message);
+  if (error) {
+    // The function classifies a failure the render service answered; it is
+    // thrown typed so the caller can say which gate closed and why.
+    const classified = renderServiceErrorFrom(data, error.message);
+    if (classified) throw classified;
+    throw new Error(describeAuthError(error.message) ?? error.message);
+  }
   const url = data?.url;
   if (!url) throw new Error('WeasyPrint render returned no document URL');
   const res = await fetch(url, { signal });

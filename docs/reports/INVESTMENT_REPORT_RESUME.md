@@ -73,9 +73,36 @@ back," which is what makes every mechanism below possible.
 
 Two related ceilings were lowered at the same time. The per-section Perplexity
 timeout was 150s and the truncation-continuation timeout 120s — both longer than
-the entire invocation they lived in, so neither could ever fire. They are now 60s
-and 45s, comfortably above the worst observed section but inside the budget, so a
-hung provider call can no longer eat the run before the guard gets to act.
+the entire invocation they lived in, so neither could ever fire. They were cut
+to 60s and 45s on the reading that observed section latency was 9-37s — true
+of the 2,500-token sections and false of the closing one.
+
+**Every call now answers to the run's own clock (15 Sep 2026).** Measured on
+the generation trace, "Risks & Recommendations" (three headings, 4,000
+tokens, a 68 KB prompt) took 40-110s whenever it completed, so the
+full-prompt attempt timed out at 60s on every run, the compact retry ran in
+whatever was left, and 43 invocations for two reports were killed by the
+platform with no status written — the widget read "Section 12 of 12 · 10h 45m
+elapsed" while the watchdog re-ran the same losing minute. The rule that
+replaces the constant: a call is given the window the run can spare —
+`SECTION_CALL_HARD_STOP_MS` (125s, inside the watchdog's 130s inner timeout
+and the platform's ~150s kill) less the post-processing reserve on the
+closing section, less a reserve for the compact retry while a full-prompt
+attempt is still worth making (`SECTION_REQUEST_TIMEOUT_MS` is 90s as a
+ceiling, never a grant). A full-prompt attempt that cannot get its measured
+60s floor is skipped for the compact prompt rather than spent on a timeout
+foretold; a continuation never starts into a window it cannot finish in; and
+a section with no window left is **deferred** — the single-section answer is
+the same `resumeRequired` hand-off as the between-sections guard's, with
+`deferred: true`, no error written over the row and no attempt spent —
+because writing "failed after 2 attempts" there is what turned one lost
+window into ten hours of them. `sectionCallBudget.spec.ts` pins the rule.
+
+What stays measured rather than assumed: whether the closing section's FULL
+prompt ever completes inside a 90s window is not known — no full-prompt
+attempt for it has completed in the trace — so it may be the compact prompt
+that keeps writing that section, as it has been. Right-sizing that section's
+prompt is a content decision for the owner, named in the tracker.
 
 ## 3. Who calls it back
 

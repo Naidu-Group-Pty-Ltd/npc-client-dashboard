@@ -1,11 +1,17 @@
 /**
  * ME-4 — `scoreInvestmentV2Shadow`, the one place the whole system composes.
  *
- * **This is not connected to report generation and must not be.**
- * `investment-scoring-service` is untouched; nothing here reaches a document, a
- * stored row or a client. It exists so the complete scoring system can be
- * tested, invariant-checked and backtested as one thing before anybody decides
- * to wire it.
+ * **Wired to production on 15 September 2026 (ME-8).** From its freeze on
+ * 11 September until then this engine reached no document, stored row or
+ * client: it existed so the complete scoring system could be tested,
+ * invariant-checked and backtested as one thing before anybody decided to
+ * wire it. The decision is recorded in `scoringV2Production.pure.ts`
+ * (`SCORING_V2_ACTIVATION`), which is the ONLY module that may call this one
+ * on a production path — `investment-scoring-service` reaches the engine
+ * through it and through nothing else, asserted by `scoringMethodology.spec.ts`.
+ * The function keeps its name: `scoreInvestmentV2` is the same function under
+ * the name the activation uses, and the harness, the backtests and every spec
+ * still call the original.
  *
  * ## Why one function
  *
@@ -71,8 +77,16 @@ import {
   type EvidenceStatement, type StatementAudience, buildEvidenceStatement,
 } from './evidenceStatement.pure.ts';
 
-/** Bumped whenever composition, weights or versions change. Persisted with the score. */
-export const SHADOW_METHODOLOGY_VERSION = '2.1.0-shadow';
+/**
+ * Bumped whenever composition, weights or versions change. Persisted with the
+ * score. The `-shadow` suffix came off at activation (ME-8, 15 Sep 2026): the
+ * composition is unchanged from the frozen `2.1.0-shadow`, and no stored row
+ * ever carried the suffixed string because the engine was never wired while
+ * it had it.
+ */
+export const SHADOW_METHODOLOGY_VERSION = '2.1.0';
+/** The same version under the name the production path uses. */
+export const SCORING_V2_METHODOLOGY_VERSION = SHADOW_METHODOLOGY_VERSION;
 
 /**
  * Nominal weights. Unchanged from the live composite on purpose: this release
@@ -316,3 +330,10 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     unavailableReason: null,
   };
 }
+
+/**
+ * The production name for the same composition. One function, two names: the
+ * harness and the specs keep calling `scoreInvestmentV2Shadow`, the activation
+ * calls this, and there is nothing to drift between them.
+ */
+export const scoreInvestmentV2 = scoreInvestmentV2Shadow;

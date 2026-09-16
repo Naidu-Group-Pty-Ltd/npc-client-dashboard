@@ -269,9 +269,11 @@ brings its heading or lead-in with it.
 
 `projectReportNarrative` is unchanged: it publishes the source and a
 template-blind estimate through the calibrated profile. `resolveNarrativeProfile`
-now carries `geometryAware`, and only a format on a geometry-aware profile is
-packed by geometry; Report Q&A and Market Intelligence keep the legacy
-arithmetic they were measured under.
+carries `geometryAware`, and a format is packed by geometry when its profile
+says so OR when `geometryAwareFormat` names it — Report Q&A and Market
+Intelligence joined that way on 14 Sep 2026 (§7), after the legacy arithmetic
+they had kept was measured against their own renders and found to fill a
+fifth to a half of each page.
 
 ## 6. Verification
 
@@ -293,3 +295,73 @@ arithmetic they were measured under.
   reading pairs text runs by bounding box and pairs a figure's alt text with
   the running foot on two pages of the long report — checked by
   `pdftotext -bbox`, no body line on either page reaches below 771pt.
+
+## 7. Market Intelligence and Report Q&A on the geometry (RS-5c.6)
+
+Neither format had a narrative profile, so their thirteen (MI) and one (Q&A)
+markdown runs packed with the legacy line estimate at the schema's
+`linesPerPage: 34` against a box that holds about 46 — and the estimate
+over-charges on top. Measured through the format journeys on the Chancery
+masters (14 Sep 2026): MI continuation pages 20–40% full while the layers
+under them were clipped by 6, 9, 14 and 9 pages, 4 of 41 pages carrying
+nothing but the "This section continues" callout, an orphan heading closing
+page 24; Q&A answer pages 47–57% full while the answer was cut at 8 of an
+estimated 26, the cut notice on a page of its own, and the transcript budget
+cutting the conversation to one exchange so the further-questions table did
+not draw at all.
+
+Five rules, each a renderer change — no stored row and no re-seeded master:
+
+- **A format joins the geometry by being measured, not by being calibrated.**
+  `geometryAwareFormat` names MI and Q&A beside the calibrated Investment
+  profile. It changes ONLY where the renderer files a geometry — a block
+  rendered on its own packs exactly as before, and the template-blind
+  estimates the projections publish are untouched.
+- **The pages path is read off the template, not assumed.** A continuation at
+  `pageIndex` n sits on a page conditional on `<path> > n` —
+  `narrative.pages`, `marketIntel.layers[0].pages`, `qa.answerPages`,
+  `marketIntel.prose.strategyPages` — and `planNarrative` writes the true
+  count at whatever path the master wrote, copying along it with arrays kept
+  as arrays (`layers[0]` still answers after the copy).
+- **The omission is folded onto the last allowed page.** The pre-pass finds
+  the master's own note page (no markdown block, gated on a key beside the
+  pages path, a block binding that key), clears the key so that page never
+  draws, rewrites the note's counts from the estimate to the renderer's truth
+  (`rewriteNoteCounts`: the estimate and the pages it hid, swapped in one
+  pass, "page"/"pages" agreeing), files it under `NARRATIVE_NOTES_KEY`, and the
+  block drawing the last allowed page packs with that much room held back
+  (`PackOptions.reserveLines`, `PageReserve`) and sets the note as a callout at
+  its foot. Same words, same page the reader is on, true numbers. MI went from
+  41 pages to 36 and the notes from "6 / 9 / 14 / 9 further pages" to
+  "2 / 4 / 6 / 3"; the Q&A cut note reads "runs to 17 pages" for the 26 the
+  estimate said.
+- **A numbered step keeps its bulleted sub-points, and its number.** The
+  scanner ended a run on any change of marker kind, so `1.` over four-space
+  `*` children (a model's plan) opened a new list at every step; a nested run
+  of the OTHER kind now belongs to the item above it (nesting by RANK of
+  indentation, so a four-space child is one level down, not two) and
+  `listHtml` opens each level with the kind of its own marker. And the
+  resumed ordinal is written as the CSS counter the engine reads: WeasyPrint
+  69.0 ignores `<ol start>` and `<li value>` (measured) and honours
+  `counter-reset: list-item N-1`; `styleTags` merges a tag's own style with
+  the block's rather than writing a second `style` attribute the parser drops;
+  the browser painter counts from the same `start`.
+- **A budget is stated in the units the page is measured in — or not applied
+  where it buys nothing.** The Q&A masters set the first answer (bounded by
+  their eight answer pages) and LIST the further questions; the flowing
+  route's transcript budget only cost that table its rows, so the templated
+  path keeps every turn (`BuildInput.keepAllTurns`; `CAPS.turns` and
+  `MAX_QUESTION_CHARS` still bound the list) and the projection's note says
+  what the document sets: *"The first exchange is set in full; 3 further
+  questions are listed without their answers."*
+
+Verified by the journeys (MI 18/18, 36 pages, 0 hard findings; Q&A transcript
+17/17, 13 pages; Cash Flow 22/22 ×2 unchanged; Investment 30/30 unchanged) and
+by `narrativePlan.spec.ts` (the MI-shaped run: pages path off the
+conditional, array kept, note folded with the true count, note page dark, a
+run that fits draws no note), `listNumbering.spec.ts`,
+`reportQaProjection.spec.ts` (renegotiated on the sentence). One instrument
+reading to know: `measure.mjs` flags the word "undefined" as a placeholder
+TOKEN wherever it appears — on the Q&A transcript it is the author's own
+prose ("an undefined or improvised installation"), which is why the runner
+judges TOKEN by eye rather than failing on it.

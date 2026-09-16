@@ -512,8 +512,11 @@
           "oldId": "5934c762-0223-4112-bfb7-88931da17652"
         }
       },
-      "env": [],
+      "env": [
+        "VAPI_WEBHOOK_SECRET"
+      ],
       "warnings": [
+        "repaired `server` - see REPAIRS in build_payloads.py for the reason",
         "dangling toolId dropped (deleted in source org): 4d3ab4a4-2662-4b5a-9089-068faf7a2b00",
         "dangling toolId dropped (deleted in source org): 4aa1a306-b057-4b0a-bcc0-f38749637ee0",
         "dangling toolId dropped (deleted in source org): 199be122-72f1-4bbb-ada3-aedba74b59b1",
@@ -643,6 +646,10 @@
         "/model/toolIds/4": {
           "resource": "tool",
           "oldId": "5c0c334c-6bbf-4399-b748-a3c50207e754"
+        },
+        "/model/toolIds/5": {
+          "resource": "tool",
+          "oldId": "f195a817-8346-475d-ad0e-8033f1d2e283"
         }
       },
       "env": [
@@ -1085,9 +1092,11 @@
           "oldId": "38e71746-75f8-4a7f-b527-f0b7528d76f0"
         }
       },
-      "env": [],
+      "env": [
+        "VAPI_SIP_URI_ASSISTANT"
+      ],
       "warnings": [
-        "sipUri dropped: minted per org; SIP callers must be re-pointed at the new URI"
+        "sipUri replaced by VAPI_SIP_URI_ASSISTANT: choose an unguessable username; the old URI cannot be reused while the source org holds it"
       ]
     },
     {
@@ -1106,10 +1115,11 @@
         }
       },
       "env": [
+        "VAPI_SIP_URI_SQUAD",
         "VAPI_WEBHOOK_SECRET"
       ],
       "warnings": [
-        "sipUri dropped: minted per org; SIP callers must be re-pointed at the new URI"
+        "sipUri replaced by VAPI_SIP_URI_SQUAD: choose an unguessable username; the old URI cannot be reused while the source org holds it"
       ]
     },
     {
@@ -1224,11 +1234,13 @@
     "optional": 8,
     "envVars": [
       "TWILIO_ACCOUNT_SID",
+      "VAPI_SIP_URI_ASSISTANT",
+      "VAPI_SIP_URI_SQUAD",
       "VAPI_WEBHOOK_SECRET"
     ],
-    "crossReferences": 104,
-    "warnings": 21,
-    "legacyMakeUrls": 12,
+    "crossReferences": 105,
+    "warnings": 22,
+    "legacyMakeUrls": 11,
     "sourceOrgId": "c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd"
   }
 }

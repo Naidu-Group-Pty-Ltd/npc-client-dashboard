@@ -28,8 +28,12 @@
  *
  *   secdef_search_path    CREATE FUNCTION ... SECURITY DEFINER must SET search_path.
  *   secdef_execute        A new SECURITY DEFINER function must REVOKE EXECUTE
- *                         from PUBLIC (revoking from `anon` alone is a no-op —
- *                         that was the RLS-W5 lesson, 20260725096000).
+ *                         from PUBLIC **and** `anon` **and** `authenticated`.
+ *                         Both halves are a lesson paid for: revoking from
+ *                         `anon` alone is a no-op because the grant is PUBLIC's
+ *                         (RLS-W5, 20260725096000), and revoking from PUBLIC
+ *                         alone is a no-op for `anon` because this project's
+ *                         default privileges grant it DIRECTLY (20261129090000).
  *   view_security_invoker CREATE VIEW must set security_invoker = true.
  *   table_rls             CREATE TABLE in public/aml must ENABLE ROW LEVEL SECURITY.
  *
@@ -115,13 +119,39 @@ const files = readdirSync(MIGRATIONS)
 const REVOKE_FN =
   /REVOKE\s+(?:ALL|EXECUTE)(?:\s+PRIVILEGES)?\s+ON\s+FUNCTION\s+([\w".]+)\s*\([^)]*\)([^;]*);/gi;
 
-const publicRevoked = new Set();
+/**
+ * The three roles a SECURITY DEFINER function in `public` has to be closed to,
+ * and why each one is load-bearing rather than belt-and-braces:
+ *
+ *   PUBLIC         `CREATE FUNCTION` grants EXECUTE to PUBLIC and every role
+ *                  inherits it, so revoking a role individually removes a grant
+ *                  it never had (RLS-W5, 20260725096000).
+ *   anon           This project also carries DEFAULT PRIVILEGES granting EXECUTE
+ *   authenticated  on new functions in `public` DIRECTLY to both, so revoking
+ *                  PUBLIC does not touch them (20261129090000).
+ *
+ * Both halves were paid for in production and both no-op revokes SUCCEED, so
+ * neither reports anything on its own.
+ */
+const EXECUTE_ROLES = ['PUBLIC', 'anon', 'authenticated'];
+
+/** Qualified function name -> the roles SOME migration revokes EXECUTE on it from. */
+const revokedRoles = new Map();
 for (const file of files) {
   const sql = stripComments(readFileSync(join(MIGRATIONS, file), 'utf8'));
   for (const m of sql.matchAll(REVOKE_FN)) {
-    if (/\bPUBLIC\b/i.test(m[2])) publicRevoked.add(qualify(m[1]));
+    const fn = qualify(m[1]);
+    const seen = revokedRoles.get(fn) ?? new Set();
+    for (const role of EXECUTE_ROLES) {
+      if (new RegExp(`\\b${role}\\b`, 'i').test(m[2])) seen.add(role);
+    }
+    revokedRoles.set(fn, seen);
   }
 }
+const rolesRevokedOn = (fn) => revokedRoles.get(fn) ?? new Set();
+const publicRevoked = new Set(
+  [...revokedRoles.keys()].filter((fn) => rolesRevokedOn(fn).has('PUBLIC')),
+);
 
 for (const file of files) {
   const sql = stripComments(readFileSync(join(MIGRATIONS, file), 'utf8'));
@@ -145,29 +175,59 @@ for (const file of files) {
         + `\`SET search_path = public\` (or \`aml, public\`) to the function header.`);
     }
 
-    // Named revoke: `REVOKE EXECUTE ON FUNCTION [schema.]name(...) FROM ... PUBLIC`.
-    // Scoped to this function and required to name PUBLIC — a revoke that lists
-    // only `anon` is a no-op, since anon inherits EXECUTE through PUBLIC.
-    const bare = name.split('.')[1];
-    const namedRevoke = new RegExp(
-      `REVOKE\\s+(?:ALL|EXECUTE)\\s+(?:PRIVILEGES\\s+)?ON\\s+FUNCTION\\s+[\\w".]*\\b${bare}\\b[^;]*?\\bFROM\\b[^;]*?\\bPUBLIC\\b`,
-      'i',
-    ).test(sql);
+    // Named revoke, scoped to this function. Every role its FROM clauses name
+    // is collected across all of them, because one migration may revoke in two
+    // statements — and ALL THREE of PUBLIC, `anon` and `authenticated` have to
+    // appear.
+    //
+    // Requiring all three is not belt-and-braces; each is load-bearing here and
+    // each half was learned from a shipped defect:
+    //
+    //   • PUBLIC — `CREATE FUNCTION` grants EXECUTE to PUBLIC and every role
+    //     inherits it, so a revoke naming only `anon` removes a grant it never
+    //     had (RLS-W5, 20260725096000; the `revoke_without_public` rule below).
+    //   • anon / authenticated — this project also carries DEFAULT PRIVILEGES
+    //     granting EXECUTE on new functions in `public` directly to both, so a
+    //     revoke naming only PUBLIC leaves those grants standing. Measured on
+    //     the live catalogue 2026-09-16: `geocode_cache_touch` and
+    //     `market_sales_refresh` each read
+    //     `postgres=X | anon=X | authenticated=X | service_role=X` with no
+    //     PUBLIC entry — the PUBLIC revoke had worked and the functions were
+    //     still reachable by the publishable key. 20261129090000 closes them.
+    //
+    // A no-op revoke succeeds, so neither half reports anything on its own.
+    // Read from the CORPUS, not from this file, for the reason
+    // `revoke_without_public` already states: an applied migration is immutable
+    // history and its text is a correct record of what ran. The question is not
+    // "does this file close the function" but "does anything close it" — so a
+    // follow-up migration clears the finding, which is how 20261129090000 clears
+    // the two it was written for, and no frozen baseline is needed.
+    const revokedFrom = rolesRevokedOn(name);
+    const missingRoles = EXECUTE_ROLES.filter((r) => !revokedFrom.has(r));
+    const namedRevoke = missingRoles.length === 0;
 
     // Catalogue sweep: a DO block that loops pg_proc on prosecdef and revokes
-    // from PUBLIC covers functions it never names. Accepted only when all three
-    // parts are present, so "mentions PUBLIC somewhere" cannot pass.
+    // covers functions it never names. Accepted only when all three parts are
+    // present, so "mentions PUBLIC somewhere" cannot pass — and the revoke it
+    // performs has to close `anon` too, for the reason above.
     const catalogueSweep = /\bpg_proc\b/i.test(sql)
       && /\bprosecdef\b/i.test(sql)
-      && /REVOKE\s+EXECUTE[^']*?FROM\s+PUBLIC/i.test(sql);
+      && /REVOKE\s+EXECUTE[^']*?FROM\s+PUBLIC/i.test(sql)
+      && /REVOKE\s+EXECUTE[^']*?\banon\b/i.test(sql);
 
     if (!namedRevoke && !catalogueSweep) {
       at('secdef_execute', name,
-        `\`${name}\` is SECURITY DEFINER but this migration never revokes EXECUTE from PUBLIC. `
-        + `CREATE grants PUBLIC by default and \`anon\` inherits it, so the function ships reachable `
-        + `by the publishable key in the browser bundle. Add `
-        + `\`REVOKE EXECUTE ON FUNCTION ${name}(...) FROM PUBLIC, anon, authenticated;\` and grant `
-        + `back only the roles that need it. Revoking from \`anon\` alone is a no-op. `
+        `\`${name}\` is SECURITY DEFINER and this migration `
+        + (revokedFrom.size === 0
+          ? 'no migration revokes EXECUTE on it. '
+          : `is revoked from ${[...revokedFrom].join(', ')} but from nothing that closes `
+            + `${missingRoles.join(', ')}. `)
+        + `CREATE grants EXECUTE to PUBLIC and every role inherits it, AND this project's default `
+        + `privileges grant EXECUTE on new functions in \`public\` directly to \`anon\` and `
+        + `\`authenticated\` — so closing one and not the others leaves the function reachable by `
+        + `the publishable key in the browser bundle, and the revoke that missed still succeeds. `
+        + `Write \`REVOKE EXECUTE ON FUNCTION ${name}(...) FROM PUBLIC, anon, authenticated;\` and `
+        + `grant back only the roles that need it. `
         + `If it must stay client-callable (an RLS predicate, say), add it to `
         + `MIGRATION_SECURITY_KEEPLIST.json with a reason.`);
     }

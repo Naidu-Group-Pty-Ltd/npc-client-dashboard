@@ -180,6 +180,39 @@ export interface PackOptions {
    * paragraph).
    */
   balanceTail?: boolean;
+  /**
+   * Lines held back on one page for something the caller draws there itself
+   * — the "this section continues" note folded onto the last page a master
+   * allows, in place of the page of its own the master gave it (RS-5c.6).
+   * Zero for every page not named.
+   */
+  reserveLines?: (pageIndex: number) => number;
+}
+
+/** Room held back on one page of a run. See `PackOptions.reserveLines`. */
+export interface PageReserve {
+  pageIndex: number;
+  lines: number;
+}
+
+/**
+ * Formats whose markdown runs are packed by the template's own geometry when
+ * the renderer has the template in hand (`narrativePlan.ts`).
+ *
+ * The Investment Compass joined by being calibrated (`resolveNarrativeProfile`).
+ * Market Intelligence and Report Q&A join by being measured: neither has a
+ * profile, so their blocks packed with the legacy estimate at the schema's 34
+ * lines against a box that holds about 46 — on the Chancery renders (14 Sep
+ * 2026) continuation pages were 20–57% full while the same sections were
+ * being clipped by up to fourteen pages, and the Q&A transcript was cut at one
+ * exchange. A format named here changes ONLY where a geometry is filed for it;
+ * a block rendered on its own still packs exactly as before, and the
+ * template-blind estimate the projections publish is untouched.
+ */
+export function geometryAwareFormat(reportType: string | null | undefined): boolean {
+  if (resolveNarrativeProfile(reportType)?.geometryAware) return true;
+  const t = String(reportType ?? '').toLowerCase();
+  return t === 'market_intelligence' || t === 'marketing_intelligence' || t === 'qa' || t === 'report_qa';
 }
 
 export const BOUNDARY_SPLIT_MIN_ROWS = 6;
@@ -235,7 +268,10 @@ export function packMarkdownPages(
   // Figures carried past the prose that follows them; they open the next page.
   let floated: MarkdownBlock[] = [];
 
-  const budgetFor = (pageIndex: number) => (pageIndex === 0 ? firstBudget : contBudget);
+  const budgetFor = (pageIndex: number) => Math.max(
+    1,
+    (pageIndex === 0 ? firstBudget : contBudget) - Math.max(0, options.reserveLines?.(pageIndex) ?? 0),
+  );
 
   // What is left to set from each block on, and the least a last page may hold.
   const restFrom: number[] = new Array(blocks.length + 1).fill(0);
@@ -453,9 +489,11 @@ export function packNarrativePages(
 export function packNarrativeGeometry(
   blocks: readonly MarkdownBlock[],
   geometry: NarrativeGeometry,
+  reserve: PageReserve | null = null,
 ): MarkdownBlock[][] {
   return packMarkdownPages(blocks, geometry.contLines, {
     firstPageLines: geometry.firstPageLines,
+    reserveLines: reserve ? (i) => (i === reserve.pageIndex ? reserve.lines : 0) : undefined,
     keepWithNext: true,
     splitTables: true,
     splitAtBoundary: true,

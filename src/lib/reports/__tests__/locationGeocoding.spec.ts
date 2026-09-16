@@ -167,13 +167,23 @@ describe('the state cross-check catches what the country box cannot', () => {
 // ---------------------------------------------------------------------------
 
 describe('the service asks the right question and refuses to guess', () => {
-  it('sends the country FILTER, not just the bias', () => {
+  it('sends the country FILTER, not just the bias — to every provider the chain asks', () => {
+    // The service composes no vendor request of its own any more; the
+    // geocoding chain does, and every provider in it is restricted to
+    // Australia. `region=au` is a preference; `components=country:AU` is the
+    // constraint, and shipping only the first was the mistake
+    // `builderStock/images.ts` had. Nominatim's `countrycodes=au` is the same
+    // constraint in its words, and the ABS query pins the state by name.
+    const chain = readFileSync(resolve(REPO, 'supabase/functions/_shared/geocode/geocoder.ts'), 'utf8');
+    const osm = readFileSync(resolve(REPO, 'supabase/functions/_shared/geocode/osmGeocode.pure.ts'), 'utf8');
+    const abs = readFileSync(resolve(REPO, 'supabase/functions/_shared/geocode/absLocality.pure.ts'), 'utf8');
+    expect(chain).toContain("components: 'country:AU'");
+    expect(chain).toContain("region: 'au'");
+    expect(osm).toContain("params.set('countrycodes', 'au')");
+    expect(abs).toContain('STATE_NAME_2021');
     const s = src();
-    // `region=au` is a preference; `components=country:AU` is the constraint.
-    // Shipping only the first is the mistake `builderStock/images.ts` still
-    // has, and is why this asserts the filter specifically.
-    expect(s).toContain("components: 'country:AU'");
-    expect(s).toContain("region: 'au'");
+    expect(s).not.toContain('maps.googleapis.com/maps/api/geocode');
+    expect(s).toContain('geocodeThroughChain(');
   });
 
   it('composes the query from the whole input rather than the bare address', () => {

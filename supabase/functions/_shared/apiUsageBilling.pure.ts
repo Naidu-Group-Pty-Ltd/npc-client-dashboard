@@ -100,27 +100,6 @@ const BINDINGS: Record<string, ServiceBinding> = {
   api2pdf: { secretName: "API2PDF_API_KEY", unit: "render", quantityFrom: "requests" },
   weasyprint: { secretName: "WEASYPRINT_SERVICE_TOKEN", unit: "render", quantityFrom: "requests" },
   pdfparse: { secretName: "PDF_PARSE_SERVICE_TOKEN", unit: "document", quantityFrom: "requests" },
-  // Ours like the two above: the Builder Stock overlay-inpaint worker — a
-  // Cloudflare Worker in front of Workers AI on the workspace's own account.
-  // The token is the workspace's own service secret, never a forwarded vendor
-  // key, so Mission Control rates the usage at nothing — the binding exists so
-  // the call is visible in the ledger rather than untracked.
-  builderstockimageworker: {
-    secretName: "BUILDER_STOCK_IMAGE_WORKER_TOKEN",
-    unit: "render",
-    quantityFrom: "requests",
-  },
-  // The same again for the Builder Stock PDF election worker — a Cloudflare
-  // Worker running the shared `electFromPdfBytes` on the workspace's own
-  // account, because that one unit exceeds an Edge Function's CPU ceiling. Its
-  // token is the workspace's own service secret rather than a forwarded vendor
-  // key, so Mission Control rates the usage at nothing; the binding exists so
-  // the call is visible in the ledger rather than untracked.
-  builderstockpdfworker: {
-    secretName: "BUILDER_STOCK_PDF_WORKER_TOKEN",
-    unit: "document",
-    quantityFrom: "requests",
-  },
   docusign: { secretName: "DOCUSIGN_INTEGRATION_KEY", unit: "document", quantityFrom: "requests" },
 
   // ── Compliance ──
@@ -224,6 +203,20 @@ const NEVER_METERED = [
   "purl.org",
   "data.gov.au",
   "abs.gov.au",
+  // The geocoding chain's free providers (`_shared/geocode/`): OpenStreetMap's
+  // Nominatim and komoot's Photon. Fetched plainly, never through
+  // `meteredFetch`; listed so a future call site cannot bill a tenant for them.
+  "openstreetmap.org",
+  "komoot.io",
+  // The open-location providers (`_shared/openLocation/`): the Overpass
+  // mirrors the amenity register ingests from, OSRM's public router, and
+  // Mapillary — whose token is the workspace's own free credential, so a
+  // call it authorises is charged at nothing (API_USAGE_METERING's rule for
+  // keys the workspace supplies itself).
+  "kumi.systems",
+  "maps.mail.ru",
+  "project-osrm.org",
+  "mapillary.com",
   "rba.gov.au",
   "bom.gov.au",
   "challenges.cloudflare.com",

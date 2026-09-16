@@ -138,6 +138,97 @@ export function stripPlaceholderRows(markdown: string): PlaceholderScrubResult {
   };
 }
 
+export interface EmptySectionResult {
+  markdown: string;
+  /** The headings dropped, in document order. */
+  dropped: string[];
+}
+
+/**
+ * A heading with nothing under it is dropped — a promise of a section that
+ * never comes.
+ *
+ * `stripPlaceholderRows` takes a table whose every row was a placeholder, and
+ * leaves the heading that introduced it standing over the next heading:
+ * measured through the real journey on the production Snapshot of 4 Sep 2026,
+ * "Key Market Stats" and "Score Breakdown" printed as headings with no body.
+ * A section is empty when the next non-blank line is a heading of the same or
+ * a higher level, or the end of the document; a heading over a deeper heading
+ * that holds prose is a section with sub-sections and is kept. Run to a
+ * fixed point, so a parent left empty by its emptied children goes with them.
+ */
+export function dropEmptySections(markdown: string): EmptySectionResult {
+  const HEADING = /^(#{1,6})\s+\S/;
+  const levelOf = (line: string): number => (line.match(HEADING)?.[1].length ?? 0);
+  let lines = (markdown || '').split('\n');
+  const dropped: string[] = [];
+  for (let pass = 0; pass < 8; pass += 1) {
+    const next: string[] = [];
+    let changed = false;
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const level = levelOf(line);
+      if (level > 0) {
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() === '') j += 1;
+        const empty = j >= lines.length || (levelOf(lines[j]) > 0 && levelOf(lines[j]) <= level);
+        if (empty) {
+          dropped.push(line.replace(/^#{1,6}\s+/, '').trim());
+          changed = true;
+          continue;
+        }
+      }
+      next.push(line);
+    }
+    lines = next;
+    if (!changed) break;
+  }
+  return {
+    markdown: dropped.length === 0
+      ? (markdown || '')
+      // The blank lines a dropped heading owned go with it: no doubled gap
+      // inside, no blank opening line, one newline at the end.
+      : lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n{2,}$/, '\n'),
+    dropped,
+  };
+}
+
+/**
+ * The read-path application of the placeholder rule.
+ *
+ * `stripPlaceholderRows` ran on the WRITE path alone — every fork and condense
+ * since 4 Sep 2026 — and every derived report stored before it rendered its
+ * placeholders verbatim for every reader. Measured on production, 14 Sep 2026:
+ * all seven Executive Briefings produced in the preceding 120 days carry 36 to
+ * 97 "N/A" cells (every one of them predates the write-path scrub), the newest
+ * Snapshot carries 19, and 268 of 1,122 Compass reports hold at least one
+ * table row whose first value cell is a placeholder. The owner's rule is that
+ * neither "N/A" nor "unavailable" ever reaches a client document, so the same
+ * scrub is applied where stored content is READ — the browser projection both
+ * presentations draw from, the template adapter, the legacy server renderer
+ * and the on-screen document view — the way `healFinanceIdentity` repairs the
+ * finance block for every reader without a migration and without a stored
+ * byte changing. One implementation, imported by every end.
+ *
+ * Prose is untouched (the scrub's own contract): a sentence that mentions an
+ * absence is the author's, and rewriting prose by pattern is how a true
+ * statement gets deleted from a client's document. What this removes is the
+ * structured placeholder — a table cell, a `label: N/A` line — which states a
+ * failure where a figure was promised.
+ *
+ * A heading the scrub leaves over nothing goes with its table
+ * (`dropEmptySections`). A document that carries neither is returned
+ * untouched, byte for byte, so a clean report's packing, charges and goldens
+ * are exactly what they were.
+ */
+export function presentStoredMarkdown(markdown: string | null | undefined): string {
+  if (!markdown) return '';
+  const r = stripPlaceholderRows(markdown);
+  const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? markdown : r.markdown;
+  const sections = dropEmptySections(scrubbed);
+  return sections.dropped.length === 0 ? scrubbed : sections.markdown;
+}
+
 const normalizeHeading = (h: string): string =>
   h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 

@@ -187,7 +187,11 @@ describe('the document is titled as what it is, per tier', () => {
     expect(DOCUMENT_IDENTITY.financial.title).toBe('Financial Analysis');
     expect(DOCUMENT_IDENTITY.snapshot.title).toBe('Snapshot Report');
     expect(DOCUMENT_IDENTITY.briefing.title).toBe('Executive Briefing');
-    expect(DOCUMENT_IDENTITY.strategic.title).toBe('Strategic Overview');
+    // Locked decision B (`TIER_FRAMEWORK.md`): the strategic tier is the Due
+    // Diligence Report wherever a person sees it. QA-32 (15 Sep 2026) found it
+    // titled "Snapshot Report" by one presentation and "Strategic Overview" by
+    // the other.
+    expect(DOCUMENT_IDENTITY.strategic.title).toBe('Due Diligence Report');
     expect(DOCUMENT_IDENTITY.compass.title).toBe('Investment Compass');
 
     const p = projectInvestmentReport({ ...ROW, report_tier: 'financial' });

@@ -6,7 +6,8 @@ import {
   composeSwotSection,
   composeVerdictSection,
 } from '../_shared/reports/investment/scoreSections.pure.ts';
-import { stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
+import { recordedScoreValues, suppressUnrecordedScores } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { dropEmptySections, stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
 import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
 import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
 import { assembleInDeclaredOrder, type ComposedPlacement } from '../_shared/reports/investment/tierAssembly.pure.ts';
@@ -122,12 +123,28 @@ REPORT STRUCTURE (~5 PAGES):
 
 ## Property Summary
 - Address, Property Type, Bedrooms/Bathrooms
-- Estimated Value, Location highlights (3 sentences max)
+- The purchase price the analysis is modelled on, labelled by what it IS:
+  "Modelled purchase price" (and "Asking price" where the report says the
+  figure is the listing's). NEVER label it "Estimated Value" or "Valuation" —
+  no valuation or automated estimate is held, and a price is not a value.
+- Location highlights (3 sentences max)
 
 ## Key Market Stats
-| Metric | Value |
-- Choose from: Median Price, Rental Yield, Vacancy Rate, Capital Growth, Days on Market, Walk Score
+| Metric | Value | Source |
+- OBSERVED market statistics only, each with the source and date the report
+  cites: Median Price, Days on Market, Walk Score, a sourced local Vacancy
+  Rate, measured price growth over a stated period.
+- A modelling assumption is NOT a market statistic. Do not put the capital
+  growth rate, the vacancy allowance (weeks vacant ÷ 52), the interest rate
+  or the CPI rate in this table — they belong under the sub-heading below.
 - Include ONLY metrics whose value is stated in the report or the recorded figures; omit the rest — never write N/A
+
+### Scenario assumptions (not market statistics)
+| Assumption | Value |
+- The recorded modelling inputs, named as assumptions: "Capital growth
+  scenario assumption", "Model vacancy allowance (N weeks, X%)", "Interest
+  rate assumed for modelling", "CPI assumption". Never "forecast", never
+  "market rate". Omit the sub-section if the record states none.
 
 DO NOT WRITE: Investment Score, Score Breakdown, or Financial Snapshot. Those
 three sections are composed from the stored record after you finish and are
@@ -728,6 +745,11 @@ IMPORTANT:
       condensedContent = scrubbed.markdown;
       hygiene.placeholder_rows_removed = scrubbed.removedRows;
       hygiene.placeholder_tables_removed = scrubbed.removedTables;
+      // And the heading a scrubbed table leaves standing over nothing goes
+      // with it — a "Key Market Stats" with no stats is a promise unkept.
+      const sections = dropEmptySections(condensedContent);
+      condensedContent = sections.markdown;
+      hygiene.empty_sections_removed = sections.dropped.length;
 
       // The same rule for the two block types the row scrubber cannot see: a
       // stat card with no value (the renderer draws its UNIT in display type)
@@ -737,7 +759,22 @@ IMPORTANT:
       hygiene.empty_stat_cards_removed = blocks.emptyStatCards;
       hygiene.duplicate_directives_removed = blocks.duplicateDirectives;
 
-      qaReport = runQAValidation(condensedContent, 'compass-40');
+      // A summarising report may not invent or re-estimate a score (QA-18):
+      // the Briefing of 291 Stone Mason Drive rated an "overall investment
+      // fit" 68/100 and two "scores of 82" that neither the record nor the
+      // parent holds. The sentence carrying such a claim goes, and the log
+      // says which. Composed tables print only recorded figures and are
+      // untouched; a claim the parent made itself is the parent's.
+      const recordedScores = recordedScoreValues(parentReport.investment_score);
+      const scoreGuard = suppressUnrecordedScores(condensedContent, {
+        recorded: recordedScores,
+        parentText: typeof parentReport.report_content === 'string' ? parentReport.report_content : undefined,
+      });
+      condensedContent = scoreGuard.markdown;
+      hygiene.unrecorded_score_claims_removed = scoreGuard.removed.length;
+      if (scoreGuard.removed.length) hygiene.unrecorded_score_claims = scoreGuard.removed.map((r) => r.text);
+
+      qaReport = runQAValidation(condensedContent, 'compass-40', { recordedScores });
       console.log('Hygiene:', JSON.stringify(hygiene));
       if (postProcessReport) console.log('Post-processor report:', JSON.stringify(postProcessReport, null, 2));
       console.log('QA report:', JSON.stringify(qaReport, null, 2));

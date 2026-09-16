@@ -5,5 +5,6 @@
     "type": "number"
   },
   "name": "NPC Services",
-  "provider": "vapi"
+  "provider": "vapi",
+  "sipUri": "{{REDACTED:VAPI_SIP_URI_ASSISTANT}}"
 }

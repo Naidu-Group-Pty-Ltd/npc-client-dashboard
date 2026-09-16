@@ -11,10 +11,12 @@ import { coerceState, resolveSchedule } from '../_shared/stampDuty/scheduleStore
 import {
   calculateAnnualCosts,
   calculateKeyMetrics,
-  calculateMonthlyPayment,
   calculateSensitivityAnalysis,
+  describeLoanStructure,
   generateProjections,
   getInterestRateByLVR,
+  ledgerForInput,
+  occupancyWeeksOf,
   type CpiProjection,
   type LoanCalculationInput,
 } from '../_shared/reports/investment/financialEngine.pure.ts';
@@ -102,11 +104,14 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
   const rateInfo = getInterestRateByLVR(lvr, borrowerType, input.interestRate);
   const interestRate = rateInfo.rate;
 
-  const monthlyInterestRate = interestRate / 100 / 12;
-  const totalPayments = loanTerm * 12;
-
-  // Monthly loan payment (Principal + Interest)
-  const monthlyPayment = calculateMonthlyPayment(loanAmount, monthlyInterestRate, totalPayments);
+  // ONE loan ledger for every figure that follows — payment, lifetime
+  // interest, the projection balances and the sensitivity — at the frequency
+  // the loan repays and for the product the case states. `monthlyPayment` is
+  // the first month's repayment: interest alone during an interest-only
+  // period, the amortising repayment otherwise (QA-04, QA-05).
+  const ledger = ledgerForInput({ ...input, interestRate });
+  const monthlyPayment = ledger.firstMonthlyPayment;
+  const occupancyWeeks = occupancyWeeksOf(input);
 
   // Calculate stamp duty with FHB concessions
   const stampDutyResult = await calculateStampDutyWithConcessions(
@@ -122,7 +127,7 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
   // Calculate ongoing costs. Reviewed figures arrive as INPUT so the totals,
   // projections, sensitivity and metrics all describe them — see
   // overrides.pure.ts for why they must never be splatted over the output.
-  const annualCosts = calculateAnnualCosts(propertyValue, weeklyRent, state, propertyType, input.annualCostOverrides);
+  const annualCosts = calculateAnnualCosts(propertyValue, weeklyRent, state, propertyType, input.annualCostOverrides, occupancyWeeks);
 
   // Generate 10-year projections with scenarios
   // If a custom capital growth rate is provided (e.g., from Perplexity research), use it
@@ -134,17 +139,26 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
   const cpiProjections = await fetchCpiProjections(supabase);
   const customCpiGrowth = input.cpiGrowthRate ? input.cpiGrowthRate / 100 : null;
 
-  const scenarios = customCapitalGrowth !== null ? {
+  // The growth each scenario is built at, stated ONCE and published beside
+  // the series. The report's prose used to hard-code "2% / 4% / 6%" while the
+  // series were built at the researched rate ±2 points (QA-10).
+  const scenarioGrowth = customCapitalGrowth !== null ? {
     // When custom rate provided, use it as the "moderate" scenario with ±2% for conservative/optimistic
-    conservative: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, Math.max(0, customCapitalGrowth - 0.02), customRentGrowth || 0.025, customCpiGrowth, cpiProjections),
-    moderate: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, customCapitalGrowth, customRentGrowth || 0.03, customCpiGrowth, cpiProjections),
-    optimistic: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, customCapitalGrowth + 0.02, customRentGrowth || 0.035, customCpiGrowth, cpiProjections)
+    conservative: { capitalGrowth: Math.max(0, customCapitalGrowth - 0.02), rentGrowth: customRentGrowth || 0.025 },
+    moderate: { capitalGrowth: customCapitalGrowth, rentGrowth: customRentGrowth || 0.03 },
+    optimistic: { capitalGrowth: customCapitalGrowth + 0.02, rentGrowth: customRentGrowth || 0.035 },
   } : {
     // Default scenario-based rates when no custom rate provided
-    conservative: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, 0.02, 0.02, customCpiGrowth, cpiProjections),
-    moderate: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, 0.04, 0.03, customCpiGrowth, cpiProjections),
-    optimistic: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, 0.06, 0.04, customCpiGrowth, cpiProjections)
+    conservative: { capitalGrowth: 0.02, rentGrowth: 0.02 },
+    moderate: { capitalGrowth: 0.04, rentGrowth: 0.03 },
+    optimistic: { capitalGrowth: 0.06, rentGrowth: 0.04 },
   };
+  const scenarios = {
+    conservative: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, scenarioGrowth.conservative.capitalGrowth, scenarioGrowth.conservative.rentGrowth, customCpiGrowth, cpiProjections),
+    moderate: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, scenarioGrowth.moderate.capitalGrowth, scenarioGrowth.moderate.rentGrowth, customCpiGrowth, cpiProjections),
+    optimistic: generateProjections({ ...input, interestRate }, monthlyPayment, annualCosts, scenarioGrowth.optimistic.capitalGrowth, scenarioGrowth.optimistic.rentGrowth, customCpiGrowth, cpiProjections),
+  };
+  const pctOf = (fraction: number) => Math.round(fraction * 10000) / 100;
 
   // The upfront position is stated once: these exact lines appear in
   // initialCosts AND fund the cash-on-cash denominator, so the total a
@@ -185,13 +199,27 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
     },
     loanDetails: {
       monthlyPayment,
-      totalInterest: (monthlyPayment * totalPayments) - loanAmount,
+      // Lifetime interest on THIS schedule — a 30-year P&I total used to be
+      // printed under an "interest only" label (QA-04).
+      totalInterest: Math.round(ledger.totalInterest),
       weeklyPayment: monthlyPayment * 12 / 52,
+      annualPayment: Math.round(ledger.years[0]?.payments ?? monthlyPayment * 12),
       lvr: Math.round(lvr * 100) / 100,
       lvrTier: rateInfo.lvrTier,
       interestRate: rateInfo.rate,
       rateSource: rateInfo.source,
-      borrowerType
+      borrowerType,
+      // The product the arithmetic ran, so the label and the schedule are one
+      // fact rather than a display override over unrelated figures.
+      loanAmount,
+      loanTerm,
+      loanType: ledger.loanType,
+      interestOnlyPeriod: ledger.interestOnlyYears,
+      /** The month's interest on the opening balance — what an interest-only period repays. */
+      interestOnlyPayment: Math.round((loanAmount * rateInfo.rate / 100 / 12) * 100) / 100,
+      amortisingMonthlyPayment: Math.round(ledger.amortisingMonthlyPayment * 100) / 100,
+      structure: describeLoanStructure(ledger),
+      repaymentBasis: 'monthly ledger',
     },
     // Persist the exact rental input used by every projection. Downstream cash-flow
     // cards and exports read this canonical path, including reports without manual
@@ -199,8 +227,26 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
     income: {
       weeklyRent,
       annualRent: weeklyRent * 52,
+      /** `weeklyRent × occupancyWeeks` — what the cash flow receives (QA-06). */
+      effectiveAnnualRent: Math.round(weeklyRent * occupancyWeeks),
+      occupancyWeeks,
     },
     annualCosts,
+    // The scenario each output was built under, declared once (QA-02, QA-10):
+    // occupancy, the fee convention, the growth timing and the growth rates
+    // behind each projection scenario. The generator overlays its own
+    // `capitalGrowth` / `cpiGrowth` here; these keys are additive.
+    assumptions: {
+      occupancyWeeks,
+      feeBasis: 'collected_rent',
+      growthTiming: 'Year-1 figures carry one year of growth; settlement is year 0.',
+      scenarioGrowth: {
+        conservative: { capitalGrowth: pctOf(scenarioGrowth.conservative.capitalGrowth), rentGrowth: pctOf(scenarioGrowth.conservative.rentGrowth) },
+        moderate: { capitalGrowth: pctOf(scenarioGrowth.moderate.capitalGrowth), rentGrowth: pctOf(scenarioGrowth.moderate.rentGrowth) },
+        optimistic: { capitalGrowth: pctOf(scenarioGrowth.optimistic.capitalGrowth), rentGrowth: pctOf(scenarioGrowth.optimistic.rentGrowth) },
+      },
+      loanStructure: describeLoanStructure(ledger),
+    },
     keyMetrics: metrics,
     projections: scenarios,
     sensitivityAnalysis: calculateSensitivityAnalysis({ ...input, interestRate }, monthlyPayment, annualCosts),

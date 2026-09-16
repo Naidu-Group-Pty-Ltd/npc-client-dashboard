@@ -104,6 +104,13 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
+    "amenity-register-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "OSM amenity register ingest (schools, healthcare, shopping, recreation, restaurants, rail transit per state) \u2014 fetches one Overpass CSV slice per category from a public mirror list (overpass-api.de excluded: 406s this egress), behind the shared one-request-a-second turn and the osm_amenities daily allowance, identified User-Agent, a [timeout:] in every query. Gateway JWT on; inside, verifyAuth (internal edge secret or service role). Writes only amenity_register/amenity_register_syncs, upsert-then-prune by sync id; a zero-row parse is refused so a bad answer never replaces a good load."
+    },
     "aml-access": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -381,36 +388,6 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
-    "builder-collaboration-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-construction-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-delivery-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-document-processor": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-inventory-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
     "builder-network-inbound": {
       "verify_jwt": false,
       "exposure_class": "webhook-secret",
@@ -418,142 +395,8 @@
       "reviewed": true,
       "notes": "Builders Network -> workspace delivery door (extraction plan Phase 3; dark until feature_flags.builder_network_enabled, which it reads server-side and fails closed on, answering a named retryable 503 while off). Authenticated by a per-connection symmetric HMAC-SHA256 over `${timestamp}.${rawBody}` with a +/-300s window and constant-time comparison; the secret is RLS-closed in builder_network_connections and never appears in a URL or log. One generic refusal covers the whole ladder (unknown connection, inactive, missing secret, bad signature) so a probing caller cannot enumerate connections. The privacy contract (builderNetworkPrivacy.pure.ts) runs on ARRIVAL and throws rather than filters -- a payload naming client PII, internal notes, staff identity, cost/margin or AML content is refused 422 and nothing is stored. Landing is idempotent by dedupe_key (a redelivery gets the 200 the sender lost); application to domain tables is a separate sweep, never this door. Carries no Supabase identity because the caller is the network's outbox worker, not a person."
     },
-    "builder-portal-accept-invite": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-change-password": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-collaboration": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-construction": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-delivery": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-forgot-password": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-inventory": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-invite": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-login": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-logout": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-projects": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-reset-password": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-stock": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-transactions": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-verify": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-portal-workspace": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-projects-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-stock-image-settler": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
-      "owner": "builder-portal-program",
-      "reviewed": true,
-      "notes": "Cron sweep that brings already-imported builder stock up to the current image rules. Signed internal callers only (verifyInternal) with enforceRawBodyLimit ahead of it; holds a service-role client and crosses organisations, so it must not be reachable by a portal session. Writes builder_stock_item_images, the primary_image_id those rows earn, and the settlement marker; creates and deletes no stock item and touches no price, availability, status, selection or project linkage. Resumable and bounded per tick, and the migration's cron job unschedules itself once no upload is below the current version."
-    },
-    "builder-stock-link-callback": {
-      "verify_jwt": false,
-      "exposure_class": "webhook-secret",
-      "owner": "builder-stock",
-      "reviewed": true,
-      "notes": "Google Sheets hyperlink recovery callback. Authenticated by a per-request one-time capability token presented as `Authorization: Bearer`: each request mints 256 bits of randomness, sends it to Make and stores only its SHA-256, so there is no long-lived shared secret in two systems and a token seen in a third party's log authorises one answer to one question already asked. The token is compared by constant-time hash equality, the request is single-use via an atomic claim, expires in 30 minutes, and is bound to the exact spreadsheet and tab. Body is capped and the organisation is rate limited. Carries no Supabase identity because the caller is an external automation. Organisation, upload and property authority are read from the stored request row and are never accepted from the payload."
-    },
     "builder-stock-marketplace": {
       "verify_jwt": false,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-transactions-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "builder-portal-program",
-      "reviewed": true
-    },
-    "builder-workspace-admin": {
-      "verify_jwt": true,
       "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
@@ -880,6 +723,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
+    },
+    "estimate-capital-growth": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Estimate CGR for the Financials tab: geocodes the typed address (Google, metered), reads the open sales register (market_sales_medians) finest grain first and answers a compound annual growth rate with its basis and caveats. Gateway JWT on; inside, verifyAuth (a signed-in user, the internal edge secret or a service-role token). Reads only; writes nothing."
     },
     "estimate-commercial-caprate": {
       "verify_jwt": true,
@@ -1986,6 +1836,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "market-sales-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "Open-data sales register ingest (QGSO residential land development activity spreadsheet for QLD by LGA; NSW DCJ Rent and Sales Report sales tables by postcode and LGA) \u2014 fetches the published workbooks itself (both hosts measured reachable from this project on 2026-09-15); parsing server-side with refusal-shaped bounds (header drift, vocabulary drift, a disagreeing reporting period, implausible medians). Gateway JWT on; inside, verifyAuth (internal edge secret or service role). Writes only market_sales_medians/market_sales_sync."
     },
     "market-source-probe": {
       "verify_jwt": true,

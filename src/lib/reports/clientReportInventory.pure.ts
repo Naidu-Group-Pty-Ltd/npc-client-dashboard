@@ -150,7 +150,7 @@ export function buildClientReportInventory(
     reports.push({
       id: r.id,
       type: 'borrowing',
-      name: `Borrowing Capacity${formattedCap ? ` – ${formattedCap}` : ''} (${r.serviceability_band || 'N/A'})`,
+      name: `Borrowing Capacity${formattedCap ? ` – ${formattedCap}` : ''}${r.serviceability_band ? ` (${r.serviceability_band})` : ''}`,
       generatedAt: r.created_at,
       status: 'completed',
       source: 'borrowing_assessment',

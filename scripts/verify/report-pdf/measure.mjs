@@ -79,7 +79,20 @@ const embeddedCount = fonts.filter((f) => f.embedded).length;
 // the projection publishes on purpose — "Not available — insufficient
 // verified evidence", a headline with its explanation — is a reading, not a
 // token, and is the one form exempted here.
-const SENTINELS = /(?<![A-Za-z])(N\/A|NA|Unavailable|Not available(?! — [a-z])|Unknown|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/;
+// The owner's rule (14 Sep 2026): neither "N/A" nor "unavailable" ever reaches
+// a client document, in any case or spelling. The first pattern is the
+// case-sensitive technical vocabulary (a token is one exact spelling), the
+// second the placeholder family in any case — and nothing is exempt any more:
+// the designed ungraded reading this used to admit ("Not available — …") is no
+// longer published by the projection.
+const SENTINELS = [
+  /(?<![A-Za-z])(NA|TBD|TBC|null|undefined|NaN|\[object Object\])(?![A-Za-z])|\{\{[^}]{1,80}\}\}/,
+  /(?<![A-Za-z])(n\/a|not available|unavailable|not provided|data unavailable|no data available|not assessed)(?![A-Za-z])/i,
+];
+const findSentinel = (text) => {
+  for (const re of SENTINELS) { const m = text.match(re); if (m) return m[0]; }
+  return null;
+};
 // U+FFFD, C0 control bytes other than tab/newline, and UTF-8 read as Latin-1
 // (a capital A-tilde followed by a Latin-1 supplement byte, or the a-circumflex
 // + euro pair that every UTF-8 punctuation mark becomes).
@@ -151,7 +164,7 @@ for (let n = 1; n <= doc.numPages; n++) {
   const header = items.filter((i) => i.yTop < vp.height * 0.08).map((i) => i.s).join(' ').trim();
   const footer = items.filter((i) => i.yTop > vp.height * 0.92).map((i) => i.s).join(' ').trim();
   const pageNo = (footer.match(/Page\s*(\d+)\s*of\s*(\d+)/i) ?? header.match(/Page\s*(\d+)\s*of\s*(\d+)/i));
-  const sentinel = text.match(SENTINELS)?.[0] ?? null;
+  const sentinel = findSentinel(text);
   const moji = MOJIBAKE.test(text);
   const p = {
     page: n, ground, chars: text.replace(/\s+/g, '').length, bodyChars: bodyItems.map((i) => i.s).join('').replace(/\s+/g, '').length,

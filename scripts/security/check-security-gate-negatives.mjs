@@ -256,16 +256,6 @@ const CASES = [
     find: "        if (permissions && can(permissions, 'matters', 'view')) visibleClientIds.push(clientId);",
     replace: '        visibleClientIds.push(clientId);',
   },
-  {
-    gate: 'security-check.mjs',
-    gatePath: 'scripts/builder-portal/security-check.mjs',
-    file: 'supabase/functions/builder-portal-login/index.ts',
-    what: 'builder login looks an account up before the throttle again',
-    find: '    const rateLimit = await enforceAuthRateLimit(supabase, req, {',
-    replace:
-      "    const { data: __earlyLookup } = await supabase.from('builder_portal_users').select('id');\n"
-      + '    const rateLimit = await enforceAuthRateLimit(supabase, req, {',
-  },
 
   // ── WP-17: the database's own gate ───────────────────────────────────────
   {
@@ -401,28 +391,6 @@ const CASES = [
     replace: 'console.warn(logPrefix(err), JSON.stringify({',
   },
 
-  // ── The Cloudflare worker's own gate ─────────────────────────────────────
-  {
-    gate: 'check-cloudflare-worker-hardening.mjs',
-    file: 'cloudflare/builder-stock-image-worker/src/index.ts',
-    what: 'the worker stops measuring the mask it is asked to paint',
-    find: 'const inkShare = await maskInkShare(mask);',
-    replace: 'const inkShare = 0;',
-  },
-  {
-    gate: 'check-cloudflare-worker-hardening.mjs',
-    file: 'cloudflare/builder-stock-image-worker/src/index.ts',
-    what: 'the worker stops refusing oversized declared bodies before parsing',
-    find: "const declared = Number(request.headers.get('content-length') ?? '');",
-    replace: "const declared = 0;",
-  },
-  {
-    gate: 'check-cloudflare-worker-hardening.mjs',
-    file: 'cloudflare/builder-stock-image-worker/src/index.ts',
-    what: 'a vendor endpoint URL appears in the worker source',
-    find: "export const INPAINT_MODEL = '@cf/runwayml/stable-diffusion-v1-5-inpainting';",
-    replace: "export const INPAINT_MODEL = 'https://api.example.com/v1/inpaint';",
-  },
 ];
 
 /**

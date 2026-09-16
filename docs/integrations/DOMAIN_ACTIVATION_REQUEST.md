@@ -1,5 +1,59 @@
 # Domain API — activation request
 
+> **Re-measured 15 September 2026, 13:53 UTC, from the production egress
+> (`market-source-probe`, invoked from the production database; read-only,
+> writes nothing).** `DOMAIN_API_KEY` is set (no OAuth pair). Domain answered:
+>
+> | route | status | Domain's body | header |
+> | --- | --- | --- | --- |
+> | `GET /v2/suburbPerformanceStatistics/NSW/Bowral/2576` | **403** | `{"type":"…/docs/latest/conventions/access","title":"Not Authorized","detail":"Operation not permitted on project"}` | no `X-Domain-Security-Reason` |
+> | `GET /v1/properties/_suggest` (Address Suggestion) | **403** | the same body | no `X-Domain-Security-Reason` |
+> | `GET /v1/suburbPerformanceStatistics/NSW/Bowral` (control) | 404 | `No Matching Route` | — |
+>
+> **This settles the both-403 ambiguity below.** The key is recognised (an
+> unrecognised key answers 401), and Domain's own words say the PROJECT the
+> key belongs to permits no operation — on either product. Domain's access
+> conventions page (the `type` the body links to) states it in one sentence:
+> *"you will not be able to access any API Endpoint until the required API
+> package(s) have been added to your project."*
+>
+> **The remedy is in the Domain Developer Portal, not in a message to Domain:**
+>
+> 1. Sign in at `developer.domain.com.au` with the account that minted the
+>    key this project runs on (`DOMAIN_API_KEY`, a `key_…` value).
+> 2. **Projects → the project → API Access** (the portal's own name for the
+>    page): add the **Properties & Locations** package — it carries
+>    `api_suburbperformance_read` — and Save. Address Suggestion is a separate
+>    package and is not needed for the grade.
+> 3. If the portal states that the package is on a paid plan for this account,
+>    that is the commercial decision the zero-cost addendum below defers to
+>    the owner; the portal publishes no plan material, so only the account
+>    page can say.
+> 4. Then either re-run the probe (`market-source-probe`, targets
+>    `domain_v2_suburb_performance`) or open any report and regenerate: the
+>    grade appears on the next generation with no further code change,
+>    because `domain-data-service` already requests the v2 route with the
+>    trusted postcode and the scoring engine already reads the series. Until
+>    then every new report reads *"grade withheld … growth: … (domain: HTTP
+>    403 — Domain says "Operation not permitted on project": the Properties &
+>    Locations API package is not attached to the project this key belongs
+>    to; attach it under API Access …)"*, which is the same finding stated on
+>    the record.
+>
+> The messages below stay as written for the case the portal cannot settle —
+> for instance if the package is attached and a 403 persists, when the
+> `X-Domain-Security-Reason` header, if one then appears, is what to quote.
+
+> **Since 15 September 2026 (evening) the grade no longer depends on this
+> package.** The open-data sales registers — Queensland's Statistician by
+> local government area and NSW's DCJ Rent and Sales Report by postcode —
+> supply the growth series at no cost under CC BY 4.0
+> (`docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md`). Domain stays first-class:
+> its suburb-grain series outranks a council or postcode one in the merge
+> the day the package is attached, with no code change. This request is
+> therefore an improvement to the grade's confidence, not its condition.
+
+
 One message, ready to send, plus the evidence behind it. Nothing here is
 speculative: every technical statement was measured, and the questions are the
 ones whose answers change what this platform may do with the data.
@@ -30,6 +84,20 @@ status code, and it is removed: it would have opened a larger commercial
 conversation than the evidence supports, on a premise nobody had established.
 
 **Do not discuss pricing in this message.** It is a scope and rights request.
+
+**State of the code (15 Sep 2026).** `domain-data-service` now requests the
+v2 route with the postcode as a path segment (`domainSuburbPerformanceUrl`),
+keyed on the geography resolved from the verified coordinate, and extracts
+the series once (`domainEvidence.pure.ts`). Its refusal — status and
+`X-Domain-Security-Reason` where Domain sends one — travels onto the report's
+grade as a named gap, so while the 403 stands every new report reads *"grade
+withheld … growth: No suburb capital-growth series for … (domain: HTTP 403
+…)"* rather than a silent absence. When Domain lifts the restriction the
+grade appears on the next generation with no further code change. Every
+point is stamped `licensingStatus: 'unverified'`
+(`DOMAIN_SUBURB_PERFORMANCE_LICENSING`) until the rights follow-up below is
+answered; until then the score uses the figures and the client document does
+not print their provenance.
 
 ---
 

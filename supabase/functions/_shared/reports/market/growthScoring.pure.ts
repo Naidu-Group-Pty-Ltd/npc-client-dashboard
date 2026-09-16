@@ -400,6 +400,8 @@ export function growthConfidence(
       ? 100
       : finest.level === 'postcode'
         ? 80
+        : finest.level === 'sa2'
+          ? 70
         : finest.level === 'lga' || finest.level === 'sa3'
           ? 55
           : finest.level === 'gccsa'

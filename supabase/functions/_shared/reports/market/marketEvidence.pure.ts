@@ -62,6 +62,12 @@ export const GEOGRAPHIC_LEVELS = [
   'property',
   'suburb',
   'postcode',
+  // ABS Statistical Area Level 2 — the grain the resident-population series
+  // is published at (`abs_sa2_population`), and the grain `report_geography`
+  // resolves a verified coordinate to. Finer than an LGA, coarser than a
+  // postal area on the whole; added 15 Sep 2026 when the population driver
+  // began arriving from that series rather than being absent.
+  'sa2',
   'lga',
   'sa3',
   'gccsa',
@@ -106,7 +112,17 @@ export type EvidenceProvider =
   | 'nsw_valuer_general'
   | 'vic_property_sales'
   | 'qld_titles'
-  | 'sa_land_services';
+  | 'sa_land_services'
+  // The open-data sales registers (docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md):
+  // published medians, CC BY 4.0, loaded by `market-sales-ingest` and read by
+  // `openDataSalesEvidence.pure.ts`.
+  | 'qld_qgso_rlda'
+  | 'nsw_dcj_rent_sales'
+  // The archived suburb series (Victoria, South Australia) and the ABS state
+  // floor beneath every jurisdiction — me9.sales.2, 16 Sep 2026.
+  | 'vic_vpsr_suburb'
+  | 'sa_lsg_suburb'
+  | 'abs_res_dwell';
 
 /** Whether the number was read from the source or computed from what was read. */
 export type EvidenceMethod = 'observed' | 'calculated';

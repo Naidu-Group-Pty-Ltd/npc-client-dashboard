@@ -122,7 +122,7 @@ function buildInput(r: Row, stripFinance = false) {
     return {
       evidence,
       yieldInputs: {
-        basis: 'purchase',
+        basis: 'purchase' as const,
         basisAmount: resolved.purchasePrice.value,
         weeklyRent: resolved.weeklyRent.value,
         annualOutgoings: resolved.annualOutgoings.value,

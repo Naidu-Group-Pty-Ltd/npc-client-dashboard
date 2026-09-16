@@ -92,6 +92,12 @@ CREATE POLICY partner_agreements_service ON storage.objects
 -- resolved. A view rather than three queries in the client, so "which partners
 -- have signed" cannot mean three different things in three tabs.
 -- ===========================================================================
+-- [Phase 7, network extraction] The builder legs left with the portal — a
+-- view is validated at creation, so a fresh clone could not build the old
+-- definition against dropped tables, and the builder acceptance rows this
+-- register would have shown were deleted (and archived) by 20261124000000.
+-- Shape-identical to the original and to the definition the decommission
+-- migration installs on databases that predate this edit.
 CREATE OR REPLACE VIEW public.partner_agreement_records AS
 SELECT
   a.id                        AS acceptance_id,
@@ -105,27 +111,15 @@ SELECT
   v.version,
   v.title,
   v.document_hash,
-  COALESCE(s.id, b.id, f.id)  AS portal_user_id,
-  COALESCE(s.name, b.name, fc.name)         AS accepted_by_name,
-  COALESCE(s.email, b.email, f.email)       AS accepted_by_email,
-  COALESCE(sf.name, bo.legal_name, fc.company) AS organisation_name,
-  COALESCE(sf.trading_name, bo.trading_name)   AS organisation_trading_name
+  COALESCE(s.id, f.id)        AS portal_user_id,
+  COALESCE(s.name, fc.name)   AS accepted_by_name,
+  COALESCE(s.email, f.email)  AS accepted_by_email,
+  COALESCE(sf.name, fc.company) AS organisation_name,
+  sf.trading_name             AS organisation_trading_name
 FROM public.portal_terms_acceptances a
 JOIN public.portal_terms_versions v ON v.id = a.terms_version_id
 LEFT JOIN public.solicitor_portal_users s ON s.id = a.solicitor_user_id
 LEFT JOIN public.solicitor_firms sf       ON sf.id = s.firm_id
-LEFT JOIN public.builder_portal_users b   ON b.id = a.builder_user_id
-LEFT JOIN LATERAL (
-  -- A builder user reaches organisations through membership; the primary one
-  -- names the party. LATERAL because there may be several and only one is the
-  -- organisation this agreement is with.
-  SELECT o.legal_name, o.trading_name
-  FROM public.builder_organisation_memberships m
-  JOIN public.builder_organisations o ON o.id = m.organisation_id
-  WHERE m.builder_user_id = b.id AND m.revoked_at IS NULL
-  ORDER BY m.is_primary DESC NULLS LAST, m.created_at
-  LIMIT 1
-) bo ON b.id IS NOT NULL
 LEFT JOIN public.finance_portal_users f   ON f.id = a.finance_user_id
 LEFT JOIN public.finance_agent_contacts fc ON fc.id = f.finance_contact_id;
 

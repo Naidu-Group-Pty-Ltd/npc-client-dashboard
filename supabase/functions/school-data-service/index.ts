@@ -5,6 +5,10 @@ import { parseJsonBody } from '../_shared/validate.ts';
 import { SchoolDataRequest, PUBLIC_SERVICE_MAX_BODY_BYTES } from '../_shared/publicServiceSchemas.ts';
 import { sourceUnavailable } from '../_shared/sourceUnavailable.pure.ts';
 import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
+import { amenityProviderOrder } from '../_shared/openLocation/providers.pure.ts';
+import { readRegisterSchools } from '../_shared/openLocation/amenityRegisterStore.ts';
+import { OSM_AMENITY_ATTRIBUTION } from '../_shared/openLocation/overpassAmenities.pure.ts';
+import { normaliseAuState } from '../_shared/auLocality.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -165,21 +169,38 @@ async function fetchSchoolDataFromDB(
       };
     }
 
-    console.log('⚠️ No schools found in database, attempting API fallback...');
-    
-    // Fallback: Try Google Places API if coordinates provided
+    console.log('⚠️ No schools found in database, attempting fallback sources...');
+
+    // Fallback sources in the AMENITY_PROVIDERS order (default
+    // register,google): the local OSM amenity register answers free from
+    // its daily-refreshed slice, and Google Places stays selectable and is
+    // asked exactly as before when the register cannot answer. A register
+    // slice that is current but holds zero schools within the radius still
+    // falls through — the legacy contract never reported "0 schools", it
+    // reported no data, and an OSM absence is weaker evidence than a
+    // directory absence.
     if (latitude && longitude) {
-      const googleSchools = await fetchSchoolsFromGooglePlaces(latitude, longitude, supabase);
-      if (googleSchools.length > 0) {
-        console.log(`✅ Found ${googleSchools.length} schools from Google Places API`);
-        return {
-          schools: googleSchools,
-          summary: calculateSchoolSummary(googleSchools, postcode),
-          dataSource: 'Google Places API',
-          dataQuality: 'live',
-          lastUpdated: new Date().toISOString(),
-          note: 'School data from Google Places API. ICSEA scores and ratings not available.'
-        };
+      for (const provider of amenityProviderOrder(Deno.env.get)) {
+        if (provider === 'register') {
+          const registerAnswer = await fetchSchoolsFromRegister(supabase, latitude, longitude, state, postcode);
+          if (registerAnswer) {
+            console.log(`✅ Found ${registerAnswer.schools.length} schools in the amenity register`);
+            return registerAnswer;
+          }
+        } else if (provider === 'google') {
+          const googleSchools = await fetchSchoolsFromGooglePlaces(latitude, longitude, supabase);
+          if (googleSchools.length > 0) {
+            console.log(`✅ Found ${googleSchools.length} schools from Google Places API`);
+            return {
+              schools: googleSchools,
+              summary: calculateSchoolSummary(googleSchools, postcode),
+              dataSource: 'Google Places API',
+              dataQuality: 'live',
+              lastUpdated: new Date().toISOString(),
+              note: 'School data from Google Places API. ICSEA scores and ratings not available.'
+            };
+          }
+        }
       }
     }
 
@@ -191,6 +212,65 @@ async function fetchSchoolDataFromDB(
     console.error('❌ Error fetching school data:', error);
     return null;
   }
+}
+
+/**
+ * Schools from the local OSM amenity register — the same daily-refreshed
+ * slice location-intelligence-service reads, at this service's own 5 km
+ * radius. Null (fall through to the next provider) when the slice is not
+ * current, when the read fails, or when it holds no named school within
+ * the radius: the legacy contract never reported "0 schools", and an OSM
+ * absence is weaker evidence than a directory absence. Sector comes from
+ * the element's own tags or reads 'Other' — never the old mapper's
+ * hardcoded 'Government'.
+ */
+async function fetchSchoolsFromRegister(
+  supabase: any,
+  latitude: number,
+  longitude: number,
+  state: string,
+  postcode: string,
+) {
+  const normalisedState = normaliseAuState(String(state ?? ''));
+  if (!normalisedState) {
+    console.log('⚠️ Amenity register skipped: state could not be normalised');
+    return null;
+  }
+  const reading = await readRegisterSchools(
+    supabase,
+    { lat: latitude, lng: longitude },
+    normalisedState,
+    5000,
+    Deno.env.get,
+  );
+  if (!reading.ok) {
+    console.log(`⚠️ Amenity register did not answer schools (${reading.reason}); next provider`);
+    return null;
+  }
+  const schools: School[] = reading.rows
+    .filter((r) => r.name !== null)
+    .map((r) => ({
+      name: r.name as string,
+      type: (r.school_sector ?? 'Other') as School['type'],
+      level: 'Combined' as const,
+      address: r.address ?? '',
+      postcode: r.postcode ?? postcode,
+      distance: calculateDistance(latitude, longitude, r.lat, r.lon),
+    }))
+    .filter((s) => (s.distance ?? Infinity) <= 5)
+    .sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0))
+    .slice(0, 20);
+  if (schools.length === 0) return null;
+  return {
+    schools,
+    summary: calculateSchoolSummary(schools, postcode),
+    dataSource: 'OpenStreetMap Amenity Register',
+    dataQuality: 'cached',
+    lastUpdated: reading.loadedAt,
+    note: `School data from the local OpenStreetMap amenity register (slice loaded ${reading.loadedAt.slice(0, 10)}). `
+      + `${OSM_AMENITY_ATTRIBUTION}. ICSEA scores and ratings are not available from this source; `
+      + 'for the latest information visit myschool.edu.au',
+  };
 }
 
 async function fetchSchoolsFromGooglePlaces(

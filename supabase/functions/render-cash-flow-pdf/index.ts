@@ -37,7 +37,8 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
-import { countPdfPagesAsync, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
+import { countPdfPagesAsync, renderPdf, weasyPrintConfig, WeasyPrintServiceError } from '../_shared/weasyprintClient.ts';
+import { functionStatusFor } from '../_shared/renderFailure.pure.ts';
 import {
   buildReportBrandSnapshot,
   REPORT_SNAPSHOT_VERSION,
@@ -346,6 +347,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const response: CashFlowRenderResponse = {
       url: signed.signedUrl,
+      path,
       fileName,
       bytes: pdf.length,
       pageCount,
@@ -366,7 +368,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
     // A malformed projection is the caller's fault and says so with a 400; the
     // message names the field, because "invalid payload" costs an hour that
-    // "years[3].rentalIncome must be a finite number" does not.
+    // "years[3].rentalIncome must be a finite number" does not. A failure the
+    // render SERVICE answered is passed on classified (503 when the engine
+    // did not answer, 502 when it refused or failed) with its kind, so the
+    // page can say what happened instead of printing the service's HTML.
+    if (e instanceof WeasyPrintServiceError) {
+      return json({
+        error: message, code: e.kind, upstreamStatus: e.upstreamStatus, retriable: e.retriable, renderId,
+      }, functionStatusFor(e.kind));
+    }
     const status = e instanceof CashFlowPayloadError ? 400 : 500;
     return json({ error: message, renderId }, status);
   }

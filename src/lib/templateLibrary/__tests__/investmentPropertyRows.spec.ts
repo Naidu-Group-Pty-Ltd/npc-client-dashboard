@@ -277,15 +277,15 @@ describe('the cover title against the longest address in production', () => {
 describe('the scorecard on a report with an unscored dimension', () => {
   const html = render(STORED);
 
-  it('says a withheld dimension was not assessed', () => {
-    // Two dimensions are withheld on this record and both must say so — once
-    // per master. `50` is NOT checked for on its own: Yield genuinely scores
-    // 50 here, which is the whole reason a placeholder of 50 was invisible.
-    const notAssessed = html.split('>Not assessed</td>').length - 1;
-    const dashes = html.split('>—</td>').length - 1;
-    const masters = 20; // the -01 and -03 variants of the ten families
-    expect(notAssessed).toBe(masters * 2);
-    expect(dashes).toBe(masters * 2);
+  it('draws no row for a withheld dimension — neither "Not assessed" nor a dash', () => {
+    // Two dimensions are withheld on this record. They used to print "Not
+    // assessed" beside a dash, once per master; the owner's rule (14 Sep 2026)
+    // is that no placeholder reaches a client document, so the row is not
+    // drawn. `50` is NOT checked for on its own: Yield genuinely scores 50
+    // here, which is the whole reason a placeholder of 50 was invisible.
+    expect(html.split('>Not assessed</td>').length - 1).toBe(0);
+    expect(html.split('>—</td>').length - 1).toBe(0);
+    expect(html).not.toMatch(/>Growth<\/td>|>Demand<\/td>/);
   });
 
   it('keeps the dimensions that were scored', () => {

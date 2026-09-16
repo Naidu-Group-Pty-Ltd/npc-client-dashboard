@@ -31,9 +31,8 @@
         "role": "system"
       }
     ],
-    "model": "gpt-5.2-chat-latest",
+    "model": "gpt-5.6-luna",
     "provider": "openai",
-    "temperature": 0.9,
     "toolIds": [
       "bbbf6fb6-685d-411e-b0e1-bec5acc4fa8e",
       "5c0c334c-6bbf-4399-b748-a3c50207e754",

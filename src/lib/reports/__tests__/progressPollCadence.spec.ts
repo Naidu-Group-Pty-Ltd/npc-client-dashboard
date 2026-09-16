@@ -164,8 +164,12 @@ describe('the two drivers of one report can see each other', () => {
     // threw 'Report regeneration incomplete' and told the operator their own
     // Stop had failed — then wrote `status: 'failed'` over the reason the
     // widget had already recorded.
-    expect(REGEN_HOOK).toMatch(/toast\.info\('Generation stopped'/);
-    const stop = REGEN_HOOK.indexOf("toast.info('Generation stopped'");
+    // The stop is settled through `settleProgressToast(toastId, 'info', …)`
+    // since the dismissable notices landed; the rule is the same — an info
+    // toast, never an error — so both spellings are accepted.
+    const STOP_TOAST = /(?:toast\.info\(|settleProgressToast\(\s*toastId,\s*'info',\s*)'Generation stopped'/;
+    expect(REGEN_HOOK).toMatch(STOP_TOAST);
+    const stop = REGEN_HOOK.search(STOP_TOAST);
     const finalCheck = REGEN_HOOK.indexOf('// Final status check');
     expect(finalCheck).toBeGreaterThan(stop);
     // It must RETURN before that check rather than fall into it.

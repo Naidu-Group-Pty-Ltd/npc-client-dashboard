@@ -15,6 +15,12 @@ export interface RoutingContext {
   tier: string | null;
   title?: string | null;
   fileLabel?: string | null;
+  /**
+   * The complete download name, when the format names its own document
+   * (the Investment family: tier word, whole address, date). Absent, the
+   * route composes `<reportType>-<fileLabel>-<id8>.pdf` as before.
+   */
+  fileName?: string | null;
   sourceTable?: string;
   legacyFallback?: LegacyFallbackDescriptor;
 }

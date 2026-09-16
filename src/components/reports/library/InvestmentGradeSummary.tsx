@@ -18,6 +18,10 @@ interface InvestmentGradeSummaryProps {
 const statusContent = (grade: ResolvedInvestmentGrade) => {
   switch (grade.status) {
     case 'pending': return { value: 'Score pending', detail: 'The latest report is still calculating its investment score.', tone: 'text-muted-foreground' };
+    // The run decided not to publish a grade — the scoring policy's own
+    // reading, said in the same words the report page uses. Never a dash
+    // alone: a withheld grade and a report nobody graded are different news.
+    case 'withheld': return { value: 'Grade withheld', detail: grade.withheld?.statement || grade.partialLabel || 'The scoring policy withheld an overall grade for this report.', tone: 'text-muted-foreground' };
     case 'insufficient_data': return { value: 'Insufficient data', detail: grade.partialLabel || 'Additional property or market data is required to calculate a numeric score.', tone: 'text-muted-foreground' };
     case 'failed': return { value: 'Unable to calculate', detail: 'The investment score could not be calculated.', tone: 'text-destructive' };
     case 'not_graded': return { value: 'Not graded', detail: 'No investment score is available for this report.', tone: 'text-muted-foreground' };

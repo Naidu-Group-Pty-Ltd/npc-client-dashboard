@@ -509,6 +509,37 @@ export default function AmlCaseWorkspace() {
           form?.querySelector<HTMLElement>("input, textarea, button")?.focus();
         }, 0);
         return;
+      case "complete_assessment":
+        /*
+         * Stage 8's primary act: land on the decision work, not merely the
+         * section the operator is already viewing. The guided path at the
+         * top of the risk panel then names the open step.
+         *
+         * This case and `record_gate` used to sit in the SCREENING switch
+         * below, whose discriminant is `AmlScreeningNextActionKey` — a union
+         * that spells neither — so no screening card could dispatch them and
+         * a typecheck pass deleted them as unreachable (15 Sep 2026). The
+         * stage header hands its `primaryAction` HERE, which is the only
+         * place either act can arrive; before this they fell to `default`
+         * and the button changed nothing visible.
+         */
+        window.setTimeout(() => {
+          document.getElementById("aml-risk-decision")
+            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 0);
+        return;
+      case "record_gate":
+        /* The gate is no longer a second decision on Stage 9. A cleared
+         * decision carries it, so the only gate a cleared case can still be
+         * holding is one an MLRO deliberately stopped, or a legacy row — and
+         * both are recorded on the Decision stage's full gate card, which is
+         * where every non-approval status has always lived. */
+        setSection("risk");
+        window.setTimeout(() => {
+          document.getElementById("decision-step-gate")
+            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+        }, 0);
+        return;
       default:
         return;
     }
@@ -653,29 +684,6 @@ export default function AmlCaseWorkspace() {
         document.getElementById("aml-party-screening")?.scrollIntoView({
           block: "start", behavior: "smooth",
         });
-        return;
-      case "complete_assessment":
-        /*
-         * Stage 8's primary act: land on the decision work, not merely the
-         * section the operator is already viewing. The guided path at the
-         * top of the risk panel then names the open step.
-         */
-        window.setTimeout(() => {
-          document.getElementById("aml-risk-decision")
-            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-        }, 0);
-        return;
-      case "record_gate":
-        /* The gate is no longer a second decision on Stage 9. A cleared
-         * decision carries it, so the only gate a cleared case can still be
-         * holding is one an MLRO deliberately stopped, or a legacy row — and
-         * both are recorded on the Decision stage's full gate card, which is
-         * where every non-approval status has always lived. */
-        setSection("risk");
-        window.setTimeout(() => {
-          document.getElementById("decision-step-gate")
-            ?.scrollIntoView?.({ block: "start", behavior: "smooth" });
-        }, 0);
         return;
       case "adjudicate_match":
       case "escalate":

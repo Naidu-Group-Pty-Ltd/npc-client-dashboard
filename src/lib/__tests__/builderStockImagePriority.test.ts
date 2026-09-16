@@ -20,10 +20,6 @@ import {
   isVerifiedWebImage, isStreetViewImage,
   PROVENANCE_LABEL, WEB_VERIFIED_VERIFICATION,
 } from '../../../supabase/functions/_shared/builderStock/imagePriority.pure';
-import {
-  verifyWebImageIdentity,
-} from '../../../supabase/functions/_shared/builderStock/webImageIdentity.pure';
-
 const SHA = 'a'.repeat(64);
 
 /** A builder source row the classifier measured CLEAN. */
@@ -280,106 +276,14 @@ const LOT_13 = {
   developmentName: 'Harpley Estate', builderName: 'Urbane Homes',
 };
 
-describe('13,14 — a search result must be THIS property', () => {
-  it('13 — another lot in the same estate is refused', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/a.jpg',
-      pageUrl: 'https://x.test/harpley-estate/lot-27',
-      title: 'Lot 27 Hummock Rise, Werribee VIC 3030 - Harpley Estate',
-    }, LOT_13);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.reason).toBe('names_a_different_lot');
-  });
-
-  it('14 — the estate\'s own marketing page is refused however much matches', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/estate.jpg',
-      pageUrl: 'https://x.test/harpley-estate/house-and-land-packages',
-      title: 'House and Land Packages - Harpley Estate, Werribee VIC 3030 | Urbane Homes',
-    }, LOT_13);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.reason).toBe('generic_estate_page');
-  });
-
-  it('a floorplan, masterplan, location map or logo is refused', () => {
-    for (const title of [
-      'Lot 13 Hummock Rise floorplan',
-      'Harpley Estate masterplan Werribee',
-      'Location map - Hummock Rise Werribee VIC 3030',
-      'Urbane Homes logo',
-    ]) {
-      const verdict = verifyWebImageIdentity({
-        imageUrl: 'https://x.test/a.jpg', pageUrl: 'https://x.test/p', title,
-      }, LOT_13);
-      expect(verdict.ok, title).toBe(false);
-      expect(verdict.reason, title).toMatch(/subject_not_a_facade/);
-    }
-  });
-
-  it('an interior offered as a facade is refused', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/a.jpg',
-      pageUrl: 'https://x.test/lot-13-hummock-rise',
-      title: 'Lot 13 Hummock Rise Werribee - kitchen and living room',
-    }, LOT_13);
-    expect(verdict.ok).toBe(false);
-  });
-
-  it('estate plus builder alone is not specific enough', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/a.jpg',
-      pageUrl: 'https://x.test/urbane/harpley',
-      title: 'Urbane Homes at Harpley Estate',
-    }, LOT_13);
-    expect(verdict.ok).toBe(false);
-  });
-
-  it('a result with no location evidence at all is refused', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/a.jpg', pageUrl: 'https://x.test/p', title: 'A nice house',
-    }, LOT_13);
-    expect(verdict.ok).toBe(false);
-    expect(verdict.reason).toMatch(/no_location_evidence|identity_not_specific/);
-  });
-
-  it('the property\'s own street and suburb ARE accepted', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/a.jpg',
-      pageUrl: 'https://x.test/vic/werribee/hummock-rise',
-      title: 'Lot 13 Hummock Rise, Werribee VIC 3030',
-    }, LOT_13);
-    expect(verdict.ok).toBe(true);
-    expect(verdict.matched).toContain('suburb');
-    expect(verdict.matched).toContain('street');
-  });
-
-  it('the same lot named explicitly inside its own estate is accepted', () => {
-    const verdict = verifyWebImageIdentity({
-      imageUrl: 'https://x.test/a.jpg',
-      pageUrl: 'https://x.test/harpley/lot-13',
-      title: 'Lot 13 at Harpley Estate, Werribee 3030',
-    }, LOT_13);
-    expect(verdict.ok).toBe(true);
-    expect(verdict.matched).toContain('lot');
-  });
-});
-
-describe('21,22 — identity is bound to the item and the organisation', () => {
-  it('a verified row records which item and organisation it was verified for', () => {
-    const row = verifiedWeb();
-    const identity = row.source_detail.property_identity as Record<string, unknown>;
-    expect(identity.stock_item_id).toBe('item-1');
-    expect(identity.organisation_id).toBe('org-a');
-  });
-
-  it('the selectors are given ONE property\'s rows and rank only those', () => {
-    // The scoping is the query's (`.eq('stock_item_id', …)`), and the ranking
-    // never widens it: nothing here can reach a row it was not handed.
-    const chosen = chooseCardImage([verifiedWeb()] as never);
-    expect(chosen?.image.id).toBe('web-verified');
-    expect(chooseCardImage([] as never)).toBeNull();
-  });
-});
+/*
+ * "A search result must be THIS property" (13,14) and the identity binding
+ * (21,22) pinned `verifyWebImageIdentity`, the web-search verifier — pipeline
+ * machinery that discovered and verified imagery on this deployment. The
+ * pipeline left with the portal (network extraction Phase 7): mirror rows
+ * arrive from the Builders Network already verified, and the ranking below is
+ * what still stands between an unproven row and a client's screen.
+ */
 
 /**
  * A STAGE THAT RAN AND FOUND NOTHING IS NOT A STAGE THAT WAS NEVER RUN.
@@ -465,24 +369,5 @@ describe('the ladder reaches every stage before a property is called blank', () 
     expect(nextImageStage([verifiedWeb()] as never, {
       sourceSettlementComplete: true,
     })).toBe('none');
-  });
-});
-
-describe('the settler does not retire a property with a stage left to try', () => {
-  const source = readFileSync(
-    join(__dirname, '..', '..', '..',
-      'supabase/functions/_shared/builderStock/images.ts'), 'utf8');
-
-  it('does not record an unreached stage as skipped', () => {
-    // The two calls that wrote a false "the builder supplied an image".
-    expect(source).not.toContain("recordStageSkipped(db, item, 'google_maps'));");
-    expect(source).not.toContain("recordStageSkipped(db, item, 'internet_search'));");
-  });
-
-  it('only writes failed when the ladder is exhausted', () => {
-    expect(source).toContain('ladderHasMore');
-    expect(source).not.toContain(`anyReady
-    ? (anyProblem ? 'partial' : 'complete')
-    : 'failed';`);
   });
 });

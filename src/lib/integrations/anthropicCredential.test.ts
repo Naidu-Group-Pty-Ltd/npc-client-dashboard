@@ -100,8 +100,8 @@ describe('an unconfigured deployment', () => {
     const { resolveAnthropicCredential } = await load();
     const result = await resolveAnthropicCredential();
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.end).toBe('unconfigured');
-    expect(!result.ok && result.why).toContain('ANTHROPIC_API_KEY');
+    expect(result.ok === false && result.end).toBe('unconfigured');
+    expect(result.ok === false && result.why).toContain('ANTHROPIC_API_KEY');
   });
 
   it('reports configuration without reaching the network', async () => {
@@ -228,10 +228,10 @@ describe('failures name the end that failed', () => {
     const { resolveAnthropicCredential } = await load();
     const result = await resolveAnthropicCredential();
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.end).toBe('mission_control');
+    expect(result.ok === false && result.end).toBe('mission_control');
     // Read from the header, never guessed from the body: both ends answer with
     // similar JSON and send an operator to opposite remedies.
-    expect(!result.ok && result.why).toContain('not_federated');
+    expect(result.ok === false && result.why).toContain('not_federated');
   });
 
   it('names Anthropic when the vendor refuses the exchange', async () => {
@@ -243,7 +243,7 @@ describe('failures name the end that failed', () => {
 
     const { resolveAnthropicCredential } = await load();
     const result = await resolveAnthropicCredential();
-    expect(!result.ok && result.end).toBe('anthropic');
+    expect(result.ok === false && result.end).toBe('anthropic');
   });
 
   it('refuses an incomplete identity rather than exchanging half of one', async () => {
@@ -257,8 +257,8 @@ describe('failures name the end that failed', () => {
 
     const { resolveAnthropicCredential } = await load();
     const result = await resolveAnthropicCredential();
-    expect(!result.ok && result.end).toBe('mission_control');
-    expect(!result.ok && result.why).toContain('incomplete');
+    expect(result.ok === false && result.end).toBe('mission_control');
+    expect(result.ok === false && result.why).toContain('incomplete');
   });
 
   /*

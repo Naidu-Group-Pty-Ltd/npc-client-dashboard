@@ -34,6 +34,7 @@ import { toast } from 'sonner';
 import { tryRouteThroughTemplateBuilderFor } from './compassRoute';
 import {
   TEMPLATE_ROUTE_REFUSAL_TEXT,
+  type TemplateBuilderRouteResult,
   type TemplateRenderer,
   type TemplateRouteRefusal,
 } from './routeReportThroughTemplate';
@@ -52,6 +53,15 @@ export interface TemplateDocument {
   renderer: string;
   /** Where a render service stored it, or null for a document drawn in this tab. */
   storagePath: string | null;
+  /**
+   * Set when the FINAL renderer was asked for and the in-tab renderer stood
+   * in because the print engine did not draw the document. The template was
+   * honoured; the document is not the final one, and the person has been
+   * told (`notifyTemplateDrawnInBrowser`). A caller that remembers a
+   * finalisation must not remember this one: the next attempt should ask the
+   * engine again.
+   */
+  degradedFrom: TemplateBuilderRouteResult['degradedFrom'];
 }
 
 /**
@@ -135,10 +145,63 @@ export function saveTemplateDocument(
  * The document still downloads either way — the notice is a warning beside a
  * working file, never an error in place of one.
  */
-export function notifySelectionNotUsed(detail?: string): void {
+export function notifySelectionNotUsed(detail?: string, cause?: string): void {
+  // The gate that closed, and what the engine actually said. On 15 Sep 2026
+  // every template fell back because the render service answered 503, and
+  // the notice said only "The renderer could not produce the document" —
+  // the status and the service's own words had been dropped one call below.
+  const why = cause && cause !== detail ? ` ${cause.replace(/\.?$/, '.')}` : '';
   toast.warning('Your chosen template was not used for this document', {
-    description: `${detail ?? 'It could not be applied to this record'}. `
+    description: `${detail ?? 'It could not be applied to this record'}.${why} `
       + 'The document was produced with the standard layout instead.',
+    duration: 12_000,
+  });
+}
+
+/**
+ * The person chose a template, the print engine did not draw it, and the
+ * in-tab renderer drew the same template instead.
+ *
+ * Said at the moment it happens, like `notifySelectionNotUsed`, and for the
+ * same reason: from the outside a stand-in and the final document are both
+ * "the template I chose", and the difference — substituted typefaces, no
+ * stored path, no PDF/UA conformance — is exactly what a person about to send
+ * the file needs to know. The engine's own status and words travel with it,
+ * because they are what an operator acts on.
+ */
+export function notifyTemplateDrawnInBrowser(detail: string, cause?: string): void {
+  const why = cause && cause !== detail ? ` ${cause.replace(/\.?$/, '.')}` : '';
+  toast.warning('Your chosen template was drawn in the browser', {
+    description: `${detail}.${why} This document uses your chosen template, drawn by the `
+      + 'in-app renderer instead of the print engine: typefaces are substituted and it is '
+      + 'not the final PDF/UA document. Generate it again once the print engine is back.',
+    duration: 15_000,
+  });
+}
+
+/**
+ * The chosen template could not carry the report and was composed around it.
+ *
+ * Said at the moment it happens, like the two above, because from the outside
+ * the composed document and the template as designed are both "the template I
+ * chose" — and the difference is exactly what the person who designed or
+ * picked that template needs to hear: which of its pages were kept, that the
+ * rest bound nothing of this report, and whose pages carry the body.
+ */
+export function notifyTemplateComposed(composed: {
+  kept: string[]; dropped: string[]; bodyPages: number; donorName: string | null;
+}): void {
+  const kept = composed.kept.length
+    ? `its ${composed.kept.join(' and ')} ${composed.kept.length === 1 ? 'page was' : 'pages were'} kept`
+    : 'none of its pages could be kept';
+  const dropped = composed.dropped.length
+    ? `, ${composed.dropped.length === 1 ? 'one page' : `${composed.dropped.length} pages`} that bound nothing of this report `
+      + `${composed.dropped.length === 1 ? 'was' : 'were'} left out`
+    : '';
+  toast.info('Your chosen template was composed around this report', {
+    description: `Its pages bind none of this report's content, so ${kept}${dropped}, and the report body `
+      + `was drawn in its palette from ${composed.donorName ?? "the format's default template"}.`,
+    duration: 15_000,
   });
 }
 
@@ -196,10 +259,11 @@ export async function tryTemplateDocument(
   // Which gate closed, when one does — so the notice below names the cause
   // rather than saying the same thing for every one of them.
   let refusal: TemplateRouteRefusal | null = null;
+  let refusalDetail: string | undefined;
   try {
     const routed = await tryRouteThroughTemplateBuilderFor(reportType, reportId, {
       variant: opts?.variant ?? null,
-      onRefusal: (reason) => { refusal = reason; },
+      onRefusal: (reason, detail) => { refusal = reason; refusalDetail = detail; },
       // The person's own answer to "which template does this format come out
       // in", honoured here so that every surface gets it rather than only the
       // ones that remembered to ask. See `selectedTemplateFor`.
@@ -208,8 +272,11 @@ export async function tryTemplateDocument(
       renderer: opts?.renderer,
     });
     if (!routed?.blob) {
+      // Only an engine's or a render's own words are worth relaying; the
+      // other gates' details are ids and adapter names for the console.
+      const relay = refusal === 'engine_unavailable' || refusal === 'render_failed' || refusal === 'unexpected_error';
       if (selectedId) {
-        notifySelectionNotUsed(refusal ? TEMPLATE_ROUTE_REFUSAL_TEXT[refusal] : undefined);
+        notifySelectionNotUsed(refusal ? TEMPLATE_ROUTE_REFUSAL_TEXT[refusal] : undefined, relay ? refusalDetail : undefined);
       }
       return null;
     }
@@ -233,12 +300,27 @@ export async function tryTemplateDocument(
      * produced is the blob that is delivered, and the emptiness check lives
      * once, beside the render.
      */
+    // The preview renderer stood in for the final one. The template is the
+    // person's choice, so this is not `notifySelectionNotUsed`; it is a
+    // different fact, said in its own words, with the engine's.
+    if (routed.degradedFrom) {
+      notifyTemplateDrawnInBrowser(
+        TEMPLATE_ROUTE_REFUSAL_TEXT[routed.degradedFrom.refusal],
+        routed.degradedFrom.detail,
+      );
+    }
+    // The chosen template could not carry the report and the body was
+    // composed into it. The document is complete; the person is told how.
+    if (routed.composed) notifyTemplateComposed(routed.composed);
+
     return {
       blob: routed.blob, fileName: routed.fileName, templateId: routed.templateId,
       renderer: routed.renderer, storagePath: routed.storagePath ?? null,
+      degradedFrom: routed.degradedFrom ?? null,
     };
-  } catch {
-    if (selectedId) notifySelectionNotUsed();
+  } catch (e) {
+    // Never a bare catch: the error object is the only thing that says why.
+    if (selectedId) notifySelectionNotUsed(undefined, e instanceof Error ? e.message : String(e));
     return null;
   }
 }

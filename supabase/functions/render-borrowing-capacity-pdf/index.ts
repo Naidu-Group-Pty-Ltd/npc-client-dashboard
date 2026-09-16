@@ -365,6 +365,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const response: SnapshotRenderResponse = {
       url: signed.signedUrl,
+      path,
       fileName,
       bytes: pdf.length,
       pageCount,

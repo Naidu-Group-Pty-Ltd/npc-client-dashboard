@@ -151,7 +151,7 @@ describe('RF-7.2B.1A.1 — the subject postcode is not a governed figure', () =>
     // from a figure ABOUT the area, and even the disclosure is refused because
     // the number sits right beside the topic it disclaims.
     expect(blocks('Population data for the 2794 postal area could not be established.',
-      ALL_WITHHELD, {})).toBe(true);
+      ALL_WITHHELD, { subjectPostcode: undefined })).toBe(true);
     // ...and supplying it is what makes the same sentence read correctly.
     expect(blocks('Population data for the 2794 postal area could not be established.'))
       .toBe(false);

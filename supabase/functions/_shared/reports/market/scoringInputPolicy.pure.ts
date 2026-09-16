@@ -215,7 +215,8 @@ export function admissibleInputs(
  * is frozen but not activated.
  *
  * `v2` — the frozen Scoring V2 engine, after an explicit production activation
- * decision (ME-8). Nothing in this repository sets it.
+ * decision (ME-8). Set by `scoringV2Production.pure.ts` alone, since 15 Sep
+ * 2026; this legacy service still cannot spell it.
  */
 export type ScoringAuthority = 'legacy_snapshot' | 'unavailable' | 'v2';
 
@@ -248,8 +249,10 @@ export type LegacyScoringAuthority = Exclude<ScoringAuthority, 'v2'>;
  *
  * Deliberately a constant rather than a flag read from configuration: making
  * V2 authoritative is a decision with a review behind it, and a value some
- * environment could set is not that decision. Changing this line is the
- * activation.
+ * environment could set is not that decision. Changing this line was never
+ * the activation and is not one now: V2 was activated (15 Sep 2026) by
+ * WIRING the engine — `scoringV2Production.pure.ts` — and this constant
+ * governs only what the legacy path may do, which is never grade.
  */
 export const PRODUCTION_SCORING_AUTHORITY: LegacyScoringAuthority = 'unavailable';
 

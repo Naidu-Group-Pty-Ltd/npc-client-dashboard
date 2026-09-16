@@ -9,7 +9,11 @@ const fn = read('supabase/functions/partner-agreement-records/index.ts');
 const doc = read('supabase/functions/_shared/partnerAgreementDocument.pure.ts');
 const panel = read('src/components/admin/PartnerAgreementsPanel.tsx');
 const rowAction = read('src/components/admin/useAgreementDownload.ts');
-const builderAdmin = read('src/pages/admin/BuilderPortalAdmin.tsx');
+/* The Builder Portal's Command Centre admin surface left with the portal
+   (network extraction Phase 7): its edge functions read tables the
+   decommission migration drops, and the archive is the operator's record.
+   The register keeps serving the two surviving partner portals, and the
+   builder acceptance rows it once showed were archived before deletion. */
 const solicitorAdmin = read('src/pages/admin/SolicitorPortalAdmin.tsx');
 const financeAdmin = read('src/pages/admin/FinancePortalAdmin.tsx');
 const registry = JSON.parse(read('supabase/functions-registry/SECURITY_REGISTRY.json'));
@@ -128,7 +132,6 @@ test('the artefact bucket is private and service-role only', () => {
 
 test('every portal has the same section, and it is the same section', () => {
   for (const [name, source, portal] of [
-    ['builder', builderAdmin, 'builder'],
     ['solicitor', solicitorAdmin, 'solicitor'],
     ['finance', financeAdmin, 'finance'],
   ]) {
@@ -157,17 +160,17 @@ test('the function is registered as module-gated', () => {
   assert.match(config, /\[functions\.partner-agreement-records\]\nverify_jwt = true/);
 });
 
-test('the Command Centre view resolves both parties for all three portals', () => {
+test('the Command Centre view resolves both parties for the surviving portals', () => {
   for (const table of [
     'solicitor_portal_users', 'solicitor_firms',
-    'builder_portal_users', 'builder_organisation_memberships', 'builder_organisations',
     'finance_portal_users', 'finance_agent_contacts',
   ]) {
     assert.ok(migration.includes(table), `the view does not reach ${table}`);
   }
-  // The builder party comes from the primary live membership, not any row.
-  assert.match(migration, /WHERE m\.builder_user_id = b\.id AND m\.revoked_at IS NULL/);
-  assert.match(migration, /ORDER BY m\.is_primary DESC NULLS LAST, m\.created_at/);
+  // The builder legs left the view with the portal — a view is validated at
+  // creation, so a fresh clone could not build the old definition against
+  // the dropped tables, and the builder rows themselves are archived.
+  assert.doesNotMatch(migration, /LEFT JOIN public\.builder_portal_users/);
   // And the migration runs the view rather than only parsing it.
   assert.match(migration, /SELECT count\(\*\) INTO v_count FROM public\.partner_agreement_records/);
 });
@@ -177,7 +180,6 @@ test('the copy is reachable from the partner row, not only from the tab', () => 
   // user is standing when a partner rings up and asks for their copy — that is
   // the portal-users row, and the answer should be one menu item away.
   for (const [name, source, portal, id] of [
-    ['builder', builderAdmin, 'builder', 'user.id'],
     ['solicitor', solicitorAdmin, 'solicitor', 'u.id'],
     ['finance', financeAdmin, 'finance', 'u.portal_user!.id'],
   ]) {

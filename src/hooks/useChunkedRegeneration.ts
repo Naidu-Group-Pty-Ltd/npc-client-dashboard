@@ -1,6 +1,10 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { toast } from 'sonner';
+import {
+  createProgressToastId,
+  settleProgressToast,
+  showProgressToast,
+} from '@/lib/progressToast';
 import { sectionCountForTier, normaliseReportTier } from '@/lib/reports/compassSectionRegistry';
 import {
   cancellationReason,
@@ -88,9 +92,10 @@ export function useChunkedRegeneration() {
     abortReasonRef.current = DEFAULT_CANCELLATION_REASON;
     activeReportIdRef.current = reportId;
 
-    const toastId = toast.loading('Starting regeneration...', {
-      description: 'Preparing to regenerate report in chunks...'
-    });
+    /* A dismissible notice: sonner will not draw a close button on a loading
+       toast, and this one lives for the whole run. */
+    const toastId = createProgressToastId('report-generation');
+    showProgressToast(toastId, 'Starting regeneration…', 'Preparing to regenerate report in chunks…');
 
     try {
       // Fetch current report state — include `report_tier` so we know the section count.
@@ -202,12 +207,13 @@ export function useChunkedRegeneration() {
         setState(prev => ({ ...prev, currentSection: section + 1, phase: 'generate' }));
         onProgress?.(section + 1, totalSections, 'generate');
 
-        toast.loading(`Generating section ${section + 1}/${totalSections}…`, {
-          id: toastId,
-          description: tier === 'financial-analysis'
-            ? 'Financial Analysis Report'
-            : 'Compass-40 Report',
-        });
+        // Closing this notice only hides it — generation continues, and the
+        // floating progress widget remains the place to stop a run.
+        showProgressToast(
+          toastId,
+          `Generating section ${section + 1}/${totalSections}…`,
+          tier === 'financial-analysis' ? 'Financial Analysis Report' : 'Compass-40 Report',
+        );
 
         let sectionSuccess = false;
         let lastError = '';
@@ -298,10 +304,12 @@ export function useChunkedRegeneration() {
             console.warn('[ChunkedRegeneration] Could not re-assert the stop:', e?.message);
           }
         }
-        toast.info('Generation stopped', {
-          id: toastId,
-          description: `${effectivePropertyAddress || 'The report'} kept ${sectionsDone} of ${totalSections} sections and can be resumed.`,
-        });
+        settleProgressToast(
+          toastId,
+          'info',
+          'Generation stopped',
+          `${effectivePropertyAddress || 'The report'} kept ${sectionsDone} of ${totalSections} sections and can be resumed.`,
+        );
         setState(prev => ({ ...prev, isRegenerating: false, currentSection: sectionsDone, phase: 'idle' }));
         return;
       }
@@ -309,7 +317,7 @@ export function useChunkedRegeneration() {
       // ── Phase 2: Condense + page-pressure trim ────────────────────────────
       setState(prev => ({ ...prev, phase: 'condense', currentSection: totalSections }));
       onProgress?.(totalSections, totalSections, 'condense');
-      toast.loading('Condensing report (word caps + page pressure)…', { id: toastId });
+      showProgressToast(toastId, 'Condensing report (word caps + page pressure)…');
 
       try {
         await invokeSecureFunction('condense-investment-report', { reportId, tier }, { timeoutMs: 180000 });
@@ -322,7 +330,7 @@ export function useChunkedRegeneration() {
       //              inside the same edge call). ───────────────────────────────
       setState(prev => ({ ...prev, phase: 'qa' }));
       onProgress?.(totalSections, totalSections, 'qa');
-      toast.loading('Running QA checks…', { id: toastId });
+      showProgressToast(toastId, 'Running QA checks…');
 
       // Final status check
       const { data: finalData } = await invokeSecureFunction('get-investment-reports', {
@@ -333,10 +341,12 @@ export function useChunkedRegeneration() {
       const finalReport = finalData?.report;
 
       if (finalReport?.last_completed_section >= totalSections) {
-        toast.success('Report regenerated successfully', {
-          id: toastId,
-          description: `Version ${finalReport.current_version || 'new'} created`,
-        });
+        settleProgressToast(
+          toastId,
+          'success',
+          'Report regenerated successfully',
+          `Version ${finalReport.current_version || 'new'} created`,
+        );
 
         setState(prev => ({
           ...prev,
@@ -355,7 +365,7 @@ export function useChunkedRegeneration() {
 
       setState(prev => ({ ...prev, isRegenerating: false, phase: 'idle', error: errorMessage }));
 
-      toast.error('Regeneration failed', { id: toastId, description: errorMessage });
+      settleProgressToast(toastId, 'error', 'Regeneration failed', errorMessage);
 
       await invokeSecureFunction('manage-investment-reports', {
         action: 'update',

@@ -45,6 +45,7 @@ import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
 import { shouldRenderBlock, shouldRenderOverlay } from './renderVisibility';
 import { applyNarrativePlan, planNarrative } from './narrativePlan';
+import { pagesForDocument } from '../../../supabase/functions/_shared/reports/investment/tierPageSequence.pure';
 
 export interface RenderOptions {
   /** The frozen presentation payload the template binds against. */
@@ -65,7 +66,12 @@ export function renderTemplateToBlob(
   const ctxSeed: ResolveContext = { data: options.data ?? {}, tokens };
   const ctxBase = applyNarrativePlan(ctxSeed, planNarrative(template, ctxSeed));
 
-  const visiblePages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
+  // The same tier rule the HTML renderer applies, so the browser presentation
+  // and the final document draw the same pages (`tierPageSequence.pure.ts`).
+  const visiblePages = pagesForDocument(
+    template.pages.filter((p) => evalConditional(p.conditional, ctxBase)),
+    options.data as Parameters<typeof pagesForDocument>[1],
+  );
   if (visiblePages.length === 0) {
     // Always produce a valid (blank) PDF
     const empty = new jsPDF({ unit: 'pt', format: 'a4' });

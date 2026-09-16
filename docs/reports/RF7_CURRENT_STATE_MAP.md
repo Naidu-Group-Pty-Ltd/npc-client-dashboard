@@ -220,7 +220,7 @@ values to undefined** (`priceGrowth1Year || undefined`, `vacancyRate ||
 undefined` — a genuine 0 reads as no data). Buyer LVR and cash flow are inputs
 to its Risk. These are exactly the classes Scoring V2 removes.
 
-**V2 — frozen shadow.** `scoreInvestmentV2Shadow` (2.1.0-shadow) →
+**V2 — production since 15 Sep 2026 (ME-8; this map's other V2 lines predate that and are left as the record of the state they described).** `scoreInvestmentV2Shadow` (2.1.0, reached only through `scoringV2Production.pure.ts` from `investment-scoring-service`) →
 `buildScoreOutput` (1.0.0). Unwired, CI-asserted; this pass re-swept the repo:
 no edge entrypoint imports anything under `_shared/reports/market` or `/risk`,
 and the only non-test `src` consumer of the bridges is the probe diagnostics

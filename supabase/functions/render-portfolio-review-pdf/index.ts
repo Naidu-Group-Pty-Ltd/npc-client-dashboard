@@ -389,6 +389,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const response: PortfolioRenderResponse = {
       url: signed.signedUrl,
+      path,
       fileName,
       bytes: pdf.length,
       pageCount,

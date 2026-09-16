@@ -14,6 +14,16 @@ import {
   type ScoredDimension,
   type ScoringPolicyStamp,
 } from '../_shared/reports/market/scoringInputPolicy.pure.ts';
+// ME-8 (15 Sep 2026) — Scoring V2 is the production grade engine. This service
+// reaches it through the activation module and through nothing else: the
+// engine's own modules are never imported here, which is what keeps "V1
+// relabelled as V2" a compile error rather than a convention.
+import {
+  SCORING_V2_ACTIVATION,
+  dwellingTypeFor,
+  scoreForProduction,
+  type ProductionScoringInput,
+} from '../_shared/reports/market/scoringV2Production.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -155,6 +165,71 @@ function transformInputData(rawInput: any): InvestmentScoringInput {
   };
 }
 
+
+/**
+ * The Scoring V2 request, read from the same nested shape the generator has
+ * always posted plus the two fields it now adds: `subject` (the trusted
+ * geography the evidence was keyed on) and `marketEvidence` (the points its
+ * adapters extracted — Domain suburb performance, the ABS population series).
+ *
+ * The buyer's position is read exactly where V1 read it (`financials.
+ * keyMetrics.lvr`, `.weeklyNet`) and reaches Finance Suitability only. The
+ * location inputs are read with the same `??` semantics the RF-7.2B.1B2 gate
+ * pins on `transformInputData`, and the input policy decides whether they may
+ * count (today: no, until repaired).
+ */
+function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
+  const property = rawInput.property || {};
+  const financials = rawInput.financials || {};
+  const locationIntelligence = rawInput.locationIntelligence || {};
+  const keyMetrics = financials.keyMetrics || {};
+  const num = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) ? v : null;
+  const str = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() ? v.trim() : null;
+
+  const propertyType = str(property.propertyType);
+  const subjectIn = rawInput.subject && typeof rawInput.subject === 'object' ? rawInput.subject : {};
+  const marketIn = rawInput.marketEvidence && typeof rawInput.marketEvidence === 'object' ? rawInput.marketEvidence : {};
+  const points = marketIn.points && typeof marketIn.points === 'object' ? marketIn.points : {};
+  const providersConsulted = Array.isArray(marketIn.providersConsulted) ? marketIn.providersConsulted : [];
+  const providersUnavailable = Array.isArray(marketIn.providersUnavailable)
+    ? marketIn.providersUnavailable.filter((u: unknown) => u && typeof u === 'object')
+    : [];
+
+  return {
+    subject: {
+      suburb: str(subjectIn.suburb),
+      postcode: str(subjectIn.postcode),
+      state: str(subjectIn.state) ?? str(rawInput.state),
+      dwellingType: dwellingTypeFor(propertyType),
+      resolvedFrom: str(subjectIn.resolvedFrom) as ProductionScoringInput['subject']['resolvedFrom'],
+    },
+    market: { points, providersConsulted, providersUnavailable },
+    property: {
+      price: (num(property.price) ?? 0) > 0 ? num(property.price) : null,
+      weeklyRent: (num(property.weeklyRent) ?? 0) > 0 ? num(property.weeklyRent) : null,
+      annualOutgoings: num(financials.expenses?.annualTotal) ?? null,
+      propertyType,
+    },
+    finance: {
+      lvr: num(keyMetrics.lvr),
+      weeklyCashFlow: num(keyMetrics.weeklyNet),
+    },
+    location: {
+      walkScore: locationIntelligence.walkScore ?? null,
+      commuteTimeCBD: locationIntelligence.commute?.durationMinutes ?? null,
+      schoolsNearby: locationIntelligence.schools?.schoolsWithin3km ?? null,
+    },
+    // Deliberately NOT read from the request. `verifiedInputs` stays unwired
+    // on the live path exactly as the input policy records: the event that
+    // wires it is the repair of the location service, with a decision behind
+    // it, and until then Location is null and disclosed rather than defaulted.
+    verifiedInputs: [],
+    evidenceWithheldReason: str(rawInput.evidenceWithheldReason),
+    now,
+  };
+}
 
 // ============= AREA SCORING TYPES & LOGIC =============
 
@@ -588,7 +663,26 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Property-specific scoring (existing logic)
+    // ME-8 — the production grade engine. Every property scoring request is
+    // answered by Scoring V2 while the activation record approves it; the
+    // legacy V1 path below is retained as the recorded methodology of the
+    // stored corpus and for the area scorer, and is never reached for a
+    // property while `approved` is true.
+    if (SCORING_V2_ACTIVATION.approved) {
+      const record = scoreForProduction(productionInputFrom(rawInput, new Date()));
+      console.log(
+        `📊 Scoring V2 (${record.policy.methodologyVersion}): `
+        + `${record.policy.gradeIssued ? `grade ${record.grade} at ${record.totalScore}` : 'grade withheld'} — `
+        + `measured ${record.policy.measuredDimensions.join(', ') || 'nothing'}`
+        + (record.gradeGaps.length ? `; gaps: ${record.gradeGaps.map((g) => `${g.dimension} (${g.detail})`).join('; ')}` : ''),
+      );
+      return new Response(JSON.stringify({ success: true, data: record }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Property-specific scoring (legacy V1 — unreached while V2 is approved)
     const input: InvestmentScoringInput = transformInputData(rawInput);
     console.log('Transformed input for scoring:', JSON.stringify(input, null, 2));
 

@@ -79,6 +79,18 @@ export interface EnrichmentStages {
   readonly placesUnavailable?: readonly string[];
   /** A commute is legitimately absent for a state with no known destination. */
   readonly commute: 'measured' | 'no_route' | 'destination_unknown';
+  /**
+   * Which provider answered each category — `register` (the local OSM
+   * amenity register), `google`, or `unmeasured`. Additive and advisory,
+   * exactly like `placesUnavailable`: the reuse decision reads `places`
+   * alone. It exists so a stored object can say where its figures came
+   * from once two providers can produce them.
+   */
+  readonly amenitySources?: Readonly<Record<string, string>>;
+  /** When the register slices that answered were loaded (category → ISO date). */
+  readonly amenityRegisterLoadedAt?: Readonly<Record<string, string>>;
+  /** Which provider measured the commute, when one did. */
+  readonly commuteProvider?: string;
 }
 
 export interface EnrichmentAcquisition {

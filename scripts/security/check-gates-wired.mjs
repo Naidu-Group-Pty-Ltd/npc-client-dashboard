@@ -56,7 +56,6 @@ const UNWIRED_BY_DESIGN = new Map([
 /** Checks that live outside scripts/security/ but are security gates all the same. */
 const EXTRA_GATES = [
   'scripts/solicitor-portal/security-check.mjs',
-  'scripts/builder-portal/security-check.mjs',
 ];
 
 const errors = [];

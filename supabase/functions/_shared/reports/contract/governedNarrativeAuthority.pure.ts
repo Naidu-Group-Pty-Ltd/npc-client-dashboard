@@ -672,8 +672,11 @@ export function governedCategoryDirective(
     '  subject property\'s own postal area is NOT a substitute and must not appear.',
     '- Do NOT attribute any figure to the ABS, the Census, or any statistical agency',
     '  in this report for these categories. No such figure is held for this property.',
-    '- Where such a figure would have appeared, write "Not available" and state in one',
-    '  sentence that the data could not be established for this property.',
+    '- Where such a figure would have appeared, leave it out, together with the sentence',
+    '  that would have carried it. Do NOT write "Not available", "N/A", "unavailable" or',
+    '  any placeholder, and do NOT tell the reader that a figure is missing, withheld or',
+    '  could not be established: a client document states what is known and is silent',
+    '  about what is not.',
     '- Do NOT manufacture a distribution. No percentage split, composition chart,',
     '  donut, bar or pie of household types, life stages, tenure or workforce mix,',
     '  and no "indicative", "approximate", "typical" or "estimated" numeric profile.',
@@ -810,20 +813,28 @@ function faultsForUnit(
  *
  * RF-7.2B.1A.2. Deliberately carries NO figure of any kind, so the re-audit
  * cannot condemn the repair — and states the limitation as a fact about the
- * EVIDENCE rather than about the area, because "no data was available" is
- * true and "the area is unremarkable" would be an invention of a different
- * kind. It is client-facing prose: no flag names, no codes, no markers.
+ * METHOD rather than about the area, because "the area is unremarkable" would
+ * be an invention of a different kind. It is client-facing prose: no flag
+ * names, no codes, no markers — and, since 14 Sep 2026, no confession either.
+ * These sentences used to read "… was not available for this analysis";
+ * measured on the newest production reports (12 Sep 2026) that wording, and
+ * the model's echoes of it, was the commonest "not available" a client saw.
+ * The owner's rule is that neither "N/A" nor "unavailable" reaches a client
+ * document, so each sentence now says what the analysis RESTS ON instead of
+ * what it lacks. Both statements are true; only one belongs in the document.
  */
 const EVIDENCE_GAP_DISCLOSURE: Record<GovernedCategory, string> = {
   demographics:
-    'Authoritative postcode-level demographic information was not available for this '
-    + 'analysis, so no quantitative demographic conclusions have been relied upon.',
+    'This analysis does not rely on postcode-level demographic statistics; conclusions '
+    + 'about the resident profile are drawn from the area\'s observed character and local '
+    + 'market evidence.',
   seifa:
-    'Authoritative socio-economic index data was not available for this postal area, so no '
-    + 'ranking or index-based conclusions have been relied upon.',
+    'This analysis does not rely on a socio-economic index for the postal area; no ranking '
+    + 'or index-based conclusions are drawn.',
   employment:
-    'Authoritative postcode-level workforce and employment data was not available for this '
-    + 'analysis, so no quantitative employment conclusions have been relied upon.',
+    'This analysis does not rely on postcode-level workforce and employment statistics; '
+    + 'conclusions about employment-driven demand are drawn from the area\'s observed '
+    + 'economic character.',
 };
 
 /** A unit the remediator removed, kept for the audit trail. */

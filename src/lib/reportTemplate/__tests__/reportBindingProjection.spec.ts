@@ -244,11 +244,13 @@ describe('after projection', () => {
     expect(data.summary.watch[0]).toBe('Negative cash flow in years 1-3');
   });
 
-  it('sets the ungraded statement as a headline and a sentence, never as a five-line headline', () => {
+  it('publishes no verdict at all on an ungraded record — never "Not available"', () => {
     // The scorer writes the policy's explanation where a recommendation would
-    // go. Every master binds `headline` at display size, so the two-sentence
-    // explanation used to set at 27pt over the KPI band. The policy's own short
-    // `value` is the headline; its explanation is the sentence under it.
+    // go. RS-3 set the policy's short form ("Not available — insufficient
+    // verified evidence") as the headline over the KPI band; the owner's rule
+    // (14 Sep 2026) is that neither "N/A" nor "unavailable" reaches a client
+    // document, so the headline, the action and the sentence are all absent
+    // and the verdict block draws nothing.
     const ungraded = projectInvestmentReport({
       ...ROW,
       investment_score: {
@@ -257,10 +259,12 @@ describe('after projection', () => {
         policy: { gradeIssued: false },
       },
     });
-    expect(ungraded.recommendation.headline).toBe(OVERALL_GRADE_UNAVAILABLE.value);
-    expect(ungraded.recommendation.gradedLine).toBe(OVERALL_GRADE_UNAVAILABLE.explanation);
+    expect(ungraded.recommendation.headline).toBeUndefined();
+    expect(ungraded.recommendation.action).toBeUndefined();
+    expect(ungraded.recommendation.gradedLine).toBeUndefined();
     expect(ungraded.recommendation.grade).toBeUndefined();
     expect(ungraded.recommendation.score).toBeUndefined();
+    expect(JSON.stringify(ungraded.recommendation)).not.toMatch(/not available|unavailable|N\/A/i);
     // A graded record's own recommendation is untouched.
     expect(data.recommendation.headline).toBe('Proceed to offer at or below $1.29m');
   });

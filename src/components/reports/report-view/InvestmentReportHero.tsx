@@ -62,9 +62,21 @@ export function InvestmentReportHero({
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold">Investment Grade</p>
+                  {/*
+                    * A withheld grade names its cause first — the scoring
+                    * policy, not a failed calculation — and the client-facing
+                    * sentence the record carries under it. It used to draw the
+                    * record's literal "N/A" as the grade beside that sentence,
+                    * which reads as a page that failed to populate.
+                    */}
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {scoreSummary.recommendation || (scoreSummary.insufficient ? 'Insufficient data for a numeric investment score' : 'Score calculated from available report data')}
+                    {scoreSummary.withheld
+                      ? scoreSummary.withheld.statement
+                      : (scoreSummary.recommendation || (scoreSummary.insufficient ? 'Insufficient data for a numeric investment score' : 'Score calculated from available report data'))}
                   </p>
+                  {scoreSummary.withheld && scoreSummary.recommendation && (
+                    <p className="mt-1 text-[11px] text-muted-foreground/80">{scoreSummary.recommendation}</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -74,15 +86,17 @@ export function InvestmentReportHero({
         <div className="grid gap-3 p-6 sm:grid-cols-2 xl:grid-cols-5">
           <div className="rounded-xl border bg-background/70 p-4">
             <p className="text-xs text-muted-foreground">Investment grade</p>
-            <p className="mt-2 text-lg font-semibold">{scoreSummary.grade || 'Not graded'}</p>
-            {scoreSummary.insufficient && <p className="mt-1 text-xs text-muted-foreground">Insufficient data</p>}
+            <p className="mt-2 text-lg font-semibold">{scoreSummary.withheld ? 'Withheld' : (scoreSummary.grade || 'Not graded')}</p>
+            {scoreSummary.withheld
+              ? <p className="mt-1 text-xs text-muted-foreground">By the scoring policy</p>
+              : scoreSummary.insufficient && <p className="mt-1 text-xs text-muted-foreground">Insufficient data</p>}
           </div>
           <div className="rounded-xl border bg-background/70 p-4">
             <p className="text-xs text-muted-foreground">Score /100</p>
             {scoreSummary.insufficient ? (
               <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                 <ShieldAlert className="h-4 w-4" />
-                Insufficient data
+                {scoreSummary.withheld ? 'Withheld' : 'Insufficient data'}
               </div>
             ) : (
               <div className="mt-2 flex items-end gap-1">

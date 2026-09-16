@@ -160,11 +160,22 @@ describe('tables', () => {
   it.each([
     ['no delimiter row', '| a | b |\n| 1 | 2 |'],
     ['a delimiter row of the wrong width', '| a | b | c |\n| --- | --- |\n| 1 | 2 | 3 |'],
-    ['a header and delimiter with no body', '| a | b |\n| --- | --- |'],
-  ])('refuses to build a table from %s', (_label, src) => {
+  ])('refuses to build a table from %s and keeps the words as a paragraph', (_label, src) => {
     const r = renderMarkdown(src);
     expect(r.html).not.toContain('<table');
     expect(r.html).toContain('<p>');
+    expect(r.notices.tablesRejected).toBe(1);
+  });
+
+  it('a header and delimiter with no body is nothing to show, and prints nothing', () => {
+    // A table the model started and never filled has no content — only the
+    // column labels and the separator. Printed as a paragraph it was
+    // `| a | b | | --- | --- |` raw on a client's page (a stored Market
+    // Intelligence layer ended exactly so). It is consumed and counted.
+    const r = renderMarkdown('| a | b |\n| --- | --- |');
+    expect(r.html).not.toContain('<table');
+    expect(r.html).not.toContain('|');
+    expect(r.html).toBe('');
     expect(r.notices.tablesRejected).toBe(1);
   });
 

@@ -37,7 +37,7 @@
     },
     "staticIpAddressesEnabled": false,
     "timeoutSeconds": 20,
-    "url": "https://hook.us2.make.com/8k9ofpknay6jvcjuz9h8cg4vbpm51rrw"
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook"
   },
   "startSpeakingPlan": {
     "waitSeconds": 4

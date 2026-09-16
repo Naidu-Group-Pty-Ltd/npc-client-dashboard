@@ -106,6 +106,16 @@ Deno.serve(async (req) => {
       return json({ error: 'delivery_not_recorded' }, 500);
     }
 
+    // The sweep converges; this door only LANDS. One opportunistic pass
+    // keeps latency low; the pg_cron drive of the same idempotent function
+    // is the guarantee, so a failure here is logged and the delivery still
+    // answers accepted.
+    const { error: applyError } = await supabase
+      .rpc('builder_network_apply_inbound_events', { _limit: 25 });
+    if (applyError) {
+      console.error('[builder-network-inbound] opportunistic apply failed', applyError.message);
+    }
+
     const { count } = await supabase
       .from('builder_network_inbound_events')
       .select('id', { count: 'exact', head: true })

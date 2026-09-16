@@ -28,7 +28,7 @@ describe('browser production export guard', () => {
       pages: [page(['text-block', 'sparkline'])],
     } as never);
     expect(verdict.ok).toBe(false);
-    if (verdict.ok) return;
+    if (verdict.ok === true) return;
     expect(verdict.blockTypes.join(' ')).toMatch(/sparkline/i);
   });
 
@@ -47,7 +47,7 @@ describe('browser production export guard', () => {
       pages: [page(['swot'])],
     } as never);
     expect(verdict.ok).toBe(false);
-    if (verdict.ok) return;
+    if (verdict.ok === true) return;
     // The reason a person reads carries no block id, no renderer name and no
     // infrastructure vocabulary.
     expect(verdict.reason).not.toMatch(/jspdf|weasy|placeholder block|drawExtras|Cloud Run/i);

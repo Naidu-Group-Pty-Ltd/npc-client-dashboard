@@ -4,6 +4,7 @@ import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { logApiUsage } from '../_shared/logApiUsage.ts';
 import { getBrandConfig } from '../_shared/brand-config.ts';
+import { publishableGrade } from '../_shared/reports/investment/scoreSections.pure.ts';
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, COMPASS_PAGE_BAND, EDITORIAL_LABELS, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
@@ -40,6 +41,21 @@ import { runQAValidation } from '../_shared/compassQAValidator.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
 import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 import { cumulativeCashFlow, fmtCashFlow, impliedOpexFromSeries, seriesLvrPercent } from '../_shared/reports/investment/financialEngine.pure.ts';
+import {
+  financialWarningsForPrompt,
+  interestOnlyMonthlyPaymentFor,
+  projectionAssumptionLinesForPrompt,
+  sensitivityRowsForPrompt,
+} from '../_shared/reports/investment/promptFinancials.pure.ts';
+import { recordedScoreValues } from '../_shared/reports/investment/scoreClaims.pure.ts';
+import { investmentScorePromptBlock, overallRecommendationLine } from '../_shared/reports/investment/scorePromptBlock.pure.ts';
+import { abbreviateState, domainCategoryFor, dwellingTypeFor } from '../_shared/reports/market/domainEvidence.pure.ts';
+import { populationGrowthPoint } from '../_shared/reports/market/populationGrowthEvidence.pure.ts';
+import { EVIDENCE_KEYS, emptyEvidence, mergeEvidence, type EvidenceSubject, type MarketEvidence } from '../_shared/reports/market/marketEvidence.pure.ts';
+import { openDataSalesPoints, salesRegisterSourcesFor } from '../_shared/reports/market/openDataSalesEvidence.pure.ts';
+import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
+import type { SalesRegisterState } from '../_shared/reports/market/openData/salesRegister.pure.ts';
+import { describeLandArea } from '../_shared/reports/investment/landAreaScope.pure.ts';
 import { applyDisplayOverrides, buildAnnualCostOverrides, normalisePropertyType, toFiniteNumber } from '../_shared/reports/investment/overrides.pure.ts';
 import { composePropertySpecs } from '../_shared/reports/investment/propertyRecord.pure.ts';
 import { reconcileNearestSchool, reconcileSchoolDistances } from '../_shared/reports/schoolDistance.pure.ts';
@@ -70,12 +86,43 @@ const POST_PROCESSING_RESERVE_MS = 25_000;
 // Fallback estimate before we have measured a section in this run.
 const DEFAULT_SECTION_ESTIMATE_MS = 30_000;
 
-// Per-call ceilings for the model. These used to be 150s/120s — longer than the
-// entire edge invocation, so one hung call could still blow the whole run past
-// the platform ceiling before the between-sections budget guard could fire.
-// Observed section latency in production is 9-37s, so these leave ample room.
-const SECTION_REQUEST_TIMEOUT_MS = 60_000;
+// Per-call ceilings for the model, and the clock every call answers to.
+//
+// These used to be 150s/120s — longer than the entire edge invocation, so one
+// hung call could still blow the whole run past the platform ceiling before
+// the between-sections budget guard could fire. They were then cut to 60s/45s
+// on the reading that "observed section latency is 9-37s" — which was true of
+// the 2,500-token sections and false of the closing one. Measured on the
+// generation trace, 15 Sep 2026: "Risks & Recommendations" (three headings,
+// 4,000 tokens, a 68 KB prompt) took 40-110s whenever it completed, so the
+// full-prompt attempt timed out at 60s on every run, the compact retry then
+// ran with whatever was left, and 43 invocations for two reports were killed
+// by the platform with no status written — the report's widget read
+// "Section 12 of 12 · 10h 45m elapsed".
+//
+// The fix is not a bigger constant. Every call is given the window it can
+// actually have: the run's own deadline (`SECTION_CALL_HARD_STOP_MS`, inside
+// the watchdog's 130s inner timeout and the platform's ~150s kill), less the
+// post-processing reserve on the closing section, less a reserve for the
+// compact retry while a full-prompt attempt is still worth making. A
+// full-prompt attempt that cannot get its measured floor is skipped for the
+// compact prompt rather than spent on a timeout foretold, and a call with no
+// window left is DEFERRED to the next invocation — reported as a hand-off,
+// never as a failed section.
+const SECTION_REQUEST_TIMEOUT_MS = 90_000;
 const SECTION_CONTINUATION_TIMEOUT_MS = 45_000;
+/** The compact prompt completes in 15-46s measured; this bounds it. */
+const SECTION_EMERGENCY_TIMEOUT_MS = 60_000;
+/** Below this window the full prompt has never completed; go straight to the compact one. */
+const SECTION_FULL_PROMPT_MIN_WINDOW_MS = 60_000;
+/** Held back from a full-prompt attempt so a compact retry still fits after it. */
+const SECTION_SECOND_ATTEMPT_RESERVE_MS = 30_000;
+/** No model call is started with less than this. */
+const SECTION_MIN_CALL_WINDOW_MS = 20_000;
+/** From the run's start: the last moment a model call may still be in flight. */
+const SECTION_CALL_HARD_STOP_MS = 125_000;
+/** The error a section returns when it made no call for want of a window. */
+const SECTION_BUDGET_DEFERRED = 'SECTION_BUDGET_DEFERRED';
 
 // ============================================================================
 // REPORT SECTION DEFINITIONS - SYNCED WITH DATABASE TEMPLATE STRUCTURE
@@ -1639,7 +1686,9 @@ async function generateReportSection(
   previousSections: string,
   propertyAddress: string,
   enhancedData: any,
-  maxRetries: number = 2
+  maxRetries: number = 2,
+  /** Absolute time (ms) by which every model call for this section must be over; null = unbounded. */
+  deadlineAt: number | null = null,
 ): Promise<{ content: string; citations: any[]; error?: string }> {
   // For section10 (Projections & SWOT), inject explicit investment score data
   let investmentScoreContext = '';
@@ -1651,16 +1700,26 @@ async function generateReportSection(
       recommendation: score.recommendation
     });
     
+    // No placeholder is handed to the model, because a placeholder handed to
+    // a model is one it copies into the client's prose ("N/A/100" on real
+    // reports). A dimension the engine did not score is left out, and a record
+    // whose policy issued no grade states no grade and no total —
+    // `publishableGrade` is the one rule that decides.
+    const publishedGrade = publishableGrade(score);
+    const dimensionLines = ([
+      ['Growth', 'growthScore', 40], ['Location', 'locationScore', 25], ['Yield', 'yieldScore', 15],
+      ['Demand', 'demandScore', 15], ['Risk', 'riskScore', 5],
+    ] as const).map(([label, key, defaultWeight]) => {
+      const d = score.breakdown?.[key];
+      const scored = typeof d?.score === 'number' && d?.excluded !== true && d?.hasData !== false;
+      return scored ? `- ${label} Score: ${d.score}/100 (Weight: ${d.weight ?? defaultWeight}%)` : null;
+    }).filter((line): line is string => line !== null);
     investmentScoreContext = `
 **INVESTMENT SCORE DATA (USE THESE EXACT VALUES):**
-- Total Investment Score: ${score.totalScore}/100
-- Investment Grade: ${score.grade}
-- Recommendation: ${score.recommendation}
-- Growth Score: ${score.breakdown?.growthScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.growthScore?.weight || 40}%)
-- Location Score: ${score.breakdown?.locationScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.locationScore?.weight || 25}%)
-- Yield Score: ${score.breakdown?.yieldScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.yieldScore?.weight || 15}%)
-- Demand Score: ${score.breakdown?.demandScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.demandScore?.weight || 15}%)
-- Risk Score: ${score.breakdown?.riskScore?.score || 'N/A'}/100 (Weight: ${score.breakdown?.riskScore?.weight || 5}%)
+${publishedGrade
+    ? `- Total Investment Score: ${score.totalScore}/100\n- Investment Grade: ${publishedGrade}\n- Recommendation: ${score.recommendation}`
+    : '- No overall grade or total score is issued for this property. Do NOT state a grade, a score out of 100, or that a grade is unavailable — write the section without one.'}
+${dimensionLines.join('\n')}
 ${score.strengths?.length ? `- Strengths: ${score.strengths.join(', ')}` : ''}
 ${score.weaknesses?.length ? `- Weaknesses: ${score.weaknesses.join(', ')}` : ''}
 ${score.opportunities?.length ? `- Opportunities: ${score.opportunities.join(', ')}` : ''}
@@ -1738,14 +1797,34 @@ Start now with the first heading.`;
 
   // Retry loop with improved backoff and jitter
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // The window THIS attempt may have, from the run's deadline. See the
+    // constants: a full-prompt attempt keeps a reserve for the compact retry,
+    // a window below the full prompt's measured floor goes straight to the
+    // compact prompt, and no window at all is a deferral, not a failure.
+    const remainingMs = deadlineAt === null ? Number.POSITIVE_INFINITY : deadlineAt - Date.now();
+    if (remainingMs < SECTION_MIN_CALL_WINDOW_MS) {
+      console.warn(
+        `⏱️ No window left for ${sectionDef.name} (attempt ${attempt}, `
+        + `${Number.isFinite(remainingMs) ? Math.round(remainingMs / 1000) : '∞'}s remaining) — deferring to the next invocation.`,
+      );
+      return { content: '', citations: [], error: SECTION_BUDGET_DEFERRED };
+    }
+    const fullPromptWindowMs = remainingMs - SECTION_SECOND_ATTEMPT_RESERVE_MS;
+    const useCompactPrompt = attempt > 1 || fullPromptWindowMs < SECTION_FULL_PROMPT_MIN_WINDOW_MS;
+    const attemptTimeoutMs = useCompactPrompt
+      ? Math.min(SECTION_EMERGENCY_TIMEOUT_MS, remainingMs)
+      : Math.min(SECTION_REQUEST_TIMEOUT_MS, fullPromptWindowMs);
     try {
-      console.log(`📝 Generating section: ${sectionDef.name}... (attempt ${attempt}/${maxRetries})`);
-      const userPromptForAttempt = attempt > 1 ? emergencySectionPrompt : sectionPrompt;
-      if (attempt > 1) {
+      console.log(
+        `📝 Generating section: ${sectionDef.name}... (attempt ${attempt}/${maxRetries}, `
+        + `window ${Math.round(attemptTimeoutMs / 1000)}s${useCompactPrompt ? ', compact prompt' : ''})`,
+      );
+      const userPromptForAttempt = useCompactPrompt ? emergencySectionPrompt : sectionPrompt;
+      if (useCompactPrompt) {
         console.log(`🧯 Using emergency compact prompt for ${sectionDef.name}: ${byteLength(userPromptForAttempt)} bytes`);
       }
       
-      const systemPromptForAttempt = attempt > 1
+      const systemPromptForAttempt = useCompactPrompt
         ? 'You are an Australian property investment analyst. Produce concise, sourced markdown and never invent exact figures.'
         : safeSystemMessage;
       const response = await fetchWithTimeout('https://api.perplexity.ai/chat/completions', {
@@ -1763,7 +1842,7 @@ Start now with the first heading.`;
             { role: 'user', content: userPromptForAttempt }
           ]
         }),
-      }, SECTION_REQUEST_TIMEOUT_MS, 'perplexity-api'); // bounded so the loop always regains control, with circuit breaker tracking
+      }, attemptTimeoutMs, 'perplexity-api'); // bounded to the window this attempt actually has, with circuit breaker tracking
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1823,6 +1902,16 @@ Start now with the first heading.`;
         return false;
       };
       while ((finishReason === 'length' || endsMidThought(content)) && continuationRounds < 2) {
+        // A continuation answers to the same deadline: it is never started
+        // into a window it cannot finish in, because a truncated tail is a
+        // smaller defect than a run killed with nothing written.
+        const continuationWindowMs = deadlineAt === null
+          ? SECTION_CONTINUATION_TIMEOUT_MS
+          : Math.min(SECTION_CONTINUATION_TIMEOUT_MS, deadlineAt - Date.now() - 5_000);
+        if (continuationWindowMs < 15_000) {
+          console.log(`   continuation skipped for ${sectionDef.name}: no window left (${Math.round(continuationWindowMs / 1000)}s)`);
+          break;
+        }
         continuationRounds++;
         console.log(`↪️  Section ${sectionDef.name} appears truncated (finish=${finishReason}) — continuation round ${continuationRounds}`);
         const tail = content.slice(-1200);
@@ -1845,7 +1934,7 @@ Start now with the first heading.`;
                 { role: 'user', content: continuePrompt },
               ],
             }),
-          }, SECTION_CONTINUATION_TIMEOUT_MS, 'perplexity-api');
+          }, continuationWindowMs, 'perplexity-api');
           if (!contResp.ok) {
             console.warn(`   continuation HTTP ${contResp.status} — stopping continuation loop`);
             break;
@@ -2343,6 +2432,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     const effectiveIsNewBuild = effectiveBuildType === 'new_build';
     const effectiveIsLandOnly = effectiveBuildType === 'land_only';
     const effectiveLandSizeSqm = mergedOverrides.landSizeSqm || propertyDetails?.landSizeSqm || null;
+    // QA-21: what the recorded area is an area OF travels with the figure —
+    // a strata townhouse's 1.25 ha is the scheme's site, not the lot — and an
+    // unresolved scope may not feed a land-content, redevelopment or
+    // valuation argument. `landAreaScope.pure.ts` is the one rule.
+    const landAreaReading = describeLandArea({
+      landSizeSqm: typeof effectiveLandSizeSqm === 'number' ? effectiveLandSizeSqm : Number(effectiveLandSizeSqm) || null,
+      lotAreaSqm: mergedOverrides.lotAreaSqm ?? propertyDetails?.lotAreaSqm ?? null,
+      propertyType: mergedOverrides.propertyType ?? propertyDetails?.propertyType ?? null,
+      isStrata: /\b(unit|apartment|townhouse|villa|strata|flat|terrace|duplex)\b/i.test(String(mergedOverrides.propertyType ?? propertyDetails?.propertyType ?? '')),
+    });
     const effectiveBuildSizeSqm = effectiveIsLandOnly ? null : (mergedOverrides.buildSizeSqm || propertyDetails?.buildSizeSqm || null);
     // A FACT and a MODELLING DEFAULT are different things. `effectiveBeds`
     // used to be `… || 3`, so a property whose bedroom count was never
@@ -2574,22 +2673,14 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       // Define all Phase 1 fetch promises
       const phase1Promises = [
-        // 1. Domain market data
-        (suburb && state) ? fetchServiceWithFallback('domain-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({ 
-              suburb, state, postcode,
-              propertyCategory: propertyDetails?.propertyType?.toLowerCase() === 'unit' ? 'unit' : 'house'
-            })
-          }, 30000, 'domain-data-service');
-          if (response.ok) {
-            const data = await response.json();
-            return data.success ? data.data : null;
-          }
-          return null;
-        }) : Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing suburb/state' }),
+        // 1. Domain market data is keyed on the TRUSTED geography — the suburb,
+        // state and postal area resolved from the verified coordinate — which
+        // does not exist yet in phase 1. It is fetched after geography
+        // resolution below, beside the scoring call it feeds; a free-text
+        // suburb and a parsed four-digit token may not select a market
+        // (`crimePostcodeAuthority.pure.ts` records why). This slot keeps the
+        // results array aligned with serviceNames.
+        Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing trusted geography (fetched after geography resolution)' }),
 
         // 2. ABS demographic data
         postcode ? fetchServiceWithFallback('abs-data-service', async () => {
@@ -2860,7 +2951,17 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               ...(toFiniteNumber(mergedOverrides.stampDuty) !== undefined
                 ? { stampDutyOverride: toFiniteNumber(mergedOverrides.stampDuty) } : {}),
               ...(toFiniteNumber(mergedOverrides.solicitorFees) !== undefined
-                ? { legalFeesOverride: toFiniteNumber(mergedOverrides.solicitorFees) } : {})
+                ? { legalFeesOverride: toFiniteNumber(mergedOverrides.solicitorFees) } : {}),
+              // The loan product and the occupancy go INTO the engine too, so
+              // the schedule, the lifetime interest, the year-1 position and
+              // the sensitivity all describe the case the report states —
+              // they used to be display overrides over P&I, 52-week arithmetic
+              // (QA-04, QA-06).
+              ...(mergedOverrides.loanType ? { loanType: mergedOverrides.loanType } : {}),
+              ...(toFiniteNumber(mergedOverrides.interestOnlyPeriodYears) !== undefined
+                ? { interestOnlyYears: toFiniteNumber(mergedOverrides.interestOnlyPeriodYears) } : {}),
+              ...(toFiniteNumber(mergedOverrides.occupancyRate) !== undefined
+                ? { occupancyWeeks: toFiniteNumber(mergedOverrides.occupancyRate) } : {}),
             })
           });
           
@@ -3393,6 +3494,176 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       }
 
+      // ======================================================================
+      // MARKET EVIDENCE FOR THE GRADE — keyed on the trusted geography only
+      // ======================================================================
+      // Scoring V2 (ME-8) grades on measured suburb evidence: Domain's suburb
+      // performance series (median sold price by year → the growth horizons,
+      // plus days on market, sales and listings) and the ABS resident
+      // population series the regional service already served for the
+      // property's SA2. Both are asked for the SUBJECT the boundary service
+      // resolved, never for the typed suburb or the parsed postcode — the
+      // same rule the crime evidence answers to — so where the geography did
+      // not resolve, no evidence is sought and the grade says why.
+      const marketPoints: Record<string, unknown> = {};
+      const providersConsulted: string[] = [];
+      const providersUnavailable: Array<{ provider: string; reason: string }> = [];
+      let evidenceWithheldReason: string | null = null;
+      const marketPostcode = subjectPostcodeOf(subjectGeography);
+      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
+        ? subjectGeography.suburb.trim() : null;
+      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
+        ?? abbreviateState(state);
+      if (!isAreaReport) {
+        if (marketPostcode && marketSuburb && marketState) {
+          providersConsulted.push('domain');
+          try {
+            const domainResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                suburb: marketSuburb,
+                state: marketState,
+                postcode: marketPostcode,
+                propertyCategory: domainCategoryFor(effectivePropertyType),
+                propertyType: effectivePropertyType,
+              }),
+            }, 30000, 'domain-data-service');
+            const domainBody = domainResponse.ok ? await domainResponse.json() : null;
+            if (domainBody?.success && domainBody.data) {
+              enhancedData = { ...enhancedData, domainData: domainBody.data };
+              const points = domainBody.data.evidence?.points;
+              if (points && typeof points === 'object') Object.assign(marketPoints, points);
+              console.log(`✓ Domain suburb performance for ${marketSuburb} ${marketState} ${marketPostcode}: ${Object.keys(points ?? {}).length} evidence points`);
+            } else {
+              const reason = domainBody?.refusal?.summary
+                ?? domainBody?.error
+                ?? `HTTP ${domainResponse.status} from domain-data-service`;
+              providersUnavailable.push({ provider: 'domain', reason });
+              console.log(`⚠️ Domain suburb performance unavailable: ${reason}`);
+            }
+          } catch (error: any) {
+            providersUnavailable.push({ provider: 'domain', reason: error?.message || 'request failed' });
+            console.log('⚠️ Domain suburb performance skipped:', error?.message?.substring(0, 120));
+          }
+        } else {
+          evidenceWithheldReason = 'the property\'s geography did not resolve to a trusted suburb, state and postcode, so no suburb market evidence was sought';
+          console.log(`⛔ Market evidence not sought: ${evidenceWithheldReason}`);
+        }
+
+        // Open-data sales registers — the zero-cost growth stack
+        // (docs/reports/OPEN_DATA_GROWTH_EVIDENCE.md). Queensland's register
+        // is keyed by local government area, which the cadastre names for
+        // the verified coordinate; New South Wales's by postcode, which the
+        // boundary service resolved. Nothing is asked for a typed suburb or a
+        // parsed token — the rule Domain and the crime evidence answer to.
+        // Where Domain also answered, the finer point wins per measure
+        // (`mergeEvidence`), so a suburb series outranks a council one.
+        // Every source the state has, finest grain first (`salesRegisterSourcesFor`):
+        // a suburb series for Victoria and South Australia, a council series
+        // for Queensland, a postcode series for New South Wales, and beneath
+        // all of them the ABS state series — read only where nothing finer
+        // answered, so the floor never displaces a real local reading and a
+        // Queensland or New South Wales report reads exactly as before.
+        const registerSources = salesRegisterSourcesFor(marketState);
+        if (registerSources.length) {
+          const cadastreLga = enhancedData.planningData?.parcel?.status === 'ok'
+            && typeof enhancedData.planningData?.parcel?.lga === 'string'
+            ? enhancedData.planningData.parcel.lga.trim() : '';
+          const registerSubject: EvidenceSubject = {
+            suburb: marketSuburb,
+            postcode: marketPostcode,
+            state: marketState,
+            dwellingType: dwellingTypeFor(effectivePropertyType),
+            resolvedFrom: marketPostcode ? 'coordinate' : null,
+          };
+          let registerAnswered = false;
+          for (const registerSource of registerSources) {
+            if (registerAnswered) break;
+            // The area each grain is asked for comes from the trusted geography
+            // or the cadastre — never a typed suburb or a parsed token.
+            const area = registerSource.areaKind === 'suburb' ? marketSuburb
+              : registerSource.areaKind === 'lga' ? cadastreLga
+              : registerSource.areaKind === 'postcode' ? marketPostcode
+              : marketState;
+            providersConsulted.push(registerSource.provider);
+            if (!area) {
+              providersUnavailable.push({
+                provider: registerSource.provider,
+                reason: registerSource.areaKind === 'suburb' ? 'the geography resolved to no suburb'
+                  : registerSource.areaKind === 'lga' ? 'the cadastre named no local government area for the verified coordinate'
+                  : registerSource.areaKind === 'postcode' ? 'the geography resolved to no postal area'
+                  : 'the geography resolved to no state',
+              });
+              continue;
+            }
+            const registerNotes: string[] = [];
+            try {
+              const register = await readSalesRegister(supabase, { state: marketState as SalesRegisterState, areaKind: registerSource.areaKind, area });
+              if (!register.rows.length) {
+                registerNotes.push(`the register holds no rows for ${registerSource.areaKind} ${area} (load it with market-sales-ingest)`);
+              } else {
+                const answer = openDataSalesPoints({
+                  subject: registerSubject,
+                  askedDwelling: dwellingTypeFor(effectivePropertyType),
+                  areaKind: registerSource.areaKind,
+                  area: register.areaLabel ?? area,
+                  rows: register.rows,
+                  benchmarkRows: register.benchmarkRows,
+                  nationalRows: register.nationalRows,
+                  source: registerSource,
+                });
+                if (!Object.keys(answer.points).length) {
+                  registerNotes.push(...answer.notes);
+                } else {
+                  // Merge per measure: a finer, dwelling-matched point wins,
+                  // whichever provider it came from.
+                  const held = Object.assign(emptyEvidence(registerSubject), marketPoints) as MarketEvidence;
+                  const offered = Object.assign(emptyEvidence(registerSubject), answer.points) as MarketEvidence;
+                  const merged = mergeEvidence(registerSubject, [held, offered]) as unknown as Record<string, unknown>;
+                  for (const key of EVIDENCE_KEYS) {
+                    if (merged[key] !== undefined) marketPoints[key] = merged[key];
+                  }
+                  evidenceWithheldReason = null;
+                  registerAnswered = true;
+                  console.log(
+                    `✓ Open-data sales register (${registerSource.provider}) for ${registerSource.areaKind} ${register.areaLabel ?? area}: `
+                    + `${Object.keys(answer.points).length} evidence points to ${answer.latestPeriod}`
+                    + (answer.dwellingTypeMatched ? '' : ' (dwelling type not matched)')
+                    + (register.capturedAt ? ` (archive capture ${register.capturedAt.slice(0, 10)})` : ''),
+                  );
+                }
+              }
+            } catch (error: any) {
+              registerNotes.push(`${registerSource.areaKind} ${area}: ${error?.message || 'register read failed'}`);
+            }
+            if (!registerAnswered) {
+              providersUnavailable.push({ provider: registerSource.provider, reason: registerNotes.join('; ') || 'no register series answered' });
+              console.log(`⚠️ Open-data sales register (${registerSource.provider}) unavailable: ${registerNotes.join('; ')}`);
+            }
+          }
+        }
+
+        // Population growth — a demand DRIVER — from the SA2 series the
+        // regional service served for the verified coordinate. Nothing new is
+        // fetched; the point is computed from the series already held.
+        const regionalPopulation = enhancedData.regionalTrends?.population;
+        const regionalSa2 = enhancedData.regionalTrends?.sa2;
+        const erpSeries = Array.isArray(regionalPopulation?.series) ? regionalPopulation.series : null;
+        if (erpSeries && typeof regionalSa2?.name === 'string' && regionalSa2.name) {
+          providersConsulted.push('abs_erp');
+          const populationPoint = populationGrowthPoint(erpSeries, { name: regionalSa2.name, level: 'sa2' });
+          if (populationPoint) {
+            marketPoints.populationGrowth = populationPoint;
+            console.log(`✓ Population growth point for SA2 ${regionalSa2.name}: ${populationPoint.value}% p.a.`);
+          } else {
+            providersUnavailable.push({ provider: 'abs_erp', reason: `the ABS series for SA2 ${regionalSa2.name} is too short to compute a growth rate` });
+          }
+        } else if (!isAreaReport) {
+          providersUnavailable.push({ provider: 'abs_erp', reason: 'no SA2 population series was served for the verified coordinate' });
+        }
+      }
+
       // Calculate investment score - property OR area scoring
       if (!isAreaReport && effectivePurchasePrice > 0) {
         // Property-specific scoring
@@ -3427,7 +3698,18 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               },
               demographics: enhancedData.demographics,
               locationIntelligence: enhancedData.locationIntelligence,
-              financials: enhancedData.financials
+              financials: enhancedData.financials,
+              // ME-8 — what Scoring V2 grades on: the subject the evidence was
+              // keyed to, and the evidence points the adapters extracted.
+              subject: {
+                suburb: marketSuburb,
+                postcode: marketPostcode,
+                state: marketState ?? state,
+                dwellingType: dwellingTypeFor(effectivePropertyType),
+                resolvedFrom: marketPostcode ? 'coordinate' : null,
+              },
+              marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
+              evidenceWithheldReason,
             })
           });
           
@@ -3435,7 +3717,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             const scoreData = await scoreResponse.json();
             if (scoreData?.success && scoreData?.data) {
               enhancedData = { ...enhancedData, investmentScore: scoreData.data };
-              console.log('✓ Investment score calculated:', scoreData.data?.grade, scoreData.data?.totalScore);
+              console.log('✓ Investment score calculated:', scoreData.data?.grade ?? 'withheld', scoreData.data?.totalScore ?? '');
+              if (Array.isArray(scoreData.data?.gradeGaps) && scoreData.data.gradeGaps.length) {
+                console.log('  Grade gaps:', scoreData.data.gradeGaps.map((g: any) => `${g.dimension}: ${g.detail}`).join(' | '));
+              }
             } else if (scoreData) {
               enhancedData = { ...enhancedData, investmentScore: scoreData };
               console.log('✓ Investment score (direct):', scoreData?.grade, scoreData?.totalScore);
@@ -4164,7 +4449,13 @@ Produce a comprehensive statewide investment analysis following the structure ab
     // when nothing authoritative is known; `propertyTypeLabel` is for prose the
     // model reads, where a readable phrase is wanted and no fact is asserted.
     const resolvedPropertyType: string | null = standardizedPropertyType;
-    const propertyTypeLabel = resolvedPropertyType ?? 'Residential Property';
+    // QA-22: "Residential Property" read as a fact and the later sections
+    // reverted to it ("Residential Property form aligned with local housing
+    // preferences") after earlier ones had named a strata townhouse from the
+    // listing. Where the record holds no type, the model is told that, and
+    // told to carry whatever type the documents state through every section.
+    const propertyTypeLabel = resolvedPropertyType
+      ?? 'Not stated in the record — if the property documents name the dwelling type, use that exact type in every section; never write "Residential Property"';
 
     console.log(`🏠 Property Type Standardization: "${rawPropertyType}" → "${resolvedPropertyType ?? '(unknown — stored as null)'}" (isStrata: ${isStrataProperty})`);
     
@@ -4201,7 +4492,17 @@ Produce a comprehensive statewide investment analysis following the structure ab
       const n = parseFloat(String(value));
       return Number.isFinite(n) ? n : fallback;
     };
-    
+
+    // The interest-only repayment the prompt's loan tables quote. The
+    // calculator writes `loanDetails.interestOnlyPayment` now; a record
+    // written before it did derives it from its own loan amount and rate —
+    // every interest-only row used to read `$0` because the key was never
+    // written anywhere (QA-04).
+    if (enhancedData?.financials?.loanDetails && toFiniteNumber(enhancedData.financials.loanDetails.interestOnlyPayment) === undefined) {
+      const ioMonthly = interestOnlyMonthlyPaymentFor(enhancedData.financials);
+      if (ioMonthly !== undefined) enhancedData.financials.loanDetails.interestOnlyPayment = ioMonthly;
+    }
+
     // A yield is a fact about rent. With no rent established there is no
     // yield, and `0.00%` is not that — it is the claim that the property earns
     // nothing, which then travelled into the prompt under an order to use it
@@ -4232,19 +4533,34 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const effectiveLandlordInsurance = toNumberOr(mergedOverrides.buildingLandlordInsurance ?? enhancedData.financials?.annualCosts?.landlordInsurance, 1800);
     const effectiveMaintenance = toNumberOr(mergedOverrides.repairsMaintenance ?? enhancedData.financials?.annualCosts?.maintenance, 1500);
     const effectiveLandTax = toNumberOr(mergedOverrides.landTax ?? enhancedData.financials?.annualCosts?.landTax, 0);
-    const effectivePmPercent = toNumberOr(mergedOverrides.propertyManagementFees ?? enhancedData.financials?.annualCosts?.propertyManagementPercent, 8);
+    // The engine's default is 7%; this fallback used to say 8, so a record
+    // with no stated percentage was described with one fee in the engine and
+    // another in the prose.
+    const effectivePmPercent = toNumberOr(mergedOverrides.propertyManagementFees ?? enhancedData.financials?.annualCosts?.propertyManagementPercent, 7);
     const effectivePmDollar = Math.round(annualRentIncome * (effectivePmPercent / 100));
-    
-    // Total annual costs for net yield calculation (excluding land tax per standard practice)
-    const totalAnnualCostsForNetYield = effectiveCouncilRates + effectiveWaterRates + effectiveStrataFees + 
-      effectiveLandlordInsurance + effectiveMaintenance + effectivePmDollar;
-    
+    const effectiveLettingFees = toNumberOr(mergedOverrides.lettingFees ?? enhancedData.financials?.annualCosts?.lettingFees, 0);
+
+    // ONE cost base for the net yield: the engine's `totalAnnualExcludingLandTax`
+    // where the engine ran (reviewed figures go into it, so it already
+    // describes them), and the same line items — letting fees INCLUDED —
+    // where it did not. This sum used to omit letting fees while the KPI's
+    // did not, so one page printed a formula that resolved to 2.41% beside a
+    // KPI reading 2.34%, exactly the $900 letting fee apart (QA-07).
+    const engineNetYieldCosts = toFiniteNumber(enhancedData.financials?.annualCosts?.totalAnnualExcludingLandTax);
+    const totalAnnualCostsForNetYield = engineNetYieldCosts !== undefined
+      ? engineNetYieldCosts
+      : effectiveCouncilRates + effectiveWaterRates + effectiveStrataFees +
+        effectiveLandlordInsurance + effectiveMaintenance + effectivePmDollar + effectiveLettingFees;
+
     // Same rule, and it bites harder here: with no rent, rent-less-costs is
     // just the costs, so the old code printed a CONFIDENT NEGATIVE yield —
     // a number that looks like analysis and is an artefact of a missing input.
+    // The engine's own yield is preferred where it exists: the KPI, the
+    // formula table and the prose then quote one metric object.
+    const engineNetYield = recordedYield(enhancedData.financials?.keyMetrics?.netRentalYield);
     const preCalculatedNetYield = rentalEvidence.established && effectivePurchasePrice > 0
-      ? (((annualRentIncome - totalAnnualCostsForNetYield) / effectivePurchasePrice) * 100).toFixed(2)
-      : recordedYield(enhancedData.financials?.keyMetrics?.netRentalYield);
+      ? (engineNetYield ?? (((annualRentIncome - totalAnnualCostsForNetYield) / effectivePurchasePrice) * 100).toFixed(2))
+      : engineNetYield;
     
     console.log(`📊 Pre-calculated Yields: Gross=${statedYield(preCalculatedGrossYield)}, Net=${statedYield(preCalculatedNetYield)} (rent source: ${rentalEvidence.source})`);
     console.log(`📊 Net Yield Calculation: ($${annualRentIncome} rent - $${totalAnnualCostsForNetYield} costs) / $${effectivePurchasePrice} = ${preCalculatedNetYield}%`);
@@ -4280,7 +4596,7 @@ Produce a comprehensive statewide investment analysis following the structure ab
 Your role is to produce comprehensive, professional-grade investment reports following the EXACT structure, length, and format of our reference template.
 
 **CRITICAL CALCULATION RULES:**
-1. OCCUPANCY ASSUMPTION: Use 100% occupancy rate (52 weeks per year) for ALL rental income calculations unless explicitly overridden. This is industry standard for investment analysis.
+1. OCCUPANCY ASSUMPTION: The recorded occupancy is ${effectiveOccupancyRate} weeks per year. Every cash-flow figure uses rent collected over ${effectiveOccupancyRate} weeks; the yields are stated on the contractual rent (52 weeks) before finance and tax, and you must say so wherever you quote a yield. Never present the two rents as one figure.
 2. YIELD VALUES: Use the pre-calculated yield values provided below EXACTLY - do NOT recalculate or estimate yields.
 3. PROPERTY TYPE: Use the standardized property type "${propertyTypeLabel}" consistently throughout the report - never switch terminology.
 
@@ -4311,7 +4627,7 @@ ${propertyDetails ? `**Property Details Provided:**
 - Property Type: ${propertyTypeLabel}
 - Bedrooms: ${propertyDetails.beds || 'Not specified'}
 - Bathrooms: ${propertyDetails.baths || 'Not specified'}
-${propertyDetails.landSizeSqm ? `- Land Size: ${propertyDetails.landSizeSqm}m²` : ''}
+${landAreaReading ? `- ${landAreaReading.label}: ${landAreaReading.value}${landAreaReading.note ? ` — ${landAreaReading.note}` : ''}` : ''}
 ${propertyDetails.buildSizeSqm ? `- Building Size: ${propertyDetails.buildSizeSqm}m²` : ''}
 ${propertyDetails.carSpaces ? `- Car Spaces: ${propertyDetails.carSpaces}` : ''}
 ${propertyDetails.isNewBuild ? `- New Build: Yes` : ''}
@@ -4400,7 +4716,7 @@ A major infrastructure advancement occurred with the opening of [Station Name] i
 
 **Commute Performance:**
 
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A".
 
 **Population & Development Trends:**
 
@@ -4412,7 +4728,7 @@ Write this from the population-trend table above, the Planning & Development blo
 
 # Current Market Performance
 
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available.
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A".
 
 **Market Commentary (150+ words required):**
 
@@ -4449,6 +4765,8 @@ The combination of [employment factor], [income factor], and [unemployment facto
 | Total Schools in Postcode | ${enhancedData.schoolData?.summary?.totalSchools || 'XX'} | Google Places API |
 | Average School Rating | ${enhancedData.schoolData?.summary?.averageRating || 'X.X'}/5 stars | Google Places API |
 | Education Quality | ${enhancedData.schoolData?.summary?.qualityAssessment || 'Average'} (National Standard) | School Data Analysis |
+
+**Catchment evidence rule (QA-28):** a school catchment is an enrolment-area fact settled only by the department's address-based School Finder or written school/department confirmation, with its date. Where the sources available to you disagree (listing vs. portal vs. department), present EACH source's claim, name the source, and mark the catchment "unverified — sources conflict"; never select one. A travel claim ("short drive", "manageable commute") is written only with its mode, origin, distance and duration from a measured route; otherwise omit it.
 
 **Nearest School:**
 
@@ -4539,7 +4857,7 @@ Additional parks include [Park 1] and [Park 2], both offering picnic areas, walk
 |--------|-------|---------|
 | Nearest Station | ${enhancedData.locationIntelligence?.transport?.nearestStation || '[Station Name]'} | [Location details] |
 
-Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above, or state plainly that transport detail is not available. Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
+Do NOT state a Walk Score, a public-transport quality/score rating, or a CBD commute time or distance anywhere in this section: none is measured for this property, and each was withdrawn because it described the state rather than the address. Write about transport from the named stations and counted stops above; where none is named, say nothing about transport detail — never write that it is not available, and never write "N/A". Service frequency is not measured either — the stops file carries no timetable — so do NOT state services per hour, peak or off-peak.
 - Transport Types: ${enhancedData.locationIntelligence?.transport?.transportTypes?.join(', ') || 'Train, Bus, Light Rail'}
 - Primary Lines: [Line names]
 - Bus Connections: Services to [destinations list]
@@ -4597,7 +4915,7 @@ ${[
   // Nothing here reaches a current document (the Compass-40 overlay does not
   // draw this section), but a dormant instruction to fabricate is one routing
   // change away from firing, which is why it goes rather than being left.
-  ['Land Size', effectiveLandSizeSqm ? `${effectiveLandSizeSqm} m²` : null],
+  [landAreaReading?.label ?? 'Land size', landAreaReading?.value ?? null],
   ['Bedrooms', effectiveBeds || null],
   ['Bathrooms', effectiveBaths || null],
   ['Parking', mergedOverrides.carSpaces ?? propertyDetails?.carSpaces ?? null],
@@ -4606,6 +4924,7 @@ ${[
 ].filter(([, v]) => v !== null && v !== undefined && v !== '')
  .map(([k, v]) => `| ${k} | ${v} |`).join('\n')}
 ${isStrataProperty ? `| Strata Type | ${propertyTypeLabel} within strata scheme |` : ''}
+${landAreaReading?.note ? `\n_${landAreaReading.note}_\n` : ''}
 
 The table above contains every physical attribute on record for this property.
 Do not add a row to it, and do not state a land size, floor area, bedroom or
@@ -4692,7 +5011,7 @@ These development options require detailed feasibility analysis and council pre-
 |-------------|------------|---------------------|
 | Rezoning Risk | Low/Medium/High | Monitor council strategic planning updates |
 | Heritage Overlay | [Confirm with council] | Obtain heritage impact assessment if required |
-| Bushfire Prone Land | [BAL rating if applicable] | Comply with AS3959 construction standards |
+| Bushfire Prone Land (mapping) | [Mapped: yes / no / not checked] — a bushfire-prone-land designation is NOT a BAL; a Bushfire Attack Level is a site-specific assessment and is stated only if one is held | Obtain a BAL assessment where the land is mapped; comply with AS3959 where a BAL applies |
 | Flood Affectation | [Check flood maps] | Obtain flood certificate, confirm habitable floor levels |
 
 **Recommendation:** Verify all zoning information with the [Council Name] planning portal before proceeding with any development applications. Obtain a Section 10.7 (formerly Section 149) Planning Certificate for comprehensive zoning confirmation.` : `**Zoning Information:**
@@ -4797,9 +5116,9 @@ The rental analysis below is based on suburb-level median rental data and the sp
 | Metric | Calculation | Value |
 |--------|-------------|-------|
 | Annual Income | ${rentalEvidence.established ? `$${quotedWeeklyRent} × ${effectiveOccupancyRate} weeks` : 'No rental evidence'} | ${rentalEvidence.established ? `$${annualRentIncome.toLocaleString()}` : 'Not established'} |
-| Annual Expenses | Mgmt + Maintenance + Rates + Insurance${effectiveStrataFees ? ' + Strata' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
+| Annual Expenses | Mgmt + Maintenance + Rates + Water + Insurance${effectiveStrataFees ? ' + Strata' : ''}${effectiveLettingFees ? ' + Letting' : ''} (excludes land tax — owner-specific) | $${totalAnnualCostsForNetYield.toLocaleString()} |
 | Net Annual Return | Income - Expenses | ${rentalEvidence.established ? `$${(annualRentIncome - totalAnnualCostsForNetYield).toLocaleString()}` : 'Not established'} |
-| **Net Rental Yield** | **Pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
+| **Net Rental Yield** | **Net operating yield before finance and tax — pre-calculated (DO NOT recalculate)** | **${statedYield(preCalculatedNetYield)}** |
 
 **Yield Comparison to Benchmarks:**
 
@@ -4896,11 +5215,7 @@ The P&I scenario provides superior long-term economics as principal repayment bu
 
 **Impact of Interest Rate Variations on Annual Cashflow (P&I Scenario):**
 
-| Scenario | Interest Rate | Annual Loan Repayment | Annual Cashflow |
-|----------|---------------|----------------------|-----------------|
-| Stress Case | ${(enhancedData.financials?.loanDetails?.interestRate || 6.5) + 1}% (+1.0%) | $${(enhancedData.financials?.sensitivityAnalysis?.interestRateUp?.monthlyPayment ? enhancedData.financials.sensitivityAnalysis.interestRateUp.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | ($${Math.abs(enhancedData.financials?.sensitivityAnalysis?.interestRateUp?.annualNet || 0).toLocaleString() || 'XX,XXX'}) |
-| Base Case | ${enhancedData.financials?.loanDetails?.interestRate || 6.5}% | $${(enhancedData.financials?.loanDetails?.monthlyPayment ? enhancedData.financials.loanDetails.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | ($${Math.abs(enhancedData.financials?.keyMetrics?.annualNet || 0).toLocaleString() || 'XX,XXX'}) |
-| Improvement Case | ${(enhancedData.financials?.loanDetails?.interestRate || 6.5) - 1}% (-1.0%) | $${(enhancedData.financials?.sensitivityAnalysis?.interestRateDown?.monthlyPayment ? enhancedData.financials.sensitivityAnalysis.interestRateDown.monthlyPayment * 12 : 0).toLocaleString() || 'XX,XXX'} | ($${Math.abs(enhancedData.financials?.sensitivityAnalysis?.interestRateDown?.annualNet || 0).toLocaleString() || 'XX,XXX'}) |
+${sensitivityRowsForPrompt(enhancedData.financials)}
 
 **Sensitivity Commentary (150+ words required):**
 
@@ -4913,9 +5228,7 @@ This sensitivity analysis demonstrates that the property's cashflow profile is i
 # 10-Year Investment Projections
 
 **Projection Assumptions:**
-- Conservative Scenario: 2% annual price growth, 2% annual rent growth
-- Base Case Scenario: 4% annual price growth, 3% annual rent growth
-- Optimistic Scenario: 6% annual price growth, 4% annual rent growth
+${projectionAssumptionLinesForPrompt(enhancedData.financials)}
 
 **Annual Operating Costs Projections (AUD):**
 
@@ -5002,21 +5315,7 @@ The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with
 
 **CRITICAL NOTE:** ${documentContent ? 'Analysis based on provided property data and market research.' : 'Insufficient comparable market data and recent sales analysis specific to this property may prevent calculation of a precise investment score. The following analysis is based on suburb-level characteristics and general market positioning.'}
 
-**Investment Grade:** ${enhancedData.investmentScore?.grade || 'B'} (${documentContent ? 'Based on property analysis' : 'Based on suburb fundamentals - requires property-specific assessment'})
-
-**Total Score:** ${enhancedData.investmentScore?.totalScore || 'XX'}/100
-
-**Recommendation:** ${enhancedData.investmentScore?.recommendation || 'HOLD'} ${documentContent ? '' : 'with caution pending property-specific verification'}
-
-**Score Breakdown:**
-
-| Component | Weight (%) | Score (/100) |
-|-----------|------------|--------------|
-| Growth Score | 30% | ${enhancedData.investmentScore?.breakdown?.growthScore?.score || 'XX'} |
-| Location Score | 25% | ${enhancedData.investmentScore?.breakdown?.locationScore?.score || 'XX'} |
-| Yield Score | 20% | ${enhancedData.investmentScore?.breakdown?.yieldScore?.score || 'XX'} |
-| Demand Score | 15% | ${enhancedData.investmentScore?.breakdown?.demandScore?.score || 'XX'} |
-| Risk Score | 10% | ${enhancedData.investmentScore?.breakdown?.riskScore?.score || 'XX'} |
+${investmentScorePromptBlock(enhancedData.investmentScore, { hasDocument: !!documentContent })}
 
 ---
 
@@ -5040,7 +5339,7 @@ The optimistic scenario (6% growth) projects Year 10 value of $[X,XXX,XXX], with
 - **Weak rental yield:** Gross yield [X.XX]%, net yield [X.XX]% insufficient to cover loan serviceability; requires investor capital support. This is typical for growth-focused suburbs but requires careful financial planning.
 - **Negative cashflow:** Year 1 cashflow negative $[XX,XXX] (P&I) or ($[XX,XXX]) (IO), with cumulative 10-year shortfalls of ($[XXX,XXX]) to ($[XXX,XXX]). Investors must have stable income to sustain this commitment.
 - **Interest rate sensitivity:** [X]% rate rise increases annual cashflow deficit by $[X,XXX]; vulnerable in tightening rate environment. Rising rates could strain investor cash reserves.
-- **Environmental risks:** [High/Moderate] bushfire risk rating requires verification; flood risk assessment pending property-specific analysis. Environmental risks may impact insurance costs.
+- **Environmental risks:** Bushfire exposure [Low/Moderate/High] on regional mapping — evidence status: UNVERIFIED at lot level (bushfire-prone-land mapping is not a Bushfire Attack Level; a BAL is a site-specific assessment). Flood exposure: unverified pending a parcel-level check. State the exposure, the evidence held and the check outstanding as three separate facts; never rate confidence High while a check is outstanding. Environmental risks may impact insurance costs.
 - **Market valuation:** Estimated $[X,XXX,XXX] price point reflects premium positioning relative to [comparison] suburbs; capitalizes growth expectations. Premium pricing reduces margin for error.
 - **Leverage structure:** 20% deposit requires $[X,XXX,XXX] loan financing; LVR declines [slowly/moderately] over 10-year period. High leverage amplifies both gains and losses.
 - **Rent growth constraints:** Rental income growing [X-X]% annually insufficient to improve cashflow economics; persistent shortfall across projections.
@@ -5114,13 +5413,15 @@ The property generates negative cashflow of ($[XX,XXX]) annually under base assu
 
 Loan repayments at current [X.X]% rate absorb [XX]% of gross rental income before accounting for property management, rates, insurance, and maintenance. A 1% rate increase (to [X.X]%) increases annual repayments by $[X,XXX], pushing negative cashflow to ($[XX,XXX])-a [XX]% increase in annual capital requirement. RBA maintains potential for further rate increases if inflation remains sticky; even modest tightening creates material cashflow deterioration. Investors with limited capital buffers face refinancing stress or forced sale risk if rates spike. Conversely, rate reductions provide primary cashflow improvement pathway; any base case reliance on rate cuts represents uncontrollable external dependency.
 
-### Environmental Risk: [High/Moderate] Bushfire Rating and Unverified Flood Risk
+### Environmental Risk: [Low/Moderate/High] Bushfire Exposure (Unverified at Lot Level) and Unverified Flood Risk
 
 [State] experiences regular bushfire seasons, and [Suburb] is rated [LEVEL] for bushfire risk. Specific property-level risk assessment requires verification with [State] Rural Fire Service (RFS); properties in extreme fire risk zones face insurance unavailability or extreme premium escalation. Flood risk is currently [verified/unverified] and requires property coordinates for accurate assessment; potential flooding exposure could impact insurability, lender appetite, or development constraints. Combined environmental risks create tail-risk exposure: (1) insurance premium spikes reducing net yields further, (2) uninsurable property becoming unmarketable, (3) damage events creating unexpected capital calls for repairs, or (4) regulatory evacuation requirements constraining usage or rental marketability. Hazard verification is essential precondition to purchase commitment.
 
 ---
 
 # Investment Recommendations
+
+${financialWarningsForPrompt(enhancedData.financials, enhancedData.investmentScore)}
 
 **Short-term Actions (Prior to Purchase):**
 
@@ -5195,7 +5496,7 @@ ${documentContent ? 'The listed' : 'Estimated'} property price of $[X,XXX,XXX] r
 
 **Overall Recommendation:**
 
-**QUALIFIED ${enhancedData.investmentScore?.recommendation || 'HOLD'} with Contingencies**
+${overallRecommendationLine(enhancedData.investmentScore)}
 
 This property warrants serious consideration for investors who (1) verify environmental hazards as acceptable, (2) confirm financial capacity to sustain negative cashflow, (3) achieve mortgage pre-approval at serviceability-acceptable terms, and (4) obtain professional valuation confirming price point aligns with current market conditions. The investment is suitable for disciplined, long-term capital accumulators with strong employment stability and confidence in [City] metropolitan property markets. Investors prioritizing immediate returns or requiring rental income should pursue alternative investments with superior yield profiles.
 
@@ -5217,7 +5518,7 @@ This report synthesizes publicly available data and ${documentContent ? 'provide
 2. **EVERY SECTION REQUIRED**: Include ALL sections exactly as specified above - do not skip any
 3. **SUBSTANTIAL CONTENT**: Each section must meet the minimum word counts specified in parentheses
 4. **TABLE FORMAT**: Use markdown tables EXACTLY as shown with proper column alignment
-5. **NO PLACEHOLDERS**: NEVER use "N/A", "TBD", "data unavailable", or "XX" placeholders - use real data or realistic estimates
+5. **NO PLACEHOLDERS**: NEVER use "N/A", "TBD", "data unavailable", "not available" or "XX" placeholders, and never tell the reader that a figure is missing — where a figure is not supplied, leave it out together with the sentence, row or cell that would have carried it
 6. **ALL 10 YEARS**: Projection tables MUST include all 10 years of data
 7. **DOLLAR AMOUNTS**: All amounts in AUD with $ symbol and proper comma formatting
 8. **CITATIONS**: Include [citation] markers where data is sourced from external references
@@ -5842,7 +6143,7 @@ WRITING STYLE RULES:
 5. Replace jargon with plain language or briefly define technical terms on first use (e.g., "gross rental yield — the annual rent as a percentage of the property price")
 6. Use contextual comparisons to make numbers meaningful (e.g., "This is 15% above the state average" rather than just stating the number)
 7. Include brief connecting sentences between sections for narrative flow
-8. Never use placeholders like "N/A" or "XX" — provide real data or clearly labelled estimates
+8. Never use placeholders like "N/A", "not available" or "XX", and never tell the reader that data is missing — state only the figures supplied and leave out any that are not
 9. Use the EXACT expense values provided in the PRE-CALCULATED ANNUAL COSTS section — do not substitute with defaults
 10. Every section is MANDATORY — do not skip any
 
@@ -6112,10 +6413,20 @@ YOUR DEDICATED PROPERTY PARTNER
       let bestContent = '';
       let bestScore = 0;
       let sectionAttempts = 0;
+      let sectionDeferred = false;
       const maxSectionAttempts = 2; // Retry once if content is insufficient
+      // Every model call for this section answers to the run's clock: the
+      // hard stop, less the post-processing reserve when this is the closing
+      // section, because what follows the last section has to fit too.
+      const sectionDeadlineAt = runStartedAt + SECTION_CALL_HARD_STOP_MS
+        - (isLastSection ? POST_PROCESSING_RESERVE_MS : 0);
       
       for (let attempt = 1; attempt <= maxSectionAttempts; attempt++) {
         sectionAttempts = attempt;
+        if (attempt > 1 && Date.now() > sectionDeadlineAt - SECTION_MIN_CALL_WINDOW_MS) {
+          console.log(`⏱️ No window for a validation retry of ${sectionDef.name}; keeping the best attempt.`);
+          break;
+        }
         
         const result = await generateReportSection(
           sectionDef,
@@ -6124,9 +6435,17 @@ YOUR DEDICATED PROPERTY PARTNER
           perplexityApiKey,
           previousContext,
           formattedInput,
-          enhancedData
+          enhancedData,
+          2,
+          sectionDeadlineAt,
         );
         
+        if (result.error === SECTION_BUDGET_DEFERRED) {
+          // Not a failure: no call was made because no window was left. The
+          // section is handed to the next invocation untouched.
+          sectionDeferred = true;
+          break;
+        }
         if (result.error) {
           console.error(`⚠️ Section ${sectionDef.name} attempt ${attempt} failed:`, result.error);
           if (attempt === maxSectionAttempts) {
@@ -6329,6 +6648,35 @@ YOUR DEDICATED PROPERTY PARTNER
           }
         }
         // === END PROGRESSIVE SAVE ===
+      } else if (sectionDeferred && !bestContent) {
+        // A DEFERRAL — the section made no model call because the run had no
+        // window left for one. It is a budget hand-off exactly like the
+        // between-sections guard's, and is reported as one: progress stands
+        // where it was, no error is written over the row, and the caller
+        // (browser pump or watchdog) invokes again. Writing "failed after N
+        // attempts" here is what turned a full window into ten hours of
+        // retries that each ran out of the same window.
+        console.log(
+          `⏱️ Section ${sectionDef.name} deferred at ${Math.round((Date.now() - runStartedAt) / 1000)}s — `
+          + 'handing off to resume with no attempt spent.',
+        );
+        if (isSingleSectionMode) {
+          await traceFinishRun(_traceSb, _traceRunId, { status: 'completed' });
+          return new Response(JSON.stringify({
+            success: true,
+            isComplete: false,
+            resumeRequired: true,
+            deferred: true,
+            sectionCompleted: lastCompletedSectionIndex,
+            totalSections: filteredSections.length,
+            contentLength: combinedContent.length,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        budgetExhausted = true;
+        break;
       } else {
         // No content generated for this section at all - still save progress
         sectionResults.push({
@@ -6618,7 +6966,11 @@ YOUR DEDICATED PROPERTY PARTNER
       const beforePost = reportContent.length;
       const { markdown, report: postReport } = postProcessReportMarkdown(reportContent, 'compass-40');
       reportContent = markdown;
-      compassQa = runQAValidation(reportContent, 'compass-40');
+      // The prose may print the recorded score and its scored dimensions,
+      // and no other (QA-18); a claim outside that set is reported here.
+      compassQa = runQAValidation(reportContent, 'compass-40', {
+        recordedScores: recordedScoreValues(enhancedData.investmentScore),
+      });
 
       console.log(
         `✓ Compass post-processor: ${beforePost} → ${reportContent.length} chars, ` +

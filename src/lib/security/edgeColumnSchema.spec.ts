@@ -38,17 +38,20 @@ describe('the resolver can see', () => {
   it('reads the migrations', () => {
     // If this comes back empty the gate is blind to everything added since the
     // types were last regenerated, and it would pass on any of it.
-    expect(migrationColumns('builder_stock_items').length).toBeGreaterThan(0);
+    expect(migrationColumns('builder_network_stock_items').length).toBeGreaterThan(0);
   });
 });
 
 describe('a column is known when EITHER source has it', () => {
   it('accepts one the migrations add and the types predate', () => {
-    // Added by `20261019000000_builder_stock_item_work_claim.sql`; the types
-    // were last regenerated before it.
-    expect(typedColumns('builder_stock_items')).not.toContain('image_work_stage');
-    expect(migrationColumns('builder_stock_items')).toContain('image_work_stage');
-    expect(knownColumns('builder_stock_items')).toContain('image_work_stage');
+    // The whole mirror table was added by
+    // `20261123000000_builder_network_stock_mirror.sql`; the types were last
+    // regenerated before it, so every column is a migrations-only fact.
+    // The whole table is missing from the stale types, so the typed reading
+    // is empty-or-null — either way, not a source that knows the column.
+    expect(typedColumns('builder_network_stock_items') ?? []).not.toContain('source_version');
+    expect(migrationColumns('builder_network_stock_items')).toContain('source_version');
+    expect(knownColumns('builder_network_stock_items')).toContain('source_version');
   });
 
   it('accepts one the types carry', () => {

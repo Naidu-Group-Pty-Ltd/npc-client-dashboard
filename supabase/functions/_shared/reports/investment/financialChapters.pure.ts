@@ -200,17 +200,29 @@ function loanStructure(fin: Record<string, unknown>): ComposedChapter | null {
   const lvr = num(loan.lvr);
   const rateSource = str(loan.rateSource);
 
+  // The structure the arithmetic RAN, from the ledger's own description,
+  // beside the label the record carries: an interest-only label over P&I
+  // figures was the audit's QA-04, and the period is what makes the label a
+  // schedule rather than a word.
+  const structure = str(loan.structure);
+  const ioYears = num(loan.interestOnlyPeriod);
   const table = twoCol(['Item', 'Value'], [
     ['Loan amount', money(loan.loanAmount)],
     ['Loan-to-value ratio', lvr !== undefined ? pct(lvr) : undefined],
     ['Loan type', loanType],
+    ['Loan structure', structure],
+    [
+      'Interest-only period',
+      ioYears !== undefined && ioYears > 0 ? `${ioYears} year${ioYears === 1 ? '' : 's'}, then principal and interest` : undefined,
+    ],
+    ['Loan term', num(loan.loanTerm) !== undefined ? `${num(loan.loanTerm)} years` : undefined],
     [
       rateSource ? `Interest rate (${rateSource})` : 'Interest rate',
       pct(loan.interestRate),
     ],
-    ['Monthly repayment', money(monthly)],
+    ['Monthly repayment (first year)', money(monthly)],
     ['Weekly repayment', money(loan.weeklyPayment)],
-    ['Annual repayments', monthly !== undefined ? money(monthly * 12) : undefined],
+    ['Annual repayments (first year)', num(loan.annualPayment) !== undefined ? money(loan.annualPayment) : (monthly !== undefined ? money(monthly * 12) : undefined)],
     ['Total interest over the term', money(loan.totalInterest)],
   ]);
 
@@ -249,13 +261,21 @@ function sensitivity(fin: Record<string, unknown>): ComposedChapter | null {
     ['Cash-on-cash return', pct(metrics.cashOnCashReturn)],
   ]);
 
+  // A row is labelled with the parameter it tested. Where the engine
+  // published its scenarios the absolute rate is printed ("Interest rate
+  // 7.5% (+1.0 pt)"); the keyed deltas alone are labelled by their change.
+  const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(obj) : [];
+  const publishedLabel = (key: string): string | undefined => {
+    const hit = published.find((s) => s.id === key);
+    return hit ? str(hit.label) : undefined;
+  };
   const scenarioRows = (
     source: Record<string, unknown>,
     labels: Readonly<Record<string, string>>,
   ): Array<[string, string | undefined]> =>
     Object.entries(labels)
       .filter(([key]) => key in source)
-      .map(([key, label]) => [label, money(source[key])]);
+      .map(([key, label]) => [publishedLabel(key) ?? label, money(source[key])]);
 
   const rateTable = twoCol(['Scenario', 'Annual cashflow'], scenarioRows(rates, RATE_LABELS));
   const rentTable = twoCol(['Scenario', 'Annual cashflow'], scenarioRows(rents, RENT_LABELS));
@@ -331,8 +351,22 @@ function projections(
   }
   if (!blocks.length) return null;
 
+  // Every scenario's own growth is stated beside the tables it produced, and
+  // the conventions the series rest on — occupancy, the fee basis, the growth
+  // timing — are said rather than left for a reader to reverse-engineer from
+  // a year-1 rent that does not equal the headline (QA-10, QA-11).
+  const scenarioGrowth = obj(assumptions.scenarioGrowth);
+  const growthRow = (key: string, label: string): [string, string | undefined] => {
+    const g = obj(scenarioGrowth[key]);
+    const capital = num(g.capitalGrowth);
+    const rent = num(g.rentGrowth);
+    return [label, capital !== undefined && rent !== undefined ? `${pct(capital)} value, ${pct(rent)} rent` : undefined];
+  };
   const assumptionTable = twoCol(['Modelling assumption', 'Value'], [
     ['Capital growth', pct(assumptions.capitalGrowth)],
+    growthRow('conservative', 'Conservative scenario growth'),
+    growthRow('moderate', 'Base case scenario growth'),
+    growthRow('optimistic', 'Optimistic scenario growth'),
     ['CPI growth', pct(assumptions.cpiGrowth)],
     [
       'Occupancy',
@@ -340,12 +374,131 @@ function projections(
         ? `${num(assumptions.occupancyWeeks)} weeks a year`
         : undefined,
     ],
+    ['Percentage fees charged on', assumptions.feeBasis === 'collected_rent' ? 'rent collected' : undefined],
+    ['Growth timing', str(assumptions.growthTiming)],
+    ['Cash-flow basis', 'pre-tax; each year is rent less operating costs less loan repayments'],
     ['Depreciation allowance', money(tax.depreciation)],
+  ]);
+
+  // An equity headline is bridged to the cash that bought it (QA-16): the
+  // audited reports led with "$1.2m equity by year 10" and nowhere set that
+  // beside the settlement cash and ten years of shortfalls that produced it.
+  // The bridge is stated before selling costs and tax, and says so — an exit
+  // figure net of those is a calculation this record does not hold.
+  const moderate = Array.isArray(stored.moderate) ? stored.moderate.map(obj) : [];
+  const last = moderate.length ? moderate[moderate.length - 1] : {};
+  const horizon = num(last.year);
+  const equity = num(last.equity);
+  const cumulative = num(last.cumulativeCashFlow);
+  const upfront = num(obj(fin.initialCosts).totalUpfront);
+  const committed = upfront !== undefined && cumulative !== undefined
+    ? upfront + Math.max(0, -cumulative)
+    : undefined;
+  const net = equity !== undefined && committed !== undefined ? equity - committed : undefined;
+  const yearLabel = horizon !== undefined ? `year ${horizon}` : 'the final year';
+  const bridge = equity === undefined ? [] : twoCol(['Equity bridge (base case, before selling costs and tax)', 'Value'], [
+    [`Equity at ${yearLabel}`, money(equity)],
+    ['Cash required to settle', money(upfront)],
+    [`Cumulative cash shortfall funded to ${yearLabel}`, cumulative !== undefined && cumulative < 0 ? money(Math.abs(cumulative)) : undefined],
+    ['Total cash committed', money(committed)],
+    [`Net position at ${yearLabel}, before selling costs and tax`, money(net)],
   ]);
 
   return chapter(9, '10-Year Cashflow, Equity & Growth Projection',
     'The recorded ten-year modelling, shown at years 1, 3, 5, 7 and 10.',
-    [...blocks, assumptionTable]);
+    [...blocks, assumptionTable, bridge]);
+}
+
+// ── Chapter 11 · Financial Risk Dashboard ───────────────────────────────────
+
+/**
+ * The financial risks the record itself states, as a dashboard.
+ *
+ * The audit of 291 Stone Mason Drive (QA-31) found the Financial report's
+ * "Financial Risk Dashboard" opening with "this register summarises the main
+ * NON-financial risks" and listing crime, bushfire and planning checks — the
+ * composite's register routed verbatim — while the row's own calculation
+ * held the cash deficit, the debt structure, the rate shocks and the funding
+ * need the heading promised. This chapter is those, typed from the record:
+ * every figure is a stored key, nothing is recomputed, and a row with no
+ * figure is not drawn. The Due Diligence report keeps the property and
+ * locality register; this one cross-references it rather than restating it.
+ */
+function financialRiskDashboard(fin: Record<string, unknown>): ComposedChapter | null {
+  const metrics = obj(fin.keyMetrics);
+  const loan = obj(fin.loanDetails);
+  const initial = obj(fin.initialCosts);
+  const income = obj(fin.income);
+  const assumptions = obj(fin.assumptions);
+  const sens = obj(fin.sensitivityAnalysis);
+  const rates = obj(sens.interestRateChanges);
+  const rents = obj(sens.rentChanges);
+  const projections = obj(fin.projections);
+  const moderate = Array.isArray(projections.moderate) ? projections.moderate.map(obj) : [];
+  const finalYear = moderate.length ? moderate[moderate.length - 1] : {};
+  const horizon = num(finalYear.year);
+
+  const annualNet = num(metrics.annualNet);
+  const cumulative = num(finalYear.cumulativeCashFlow);
+  const upfront = num(initial.totalUpfront);
+  const funding = cumulative !== undefined && cumulative < 0 && upfront !== undefined
+    ? upfront + Math.abs(cumulative)
+    : undefined;
+
+  const deficit = twoCol(['Cash position', 'Recorded value'], [
+    ['Year-1 annual cash position (pre-tax)', money(annualNet)],
+    ['Weekly net position', money(metrics.weeklyNet)],
+    [
+      horizon !== undefined ? `Cumulative cash position to year ${horizon} (base case)` : 'Cumulative cash position (base case)',
+      money(cumulative),
+    ],
+    ['Cash required to settle', money(upfront)],
+    [
+      horizon !== undefined ? `Total cash committed to year ${horizon} (settlement plus shortfalls)` : 'Total cash committed (settlement plus shortfalls)',
+      money(funding),
+    ],
+  ]);
+
+  const published = Array.isArray(sens.scenarios) ? sens.scenarios.map(obj) : [];
+  const labelFor = (key: string, fallback: string): string => {
+    const hit = published.find((x) => x.id === key);
+    return (hit && str(hit.label)) ?? fallback;
+  };
+  const shockRow = (source: Record<string, unknown>, key: string, fallback: string): [string, string | undefined] => {
+    const value = num(source[key]);
+    if (value === undefined || annualNet === undefined) return [labelFor(key, fallback), money(value)];
+    const delta = value - annualNet;
+    return [labelFor(key, fallback), `${money(value)} (${delta < 0 ? '−' : '+'}${money(Math.abs(delta))} a year)`];
+  };
+  const shocks = twoCol(['Shock', 'Annual cash position'], [
+    shockRow(rates, 'plus1Percent', RATE_LABELS.plus1Percent),
+    shockRow(rates, 'plus2Percent', RATE_LABELS.plus2Percent),
+    shockRow(rents, 'minus10Percent', RENT_LABELS.minus10Percent),
+  ]);
+
+  const ioYears = num(loan.interestOnlyPeriod);
+  const ioPayment = num(loan.interestOnlyPayment);
+  const piPayment = num(loan.amortisingMonthlyPayment);
+  const stepUp = ioYears !== undefined && ioYears > 0 && ioPayment !== undefined && piPayment !== undefined
+    ? `${money(piPayment)} a month from year ${ioYears + 1}, up from ${money(ioPayment)} interest-only`
+    : undefined;
+  const lvr = num(loan.lvr);
+  const occupancyWeeks = num(assumptions.occupancyWeeks) ?? num(income.occupancyWeeks);
+  const structure = twoCol(['Debt and funding', 'Recorded value'], [
+    ['Loan-to-value ratio at settlement', lvr !== undefined ? pct(lvr) : undefined],
+    ['Interest rate assumed for modelling', pct(loan.interestRate)],
+    ['Loan structure', str(loan.structure)],
+    ['Repayment step-up when the interest-only period ends', stepUp],
+    [
+      'Occupancy assumed',
+      occupancyWeeks !== undefined ? `${occupancyWeeks} of 52 weeks let` : undefined,
+    ],
+  ]);
+
+  const chapterOut = chapter(11, 'Financial Risk Dashboard',
+    'The financial exposures the recorded calculation states: the cash the investor must fund, how it moves under a rate or rent shock, and the debt structure behind it. Property and locality risks (crime, environmental, planning, condition) are assessed in the Property & Location Due Diligence Report and are not restated here.',
+    [deficit, shocks, structure]);
+  return chapterOut;
 }
 
 // ── Public entrypoint ───────────────────────────────────────────────────────
@@ -367,6 +520,7 @@ export function composeFinancialChapters(
     loanStructure(fin),
     sensitivity(fin),
     projections(fin, opts),
+    financialRiskDashboard(fin),
   ];
 
   const scorecard = composeScoreBreakdownSection(

@@ -15,12 +15,6 @@ import {
 import { internalError } from '../_shared/errorResponse.ts';
 import { recordActivity } from '../_shared/activityAudit.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
-  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-};
-
 // Allowlist of secrets that can be updated via this endpoint.
 // Derived from the Integrations registry rather than hand-maintained: the previous
 // hand-typed list covered 27 of the registry's 240 credential fields, so "Sync to

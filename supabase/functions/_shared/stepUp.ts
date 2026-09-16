@@ -19,14 +19,7 @@
  */
 
 import { hashSessionToken, isSessionHashConfigured } from "./sessionHash.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
-  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+import { createCorsHeaders } from "./auth.ts";
 
 export type StepUpCapability =
   | "role.change"
@@ -151,6 +144,12 @@ export interface RequireStepUpArgs {
   body?: any;
   /** When true, always audit-log even if not enforced. */
   logAudit?: boolean;
+  /**
+   * The caller's own per-origin CORS headers. Optional: when absent they are
+   * derived from `req`'s Origin, so a caller that forgets still emits a
+   * readable refusal. Pass them when the handler has already built them.
+   */
+  cors?: Record<string, string>;
 }
 
 /**
@@ -212,6 +211,18 @@ export async function requireStepUp(
     await admin.from("security_events").insert({ action: "step_up.blocked", decision: "deny", actor_type: "human", actor_id: args.userId, reason_code: reason, metadata_redacted: { capability: args.capability, enforced: true } });
   } catch { /* best-effort */ }
 
+  // This refusal MUST carry the caller's per-origin CORS headers, never a
+  // wildcard. `secureInvoke` sends every call with `credentials: 'include'`,
+  // and a wildcard `Access-Control-Allow-Origin` is invalid for a credentialed
+  // request - so the browser discards the response and `fetch` rejects with
+  // `Failed to fetch`, which the client reports as a network/CORS fault. That
+  // is what made a step-up block on the Integrations page look like a broken
+  // deployment for eight weeks: the 401 and the words below never reached JS.
+  // Every other refusal in this codebase (csrfDenied, createUnauthorizedResponse,
+  // createForbiddenResponse) already takes the caller's headers; this one built
+  // its own.
+  const cors = args.cors ?? createCorsHeaders(args.req?.headers.get("origin") ?? null);
+
   return new Response(
     JSON.stringify({
       success: false,
@@ -220,7 +231,7 @@ export async function requireStepUp(
       capability: args.capability,
       reason,
     }),
-    { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    { status: 401, headers: { ...cors, "Content-Type": "application/json" } },
   );
 }
 

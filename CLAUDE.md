@@ -251,6 +251,33 @@ Management API instead. And **a config-only edit used to deploy nothing**,
 because the changed-function list was built from `supabase/functions/**` paths
 alone — which is how a declaration and production came to disagree at all.
 
+## Step-up authentication blocks what nobody can unblock
+Read [`docs/security/STEP_UP_ENFORCEMENT.md`](./docs/security/STEP_UP_ENFORCEMENT.md)
+before touching `_shared/stepUp.ts`, `_shared/aml/step-up.ts`, `STEP_UP_ENFORCED`
+or any handler calling `requireStepUp`. Saving a credential on the Integrations
+page reported *"Network/CORS error calling update-integration-secret"* and
+**both claims were false** — the function was ACTIVE v354 and CORS was correct.
+`security_events` held the real answer: `step_up.blocked / missing /
+secrets.update / enforced:true`.
+
+Two rules bite. **A shared refusal helper never invents CORS headers** — both
+step-up modules built their 401 from a module-level
+`Access-Control-Allow-Origin: *`, and a wildcard is invalid for the
+`credentials: 'include'` requests this product sends, so the browser discarded
+the response and `fetch` rejected with `Failed to fetch`. The 401 and the words
+"Recent reauthentication required" never reached JavaScript, and an auth gate
+presented as a broken deployment. The helper now resolves
+`args.cors ?? createCorsHeaders(origin)` from the request it already holds, so
+the fix reaches **all eleven call sites without editing one of them**; the AML
+copy had the same defect on a path that is LIVE on ~20 routes. And **a control
+that cannot be satisfied is an outage, not a control**: enforce mode demands
+`assurance_level >= 2`, password-only minting yields 1, and 0 of 4 superadmins
+have MFA — while `StepUpDialog` and `useStepUp` are fully built with **zero call
+sites**. `STEP_UP_ENFORCED` is fail-closed when unset (CI-pinned) and is set
+nowhere in this repo, so every deployment that never set it has a silently
+bricked Integrations page; the clone sets it and its saves work — 6 of 6 rows
+filled against the prime's 0 of 20.
+
 ## The login CAPTCHA is a per-deployment credential
 `src/lib/turnstileSiteKey.ts` is the one place that decides which Turnstile
 widget a build renders. A widget IS a **(site key, secret) pair** — the site key

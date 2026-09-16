@@ -62,9 +62,10 @@ describe("the browser never reads feature_flags for a partner surface", () => {
   });
 
   it("no partner-facing surface reads the table either", () => {
+    /* The Builder page left with the portal (network extraction Phase 7);
+       the rule holds over every partner surface that remains. */
     for (const page of [
       "src/pages/finance-portal/FinancePortalComplianceWorkspace.tsx",
-      "src/pages/builder/BuilderCompliance.tsx",
       "src/pages/solicitor/SolicitorCompliance.tsx",
       "src/components/partner-compliance/PartnerComplianceWorkspace.tsx",
     ]) {
@@ -81,7 +82,6 @@ describe("one authority decides whether a partner may see the page", () => {
        announce itself unavailable while the server was ready to serve it. */
     for (const page of [
       "src/pages/finance-portal/FinancePortalComplianceWorkspace.tsx",
-      "src/pages/builder/BuilderCompliance.tsx",
       "src/pages/solicitor/SolicitorCompliance.tsx",
     ]) {
       const source = code(page);
@@ -163,7 +163,6 @@ describe("the nav entry still leads somewhere", () => {
     // An entry that leads nowhere is worse than none — this is the one place
     // a client-side reading is still the right control.
     for (const layout of [
-      "src/components/builder-portal/BuilderPortalLayout.tsx",
       "src/components/finance-portal/FinancePortalLayout.tsx",
       "src/components/solicitor-portal/SolicitorPortalLayout.tsx",
     ]) {
@@ -178,9 +177,16 @@ describe("the nav entry still leads somewhere", () => {
     for (const route of [
       '<Route path="compliance" element={<FinancePortalComplianceWorkspace />} />',
       '<Route path="compliance" element={<SolicitorCompliance />} />',
-      '<Route path="compliance" element={<BuilderCompliance />} />',
     ]) {
       expect(app, route).toContain(route);
     }
+    /* Phase 6 of the network extraction: the Builder portal is unrouted
+       wholesale — the nav entry, the layout that drew it and the compliance
+       page all left with /builder/*, which resolves to the Builders Network
+       redirect. There is no builder entry left to lead anywhere, and the
+       portal handoff names the closed door `portal_moved` until E4's
+       network→clone surface ships. */
+    expect(app).toContain('<Route path="/builder/*" element={<BuilderPortalMoved />} />');
+    expect(app).not.toContain('element={<BuilderCompliance />}');
   });
 });

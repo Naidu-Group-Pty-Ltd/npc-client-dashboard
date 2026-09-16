@@ -137,10 +137,24 @@ export const qaAdapter: ReportTemplateAdapter = {
     // The same test the binding applies. See `hasAnswer`.
     if (!await hasAnswer(reportId)) return null;
     const subject = subjectFor(variant);
-    // The normaliser's other refusal this read can already answer: asked for
-    // the structured report, a conversation that stores none produces nothing.
-    // Free, because `CONVERSATION_COLUMNS` already selects the column.
-    if (subject === 'structured' && !conversation.structured_report) return null;
+    /*
+     * The structured write-up is NOT a templated document (RS-5c.5b).
+     *
+     * The projection deliberately never publishes `structured_report` (see
+     * `reportQaProjection.pure.ts`), and no master carries a page bound to it —
+     * every content page of the Q&A masters draws `qa.answer`, the FIRST turn's
+     * reply, or the turns table. Routing the structured subject here therefore
+     * produced a real document with nothing in it: measured through the journey
+     * on 14 Sep 2026, a conversation holding a 5,460-character write-up came
+     * out as a cover, "The question" with a note reading "This document carries
+     * 0 of 4 exchanges; 4 are not shown", the sources page and the back cover.
+     * A shell that looks finished is worse than the standard layout, so the
+     * templated path declines and `deliverReportQaPdf` falls through to
+     * `render-report-qa-pdf`, which draws the write-up. The day a master binds
+     * the write-up (`qaStructuredNotTemplated.spec.ts` watches the composer
+     * for it), this refusal is the line to remove.
+     */
+    if (subject === 'structured') return null;
     return {
       reportId,
       reportType: 'qa',
@@ -172,6 +186,10 @@ export const qaAdapter: ReportTemplateAdapter = {
       // answer asks the flowing route, which is addressed by message.
       messageId: subject === 'answer' ? (messages.find((m) => m.role === 'assistant')?.id ?? null) : null,
       preparedOn: new Date().toISOString(),
+      // The masters set the first answer (bounded by their answer pages) and
+      // LIST the further questions; the flowing route's line budget would cut
+      // the very turns that table exists for. See `BuildInput.keepAllTurns`.
+      keepAllTurns: true,
     });
     // A conversation with no assistant turn is not a document. Returning null
     // rather than an empty one is what makes the library card say so.

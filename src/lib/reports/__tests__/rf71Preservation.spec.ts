@@ -238,7 +238,14 @@ describe('finance figures are unchanged', () => {
   it('the 10-year cash-flow projection still generates', () => {
     const projections = generateProjections(
       { purchasePrice: 700000, deposit: 140000, weeklyRent: 650, interestRate: 6.2, loanTerm: 30 } as never,
-      undefined as never,
+      // Repayment, annual costs and the growth/CPI path the engine requires:
+      // this test asserts the series still generates, not what it contains.
+      3_430,
+      6_500,
+      0.04,
+      0.03,
+      0.038,
+      [],
     );
     expect(Array.isArray(projections)).toBe(true);
     expect(projections.length).toBeGreaterThan(0);

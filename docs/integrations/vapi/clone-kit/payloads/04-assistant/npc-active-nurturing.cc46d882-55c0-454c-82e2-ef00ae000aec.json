@@ -58,7 +58,7 @@
       "x-vapi-webhook-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
     },
     "timeoutSeconds": 20,
-    "url": "https://hook.us2.make.com/my4fk4f1hyvrtq3qwl88oae8ntiku3v4"
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook"
   },
   "serverMessages": [
     "end-of-call-report"

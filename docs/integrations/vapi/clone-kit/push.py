@@ -30,8 +30,11 @@ import argparse, json, os, ssl, sys, time, urllib.request, urllib.error, uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = 'https://api.vapi.ai'
 SOURCE_ORG_ID = 'c9015cd5-3701-4ac5-aa9c-be6cdcaaecdd'
+# sipUri is NOT server-assigned: CreateVapiPhoneNumberDTO accepts it, and the
+# username is ours to choose. It must therefore survive into the request body,
+# or the new number is minted at an address nothing has been told to dial.
 SERVER_FIELDS = {'id', 'orgId', 'createdAt', 'updatedAt', 'latestVersion',
-                 'isServerUrlSecretSet', 'status', 'sipUri'}
+                 'isServerUrlSecretSet', 'status'}
 STATE_PATH = os.path.join(HERE, 'clone-state.json')
 CONTESTED_ASSISTANT = {'serverUrl', 'recordingEnabled', 'hipaaEnabled',
                        'silenceTimeoutSeconds', 'backchannelingEnabled',

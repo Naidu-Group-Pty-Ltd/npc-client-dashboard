@@ -144,7 +144,9 @@ describe('loose lists and footnotes', () => {
 
   it('an ordered run opening past 1 keeps its numbering', () => {
     const { blocks } = renderMarkdown('4. four\n5. five');
-    expect(blocks[0].html).toContain('<ol start="4">');
+    // The attribute for readers that honour it, the CSS counter for the pinned
+    // engine, which does not (WeasyPrint 69.0 sets `<ol start="4">` as "1.").
+    expect(blocks[0].html).toContain('<ol start="4" style="counter-reset:list-item 3">');
   });
 
   it('a blank line before an UNordered item does not merge into an ordered run', () => {

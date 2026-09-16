@@ -382,6 +382,22 @@ answer is the canonical engine's own schedule stamp (`stampDutyScheduleYear` /
 `stampDutyScheduleSource`), never a recomputation here. A `$0` liability that
 was calculated is stated; a `0` that means "never calculated" is omitted.
 
+### And the same rule where stored content is READ (RS-5a, 14 Sep 2026)
+
+The owner's rule — *"N/A or unavailable — this never should be included in
+reports"* — reached three more places, and
+`docs/reports/RUNTIME_CONSOLIDATION.md` §8 carries the measurements. **The
+placeholder scrub runs on read as well as on write**: `presentStoredMarkdown`
+is applied at `projectRowForPdf` (both browser presentations), the template
+adapter, the legacy server renderer and the on-screen document view, so the
+"N/A" cells every stored Briefing carries (36–97 a report) are neither shown
+nor printed, without a migration and without a stored byte changing. **An
+ungraded record publishes no verdict** — the headline this section's earlier
+correction left as *"Not available — insufficient verified evidence"* is
+absent now, with the action and the sentence, and the verdict block draws
+nothing. And **an unscored dimension draws no row**: "Not assessed" beside a
+dash was a placeholder wearing a label.
+
 ### What is deliberately NOT done
 
 **No post-processing.** There is no `.replace(/N\/A/g, '')` anywhere. Such a

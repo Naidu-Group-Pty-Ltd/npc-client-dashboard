@@ -132,9 +132,17 @@ describe('F3 — Google Maps is judged by its own status', () => {
   });
 
   it('the shipped judge encodes exactly that rule', () => {
-    expect(service).toContain('const judgeGoogleMapsBody =');
-    expect(service).toMatch(/status === 'OK' \|\| status === ADDRESS_IS_THE_ANSWER/);
-    expect(service).toContain("if (typeof status !== 'string') return null;");
+    // The judge is one shared module now (`_shared/googleMapsBody.pure.ts`),
+    // imported here for the Places and Distance Matrix calls and by the
+    // geocoding chain for its Google provider — which is also the one place
+    // `ADDRESS_IS_THE_ANSWER` is read, since the service no longer geocodes
+    // against Google itself.
+    expect(service).toContain('import { judgeGoogleMapsBody } from "../_shared/googleMapsBody.pure.ts"');
+    const chain = readFileSync(resolve(REPO, 'supabase/functions/_shared/geocode/geocoder.ts'), 'utf8');
+    expect(chain).toContain("import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from '../googleMapsBody.pure.ts';");
+    const judge = readFileSync(resolve(REPO, 'supabase/functions/_shared/googleMapsBody.pure.ts'), 'utf8');
+    expect(judge).toMatch(/status === 'OK' \|\| status === ADDRESS_IS_THE_ANSWER/);
+    expect(judge).toContain("if (typeof status !== 'string') return null;");
   });
 
   it('every Google Maps call in the service is judged by its body', () => {

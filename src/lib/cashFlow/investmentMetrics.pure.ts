@@ -63,6 +63,8 @@ export interface MetricsBase {
   depositValue: number;
   stampDuty: number;
   solicitorFees: number;
+  /** Building and pest inspections — part of the same settlement-cost object as duty and legal fees. */
+  inspectionFees?: number;
   lmiAmount: number;
   loanToValueRatio: number;
 }
@@ -129,11 +131,20 @@ export function depositFor(base: MetricsBase): number {
   return (finite(base.purchasePrice) * (100 - (lvr > 0 ? lvr : 80))) / 100;
 }
 
-/** The cash an investor put in to acquire the property: deposit + costs. */
+/**
+ * The cash an investor put in to acquire the property: deposit + costs.
+ *
+ * Inspection fees are in it because they are in the sibling report's
+ * settlement-cost object (`initialCosts.inspectionFees`): the standalone cash
+ * flow of 291 Stone Mason Drive stated $259,800 upfront where the Financial
+ * Analysis stated $314,832, and the $55,032 gap was duty, legal and inspection
+ * costs this reading never reached (QA-03).
+ */
 export function acquisitionCashFor(base: MetricsBase): number {
   return depositFor(base)
     + finite(base.stampDuty)
     + finite(base.solicitorFees)
+    + finite(base.inspectionFees)
     + finite(base.lmiAmount);
 }
 

@@ -53,10 +53,18 @@ describe("migration corpus parses", () => {
     expect(files.length).toBeGreaterThan(500);
   });
 
-  it("uses no IF NOT EXISTS clause PostgreSQL does not have", () => {
+  // The corpus is 984 files and 327 MB (measured 16 Sep 2026): reading it
+  // alone is ~2.4 s, the comment strip ~1.2 s and the five scans ~1.4 s, so
+  // the default 5 s budget was already the measured cost of the test and one
+  // more migration tipped it over under a parallel run. A file that never
+  // says `if not exists` is skipped before the strip, and the budget states
+  // what the corpus costs rather than what a small one would.
+  it("uses no IF NOT EXISTS clause PostgreSQL does not have", { timeout: 60_000 }, () => {
     const offences: string[] = [];
     for (const file of files) {
-      const sql = stripComments(readFileSync(join(MIGRATIONS, file), "utf8"));
+      const raw = readFileSync(join(MIGRATIONS, file), "utf8");
+      if (!/\bif\s+not\s+exists\b/i.test(raw)) continue;
+      const sql = stripComments(raw);
       for (const { re, stmt } of INVALID) {
         const hits = sql.match(re);
         if (hits) {

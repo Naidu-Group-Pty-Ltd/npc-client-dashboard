@@ -157,7 +157,9 @@ describe('the server resolves the engine and records the one it ran', () => {
   it('the editorial and QA gates run under the primary engine', () => {
     expect(edge).toContain('if (compass40OverlayActive) {');
     expect(edge).toContain("postProcessReportMarkdown(reportContent, 'compass-40')");
-    expect(edge).toContain("runQAValidation(reportContent, 'compass-40')");
+    // The QA run now also carries the recorded scores (QA-18), so the call
+    // opens a context object rather than closing on the tier.
+    expect(edge).toContain("runQAValidation(reportContent, 'compass-40', {");
   });
 });
 

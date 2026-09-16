@@ -14,24 +14,27 @@ import {
 import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
 import { assessAgainstConsensus, type GeoPointLike } from '../_shared/geoConsensus.pure.ts';
 import {
-  fetchWithTimeout,
   killSwitchActive,
   redactError,
 } from '../_shared/publicAbuseControls.ts';
-import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
+import { geocodeAddress } from '../_shared/geocode/geocoder.ts';
+import { precisionLabel } from '../_shared/geocode/geocodeResult.pure.ts';
 
 // Resolves map coordinates for property listings WITHOUT any browser-side
 // geocoding. Order of resolution per listing:
 //   1. Coordinates already supplied by the source record -- ACCEPTED ONLY IF
 //      THEY LAND IN AUSTRALIA. See recordPointIsTrustworthy below.
 //   2. Cache hit in public.listing_geocodes.
-//   3. Google Geocoding API (server key), result written to the cache.
+//   3. The geocoding chain (`_shared/geocode/geocoder.ts`: OpenStreetMap's
+//      Nominatim, then the suburb's own centroid from the ABS, then Google
+//      only where an operator lists it), result written to the cache.
 //
 // Step 1 used to be an unconditional `continue`: any record carrying a numeric
 // latitude/longitude was served verbatim, because `validPoint` asks only
 // whether a number is a coordinate at all (|lat| <= 90, |lng| <= 180) -- which
-// is true of every point on Earth. The three gates below it (country:AU on the
-// provider call, assessAuPoint, assessAuPostcodePoint, the suburb consensus)
+// is true of every point on Earth. The three gates below it (the country
+// restriction on every provider call, assessAuPoint, assessAuPostcodePoint,
+// the suburb consensus)
 // therefore protected only the geocoded path, and the one path nobody checked
 // was the one carrying data this product does not control.
 //
@@ -47,7 +50,7 @@ import { consumeGoogleDailyCap } from '../_shared/googleMapsDailyCaps.ts';
 // The rule: a coordinate the record supplies is a HINT, not an answer. It is
 // trusted where it is consistent with the record's own Australian geography,
 // and where it is not the listing falls through to the geocoder -- which is
-// restricted to country:AU and then re-checked -- so a bad hint costs one
+// restricted to Australia and then re-checked -- so a bad hint costs one
 // lookup instead of one lost property.
 
 interface ListingInput {
@@ -62,7 +65,20 @@ interface ListingInput {
 
 const MAX_BATCH = 300;
 const MAX_LOOKUPS_PER_REQUEST = 40;
-const CIRCUIT_SCOPE = 'google_listing_geocoding';
+/**
+ * Fresh lookups stop being taken after this long, whatever the count above
+ * says, and the rest are reported as pending for the next request. A public
+ * OpenStreetMap geocoder answers one address a second, so forty in one
+ * request would hold the map's request open for most of a minute; the client
+ * drains the remainder request by request.
+ */
+const LOOKUP_WALL_BUDGET_MS = 20_000;
+/**
+ * This function's own breaker — one caller's error rate, whichever provider
+ * the chain asked. A budget is the other axis (the account's spend, or a
+ * public service's goodwill) and lives inside the chain.
+ */
+const CIRCUIT_SCOPE = 'listing_geocoding';
 
 function clean(value: unknown, max = 160): string {
   if (typeof value !== 'string') return '';
@@ -306,7 +322,6 @@ Deno.serve(async (req) => {
     }
 
     // 3. Provider lookup for the remainder (bounded per request).
-    const apiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
     let remaining = MAX_LOOKUPS_PER_REQUEST;
     const seenHashes = new Set<string>();
     const inserts: Array<Record<string, unknown>> = [];
@@ -344,74 +359,50 @@ Deno.serve(async (req) => {
       }
     }
 
-    if (apiKey && !killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
+    if (!killSwitchActive('GEOCODING_KILL_SWITCH')) {
       // This endpoint is already protected by staff authentication and the
       // listings permission. Per-request actor/IP throttles caused normal map
       // pagination to lock itself out and, worse, discarded cache hits with a
       // blanket 429. Provider spend remains bounded by the global daily quota,
-      // the per-request lookup cap, and the circuit breaker below.
+      // the per-request lookup cap, the wall-clock budget and the circuit
+      // breaker below.
 
       const { data: circuitOpen, error: circuitReadError } = await supabase.rpc('provider_circuit_is_open', { p_scope: CIRCUIT_SCOPE });
       if (circuitReadError || circuitOpen === true) return j({ error: 'temporarily_unavailable', success: false }, 503);
 
+      const lookupsStartedAt = Date.now();
       for (const item of needsLookup) {
         if (remaining <= 0) break;
+        if (Date.now() - lookupsStartedAt > LOOKUP_WALL_BUDGET_MS) break;
         if (seenHashes.has(item.hash)) continue;
 
-        // ONE product-wide Geocoding budget. Google bills every geocode in
-        // this deployment together, so `location-intelligence-service`,
-        // `parse-property-pdf`, `builderStock/images.ts` and this function all
-        // consume `google_geocoding` — otherwise `GOOGLE_GEOCODING_DAILY_LIMIT`
-        // would mean "N times however many functions happen to geocode", which
-        // is not a ceiling anybody can reason about.
-        //
-        // `CIRCUIT_SCOPE` is untouched and still names this function's own
-        // breaker below: a breaker is about one caller's error rate, a budget
-        // is about the account's spend. Different axes, different scopes.
-        const globalQuota = await consumeGoogleDailyCap(supabase, 'geocoding');
-        if (!globalQuota.ok) {
-          // Includes `limiter_unavailable`: when the shared counter cannot be
-          // reached the ceiling cannot be enforced, and an unenforceable
-          // ceiling on a paid provider is no ceiling at all. A listing simply
-          // keeps the coordinate it already had.
-          console.warn(`[resolve-listing-coordinates] geocoding not attempted (${globalQuota.reason})`);
-          break;
-        }
         seenHashes.add(item.hash);
         remaining -= 1;
 
         try {
-          const params = new URLSearchParams({
-            address: item.query,
-            components: 'country:AU',
-            key: apiKey,
-          });
-          const response = await fetchWithTimeout(
-            `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`,
-            {},
-            6000,
+          // The one geocoding chain: OpenStreetMap, then the suburb's own
+          // centroid from the ABS, then Google only where an operator lists
+          // it (`GEOCODER_PROVIDERS`). Each provider budgets itself inside the
+          // chain; every answer has already passed the granularity gate.
+          const outcome = await geocodeAddress(
+            supabase,
+            { address: item.query, suburb: item.suburb, state: item.state, postcode: item.postcode },
+            { allowLocalityFallback: true, feature: 'resolve-listing-coordinates' },
           );
-          const data = await response.json().catch(() => ({}));
 
-          if (data.status === 'OK' && Array.isArray(data.results) && data.results[0]?.geometry?.location) {
-            const loc = data.results[0].geometry.location;
-            const lat = numeric(loc.lat);
-            const lng = numeric(loc.lng);
-            const precision = String(data.results[0].geometry.location_type ?? 'UNKNOWN').slice(0, 40);
+          if (outcome.ok) {
+            const found = outcome.result;
+            const lat = numeric(found.lat);
+            const lng = numeric(found.lng);
+            const precision = precisionLabel(found);
             const neighbours = item.suburb
               ? (neighboursBySuburb.get(item.suburb.toLowerCase()) ?? [])
               : [];
-            // What KIND of thing did the provider match? `country:AU` does not
-            // make an unmatched address fail — it returns the centre of the
-            // continent, with HTTP 200 and APPROXIMATE precision, and every
-            // gate below waves it through because the centre of Australia is
-            // inside Australia and on land. Granularity is the only check that
-            // can see it.
-            const granularity = assessGeocodeGranularity(
-              lat as number,
-              lng as number,
-              data.results[0]?.types,
-            );
+            // What KIND of thing did the provider match? The chain refuses the
+            // centre of the continent and anything no finer than a state
+            // whoever answered; the gate is asked again here so this file
+            // still says so on its own.
+            const granularity = assessGeocodeGranularity(lat as number, lng as number, found.types);
             if (!granularity.ok) {
               console.warn(
                 `[resolve-listing-coordinates] refused a ${granularity.verdict} result: ${granularity.reason}`,
@@ -434,44 +425,45 @@ Deno.serve(async (req) => {
                 lat,
                 lng,
                 precision,
-                provider: 'google',
+                provider: found.provider,
                 status: 'ok',
                 suburb: item.suburb,
                 state: item.state,
                 resolved_at: new Date().toISOString(),
               });
             } else if (validPoint(lat, lng)) {
-              // Google answered with a point that cannot be this property:
-              // outside Australia, outside the listing's own state, far from
-              // every verified neighbour, or no finer than the country — the
-              // last being what an unmatched overseas address gets under
-              // `country:AU`. Recorded as suspect so the sweep does not retry
-              // it forever, and never served as a coordinate.
+              // The provider answered with a point that cannot be this
+              // property: outside Australia, outside the listing's own state,
+              // far from every verified neighbour, or no finer than the
+              // country. Recorded as suspect so the sweep does not retry it
+              // forever, and never served as a coordinate.
               cacheMap.set(item.hash, { lat: null, lng: null, status: 'suspect', precision: null });
               inserts.push({
                 listing_hash: item.hash,
                 lat: null,
                 lng: null,
                 precision: null,
-                provider: 'google',
+                provider: found.provider,
                 status: 'suspect',
                 resolved_at: new Date().toISOString(),
               });
             }
-          } else if (data.status === 'ZERO_RESULTS') {
+          } else if (outcome.reason === 'no_match') {
             cacheMap.set(item.hash, { lat: null, lng: null, status: 'not_found', precision: null });
             inserts.push({
               listing_hash: item.hash,
               lat: null,
               lng: null,
               precision: null,
-              provider: 'google',
+              provider: outcome.tried[outcome.tried.length - 1] ?? 'chain',
               status: 'not_found',
               resolved_at: new Date().toISOString(),
             });
           } else {
+            // Unavailable, refused or out of allowance: the provider's fault,
+            // never recorded against the listing, and the breaker counts it.
             await supabase.rpc('provider_circuit_record_failure', { p_scope: CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
-            console.warn('[resolve-listing-coordinates] geocode status', data.status);
+            console.warn(`[resolve-listing-coordinates] geocode ${outcome.reason}: ${outcome.detail}`);
             continue;
           }
           await supabase.rpc('provider_circuit_record_success', { p_scope: CIRCUIT_SCOPE });
@@ -480,10 +472,8 @@ Deno.serve(async (req) => {
           console.warn('[resolve-listing-coordinates] lookup failed', redactError(e));
         }
       }
-    } else if (killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
-      return j({ error: 'temporarily_unavailable', success: false }, 503);
     } else {
-      console.warn('[resolve-listing-coordinates] GOOGLE_MAPS_API_KEY not configured');
+      return j({ error: 'temporarily_unavailable', success: false }, 503);
     }
 
     if (inserts.length > 0) {

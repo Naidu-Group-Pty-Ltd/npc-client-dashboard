@@ -55,7 +55,14 @@ function styleTags(html: string, rules: readonly TagStyle[]): string {
         const classes = /class="([^"]*)"/.exec(attrs ?? '')?.[1]?.split(/\s+/) ?? [];
         const rule = ordered.find((r) => !r.cls || classes.includes(r.cls));
         if (!rule) return m;
-        return `<${tag}${attrs ?? ''} style="${rule.style}">`;
+        // A tag that arrives with a style of its own — an `<ol>` carrying the
+        // counter its `start` stands for — keeps it. Two `style` attributes on
+        // one tag and the first silently wins, which is how a continued list
+        // would lose either its numbering or its margins.
+        const own = /\sstyle="([^"]*)"/.exec(attrs ?? '');
+        const rest = (attrs ?? '').replace(/\sstyle="[^"]*"/, '');
+        const style = own ? `${own[1].replace(/;?\s*$/, ';')}${rule.style}` : rule.style;
+        return `<${tag}${rest} style="${style}">`;
       },
     );
   }

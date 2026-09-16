@@ -71,6 +71,24 @@ describe('update-integration-secret allowlist', () => {
     expect(generated.has('GHL_LOCATION_ID')).toBe(false);
   });
 
+  it('gives every card at least one required field, so a card can read as configured', () => {
+    // The page derives a card's status from its REQUIRED fields alone:
+    // `configuredFields.length === 0` is `not_configured`, and a card with no
+    // required field has an empty required set, so it reads "Not configured"
+    // for ever however the deployment is set. That is a false reading of the
+    // kind a credential register must not print.
+    //
+    // It is also what the page IS: every entry maps to a credential an edge
+    // function or the browser reads. A service that needs no credential — the
+    // geocoding chain's OpenStreetMap providers, which are on by default — is
+    // configuration rather than an integration, and its environment names are
+    // documented in `docs/integrations/GEOCODING_WITHOUT_GOOGLE.md` instead.
+    const optionalOnly = INTEGRATIONS
+      .filter((i) => i.fields.length > 0 && i.fields.every((f) => f.required === false))
+      .map((i) => i.id);
+    expect(optionalOnly).toEqual([]);
+  });
+
   it('only lists names the endpoint’s own format check accepts', () => {
     // Mirrors SECRET_NAME_REGEX in supabase/functions/update-integration-secret/index.ts.
     const SECRET_NAME_REGEX = /^[A-Z][A-Z0-9_]{2,50}$/;

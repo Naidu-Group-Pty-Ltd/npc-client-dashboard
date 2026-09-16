@@ -275,7 +275,19 @@ export function projectReportQa(
   const omittedTurns = Math.max(0, doc.meta.turnCount - doc.meta.turnsShown);
   const cappedHere = Math.max(0, doc.meta.turnsShown - turns.length);
   const notShown = omittedTurns + cappedHere;
-  if (notShown > 0) {
+  if (doc.meta.subject === 'transcript' && turns.length > 1) {
+    /*
+     * What the masters actually set: the first exchange in full (`qa.answer`,
+     * bounded by `CAPS.answerPages`) and the further QUESTIONS in a table
+     * without their answers. The sentence says exactly that. "Carries N of M
+     * exchanges" read as though N answers were set; one was.
+     */
+    const further = turns.length - 1;
+    const listed = `${further} further ${further === 1 ? 'question is' : 'questions are'} listed without `
+      + `${further === 1 ? 'its answer' : 'their answers'}`;
+    const beyond = notShown > 0 ? `, and ${notShown} more ${notShown === 1 ? 'is' : 'are'} not shown` : '';
+    put(qa, 'omissionNote', `The first exchange is set in full; ${listed}${beyond}. The complete transcript is in the Markdown export.`);
+  } else if (notShown > 0) {
     put(
       qa,
       'omissionNote',

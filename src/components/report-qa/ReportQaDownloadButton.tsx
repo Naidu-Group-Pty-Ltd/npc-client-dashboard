@@ -70,7 +70,7 @@ const SUBJECT_TITLE: Record<ReportQaSubjectName, string> = {
 };
 
 const SUBJECT_NOTE: Record<ReportQaSubjectName, string> = {
-  structured: 'The conversation written up as a report. Uses AI.',
+  structured: 'The conversation written up as a report, in the standard layout. Uses AI.',
   answer: 'One answer, typeset on its own.',
   transcript: 'Every question and answer, as they happened.',
 };

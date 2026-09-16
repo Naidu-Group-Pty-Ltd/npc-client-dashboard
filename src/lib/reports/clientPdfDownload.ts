@@ -1,5 +1,6 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { logReportRenderEvent } from '@/lib/reports/renderEvent';
+import { investmentReportFileName } from '@/lib/reports/investment/reportFileName.pure';
 
 export interface ClientPdfReport {
   id: string;
@@ -20,10 +21,14 @@ function storagePath(value: string): string | null {
   return index >= 0 ? decodeURIComponent(value.slice(index + marker.length).split('?')[0]) : null;
 }
 
+/** One naming rule for the Investment family — see `reportFileName.pure.ts`. The version rides as the suffix. */
 export function clientPdfFilename(report: ClientPdfReport): string {
-  const address = (report.property_address || 'property-report').trim().replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
-  const type = (report.report_variant || report.report_tier || 'compass').replace(/[^a-z0-9]+/gi, '_');
-  return `${address}_${type}_Client_Report_v${report.current_version || 1}.pdf`;
+  return investmentReportFileName({
+    tier: report.report_variant || report.report_tier,
+    address: report.property_address,
+    at: new Date(),
+    suffix: `v${report.current_version || 1}`,
+  });
 }
 
 function triggerDownload(blob: Blob, filename: string) {

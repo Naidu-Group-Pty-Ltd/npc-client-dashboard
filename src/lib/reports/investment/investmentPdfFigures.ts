@@ -27,6 +27,7 @@
  */
 import type { PDFFont, PDFPage } from 'pdf-lib';
 import { rgb } from 'pdf-lib';
+import { dimensionScoresMayBeShown, dimensionWasScored } from '@/lib/reports/investment/scoreSections.pure';
 
 /** The report's palette, passed in so this draws in the document's own ink. */
 export interface FigurePalette {
@@ -85,12 +86,27 @@ export function readProjectionSeries(financials: unknown): ProjectionYear[] | nu
 
 export interface ScoreComponent { label: string; score: number; weight?: number }
 
-/** The scored dimensions the record carries, or an empty list. */
+/**
+ * The scored dimensions the record carries, or an empty list.
+ *
+ * Two questions, both asked of the modules that own them rather than of a
+ * local reading. Whether this score's own run authorised publishing dimension
+ * scores at all (`dimensionScoresMayBeShown` — the templated scorecard's
+ * gate, which this chart never asked). And whether a dimension was actually
+ * scored (`dimensionWasScored`): the engine writes `available: false` with a
+ * score of 0 and a weight of 0 for a dimension it had no data for, and the
+ * local test here read `hasData` alone — so an unscored growth dimension
+ * survived as a real bar labelled "Growth 0" beside "Yield 30" on every
+ * document of 291 Stone Mason Drive (QA-19). A dimension that is out of
+ * scope is not a substantive zero.
+ */
 export function readScoreComponents(investmentScore: unknown): ScoreComponent[] {
   const breakdown = (investmentScore as { breakdown?: unknown } | null | undefined)?.breakdown;
   if (typeof breakdown !== 'object' || breakdown === null) return [];
+  if (!dimensionScoresMayBeShown(investmentScore as Record<string, unknown>)) return [];
   const out: ScoreComponent[] = [];
   for (const [key, raw] of Object.entries(breakdown as Record<string, unknown>)) {
+    if (typeof raw === 'object' && raw !== null && !dimensionWasScored(raw)) continue;
     const value = typeof raw === 'object' && raw !== null
       ? finite((raw as Record<string, unknown>).score)
       : finite(raw);

@@ -139,6 +139,10 @@ export const PROPERTY_NODES: CatalogNode[] = [
     { op: 'static_map', name: 'Render a map image', summary: 'Returns a map image centred on a location.', fields: [f.expr('latitude', 'Latitude', { required: true }), f.expr('longitude', 'Longitude', { required: true }), f.select('style', 'Style', [opt('streets-v12', 'Streets'), opt('satellite-streets-v12', 'Satellite'), opt('light-v11', 'Light')], { defaultValue: 'light-v11' }), f.number('zoom', 'Zoom', { defaultValue: 14 })], outputs: outs('imageUrl:string:Image URL'), keywords: ['map', 'image', 'report', 'location'] },
   ]),
 
+  ...provider({ integrationId: 'mapillary', category: 'property_data', docs: 'https://www.mapillary.com/developer/api-documentation' }, [
+    { op: 'street_imagery', name: 'Find street imagery', summary: 'Returns the nearest crowd-photographed street-level image of a location (CC BY-SA 4.0).', fields: [f.expr('latitude', 'Latitude', { required: true }), f.expr('longitude', 'Longitude', { required: true })], outputs: outs('imageId:string:Image ID', 'thumbUrl:string:Image URL', 'capturedAt:string:Captured', 'attribution:string'), keywords: ['street view', 'imagery', 'photo', 'listing'] },
+  ]),
+
   ...provider({ integrationId: 'walkscore', category: 'property_data', docs: 'https://www.walkscore.com/professional/api.php' }, [
     { op: 'scores', name: 'Get walkability scores', summary: 'Returns walk, transit and bike scores for an address.', fields: [ADDRESS_FIELD], outputs: outs('walkScore:number:Walk score', 'transitScore:number:Transit score', 'bikeScore:number:Bike score', 'description:string'), keywords: ['walkability', 'transit', 'lifestyle', 'amenity'] },
   ]),

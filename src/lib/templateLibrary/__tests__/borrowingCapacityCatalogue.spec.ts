@@ -244,6 +244,10 @@ describe('rendering', () => {
     }
   });
 
+  // Five hundred renders (fifty masters, ten colourways each) — a catalogue,
+  // not a unit. Measured 14 Sep 2026 on the merged main head: 5.2–5.8 s on a
+  // loaded container against the 5 s default, so the budget is stated here
+  // rather than left to the machine.
   it('changes the colour and never the layout', () => {
     const geometry = (html: string) => (html.match(/left:[\d.]+pt;top:[\d.]+pt/g) ?? []).join('|');
     for (const t of BORROWING_CAPACITY_TEMPLATES) {
@@ -255,7 +259,7 @@ describe('rendering', () => {
         expect(other, `${t.name} / ${cw.name}`).toBe(base);
       }
     }
-  });
+  }, 60_000);
 
   it('renders the snapshot pages the sample carries, one table depth each', () => {
     const t = BORROWING_CAPACITY_TEMPLATES[0];

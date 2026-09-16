@@ -8,10 +8,13 @@
  * the module that enforces it. Change a weight, a threshold, a rule or a
  * version and this spec names the sentence that now lies.
  *
- * The second describe is the unwired guard: Scoring V2 is shadow-only until
- * ME-7 passes and activation is explicitly approved, so no production edge
- * function entrypoint may import the engine. That is asserted against the
- * sources, not promised in prose.
+ * The second describe is the wiring guard. Until 15 Sep 2026 it asserted that
+ * no production entrypoint imported the engine (shadow-only). Under the ME-8
+ * activation it asserts the inverse shape: exactly one entrypoint
+ * (`investment-scoring-service`) reaches the engine, and only through
+ * `scoringV2Production.pure.ts` — the module that records the decision — so
+ * a second caller or a direct import is still a failing build rather than a
+ * convention. Asserted against the sources, not promised in prose.
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -30,6 +33,7 @@ import {
   RISK_MODEL_D_VERSION,
 } from '../risk/riskModelD.pure';
 import { FINANCE_SUITABILITY_VERSION } from '../risk/financeSuitability.pure';
+import { SCORING_V2_ACTIVATION } from '../market/scoringV2Production.pure';
 
 const ROOT = join(__dirname, '..', '..', '..', '..');
 const DOC = readFileSync(join(ROOT, 'docs', 'reports', 'SCORING_V2_METHODOLOGY.md'), 'utf8');
@@ -87,18 +91,24 @@ describe('the methodology document agrees with the code', () => {
     expect(DOC).toContain(RISK_METHODOLOGY_STATUS);
   });
 
-  it('is versioned as shadow and says the engine is unwired', () => {
-    expect(SHADOW_METHODOLOGY_VERSION.endsWith('-shadow')).toBe(true);
-    expect(DOC).toMatch(/shadow-only/);
-    expect(DOC).toMatch(/not wired/i);
+  it('is versioned without the shadow suffix, and the document records the activation', () => {
+    expect(SHADOW_METHODOLOGY_VERSION.endsWith('-shadow')).toBe(false);
+    expect(SHADOW_METHODOLOGY_VERSION).toBe('2.1.0');
+    expect(DOC).toMatch(/production grade engine/i);
+    expect(DOC).toMatch(/ME-8/);
+    expect(DOC).toContain(`\`${SCORING_V2_ACTIVATION.approvedOn}\``);
+    // The activation condition is stated where the methodology is.
+    expect(DOC).toMatch(/Growth is required/);
+    expect(SCORING_V2_ACTIVATION.requiredDimensions).toContain('growth');
   });
 });
 
-describe('the engine is unwired — asserted, not promised', () => {
+describe('the engine is reached only through the activation module — asserted, not promised', () => {
   // The modules that constitute Scoring V2. A production entrypoint importing
-  // any of them is the wiring this guard exists to catch. `investment/
-  // scoringV2.pure.ts` is the earlier unwired analysis module and is held to
-  // the same rule.
+  // any of them DIRECTLY is the wiring this guard exists to catch: the one
+  // authorised path is `scoringV2Production.pure.ts`, imported by
+  // `investment-scoring-service` alone. `investment/scoringV2.pure.ts` is the
+  // earlier unwired analysis module and is held to the same rule.
   const ENGINE_MARKERS = [
     'shadowScorer',
     'scoreOutputContract',
@@ -106,8 +116,10 @@ describe('the engine is unwired — asserted, not promised', () => {
     'scoreInvestmentV2',
     'investment/scoringV2',
   ];
+  const ACTIVATION_MODULE = 'scoringV2Production';
+  const ACTIVATED_ENTRYPOINT = 'investment-scoring-service';
 
-  it('no production edge-function entrypoint imports the V2 engine', () => {
+  it('no production edge-function entrypoint imports the V2 engine itself', () => {
     const fnRoot = join(ROOT, 'supabase', 'functions');
     const offenders: string[] = [];
     for (const dir of readdirSync(fnRoot, { withFileTypes: true })) {
@@ -118,7 +130,19 @@ describe('the engine is unwired — asserted, not promised', () => {
       for (const marker of ENGINE_MARKERS) {
         if (src.includes(marker)) offenders.push(`${dir.name}: ${marker}`);
       }
+      if (dir.name !== ACTIVATED_ENTRYPOINT && src.includes(ACTIVATION_MODULE)) {
+        offenders.push(`${dir.name}: ${ACTIVATION_MODULE}`);
+      }
     }
-    expect(offenders, 'Scoring V2 must stay shadow-only until ME-8 activation is approved').toEqual([]);
+    expect(offenders, 'Scoring V2 is reached through scoringV2Production by investment-scoring-service and nothing else').toEqual([]);
+  });
+
+  it('the scoring service reaches the engine through the activation module, and the activation is approved', () => {
+    const src = readFileSync(join(ROOT, 'supabase', 'functions', ACTIVATED_ENTRYPOINT, 'index.ts'), 'utf8');
+    expect(src).toContain("from '../_shared/reports/market/scoringV2Production.pure.ts'");
+    expect(src).toContain('SCORING_V2_ACTIVATION.approved');
+    expect(src).toContain('scoreForProduction(');
+    expect(SCORING_V2_ACTIVATION.approved).toBe(true);
+    expect(SCORING_V2_ACTIVATION.reference).toBe('ME-8');
   });
 });

@@ -67,20 +67,19 @@ const XFF = /headers\.get\(\s*['"]x-forwarded-for['"]\s*\)/i;
 
 const failures = [];
 
-/** Endpoints that accept a credential, an OTP, or trigger a recovery e-mail. */
+/** Endpoints that accept a credential, an OTP, or trigger a recovery e-mail.
+ * (The builder portal's three left with the portal — network extraction
+ * Phase 7; the Builders Network rate-limits its own doors.) */
 const RATE_LIMITED_ENDPOINTS = [
   'custom-auth-login-v2',
   'client-portal-login',
   'finance-portal-login',
-  'builder-portal-login',
   'solicitor-portal-login',
   'client-portal-forgot-password',
   'finance-portal-forgot-password',
-  'builder-portal-forgot-password',
   'solicitor-portal-forgot-password',
   'client-portal-reset-password',
   'finance-portal-reset-password',
-  'builder-portal-reset-password',
   'solicitor-portal-reset-password',
   'admin-password-reset',
 ];
@@ -89,11 +88,9 @@ const RATE_LIMITED_ENDPOINTS = [
 const TWO_PHASE_ENDPOINTS = [
   'client-portal-forgot-password',
   'finance-portal-forgot-password',
-  'builder-portal-forgot-password',
   'solicitor-portal-forgot-password',
   'client-portal-reset-password',
   'finance-portal-reset-password',
-  'builder-portal-reset-password',
   'solicitor-portal-reset-password',
   'admin-password-reset',
 ];

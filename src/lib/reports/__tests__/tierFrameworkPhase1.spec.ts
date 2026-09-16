@@ -109,7 +109,7 @@ describe('the Financial chapters are composed from the record', () => {
   );
 
   it('produces the missing chapters in FIN ordinal order, never a placeholder', () => {
-    expect(chapters.map((c) => c.ordinal)).toEqual([4, 5, 6, 8, 9, 12, 14]);
+    expect(chapters.map((c) => c.ordinal)).toEqual([4, 5, 6, 8, 9, 11, 12, 14] /* 11: the Financial Risk Dashboard, composed from the record since QA-31 */);
     const all = chapters.map((c) => c.markdown).join('\n');
     expect(all).not.toMatch(/N\/A|TBD/i);
     expect((all.match(/\$/g) ?? []).length).toBeGreaterThan(30);
@@ -304,6 +304,10 @@ describe('the engines stamp lineage and compose rather than slice', () => {
     expect(fork).toContain('stripPlaceholderRows');
     expect(fork).toContain('stripEditorialLabelsFromMarkdown');
     expect(fork).toContain('resolveVariantScore');
+    // A fork mints no grade: the variant scorer's output goes through the
+    // scoring policy, which restates the parent's decision (15 Sep 2026 —
+    // the Financial fork wrote D · 39 beside a withheld composite).
+    expect(fork).toContain('variantScoreUnderPolicy({ variantScore, parentScore, now: new Date() })');
     expect(fork).toContain("generation_engine: parent.generation_engine ?? 'legacy'");
     expect(fork).toContain('report_scope: parent.report_scope');
   });

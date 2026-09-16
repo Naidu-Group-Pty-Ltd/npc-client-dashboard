@@ -19,6 +19,8 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { reconcileStoredFinancials } from '@/lib/reports/investment/financialEngine.pure';
 import { overlayOverridesForHistoricRow } from '@/lib/reports/investment/overrides.pure';
+import { presentStoredMarkdown } from '@/lib/reports/investment/derivedHygiene.pure';
+import { normalizeReportType } from '@/lib/reports/reportVariants';
 import type {
   InvestmentReportData,
   ReportTier,
@@ -72,7 +74,11 @@ export function projectRowForPdf(row: StoredInvestmentReportRow): ProjectedInves
     report: {
       id: row.id,
       address: row.property_address || 'Property Report',
-      content: row.report_content || '',
+      // The stored content through the read-path placeholder scrub every
+      // renderer applies — see `presentStoredMarkdown`. A derived report
+      // stored before the write-path hygiene carries its "N/A" cells verbatim,
+      // and this projection is where both presentations read the prose.
+      content: presentStoredMarkdown(row.report_content),
       created_at: row.created_at || new Date().toISOString(),
       pdf_url: row.pdf_url,
       enhanced_data: {
@@ -84,7 +90,11 @@ export function projectRowForPdf(row: StoredInvestmentReportRow): ProjectedInves
         investmentScore: row.investment_score,
       },
     },
-    reportTier: (row.report_variant || row.report_tier || 'compass') as ReportTier,
+    // Resolved through the canonical alias map rather than cast: `strategic`,
+    // `due_diligence` and `pldd` are one tier, and an unvalidated cast is how
+    // the strategic tier reached a four-branch title map and came out titled
+    // "Snapshot Report" (QA-32).
+    reportTier: (normalizeReportType(row.report_variant || row.report_tier) ?? 'compass') as ReportTier,
   };
 }
 

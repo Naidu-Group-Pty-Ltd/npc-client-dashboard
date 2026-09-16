@@ -84,6 +84,18 @@ describe('closeDroppedBlocks', () => {
     expect(yOf(out, 'risk-plain')).toBe(536.25 - (459.25 - 368.25));
   });
 
+  it('two dropped blocks with nothing drawn between them are one hole, closed once', () => {
+    // The assessment page on the long reference report (RS-5a): the scorecard
+    // at 228 dropped, the Location definition at 368.25 dropped, the Yield
+    // definition at 459.25 drawn. Yield lands where the scorecard began — never
+    // 91pt higher, inside the section opener at 114.
+    const blocks = [block('opener', 114), block('scorecard', 228), block('location', 368.25), block('yield', 459.25)];
+    const out = closeDroppedBlocks(blocks, (b) => b.id === 'scorecard' || b.id === 'location', () => false);
+    const y = (id: string) => Number(out.find((b) => b.id === id)!.props.y);
+    expect(y('yield')).toBe(228);
+    expect(y('opener')).toBe(114);
+  });
+
   it('a dropped block with nothing under it changes nothing', () => {
     const blocks = [block('a', 100), block('b', 300)];
     const out = closeDroppedBlocks(blocks, (b) => b.id === 'b', isFurniture);

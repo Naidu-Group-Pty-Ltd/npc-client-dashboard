@@ -65,7 +65,7 @@ export function tryRouteThroughTemplateBuilderFor(
   opts?: {
     variant?: string | null; brand?: unknown; templateId?: string | null;
     payload?: Record<string, unknown> | null;
-    onRefusal?: (refusal: TemplateRouteRefusal) => void;
+    onRefusal?: (refusal: TemplateRouteRefusal, detail?: string) => void;
     /** Which engine draws it — see `routeReportThroughTemplate`. */
     renderer?: TemplateRenderer;
   },

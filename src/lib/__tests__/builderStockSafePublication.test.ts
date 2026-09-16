@@ -1,641 +1,76 @@
 /**
- * BUILDER STOCK — A REPLACEMENT LIST MUST NOT BLANK A WORKING MARKETPLACE.
+ * BUILDER STOCK — WHAT MAY BE SERVED.
  *
- * WHAT #2347 LEFT. That change made a re-import find the property it already
- * imported — same `source_anchor`, same exact-property identity, update in
- * place, imagery survives. It fixes MATCHED properties completely, and it was
- * said at the time that it fixes nothing else.
+ * This file used to pin the whole safe-publication machine: staged imports,
+ * per-row readiness, the atomic cutover, the publish sweep's SQL. That
+ * machine left with the Builder Portal (network extraction Phase 7) — stock
+ * arrives on this deployment as `builder_network_stock_*` mirror rows,
+ * already processed by the Builders Network — and its migrations and workers
+ * are deleted, not dormant.
  *
- * A genuinely NEW or UNMATCHED row is still inserted `lifecycle_status =
- * 'active'` inside the import request, before one pixel of its imagery has
- * been looked for. The Marketplace's only visibility gate is
- * `.eq('lifecycle_status','active')`, so that row reaches a client's screen
- * immediately as a card reading "No image found", and stays that way for as
- * long as its source work takes. A replacement list of twenty-three new
- * properties turns a working Marketplace into twenty-three blank cards the
- * instant it is imported.
- *
- * THE MODEL IS ONE EXTRA LIFECYCLE VALUE. Every consumer of `lifecycle_status`
- * already filters POSITIVELY on `'active'`, so a third value is invisible
- * everywhere by construction — nothing has to learn to hide it. The half that
- * is easy to miss is the other side: PROCESSING has to widen, or a staged row
- * can never reach readiness and would sit invisible for ever.
- *
- *     SERVING     stays  = 'active'
- *     PROCESSING becomes IN ('active','staged')
- *
- * The migration's behaviour was verified against the live database inside a
- * rolled-back transaction: staged rows invisible (2 staged, 0 active),
- * publication refused while one row still owed source work
- * (`source_outstanding: 1`), the published set untouched by that refusal (23
- * active), then published (promoted 2), the replaced upload's remaining rows
- * archived (0 still active), the new dataset served, `published_at` stamped.
+ * What did NOT leave is the rule the machine existed to uphold, because the
+ * marketplace still serves clients: WHICH rows a client may be shown is
+ * decided by lifecycle alone. A staged replacement was never served, a row
+ * mid-pipeline was never blanked, and both halves of that promise survive
+ * the pipeline that used to produce the rows.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  PROCESSED_LIFECYCLE, SERVED_LIFECYCLE, isProcessed, isServed,
-  lifecycleForNewProperty,
+  isProcessed, isServed, PROCESSED_LIFECYCLE, SERVED_LIFECYCLE,
 } from '../../../supabase/functions/_shared/builderStock/stockLifecycle.pure';
-import {
-  importStockRecords,
-} from '../../../supabase/functions/_shared/builderStock/importStock';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
-const MIGRATION =
-  'supabase/migrations/20261022000000_builder_stock_safe_publication.sql';
-const sql = readFileSync(join(REPO_ROOT, MIGRATION), 'utf8');
-const ORG = 'org-a';
-
-// ---------------------------------------------------------------------------
-// The rule
-// ---------------------------------------------------------------------------
+const MARKETPLACE = 'supabase/functions/builder-stock-marketplace/index.ts';
 
 describe('serving and processing are different questions', () => {
-  it('serves only published stock', () => {
-    expect(SERVED_LIFECYCLE).toBe('active');
+  it('a property being processed is still a property being served', () => {
+    // The two vocabularies are separate on purpose: PROCESSED is the wider
+    // set, and collapsing them once emptied the marketplace for as long as
+    // image work ran.
     expect(isServed('active')).toBe(true);
-    expect(isServed('staged')).toBe(false);
-    expect(isServed('archived')).toBe(false);
+    expect(isProcessed('active')).toBe(true);
+    expect(SERVED_LIFECYCLE).toBe('active');
+    expect([...PROCESSED_LIFECYCLE]).toEqual(['active', 'staged']);
   });
 
-  it('processes published AND staged stock', () => {
-    // The half that is easy to miss. A staged row that is never processed can
-    // never reach readiness, so it could never publish and would sit invisible
-    // for ever — the same blank Marketplace, reached from the other side.
-    expect([...PROCESSED_LIFECYCLE]).toEqual(['active', 'staged']);
-    expect(isProcessed('active')).toBe(true);
+  it('a staged replacement is processed but not served', () => {
+    // What let a re-import be worked on privately while the published list
+    // stayed up — and what the network sync inherits: a mirror row it stamps
+    // `staged` reaches no card until it stamps it `active`.
     expect(isProcessed('staged')).toBe(true);
+    expect(isServed('staged')).toBe(false);
+  });
+
+  it('an archived row is neither', () => {
+    expect(isServed('archived')).toBe(false);
     expect(isProcessed('archived')).toBe(false);
   });
-
-  it('stages a new property ONLY where there is something to protect', () => {
-    /*
-     * An organisation with no published stock has no working Marketplace to
-     * blank, and staging its first upload would leave it looking at an empty
-     * page until the imagery finished — turning a fix for the replacement case
-     * into a regression for the first-run case.
-     */
-    expect(lifecycleForNewProperty({ organisationHasPublishedStock: false })).toBe('active');
-    expect(lifecycleForNewProperty({ organisationHasPublishedStock: true })).toBe('staged');
-  });
 });
 
-describe('every processing path was widened, and no serving path was', () => {
-  const read = (path: string) => readFileSync(join(REPO_ROOT, path), 'utf8');
+describe('the marketplace serves `active` alone, and reads nothing else about readiness', () => {
+  const source = readFileSync(join(REPO_ROOT, MARKETPLACE), 'utf8');
 
-  it('widens the five queues the image engine drives', () => {
-    for (const path of [
-      'supabase/functions/_shared/builderStock/repairSourceImages.ts',
-      'supabase/functions/_shared/builderStock/primaryImage.ts',
-      'supabase/functions/_shared/builderStock/settleFallbackImages.ts',
-    ]) {
-      const source = read(path);
-      expect(source, `${path} still filters lifecycle to active alone`)
-        .not.toMatch(/\.eq\('lifecycle_status', 'active'\)/);
-      expect(source).toMatch(/\.in\('lifecycle_status', PROCESSED_LIFECYCLE\)/);
-    }
-    // …and the SQL side: the claim, the pending count and the cron gate.
-    expect((sql.match(/lifecycle_status IN \('active', 'staged'\)/g) ?? []).length)
-      .toBeGreaterThanOrEqual(4);
-  });
-
-  it('leaves the Marketplace and the portal serving `active` alone', () => {
+  it('every stock read filters lifecycle to active', () => {
     /*
-     * THE WHOLE SAFETY PROPERTY. If a serving query widened, a staged row would
-     * appear on a client's screen as the blank card this exists to prevent.
+     * THE WHOLE SAFETY PROPERTY. If a serving query widened, a staged row
+     * would appear on a client's screen as the blank or half-processed card
+     * this rule exists to prevent.
      */
-    for (const path of [
-      'supabase/functions/builder-stock-marketplace/index.ts',
-      'supabase/functions/builder-portal-stock/index.ts',
-    ]) {
-      const source = read(path);
-      expect(source).toMatch(/\.eq\('lifecycle_status', 'active'\)/);
-      expect(source, `${path} must not serve staged stock`)
-        .not.toMatch(/lifecycle_status[^)]*staged/);
-    }
+    expect(source).toMatch(/\.eq\('lifecycle_status', 'active'\)/);
+    expect(source, 'the marketplace must not serve staged stock')
+      .not.toMatch(/lifecycle_status[^)]*staged/);
   });
 
-  it('re-states the claim index for the widened predicate', () => {
-    // The partial index from 20261019000000 says `= 'active'`, so a staged row
-    // would not be in it and the claim would sequential-scan for exactly the
-    // rows that need claiming most.
-    expect(sql).toMatch(/DROP INDEX IF EXISTS builder_stock_items_image_work_queue_idx/);
-    expect(sql).toMatch(
-      /CREATE INDEX IF NOT EXISTS builder_stock_items_image_work_queue_idx[\s\S]{0,200}lifecycle_status IN \('active', 'staged'\)/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Readiness and the cutover
-// ---------------------------------------------------------------------------
-
-describe('readiness is one question, asked of the rows themselves', () => {
-  it('is "has every staged row had its own source work run"', () => {
-    expect(sql).toMatch(
-      /WHERE i\.lifecycle_status = 'staged' AND i\.image_work_stage = 'source'\s*\n?\s*\) = 0 AS ready/);
-  });
-
-  it('counts a matched property that is waiting only on its patch', () => {
-    /*
-     * An import whose rows ALL matched stages nothing at all. A readiness rule
-     * that looked only at staged rows would answer "nothing here" for ever, and
-     * the new prices would never publish. Such a property owes no source work —
-     * its imagery is already earned and its row is already serving.
-     */
-    expect(sql).toMatch(/OR \(i\.pending_upload_id = p_upload_id\)/);
-  });
-
-  it('does not require a picture, because blank is a valid terminal outcome', () => {
-    /*
-     * A property whose builder supplied nothing is a legitimate blank, and
-     * blocking on it would mean a replacement list could never publish because
-     * of one property nobody has a photograph of. A package that exhausted
-     * MAX_PACKAGE_ATTEMPTS is written its terminal verdict by the repair and
-     * advances off `source` like any other — so it counts as ready.
-     */
-    expect(sql).not.toMatch(/primary_image_id IS NOT NULL/);
-    expect(sql).toMatch(/blank[\s\S]{0,80}legitimate|legitimate blank/i);
-  });
-
-  it('does not gate on the fallback ladder', () => {
-    // Fallback runs after `source`, can only ADD an image to a card that would
-    // otherwise be blank, and `chooseDisplayableImage` keeps builder imagery
-    // ahead of it — so letting it continue past the cutover cannot produce the
-    // failure this exists to prevent.
-    expect(sql).not.toMatch(/image_work_stage = 'fallback'[^\n]*ready/);
-  });
-});
-
-describe('the cutover is atomic and refuses unless ready', () => {
-  it('evaluates readiness INSIDE the statement that flips the rows', () => {
-    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
-    expect(fn).toMatch(/builder_stock_publication_readiness\(p_upload_id\)/);
-    expect(fn).toMatch(/IF NOT coalesce\(v_ready, false\) THEN[\s\S]{0,200}'not_ready'/);
-    // Nothing may change between the check and the act.
-    expect(fn.indexOf('builder_stock_publication_readiness'))
-      .toBeLessThan(fn.indexOf("SET lifecycle_status = 'active'"));
-  });
-
-  it('archives ONLY what the uploads it replaces still supply', () => {
-    /*
-     * #2347 re-points a matched row's `upload_id` during the import, so any row
-     * still carrying a superseded upload's id is by definition one the new list
-     * did not contain: a removed property. A stock list the builder keeps
-     * BESIDE this one has an id that is not in `replaces_upload_ids` and is
-     * never touched — which is why the set is recorded rather than derived from
-     * "anything that is not mine".
-     */
-    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
-    expect(fn).toMatch(/upload_id = ANY\(v_replaces\)/);
-    expect(fn).toMatch(/SET lifecycle_status = 'archived'/);
-    // Archived, never deleted: an adviser's selection survives.
-    expect(fn).not.toMatch(/DELETE FROM/i);
-  });
-
-  it('is hardened like every other function in this programme', () => {
-    for (const fn of [
-      'claim_builder_stock_image_work\\(integer, integer, uuid\\)',
-      'builder_stock_image_work_pending\\(\\)',
-      'builder_stock_publication_readiness\\(uuid\\)',
-      'publish_builder_stock_upload\\(uuid\\)',
-      'settle_builder_stock_marketplace_eligibility_tick\\(\\)',
-    ]) {
-      expect(sql).toMatch(new RegExp(
-        `REVOKE ALL ON FUNCTION public\\.${fn}\\s*\\n?\\s*FROM PUBLIC, anon, authenticated`));
-      expect(sql).toMatch(new RegExp(
-        `GRANT EXECUTE ON FUNCTION public\\.${fn}\\s*\\n?\\s*TO postgres, service_role`));
-    }
-  });
-
-  it('publishes itself, with no operator in the loop', () => {
-    /*
-     * THIS TEST USED TO PIN THE DEFECT.
-     *
-     * It asserted `publishUploadIfReady(supabase, claimed.upload_id)` behind
-     * `claimed.lifecycle_status === 'staged'` — which is what the settler did,
-     * and both halves were wrong for a replacement whose rows all MATCHED. A
-     * matched row is `active` rather than staged, and its `upload_id` is still
-     * the OLD upload because re-pointing it is step 1 of the cutover. So the
-     * one code path that could publish was asking about the dataset already on
-     * screen, on rows it never looked at.
-     *
-     * Pinned on the waiting upload now, which is the only id that names the
-     * upload holding this property's replacement values.
-     */
-    const settler = readFileSync(join(REPO_ROOT,
-      'supabase/functions/builder-stock-image-settler/index.ts'), 'utf8');
-    expect(settler).toMatch(/publishUploadIfReady\(supabase, waitingUpload\)/);
-    expect(settler).toMatch(/claimed\.pending_upload_id \?\?/);
-    // And never again the id of the upload that is currently serving.
-    expect(settler).not.toMatch(/publishUploadIfReady\(supabase, claimed\.upload_id\)/);
-  });
-
-  it('the SCHEDULER asks too — an item finishing is not the mechanism', () => {
-    /*
-     * REPORTED, 30 AUGUST 2026. A replacement landed 18 detected / 0 new / 18
-     * updated, readiness answered TRUE, and `published_at` stayed NULL while
-     * the Marketplace served the superseded dataset.
-     *
-     * The settler was the ONLY caller of the cutover anywhere, and it asks
-     * inside the branch that has just settled a claimed property. An import
-     * whose rows all matched stages nothing and inserts nothing, so it owes no
-     * image work: the claim returns empty, the branch never runs, and nobody
-     * ever asks. A builder re-uploading their list is the ordinary case, and
-     * it is exactly the case with no completed item to hang the question on.
-     *
-     * So publication is a question the scheduler asks, every tick, rather than
-     * a side effect of unrelated work finishing.
-     */
-    const sql = readFileSync(join(REPO_ROOT,
-      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
-    const tick = sql.slice(sql.indexOf(
-      'FUNCTION public.settle_builder_stock_marketplace_eligibility_tick'));
-
-    // Asked before anything is counted, and not behind any condition.
-    const ask = tick.indexOf('PERFORM public.publish_ready_builder_stock_uploads()');
-    expect(ask).toBeGreaterThan(-1);
-    expect(ask).toBeLessThan(tick.indexOf('SELECT count(*) INTO v_outstanding'));
-    expect(ask).toBeLessThan(tick.indexOf('IF v_outstanding'));
-  });
-
-  it('an owed cutover keeps the scheduler alive', () => {
-    // The retirement test is a sum, and a quantity missing from it is one the
-    // sweep can retire on top of. An upload owing no image work contributes
-    // nothing to the other three counts.
-    const sql = readFileSync(join(REPO_ROOT,
-      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
-    expect(sql).toContain(
-      'IF v_outstanding + v_fallback + v_item_work + v_publications = 0 THEN');
-    expect(sql).toContain('v_publications := public.builder_stock_publications_pending()');
-  });
-
-  it('a SUPERSEDED upload can never publish, and that is enforced in the function', () => {
-    /*
-     * NOT THEORETICAL. On the reported deployment an earlier replacement that
-     * never published was ALSO ready, holding pending patches for the five
-     * properties the current source drops. Publishing it would have re-pointed
-     * those five to ITSELF, taking them out of the current upload's
-     * `replaces_upload_ids` — so the cutover's archive step would no longer
-     * recognise them as removed and they would have stayed on the Marketplace
-     * for ever. A sweep that published "anything ready" would have permanently
-     * broken the membership it exists to correct.
-     */
-    const sql = readFileSync(join(REPO_ROOT,
-      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
-    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
-
-    // In the function itself, not only in the sweep: the settler calls this
-    // directly too, and a guard only one caller honours is not a guard.
-    const refusal = fn.indexOf('builder_stock_upload_superseded(p_upload_id)');
-    expect(refusal).toBeGreaterThan(-1);
-    expect(fn).toContain("'published', false, 'reason', 'superseded'");
-    // Refused before a single row is touched.
-    expect(refusal).toBeLessThan(fn.indexOf('UPDATE public.builder_stock_items'));
-
-    // Deleted and already-published are refused on the same terms.
-    expect(fn).toContain("'reason', 'deleted'");
-    expect(fn).toContain("'reason', 'already_published'");
-
-    // Newest wins, decided by the upload row rather than by any caller.
-    const guard = sql.slice(sql.indexOf('FUNCTION public.builder_stock_upload_superseded'));
-    expect(guard).toContain('newer.organisation_id = this.organisation_id');
-    expect(guard).toContain('newer.created_at > this.created_at');
-    expect(guard).toContain('newer.deleted_at IS NULL');
-  });
-
-  it('the sweep offers every candidate and lets the cutover refuse', () => {
-    const sql = readFileSync(join(REPO_ROOT,
-      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
-    const sweep = sql.slice(sql.indexOf('FUNCTION public.publish_ready_builder_stock_uploads'));
-    expect(sweep).toContain('u.published_at IS NULL');
-    expect(sweep).toContain('u.deleted_at IS NULL');
-    expect(sweep).toContain('NOT public.builder_stock_upload_superseded(u.id)');
-    // Readiness is never re-decided out here — it is evaluated inside the same
-    // statement that flips the rows, so nothing can change between the two.
-    expect(sweep).toContain('public.publish_builder_stock_upload(v_upload.id)');
-    expect(sweep).not.toContain('publication_readiness');
-  });
-
-  it('every function this migration adds is locked to the service role', () => {
-    const sql = readFileSync(join(REPO_ROOT,
-      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
-    for (const fn of [
-      'builder_stock_upload_superseded\\(uuid\\)',
-      'publish_builder_stock_upload\\(uuid\\)',
-      'builder_stock_publications_pending\\(\\)',
-      'publish_ready_builder_stock_uploads\\(\\)',
-      'settle_builder_stock_marketplace_eligibility_tick\\(\\)',
-    ]) {
-      expect(sql).toMatch(new RegExp(
-        `REVOKE ALL ON FUNCTION public\\.${fn}\\s*\\n?\\s*FROM PUBLIC, anon, authenticated`));
-      expect(sql).toMatch(new RegExp(
-        `GRANT EXECUTE ON FUNCTION public\\.${fn}\\s*\\n?\\s*TO postgres, service_role`));
-    }
-  });
-
-  it('the cutover the sweep runs is the SAME three ordered steps', () => {
-    // A restated function is a chance to change one silently. The archive
-    // predicate, the order, and that a removal is archived rather than deleted.
-    const sql = readFileSync(join(REPO_ROOT,
-      'supabase/migrations/20261025000000_builder_stock_publish_sweep.sql'), 'utf8');
-    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
-    const repoint = fn.indexOf('upload_id          = p_upload_id');
-    const promote = fn.indexOf("-- 2. Promote this upload's staged rows");
-    const archive = fn.indexOf('-- 3. Archive what the superseded uploads still supply');
-    expect(repoint).toBeGreaterThan(-1);
-    expect(repoint).toBeLessThan(promote);
-    expect(promote).toBeLessThan(archive);
-    expect(fn).toContain('AND upload_id = ANY(v_replaces)');
-    expect(fn).toContain('AND upload_id <> p_upload_id');
-    expect(fn.slice(archive, fn.indexOf('UPDATE public.builder_stock_uploads'))).not.toContain('DELETE');
-    expect(fn).toContain('IF NOT coalesce(v_ready, false) THEN');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The import
-// ---------------------------------------------------------------------------
-
-interface StoredItem extends Record<string, unknown> {
-  id: string;
-  lifecycle_status: string;
-  upload_id: string | null;
-  source_anchor: string | null;
-}
-
-function dbHolding(existing: StoredItem[]) {
-  const updated: Array<{ id: string; payload: Record<string, unknown> }> = [];
-  const inserted: Array<Record<string, unknown>> = [];
-  const uploadPatches: Array<Record<string, unknown>> = [];
-  let nextId = existing.length + 1;
-
-  const db: any = {
-    updated, inserted, uploadPatches,
-    from(table: string) {
-      const state: any = { filters: [] as Array<[string, unknown]> };
-      const builder: any = {
-        select() { return builder; },
-        eq(column: string, value: unknown) { state.filters.push([column, value]); return builder; },
-        or() { return builder; }, not() { return builder; }, neq() { return builder; },
-        in() { return builder; }, is() { return builder; },
-        order() { return builder; }, limit() { return builder; },
-        // A paged read asks for one page at a time, because the API caps every
-        // response at `db-max-rows` however large a `.limit()` it is given.
-        range(from: number, to: number) {
-          return Promise.resolve(builder as any).then((page: any) => ({ data: (page?.data ?? []).slice(from, to + 1), error: page?.error ?? null }));
-        },
-        maybeSingle() { return Promise.resolve({ data: null, error: null }); },
-        insert(payload: Record<string, unknown>) { state.insert = payload; return builder; },
-        update(payload: Record<string, unknown>) {
-          state.update = payload;
-          if (table === 'builder_stock_uploads') uploadPatches.push(payload);
-          return builder;
-        },
-        upsert() { return builder; },
-        delete() { return builder; },
-        single() {
-          if (table !== 'builder_stock_items') return Promise.resolve({ data: { id: 'x' }, error: null });
-          if (state.update) {
-            const id = String(state.filters.find(([c]: [string, unknown]) => c === 'id')?.[1] ?? '');
-            updated.push({ id, payload: state.update });
-            return Promise.resolve({ data: { id }, error: null });
-          }
-          const row = { id: `new-${nextId++}`, ...(state.insert ?? {}) };
-          inserted.push(row);
-          return Promise.resolve({ data: row, error: null });
-        },
-        then(resolve: any, reject?: any) {
-          const rows = table === 'builder_stock_items' ? existing : [];
-          return Promise.resolve({ data: rows, error: null }).then(resolve, reject);
-        },
-      };
-      return builder;
-    },
-    storage: {
-      from: () => ({
-        upload: () => Promise.resolve({ data: { path: 'p' }, error: null }),
-        download: () => Promise.resolve({ data: null, error: { message: 'no' } }),
-      }),
-    },
-  };
-  return db;
-}
-
-const HELD: StoredItem = {
-  id: 'item-1', lifecycle_status: 'active', upload_id: 'upload-1',
-  source_anchor: 'notion:lot-13',
-  external_reference: null, development_name: 'Hummock Rise', project_name: null,
-  unit_number: null, lot_number: null,
-  address_line: 'Lot 13 - Hummock Rise, Werribee, VIC', suburb: null,
-  building_size_sqm: '231.00',
-};
-
-const ROW = (overrides: Record<string, unknown> = {}) => ({
-  Property: 'Lot 13 - Hummock Rise, Werribee, VIC',
-  Price: '865000', 'Building Size': '231',
-  npc_source_anchor: 'notion:lot-13',
-  ...overrides,
-});
-
-function runImport(db: unknown, rows: Array<Record<string, unknown>>) {
-  return importStockRecords(db as never, {
-    organisationId: ORG, uploadId: 'upload-2', builderUserId: 'builder-1',
-    rows: rows as never, media: [], filename: 'stock.csv',
-    imageDeadlineAt: Date.now() - 1,
-  } as never);
-}
-
-describe('importing a replacement list', () => {
-  it('1. a first-ever upload publishes immediately — there is nothing to protect', async () => {
-    const db = dbHolding([]);
-    const outcome = await runImport(db, [ROW()]);
-    expect(outcome.imported).toBe(1);
-    expect(outcome.staged).toBe(0);
-    expect(db.inserted[0].lifecycle_status).toBe('active');
-  });
-
-  it('4. a new property in a replacement list arrives STAGED, not blank on a card', async () => {
-    const db = dbHolding([HELD]);
-    const outcome = await runImport(db, [
-      ROW(),
-      ROW({ Property: 'Lot 900 - Brand New Street, Nowhere VIC',
-            npc_source_anchor: 'notion:lot-900' }),
-    ]);
-    expect(outcome.updated).toBe(1);   // the matched one, still serving
-    expect(outcome.imported).toBe(1);  // the new one
-    expect(outcome.staged).toBe(1);
-    expect(db.inserted[0].lifecycle_status).toBe('staged');
-  });
-
-  it('2, 3. a matched property keeps serving, and its lifecycle is never rewritten', async () => {
-    /*
-     * The update deliberately does not name `lifecycle_status`, so a published
-     * property goes on serving its correct imagery throughout the replacement —
-     * the whole point of #2347 — and a still-staged one stays invisible.
-     */
-    const db = dbHolding([HELD]);
-    await runImport(db, [ROW({ Price: '999000' })]);
-    expect(db.updated).toHaveLength(1);
-    // Not one served value is written. The price, the availability and the
-    // membership all wait in the patch; only the imagery levers apply now.
-    const payload = db.updated[0].payload as Record<string, unknown>;
-    expect(payload.pending_upload_id).toBe('upload-2');
-    expect((payload.pending_patch as Record<string, unknown>).price).toBe(999000);
-    expect(payload.price).toBeUndefined();
-    expect(payload.lifecycle_status).toBeUndefined();
-    expect(payload.upload_id).toBeUndefined();
-    // …and `source_row` does, because it is what finds the photographs.
-    expect(payload.source_row).toBeTruthy();
-  });
-
-  it('5, 14. records the upload it replaces, so removal waits for the cutover', async () => {
-    const db = dbHolding([HELD]);
-    const outcome = await runImport(db, [ROW()]);
-    // Captured BEFORE `upload_id` was re-pointed — the only moment it exists.
-    expect(outcome.replacesUploadIds).toEqual(['upload-1']);
-    expect(db.uploadPatches).toContainEqual({ replaces_upload_ids: ['upload-1'] });
-  });
-
-  it('records an EMPTY predecessor set rather than leaving it unknown', async () => {
-    // An upload that superseded nothing must archive nothing. A NULL that later
-    // reads as "unknown" is how a cutover talks itself into archiving a stock
-    // list the builder keeps beside this one.
-    const db = dbHolding([]);
-    const outcome = await runImport(db, [ROW()]);
-    expect(outcome.replacesUploadIds).toEqual([]);
-    expect(db.uploadPatches).toContainEqual({ replaces_upload_ids: [] });
-  });
-
-  it('6, 15. a changed identity under one anchor still stages rather than carrying imagery', async () => {
-    const db = dbHolding([HELD]);
-    const outcome = await runImport(db, [
-      ROW({ Property: 'Lot 14 - Hummock Rise, Werribee, VIC' }),
-    ]);
-    // #2347 refuses the carry-forward; PR 4 makes the replacement invisible
-    // until its own imagery has been looked for. Both rules, one row.
-    expect(outcome.replacedProperties).toHaveLength(1);
-    expect(outcome.imported).toBe(1);
-    expect(db.inserted[0].lifecycle_status).toBe('staged');
-  });
-
-  it('a re-import never PUBLISHES a still-staged replacement property', async () => {
-    /*
-     * The defect this test was written to catch. The matched-row update wrote a
-     * flat `lifecycle_status: 'active'` — correct when there were two
-     * lifecycles, and a silent publication of an unready row now there are
-     * three. A staged property publishes when its upload is ready and never
-     * because a later list mentioned it again.
-     */
-    const db = dbHolding([
-      { ...HELD, id: 'served', source_anchor: 'notion:served' },
-      { ...HELD, id: 'pending', lifecycle_status: 'staged', source_anchor: 'notion:lot-13' },
-    ]);
-    await runImport(db, [ROW()]);
-    expect(db.updated).toHaveLength(1);
-    expect(db.updated[0].id).toBe('pending');
-    expect(db.updated[0].payload.lifecycle_status).toBe('staged');
-  });
-
-  it('revives an ARCHIVED property as staged where there is a Marketplace to protect', async () => {
-    const db = dbHolding([
-      { ...HELD, id: 'served', source_anchor: 'notion:served' },
-    ]);
-    // The archived row is not in the anchor index, so this arrives as a new
-    // property — and a new property stages while published stock exists.
-    const outcome = await runImport(db, [ROW()]);
-    expect(outcome.staged).toBe(1);
-    expect(db.inserted[0].lifecycle_status).toBe('staged');
-  });
-
-  it('stages against PUBLISHED stock only, not against a half-finished replacement', async () => {
-    /*
-     * An organisation holding nothing but staged rows still has an empty page,
-     * and staging again would keep it empty. Only `active` counts as something
-     * to protect.
-     */
-    const db = dbHolding([{ ...HELD, lifecycle_status: 'staged' }]);
-    const outcome = await runImport(db, [
-      ROW({ Property: 'Lot 900 - Brand New Street, Nowhere VIC',
-            npc_source_anchor: 'notion:lot-900' }),
-    ]);
-    expect(outcome.staged).toBe(0);
-    expect(db.inserted[0].lifecycle_status).toBe('active');
-  });
-
-  it('decides once, so a 23-row list cannot stage its first row and publish its last', async () => {
-    const db = dbHolding([HELD]);
-    const rows = Array.from({ length: 6 }, (_, n) => ROW({
-      Property: `Lot ${900 + n} - Brand New Street, Nowhere VIC`,
-      npc_source_anchor: `notion:lot-${900 + n}`,
-    }));
-    const outcome = await runImport(db, rows);
-    expect(outcome.staged).toBe(6);
-    expect(new Set(db.inserted.map((row: Record<string, unknown>) => row.lifecycle_status)))
-      .toEqual(new Set(['staged']));
-  });
-
-  it('18. the import writes everything it needs and never waits on a browser', async () => {
-    // The record write, the predecessor set and the staged lifecycle are all
-    // committed inside the request; publication is the settler's, driven by
-    // cron. Nothing here needs the page to stay open.
-    const db = dbHolding([HELD]);
-    const outcome = await runImport(db, [ROW(), ROW({
-      Property: 'Lot 900 - Brand New Street, Nowhere VIC',
-      npc_source_anchor: 'notion:lot-900',
-    })]);
-    expect(outcome.failed).toBe(0);
-    expect(outcome.itemIds).toHaveLength(2);
-    // The predecessor set and the staged lifecycle are both committed here.
-    expect(db.uploadPatches).toContainEqual({ replaces_upload_ids: ['upload-1'] });
-    expect(db.inserted[0].lifecycle_status).toBe('staged');
-  });
-});
-
-describe('a failed replacement leaves the published Marketplace alone', () => {
-  it('12. reports the failure without touching the served rows', async () => {
-    const db = dbHolding([HELD]);
-    const inner = db.from;
-    db.from = (table: string) => {
-      const builder = inner(table);
-      if (table !== 'builder_stock_uploads') return builder;
-      builder.single = () => Promise.resolve({ data: null, error: { message: 'gone' } });
-      const update = builder.update;
-      builder.update = (payload: Record<string, unknown>) => {
-        update(payload);
-        const chained: any = { ...builder };
-        chained.eq = () => chained;
-        chained.then = (resolve: (v: unknown) => unknown) =>
-          Promise.resolve({ error: { message: 'gone' } }).then(resolve);
-        return chained;
-      };
-      return builder;
-    };
-    const outcome = await runImport(db, [ROW()]);
-    // The properties are saved; only the predecessor record failed, and it is
-    // reported in the uploader's own words rather than thrown.
-    expect(outcome.updated).toBe(1);
-    expect(outcome.failures.some((f: { reason: string }) =>
-      /removed properties/i.test(f.reason))).toBe(true);
-  });
-
-  it('11, 13. nothing publishes until readiness, and then all at once', () => {
-    /*
-     * Proved against the live database in a rolled-back transaction, because
-     * atomicity is a property of the statement rather than of the caller:
-     *   staged rows invisible ......................... 2 staged, 0 active
-     *   publication refused, one row owing source ..... source_outstanding: 1
-     *   published set untouched by the refusal ........ 23 active
-     *   then published ................................ promoted 2
-     *   replaced upload's leftovers archived .......... 0 still active
-     *   the new dataset is served ..................... both promoted
-     * A `LANGUAGE plpgsql` function is one statement to its caller, so the
-     * Marketplace can observe the moment before and the moment after and
-     * nothing in between.
-     */
-    const fn = sql.slice(sql.indexOf('FUNCTION public.publish_builder_stock_upload'));
-    expect(fn).toMatch(/GET DIAGNOSTICS v_published = ROW_COUNT/);
-    expect(fn).toMatch(/GET DIAGNOSTICS v_archived = ROW_COUNT/);
+  it('serving is decided by lifecycle alone, never by how far image work got', () => {
+    // The 23 live properties once spent a whole incident mid-ladder; a
+    // serving query reading either pipeline column would have emptied the
+    // marketplace for as long as processing ran. The columns still exist on
+    // the mirror (the network stamps them); the serving read stays blind to
+    // them.
+    expect(source).toContain("'lifecycle_status', 'active'");
+    expect(source).not.toContain('image_work_stage');
+    expect(source).not.toContain('enrichment_status');
   });
 });

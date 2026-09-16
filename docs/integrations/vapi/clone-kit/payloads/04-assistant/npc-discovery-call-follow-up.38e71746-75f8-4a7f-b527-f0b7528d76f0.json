@@ -43,8 +43,12 @@
   },
   "name": "NPC Discovery Call Follow Up",
   "server": {
+    "headers": {
+      "x-vapi-secret": "{{REDACTED:VAPI_WEBHOOK_SECRET}}"
+    },
+    "staticIpAddressesEnabled": false,
     "timeoutSeconds": 20,
-    "url": "https://hook.eu2.make.com/xoktvkk0wxyj8weopjeiqrqd914ad1jg"
+    "url": "https://dduzbchuswwbefdunfct.supabase.co/functions/v1/vapi-call-webhook"
   },
   "serverMessages": [
     "conversation-update",

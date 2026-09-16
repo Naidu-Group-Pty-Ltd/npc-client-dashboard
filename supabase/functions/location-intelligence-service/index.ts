@@ -21,12 +21,22 @@ import {
   placesAreComplete,
   unavailableCategories,
   type PlacesCategory,
+  type PlacesLookup,
   type PlacesLookups,
 } from '../_shared/reports/location/placesAvailability.pure.ts';
+import { amenityProviderOrder, commuteProviderOrder } from '../_shared/openLocation/providers.pure.ts';
+import { readAmenityRegister } from '../_shared/openLocation/amenityRegisterStore.ts';
+import { buildOsrmRouteUrl, parseOsrmAnswer } from '../_shared/openLocation/osrmRoute.pure.ts';
+import { awaitOsmTurn, consumeOsmDailyAllowance } from '../_shared/geocode/osmAllowance.ts';
+import { GEOCODER_USER_AGENT } from '../_shared/geocode/geocoder.ts';
+import { fetchWithTimeout } from '../_shared/publicAbuseControls.ts';
+import { normaliseAuState } from '../_shared/auLocality.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { meteredFetch } from "../_shared/meteredFetch.ts";
 import { consumeGoogleDailyCap, type GoogleCapRefusal } from "../_shared/googleMapsDailyCaps.ts";
+import { geocodeAddress as geocodeThroughChain } from "../_shared/geocode/geocoder.ts";
+import { judgeGoogleMapsBody } from "../_shared/googleMapsBody.pure.ts";
 import { assessAuPoint } from "../_shared/auGeoSanity.pure.ts";
 import { buildAuGeocodeQuery } from "../_shared/auGeocodeQuery.pure.ts";
 import { sourceUnavailable, isSourceUnavailable } from "../_shared/sourceUnavailable.pure.ts";
@@ -88,27 +98,22 @@ Deno.serve(async (req) => {
     console.log(`[location-intelligence-service] Authenticated user: ${userId}`);
     console.log('Analyzing location intelligence for:', input.address);
 
-    const googleMapsApiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
-    
+    // The geocode no longer needs Google: it goes through the one geocoding
+    // chain (`_shared/geocode/geocoder.ts`). The key is now only what the
+    // amenity lookups and the commute call spend, and without it those two
+    // are unmeasured — recorded as such, never invented. The old branch here
+    // refused the whole measurement for a missing key, back when the key was
+    // the geocoder too; a coordinate is a measurement in its own right (the
+    // transport reading, the crime area and the report geography all read
+    // it), so the run proceeds and says what it could not measure. (The
+    // branch before THAT one answered with `generateMockLocationData` —
+    // invented school names, a Math.random() walk score and Sydney's
+    // coordinates — as HTTP 200 `success: true`; it is gone and stays gone.)
+    const googleMapsApiKey = (Deno.env.get('GOOGLE_MAPS_API_KEY') || '').trim();
     if (!googleMapsApiKey) {
-      // No key means no measurement, and no measurement means no data. The
-      // old branch here answered with `generateMockLocationData` — invented
-      // school names, an invented station, a Math.random() walk score and
-      // Sydney's coordinates — as HTTP 200 `success: true`, which is how a
-      // deployment with a missing credential shipped fiction into client
-      // reports and reported itself healthy while doing it.
-      console.warn('⚠️ GOOGLE_MAPS_API_KEY not configured — location intelligence unavailable.');
-      return new Response(JSON.stringify(sourceUnavailable(
-        'location-intelligence',
-        'not_configured',
-        'GOOGLE_MAPS_API_KEY is not configured — location intelligence is unavailable for this deployment.',
-      )), {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      console.warn('[location-intelligence-service] GOOGLE_MAPS_API_KEY not configured — amenities and commute are unmeasured; the geocode proceeds through the chain.');
     }
 
-    console.log('✓ Google Maps API key found, fetching real data...');
     
     try {
       const location = await fetchLocationIntelligence(input, googleMapsApiKey, supabase);
@@ -344,29 +349,70 @@ async function fetchLocationIntelligence(
     }
   }
 
-  // Fetch all location intelligence data in parallel
-  const [
-    transitData,
-    schoolsData,
-    healthcareData,
-    shoppingData,
-    recreationData,
-    restaurantsData
-  ] = await Promise.all([
-    fetchNearbyPlaces(coordinates, 'transit_station', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'school', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'hospital', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'shopping_mall', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'park', apiKey, db),
-    fetchNearbyPlaces(coordinates, 'restaurant', apiKey, db)
-  ]);
+  // The six amenity lookups, through the provider order (AMENITY_PROVIDERS,
+  // default register,google): the local OSM amenity register answers every
+  // category whose (category, state) slice is loaded and current, and
+  // Google Places is asked — in parallel, exactly as before — only for the
+  // categories the register could not answer. On a deployment whose
+  // register has never loaded, every category falls through and this
+  // behaves exactly as it always has; `fetchNearbyPlaces` is untouched.
+  const amenityOrder = amenityProviderOrder(Deno.env.get);
+  const registerState = normaliseAuState(String(input.state ?? ''));
+  const GOOGLE_TYPE_FOR: Record<PlacesCategory, string> = {
+    transit: 'transit_station',
+    schools: 'school',
+    healthcare: 'hospital',
+    shopping: 'shopping_mall',
+    recreation: 'park',
+    restaurants: 'restaurant',
+  };
+  const AMENITY_CATEGORY_ORDER: PlacesCategory[] = ['transit', 'schools', 'healthcare', 'shopping', 'recreation', 'restaurants'];
+  const chained: Partial<Record<PlacesCategory, PlacesLookup>> = {};
+  const amenitySources: Partial<Record<PlacesCategory, 'register' | 'google'>> = {};
+  const amenityRegisterLoadedAt: Record<string, string> = {};
+  for (const provider of amenityOrder) {
+    const missing = AMENITY_CATEGORY_ORDER.filter((c) => chained[c]?.ok !== true);
+    if (missing.length === 0) break;
+    if (provider === 'register') {
+      const readings = await readAmenityRegister(db, coordinates, registerState, missing, Deno.env.get);
+      for (const c of missing) {
+        const reading = readings[c];
+        if (reading && reading.unavailableReason === null) {
+          chained[c] = reading.lookup;
+          amenitySources[c] = 'register';
+          if (reading.loadedAt) amenityRegisterLoadedAt[c] = reading.loadedAt;
+        } else if (reading) {
+          console.log(`[location-intelligence-service] register did not answer ${c} (${reading.unavailableReason}); next provider`);
+        }
+      }
+    } else if (provider === 'google') {
+      const answers = await Promise.all(
+        missing.map((c) => fetchNearbyPlaces(coordinates, GOOGLE_TYPE_FOR[c], apiKey, db)),
+      );
+      missing.forEach((c, i) => {
+        chained[c] = answers[i];
+        if (answers[i].ok) amenitySources[c] = 'google';
+      });
+    }
+  }
+  const UNMEASURED: PlacesLookup = { ok: false, count: 0, results: [] };
+  const transitData = chained.transit ?? UNMEASURED;
+  const schoolsData = chained.schools ?? UNMEASURED;
+  const healthcareData = chained.healthcare ?? UNMEASURED;
+  const shoppingData = chained.shopping ?? UNMEASURED;
+  const recreationData = chained.recreation ?? UNMEASURED;
+  const restaurantsData = chained.restaurants ?? UNMEASURED;
 
   // Calculate CBD commute time. No state means no known destination, and a
   // guessed destination is what put a Perth property 82 hours from "the CBD".
+  // The measurement follows COMMUTE_PROVIDERS (default osrm,google): OSRM's
+  // public router drives the route free, and the Distance Matrix stays
+  // selectable — `calculateCommuteTime` is untouched.
   const cbdCoordinates = resolveCbdDestination(input.state);
-  const commuteData = cbdCoordinates
-    ? await calculateCommuteTime(coordinates, cbdCoordinates, apiKey, db)
-    : COMMUTE_DESTINATION_UNKNOWN;
+  const measuredCommute = cbdCoordinates
+    ? await measureCommuteThroughChain(coordinates, cbdCoordinates, apiKey, db)
+    : { data: COMMUTE_DESTINATION_UNKNOWN, provider: null };
+  const commuteData = measuredCommute.data;
 
   // RF-7.2B.1B2 — the six lookups, named once so that every projection below
   // reads the SAME per-category outcome. `ok` used to be reduced to one
@@ -424,7 +470,7 @@ async function fetchLocationIntelligence(
     nearestStation: measuredName(transitData),
     distanceToStation: measuredDistance(transitData),
     stationsWithin2km: measuredCount(transitData),
-    source: 'google_places',
+    source: amenitySources.transit === 'register' ? 'osm_amenity_register' : 'google_places',
   };
 
   const data = {
@@ -487,6 +533,13 @@ async function fetchLocationIntelligence(
       commute: commuteData === COMMUTE_DESTINATION_UNKNOWN
         ? 'destination_unknown'
         : commuteData === COMMUTE_NO_ROUTE ? 'no_route' : 'measured',
+      // Which provider answered what — provenance for a record two
+      // providers can now produce. Advisory, like `placesUnavailable`.
+      amenitySources: Object.fromEntries(
+        AMENITY_CATEGORY_ORDER.map((c) => [c, amenitySources[c] ?? 'unmeasured']),
+      ),
+      ...(Object.keys(amenityRegisterLoadedAt).length > 0 ? { amenityRegisterLoadedAt } : {}),
+      ...(measuredCommute.provider ? { commuteProvider: measuredCommute.provider } : {}),
     },
     matchedAddress,
   });
@@ -552,34 +605,17 @@ type GeocodeOutcome =
   // though the client-facing reading deliberately is not that specific.
   | { ok: false; providerRefused: boolean; capped?: boolean; capReason?: GoogleCapRefusal };
 
-/**
- * The only Google geocoder status that is a statement about the ADDRESS.
- * Every other status — `REQUEST_DENIED`, `OVER_QUERY_LIMIT`,
- * `OVER_DAILY_LIMIT`, `INVALID_REQUEST`, `UNKNOWN_ERROR` — is a statement
- * about our request or their service, so an unrecognised status counts as
- * ours: attributing our outage to the customer's address is the error that
- * costs, and the conservative side is to own it.
- */
-const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS';
-
-/**
- * RF-7.2B.1B0-F3 — what Google Maps counts as a served request.
- *
- * Google answers HTTP 200 for everything, so `response.ok` billed us for
- * refusals. `OK` and `ZERO_RESULTS` are both requests Google served and
- * charges for — a genuine no-match is a real answer. Everything else
- * (`REQUEST_DENIED`, `OVER_QUERY_LIMIT`, `INVALID_REQUEST`, `UNKNOWN_ERROR`)
- * is a request that returned nothing and must not be metered as spend.
- */
-const judgeGoogleMapsBody = (body: unknown): 'success' | 'error' | null => {
-  const status = (body as { status?: unknown } | null)?.status;
-  if (typeof status !== 'string') return null;
-  return status === 'OK' || status === ADDRESS_IS_THE_ANSWER ? 'success' : 'error';
-};
+// `judgeGoogleMapsBody` — the one judge of a Google Maps body — lives in
+// `_shared/googleMapsBody.pure.ts` and is what the Places and Distance Matrix
+// calls below pass to `meteredFetch`. The geocode itself goes through
+// `_shared/geocode/geocoder.ts`, which is the one place a Google geocoder body
+// is read and where `ADDRESS_IS_THE_ANSWER` decides what is a statement about
+// the address; this function reads the chain's verdict and re-derives nothing
+// from the absence of a point.
 
 async function geocodeAddress(
   input: LocationIntelligenceInput,
-  apiKey: string,
+  _apiKey: string,
   db: unknown,
 ): Promise<GeocodeOutcome> {
   // The suburb, postcode and state were already in hand — used for the CBD
@@ -593,95 +629,62 @@ async function geocodeAddress(
     return { ok: false, providerRefused: false };
   }
 
-  // One unit, immediately before the one request it pays for. Consuming
-  // earlier would charge for a lookup that never happens; consuming after
-  // would let concurrent isolates pass the ceiling together.
-  const budget = await consumeGoogleDailyCap(db, 'geocoding');
-  if (!budget.ok) {
-    console.warn(`[location-intelligence-service] geocode not attempted (${budget.reason})`);
-    return { ok: false, providerRefused: false, capped: true, capReason: budget.reason };
-  }
-
-  try {
-    const params = new URLSearchParams({
-      address,
-      // A filter, not a bias. `region=au` alone would only have expressed a
-      // preference, and this had neither.
-      components: 'country:AU',
-      region: 'au',
-      key: apiKey,
-    });
-    const response = await meteredFetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`,
-      undefined,
-      { judgeBody: judgeGoogleMapsBody },
+  // The one geocoding chain: OpenStreetMap, then the suburb's own centroid
+  // from the ABS, then Google only where an operator lists it. Each provider
+  // budgets itself; every answer has passed the granularity gate; the
+  // status below is the chain's own, never re-derived from the absence of
+  // a point.
+  const outcome = await geocodeThroughChain(
+    db,
+    // The street line is derived from the composed address by the chain; the
+    // raw `input.address` is not passed as one because 768 stored rows carry a
+    // bare street name there and others carry the whole address.
+    { address, suburb: input.suburb, state: input.state, postcode: input.postcode },
+    { allowLocalityFallback: true, feature: 'location-intelligence-service/geocode' },
+  );
+  if (!outcome.ok) {
+    if (outcome.reason === 'budget') {
+      // Not attempted: an allowance refused it. The chain says WHICH of the
+      // three readings it was, in the caps module's own vocabulary, and the
+      // one it did not say is read as the counter being unreadable — the
+      // reading that sends nobody to wait for a reset that will not come.
+      const budget = { reason: outcome.capReason ?? 'limiter_unavailable' } as const;
+      console.warn(`[location-intelligence-service] geocode not attempted (${budget.reason}: ${outcome.detail})`);
+      return { ok: false, providerRefused: false, capped: true, capReason: budget.reason };
+    }
+    // Every reason but `no_match` is ours: the provider could not be reached,
+    // refused us, or answered nothing usable. Only a provider that looked
+    // and found no such address is a statement about the address.
+    const refused = outcome.reason !== 'no_match';
+    console.warn(
+      `[location-intelligence-service] geocode returned no point: ${outcome.reason} — ${outcome.detail}`
+      + (refused
+        ? ' — this is a fault in our map service access, not in the address'
+        : ' — no provider has a match for this address'),
     );
-
-    if (!response.ok) {
-      console.warn('[location-intelligence-service] geocode HTTP', response.status);
-      return { ok: false, providerRefused: true };
-    }
-
-    const data = await response.json();
-    const location = data?.results?.[0]?.geometry?.location;
-    const lat = Number(location?.lat);
-    const lng = Number(location?.lng);
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      const status = typeof data?.status === 'string' ? data.status : 'unknown';
-      // RF-7.2B.1B0-F1 — Google says WHY in `error_message`, and without it an
-      // operator cannot tell an unenabled API from a dead key from disabled
-      // billing. It is a fixed diagnostic sentence and never echoes the
-      // credential, but it is sanitised anyway: any long key-shaped token is
-      // redacted and the whole thing is capped, because a log line is the one
-      // place a secret must never reach by accident.
-      const detail = typeof data?.error_message === 'string'
-        ? data.error_message
-          .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[redacted-key]')
-          .replace(/\b[0-9A-Za-z_-]{30,}\b/g, '[redacted]')
-          .slice(0, 300)
-        : null;
-      // Google answers HTTP 200 with the real verdict in the body — the same
-      // shape the ABS boundary server uses, and the same trap: `response.ok`
-      // says nothing about whether the call worked.
-      const refused = status !== ADDRESS_IS_THE_ANSWER;
-      console.warn(
-        `[location-intelligence-service] geocode returned no point: ${status}`
-        + (detail ? ` — provider says: ${detail}` : '')
-        + (refused
-          ? ' — this is a fault in our map service access, not in the address'
-          : ' — the provider has no match for this address'),
-      );
-      return { ok: false, providerRefused: refused };
-    }
-
-    const verdict = assessAuPoint(lat, lng, input.state);
-    if (!verdict.ok) {
-      // Named rather than swallowed: `outside_australia`, `offshore` and
-      // `wrong_state` are different faults with different remedies, and the
-      // log is the only place anybody will see which one happened.
-      console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
-      // The provider answered about this address and we refused the answer.
-      // Ours to explain, but not a service fault.
-      return { ok: false, providerRefused: false };
-    }
-
-    // What Google says it MATCHED, kept so a verification can compare the
-    // answer against the question. It is evidence, never an input: nothing
-    // downstream keys on it, because a `formatted_address` describes what the
-    // provider matched rather than what the source said.
-    const matched = data?.results?.[0]?.formatted_address;
-    return {
-      ok: true,
-      lat,
-      lng,
-      matchedAddress: typeof matched === 'string' ? matched : null,
-    };
-  } catch (error) {
-    // Never reached the provider, or its body could not be read.
-    console.error('Geocoding error:', error);
-    return { ok: false, providerRefused: true };
+    return { ok: false, providerRefused: refused };
   }
+
+  const { lat, lng } = outcome.result;
+  const verdict = assessAuPoint(lat, lng, input.state);
+  if (!verdict.ok) {
+    // Named rather than swallowed: `outside_australia`, `offshore` and
+    // `wrong_state` are different faults with different remedies, and the
+    // log is the only place anybody will see which one happened.
+    console.warn(`[location-intelligence-service] geocode rejected (${verdict.reason}) for state ${input.state ?? 'unknown'}`);
+    // The provider answered about this address and we refused the answer.
+    // Ours to explain, but not a service fault.
+    return { ok: false, providerRefused: false };
+  }
+
+  // What the provider says it MATCHED, kept so a verification can compare
+  // the answer against the question. It is evidence, never an input.
+  return {
+    ok: true,
+    lat,
+    lng,
+    matchedAddress: outcome.result.matchedAddress,
+  };
 }
 
 async function fetchNearbyPlaces(
@@ -694,6 +697,10 @@ async function fetchNearbyPlaces(
   // with a zero count — so `unavailableCategories` records it as unmeasured
   // and every projection downstream omits the line rather than printing a
   // zero. That contract is RF-7.2B.1B2's and nothing here re-implements it.
+  if (!apiKey) {
+    console.warn(`[location-intelligence-service] ${type} lookup not attempted (no Google Maps key)`);
+    return { ok: false, count: 0, results: [] };
+  }
   const budget = await consumeGoogleDailyCap(db, 'placesNearby');
   if (!budget.ok) {
     console.warn(`[location-intelligence-service] ${type} lookup not attempted (${budget.reason})`);
@@ -756,6 +763,10 @@ async function calculateCommuteTime(
   // One origin and one destination, so one request is one billable ELEMENT
   // and one unit is honest here. A call site that ever sends more must consume
   // that many — see `googleMapsDailyCaps.ts`.
+  if (!apiKey) {
+    console.warn('[location-intelligence-service] commute not attempted (no Google Maps key)');
+    return COMMUTE_CAP_REACHED;
+  }
   const budget = await consumeGoogleDailyCap(db, 'distanceMatrix');
   if (!budget.ok) {
     console.warn(`[location-intelligence-service] commute not attempted (${budget.reason})`);
@@ -803,6 +814,82 @@ async function calculateCommuteTime(
   // behind it is worse than none, because every reader downstream treats
   // `durationMinutes` as measured. Absent, not estimated.
   return COMMUTE_NO_ROUTE;
+}
+
+/**
+ * The commute, through the provider order. OSRM's public router measures a
+ * DRIVING route (its demo graph has no timetables) and the reading says so
+ * in `mode`; the Distance Matrix branch is `calculateCommuteTime`,
+ * untouched. A provider's own "no route between these points" is final —
+ * it is an answer about the geometry — while an unreachable or refused
+ * provider hands the question to the next one. When nothing could attempt
+ * the measurement the answer is CAP_REACHED, and when a provider was
+ * reached and failed it is NO_ROUTE, which is exactly how the Google-only
+ * path already divided the two.
+ */
+async function measureCommuteThroughChain(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  apiKey: string,
+  db: unknown,
+): Promise<{ data: typeof COMMUTE_NO_ROUTE | typeof COMMUTE_CAP_REACHED | { durationMinutes: number; distanceKm: number; mode: string }; provider: 'osrm' | 'google' | null }> {
+  let reachedAndFailed = false;
+  for (const provider of commuteProviderOrder(Deno.env.get)) {
+    if (provider === 'osrm') {
+      const answer = await osrmCommute(origin, destination, db);
+      if (answer.kind === 'route') return { data: answer.commute, provider: 'osrm' };
+      if (answer.kind === 'no_route') return { data: COMMUTE_NO_ROUTE, provider: null };
+      if (answer.kind === 'unusable') reachedAndFailed = true;
+      // 'not_attempted' (allowance refused) falls through silently.
+    } else if (provider === 'google') {
+      const g = await calculateCommuteTime(origin, destination, apiKey, db);
+      if (g === COMMUTE_NO_ROUTE) return { data: g, provider: null };
+      if (g !== COMMUTE_CAP_REACHED) return { data: g, provider: 'google' };
+      // CAP_REACHED covers "no key" and "cap spent" — the next provider,
+      // when the operator listed one after google, may still answer.
+    }
+  }
+  return { data: reachedAndFailed ? COMMUTE_NO_ROUTE : COMMUTE_CAP_REACHED, provider: null };
+}
+
+async function osrmCommute(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  db: unknown,
+): Promise<
+  | { kind: 'route'; commute: { durationMinutes: number; distanceKm: number; mode: string } }
+  | { kind: 'no_route' }
+  | { kind: 'unusable' }
+  | { kind: 'not_attempted' }
+> {
+  // Free, so never metered — but never unbounded either: the same daily
+  // allowance and one-a-second turn discipline every public OSM service
+  // gets, in the shared limiter, failing closed.
+  const allowance = await consumeOsmDailyAllowance(db, 'routing');
+  if (!allowance.ok) {
+    console.warn(`[location-intelligence-service] commute not attempted on OSRM (${allowance.reason})`);
+    return { kind: 'not_attempted' };
+  }
+  await awaitOsmTurn(db, 'osrm');
+  try {
+    const res = await fetchWithTimeout(
+      buildOsrmRouteUrl(origin, destination),
+      { headers: { 'User-Agent': GEOCODER_USER_AGENT, Accept: 'application/json' } },
+      8000,
+    );
+    if (!res.ok) {
+      console.warn(`[location-intelligence-service] OSRM answered ${res.status}`);
+      return { kind: 'unusable' };
+    }
+    const parsed = parseOsrmAnswer(await res.json());
+    if (parsed.kind === 'route') return { kind: 'route', commute: parsed.commute };
+    if (parsed.kind === 'no_route') return { kind: 'no_route' };
+    console.warn(`[location-intelligence-service] OSRM answer unusable (${parsed.code})`);
+    return { kind: 'unusable' };
+  } catch (error) {
+    console.warn('[location-intelligence-service] OSRM unreachable:', (error as Error).message);
+    return { kind: 'unusable' };
+  }
 }
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {

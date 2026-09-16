@@ -23,6 +23,7 @@ import {
   buildProjection,
   fixedExpenseBase,
   taxEffectOf,
+  type ProjectionInputs,
   type ProjectionLoanYear,
 } from '../projectionEngine.pure';
 
@@ -45,7 +46,7 @@ const DELIVERED_LOAN: Record<number, ProjectionLoanYear> = {
 const DEPRECIATION = { 1: 3000, 2: 3000, 3: 2000, 4: 2000, 5: 1000, 6: 1000, 7: 1000, 8: 1000, 9: 1000, 10: 0 };
 
 /** The inputs as the delivered report used them — letting fees EXCLUDED, as shipped. */
-const asDelivered = {
+const asDelivered: ProjectionInputs = {
   marketValueNow: 489_000,
   initialLoanAmount: 391_200,
   baseAnnualRent: 750 * 50,
@@ -60,7 +61,7 @@ const asDelivered = {
   baseLandTax: 0,
 };
 
-const run = (inputs = asDelivered) =>
+const run = (inputs: ProjectionInputs = asDelivered) =>
   buildProjection(inputs, {}, (y) => DELIVERED_LOAN[y] ?? null);
 
 /** Rows are indexed by year, so `row(p, 3)` is the Year 3 column. */

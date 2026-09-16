@@ -126,6 +126,7 @@ import { readAnnualRent } from './reports/investment/rentBasis.pure.ts';
 import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
 import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
+import { DOCUMENT_IDENTITY, documentTitleForTier } from './reports/investment/tierIdentity.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -276,28 +277,12 @@ function specReader(
  * never spelled per family, because ten families times five layouts is how
  * one wording change becomes fifty edits.
  */
-export const DOCUMENT_IDENTITY: Record<string, { title: string; standfirst: string }> = {
-  compass: {
-    title: 'Investment Compass',
-    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
-  },
-  financial: {
-    title: 'Financial Analysis',
-    standfirst: 'What it costs to buy and hold, what it returns, and how the position moves over ten years.',
-  },
-  snapshot: {
-    title: 'Snapshot Report',
-    standfirst: 'The numbers that matter and a short assessment.',
-  },
-  briefing: {
-    title: 'Executive Briefing',
-    standfirst: 'The assessment, condensed for a decision.',
-  },
-  strategic: {
-    title: 'Strategic Overview',
-    standfirst: 'The strategy this assessment supports, and what carries it.',
-  },
-};
+/**
+ * The tier vocabulary lives beside the investment modules (`tierIdentity.pure.ts`)
+ * so the file-name rule can import it as a sibling; it is re-exported here for
+ * every reader that already resolves it through the projection.
+ */
+export { DOCUMENT_IDENTITY, documentTitleForTier };
 
 export interface ProjectedNamespaces {
   property: Record<string, unknown>;
@@ -544,17 +529,20 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   const recommendation: Record<string, unknown> = {};
   // On a record that may state no grade, the scorer writes the client-facing
   // EXPLANATION where a recommendation would go — two sentences, 143
-  // characters. Every selectable master binds `headline` at display size
-  // (27pt on the verdict page) and `gradedLine` as the sentence under it, so
-  // the explanation set as a five-line headline over the KPI band (measured on
-  // the long reference report, RS-3, 14 Sep 2026: "analysis is shown below"
-  // printed through "PURCHASE PRICE"). The statement is split the way the
-  // policy already words it: its short `value` is the headline and its
-  // explanation is the sentence — nothing is reworded, and a graded record is
-  // untouched.
+  // characters — and every selectable master binds `headline` at display size
+  // (27pt on the verdict page) with `gradedLine` as the sentence under it. RS-3
+  // set the policy's short form, "Not available — insufficient verified
+  // evidence", as that headline. The owner's rule (14 Sep 2026) is that
+  // neither "N/A" nor "unavailable" ever reaches a client document, so an
+  // ungraded record publishes NO verdict at all: headline, action and the
+  // verdict sentence are absent, the verdict block draws nothing
+  // (`textBlock.html.ts`), the cover's Verdict cell is dropped, and the
+  // narrative's own recommendation prose is what the reader gets. A graded
+  // record is untouched. The operator's on-screen viewer still says the grade
+  // was withheld and why — that surface is not the document.
   const storedRecommendation = str(score.recommendation);
   const ungradedStatement = storedRecommendation?.trim() === OVERALL_GRADE_UNAVAILABLE.explanation;
-  const headline = ungradedStatement ? OVERALL_GRADE_UNAVAILABLE.value : storedRecommendation;
+  const headline = ungradedStatement ? undefined : storedRecommendation;
   put(recommendation, 'headline', headline);
   put(recommendation, 'action', recommendationAction(headline));
   // The grade and its score go through the ONE rule that decides whether this
@@ -578,7 +566,7 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // scores, whose dimensions are not the composite five. `gradedLine` names
   // the dimensions this score actually carries; absent grade or score, the
   // binding is absent and the sentence is not drawn.
-  put(recommendation, 'gradedLine', ungradedStatement ? OVERALL_GRADE_UNAVAILABLE.explanation : gradedLine(score));
+  put(recommendation, 'gradedLine', ungradedStatement ? undefined : gradedLine(score));
   put(recommendation, 'gradedDetailLine', gradedDetailLine(score));
 
   const strengths = strArray(score.strengths);
@@ -638,10 +626,16 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
    * saying it had no data, and plotting it would put a fabricated point on the
    * wheel". This is the same refusal for the templated path.
    *
-   * The row stays. A four-row table where the reader was told there are five
-   * dimensions reads as a table cut for space; "Not assessed" says what
-   * happened. So the numeric `score`/`weight` are withheld — nothing can plot
-   * a placeholder — and the table binds the composed labels instead.
+   * The row used to stay, reading "Not assessed" beside a dash, on the theory
+   * that a four-row table where the reader was told there are five dimensions
+   * reads as cut for space. The owner's rule (14 Sep 2026) is that no
+   * placeholder — "N/A", "unavailable", a dash, "not assessed" — reaches a
+   * client document, so an unscored dimension now publishes NOTHING bindable:
+   * no label, no score, no weight, no details. Its entry keeps its position
+   * (the risk register binds `assessment.4.details` by index) and its
+   * `scored: false`, and the scorecard row draws nothing
+   * (`rowsWithSomethingToSay`). The verdict sentence already names only the
+   * dimensions the score carries, so the shorter table and the sentence agree.
    */
   /**
    * The engine writes its thresholds into its own explanation — "Good
@@ -665,15 +659,15 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
     const weight = num(d.weight);
     const scored = !(d.excluded === true || d.hasData === false);
     const entry: Record<string, unknown> = {};
-    put(entry, 'label', label);
     put(entry, 'scored', scored);
     if (scored) {
+      put(entry, 'label', label);
       put(entry, 'score', score);
       put(entry, 'weight', weight);
+      put(entry, 'scoreLabel', score !== undefined ? String(Math.round(score)) : undefined);
+      put(entry, 'weightLabel', weight !== undefined ? `${Math.round(weight)}%` : undefined);
+      put(entry, 'details', humaniseScoreDetail(str(d.details)));
     }
-    put(entry, 'scoreLabel', scored && score !== undefined ? String(Math.round(score)) : 'Not assessed');
-    put(entry, 'weightLabel', scored && weight !== undefined ? `${Math.round(weight)}%` : '—');
-    put(entry, 'details', humaniseScoreDetail(str(d.details)));
     return entry;
     // A dimension the record does not carry at all has no score AND no
     // exclusion flag; it is absent from the engine's output rather than

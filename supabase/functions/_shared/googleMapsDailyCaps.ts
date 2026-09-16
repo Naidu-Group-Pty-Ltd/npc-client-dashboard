@@ -33,17 +33,22 @@
  * what makes each configured number mean something on its own.
  *
  * Geocoding is the opposite case and the rule is the same: **one SKU, one
- * budget.** Four call sites geocode (`location-intelligence-service`,
- * `resolve-listing-coordinates`, `parse-property-pdf`,
- * `builderStock/images.ts`) and Google bills them together, so they share
- * `google_geocoding`. A per-function bucket would make
- * `GOOGLE_GEOCODING_DAILY_LIMIT` mean "N times however many functions happen
- * to geocode", which is not a ceiling anybody can reason about.
+ * budget.** Four call sites used to geocode directly
+ * (`location-intelligence-service`, `resolve-listing-coordinates`,
+ * `parse-property-pdf`, `builderStock/images.ts`) and Google bills them
+ * together, so they shared `google_geocoding`. A per-function bucket would
+ * make `GOOGLE_GEOCODING_DAILY_LIMIT` mean "N times however many functions
+ * happen to geocode", which is not a ceiling anybody can reason about. Since
+ * 16 Sep 2026 there is ONE Google geocoder — the `google` provider inside
+ * `_shared/geocode/geocoder.ts`, off by default and listed by an operator —
+ * and it is the one consumer of that scope; OpenStreetMap's allowance is a
+ * different kind of thing (goodwill, not spend) and lives in
+ * `_shared/geocode/osmAllowance.ts`.
  *
  * Circuit-breaker scopes are a **different axis** and are deliberately left
- * alone: `resolve-listing-coordinates` keeps `google_listing_geocoding` for
- * its breaker, because a breaker is about one caller's error rate while a
- * budget is about the account's spend.
+ * alone: `resolve-listing-coordinates` keeps `listing_geocoding` for its
+ * breaker, because a breaker is about one caller's error rate while a budget
+ * is about the account's spend.
  *
  * ## Fail closed — this is a spending boundary, not abuse control
  *

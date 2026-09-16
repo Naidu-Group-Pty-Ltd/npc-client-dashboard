@@ -20,6 +20,9 @@ import {
   type ClaudeReconstructArgs,
 } from '../../../../supabase/functions/_shared/claudeReconstruct.pure';
 
+/** A resolved key credential: this contract is about request shape, not auth. */
+const KEY_CREDENTIAL = { kind: 'api_key', value: 'k', workspaceId: null } as const;
+
 const TOOL = {
   type: 'function' as const,
   function: { name: 'apply_changes', description: 'Apply ops', parameters: { type: 'object', properties: {} } },
@@ -83,7 +86,7 @@ describe('claudeReconstruct.pure — tool choice + reasoning', () => {
 
 describe('claudeReconstruct.pure — buildAnthropicRequestBody', () => {
   const baseArgs: ClaudeReconstructArgs = {
-    apiKey: 'k',
+    credential: KEY_CREDENTIAL,
     messages: [
       { role: 'system', content: 'SYSTEM PROMPT' },
       { role: 'system', content: 'CONTEXT' },
@@ -127,7 +130,7 @@ describe('claudeReconstruct.pure — buildAnthropicRequestBody', () => {
 
   it('attaches native PDF documents + applies effort when the tool is not forced', () => {
     const { body: b2 } = buildAnthropicRequestBody(
-      { apiKey: 'k', messages: [{ role: 'user', content: 'go' }], documents: [{ base64: 'PDF' }], effort: 'high', thinking: true },
+      { credential: KEY_CREDENTIAL, messages: [{ role: 'user', content: 'go' }], documents: [{ base64: 'PDF' }], effort: 'high', thinking: true },
       'claude-opus-4-8',
     );
     expect(b2.messages[0].content).toEqual([

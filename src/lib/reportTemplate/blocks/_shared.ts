@@ -4,6 +4,7 @@
  * riskRegister / amenityMatrix / planningTable / ddChecklist / decisionBox.
  */
 import type { jsPDF } from 'jspdf';
+import { UNSTATED_CONFIDENCE } from './_chips.html';
 
 export function hex(s: string) {
   let h = String(s ?? '#000000').replace('#', '');
@@ -19,7 +20,6 @@ export type Confidence =
   | 'Planned'
   | 'UnderConstruction'
   | 'Unverified'
-  | 'NotAvailable'
   | string;
 
 export const RATING_PALETTE: Record<string, { bg: string; fg: string }> = {
@@ -37,7 +37,6 @@ export const CONFIDENCE_PALETTE: Record<string, { bg: string; fg: string; label:
   Planned:           { bg: '#DBEAFE', fg: '#1E3A8A', label: 'Planned' },
   UnderConstruction: { bg: '#E0E7FF', fg: '#3730A3', label: 'Under construction' },
   Unverified:        { bg: '#F3F4F6', fg: '#374151', label: 'Unverified' },
-  NotAvailable:      { bg: '#F3F4F6', fg: '#6B7280', label: 'N/A' },
 };
 
 /** Draw a pill / chip. Returns its width in pt. */
@@ -74,6 +73,8 @@ export function confidenceChip(
   conf: Confidence,
   fontSize = 7.5,
 ): number {
+  // An unstated confidence draws nothing — see `UNSTATED_CONFIDENCE`.
+  if (UNSTATED_CONFIDENCE.test(String(conf ?? ''))) return 0;
   const c = CONFIDENCE_PALETTE[conf] ?? { bg: '#F3F4F6', fg: '#374151', label: String(conf) };
   return drawChip(doc, x, y, c.label, c.bg, c.fg, fontSize);
 }

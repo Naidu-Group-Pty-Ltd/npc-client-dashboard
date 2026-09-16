@@ -27,7 +27,10 @@ CREATE TABLE IF NOT EXISTS aml.partner_organisations (
   verified_at timestamptz,
   status text NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'suspended', 'ended')),
-  builder_organisation_id uuid REFERENCES public.builder_organisations(id),
+  -- [Phase 7, network extraction] the inline FK to builder_organisations was
+  -- released live by 20261122000000 and the table is dropped by 20261124000000;
+  -- the column stays as recorded history.
+  builder_organisation_id uuid,
   solicitor_firm_id uuid REFERENCES public.solicitor_firms(id),
   finance_agent_contact_id uuid REFERENCES public.finance_agent_contacts(id),
   created_by uuid NOT NULL,

@@ -18,8 +18,10 @@ import {
   renderPdf,
   toPdfVariant,
   weasyPrintConfig,
+  WeasyPrintServiceError,
   type PdfVariant,
 } from "../_shared/weasyprintClient.ts";
+import { functionStatusFor } from "../_shared/renderFailure.pure.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -367,6 +369,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         });
       }
     } catch (_) {}
+    // A failure the render SERVICE answered is passed on classified — 503
+    // when the engine did not answer, 502 when it refused or failed — with
+    // its kind and upstream status, so the caller can tell "the engine is
+    // down" from "this document is bad". It used to be re-badged as this
+    // function's own 500 with the service's HTML page inside the message.
+    if (e instanceof WeasyPrintServiceError) {
+      return new Response(JSON.stringify({
+        error: msg, code: e.kind, upstreamStatus: e.upstreamStatus, retriable: e.retriable, jobId,
+      }), {
+        status: functionStatusFor(e.kind),
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     return new Response(JSON.stringify({ error: msg, jobId }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

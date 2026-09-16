@@ -309,13 +309,13 @@ describe('Yield measures rental return once', () => {
   });
 
   it('routes holding cash flow to its own reading, not into the score', () => {
-    const s = holdingCashFlowSignal({ weeklyCashFlow: -350 });
+    const s = holdingCashFlowSignal({ basis: 'purchase', weeklyCashFlow: -350 });
     expect(s.reading).toBe('typical_negative');
     // Ordinary negative gearing is described, not punished — it says nothing
     // distinguishing about a property when it applies to almost all of them.
     expect(s.detail).toMatch(/ordinary for residential investment/);
-    expect(holdingCashFlowSignal({ weeklyCashFlow: -900 }).reading).toBe('materially_negative');
-    expect(holdingCashFlowSignal({ weeklyCashFlow: null }).reading).toBe('unknown');
+    expect(holdingCashFlowSignal({ basis: 'purchase', weeklyCashFlow: -900 }).reading).toBe('materially_negative');
+    expect(holdingCashFlowSignal({ basis: 'purchase', weeklyCashFlow: null }).reading).toBe('unknown');
   });
 });
 

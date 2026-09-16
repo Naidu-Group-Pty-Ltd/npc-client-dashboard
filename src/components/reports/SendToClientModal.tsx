@@ -8,18 +8,10 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Switch } from '@/components/ui/switch';
 import { SearchInput } from '@/components/ui/search-input';
-import { Check, Loader2, Send, User, CheckCircle2, AlertCircle, BarChart3, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Check, Loader2, Send, User, CheckCircle2, AlertCircle, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-
-export interface CashFlowChartOptions {
-  cashFlowTrends: boolean;
-  yieldChart: boolean;
-  comparisonChart: boolean;
-}
 
 interface SendToClientModalProps {
   isOpen: boolean;
@@ -28,7 +20,19 @@ interface SendToClientModalProps {
   reportTitle: string;
   reportTier?: string;
   storagePath?: string | null;
-  onGeneratePDF?: (chartOptions?: CashFlowChartOptions) => Promise<string | null>;
+  /**
+   * Produces — or, when one already exists for this exact version, reuses —
+   * the FINAL document, and answers the storage path the portal row points
+   * at. Both callers (the Investment page, the Cash Flow analysis) answer
+   * with the same document their own "Generate PDF" downloads; nothing is
+   * drawn here, and nothing here can change what the document contains.
+   *
+   * This used to take the Cash Flow chart switches, which reached only the
+   * in-browser jsPDF generator — so the send shipped a different document
+   * from the one the adviser had generated (RS-5c.2). The switches went
+   * with it: a control that changes nothing is worse than no control.
+   */
+  onGeneratePDF?: () => Promise<string | null>;
 }
 
 interface ClientOption {
@@ -67,31 +71,7 @@ export function SendToClientModal({
   const [sent, setSent] = useState(false);
   const [expandedNoteClient, setExpandedNoteClient] = useState<string | null>(null);
 
-  // Chart inclusion options for cashflow reports
-  const [includeCharts, setIncludeCharts] = useState(true);
-  const [chartOptions, setChartOptions] = useState<CashFlowChartOptions>({
-    cashFlowTrends: true,
-    yieldChart: true,
-    comparisonChart: true,
-  });
-
-  const isCashflow = reportTier === 'cashflow';
   const needsGeneration = !storagePath && !!onGeneratePDF;
-
-  const handleIncludeChartsToggle = (checked: boolean) => {
-    setIncludeCharts(checked);
-    setChartOptions({
-      cashFlowTrends: checked,
-      yieldChart: checked,
-      comparisonChart: checked,
-    });
-  };
-
-  const handleChartOptionToggle = (key: keyof CashFlowChartOptions, checked: boolean) => {
-    const updated = { ...chartOptions, [key]: checked };
-    setChartOptions(updated);
-    setIncludeCharts(Object.values(updated).some(v => v));
-  };
 
   const { data: clients = [], isLoading } = useQuery({
     queryKey: ['clients-for-send'],
@@ -158,8 +138,8 @@ export function SendToClientModal({
       // If no PDF exists yet, generate it first (once for all clients)
       let finalStoragePath = storagePath;
       if (!finalStoragePath && onGeneratePDF) {
-        toast.info('Generating PDF before sending...');
-        finalStoragePath = await onGeneratePDF(isCashflow ? chartOptions : undefined);
+        toast.info('Preparing the PDF before sending…');
+        finalStoragePath = await onGeneratePDF();
         if (!finalStoragePath) {
           toast.error('PDF generation failed. Please try again.');
           setSending(false);
@@ -230,8 +210,6 @@ export function SendToClientModal({
       setSearch('');
       setSent(false);
       setExpandedNoteClient(null);
-      setIncludeCharts(true);
-      setChartOptions({ cashFlowTrends: true, yieldChart: true, comparisonChart: true });
       onClose();
     }
   };
@@ -267,42 +245,17 @@ export function SendToClientModal({
               </div>
             </div>
 
-            {/* PDF auto-generation notice */}
+            {/* The document is produced — or reused — at send time */}
             {needsGeneration && (
-              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-3">
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
                 <div className="flex items-start gap-2">
                   <AlertCircle className="h-4 w-4 text-primary mt-0.5 shrink-0" />
                   <p className="text-sm text-muted-foreground">
-                    The PDF will be automatically generated and uploaded when you send.
+                    The final PDF is produced when you send — the same document
+                    “Generate PDF” downloads — or reused when it has already been
+                    generated for this exact version.
                   </p>
                 </div>
-                {isCashflow && (
-                  <div className="space-y-2 pt-1 border-t border-primary/10">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                        <Label className="text-sm font-medium">Include Charts</Label>
-                      </div>
-                      <Switch checked={includeCharts} onCheckedChange={handleIncludeChartsToggle} />
-                    </div>
-                    {includeCharts && (
-                      <div className="pl-6 space-y-1.5">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <Checkbox checked={chartOptions.cashFlowTrends} onCheckedChange={(checked) => handleChartOptionToggle('cashFlowTrends', checked === true)} />
-                          <span className="text-sm text-muted-foreground">Cash Flow Trends</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <Checkbox checked={chartOptions.yieldChart} onCheckedChange={(checked) => handleChartOptionToggle('yieldChart', checked === true)} />
-                          <span className="text-sm text-muted-foreground">Yield Analysis</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <Checkbox checked={chartOptions.comparisonChart} onCheckedChange={(checked) => handleChartOptionToggle('comparisonChart', checked === true)} />
-                          <span className="text-sm text-muted-foreground">Comparison Chart</span>
-                        </label>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
 
@@ -465,13 +418,13 @@ export function SendToClientModal({
                 {sending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                    {!storagePath ? 'Generating & Sending...' : 'Sending...'}
+                    {!storagePath ? 'Preparing & Sending…' : 'Sending…'}
                   </>
                 ) : (
                   <>
                     <Send className="h-4 w-4 mr-1" />
                     {!storagePath
-                      ? `Generate & Send${selectedClientIds.length > 1 ? ` to ${selectedClientIds.length}` : ''}`
+                      ? `Prepare & Send${selectedClientIds.length > 1 ? ` to ${selectedClientIds.length}` : ''}`
                       : `Send to ${selectedClientIds.length} Client${selectedClientIds.length !== 1 ? 's' : ''}`
                     }
                   </>

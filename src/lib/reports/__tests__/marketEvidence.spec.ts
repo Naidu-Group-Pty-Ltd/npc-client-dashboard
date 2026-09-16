@@ -62,7 +62,7 @@ describe('absent is absent', () => {
   it('an empty bundle carries no measure and no fabricated zero', () => {
     const ev = emptyEvidence(SUBJECT);
     expect(presentPoints(ev)).toEqual([]);
-    for (const k of EVIDENCE_KEYS) expect((ev as Record<string, unknown>)[k]).toBeUndefined();
+    for (const k of EVIDENCE_KEYS) expect((ev as unknown as Record<string, unknown>)[k]).toBeUndefined();
   });
 
   it('a measured zero is a value, not an absence', () => {

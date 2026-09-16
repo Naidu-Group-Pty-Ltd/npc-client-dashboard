@@ -557,16 +557,20 @@ export async function runStandaloneVerification(
    * spends money.
    */
   const holdResult = await holdVerificationTokens(check, checkId);
-  if (!holdResult.held) {
+  /* Read through `in` rather than off the narrowed branch: this repo's
+     typecheck runs without strict null checks, so `held: null` does not
+     discriminate the union and the reserve has to be reached explicitly. */
+  const refusedReserve = 'reserve' in holdResult ? holdResult.reserve : null;
+  if (holdResult.held === null) {
     // Mission Control refused explicitly. Nothing was called, no attempt was
     // consumed and no customer outcome is written — see
     // `verificationTokenPrice.pure.ts` for why this is its own category and
     // not the provider's `insufficient_credits`.
     await recordTechnical(db, check, WORKSPACE_OUT_OF_TOKENS,
-      `workspace has fewer than ${holdResult.reserve} tokens available`,
+      `workspace has fewer than ${refusedReserve} tokens available`,
       {
         token_charge: {
-          metered: true, charged: 0, reserve: holdResult.reserve,
+          metered: true, charged: 0, reserve: refusedReserve,
           refused: 'insufficient_funds',
         },
       });

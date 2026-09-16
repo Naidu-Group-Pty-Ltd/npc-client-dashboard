@@ -35,29 +35,51 @@ const readHandler = (name: string) => readFileSync(
  * belongs — with `resolve-listing-coordinates` asserted NOT to have it, so its
  * removal stays deliberate rather than becoming an accident nobody notices.
  */
+/**
+ * The controls both handlers keep at the call site. The daily allowance and
+ * the bounded fetch moved: `resolve-listing-coordinates` no longer names a
+ * vendor at all — it asks the geocoding chain (`_shared/geocode/geocoder.ts`,
+ * OpenStreetMap then the ABS then Google only where an operator lists it),
+ * which holds the fetch timeout and the allowances for every geocode in the
+ * product — and `street-view` consumes the Google cap rather than the raw
+ * abuse-control quota (RC-2: the raw quota does not fail closed).
+ */
 const SHARED_CONTROLS = [
-  'enforceGlobalDailyQuota',
   'provider_circuit_is_open',
   'provider_circuit_record_failure',
   'provider_circuit_record_success',
   'killSwitchActive',
-  'fetchWithTimeout',
 ] as const;
 
+/** Where each handler spends, and what it spends through. */
+const SPEND = {
+  'resolve-listing-coordinates': { call: 'geocodeAddress(', control: "from '../_shared/geocode/geocoder.ts'" },
+  'street-view': { call: 'maps.googleapis.com', control: 'consumeGoogleDailyCap' },
+} as const;
+
 describe('Google Maps proxy security controls', () => {
-  for (const functionName of ['resolve-listing-coordinates', 'street-view']) {
+  for (const functionName of ['resolve-listing-coordinates', 'street-view'] as const) {
     it(`${functionName} authorizes before it spends, and bounds the spend`, () => {
       const source = readHandler(functionName);
       const authorization = source.indexOf("requireModulePermission(supabase, { userId, authMethod }, 'listings', 'can_view')");
-      const providerCall = source.indexOf('maps.googleapis.com');
+      const providerCall = source.indexOf(SPEND[functionName].call);
 
       expect(authorization).toBeGreaterThan(-1);
       expect(providerCall).toBeGreaterThan(authorization);
+      expect(source).toContain(SPEND[functionName].control);
       for (const control of SHARED_CONTROLS) {
         expect(source, `${functionName} must keep ${control}`).toContain(control);
       }
     });
   }
+
+  it('the geocoding chain bounds every geocode: a timeout on every fetch and a fail-closed allowance per provider', () => {
+    const chain = readFileSync(join(process.cwd(), 'supabase', 'functions', '_shared', 'geocode', 'geocoder.ts'), 'utf8');
+    for (const control of ['fetchWithTimeout', 'consumeOsmDailyAllowance', 'consumeGoogleDailyCap']) {
+      expect(chain, `the chain must keep ${control}`).toContain(control);
+    }
+    expect(chain).not.toMatch(/enforceGlobalDailyQuota\s*\(/);
+  });
 
   it('throttles street-view per actor and per IP', () => {
     const source = readHandler('street-view');

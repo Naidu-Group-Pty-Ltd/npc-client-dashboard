@@ -122,7 +122,11 @@ function dServiceability(i: ScoringInput): DimensionResult {
   else if (i.lvr > 80) score = 65;
   else if (i.lvr > 70) score = 80;
   else if (i.lvr > 60) score = 90;
-  return { score, weight: 0, details: `LVR: ${i.lvr}%`, available: true };
+  // An LVR band is a leverage proxy. No borrower income, living costs,
+  // liabilities, rental shading or buffer rate is an input here, so this
+  // dimension must never be read as a lender's serviceability assessment
+  // (audit QA-17); the basis travels with the score and is printed under it.
+  return { score, weight: 0, details: `LVR ${i.lvr}%; no borrower serviceability assessment is part of this score`, available: true };
 }
 
 function dGrowth(i: ScoringInput): DimensionResult {

@@ -35,7 +35,12 @@ export const DIMENSION_LABELS: Readonly<Record<string, string>> = {
   demandScore: 'demand',
   riskScore: 'risk',
   cashflowScore: 'cash flow',
-  serviceabilityScore: 'serviceability',
+  // What the engine MEASURES for this key is an LVR band, not a borrower's
+  // capacity to service the loan (income, expenses, liabilities, a buffer
+  // rate — none is an input). The audit of 291 Stone Mason Drive (QA-17)
+  // found "Serviceability 80/100" read as a lender's assessment; the label
+  // now names the proxy, and `scoreBasisLine` prints what each score rests on.
+  serviceabilityScore: 'serviceability (LVR proxy)',
   tenantFitScore: 'tenant fit',
   planningRiskScore: 'planning risk',
   liveabilityScore: 'liveability',
@@ -56,6 +61,8 @@ interface BreakdownEntry {
   label: string;
   weight: number | undefined;
   score: number | undefined;
+  /** The engine's own statement of what the score rests on (`details`), when it wrote one. */
+  basis: string | undefined;
 }
 
 /**
@@ -111,7 +118,7 @@ function scorePolicy(score: Record<string, unknown>): Record<string, unknown> | 
   return isRecord(score.policy) ? score.policy : null;
 }
 
-function dimensionScoresMayBeShown(score: Record<string, unknown>): boolean {
+export function dimensionScoresMayBeShown(score: Record<string, unknown>): boolean {
   const policy = scorePolicy(score);
   return policy === null || policy.dimensionScoresAuthoritative !== false;
 }
@@ -142,7 +149,7 @@ function breakdownEntries(score: unknown): BreakdownEntry[] {
   for (const [key, raw] of Object.entries(score.breakdown)) {
     if (!isRecord(raw)) continue;
     if (!dimensionWasScored(raw)) continue;
-    out.push({ key, label: dimensionLabel(key), weight: num(raw.weight), score: num(raw.score) });
+    out.push({ key, label: dimensionLabel(key), weight: num(raw.weight), score: num(raw.score), basis: str(raw.details) ?? str(raw.basis) });
   }
   return out;
 }
@@ -243,6 +250,23 @@ function verdictLines(score: Record<string, unknown>): string[] | null {
   return lines;
 }
 
+/**
+ * What each published score rests on, in the engine's own words.
+ *
+ * "Publish the score definition and input coverage with any weighted result"
+ * (QA-17): the engine records a `details` string per dimension ("Gross yield:
+ * 3.60%", "LVR proxy: 80% — no borrower serviceability assessment") and until
+ * now nothing printed it, so a reader could not tell a measured dimension
+ * from a proxy. Empty when no dimension carries a basis, so a legacy record
+ * renders exactly as before.
+ */
+export function scoreBasisLine(score: unknown): string | undefined {
+  if (!isRecord(score)) return undefined;
+  const dims = breakdownEntries(score).filter((d) => d.score !== undefined && d.basis);
+  if (!dims.length) return undefined;
+  return `_Scored from: ${dims.map((d) => `${d.label} — ${d.basis}`).join('; ')}._`;
+}
+
 /** The weighted dimensions table. Empty when the record scored none of them. */
 function dimensionLines(score: Record<string, unknown>): string[] {
   const dims = breakdownEntries(score).filter((d) => d.score !== undefined);
@@ -252,6 +276,8 @@ function dimensionLines(score: Record<string, unknown>): string[] {
     const label = d.label.charAt(0).toUpperCase() + d.label.slice(1);
     rows.push(`| ${label} | ${d.weight !== undefined ? `${Math.round(d.weight)}%` : '—'} | ${Math.round(d.score!)}/100 |`);
   }
+  const basis = scoreBasisLine(score);
+  if (basis) rows.push('', basis);
   return rows;
 }
 

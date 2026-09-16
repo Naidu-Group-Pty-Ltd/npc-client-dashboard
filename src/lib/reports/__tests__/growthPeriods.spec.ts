@@ -93,7 +93,7 @@ describe('a shorter window is never reported as a longer one', () => {
   it('refuses a 5-year figure from 2 years of history', () => {
     const r = computeGrowthPeriod(series(quarterly(2, 500_000, 0.06)), 5);
     expect(r.ok).toBe(false);
-    if (r.ok) return;
+    if (r.ok === true) return;
     expect(r.reason).toBe('insufficient_history');
     expect(r.detail).toMatch(/not a 5-year figure/i);
   });
@@ -127,7 +127,7 @@ describe('a growth figure is a claim about ONE series', () => {
     const obs = quarterly(3, 500_000, 0.05);
     const r = computeGrowthPeriod(series([...obs, { ...obs[2] }]), 3);
     expect(r.ok).toBe(false);
-    if (r.ok) return;
+    if (r.ok === true) return;
     expect(r.reason).toBe('duplicate_period');
   });
 
@@ -136,7 +136,7 @@ describe('a growth figure is a claim about ONE series', () => {
     obs[4] = { ...obs[4], value: Number.NaN };
     const r = computeGrowthPeriod(series(obs), 3);
     expect(r.ok).toBe(false);
-    if (r.ok) return;
+    if (r.ok === true) return;
     expect(r.reason).toBe('non_finite_value');
   });
 
@@ -148,7 +148,7 @@ describe('a growth figure is a claim about ONE series', () => {
   it('refuses an empty series', () => {
     const r = computeGrowthPeriod(series([]), 1);
     expect(r.ok).toBe(false);
-    if (r.ok) return;
+    if (r.ok === true) return;
     expect(r.reason).toBe('series_empty');
   });
 
@@ -158,7 +158,7 @@ describe('a growth figure is a claim about ONE series', () => {
       1,
     );
     expect(r.ok).toBe(false);
-    if (r.ok) return;
+    if (r.ok === true) return;
     expect(r.reason).toBe('non_positive_start_value');
   });
 });

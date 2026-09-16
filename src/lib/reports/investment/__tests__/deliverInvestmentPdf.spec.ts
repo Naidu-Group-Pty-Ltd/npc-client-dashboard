@@ -75,7 +75,19 @@ const finalDoc = (over: Partial<{ blob: Blob; fileName: string; storagePath: str
   templateId: 't-1',
   renderer: WEASYPRINT_FINAL_RENDERER,
   storagePath: 'template-builder/2026-09-14/0f1e-doc.pdf',
+  degradedFrom: null,
   ...over,
+});
+
+/** The chosen template drawn in this tab because the print engine did not answer. */
+const standInDoc = () => ({
+  ...finalDoc({ storagePath: null }),
+  renderer: BROWSER_PRESENTATION_RENDERER,
+  degradedFrom: {
+    renderer: WEASYPRINT_FINAL_RENDERER,
+    refusal: 'engine_unavailable' as const,
+    detail: 'The print engine did not answer (HTTP 500 from the render service).',
+  },
 });
 
 const standardDrawing = () => ({
@@ -117,7 +129,7 @@ describe('produceInvestmentDocument', () => {
     // module already read, so the memo below and the route agree on it.
     expect(tryTemplate).toHaveBeenCalledWith('investment', 'r-1', {
       variant: 'briefing',
-      payload: { reportContent: expect.stringContaining('$700,000') },
+      payload: { reportContent: expect.stringContaining('$700,000'), includeScoring: true, includeSources: true },
       renderer: 'weasyprint',
       selectedTemplateId: null,
     });
@@ -148,6 +160,32 @@ describe('produceInvestmentDocument', () => {
 
     expect(doc.engine).toBe(BROWSER_PRESENTATION_RENDERER);
     expect(doc.storagePath).toBeNull();
+  });
+
+  it('delivers a stand-in for the print engine but never remembers it as the finalisation', async () => {
+    // 15 Sep 2026: the engine answered Cloud Run's 500 page for five hours.
+    // The chosen template drawn in this tab is delivered — it is the document
+    // the person needs — and the NEXT request asks the engine again rather
+    // than handing back the stand-in for the rest of the session.
+    tryTemplate.mockResolvedValue(standInDoc());
+
+    const first = await produceInvestmentDocument('r-1');
+    const second = await produceInvestmentDocument('r-1');
+
+    expect(first.engine).toBe(BROWSER_PRESENTATION_RENDERER);
+    expect(first.storagePath).toBeNull();
+    expect(second.engine).toBe(BROWSER_PRESENTATION_RENDERER);
+    expect(tryTemplate).toHaveBeenCalledTimes(2);
+    expect(draw).not.toHaveBeenCalled();
+  });
+
+  it('remembers a template document the browser drew on purpose (a preview request), as before', async () => {
+    tryTemplate.mockResolvedValue({ ...finalDoc({ storagePath: null }), renderer: BROWSER_PRESENTATION_RENDERER });
+
+    await produceInvestmentDocument('r-1');
+    await produceInvestmentDocument('r-1');
+
+    expect(tryTemplate).toHaveBeenCalledTimes(1);
   });
 
   it('draws the standard document in the browser when no template applies', async () => {

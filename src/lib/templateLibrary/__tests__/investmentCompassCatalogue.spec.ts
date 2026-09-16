@@ -404,6 +404,10 @@ describe('every colourway reaches the page', () => {
     }
   });
 
+  // Five hundred renders (fifty masters, ten colourways each) — a catalogue,
+  // not a unit. Measured 14 Sep 2026 on the merged main head: 5.2–5.8 s on a
+  // loaded container against the 5 s default, so the budget is stated here
+  // rather than left to the machine.
   it('changes the colour and never the layout', () => {
     // The catalogue's own rule: "tokens carry no layout meaning". If a
     // colourway moved a box, the 500 combinations would be 500 documents and
@@ -421,7 +425,7 @@ describe('every colourway reaches the page', () => {
         expect(other, `${template.name} / ${c.name}`).toBe(base);
       }
     }
-  });
+  }, 60_000);
 
   it('inverts the page for a dark ground', () => {
     for (const [key, set] of Object.entries(COLOURWAYS_BY_FAMILY)) {

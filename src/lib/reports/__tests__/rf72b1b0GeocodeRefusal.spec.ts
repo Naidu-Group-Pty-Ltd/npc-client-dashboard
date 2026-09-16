@@ -30,6 +30,24 @@ const SERVICE = resolve(
 );
 const src = readFileSync(SERVICE, 'utf8');
 
+/**
+ * The geocoding chain the service asks since Google refused every geocode
+ * (16 Sep 2026). Its Google provider is the one place a Google geocoder body
+ * is read now, so the rules about that body are asserted there; the service
+ * maps the chain's verdict and re-derives nothing from the absence of a point.
+ */
+const CHAIN = resolve(__dirname, '../../../../supabase/functions/_shared/geocode/geocoder.ts');
+const chain = readFileSync(CHAIN, 'utf8');
+
+/** One provider's function in the chain, from its signature to the next function. */
+function providerBody(name: string, next: string): string {
+  const start = chain.indexOf(`async function ${name}(`);
+  expect(start).toBeGreaterThan(-1);
+  const end = chain.indexOf(`function ${next}(`, start);
+  expect(end).toBeGreaterThan(start);
+  return chain.slice(start, end);
+}
+
 /** The body of `geocodeAddress`, from its signature to the next top-level `}`. */
 function geocodeAddressBody(): string {
   const start = src.indexOf('async function geocodeAddress(');
@@ -72,7 +90,9 @@ describe('RF-7.2B.1B0 — the geocoder says which kind of failure it was', () =>
     // A bare `return null` is the whole defect: it makes a denied credential
     // and a genuine miss indistinguishable to every caller.
     expect(body).not.toMatch(/return\s+null\s*;/);
-    // Five exits: no address, HTTP error, no point, rejected point, success.
+    // Five exits: no address, not attempted (an allowance refused it), the
+    // chain found no point (the provider's fault or a genuine miss, and it
+    // says which), rejected point, success.
     const verdicts = body.match(/return\s*\{\s*ok:\s*(?:true|false)/g) ?? [];
     expect(verdicts.length).toBeGreaterThanOrEqual(5);
   });
@@ -94,33 +114,54 @@ describe('RF-7.2B.1B0 — the geocoder says which kind of failure it was', () =>
   });
 
   it('treats ZERO_RESULTS as the ONLY statement about the address', () => {
-    expect(src).toContain("const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS'");
-    // The test that matters: an unrecognised status must count as OURS.
-    // `status !== ADDRESS_IS_THE_ANSWER` gives that for free; an allow-list of
-    // "our" statuses would not, and would let a new Google status be blamed
-    // on the customer's address.
-    expect(geocodeAddressBody()).toContain('status !== ADDRESS_IS_THE_ANSWER');
+    // The constant and the judge live in `_shared/googleMapsBody.pure.ts`,
+    // one implementation; the chain's Google provider imports both rather
+    // than declaring its own, and the service declares nothing of the kind.
+    expect(chain).toContain("import { ADDRESS_IS_THE_ANSWER, judgeGoogleMapsBody } from '../googleMapsBody.pure.ts';");
+    expect(chain).not.toContain("const ADDRESS_IS_THE_ANSWER =");
+    expect(src).not.toContain("const ADDRESS_IS_THE_ANSWER =");
+    const shared = readFileSync(resolve(SERVICE, '..', '..', '_shared', 'googleMapsBody.pure.ts'), 'utf8');
+    expect(shared).toContain("export const ADDRESS_IS_THE_ANSWER = 'ZERO_RESULTS'");
+    // The test that matters: an unrecognised status must count as OURS. The
+    // provider names the one address status and refuses everything else; an
+    // allow-list of "our" statuses would let a new Google status be blamed on
+    // the customer's address.
+    const google = providerBody('askGoogle', 'councilOf');
+    expect(google).toContain('data.status === ADDRESS_IS_THE_ANSWER');
+    expect(codeOnly(google)).not.toContain('ZERO_RESULTS');
+    // And the service maps the chain's reading rather than re-deriving one
+    // from the absence of a point: only `no_match` is about the address, and
+    // `no_match` is what every provider answers when it looked and found no
+    // such address.
+    expect(geocodeAddressBody()).toContain("const refused = outcome.reason !== 'no_match'");
   });
 
   it('never enumerates the refusal statuses, so a new one is still ours', () => {
-    const body = geocodeAddressBody();
-    for (const status of [
-      'REQUEST_DENIED', 'OVER_QUERY_LIMIT', 'OVER_DAILY_LIMIT', 'INVALID_REQUEST',
-    ]) {
-      // Naming them in the decision would make the rule an allow-list by the
-      // back door. They may appear in prose; they may not appear in code.
-      expect(codeOnly(body)).not.toContain(status);
+    for (const body of [geocodeAddressBody(), providerBody('askGoogle', 'councilOf')]) {
+      for (const status of [
+        'REQUEST_DENIED', 'OVER_QUERY_LIMIT', 'OVER_DAILY_LIMIT', 'INVALID_REQUEST',
+      ]) {
+        // Naming them in the decision would make the rule an allow-list by the
+        // back door. They may appear in prose; they may not appear in code.
+        expect(codeOnly(body)).not.toContain(status);
+      }
     }
   });
 
   it('a transport failure and a thrown request are ours', () => {
-    const body = geocodeAddressBody();
-    // HTTP non-ok
-    const http = blockContaining(body, 'if (!response.ok)');
-    expect(http).toContain('providerRefused: true');
-    // Never reached the provider, or its body could not be read
-    const thrown = blockContaining(body, 'catch (error)');
-    expect(thrown).toContain('providerRefused: true');
+    // In the chain, for every provider: an HTTP non-ok answer, a body with no
+    // usable point under a status that is not the address's, and a request
+    // that never reached the provider are the provider's fault.
+    for (const [name, next] of [['askNominatim', 'askAbsLocality'], ['askAbsLocality', 'googlePrecision']] as const) {
+      const body = providerBody(name, next);
+      expect(blockContaining(body, 'if (!res.ok)'), name).toContain('providerRefused: true');
+      expect(blockContaining(body, 'catch (error)'), name).toContain('providerRefused: true');
+    }
+    const google = providerBody('askGoogle', 'councilOf');
+    expect(blockContaining(google, "if (data.status !== 'OK' || !first || !loc)")).toContain('providerRefused: true');
+    expect(blockContaining(google, 'catch (error)')).toContain('providerRefused: true');
+    // And the service carries that verdict through unchanged.
+    expect(geocodeAddressBody()).toContain('return { ok: false, providerRefused: refused };');
   });
 
   it('a point we rejected as not-in-Australia is NOT a provider refusal', () => {

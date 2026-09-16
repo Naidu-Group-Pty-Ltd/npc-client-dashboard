@@ -76,7 +76,8 @@ export async function deliverClientDetailsPdf(
   // An activated template wins, and answers null when there is none. See
   // `templateDocument.ts`; every one of its failure modes lands here as null,
   // so the route below stays the way this document is produced.
-  const templated = await tryTemplateDocument('client_details', clientId);
+  // The FINAL document: drawn by the pinned engine, never the browser's jsPDF (RS-5c).
+  const templated = await tryTemplateDocument('client_details', clientId, { renderer: 'weasyprint' });
   if (templated) {
     if (options.save !== false) saveToBrowser(templated.blob, templated.fileName);
     return {

@@ -181,7 +181,7 @@ describe('scenario matrix — bounds and shape', () => {
       inBounds(r);
       expect(r.evidenceCoverage, name).toBeGreaterThanOrEqual(0);
       expect(r.evidenceCoverage, name).toBeLessThanOrEqual(1);
-      expect(r.methodologyVersion, name).toBe('2.1.0-shadow');
+      expect(r.methodologyVersion, name).toBe('2.1.0');
     }
   });
 
@@ -240,8 +240,8 @@ describe('scenario matrix — bounds and shape', () => {
     });
     const attached = run({
       evidence: ev(
-        { ...growthBlock(7, { dwellingType: 'unit' }), ...demandBlock('strong') },
-        subject({ dwellingType: 'unit' }),
+        { ...growthBlock(7, { dwellingType: 'attached' }), ...demandBlock('strong') },
+        subject({ dwellingType: 'attached' }),
       ),
       propertyRisk: { propertyType: 'Unit', answers: {}, growth1Year: null },
     });

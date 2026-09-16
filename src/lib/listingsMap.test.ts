@@ -354,6 +354,18 @@ describe('describeGeocodePrecision', () => {
     expect(describeGeocodePrecision('rooftop').tier).toBe('exact');
     expect(describeGeocodePrecision('SOMETHING_NEW').tier).toBe('unknown');
   });
+
+  it("reads the geocoding chain's provider-qualified word by its suffix", () => {
+    // The chain writes `<provider>:<precision>` for every provider but Google
+    // (`precisionLabel`), and Google's own words stay Google's. A suburb
+    // centroid from the ABS is approximate exactly as Google's was.
+    expect(describeGeocodePrecision('nominatim:address')).toEqual({ tier: 'exact', note: null });
+    expect(describeGeocodePrecision('nominatim:street')).toEqual({ tier: 'street', note: null });
+    expect(describeGeocodePrecision('abs_locality:locality').tier).toBe('area');
+    expect(describeGeocodePrecision('abs_locality:locality').note).toMatch(/approximate/i);
+    expect(describeGeocodePrecision('nominatim:postcode').tier).toBe('area');
+    expect(describeGeocodePrecision('nominatim:something').tier).toBe('unknown');
+  });
 });
 
 

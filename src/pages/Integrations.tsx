@@ -237,7 +237,7 @@ export default function Integrations() {
 
     try {
       const runtime = await applyToRuntime(integration);
-      if (!runtime.ok) {
+      if (runtime.ok === false) {
         toast({
           title: 'Not saved',
           description: runtime.error,

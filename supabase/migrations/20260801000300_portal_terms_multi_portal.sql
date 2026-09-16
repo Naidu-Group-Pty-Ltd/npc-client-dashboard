@@ -87,9 +87,13 @@ ALTER TABLE public.portal_terms_acceptances
 -- be unenforceable: nothing would stop an acceptance naming a user that does
 -- not exist, or a solicitor id being stored under a builder portal marker.
 -- ===========================================================================
+-- [Phase 7, network extraction] The foreign key that used to sit inline here
+-- was released live by 20261122000000 when the portal moved to the Builders
+-- Network, and the decommission migration (20261124000000) drops the table it
+-- referenced — so a fresh clone must not recreate it. The column stays: dead
+-- uuids are the recorded history.
 ALTER TABLE public.portal_terms_acceptances
-  ADD COLUMN IF NOT EXISTS builder_user_id uuid
-    REFERENCES public.builder_portal_users(id) ON DELETE CASCADE;
+  ADD COLUMN IF NOT EXISTS builder_user_id uuid;
 
 -- ===========================================================================
 -- 4. Exactly one owner

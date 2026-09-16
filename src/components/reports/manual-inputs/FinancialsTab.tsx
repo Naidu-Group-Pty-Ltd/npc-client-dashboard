@@ -32,6 +32,30 @@ import {
 export type StampDutyPropertyType = 'primary_residence' | 'investment';
 export type StampDutyPurchaseType = 'established_home' | 'new_home' | 'vacant_land';
 
+/** What the Estimate CGR button answered, as the Financials tab shows it. */
+export interface CgrEstimateReading {
+  ratePct: number;
+  horizonYears: number;
+  areaName: string;
+  level: string;
+  latestPeriod: string | null;
+  /** The latest period in the publisher's own words. */
+  latestPeriodLabel: string | null;
+  /** When the register last took the series from its source. */
+  loadedAt: string | null;
+  basis: string;
+  caveats: string[];
+  alternatives: Array<{ areaName: string; horizonYears: number; ratePct: number }>;
+}
+
+/** `2026-09-16T00:43:00Z` → `16 September 2026`, in the locale the rest of the product uses. */
+function refreshedOn(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
 interface FinancialsTabProps {
   buildType: BuildType;
   purchasePrice: string;
@@ -80,6 +104,11 @@ interface FinancialsTabProps {
   setOffsetBalance?: (value: string) => void;
   /** Locality-derived growth estimate for smart default */
   localityGrowthEstimate?: { capitalGrowthPercent: number; source: string } | null;
+  /** Estimate CGR: reads the open sales register for the typed address and fills Growth. */
+  onEstimateCgr?: () => void;
+  isEstimatingCgr?: boolean;
+  /** The last estimate the register answered for this address, for the line under the field. */
+  cgrEstimate?: CgrEstimateReading | null;
 }
 
 export function FinancialsTab({
@@ -123,7 +152,10 @@ export function FinancialsTab({
   setExtraRepaymentPerMonth: propSetExtraRepaymentPerMonth,
   offsetBalance: propOffsetBalance,
   setOffsetBalance: propSetOffsetBalance,
-  localityGrowthEstimate
+  localityGrowthEstimate,
+  onEstimateCgr,
+  isEstimatingCgr = false,
+  cgrEstimate = null,
 }: FinancialsTabProps) {
   const [showStampDutyModal, setShowStampDutyModal] = useState(false);
   const [showMortgageCalculator, setShowMortgageCalculator] = useState(false);
@@ -337,10 +369,26 @@ export function FinancialsTab({
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="capitalGrowth" className="text-sm font-medium flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" />
-                Growth
-              </Label>
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="capitalGrowth" className="text-sm font-medium flex items-center gap-1">
+                  <TrendingUp className="h-3 w-3" />
+                  Growth
+                </Label>
+                {onEstimateCgr && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={onEstimateCgr}
+                    disabled={disabled || isEstimatingCgr || !propertyAddress}
+                    title={propertyAddress ? 'Estimate the capital growth rate from the open sales register for this address' : 'Enter the property address first'}
+                    aria-label="Estimate capital growth rate from the open sales register"
+                  >
+                    {isEstimatingCgr ? 'Estimating…' : 'Estimate CGR'}
+                  </Button>
+                )}
+              </div>
               <div className="relative">
                 <Input
                   id="capitalGrowth"
@@ -354,7 +402,7 @@ export function FinancialsTab({
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
               </div>
-              {isNewBuild && localityGrowthEstimate && !capitalGrowth && (
+              {isNewBuild && localityGrowthEstimate && !capitalGrowth && !cgrEstimate && (
                 <button 
                   type="button"
                   onClick={() => setCapitalGrowth(localityGrowthEstimate.capitalGrowthPercent.toString())}
@@ -363,6 +411,31 @@ export function FinancialsTab({
                 >
                   Auto-fill {localityGrowthEstimate.capitalGrowthPercent}% ({localityGrowthEstimate.source})
                 </button>
+              )}
+              {cgrEstimate && (
+                <div className="text-xs text-muted-foreground space-y-1" data-testid="cgr-estimate-reading">
+                  <p>
+                    <span className="font-medium text-foreground">{cgrEstimate.ratePct}% a year</span>
+                    {' '}— {cgrEstimate.horizonYears}-year compound growth, {cgrEstimate.areaName}
+                    {cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod ? ` (to ${cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod})` : ''}
+                  </p>
+                  <p className="leading-snug">{cgrEstimate.basis}</p>
+                  {(cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod) && (
+                    <p className="leading-snug" data-testid="cgr-estimate-currency">
+                      Series to {cgrEstimate.latestPeriodLabel ?? cgrEstimate.latestPeriod}
+                      {refreshedOn(cgrEstimate.loadedAt) ? `; register refreshed ${refreshedOn(cgrEstimate.loadedAt)}` : ''}
+                      {' '}— the newest figures the publisher had released when the register was last refreshed.
+                    </p>
+                  )}
+                  {cgrEstimate.caveats.map((c) => (
+                    <p key={c} className="leading-snug">{c}</p>
+                  ))}
+                  {cgrEstimate.alternatives.length > 0 && (
+                    <p className="leading-snug">
+                      Also measured: {cgrEstimate.alternatives.map((a) => `${a.areaName} ${a.ratePct}% (${a.horizonYears}-year)`).join('; ')}.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>

@@ -70,10 +70,14 @@ beforeEach(() => {
     documents: [{ code: "compliance_sharing", accepted_at: "2026-08-01T00:00:00.000Z" }],
   });
   // Every portal-provisioning call succeeds; the invite is not under test.
+  // One generic answer serves every portal's admin/invite mock: the builder
+  // keys are historical (that portal's provisioning is closed now — the
+  // portal moved), the solicitor keys drive the enrolment journeys below.
   invokeSecureFunction.mockResolvedValue({
     data: {
       users: [], organisation: { id: "builder-org-1", row_version: 1, status: "active" },
       user: { id: "builder-user-1" },
+      firm_id: "firm-1", solicitor_user_id: "sol-user-1",
     },
     error: null,
   });
@@ -119,6 +123,26 @@ async function runWizard() {
     target: { value: "Ridgeline Builders Pty Ltd" },
   });
   fireEvent.click(screen.getByRole("radio", { name: /Builder \/ Developer portal/i }));
+  fireEvent.change(screen.getByLabelText(/Contact email/i), { target: { value: CONTACT } });
+  fireEvent.change(screen.getByLabelText(/Contact name/i), { target: { value: "Dana Reyes" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Continue$/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /Record, invite & grant/i }));
+}
+
+/**
+ * The same journey through the Solicitors & conveyancers portal — the
+ * enrolment rules' remaining live surface. The builder journey above still
+ * exercises delivery, but its enrolment half is CLOSED (the portal moved to
+ * the Builders Network), so the behavioural coverage of enrolment drives
+ * through a portal this workspace still serves.
+ */
+async function runSolicitorWizard() {
+  renderWizard();
+  fireEvent.change(await screen.findByLabelText(/Legal name/i), {
+    target: { value: "Harbour & Vale Conveyancing" },
+  });
+  fireEvent.click(screen.getByRole("radio", { name: /Solicitors & conveyancers/i }));
   fireEvent.change(screen.getByLabelText(/Contact email/i), { target: { value: CONTACT } });
   fireEvent.change(screen.getByLabelText(/Contact name/i), { target: { value: "Dana Reyes" } });
   fireEvent.click(screen.getByRole("button", { name: /^Continue$/ }));
@@ -203,11 +227,11 @@ describe("the final screen leads with delivery, not with a bearer token", () => 
 
 describe("the partner's own portal is enrolled on the way through", () => {
   it("maps a REAL portal identity, and never an email address", async () => {
-    await runWizard();
+    await runSolicitorWizard();
     await waitFor(() => expect(enrolPartnerPortalAccess).toHaveBeenCalled());
     const args = enrolPartnerPortalAccess.mock.calls[0][0];
-    expect(args.portal_user_source).toBe("builder_portal_users");
-    expect(args.portal_user_id).toBe("builder-user-1");
+    expect(args.portal_user_source).toBe("solicitor_portal_users");
+    expect(args.portal_user_id).toBe("sol-user-1");
     expect(args.portal_user_id).not.toContain("@");
     /* Active immediately: the MLRO has already decided this partner may
        rely, and an `invited` state nothing ever promotes is one more silent
@@ -217,32 +241,56 @@ describe("the partner's own portal is enrolled on the way through", () => {
 
   it("says the Passport is also in their portal — only when that is true", async () => {
     enrolPartnerPortalAccess.mockResolvedValue({
-      membership: { id: "m1", status: "active", portal_type: "builder" },
-      organisation_binding: { column: "builder_organisation_id", portal_organisation_id: "o", bound: "set" },
+      membership: { id: "m1", status: "active", portal_type: "solicitor_conveyancer" },
+      organisation_binding: { column: "solicitor_firm_id", portal_organisation_id: "firm-1", bound: "set" },
       surface_enabled: true, passport_view_enabled: true,
     });
-    await runWizard();
+    await runSolicitorWizard();
     await screen.findByLabelText(/Their Passport link/i);
     expect(await screen.findByText(/AML\/CTF Compliance/i)).toBeInTheDocument();
   });
 
   it("with the surface off, it says the emailed link is the only way", async () => {
     enrolPartnerPortalAccess.mockResolvedValue({
-      membership: { id: "m1", status: "active", portal_type: "builder" },
-      organisation_binding: { column: "builder_organisation_id", portal_organisation_id: "o", bound: "set" },
+      membership: { id: "m1", status: "active", portal_type: "solicitor_conveyancer" },
+      organisation_binding: { column: "solicitor_firm_id", portal_organisation_id: "firm-1", bound: "set" },
       surface_enabled: false, passport_view_enabled: false,
     });
-    await runWizard();
+    await runSolicitorWizard();
     await screen.findByLabelText(/Their Passport link/i);
     expect(await screen.findByText(/only way they reach this Passport today/i)).toBeInTheDocument();
   });
 
   it("a failed enrolment NEVER blocks the grant, and is reported", async () => {
-    enrolPartnerPortalAccess.mockRejectedValue(new Error("that builder organisation is not one this portal user belongs to"));
-    await runWizard();
+    enrolPartnerPortalAccess.mockRejectedValue(new Error("that firm is not one this portal user belongs to"));
+    await runSolicitorWizard();
     // The Passport still issued and still delivered.
     await waitFor(() => expect(grantAccess).toHaveBeenCalled());
     expect(await screen.findByLabelText(/Their Passport link/i)).toBeInTheDocument();
     expect(await screen.findByText(/could not be enrolled/i)).toBeInTheDocument();
+  });
+
+  it("a builder partner is neither provisioned nor enrolled — the portal moved", async () => {
+    /* Phase 6/7 of the network extraction: /builder/* redirects to the
+       Builders Network and the admin plane here is a frozen archive, so the
+       wizard walks no doomed step — no organisation, user, membership or
+       invite call, no enrolment — and SAYS so, while the grant and its
+       emailed link are untouched. */
+    await runWizard();
+    await waitFor(() => expect(grantAccess).toHaveBeenCalled());
+    expect(await screen.findByLabelText(/Their Passport link/i)).toBeInTheDocument();
+    expect(enrolPartnerPortalAccess).not.toHaveBeenCalled();
+    for (const op of ["upsert_organisation", "create_user", "upsert_membership"]) {
+      expect(
+        invokeSecureFunction.mock.calls.some(
+          ([, payload]: [unknown, { operation?: string }]) => payload?.operation === op),
+        op,
+      ).toBe(false);
+    }
+    expect(
+      invokeSecureFunction.mock.calls.some(([fn]: [string]) => fn === "builder-portal-invite"),
+    ).toBe(false);
+    expect(await screen.findByText(/No workspace portal invite was sent/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no in-portal compliance page for builder partners/i)).toBeInTheDocument();
   });
 });

@@ -275,9 +275,17 @@ async function produceInvestmentDocumentOnce(
   const templated = await tryTemplateDocument('investment', reportId, {
     variant: options.variant ?? null,
     // The SAME payload the standard presentation would draw. The adapter reads
-    // the record itself for everything else; this is the one thing the
-    // operator's switches changed, so it is the one thing that travels.
-    payload: { reportContent: presentedRow.report_content },
+    // the record itself for everything else; the operator's two CONTENT
+    // switches travel beside the content they shaped — the Markdown has its
+    // sections removed here, and the adapter reads the switch itself for the
+    // BOUND values (`scores.*`) that no section filter can reach, so a
+    // template with a grade block on its dashboard page draws no grade when
+    // scoring is off, exactly as the standard document prints none.
+    payload: {
+      reportContent: presentedRow.report_content,
+      includeScoring: presentation.includeScoring,
+      includeSources: presentation.includeSources,
+    },
     // The FINAL document: the chosen template drawn by the pinned engine.
     renderer: 'weasyprint',
     selectedTemplateId,
@@ -292,7 +300,12 @@ async function produceInvestmentDocumentOnce(
       templateId: templated.templateId,
       storagePath: templated.storagePath ?? null,
     };
-    rememberFinalised(reportId, { fingerprint, doc });
+    // A stand-in (the in-tab renderer drew the chosen template because the
+    // print engine did not) is delivered but never REMEMBERED as the
+    // finalisation: the next request for the same document must ask the
+    // engine again rather than hand back the stand-in for the rest of the
+    // session. One finalisation is one PDF, and this was not one.
+    if (!templated.degradedFrom) rememberFinalised(reportId, { fingerprint, doc });
     return doc;
   }
 

@@ -63,7 +63,22 @@ export function describeGeocodePrecision(precision: string | null | undefined): 
   tier: GeocodePrecisionTier;
   note: string | null;
 } {
-  switch ((precision ?? '').toUpperCase()) {
+  const word = (precision ?? '').toUpperCase();
+  // The geocoding chain writes `<provider>:<precision>` for every provider
+  // but Google (`nominatim:street`, `abs_locality:locality`); Google's own
+  // words are kept for Google. The suffix is the tier.
+  const chained = /^[A-Z_]+:(ADDRESS|STREET|LOCALITY|POSTCODE)$/.exec(word);
+  if (chained) {
+    switch (chained[1]) {
+      case 'ADDRESS':
+        return { tier: 'exact', note: null };
+      case 'STREET':
+        return { tier: 'street', note: null };
+      default:
+        return { tier: 'area', note: 'Approximate — placed at suburb level' };
+    }
+  }
+  switch (word) {
     case 'ROOFTOP':
       return { tier: 'exact', note: null };
     case 'RANGE_INTERPOLATED':

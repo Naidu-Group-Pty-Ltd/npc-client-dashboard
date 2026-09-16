@@ -204,10 +204,14 @@ describe('the frame the arithmetic assumes is the frame the picture draws', () =
     expect(stripComments(source)).not.toMatch(/backdrop-(filter|blur)/);
   });
 
-  it('is the only implementation — neither caller re-derives the fit', () => {
+  it('is the only implementation — the caller never re-derives the fit', () => {
+    /* The Builder Portal's own Stock List was the second caller until the
+       portal moved to the Builders Network (extraction Phase 7); the
+       marketplace tab is the surviving surface, and the rule is the same —
+       one implementation, so a second surface could not draw the same
+       photograph differently. */
     for (const caller of [
       'src/components/listings/BuilderStockTab.tsx',
-      'src/pages/builder/BuilderStockList.tsx',
     ]) {
       const source = readFileSync(join(process.cwd(), caller), 'utf8');
       expect(source).toContain('<StockPicture');

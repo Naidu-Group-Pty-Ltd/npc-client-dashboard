@@ -43,6 +43,8 @@ const REASONS: TemplateRouteRefusal[] = [
   'adapter_published_no_data',
   'template_schema_invalid',
   'template_unbound_reconstruction',
+  'template_carries_no_content',
+  'engine_unavailable',
   'render_failed',
   'unexpected_error',
 ];
@@ -74,9 +76,35 @@ describe('the route reports the gate it closed at', () => {
 
   it('tells the caller once, on the way out — never throws instead', () => {
     // The contract every caller depends on: a refusal is a fallback, so the
-    // route returns null and the next line is the legacy generator.
-    expect(code).toMatch(/opts\?\.onRefusal\?\.\(refusedAt\)/);
-    expect(code).toMatch(/opts\?\.onRefusal\?\.\('unexpected_error'\)/);
+    // route returns null and the next line is the legacy generator. The
+    // second argument is the gate's own detail (the engine's status and
+    // words, for a render that failed) — carried, never thrown.
+    expect(code).toMatch(/opts\?\.onRefusal\?\.\(refusedAt, refusedDetail\)/);
+    expect(code).toMatch(/opts\?\.onRefusal\?\.\('unexpected_error', /);
+  });
+
+  it('tells an engine that did not answer apart from a document it could not draw', () => {
+    // On 15 Sep 2026 every template fell back behind one sentence, "The
+    // renderer could not produce the document", while the engine had in fact
+    // answered 503 to every request. The route reads the typed failure the
+    // render client throws and names the gate that actually closed.
+    expect(code).toMatch(/e instanceof RenderServiceError && e\.kind === 'engine_unavailable'/);
+    expect(code).toMatch(/refuse\(unavailable \? 'engine_unavailable' : 'render_failed'/);
+  });
+
+  it('lets the in-tab renderer stand in for the print engine only on the engine\'s own failure', () => {
+    // 15 Sep 2026, second episode: the engine answered Cloud Run's 500 page
+    // for five hours and every chosen template fell back to the standard
+    // layout. The preview renderer draws the same template; it stands in
+    // for a failure OF THE ENGINE, on a template it draws in full, and the
+    // result says so. A refusal or a plain error (the client-readiness gate
+    // answers as one) never reaches another renderer.
+    expect(code).toMatch(/function browserStandInFor\(/);
+    expect(code).toMatch(/if \(!\(failure instanceof RenderServiceError\)\) return null;/);
+    expect(code).toMatch(/judgeBrowserProductionExport\(schema\)\.ok === false\) return null;/);
+    expect(code).toMatch(/degradedFrom = standIn;/);
+    // The renderer named on the result is the one that DREW the bytes.
+    expect(code).toMatch(/renderer === 'weasyprint' && !degradedFrom/);
   });
 
   it('parses the template inside its own guard, not past every other one', () => {
@@ -92,6 +120,13 @@ describe('the person is told which gate closed', () => {
   it('puts the reason in the notice, for every format at once', () => {
     expect(code).toContain('onRefusal');
     expect(code).toMatch(/TEMPLATE_ROUTE_REFUSAL_TEXT\[refusal\]/);
+  });
+
+  it('says when the chosen template was drawn in the browser, with the engine\'s words', () => {
+    // A stand-in is not "your template was not used" — it was. It is a
+    // different fact, and the person about to send the file is told it.
+    expect(code).toMatch(/if \(routed\.degradedFrom\) \{\s*notifyTemplateDrawnInBrowser\(/);
+    expect(code).toMatch(/degradedFrom: routed\.degradedFrom \?\? null/);
   });
 
   it('still only speaks when a template was actually chosen', () => {

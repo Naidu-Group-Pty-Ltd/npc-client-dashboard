@@ -81,7 +81,6 @@ const RESET_FUNCTIONS = [
   'client-portal-reset-password',
   'finance-portal-reset-password',
   'solicitor-portal-reset-password',
-  'builder-portal-reset-password',
 ] as const;
 
 describe('a password reset releases the sign-in lockout', () => {

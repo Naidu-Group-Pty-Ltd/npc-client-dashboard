@@ -25,11 +25,35 @@
  * (the money leaves the owner's account). Reports state the exclusion.
  */
 
+import {
+  buildLoanLedger,
+  describeLoanStructure,
+  ledgerYear,
+  normaliseLoanProduct,
+  type LoanLedger,
+  type LoanProduct,
+} from './loanLedger.pure.ts';
+
 export interface LoanCalculationInput {
   propertyValue: number;
   deposit: number;
   interestRate?: number; // Optional — the service fetches live rates if not provided
   loanTerm: number;
+  /**
+   * The loan product, and it DRIVES the arithmetic. It used to be a display
+   * override (`loanDetails.loanType`) that no calculation read, so a report
+   * said "interest only" over a 30-year P&I schedule (QA-04). See
+   * `loanLedger.pure.ts`.
+   */
+  loanType?: LoanProduct | string | null;
+  /** Years of interest-only repayments before amortisation; ignored for P&I. */
+  interestOnlyYears?: number | null;
+  /**
+   * Weeks let per year. The headline cash flow used to charge 52 weeks
+   * whatever the assumptions table said (QA-06); the effective rent is
+   * `weeklyRent × occupancyWeeks` and percentage fees are charged on it.
+   */
+  occupancyWeeks?: number | null;
   weeklyRent: number;
   state: string;
   propertyType: 'house' | 'unit' | 'townhouse';
@@ -85,7 +109,35 @@ export interface FinancialProjection {
   cashFlow: number;
   cumulativeCashFlow: number;
   roi: number;
+  /**
+   * The components each row's cash flow is the sum of, so a reader can
+   * reconcile `annualRent − operatingCosts − interest − principal = cashFlow`
+   * (QA-11). Pre-tax; absent on rows written before they were published.
+   */
+  operatingCosts?: number;
+  interest?: number;
+  principal?: number;
+  loanPayments?: number;
 }
+
+/** The ledger a set of inputs describes — one schedule for every figure. */
+export function ledgerForInput(input: LoanCalculationInput & { interestRate: number }): LoanLedger {
+  return buildLoanLedger({
+    loanAmount: input.propertyValue - input.deposit,
+    annualRatePercent: input.interestRate,
+    termYears: input.loanTerm,
+    loanType: input.loanType,
+    interestOnlyYears: input.interestOnlyYears ?? 0,
+  });
+}
+
+/** Weeks let per year as the input states it; 52 is the contractual default. */
+export function occupancyWeeksOf(input: { occupancyWeeks?: number | null }): number {
+  const w = Number(input.occupancyWeeks);
+  return Number.isFinite(w) && w > 0 && w <= 52 ? w : 52;
+}
+
+export { describeLoanStructure, normaliseLoanProduct };
 
 export interface InterestRateInfo {
   rate: number;
@@ -219,8 +271,13 @@ export function calculateAnnualCosts(
   state: string,
   propertyType: string,
   overrides?: AnnualCostOverrides,
+  occupancyWeeks: number = 52,
 ) {
   const annualRent = weeklyRent * 52;
+  // Percentage fees are charged on the rent COLLECTED — the convention the
+  // engine declares (`feeBasis`) rather than leaves a reader to infer (QA-06,
+  // QA-09). At 52 weeks the two rents are one figure.
+  const collectedRent = weeklyRent * occupancyWeeks;
   const o = overrides ?? {};
   // `??` throughout: an explicit reviewed $0 replaces the estimate; only an
   // absent override falls back to the formula.
@@ -229,7 +286,7 @@ export function calculateAnnualCosts(
   const landlordInsurance = o.landlordInsurance ?? Math.floor(annualRent * 0.01);
   const propertyManagementPercent = o.propertyManagementPercent ?? 7;
   const propertyManagement = o.propertyManagement
-    ?? Math.floor(annualRent * (propertyManagementPercent / 100));
+    ?? Math.floor(collectedRent * (propertyManagementPercent / 100));
   const maintenance = o.maintenance ?? 1500;
   const landTax = o.landTax ?? calculateLandTax(propertyValue, state);
   const strataFees = o.strataFees ?? (propertyType === 'unit' ? 4800 : 0);
@@ -253,7 +310,13 @@ export function calculateAnnualCosts(
     strataFees,
     ...(lettingFees !== undefined ? { lettingFees } : {}),
     totalAnnual,
-    totalAnnualExcludingLandTax
+    totalAnnualExcludingLandTax,
+    /**
+     * Percentage fees are charged on the rent collected at the stated
+     * occupancy. A string, deliberately: this object is folded by historic
+     * readers and a numeric key here would change what they sum.
+     */
+    feeBasis: 'collected_rent' as const,
   };
 }
 
@@ -312,11 +375,21 @@ export function generateProjections(
 
   const projections: FinancialProjection[] = [];
   let currentPropertyValue = input.propertyValue;
-  let currentRent = input.weeklyRent * 52;
-  let loanBalance = input.propertyValue - input.deposit;
+  // Rent grows from the rent COLLECTED at the stated occupancy (QA-06); the
+  // growth timing is the convention the assumptions block declares
+  // (`growthTiming`): value and rent carry one year of growth by the end of
+  // year 1, so year-1 rent is the settlement rent grown once (QA-10).
+  let currentRent = input.weeklyRent * occupancyWeeksOf(input);
   let cumulativeCashFlow = 0;
 
-  const loanPaymentsAnnual = monthlyPayment * 12;
+  // ONE monthly ledger, read for every year's interest, principal and closing
+  // balance. The old loop accrued interest annually on the opening balance
+  // while subtracting a monthly-derived payment, which overstated year-10
+  // debt by ~$6,078 on the audited property (QA-05) — and it never asked
+  // which loan product it was repaying (QA-04). `monthlyPayment` stays in the
+  // signature for callers that pass it; the ledger is the arithmetic.
+  const ledger = ledgerForInput(input);
+  void monthlyPayment;
   let currentOperatingExpenses = operatingExpensesFrom(annualCosts);
 
   for (let year = 1; year <= 10; year++) {
@@ -330,11 +403,13 @@ export function generateProjections(
       : (cpiProjections.find(p => p.year === year)?.cpiPercent ?? 2.5) / 100;
     currentOperatingExpenses *= (1 + yearCpi);
 
+    const ledgerRow = ledgerYear(ledger, year);
+    const interest = ledgerRow?.interest ?? 0;
+    const principal = ledgerRow?.principal ?? 0;
+    const loanPaymentsAnnual = interest + principal;
+    const loanBalance = ledgerRow?.closingBalance ?? 0;
+
     const totalAnnualCosts = currentOperatingExpenses + loanPaymentsAnnual;
-
-    const annualPrincipalPayment = loanPaymentsAnnual - (loanBalance * input.interestRate / 100);
-    loanBalance = Math.max(0, loanBalance - annualPrincipalPayment);
-
     const annualCashFlow = currentRent - totalAnnualCosts;
     cumulativeCashFlow += annualCashFlow;
 
@@ -349,7 +424,11 @@ export function generateProjections(
       annualRent: Math.round(currentRent),
       cashFlow: Math.round(annualCashFlow),
       cumulativeCashFlow: Math.round(cumulativeCashFlow),
-      roi: Math.round(roi * 100) / 100
+      roi: Math.round(roi * 100) / 100,
+      operatingCosts: Math.round(currentOperatingExpenses),
+      interest: Math.round(interest),
+      principal: Math.round(principal),
+      loanPayments: Math.round(loanPaymentsAnnual),
     });
   }
 
@@ -362,7 +441,14 @@ export function calculateKeyMetrics(
   annualCosts: any,
   totalUpfront: number
 ) {
+  // Two rents, each named: the CONTRACTUAL rent the yields divide (52
+  // weeks — a property-comparison basis, `rentBasis.pure.ts`), and the rent
+  // COLLECTED at the stated occupancy, which is what the cash flow receives.
+  // The headline used to charge 52 weeks while the assumptions table beside
+  // it said 50 (QA-06).
   const annualRent = input.weeklyRent * 52;
+  const occupancyWeeks = occupancyWeeksOf(input);
+  const effectiveAnnualRent = input.weeklyRent * occupancyWeeks;
   // Cash flow shares the projections' cost base (all costs, land tax in);
   // yield keeps the owner-independent base and the report says so.
   const cashFlowCosts = operatingExpensesFrom(annualCosts);
@@ -370,15 +456,28 @@ export function calculateKeyMetrics(
     ? annualCosts.totalAnnualExcludingLandTax
     : cashFlowCosts;
 
+  // Year-1 debt service off the one ledger, so an interest-only loan is
+  // charged interest and a P&I loan its amortising repayment (QA-04).
+  const ledger = ledgerForInput(input);
+  const yearOne = ledgerYear(ledger, 1);
+  const annualLoanPayments = yearOne ? yearOne.payments : monthlyPayment * 12;
+
   const grossYield = (annualRent / input.propertyValue) * 100;
   const netYield = ((annualRent - yieldCosts) / input.propertyValue) * 100;
-  const netCashFlow = annualRent - cashFlowCosts - (monthlyPayment * 12);
+  const netCashFlow = effectiveAnnualRent - cashFlowCosts - annualLoanPayments;
 
   return {
     grossRentalYield: Math.round(grossYield * 100) / 100,
     netRentalYield: Math.round(netYield * 100) / 100,
+    /** The yields' basis, stated: contractual rent over the purchase price, land tax out. */
+    yieldBasis: 'contractual_rent_before_finance_and_tax' as const,
     weeklyNet: Math.round(netCashFlow / 52),
     annualNet: Math.round(netCashFlow),
+    /** What the cash flow received: `weeklyRent × occupancyWeeks`. */
+    effectiveAnnualRent: Math.round(effectiveAnnualRent),
+    potentialAnnualRent: Math.round(annualRent),
+    occupancyWeeks,
+    annualLoanPayments: Math.round(annualLoanPayments),
     lvr: Math.round(((input.propertyValue - input.deposit) / input.propertyValue) * 100),
     // The denominator is the same figure initialCosts publishes as
     // totalUpfront — deposit, duty, LMI and the fee lines — never a second
@@ -397,31 +496,87 @@ export function calculateSensitivityAnalysis(
 ) {
   // Same single cost base as the projections and headline metrics — see
   // operatingExpensesFrom for why the raw object must never be folded.
-  const baseNetCashFlow = (input.weeklyRent * 52) -
-    operatingExpensesFrom(annualCosts) -
-    (monthlyPayment * 12);
+  void monthlyPayment;
+  const baseNetCashFlow = calculateImpact(input, input.interestRate, annualCosts);
+  const effectiveRent = input.weeklyRent * occupancyWeeksOf(input);
+  const baseRate = input.interestRate;
+
+  // A rent scenario re-derives the costs that are a share of rent. The fee
+  // was held fixed at its base-case dollars while its own label said "7.5%
+  // of rent", which overstated the +10% and +20% upside by the fee on the
+  // extra rent (QA-09). Every cost that is not rent-linked stays where it is.
+  const rentScenario = (change: number): number => {
+    const extraRent = effectiveRent * change;
+    const extraFee = extraRent * rentLinkedFeeRate(annualCosts);
+    return baseNetCashFlow + extraRent - extraFee;
+  };
+
+  const rateScenarios = [
+    { id: 'minus1Percent', delta: -1 },
+    { id: 'plus1Percent', delta: 1 },
+    { id: 'plus2Percent', delta: 2 },
+  ].map(({ id, delta }) => {
+    const rate = Math.round((baseRate + delta) * 100) / 100;
+    return {
+      id, kind: 'rate' as const, rate, deltaPoints: delta,
+      // "7.5% (+1.0 pt)" — the actual rate tested and the change from the
+      // base, because three rows all labelled with the base rate cannot be
+      // read as a stress test (QA-08).
+      label: `Interest rate ${rate.toFixed(2).replace(/\.?0+$/, '')}% (${delta > 0 ? '+' : '−'}${Math.abs(delta).toFixed(1)} pt)`,
+      annualNet: Math.round(calculateImpact(input, rate, annualCosts)),
+    };
+  });
+  const rentScenarios = [
+    { id: 'minus10Percent', change: -0.1 },
+    { id: 'plus10Percent', change: 0.1 },
+    { id: 'plus20Percent', change: 0.2 },
+  ].map(({ id, change }) => ({
+    id, kind: 'rent' as const, rentChangePercent: change * 100,
+    label: `Rent ${change > 0 ? '+' : '−'}${Math.abs(change * 100).toFixed(0)}%`,
+    annualNet: Math.round(rentScenario(change)),
+  }));
 
   return {
     interestRateChanges: {
-      'minus1Percent': calculateImpact(input, input.interestRate - 1, annualCosts),
-      'plus1Percent': calculateImpact(input, input.interestRate + 1, annualCosts),
-      'plus2Percent': calculateImpact(input, input.interestRate + 2, annualCosts)
+      'minus1Percent': rateScenarios[0].annualNet,
+      'plus1Percent': rateScenarios[1].annualNet,
+      'plus2Percent': rateScenarios[2].annualNet,
     },
     rentChanges: {
-      'minus10Percent': baseNetCashFlow - (input.weeklyRent * 52 * 0.1),
-      'plus10Percent': baseNetCashFlow + (input.weeklyRent * 52 * 0.1),
-      'plus20Percent': baseNetCashFlow + (input.weeklyRent * 52 * 0.2)
-    }
+      'minus10Percent': rentScenarios[0].annualNet,
+      'plus10Percent': rentScenarios[1].annualNet,
+      'plus20Percent': rentScenarios[2].annualNet,
+    },
+    /** The base every scenario moves off — the headline year-1 position. */
+    baseCase: { rate: baseRate, annualNet: Math.round(baseNetCashFlow) },
+    /**
+     * Every scenario with the parameter it actually tested, for a labelled
+     * row. The field is `id`, not `key`: a field called key holding a
+     * ten-character token is exactly the shape the repository's secret
+     * scanner refuses, and a scenario name is not a credential.
+     */
+    scenarios: [...rateScenarios, ...rentScenarios],
+    feeBasis: 'collected_rent' as const,
   };
 }
 
-export function calculateImpact(input: LoanCalculationInput & { interestRate: number }, newRate: number, annualCosts: any) {
-  const loanAmount = input.propertyValue - input.deposit;
-  const monthlyRate = newRate / 100 / 12;
-  const totalPayments = input.loanTerm * 12;
-  const newMonthlyPayment = calculateMonthlyPayment(loanAmount, monthlyRate, totalPayments);
+/** The share of rent charged as fees — the management percentage the cost base declares, as a fraction. */
+export function rentLinkedFeeRate(annualCosts: any): number {
+  const pct = annualCosts?.propertyManagementPercent;
+  return typeof pct === 'number' && Number.isFinite(pct) && pct > 0 ? pct / 100 : 0;
+}
 
-  return (input.weeklyRent * 52) - operatingExpensesFrom(annualCosts) - (newMonthlyPayment * 12);
+/**
+ * Year-1 net cash flow at `newRate`, on the same ledger the projections use:
+ * an interest-only loan is stressed on its interest, a P&I loan on its
+ * amortising repayment, and both on the rent collected at the stated
+ * occupancy.
+ */
+export function calculateImpact(input: LoanCalculationInput & { interestRate: number }, newRate: number, annualCosts: any) {
+  const ledger = ledgerForInput({ ...input, interestRate: newRate });
+  const yearOne = ledgerYear(ledger, 1);
+  const annualLoanPayments = yearOne ? yearOne.payments : 0;
+  return (input.weeklyRent * occupancyWeeksOf(input)) - operatingExpensesFrom(annualCosts) - annualLoanPayments;
 }
 
 // ---------------------------------------------------------------------------

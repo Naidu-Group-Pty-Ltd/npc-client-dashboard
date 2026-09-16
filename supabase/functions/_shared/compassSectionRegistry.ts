@@ -319,7 +319,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     sectionPriority: 'Protected',
     maxWordCount: 500,
     visualComponents: ['riskRegister', 'confidenceChip'],
-    purpose: 'One consolidated risk table: Risk / Level / Why It Matters / Required Check. Covers crime, environmental (bushfire, flood), planning overlays and covenants, supply, transport reliance and infrastructure timing. Every risk carries a confidence chip and a required DD action. The table IS the section — no prose restating rows.',
+    purpose: 'One consolidated risk table: Risk / Level / Why It Matters / Required Check. Covers crime, environmental (bushfire, flood), planning overlays and covenants, supply, transport reliance and infrastructure timing. Every risk carries an evidence chip and a required DD action. The chip states EVIDENCE HELD, never reassurance: "Verified" only where a dated, parcel-level source is cited; "Unverified" while the required check is still to be done; "Conflicting" where sources disagree (say which). A level (Low/Moderate/High) describes exposure and is separate from the chip; never rate confidence High for a risk whose check is outstanding, and never let a checklist of work still to do read as a clearance. The table IS the section — no prose restating rows.',
   },
   {
     id: 'compass.dueDiligenceChecklist',

@@ -31,6 +31,7 @@ import {
   type CompassSectionDefinition,
 } from './compassSectionRegistry.ts';
 import { countWords, estimatePages, findEditorialLabels } from './compassPostProcessor.ts';
+import { findScoreClaims } from './reports/investment/scoreClaims.pure.ts';
 
 /**
  * The prompt asks for at most 4 `###` a section; this flags at 6+.
@@ -40,6 +41,14 @@ import { countWords, estimatePages, findEditorialLabels } from './compassPostPro
  * v2.0 produced 68 `###` a report across 17 sections; 4 a section over 11 is ~44.
  */
 const MAX_SUBHEADINGS_PER_SECTION = 5;
+
+/** A sentence that introduces a table or matrix said to follow it. */
+const TABLE_PROMISE = /\b(?:table|matrix|grid|schedule)\s+(?:below|that follows|following)\b|\bbelow\s+(?:table|matrix)\b|\b(?:summari[sz]ed|set out|shown|listed|presented)\s+(?:in\s+the\s+)?(?:table|matrix)\s+below\b/i;
+/** A heading or bold label naming a pair of lists. */
+const PAIR_HEADING = /^(?:#{2,4}\s+|\*\*)?strengths?\s*(?:and|&)\s*(?:limitations?|weaknesses|considerations|watch[- ]?points)\b/i;
+/** The second half of that pair, as a sub-heading or a bold label. */
+const PAIR_SECOND_LABEL = /^(?:#{3,5}\s+|\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}:?\s*$/i;
+
 
 export type QASeverity = 'error' | 'warning' | 'info';
 
@@ -136,9 +145,20 @@ function splitBySections(markdown: string): { heading: string; body: string }[] 
   return out;
 }
 
+export interface QAContext {
+  /**
+   * The numbers `investment_score` actually holds (`recordedScoreValues`).
+   * When given, a score-shaped claim in the prose that matches none of them
+   * is reported (QA-18) — a document may print a score the record holds, and
+   * no other.
+   */
+  recordedScores?: number[];
+}
+
 export function runQAValidation(
   markdown: string,
   tier: 'compass-40' | 'financial-analysis',
+  context: QAContext = {},
 ): QAReport {
   const findings: QAFinding[] = [];
   const registry =
@@ -183,6 +203,26 @@ export function runQAValidation(
         rule: 'forbidden-placeholder',
         severity: 'error',
         message: `Report contains unresolved placeholder matching ${pat}. Replace with a real source reference or remove and consolidate into the source appendix.`,
+      });
+    }
+  }
+
+  // Rule 2d — no score the record does not hold (QA-18). Tables and chart
+  // directives print recorded figures and are not read here; prose is.
+  if (context.recordedScores) {
+    const recorded = new Set(context.recordedScores.map((n) => Math.round(n)));
+    const prose = markdown
+      .split('\n')
+      .filter((l) => { const t = l.trim(); return t && !t.startsWith('|') && !t.startsWith('{{') && !t.startsWith('#'); })
+      .join('\n');
+    const unrecorded = findScoreClaims(prose).filter((c) => !recorded.has(c.value));
+    if (unrecorded.length) {
+      findings.push({
+        rule: 'unrecorded-score',
+        severity: 'warning',
+        message: `Prose asserts ${unrecorded.length} score(s) the record does not hold: `
+          + unrecorded.slice(0, 5).map((c) => `"${c.text}"`).join(', ')
+          + '. A document may print the recorded score and its scored dimensions, and no other.',
       });
     }
   }
@@ -280,6 +320,78 @@ export function runQAValidation(
         });
       }
     }
+  }
+
+
+  // Rule 9 — a promised table is a table that exists (QA-33).
+  //
+  // "The matrix below groups the main amenities by type" printed on two of
+  // the audited documents with nothing below it: the figure was a chart
+  // directive the standard presentation could not draw, so it was dropped,
+  // and the sentence that introduced it stayed. A lead-in is a promise; a
+  // section that makes one must carry a table or a directive after it.
+  for (const s of splitBySections(markdown)) {
+    const lines = s.body.split('\n');
+    lines.forEach((line, i) => {
+      const t = line.trim();
+      if (!t || t.startsWith('|') || t.startsWith('{{') || t.startsWith('#')) return;
+      if (!TABLE_PROMISE.test(t)) return;
+      const kept = lines.slice(i + 1).some((l) => { const u = l.trim(); return u.startsWith('|') || u.startsWith('{{'); });
+      if (!kept) {
+        findings.push({
+          rule: 'promised-table',
+          severity: 'error',
+          sectionId: findDef(s.heading, registry)?.id,
+          message: `"${s.heading}" promises a table or matrix below ("${t.slice(0, 80)}…") and none follows. Draw it or remove the promise.`,
+        });
+      }
+    });
+  }
+
+  // Rule 10 — a paired heading carries both halves (QA-33).
+  //
+  // "Strengths and Limitations" on the audited Compass printed strengths and
+  // no limitations at all — the second half had been cut by a word cap. A
+  // heading that names two lists is a promise of two lists.
+  for (const s of splitBySections(markdown)) {
+    const lines = s.body.split('\n');
+    const pairAt = lines.findIndex((l) => PAIR_HEADING.test(l.trim()));
+    if (pairAt < 0) continue;
+    const rest = lines.slice(pairAt + 1);
+    const secondAt = rest.findIndex((l) => PAIR_SECOND_LABEL.test(l.trim()));
+    const secondHasContent = secondAt >= 0 && rest.slice(secondAt + 1).some((l) => {
+      const t = l.trim();
+      return t && !t.startsWith('#') && !PAIR_SECOND_LABEL.test(t);
+    });
+    if (!secondHasContent) {
+      findings.push({
+        rule: 'unbalanced-pair',
+        severity: 'error',
+        sectionId: findDef(s.heading, registry)?.id,
+        message: `"${s.heading}" announces "${lines[pairAt].trim().replace(/^#+\s*/, '')}" but carries no ${secondAt >= 0 ? 'content under the second list' : 'second list'}. State the limitations or rename the heading.`,
+      });
+    }
+  }
+
+  // Rule 11 — confidence is evidence completeness, not reassurance (QA-20).
+  //
+  // "Environmental Risk — Level: Moderate — Confidence: High" sat beside the
+  // instruction to obtain the flood and bushfire checks. A rating may be
+  // called high-confidence only once the dated, parcel-level check is held;
+  // while a required check is outstanding the honest word is "unverified".
+  {
+    const lines = markdown.split('\n');
+    lines.forEach((line, i) => {
+      if (!/confidence:\s*high\b/i.test(line)) return;
+      const window = lines.slice(i + 1, i + 8).join(' ');
+      if (/required (?:check|action|dd)|verification required|to be (?:verified|confirmed|assessed)|pending|obtain|confirm with|verify with/i.test(window)) {
+        findings.push({
+          rule: 'risk-confidence-overstated',
+          severity: 'warning',
+          message: `A risk is rated "Confidence: High" while its required check is still outstanding ("${line.trim().slice(0, 80)}"). Confidence describes evidence held, so rate it "Unverified" until the dated check exists.`,
+        });
+      }
+    });
   }
 
   const passed = findings.every((f) => f.severity !== 'error');

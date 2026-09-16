@@ -218,12 +218,24 @@ describe('RC-2 — every billable production caller is accounted for', () => {
    * "location-intelligence-service is the only uncapped site" and was wrong
    * twice over, because nothing checked it.
    */
+  // `_shared/builderStock/images.ts` WAS on this list and is deleted: the
+  // Builder Stock image pipeline left with the Builder Portal (network
+  // extraction Phase 7), along with the two Edge Functions that dispatched it.
+  // It was a real Maps caller — a geocoder and a Street View consumer — and it
+  // now makes those calls on the Builders Network, against that deployment's
+  // own allowance. Removed here rather than guarded, because a file this scan
+  // cannot open is a scan that reports nothing.
+  // `parse-property-pdf` and `resolve-listing-coordinates` WERE on this list
+  // and are not Maps callers any more: every server-side geocode goes through
+  // `_shared/geocode/geocoder.ts` (OpenStreetMap, then the ABS, then Google
+  // only where an operator lists it), whose Google provider is the ONE place
+  // the Google geocoder is named — and it meters, judges and consumes exactly
+  // as the four call sites it replaced did. `location-intelligence-service`
+  // stays: its Places Nearby and Distance Matrix calls are still Google's.
   const CALLERS = [
-    '_shared/builderStock/images.ts',
+    '_shared/geocode/geocoder.ts',
     'google-places-autocomplete/index.ts',
     'location-intelligence-service/index.ts',
-    'parse-property-pdf/index.ts',
-    'resolve-listing-coordinates/index.ts',
     'school-data-service/index.ts',
     'street-view/index.ts',
   ];
@@ -251,25 +263,34 @@ describe('RC-2 — every billable production caller is accounted for', () => {
     // bucket would make GOOGLE_GEOCODING_DAILY_LIMIT mean "N times however many
     // functions happen to geocode", which is not a ceiling anybody can reason
     // about — and it is the "configure N/2" workaround this replaces.
-    const geocoders = [
-      '_shared/builderStock/images.ts',
+    //
+    // There is ONE Google geocoder now, inside the chain, and it consumes the
+    // one scope. The four functions that used to geocode directly ask the
+    // chain and name no Google geocoder at all — which is what makes the
+    // budget one thing rather than four copies of one thing.
+    const chain = read('supabase/functions/_shared/geocode/geocoder.ts');
+    expect(chain).toMatch(/maps\.googleapis\.com\/maps\/api\/geocode/);
+    expect(chain).toContain("consumeGoogleDailyCap(supabase, 'geocoding')");
+    for (const caller of [
+      'estimate-capital-growth/index.ts',
       'location-intelligence-service/index.ts',
       'parse-property-pdf/index.ts',
       'resolve-listing-coordinates/index.ts',
-    ];
-    for (const caller of geocoders) {
+    ]) {
       const src = read(`supabase/functions/${caller}`);
-      expect(src, caller).toMatch(/maps\.googleapis\.com\/maps\/api\/geocode/);
-      expect(src, caller).toMatch(/'geocoding'/);
+      expect(src, caller).not.toMatch(/maps\.googleapis\.com\/maps\/api\/geocode/);
+      expect(src, caller).toContain('_shared/geocode/geocoder.ts');
     }
     expect(GOOGLE_CAP_SCOPES.geocoding).toBe('google_geocoding');
   });
 
   it('a circuit-breaker scope is a different axis and survives', () => {
     // A breaker is about one caller's error rate; a budget is about the
-    // account's spend. Collapsing them would make one ceiling trip the other.
+    // account's spend (or a public service's goodwill). Collapsing them would
+    // make one ceiling trip the other. The scope no longer names Google
+    // because the chain behind it no longer does.
     expect(read('supabase/functions/resolve-listing-coordinates/index.ts'))
-      .toContain("CIRCUIT_SCOPE = 'google_listing_geocoding'");
+      .toContain("CIRCUIT_SCOPE = 'listing_geocoding'");
   });
 
   it('every ceiling the runtime reads is declared in the Integrations registry', () => {
@@ -322,11 +343,12 @@ describe('RC-2 — a refusal is reported for what it actually was', () => {
     // The defect this replaces: `street-view` and `google-places-autocomplete`
     // answered `daily_quota_exceeded` for every refusal, and
     // `builderStock/images.ts` PERSISTED "the daily limit ... has been reached"
-    // onto the row, where it outlives the incident.
+    // onto the row, where it outlives the incident. That third file is gone
+    // with the Builder Portal; the rule it taught is kept here, and travels
+    // with the pipeline to the network's own copy of this suite.
     const callers = [
       'supabase/functions/google-places-autocomplete/index.ts',
       'supabase/functions/street-view/index.ts',
-      'supabase/functions/_shared/builderStock/images.ts',
     ];
     for (const caller of callers) {
       const code = codeOnly(read(caller));

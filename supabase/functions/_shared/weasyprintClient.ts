@@ -17,6 +17,46 @@
  *    not look like the one that was approved.
  */
 import { meteredFetch } from './meteredFetch.ts';
+import {
+  classifyServiceAnswer,
+  describeRenderFailure,
+  renderFailureIsRetriable,
+  summariseServiceBody,
+  type RenderFailureKind,
+} from './renderFailure.pure.ts';
+
+/**
+ * A failure the render SERVICE answered (or failed to answer), classified.
+ *
+ * `kind` says what the status means, `upstreamStatus` is what the service
+ * said, `summary` is one sentence out of its body — never the raw page —
+ * and `message` is the operator's sentence. The edge functions answer with
+ * these fields rather than a bare 500 so a caller can tell "the engine is
+ * down" from "this document is bad" (QA-291SM, 15 Sep 2026).
+ */
+export class WeasyPrintServiceError extends Error {
+  readonly kind: RenderFailureKind;
+  readonly upstreamStatus: number | null;
+  readonly summary: string;
+  readonly retriable: boolean;
+  constructor(kind: RenderFailureKind, upstreamStatus: number | null, summary: string) {
+    super(describeRenderFailure({ kind, upstreamStatus, summary }));
+    this.name = 'WeasyPrintServiceError';
+    this.kind = kind;
+    this.upstreamStatus = upstreamStatus;
+    this.summary = summary;
+    this.retriable = renderFailureIsRetriable(kind);
+  }
+}
+
+/**
+ * One more attempt, after this pause, when the service host did not serve
+ * the request. The container scales to zero and has no startup probe, so
+ * the first request after a quiet spell can meet Cloud Run's front-end 503
+ * while the instance warms; a second failure a few seconds later is real.
+ */
+export const UNAVAILABLE_RETRY_DELAY_MS = 5_000;
+const UNAVAILABLE_RETRY_ATTEMPTS = 1;
 
 /**
  * What the file declares itself to be.
@@ -303,7 +343,7 @@ export async function renderPdfWithDiagnostics(
     // is real, so it is metered like any vendor. The host comes from env and
     // varies per deployment, so the credential is named explicitly rather than
     // inferred from the URL. One swap here covers all eleven render routes.
-    const res = await meteredFetch(`${config.url}/render`, {
+    const request = () => meteredFetch(`${config.url}/render`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -328,10 +368,40 @@ export async function renderPdfWithDiagnostics(
       }),
       signal: controller.signal,
     }, { secretName: 'WEASYPRINT_SERVICE_TOKEN', feature: 'weasyprint/render' });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`WeasyPrint render failed (${res.status}): ${body.slice(0, 400)}`);
+
+    // A host that did not serve the request (502/503/504, or no answer at
+    // all) is asked once more after a pause; anything the service actually
+    // SAID is final. The failure is thrown classified — kind, upstream
+    // status, one sentence of its body — never as the raw page.
+    let res: Response | null = null;
+    let failure: WeasyPrintServiceError | null = null;
+    for (let attempt = 0; attempt <= UNAVAILABLE_RETRY_ATTEMPTS; attempt += 1) {
+      failure = null;
+      try {
+        res = await request();
+      } catch (e) {
+        if (controller.signal.aborted) throw e;
+        res = null;
+        failure = new WeasyPrintServiceError('engine_unavailable', null, summariseServiceBody(e instanceof Error ? e.message : String(e)));
+      }
+      if (res && res.ok) break;
+      if (res) {
+        const body = await res.text().catch(() => '');
+        // The SHAPE of the answer decides, not the digit: Cloud Run's own
+        // error page under a 500 is the engine not answering (15 Sep 2026 —
+        // every request, including an unauthenticated GET /, met it), and
+        // the engine's own JSON under the same status is a render failure.
+        const kind = classifyServiceAnswer({
+          status: res.status, body, engineHeader: res.headers.get('X-WeasyPrint-Version'),
+        });
+        failure = new WeasyPrintServiceError(kind, res.status, summariseServiceBody(body));
+        res = null;
+      }
+      if (!failure || !failure.retriable || attempt === UNAVAILABLE_RETRY_ATTEMPTS) break;
+      console.warn(`[weasyprintClient] ${failure.kind} (HTTP ${failure.upstreamStatus ?? 'none'}); retrying once in ${UNAVAILABLE_RETRY_DELAY_MS}ms`);
+      await new Promise((resolve) => setTimeout(resolve, UNAVAILABLE_RETRY_DELAY_MS));
     }
+    if (!res) throw failure ?? new WeasyPrintServiceError('engine_failed', null, 'no response');
     const buffer = await res.arrayBuffer();
     if (buffer.byteLength === 0) throw new Error('WeasyPrint returned an empty body');
     const taggedHeader = res.headers.get('X-Pdf-Tagged');

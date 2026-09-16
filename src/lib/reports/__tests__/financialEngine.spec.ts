@@ -105,7 +105,7 @@ describe('operatingExpensesFrom — the one cost base', () => {
     const oldFold = Object.values(annualCosts)
       .filter((v): v is number => typeof v === 'number')
       .reduce((sum, v) => sum + v, 0);
-    expect(oldFold).toBe(57_736); // 2·totalAnnual + totalExcludingLandTax + 7
+    expect(oldFold).toBe(57_736); // 2·totalAnnual + totalExcludingLandTax + 7 (feeBasis is a string and folds to nothing)
     expect(operatingExpensesFrom(annualCosts)).not.toBe(oldFold);
   });
 
@@ -151,7 +151,21 @@ describe('generateProjections — the repaired series', () => {
   it('the growth legs are untouched by the repair', () => {
     expect(series[0].annualRent).toBe(ACER.stored.moderateYear1.annualRent);
     expect(series[0].propertyValue).toBe(ACER.stored.moderateYear1.propertyValue);
-    expect(series[0].loanBalance).toBe(ACER.stored.moderateYear1.loanBalance);
+  });
+
+  it('the loan balance is the monthly ledger\'s, not the annual-accrual shortcut the row stored (QA-05)', () => {
+    // The stored balance accrued a year's interest on the opening balance and
+    // subtracted the monthly-derived repayment once; the ledger accrues and
+    // repays monthly, so principal retires faster and the balance is lower.
+    const loan = ACER.propertyValue - ACER.deposit;
+    const annualShortcut = Math.round(loan * (1 + rateInfo.rate / 100) - annualLoanPayments);
+    expect(ACER.stored.moderateYear1.loanBalance).toBe(annualShortcut);
+    expect(series[0].loanBalance).toBeLessThan(annualShortcut);
+    expect(series[0].loanBalance).toBe(ACER.stored.moderateYear1.loanBalance - 314);
+    // And the components published with the row reconcile it (QA-11).
+    expect(series[0].annualRent - series[0].operatingCosts! - series[0].interest! - series[0].principal!)
+      .toBeCloseTo(series[0].cashFlow, -1);
+    expect(series[0].loanPayments).toBe(Math.round(annualLoanPayments));
   });
 
   it('diagnoses the stored row exactly: old fold × that year CPI', () => {
@@ -211,10 +225,30 @@ describe('sensitivity — same base as everything else', () => {
     expect(Math.round(impact)).toBe(metrics.annualNet);
   });
 
-  it('rent sensitivity moves off the same base', () => {
+  it('rent sensitivity moves off the same base, and re-derives the fee that is a share of rent', () => {
     const s = calculateSensitivityAnalysis({ ...input, interestRate: rateInfo.rate }, monthlyPayment, annualCosts);
     const base = annualRent - 21_418 - annualLoanPayments;
-    expect(s.rentChanges.plus10Percent).toBeCloseTo(base + annualRent * 0.1, 6);
+    // The management fee is a percentage OF rent, so 10% more rent carries
+    // 10% more fee; holding the fee at its base-case dollars overstated the
+    // upside by exactly that fee (QA-09, 15 Sep 2026).
+    const extraRent = annualRent * 0.1;
+    const extraFee = extraRent * (annualCosts.propertyManagementPercent / 100);
+    expect(s.rentChanges.plus10Percent).toBe(Math.round(base + extraRent - extraFee));
+    expect(s.rentChanges.minus10Percent).toBe(Math.round(base - extraRent + extraFee));
+    expect(s.baseCase.annualNet).toBe(Math.round(base));
+  });
+
+  it('every scenario carries the parameter it actually tested (QA-08)', () => {
+    const s = calculateSensitivityAnalysis({ ...input, interestRate: rateInfo.rate }, monthlyPayment, annualCosts);
+    const labels = s.scenarios.map((x) => x.label);
+    expect(labels).toEqual([
+      'Interest rate 5.5% (−1.0 pt)', 'Interest rate 7.5% (+1.0 pt)', 'Interest rate 8.5% (+2.0 pt)',
+      'Rent −10%', 'Rent +10%', 'Rent +20%',
+    ]);
+    const plusOne = s.scenarios.find((x) => x.id === 'plus1Percent')!;
+    expect(plusOne.kind === 'rate' && plusOne.rate).toBe(7.5);
+    expect(plusOne.annualNet).toBe(s.interestRateChanges.plus1Percent);
+    expect(plusOne.annualNet).toBeLessThan(s.baseCase.annualNet);
   });
 });
 

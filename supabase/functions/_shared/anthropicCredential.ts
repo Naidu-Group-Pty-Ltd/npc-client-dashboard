@@ -207,7 +207,7 @@ async function exchange(
   opts?: { readonly cache?: boolean },
 ): Promise<CredentialResult> {
   const identity = await requestIdentity(route);
-  if (!identity.ok) return { ok: false, why: identity.why, end: 'mission_control' };
+  if (identity.ok === false) return { ok: false, why: identity.why, end: 'mission_control' };
 
   const { grant } = identity;
 
@@ -427,7 +427,7 @@ export async function describeAnthropicReach(
     ? await exchange(route, { cache: false })
     : await resolveAnthropicCredential();
 
-  if (!resolved.ok) {
+  if (resolved.ok === false) {
     return {
       reach: {
         route: route.via,

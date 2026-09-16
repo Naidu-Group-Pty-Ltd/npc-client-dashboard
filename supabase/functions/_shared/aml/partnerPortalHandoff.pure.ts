@@ -97,6 +97,20 @@ export interface HandoffFacts {
   hasActiveMembership: boolean;
 }
 
+/**
+ * Surfaces whose portal LEFT this deployment (extraction plan §7 Phase 6).
+ *
+ * `/builder/*` is a redirect to the central Builders Network now, and the
+ * network has no in-portal Passport surface yet — that arrives with E4's
+ * network → clone server-side call. Until it does, offering the builder door
+ * would send a partner to another product's login with no Passport behind
+ * it, which is exactly the door-that-refuses this module exists to prevent.
+ * The route table above keeps the paths (they are the revival, and history),
+ * the handoff refuses by name here, and the emailed `/passport/<token>` link
+ * — which is portal-independent — remains the builder partner's way in.
+ */
+const MOVED_SURFACES: ReadonlySet<PortalRoute["surface"]> = new Set(["builder"]);
+
 export interface PortalHandoff {
   /** Whether to offer it at all. */
   available: boolean;
@@ -111,7 +125,7 @@ export interface PortalHandoff {
    * never rendered to a partner: "your organisation has no enrolled portal
    * account" is our configuration, not their business.
    */
-  reason: "no_portal" | "surface_disabled" | "not_enrolled" | null;
+  reason: "no_portal" | "portal_moved" | "surface_disabled" | "not_enrolled" | null;
 }
 
 export function portalHandoff(facts: HandoffFacts, origin?: string | null): PortalHandoff {
@@ -123,6 +137,11 @@ export function portalHandoff(facts: HandoffFacts, origin?: string | null): Port
     return { available: false, portalType: null, label: null, path: null, url: null, reason: "no_portal" };
   }
   const base = { portalType: type, label: route.label };
+  if (MOVED_SURFACES.has(route.surface)) {
+    // Checked before enrolment and the flag: a moved portal is unavailable
+    // whatever this deployment's configuration says about it.
+    return { ...base, available: false, path: null, url: null, reason: "portal_moved" as const };
+  }
   if (!facts.surfaceEnabled) {
     return { ...base, available: false, path: null, url: null, reason: "surface_disabled" as const };
   }

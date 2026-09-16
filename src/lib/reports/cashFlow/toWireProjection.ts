@@ -56,6 +56,7 @@ export interface ModalBaseFinancials {
   weeklyRent: number;
   stampDuty: number;
   solicitorFees: number;
+  inspectionFees?: number;
   lmiAmount: number;
   capitalGrowth: number;
   cpiGrowthRate: number;
@@ -104,6 +105,7 @@ function toAcquisition(base: ModalBaseFinancials): WireAcquisition {
   const costs = [
     { label: 'Stamp duty', amount: finite(base.stampDuty) },
     { label: 'Legal fees', amount: finite(base.solicitorFees) },
+    { label: 'Inspection fees', amount: finite(base.inspectionFees) },
     { label: "Lenders mortgage insurance", amount: finite(base.lmiAmount) },
   ].filter((c) => c.amount > 0);
 

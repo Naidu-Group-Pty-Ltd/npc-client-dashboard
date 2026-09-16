@@ -20,11 +20,16 @@ import {
  *
  * The rule that shapes it: **a generated report is pointed at, never copied.**
  * The PDF already sits in storage, and a second copy would double the bytes
- * and, worse, silently diverge the moment the report is regenerated. The one
- * exception is the borrowing capacity assessment, which genuinely has no
- * document until somebody asks for one — publishing renders it, and that is
- * declared as `on_publish` before the operator commits rather than discovered
- * as a failure afterwards.
+ * and, worse, silently diverge the moment the report is regenerated. Two
+ * sources genuinely have no document until somebody asks for one — the
+ * borrowing capacity assessment, and a stored portfolio analysis whose file
+ * upload failed — so publishing renders it, declared as `on_publish` before
+ * the operator commits rather than discovered as a failure afterwards. Since
+ * RS-5c.3 that render is pointed at too: the route (or the final template
+ * renderer) stores and ledgers the document and answers where, and the row is
+ * written with THAT path. A copy is uploaded to `portal-reports/…` only for a
+ * document nothing stored — the in-browser generator on the deployment-gap
+ * fallback — because that file exists nowhere else.
  *
  * The reference is normalised through `parseStorageRef` before it is written.
  * `storageRef.ts` records four shapes these columns have been written in, two
@@ -58,7 +63,45 @@ export interface PublishOutcome {
   ok: boolean;
   storagePath?: string;
   generated?: boolean;
+  /**
+   * True when a copy was uploaded to `portal-reports/…`; false when the row
+   * points at the object the renderer stored (the normal case since RS-5c.3).
+   */
+  uploaded?: boolean;
   error?: string;
+}
+
+/**
+ * Where the portal row should point.
+ *
+ * The renderer that produced the document already stored it and answered the
+ * path, so that is what is published. Only a document with no stored object —
+ * the in-browser generator, reached when the render route is not deployed —
+ * is uploaded, to the same portal prefix it always was.
+ */
+async function storedOrUploaded(
+  produced: { blob: Blob; storagePath?: string | null },
+  clientId: string,
+  clientName: string,
+  documentName: string,
+  onProgress?: (message: string) => void,
+): Promise<{ storagePath: string; uploaded: boolean } | { error: string }> {
+  if (produced.storagePath) return { storagePath: produced.storagePath, uploaded: false };
+
+  const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
+  const dateStr = format(new Date(), 'yyyy-MM-dd_HHmmss');
+  const uploadPath = `portal-reports/${clientId}/${documentName}_${safeName}_${dateStr}.pdf`;
+
+  onProgress?.('Uploading…');
+  const uploadResult = await secureStorageUpload('client-files', uploadPath, produced.blob, {
+    contentType: 'application/pdf',
+    upsert: true,
+    resourceId: clientId,
+  });
+  if (!uploadResult.success) {
+    return { error: 'Failed to upload PDF: ' + (uploadResult.error ?? 'unknown error') };
+  }
+  return { storagePath: uploadResult.path || uploadPath, uploaded: true };
 }
 
 export async function publishReportToPortal(req: PublishRequest): Promise<PublishOutcome> {
@@ -72,6 +115,7 @@ export async function publishReportToPortal(req: PublishRequest): Promise<Publis
 
   let storagePath = verdict.storagePath;
   let generated = false;
+  let uploaded = false;
 
   if (verdict.readiness === 'unavailable') {
     return { ok: false, error: verdict.reason };
@@ -94,21 +138,10 @@ export async function publishReportToPortal(req: PublishRequest): Promise<Publis
         request: { reportId: report.id },
       });
 
-      const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
-      const dateStr = format(new Date(), 'yyyy-MM-dd_HHmmss');
-      const uploadPath = `portal-reports/${clientId}/Portfolio_Analysis_${safeName}_${dateStr}.pdf`;
-
-      onProgress?.('Uploading…');
-      const uploadResult = await secureStorageUpload('client-files', uploadPath, review.blob, {
-        contentType: 'application/pdf',
-        upsert: true,
-        resourceId: clientId,
-      });
-      if (!uploadResult.success) {
-        return { ok: false, error: 'Failed to upload PDF: ' + (uploadResult.error ?? 'unknown error') };
-      }
-
-      storagePath = uploadResult.path || uploadPath;
+      const placed = await storedOrUploaded(review, clientId, clientName, 'Portfolio_Analysis', onProgress);
+      if ('error' in placed) return { ok: false, error: placed.error };
+      storagePath = placed.storagePath;
+      uploaded = placed.uploaded;
       generated = true;
     } catch (err: any) {
       return { ok: false, error: 'Failed to produce the review: ' + (err?.message || 'Unknown error') };
@@ -123,10 +156,9 @@ export async function publishReportToPortal(req: PublishRequest): Promise<Publis
         return { ok: false, error: 'No borrowing capacity assessment found. Calculate capacity first.' };
       }
 
-      // The only path that does not hand the file to the browser: it uploads
-      // to the portal prefix instead. `snapshotBlob` keeps that contract — a
-      // blob and a filename, produced with no download side effect — while
-      // giving this path the same renderer as every button beside it.
+      // The only path that does not hand the file to the browser. `snapshotBlob`
+      // answers the bytes with no download side effect — and, since RS-5c.3,
+      // where the renderer stored them, so the row below points at that object.
       const result = await snapshotBlob({
         variant: 'server',
         request: { clientId, clientName },
@@ -146,21 +178,10 @@ export async function publishReportToPortal(req: PublishRequest): Promise<Publis
 
       if (!result?.blob) return { ok: false, error: 'PDF generation failed' };
 
-      const safeName = clientName.replace(/[^a-zA-Z0-9]/g, '_');
-      const dateStr = format(new Date(), 'yyyy-MM-dd_HHmmss');
-      const uploadPath = `portal-reports/${clientId}/Borrowing_Capacity_${safeName}_${dateStr}.pdf`;
-
-      onProgress?.('Uploading…');
-      const uploadResult = await secureStorageUpload('client-files', uploadPath, result.blob, {
-        contentType: 'application/pdf',
-        upsert: true,
-        resourceId: clientId,
-      });
-      if (!uploadResult.success) {
-        return { ok: false, error: 'Failed to upload PDF: ' + (uploadResult.error ?? 'unknown error') };
-      }
-
-      storagePath = uploadResult.path || uploadPath;
+      const placed = await storedOrUploaded(result, clientId, clientName, 'Borrowing_Capacity', onProgress);
+      if ('error' in placed) return { ok: false, error: placed.error };
+      storagePath = placed.storagePath;
+      uploaded = placed.uploaded;
       generated = true;
     } catch (err: any) {
       return { ok: false, error: 'Failed to generate PDF: ' + (err?.message || 'Unknown error') };
@@ -185,7 +206,7 @@ export async function publishReportToPortal(req: PublishRequest): Promise<Publis
       },
     });
     if (error) throw error;
-    return { ok: true, storagePath, generated };
+    return { ok: true, storagePath, generated, uploaded };
   } catch (err: any) {
     return { ok: false, error: err?.message || 'Unknown error' };
   }

@@ -1,5 +1,5 @@
 /**
- * THE THREE WORKFLOWS THAT WRITE AN EDGE SECRET, AND WHO MAY RUN THEM.
+ * THE WORKFLOW THAT WRITES AN EDGE SECRET, AND WHO MAY RUN IT.
  *
  * Writing a Supabase Edge secret from CI needs a Supabase management
  * credential. This repository is the only one in the fleet that holds one: a
@@ -8,22 +8,20 @@
  * because a classic personal access token carries every project in the account
  * including ones created after it was issued.
  *
- * All three of these workflows travel. A mirror clone receives the whole tree,
- * so a byte-identical copy of each sits in every clone repository today, where
- * it can only reach its own "check the credential this job needs" step and
- * fail. That is not harmless: a job that fails naming a missing setting is an
- * invitation to go and set it, and the remedy those messages invite is exactly
- * the one the architecture forbids.
+ * The workflow travels. A mirror clone receives the whole tree, so a
+ * byte-identical copy sits in every clone repository today, where it can only
+ * reach its own "check the credential this job needs" step and fail. That is
+ * not harmless: a job that fails naming a missing setting is an invitation to
+ * go and set it, and the remedy those messages invite is exactly the one the
+ * architecture forbids.
  *
- * `set-builder-stock-pdf-worker-secrets.yml` is worse than inert. Its Supabase
- * half resolves the target from the repository's own `supabase/config.toml`, so
- * on a clone it would write to that clone's project — wrong, but contained. Its
- * Cloudflare half has no indirection at all: `wrangler.jsonc`, which every clone
- * also carries byte-identical, names `builder-stock-pdf-worker` — one worker, on
- * one account. A clone that acquired a Cloudflare token and dispatched it would
- * rotate that worker's bearer for every deployment that calls it and store the
- * new value in its own Supabase project. The workflow's proof step would report
- * success either way, because it probes the worker it has just written to.
+ * There used to be three of these. The two Builder Stock ones
+ * (`set-builder-stock-link-secrets.yml`, `set-builder-stock-pdf-worker-secrets.yml`)
+ * left with the Builder Portal (network extraction Phase 7): the functions and
+ * Cloudflare workers they configured are deleted, so a workflow that could
+ * only write secrets nothing reads was deleted rather than left dormant —
+ * dormant, it is one dispatch away from writing a dead name into a live
+ * project and reporting success.
  *
  * These tests EXECUTE the guard rather than reading it, which is also why each
  * guard compares in the shell instead of in a step `if:` expression: an
@@ -38,8 +36,6 @@ import { spawnSync } from 'node:child_process';
 const OWNER = 'Naidu-Group-Pty-Ltd/npc-property-dashbord';
 
 const WORKFLOWS = [
-  '.github/workflows/set-builder-stock-link-secrets.yml',
-  '.github/workflows/set-builder-stock-pdf-worker-secrets.yml',
   '.github/workflows/rotate-internal-edge-secret.yml',
 ];
 
@@ -140,25 +136,16 @@ describe.each(WORKFLOWS)('%s — the guard, executed', (path) => {
   });
 });
 
-describe('the Cloudflare half says that it is not local', () => {
-  // The other two write only to the repository's own Supabase project. This
-  // one also writes a secret on an account that hosts a single worker, so its
-  // refusal carries a second line naming that — an operator reading only the
-  // error should understand why this is not a setting they can fix here.
-  const script = guardScript(read('.github/workflows/set-builder-stock-pdf-worker-secrets.yml'));
-
-  it('names the shared worker in the refusal', () => {
-    const { output } = runGuard(script, 'Naidu-Group-Pty-Ltd/npc-test-76b3b3', OWNER);
-    expect(output).toContain('Cloudflare');
-    expect(output).toContain('wrangler.jsonc');
-    expect(output).toContain('one worker on one account');
-  });
-
-  it('and wrangler.jsonc really does name exactly one worker', () => {
-    // The claim in that message is only true while this holds. A per-clone
-    // worker name would make the refusal wrong rather than merely stale.
-    const wrangler = read('cloudflare/builder-stock-pdf-worker/wrangler.jsonc');
-    const names = [...wrangler.matchAll(/^ {2}"name":\s*"([^"]+)"/gm)].map((m) => m[1]);
-    expect(names).toEqual(['builder-stock-pdf-worker']);
+describe('the deleted Builder Stock secrets workflows stay deleted', () => {
+  // Phase 7 deleted the two workflows this file used to pin alongside the
+  // rotation. Their targets are gone (`builder-stock-link-callback`, both
+  // Cloudflare workers), so a restored copy could only write secrets nothing
+  // reads — and its Cloudflare half named one shared worker on one account,
+  // which every clone's byte-identical copy could rotate for everyone.
+  it.each([
+    '.github/workflows/set-builder-stock-link-secrets.yml',
+    '.github/workflows/set-builder-stock-pdf-worker-secrets.yml',
+  ])('%s does not exist', (path) => {
+    expect(() => readFileSync(path)).toThrow();
   });
 });

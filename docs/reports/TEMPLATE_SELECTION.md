@@ -474,3 +474,58 @@ reports) and `investment_compass` for the compass tier (1,124), so a row has to
 exist under **both** spellings or one of the two groups resolves nothing.
 Correcting the tier fix's spelling was necessary and, on its own, changed no
 document.
+
+## A chosen template that cannot carry the report is composed, never shipped empty
+
+Measured on 15 Sep 2026. A person chose the library's **First-Home Buyer
+Report** for an Investment report and received five pages: a cover reading
+"Prepared for" with no name after it, three pages carrying only their
+headings, and a disclaimer — 225 KB, PDF/UA-tagged, under the tenant's own
+letterhead, recorded in `template_render_jobs` as `succeeded`. The template is
+seeded against a sample preset (`client.deposit`, `finance.capacity`,
+`grants.fhog`, `steps.0`, `prep.0.owner`): 48 bound paths, of which 7 resolve
+on a real Investment row and none of those is content — the address in the
+running foot and the letterhead on the disclaimer page. Two guards existed and
+neither could see it: `refuseUnboundReconstruction` catches a static copy of
+one client's report, and the route's empty-context guard catches an adapter
+that published nothing. A template that binds the **wrong** vocabulary passed
+both.
+
+`templateBindingCoverage.pure.ts` measures it, against the data the adapter
+actually built and never against a sample: every bound path — `{{…}}`
+bindings, bare `dataPath` props, dotted paths in conditionals — is resolved
+exactly as the renderer resolves it, and each page is classified by what it is
+for (cover, closing, content, furniture). The decision the route acts on is
+narrow on purpose: **`needsComposition` is true only when the template binds
+content and none of it resolves.** A template that binds nothing is a brochure
+and is drawn as designed; one that resolves even one content field is the
+author's document and is drawn as designed, blank pages included — that is
+their call, and the toast is the place to say so.
+
+`templateComposition.pure.ts` is what happens instead of the empty document.
+The chosen template is honoured as a **design**: its cover and closing pages
+are kept, its pages of static prose are kept, its pages that bind content and
+resolve none of it are left out, and the report body is drawn from a **donor**
+— a published template for the format that carries it — under the chosen
+template's own tokens. Both kinds of template share one `TokensSchema`, which
+is what makes the palette portable; a token the chosen template does not
+declare falls back to the donor's, so a block naming `token:info` never prints
+the literal. A kept label whose every binding is absent is blanked rather than
+half-printed ("Prepared for" with nothing after it). The donor's pages are
+never rewritten: their conditionals still decide what prints.
+
+The donor is found by `findBodyDonor` in the route: the ranking's own answer
+first — except that `resolve_report_template` ranks a person's own templates
+above the global masters, so the template that cannot carry the report is
+often the ranking's pick too — then the published set, defaults and global
+scope first, one schema at a time up to eight, preferring a template that
+carries the format's narrative over one that merely resolves content. Where
+none does, the route refuses `template_carries_no_content` and the standard
+document is produced, said out loud like every other refusal.
+
+Proved on the real engine: the First-Home Buyer Report composed over "Luxury
+Editorial — Frontispiece · Midnight Editorial" for 291 Stone Mason Drive
+renders 30 pages on WeasyPrint 69.0 — the chosen cover, the master's contents,
+dashboard, financial pages and 22 narrative pages in the chosen gold-on-cream
+palette, the method page, and the chosen disclaimer — where the same choice
+had produced five. `templateComposition.spec.ts` pins the rules.

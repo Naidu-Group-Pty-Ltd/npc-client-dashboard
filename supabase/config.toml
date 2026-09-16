@@ -934,6 +934,11 @@ verify_jwt = false
 [functions.mission-control-plan-change]
 verify_jwt = false
 
+# Same family, same auth shape: verifies the session itself via `verifyAuth`,
+# so the platform JWT gate stays off.
+[functions.mission-control-announcements]
+verify_jwt = false
+
 [functions.mission-control-key-info]
 verify_jwt = false
 

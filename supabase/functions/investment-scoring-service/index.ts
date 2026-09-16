@@ -24,6 +24,10 @@ import {
   scoreForProduction,
   type ProductionScoringInput,
 } from '../_shared/reports/market/scoringV2Production.pure.ts';
+// IPV-1.1.0 (16 Sep 2026) — Location's verification is DERIVED from the
+// enrichment's own RF-7.2B acquisition stamp, in this service, never read
+// from a request field a caller could assert.
+import { verifiedLocationInputs } from '../_shared/reports/market/locationInputVerification.pure.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -183,6 +187,16 @@ function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
   const financials = rawInput.financials || {};
   const locationIntelligence = rawInput.locationIntelligence || {};
   const keyMetrics = financials.keyMetrics || {};
+  const locationVerification = verifiedLocationInputs(
+    rawInput.locationIntelligence ?? null,
+    rawInput.locationSubject && typeof rawInput.locationSubject === 'object'
+      ? rawInput.locationSubject
+      : {},
+  );
+  console.log(
+    `📍 Location verification: [${locationVerification.verified.join(', ') || 'none'}]`
+    + (locationVerification.notes.length ? ` — ${locationVerification.notes.join('; ')}` : ''),
+  );
   const num = (v: unknown): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null;
   const str = (v: unknown): string | null =>
@@ -221,11 +235,15 @@ function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
       commuteTimeCBD: locationIntelligence.commute?.durationMinutes ?? null,
       schoolsNearby: locationIntelligence.schools?.schoolsWithin3km ?? null,
     },
-    // Deliberately NOT read from the request. `verifiedInputs` stays unwired
-    // on the live path exactly as the input policy records: the event that
-    // wires it is the repair of the location service, with a decision behind
-    // it, and until then Location is null and disclosed rather than defaulted.
-    verifiedInputs: [],
+    // DERIVED from the enrichment's RF-7.2B acquisition stamp, never read
+    // from the request: the stamp must name the same subject the caller is
+    // scoring (`locationSubject`, restated by the generator) and the stage
+    // that produced each reading must have run. A stampless enrichment —
+    // every row persisted before RF-7.2B — verifies nothing and scores
+    // exactly as before. The wiring event the input policy required is
+    // recorded in `scoringInputPolicy.pure.ts` (IPV 1.1.0) and the rule
+    // lives in `locationInputVerification.pure.ts`.
+    verifiedInputs: locationVerification.verified,
     evidenceWithheldReason: str(rawInput.evidenceWithheldReason),
     now,
   };

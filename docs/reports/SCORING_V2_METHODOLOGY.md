@@ -53,10 +53,46 @@ activation is approved, and it still cannot spell `v2`
 
 What it does not change: no weight, anchor, ceiling or rule in this document;
 nothing about the forward-only input policy (Location's three inputs stay
-`requires_repair` and are refused until a caller declares them verified, so
-Location is null today and disclosed); and no stored row — a score issued
-under V1 keeps its stamp, a withholding keeps its stamp, and the next run of a
-report is the first to carry `v2`.
+`requires_repair` and count only when declared verified for the run — see IPV
+1.1.0 below for how that declaration is now made); and no stored row — a
+score issued under V1 keeps its stamp, a withholding keeps its stamp, and the
+next run of a report is the first to carry `v2`.
+
+### Location verification — IPV 1.1.0, 16 September 2026
+
+The input policy's own header required "the repair of the location service,
+with a decision behind it" before `verifiedInputs` could reach the live path.
+Both arrived. The repair is the measured location chain: every geocode goes
+through the granularity-gated provider chain
+(`GEOCODING_WITHOUT_GOOGLE.md` — a state centroid is refused whoever answered),
+amenities are measured at the verified coordinate from the local OSM amenity
+register or Places, the commute is a real route from that coordinate (OSRM or
+the Distance Matrix), and RF-7.2B stamps every acquisition with the subject
+it describes and whether each stage ran. The decision is the platform owner's
+instruction of 16 September 2026 that a measured run stop scoring as partial
+(the reported case: 85 Bronze Street, Maryborough — grade C at 64 with
+`3 of 5 dimensions`, the C being the delivered-points ceiling on 70% weight).
+
+The wiring is a derivation, never a request field.
+`investment-scoring-service` reads the enrichment's own acquisition stamp
+(`locationInputVerification.pure.ts`): an input is verified exactly when the
+stamp's `subjectKey` equals the key of the subject the generator restates on
+the request (`locationSubject` — same address, postcode and state under the
+canonical normalisation), the stage that produced the reading ran (`places:
+complete` for the walk score and school count, `commute: measured` for the
+commute), and the reading is a finite number on the stamped object. A
+stampless enrichment — every row persisted before RF-7.2B — verifies nothing
+and scores exactly as before; the remedy is regeneration, which re-acquires
+with a stamp. A caller-asserted `verifiedInputs` on the request body is still
+never read, because evidence travels with the object that carries the
+readings. Wiring Location can never lower a grade: the delivered points only
+rise when a dimension is added, and the renormalised composite stays at or
+above the old nominal sum — though the composite NUMBER can move either way,
+because a genuinely weak location (a regional property three hours from its
+capital) now measures instead of being excluded. Risk stays null under the
+recorded Model D decision (`propertyRiskSchema.pure.ts`): the platform holds
+no property-level risk evidence, and 95 of 100 nominal points keeps every
+grade to A+ reachable.
 
 **Growth is required.** The engine's own floor is three measured dimensions,
 and on the evidence this deployment holds today three can be reached without

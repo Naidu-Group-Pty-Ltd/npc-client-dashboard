@@ -452,12 +452,18 @@ describe('verified inputs never rehabilitate V1', () => {
     }
   });
 
-  it('the field is documented as unwired rather than as a future switch', () => {
+  it('the wiring is documented as a derivation with a decision behind it, never a request field', () => {
+    // Until 16 Sep 2026 this test pinned "not wired to the live request
+    // path". The wiring event the header required — the location repair plus
+    // an owner decision — happened (IPV 1.1.0), and what the prose must now
+    // record is the shape that keeps the boundary: derived from the
+    // enrichment's acquisition stamp, never read off the request.
     const policySrc = readFileSync(
       join(ROOT, 'supabase', 'functions', '_shared', 'reports', 'market', 'scoringInputPolicy.pure.ts'),
       'utf8',
     );
-    expect(policySrc).toMatch(/not wired to the live request path/i);
+    expect(policySrc).toMatch(/wired to exactly one live path, and it is derived, never\s*\n?\s*\* read/i);
+    expect(policySrc).toMatch(/never trusted: a caller cannot assert verification/i);
     expect(policySrc).toMatch(/trusted evidence → Scoring V2/);
     // The overstated claim must not return.
     expect(policySrc).not.toMatch(/opens by itself/);

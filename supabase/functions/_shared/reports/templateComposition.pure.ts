@@ -16,6 +16,25 @@
  * palette portable; a token the chosen template does not declare falls back to
  * the donor's, so a block naming `token:info` never prints the literal.
  *
+ * ## The cover must speak for THIS report
+ *
+ * A cover is the page that says what the document IS, and it is the one page
+ * whose static words the coverage measure cannot judge: text between bindings
+ * is invisible to it. Measured on 16 Sep 2026, the First-Home Buyer Report's
+ * cover shipped as page 1 of an Investment report reading "FIRST HOME / Your
+ * First Property" — its only bindings are the tenant's own mark
+ * (`org.markMono`, which resolves on every report of every format) and
+ * `client.name` (the ADDRESSEE, which resolves on every format prepared for
+ * that person), so nothing on it could ever say which document it fronts, and
+ * its static words claimed a different one. The rule: **a chosen cover is kept
+ * only where it resolves at least one binding that names this document** — a
+ * path outside the tenant (`org`, `brand`) and addressee (`client`)
+ * namespaces, such as `report.title` or `property.address`. A cover that
+ * cannot is left out with the blank pages, and the donor's cover — which
+ * carries the report's identity by construction — leads the document under
+ * the merged tokens, so the choice still decides how page 1 LOOKS while the
+ * record decides what it SAYS.
+ *
  * ## What it never does
  *
  * It never invents a page: every page in the result exists in one of the two
@@ -90,8 +109,14 @@ export interface CompositionResult {
   kept: Array<{ name: string; kind: PageCoverage['kind'] }>;
   /** Chosen pages left out because nothing on them resolves. */
   dropped: Array<{ name: string; kind: PageCoverage['kind'] }>;
-  /** Donor pages carried into the body. */
+  /** Donor pages carried into the body (the donor's cover included, when it leads). */
   bodyPages: number;
+  /**
+   * Whose cover leads the document. `chosen` when the chosen cover names this
+   * report; `donor` when it could not and the donor's cover stands in under
+   * the merged tokens; `none` when neither template has one.
+   */
+  coverFrom: 'chosen' | 'donor' | 'none';
   chosen: TemplateCoverage;
   donor: TemplateCoverage;
 }
@@ -122,6 +147,25 @@ export function mergeTokens(
 }
 
 const TEMPLATE_LEVEL_EXCLUDED = new Set(['name', 'tokens', 'pages', 'slots', 'pageMasters']);
+
+/** Namespaces about the TENANT (letterhead) or the ADDRESSEE, never the document. */
+const NON_IDENTITY_NAMESPACES: ReadonlySet<string> = new Set(['org', 'brand', 'client']);
+
+/**
+ * Does this cover resolve anything that names THIS document?
+ *
+ * The tenant's mark resolves on every report of every format, and the client's
+ * name on every format prepared for that person — neither says which document
+ * the page fronts, so neither can vouch for the cover's static words. Anything
+ * else that resolves (`report.title`, `property.address`, a content field)
+ * is this report speaking on its own cover.
+ */
+export function coverNamesThisReport(cover: PageCoverage): boolean {
+  return cover.resolved.some((path) => {
+    const m = /^([A-Za-z_$][\w$]*)/.exec(path);
+    return !NON_IDENTITY_NAMESPACES.has(m ? m[1] : path);
+  });
+}
 
 /**
  * Compose `chosen` over `donor` for this report's data.
@@ -157,6 +201,10 @@ export function composeTemplateWithDonor(
   for (const pc of chosenCov.pages) {
     const page = chosenPages[pc.index];
     if (pc.kind === 'cover') {
+      // A cover that cannot name this report goes with the blank pages: its
+      // static words were written for the vocabulary the template binds, and
+      // nothing this report publishes can vouch for them. See the header.
+      if (!coverNamesThisReport(pc)) { dropped.push({ name: pc.name, kind: pc.kind }); continue; }
       chosenHasCover = true;
       front.push(page); kept.push({ name: pc.name, kind: pc.kind }); continue;
     }
@@ -166,9 +214,16 @@ export function composeTemplateWithDonor(
   }
 
   const chosenHasClosing = back.length > 0;
+  // The donor's cover LEADS when the chosen one was refused or absent — a
+  // document's first page is its cover, whichever template donates it — and
+  // it draws under the merged tokens, so the choice still decides the palette.
+  const lead: ComposablePage[] = [];
   const body: ComposablePage[] = [];
   for (const pc of donorCov.pages) {
-    if (pc.kind === 'cover' && chosenHasCover) continue;
+    if (pc.kind === 'cover') {
+      if (!chosenHasCover) lead.push(donorPages[pc.index]);
+      continue;
+    }
     if (pc.kind === 'closing' && chosenHasClosing) continue;
     body.push(donorPages[pc.index]);
   }
@@ -185,6 +240,7 @@ export function composeTemplateWithDonor(
     return { ...page, id: candidate };
   };
   const pages = [
+    ...lead.map((p) => uniqueId(p, 'body')),
     ...front.map((p) => uniqueId(scrubPage(p, data), 'chosen')),
     ...body.map((p) => uniqueId(p, 'body')),
     ...back.map((p) => uniqueId(scrubPage(p, data), 'chosen')),
@@ -203,5 +259,13 @@ export function composeTemplateWithDonor(
   schema.slots = { ...(donor.slots ?? {}), ...(chosen.slots ?? {}) };
   schema.pageMasters = { ...(donor.pageMasters ?? {}), ...(chosen.pageMasters ?? {}) };
 
-  return { schema, kept, dropped, bodyPages: body.length, chosen: chosenCov, donor: donorCov };
+  return {
+    schema,
+    kept,
+    dropped,
+    bodyPages: lead.length + body.length,
+    coverFrom: chosenHasCover ? 'chosen' : lead.length > 0 ? 'donor' : 'none',
+    chosen: chosenCov,
+    donor: donorCov,
+  };
 }

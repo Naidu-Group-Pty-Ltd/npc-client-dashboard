@@ -170,10 +170,12 @@ export interface TemplateBuilderRouteResult {
   } | null;
   /**
    * Set when the chosen template could not carry the report and was composed
-   * over a donor: its cover and closing pages kept, its content pages that
-   * resolved nothing of this report left out, and the report body drawn from
-   * the donor's pages under the chosen template's tokens. Null when the
-   * template was drawn as designed. See `templateComposition.pure.ts`.
+   * over a donor: its closing pages kept, its cover kept only where it
+   * resolves this report's identity, its content pages that resolved nothing
+   * of this report left out, and the report body — and the cover, where the
+   * chosen one could not name this report — drawn from the donor's pages
+   * under the chosen template's tokens. Null when the template was drawn as
+   * designed. See `templateComposition.pure.ts`.
    */
   composed: {
     donorTemplateId: string;
@@ -183,6 +185,8 @@ export interface TemplateBuilderRouteResult {
     /** Names of the chosen template's pages left out. */
     dropped: string[];
     bodyPages: number;
+    /** Whose cover leads the composed document. */
+    coverFrom: 'chosen' | 'donor' | 'none';
   } | null;
 }
 
@@ -590,11 +594,12 @@ export async function routeReportThroughTemplate(
           kept: composition.kept.map((p) => p.name),
           dropped: composition.dropped.map((p) => p.name),
           bodyPages: composition.bodyPages,
+          coverFrom: composition.coverFrom,
         };
         console.info(
           `[routeReportThroughTemplate] composed ${tplRow.name ?? tplRow.id} over ${donor.name ?? donor.id}: `
           + `kept ${composed.kept.join(', ') || 'nothing'}; dropped ${composed.dropped.join(', ') || 'nothing'}; `
-          + `${composition.bodyPages} body pages`,
+          + `${composition.bodyPages} body pages; cover from ${composition.coverFrom}`,
         );
       }
 

@@ -577,6 +577,23 @@ undercount as confidently as a complete one. A run scoped to named
 categories is a repair, not the nightly sweep, and gets budget for the
 ladder.
 
+**And the hold-back the fix left behind, measured on the first slow
+night.** On 16 Sep 2026 the nightly sweep (16:00–16:42 UTC) met a
+mirror answering in ~45–50 s a request, and `schools` failed outright
+in VIC and QLD — aborted at the 50 s union-first window with nothing
+behind it. That window is a HOLD-BACK FOR THE LADDER, and `schools` is
+a category of ONE tag pair: its union is its only query, so the
+shorter window bought nothing and cost the difference between 50 s
+and the 100 s ceiling it was entitled to. A single-pair category now
+gets the whole ceiling on its first and only attempt
+(`filters.length > 1 ? UNION_FIRST_WINDOW_MS : FETCH_CEILING_MS`), and
+the ladder still runs only where there is more than one pair. The
+multi-pair failures that same night were the run BUDGET rather than
+the window — six categories against 120 s at 50 s a request — which
+is the designed hand-off: the starting category rotates by day, so a
+clipped tail is a different tail tomorrow, and a slice that failed
+leaves the previous load standing rather than emptying an area.
+
 Two observations for the record. One campus appeared twice in
 `topSchools` (an OSM node AND way both tagged for it) — the register
 deliberately does not merge same-name elements, because absent

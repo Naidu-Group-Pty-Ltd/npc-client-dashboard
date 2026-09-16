@@ -161,6 +161,18 @@ describe('the ingest owes the mirror its etiquette', () => {
     expect(ceiling).toBeGreaterThan(granted * 1000);
   });
 
+  it('gives a single-pair category the whole ceiling, not the ladder’s hold-back', () => {
+    // The union-first window exists to leave room for the per-pair ladder,
+    // and a one-pair category has no ladder — measured 16 Sep 2026, VIC and
+    // QLD `schools` were aborted at the 50 s hold-back under a slow mirror
+    // and failed outright with nothing to fall back to.
+    expect(INGEST).toContain(
+      'filters.length > 1 ? UNION_FIRST_WINDOW_MS : FETCH_CEILING_MS',
+    );
+    // The ladder itself still only runs where there is more than one pair.
+    expect(INGEST).toMatch(/if \('error' in fetched && filters\.length > 1\)/);
+  });
+
   it('falls back to the per-pair ladder, and every pair must succeed', () => {
     expect(INGEST).toContain('retrying per tag pair');
     // A category missing one pair's rows would undercount as confidently

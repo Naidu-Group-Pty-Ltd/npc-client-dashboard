@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Bed, Bath, Building2, Car, CheckCircle2, ChevronLeft, ChevronRight,
-  ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, UserPlus,
+  ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, Sparkles, UserPlus,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -30,7 +30,8 @@ import {
   homeSizeDisplay,
   primaryStockImage, stockImageProvenance, STOCK_PROVENANCE_LABEL,
   SELECTABLE_AVAILABILITY, stockItemConfiguration, stockItemLocality,
-  stockItemPrice, stockItemTitle, STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
+  stockItemPrice, stockItemTitle, stockPlacementLabel,
+  STOCK_AVAILABILITY_CLASSES, STOCK_AVAILABILITY_LABELS,
   STOCK_IMAGE_STAGE_BADGES, STOCK_IMAGE_STAGE_LABELS, STOCK_SELECTION_STATUS_LABELS,
   type BuilderStockImage, type BuilderStockItem, type StockAvailability,
 } from '@/lib/builderStock';
@@ -281,6 +282,7 @@ function StockCard({
   const availabilityStatus = item.availability_status as StockAvailability;
   const selection = item.selections?.[0] ?? null;
   const selectable = SELECTABLE_AVAILABILITY.has(availabilityStatus);
+  const placement = stockPlacementLabel(item);
 
   return (
     <Card className="flex flex-col overflow-hidden rounded-2xl border-border/70 bg-card/90 shadow-[0_10px_30px_rgba(15,23,42,0.06)] dark:border-white/10 dark:bg-background/80">
@@ -302,6 +304,29 @@ function StockCard({
             <Badge variant="outline" className="border-primary/30 bg-primary/10 font-medium text-primary">
               <CheckCircle2 className="mr-1 h-3 w-3" aria-hidden />
               {STOCK_SELECTION_STATUS_LABELS[selection.status]}
+            </Badge>
+          ) : null}
+          {/*
+            * WHERE A POSITION WAS NOT DECIDED BY MERIT, THE CARD SAYS SO.
+            *
+            * An adviser reads this list and then recommends what is on it to a
+            * client, so a property a builder paid to place — or that an
+            * operator pinned — carries a label where that decision is read.
+            * `rank_disclose` is set on the network, once, so the prime and
+            * every clone cannot disagree about whether a position was bought;
+            * the card cannot suppress it and there is no prop to turn it off.
+            *
+            * A chip with nothing to state is not drawn, rather than drawn
+            * empty — an ordinary listing gets no badge at all.
+            */}
+          {placement ? (
+            <Badge
+              variant="outline"
+              className="border-warning/40 bg-warning/10 font-medium text-warning"
+              title="This builder's placement in the marketplace was arranged rather than earned by ranking."
+            >
+              <Sparkles className="mr-1 h-3 w-3" aria-hidden />
+              {placement}
             </Badge>
           ) : null}
         </div>

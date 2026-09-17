@@ -2430,6 +2430,65 @@ bucketing rather than native cascade layers, so **specificity decides** and a
 descendant-of-root selector out-ranks a utility — which is what lets one rule
 re-skin ~40 shadcn badges without touching a page.
 
+## The builder ranking (which builder's stock an adviser sees first)
+Read [`docs/builder-portal/47-builder-ranking.md`](./docs/builder-portal/47-builder-ranking.md)
+before touching `_shared/builderStock/builderRanking.pure.ts` (network),
+`marketplaceOrder.pure.ts`, the `builder_network_stock_ranked` view, or the
+ranking operations on `builder-network-admin`. The marketplace ordered by
+`created_at DESC` on every deployment, and in a multi-vendor marketplace that
+is not the absence of a ranking — it IS one: it rewards whoever uploaded last,
+no builder can be told their position, and no operator can defend it.
+
+The measurement that shaped the whole design: on 17 Sep 2026 the network held
+**2 builders, 1 with live stock, 43 live properties, 1 activation, and zero
+construction cases, completions, defects, warranty claims or transactions.**
+Almost nothing you would rank a builder on has happened yet.
+
+Five rules carry it. **Absent is never zero** — the rule `rentalEvidence` and
+`placesAvailability` already paid for, applied again: a `not_measured` signal
+leaves BOTH sides of the average, so a builder with no delivery history outranks
+one with a bad delivery history. **A thinly-evidenced score is pulled toward the
+middle** — excluding absent signals would otherwise let one perfect signal beat
+nine good ones, so the measured mean is blended with a neutral prior and
+`confidence` is drawn beside every score. **Merit and money are two numbers and
+never one**: a commercial placement adds NO points, it selects a capped, labelled
+band, and `builder_stock_item_ranks_disclosure` is a CHECK constraint refusing
+any promoted or pinned row with `disclose = false` — held again at the clone's
+mirror. **An override is an act, not a value** — pin, suppress and freeze sit
+beside the computed score with an actor, a reason (10-character floor at the
+column) and an expiry that **defaults to 90 days rather than NULL**, because the
+failure is not a bad expiry but the pin nobody renewed; there is no
+`set_merit_score` and there must never be one. And **the page's shape is not
+part of any score**, which is why the network scorer contains no ordering
+function at all: the network decides what a builder and a property are WORTH and
+that travels, each clone lays out a page from those worths, and a clone computes
+nothing because its mirror is a PARTIAL view of the market — a clone scoring for
+itself would be wrong, not merely different.
+
+Three more that bite. **Tenure cannot be read from `created_at`** (that is when
+a builder joined the network; both live organisations joined weeks before this
+shipped), so it is declared, an ABR-verified date outranks a typed one, and
+neither present is `not_measured` rather than "new". **A price cohort needs
+three distinct BUILDERS** before it may say anything — comparing a builder to a
+cohort of their own stock compares them to themselves — and the score saturates
+at both ends, because a listing 45% under comparable stock describes a different
+product rather than a better deal. And **the interleave is a window function in
+the view, never a pass over rows already fetched**: a cap applied to a page after
+the fact cannot help when the page is already one builder's. Nothing it does is
+a filter — the only property that leaves a marketplace is one an operator
+explicitly suppressed.
+
+Two findings from the same work, recorded in §"What is asserted" of that doc:
+the **stock-sync producer existed only in production** (six functions, three
+triggers, no file — captured verbatim in
+`20260917090000_capture_stock_sync_producer.sql`, because `baseline-check.mjs`
+rebuilds from the repo and a rebuilt environment would have come up with the
+mirror wiring absent), and **a builder's stated figures have never crossed to a
+clone** — the payload composer reads `manual_stats->'bedrooms'` where the
+column's own constraint puts them under `manual_stats->'values'`, so every
+lookup is NULL and it looks exactly like a builder who stated nothing. That one
+is named and deliberately not fixed in a capture migration.
+
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.
 2. Build shadcn-first; use **@21st-dev/magic** for net-new components, then adapt to

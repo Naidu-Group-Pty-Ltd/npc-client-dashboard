@@ -72,6 +72,27 @@ export const STOCK_ITEM_SELECT = `
 `;
 
 /**
+ * The same projection, plus the ranking the Builders Network published and the
+ * two columns the ordering view derives.
+ *
+ * The SIGNAL BREAKDOWN deliberately does not travel. A clone has no surface
+ * that explains a builder's score — the explanation is the network's and
+ * Mission Control's, where the evidence actually lives — and shipping thirteen
+ * signal readings per property to draw a card would be sending an adviser data
+ * they cannot act on and a builder's measured weaknesses to every agency that
+ * sells their stock.
+ */
+export const RANKED_ITEM_SELECT = `
+  ${STOCK_ITEM_SELECT.trim()},
+  rank_item_score, rank_item_confidence,
+  rank_builder_score, rank_builder_confidence, rank_builder_band,
+  rank_placement_kind, rank_placement_position, rank_placement_tier,
+  rank_disclose, rank_version, rank_computed_at,
+  ranked_band, ranked_item_score, ranked_placement_kind,
+  ranked_placement_order, interleave_bucket
+`;
+
+/**
  * Source columns. `error_detail` and `storage_path` are absent: the first is
  * the internal diagnosis, the second is a location no browser needs.
  */

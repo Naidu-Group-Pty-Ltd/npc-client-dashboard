@@ -248,6 +248,27 @@ const RENT_LABELS: Readonly<Record<string, string>> = {
   plus20Percent: 'Rent +20%',
 };
 
+/**
+ * The weekly cash position, with the basis it rests on.
+ *
+ * `reconcileStoredFinancials` re-bases `annualNet` from the contractual rent
+ * onto `weeklyRent x occupancyWeeks`, which is `calculateKeyMetrics`' own
+ * definition — measured on 48 Redfern Street, Cowra: -23,383 becomes -24,273
+ * and -450 a week becomes -467, the two unlet weeks being 890 a year or 17.12
+ * a week. Both quantities are defensible; printing either under the bare label
+ * "Weekly net position" is what left a reader unable to tell a second basis
+ * from a second answer.
+ *
+ * So the row says which. At 52 weeks, or where the record states no occupancy,
+ * there is no second basis and the label is unchanged.
+ */
+function weeklyNetLabel(metrics: Record<string, unknown>, assumptions: Record<string, unknown>): string {
+  const weeks = num(metrics.occupancyWeeks) ?? num(assumptions.occupancyWeeks);
+  return weeks !== undefined && weeks < 52
+    ? `Weekly net position (${weeks} of 52 weeks let)`
+    : 'Weekly net position';
+}
+
 function sensitivity(fin: Record<string, unknown>): ComposedChapter | null {
   const metrics = obj(fin.keyMetrics);
   const sens = obj(fin.sensitivityAnalysis);
@@ -256,7 +277,7 @@ function sensitivity(fin: Record<string, unknown>): ComposedChapter | null {
 
   const position = twoCol(['Year-1 position', 'Value'], [
     ['Annual net cashflow (pre-tax)', money(metrics.annualNet)],
-    ['Weekly net position', money(metrics.weeklyNet)],
+    [weeklyNetLabel(metrics, obj(fin.assumptions)), money(metrics.weeklyNet)],
     ['Total cash invested', money(metrics.totalInvestment)],
     ['Cash-on-cash return', pct(metrics.cashOnCashReturn)],
   ]);
@@ -447,7 +468,7 @@ function financialRiskDashboard(fin: Record<string, unknown>): ComposedChapter |
 
   const deficit = twoCol(['Cash position', 'Recorded value'], [
     ['Year-1 annual cash position (pre-tax)', money(annualNet)],
-    ['Weekly net position', money(metrics.weeklyNet)],
+    [weeklyNetLabel(metrics, assumptions), money(metrics.weeklyNet)],
     [
       horizon !== undefined ? `Cumulative cash position to year ${horizon} (base case)` : 'Cumulative cash position (base case)',
       money(cumulative),

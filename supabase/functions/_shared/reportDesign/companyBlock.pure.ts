@@ -15,6 +15,7 @@
  * document alike.
  */
 import { paragraphsFromWrapped } from './prose.pure.ts';
+import { PLATFORM_ISSUER_NAME, isNonIdentity } from '../reports/issuerIdentity.pure.ts';
 
 /** Contact details as stored in `global_report_settings.contact_details`. */
 export interface CompanyContact {
@@ -41,13 +42,41 @@ export interface ContactRow {
 }
 
 /**
- * Fallback company name.
+ * Who a report is issued by when the workspace has named nobody.
  *
- * Deliberately generic. A white-label tenant whose settings have not been filled
- * in must not have our name printed on their client's report, which is what a
- * hardcoded `"NPC"` here would do.
+ * Aurixa Systems is the reporting platform; an organisation using its
+ * white-label capability supplies its own name, marks, colours and contact
+ * details, and those reach a document through `global_report_settings` and
+ * `whitelabel_settings` exactly as they always have. What changes here is only
+ * the answer when a deployment has supplied none of it.
+ *
+ * It used to be the literal `'Property Consulting'`, chosen so that a tenant
+ * who had filled nothing in would not have somebody else's name on their
+ * client's report — which is right, and was solved the wrong way round.
+ * `issuerIdentity.pure.ts` already lists `'property consulting'` among the
+ * names that are *the absence of a brand rather than a brand*, and already
+ * answers `Aurixa Systems`. So an unbranded document printed the platform's
+ * name on its issuer line and a generic placeholder in the running foot of
+ * every body page and on the closing page's lockup.
+ *
+ * One declaration now. `FALLBACK_COMPANY_NAME` is kept as a name rather than
+ * inlined because four call sites and a second product (`intakePack/branding`)
+ * read it, and a second literal is how the two came to disagree.
  */
-export const FALLBACK_COMPANY_NAME = 'Property Consulting';
+export const FALLBACK_COMPANY_NAME = PLATFORM_ISSUER_NAME;
+
+/**
+ * The company name to PRINT, given what the settings row carries.
+ *
+ * A row still holding a placeholder — `dashboard`, `NPC`, `Property Consulting`
+ * — is not an identity, and printing it puts a name nobody chose (or, worse,
+ * another organisation's) at the foot of every page. The same set the issuer
+ * line refuses is refused here, so a document cannot name two issuers.
+ */
+function printableCompanyName(name: string | null | undefined): string {
+  const clean = sanitizeReportText(name);
+  return isNonIdentity(clean) ? FALLBACK_COMPANY_NAME : clean;
+}
 
 /**
  * Strip what a PDF core font cannot set.
@@ -116,7 +145,7 @@ export function splitCompanyName(name: string | null | undefined): {
   lead: string;
   tail: string | null;
 } {
-  const clean = sanitizeReportText(name) || FALLBACK_COMPANY_NAME;
+  const clean = printableCompanyName(name);
   const parts = clean.toUpperCase().split(/\s+/).filter(Boolean);
   if (parts.length < 2) return { lead: parts[0] ?? FALLBACK_COMPANY_NAME.toUpperCase(), tail: null };
 
@@ -227,5 +256,5 @@ export function resolveCompanyBlock(
  * the PDF title, and in the `@top-right` running head, all of which have room.
  */
 export function mastheadFor(contact: CompanyContact | null | undefined): string {
-  return sanitizeReportText(contact?.company_name) || FALLBACK_COMPANY_NAME;
+  return printableCompanyName(contact?.company_name);
 }

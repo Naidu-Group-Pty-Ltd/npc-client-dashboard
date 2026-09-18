@@ -22,8 +22,19 @@ import {
 import { trimToDeclaredSections } from '../investment/derivedHygiene.pure';
 
 const REPO = resolve(__dirname, '../../../..');
-const read = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
+const readFile = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
+/**
+ * Condensation is two files: the handler and the composition it calls.
+ *
+ * `condenseCompose.pure.ts` holds the composed sections, the registry trim,
+ * the declared-order assembly and the hygiene passes, which used to be 156
+ * lines of `index.ts`. A rule about what condensation DOES is satisfied by
+ * either, so `read(CONDENSE)` returns both — which also means the next move
+ * cannot silently pass.
+ */
 const CONDENSE = 'supabase/functions/condense-investment-report/index.ts';
+const CONDENSE_COMPOSE = 'supabase/functions/_shared/reports/investment/condenseCompose.pure.ts';
+const read = (p: string) => (p === CONDENSE ? `${readFile(CONDENSE)}\n${readFile(CONDENSE_COMPOSE)}` : readFile(p));
 
 const doc = (headings: readonly string[]) =>
   headings.map((h) => `## ${h}\n\nBody for ${h}.\n`).join('\n');
@@ -91,7 +102,24 @@ describe('the briefing is trimmed to its own structure', () => {
     'Top 3 Risks', 'Investment Recommendations', 'Market Data Sources',
   ];
 
-  it('declares seventeen headings — nine authored, eight composed and appended', () => {
+  /*
+   * Twelve, not seventeen, from 18 Sep 2026 (S5/S6 §4, `TIER_FRAMEWORK`
+   * Decision F).
+   *
+   * The five that left are the detailed financial chapters. They contradicted
+   * three things this platform already said about the same document:
+   * `TIER_CONTENT.briefing.financialModelling: false`, a projection that
+   * withholds 32 modelling bindings and drops three master pages, and the
+   * companion note the Briefing prints on its own cover — *"the financial
+   * position in the Financial Analysis Report"*. Measured on this very row
+   * (89b451f6) they composed to 3,156 characters over 73 table rows, four of
+   * the five byte-identical to that report's own.
+   *
+   * The two that remain are the ASSESSMENT — the score breakdown and the
+   * SWOT — which is what a Briefing is for, and they are still composed from
+   * the record rather than asked of the model.
+   */
+  it('declares twelve headings — ten authored, two composed and placed', () => {
     const all = markdownHeadingsForTier('briefing');
     const authored = authoredHeadingsForTier('briefing');
     expect(authored).toEqual([
@@ -99,16 +127,21 @@ describe('the briefing is trimmed to its own structure', () => {
       'Property Fit', 'Risk Overview', 'Top 3 Opportunities', 'Top 3 Risks',
       'Recommendation', 'Market Data Sources',
     ]);
-    // The rest are the chapters composed from the record after the model call.
+    expect(all).toHaveLength(12);
+    // The rest are composed from the record after the model call.
     expect(all.filter((h) => !authored.includes(h))).toEqual([
+      'Investment Score Breakdown',
+      'SWOT Analysis',
+    ]);
+    // And the modelling is declared by NO briefing heading, asserted by name
+    // rather than by the count above — a count can be satisfied by a swap.
+    for (const gone of [
       'Purchase Costs & Annual Holding Cost Breakdown',
       'Rental Assessment, Gross Yield & Net Yield',
       'Loan Structure, Repayments & Cashflow Impact',
       'Sensitivity & Scenario Testing',
       '10-Year Cashflow, Equity & Growth Projection',
-      'Investment Score Breakdown',
-      'SWOT Analysis',
-    ]);
+    ]) expect(all, gone).not.toContain(gone);
   });
 
   it('keeps every section a correctly-written briefing carries', () => {
@@ -211,7 +244,19 @@ describe('the condense function keeps no structure of its own', () => {
 
   it('both trims read the registry rather than a literal', () => {
     const s = src();
-    expect(s).toContain("markdownHeadingsForTier(targetTier)");
+    /**
+     * Read as a SHAPE, not as a name. This pinned the literal
+     * `markdownHeadingsForTier(targetTier)`, and moving the trim into
+     * `condenseCompose.pure.ts` — where the tier is a parameter called
+     * `tier` — failed a rule about WHICH registry the trim consults over what
+     * somebody had called a variable. What has to hold is both halves of the
+     * title: the list comes from the registry, and it is asked for the tier
+     * the run is PRODUCING. So the argument must be a bare identifier — never
+     * a quoted tier name, which would trim every briefing to a snapshot's
+     * sections however the run was started.
+     */
+    expect(s).toMatch(/markdownHeadingsForTier\(\s*[A-Za-z_$][\w$]*\s*\)/);
+    expect(s).not.toMatch(/markdownHeadingsForTier\(\s*['"]/);
     // The inline nine are gone.
     expect(s).not.toContain("'Property Summary', 'Key Market Stats'");
   });

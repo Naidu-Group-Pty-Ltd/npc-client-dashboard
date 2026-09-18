@@ -233,9 +233,19 @@ describe('sections come out in the order the registry declares', () => {
     '## Market Data Sources', '- NPC internal assessment.', '',
   ].join('\n');
 
+  /*
+   * Two composed sections the Briefing DECLARES, so the ordering rule is
+   * exercised on a real slot rather than on an appended one.
+   *
+   * This used to be `rentalYield` + `scorecard`. The Briefing declared the
+   * five financial chapters then; it does not from 18 Sep 2026 (S5/S6 §4,
+   * `TIER_FRAMEWORK` Decision F), so `rentalYield` is now an UNDECLARED id for
+   * this tier and appends — which is the behaviour the "no slot" test below
+   * covers, not this one. `swot` and `scorecard` are the Briefing's own.
+   */
   const COMPOSED: ComposedPlacement[] = [
-    { id: 'rentalYield', markdown: '## Rental Assessment, Gross Yield & Net Yield\n\ntable\n' },
     { id: 'scorecard', markdown: '## Investment Score Breakdown\n\nscores\n' },
+    { id: 'swot', markdown: '## SWOT Analysis\n\nstrengths\n' },
   ];
 
   const headings = (md: string) => [...md.matchAll(/^##\s+(.+?)\s*$/gm)].map((m) => m[1]);
@@ -245,15 +255,15 @@ describe('sections come out in the order the registry declares', () => {
     expect(headings(out.markdown)).toEqual([
       'Executive Summary',
       'Risk Overview',
-      // 12 and 16 — before Top 3 Opportunities (18), Recommendation (20) and
-      // Market Data Sources (90). Appending put both of these after all three.
-      'Rental Assessment, Gross Yield & Net Yield',
+      // Both sit before Top 3 Opportunities, Recommendation and Market Data
+      // Sources. Appending put them after all three.
       'Investment Score Breakdown',
+      'SWOT Analysis',
       'Top 3 Opportunities',
       'Recommendation',
       'Market Data Sources',
     ]);
-    expect(out.placed).toEqual(['rentalYield', 'scorecard']);
+    expect(out.placed).toEqual(['scorecard', 'swot']);
     expect(out.unplaced).toEqual([]);
   });
 
@@ -311,8 +321,8 @@ describe('sections come out in the order the registry declares', () => {
   it('handles an empty document without inventing sections', () => {
     const out = assembleInDeclaredOrder('', COMPOSED, 'briefing');
     expect(headings(out.markdown)).toEqual([
-      'Rental Assessment, Gross Yield & Net Yield',
       'Investment Score Breakdown',
+      'SWOT Analysis',
     ]);
   });
 });

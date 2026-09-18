@@ -184,9 +184,11 @@ describe('closure: the grade boundaries', () => {
     expect(gradeFor(85.01)).toBe('A+');
   });
 
-  it('the delivered-points ceiling turns at exactly 85 and 75', () => {
-    // A growth result strong enough that the growth ceiling is A+ — so the
-    // delivered-points ceiling is the only variable in this test.
+  // S5/S6 §8 removed the delivered-points ceiling. The test that stood here
+  // pinned its turning points at 85 and 75; what replaces it pins that the
+  // delivered points no longer reach the grade at all, and that the gate which
+  // DID survive is the one about evidence quality.
+  it('the delivered points no longer move the printed grade', () => {
     const strong = run({
       evidence: ev({ ...growthBlock(15), ...demandBlock('strong') }),
       yieldInputs: { basis: 'purchase', basisAmount: 500_000, weeklyRent: 820 },
@@ -194,19 +196,43 @@ describe('closure: the grade boundaries', () => {
     });
     expect(strong.eligibility!.ceiling).toBe('A+');
 
-    const at = (nominalMeasuredScore: number) =>
-      applyEligibility({ compositeScore: 90, growth: strong.growth, overallCoverage: 0.9, nominalMeasuredScore });
+    // `applyEligibility` has no delivered-points input to vary any more, so
+    // the assertion is structural: the only inputs are the score, the growth
+    // evidence and the quality of what was assessed.
+    expect(Object.keys({
+      compositeScore: 90, growth: strong.growth, evidenceQualityCoverage: 0.9,
+    })).toEqual(['compositeScore', 'growth', 'evidenceQualityCoverage']);
 
-    expect(at(84.99).grade).toBe('A');
-    expect(at(84.99).capped).toBe(true);
-    expect(at(84.99).reasons.join(' ')).toMatch(/never lifts the grade/);
-    expect(at(85).grade).toBe('A+');
-    expect(at(85).capped).toBe(false);
-    expect(at(85.01).grade).toBe('A+');
+    const at = (evidenceQualityCoverage: number) =>
+      applyEligibility({ compositeScore: 90, growth: strong.growth, evidenceQualityCoverage });
 
-    expect(at(74.99).grade).toBe('B+');
-    expect(at(75).grade).toBe('A');
-    expect(at(75.01).grade).toBe('A');
+    // Quality gates A+ at 0.70 and A at 0.55, and nothing else does.
+    expect(at(0.9).grade).toBe('A+');
+    expect(at(0.9).capped).toBe(false);
+    expect(at(0.69).grade).toBe('A');
+    expect(at(0.69).capped).toBe(true);
+    expect(at(0.69).reasons.join(' ')).toMatch(/evidenced/);
+    expect(at(0.54).grade).toBe('B+');
+
+    // No reason this module can give mentions the removed ceiling.
+    for (const q of [0.2, 0.54, 0.69, 0.9]) {
+      expect(at(q).reasons.join(' ')).not.toMatch(/delivered|never lifts the grade/);
+    }
+  });
+
+  it('a dimension being unavailable never appears in a cap reason', () => {
+    // The successor rule to the delivered-points ceiling: an absent dimension
+    // is disclosed and excluded from the weighting, never used to hold a
+    // badge down. Three dimensions, perfectly evidenced, must reach the
+    // growth gate on the growth evidence alone.
+    const threeOfFive = run({
+      evidence: ev({ ...growthBlock(15), ...demandBlock('strong') }),
+      yieldInputs: { basis: 'purchase', basisAmount: 500_000, weeklyRent: 820 },
+      locationInputs: {},
+    });
+    expect(threeOfFive.measured).toEqual(['growth', 'yield', 'demand']);
+    expect(threeOfFive.eligibility!.ceiling).toBe('A+');
+    expect(threeOfFive.gradeCapReason.join(' ')).not.toMatch(/dimension|delivered/);
   });
 });
 
@@ -237,11 +263,67 @@ describe('closure: the missing-evidence matrix', () => {
     expect(exceptional.eligibility!.capped).toBe(false);
   });
 
-  it('a missing dimension never improves the printed grade — pairwise, on every removal', () => {
+  /*
+   * What replaced "a missing dimension never improves the printed grade".
+   *
+   * That invariant was true and was enforced by the delivered-points ceiling,
+   * which S5/S6 §8 removed as a missing-dimension penalty that contradicts
+   * proportional scoring. Under §7 the arithmetic is explicit: the score is
+   * the valid dimensions' scores weighted by their ORIGINAL weights and
+   * divided by those weights' sum. Removing a weak Demand therefore CAN raise
+   * the result, and that is the specified behaviour rather than a defect —
+   * a four-dimension assessment is scored on the four it has.
+   *
+   * What protects against the abuse the old ceiling was aimed at is §4's
+   * SELECTION rule — "include every valid dimension available at the
+   * assessment cutoff; never omit a low-scoring dimension to improve the
+   * result" — and that is what the three tests below pin. They are stronger
+   * than the ceiling was: the ceiling bounded the consequence of dropping a
+   * dimension, while these assert the engine has no way to drop one.
+   */
+  it('selects dimensions by VALIDITY alone — the measured set is blind to the values', () => {
+    // The same evidence, with the dimension scores driven from strong to weak
+    // and back. If any selection anywhere depended on a value, the measured
+    // set would move with it.
+    const variants = [
+      run({ ...COMPLETE, evidence: ev({ ...growthBlock(15), ...demandBlock('strong') }) }),
+      run({ ...COMPLETE, evidence: ev({ ...growthBlock(9), ...demandBlock('strong') }) }),
+      run({ ...COMPLETE, evidence: ev({ ...growthBlock(9), ...demandBlock('weak') }) }),
+      run({ ...COMPLETE, evidence: ev({ ...growthBlock(-4), ...demandBlock('weak') }) }),
+    ];
+    const sets = variants.map((r) => [...r.measured].sort().join(','));
+    expect(new Set(sets).size, `measured set moved with the scores: ${sets.join(' | ')}`).toBe(1);
+    // And every one of them weighted every dimension it measured.
+    for (const r of variants) {
+      for (const key of r.measured) {
+        const d = r.dimensions.find((x) => x.key === key)!;
+        expect(d.effectiveWeight, `${key} carried no weight`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('weights every valid dimension proportionally, including the worst one', () => {
+    // §7, checked against the formula rather than against the engine: the
+    // composite is Σ(score × original weight) / Σ(original weights of valid),
+    // rounded once. A dropped weak dimension would break this identity.
+    const weak = run({ ...COMPLETE, evidence: ev({ ...growthBlock(9), ...demandBlock('weak') }) });
+    const measured = weak.dimensions.filter((d) => weak.measured.includes(d.key));
+    const wSum = measured.reduce((s, d) => s + d.nominalWeight, 0);
+    const expected = Math.round(
+      measured.reduce((s, d) => s + (d.score as number) * d.nominalWeight, 0) / wSum,
+    );
+    expect(weak.compositeScore).toBe(expected);
+    // The weak dimension is genuinely in there, at its own original weight.
+    const demand = measured.find((d) => d.key === 'demand')!;
+    expect(demand.nominalWeight).toBe(0.15);
+    expect(demand.score).not.toBeNull();
+  });
+
+  it('a removal changes the score only by renormalisation, and the removal is disclosed', () => {
     // Each case: the same property WITH the dimension measured (weak or
-    // strong) and WITHOUT it. The absent variant may raise the composite —
-    // that is the renormalised score's meaning — but the printed grade may
-    // never come out better than the measured variant's.
+    // strong) and WITHOUT it. Under §7 the absent variant may score higher;
+    // what may never happen is the absence going unrecorded, or the present
+    // variant quietly dropping the dimension it was given.
     const cases: Array<{ name: string; present: ShadowScoreResult; absent: ShadowScoreResult }> = [
       {
         name: 'weak demand removed',
@@ -272,12 +354,37 @@ describe('closure: the missing-evidence matrix', () => {
     for (const c of cases) {
       assertIntegrity(`${c.name}:present`, c.present, COMPLETE.evidence);
       assertIntegrity(`${c.name}:absent`, c.absent, COMPLETE.evidence);
-      expect(idx(c.absent.grade), `${c.name}: absent grade must not beat present`)
-        .toBeLessThanOrEqual(idx(c.present.grade));
+      // The present variant kept everything it was given …
+      expect(c.present.measured.length, `${c.name}: present dropped a dimension`)
+        .toBeGreaterThan(c.absent.measured.length);
+      // … the absent variant named every dimension it could not measure …
+      expect([...c.absent.unavailable].sort(), `${c.name}: absence not disclosed`)
+        .toEqual([...c.present.unavailable, ...c.present.measured
+          .filter((k) => !c.absent.measured.includes(k))].sort());
+      // … and neither invented a score for one it did not have.
+      for (const key of c.absent.unavailable) {
+        const d = c.absent.dimensions.find((x) => x.key === key)!;
+        expect(d.score, `${c.name}: ${key} scored while unavailable`).toBeNull();
+        expect(d.effectiveWeight, `${c.name}: ${key} weighted while unavailable`).toBe(0);
+      }
     }
   });
 
-  it('sparse but strong evidence keeps a high composite and a capped badge, with reasons', () => {
+  /*
+   * RENEGOTIATED 18 September 2026 — eligibility 4.0.0.
+   *
+   * This asserted the grade was CAPPED at B+ on sparse-but-strong evidence,
+   * for two stated reasons: "the growth ceiling is B+; the delivered points
+   * on 0.55 of the nominal weight cap it harder still". Both were the
+   * missing-dimension penalty — the second was removed in 3.0.0, the first
+   * in 4.0.0, and neither was a statement about evidence this report holds.
+   *
+   * What replaces it is the honest pair: strong evidence on what was measured
+   * produces a strong letter, AND the scope of the assessment travels with it
+   * so no reader mistakes three dimensions for five. Disclosure rather than
+   * deduction is the whole change.
+   */
+  it('sparse but strong evidence keeps a high composite and a strong badge, with the scope disclosed', () => {
     const sparse = run({
       evidence: ev({ ...demandBlock('strong') }),
       yieldInputs: { basis: 'purchase', basisAmount: 450_000, weeklyRent: 780 },
@@ -285,10 +392,12 @@ describe('closure: the missing-evidence matrix', () => {
     });
     expect(sparse.measured).toEqual(['location', 'yield', 'demand']);
     expect(sparse.compositeScore!).toBeGreaterThanOrEqual(75); // strong on what was measured
-    // No growth evidence: the growth ceiling is B+; the delivered points on
-    // 0.55 of the nominal weight cap it harder still.
-    expect(idx(sparse.grade)).toBeLessThanOrEqual(idx('B+'));
-    expect(sparse.gradeCapReason.length).toBeGreaterThan(0);
+    // The letter follows the composite: nothing deducts for the two
+    // dimensions nobody could measure.
+    expect(idx(sparse.grade)).toBeGreaterThanOrEqual(idx('A'));
+    expect(sparse.gradeCapReason).toEqual([]);
+    // …and the scope is never silent. Two dimensions are named as unmeasured.
+    expect([...sparse.unavailable].sort()).toEqual(['growth', 'risk']);
     assertIntegrity('sparse-strong', sparse, ev({ ...demandBlock('strong') }));
   });
 

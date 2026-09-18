@@ -72,8 +72,22 @@ export const FIN_SECTION_ORDER: { ordinal: number; heading: string }[] = [
   { ordinal: 12, heading: 'Financial Investment Scorecard' },
   { ordinal: 13, heading: 'Investor Suitability Profile' },
   { ordinal: 14, heading: 'Financial SWOT: Returns, Risk & Holding Capacity' },
-  { ordinal: 15, heading: 'Financial Recommendation & Portfolio Fit' },
-  { ordinal: 16, heading: 'Assumptions, Verification Items & Adviser Disclaimer' },
+  /*
+   * 15 is new. Suitability (13) says what the asset demands and the SWOT (14)
+   * balances it; the Holding Strategy says what to DO about it across the
+   * hold — the base case, the break-even rent, the end of an interest-only
+   * term, the lending ratio that gates a refinance. It goes before the
+   * recommendation because a recommendation that has not said how the thing is
+   * held is a verdict with no plan under it.
+   *
+   * Inserted here rather than appended, and only the two ordinals after it
+   * moved, because every `composed(N)` and `routed('financial', N)` in
+   * `sectionRegistry.pure.ts` is this list's ordinal and a wholesale renumber
+   * would have touched seven of them for no gain.
+   */
+  { ordinal: 15, heading: 'Holding Strategy' },
+  { ordinal: 16, heading: 'Financial Recommendation & Portfolio Fit' },
+  { ordinal: 17, heading: 'Assumptions, Verification Items & Adviser Disclaimer' },
 ];
 
 // ─── PLDD report structure (Report 2 — 17 sections) ─────────────────────────

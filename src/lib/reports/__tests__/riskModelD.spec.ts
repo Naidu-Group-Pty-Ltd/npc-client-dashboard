@@ -8,7 +8,9 @@ import {
   answerableCount,
   resolveAssetClass,
   SCHEMA_BY_ASSET_CLASS,
+  riskRemedyFor,
   scoreableQuestions,
+  unscoreableHoldings,
   type AssetClass,
 } from '@/lib/reports/risk/propertyRiskSchema.pure';
 import {
@@ -153,10 +155,103 @@ describe('property risk: type selects, never scores', () => {
       const backlog = acquisitionBacklog();
       expect(backlog.map((q) => q.id).sort()).toEqual([
         'condition_and_maintenance', 'construction_and_completion',
-        'local_unit_supply_concentration', 'planning_constraints',
-        'site_hazard_exposure', 'strata_health', 'title_and_registration_timing',
+        'local_unit_supply_concentration', 'strata_health',
+        'title_and_registration_timing',
       ]);
       for (const q of backlog) expect(q.evidenceRequired.length).toBeGreaterThan(30);
+    });
+
+    /*
+     * The planning programme retrieves both site controls at parcel grain now.
+     * They leave the ACQUISITION backlog — buying a dataset the platform
+     * already reads is the wrong instruction — and enter a second list, because
+     * what is outstanding is a published scale.
+     */
+    it('separates what is unretrieved from what is retrieved and unscoreable', () => {
+      expect(unscoreableHoldings().map((q) => q.id).sort())
+        .toEqual(['planning_constraints', 'site_hazard_exposure']);
+      const backlogIds = acquisitionBacklog().map((q) => q.id);
+      for (const q of unscoreableHoldings()) {
+        expect(backlogIds, `${q.id} is retrieved; it is not an acquisition`).not.toContain(q.id);
+      }
+    });
+
+    it('counts a retrieved-but-unscoreable control as answerable by nobody', () => {
+      // `answerableCount` counts what can ANSWER a question. A fact with no
+      // published scale answers none, so the honest count is still zero and
+      // the statement cannot claim a capability nothing delivers.
+      for (const cls of ['established_house', 'strata_dwelling', 'medium_density', 'land_or_new_build'] as const) {
+        expect(answerableCount(cls), `${cls} answers nothing today`).toBe(0);
+      }
+    });
+
+    /*
+     * The remedy the report prints is DERIVED from the schema.
+     *
+     * The literal it replaces read "Answered property-risk questions from the
+     * per-class schema (hazard, planning, condition, strata)" on every record
+     * — naming hazard and planning as outstanding when both are retrieved, and
+     * naming strata on a house that is never asked about one. A remedy that
+     * misdescribes the platform's own holdings sends somebody to buy what it
+     * already reads.
+     *
+     * RENEGOTIATED 18 Sep 2026. This used to assert the remedy contained the
+     * words "published scale", pinning the claim that what was outstanding for
+     * hazard and planning was a scale no publisher issues. That claim is
+     * WRONG — an internal methodology needs a defensible, documented and
+     * versioned basis, not a publisher-issued score — so the assertion was
+     * holding a false statement in place. The remedy now names the real
+     * obstacle, a query against the PARCEL rather than the address point, and
+     * this test asserts the corrected rule in both directions: the parcel
+     * query is named, and nobody is sent to look for a published scale.
+     * `RISK_METHOD_RECOMMENDATION.md` carries the reasoning.
+     */
+    it('derives a remedy that names only what is genuinely outstanding', () => {
+      const house = riskRemedyFor('established_house');
+      expect(house).toContain('condition and maintenance');
+      expect(house, 'a house is never asked about an owners corporation').not.toContain('strata');
+      expect(house).toContain('retrieved already, at a single coordinate');
+      expect(house).toContain('query against the parcel');
+      expect(house, 'never send an operator to find a scale no publisher issues')
+        .not.toContain('published scale');
+      expect(house).toContain('two independent categories');
+
+      const strata = riskRemedyFor('strata_dwelling');
+      expect(strata).toContain('strata health');
+      // Planning is not on a strata dwelling's schema, so it is named nowhere.
+      expect(strata).not.toContain('planning constraints');
+
+      // Never the raw column vocabulary.
+      for (const cls of ['established_house', 'strata_dwelling', 'medium_density', 'land_or_new_build'] as const) {
+        expect(riskRemedyFor(cls), cls).not.toMatch(/[a-z]+_[a-z]+/);
+      }
+      expect(riskRemedyFor(null)).toContain('A placeholder selects none.');
+    });
+
+    it('says what is outstanding for a retrieved control is a scale, not a dataset', () => {
+      for (const q of unscoreableHoldings()) {
+        expect(q.evidenceRequired, `${q.id}`).toMatch(/published scale/);
+        expect(q.evidenceRequired, `${q.id}`).toMatch(/RETRIEVED/);
+      }
+    });
+
+    /*
+     * The grouping, stated as a consequence rather than as an intention.
+     *
+     * Even given a published scale for both site controls, an established
+     * house would not reach a Risk score on them: hazard and planning are one
+     * independent category, and a house's only other is `building`, which
+     * needs a construction year — held on 0 of 1,230 stored reports.
+     */
+    it('treats the two site controls as ONE independent category', () => {
+      const both = scorePropertyRisk({
+        propertyType: 'House',
+        answers: { site_hazard_exposure: 90, planning_constraints: 80 },
+      });
+      expect(both.observations.map((o) => o.category)).toEqual(['site', 'site']);
+      expect(both.eligibility.categoriesRepresented).toEqual(['site']);
+      expect(both.eligibility.eligible).toBe(false);
+      expect(both.score, 'two readings of one site are not two observations').toBeNull();
     });
   });
 

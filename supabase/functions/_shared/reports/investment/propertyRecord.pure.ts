@@ -195,7 +195,13 @@ export function readPropertyFacts(
     beds: pick('bedrooms', 'bedrooms'),
     baths: pick('bathrooms', 'bathrooms'),
     carSpaces: pick('parking', 'carSpaces'),
-    yearBuilt: pick('year_built', 'yearBuilt'),
+    // Three spellings of one fact. The override registry's key is
+    // `constructionYear` (`src/types/overrideFields.ts`), the spec column's is
+    // `year_built`, and `yearBuilt` is what this reader asked for and nothing
+    // writes — so a construction year an operator had entered was invisible
+    // here on every report that held one. `reportBindingProjection` already
+    // healed the same three keys for templates; the scoring reader did not.
+    yearBuilt: num(s.year_built) ?? num(o.yearBuilt) ?? num(o.constructionYear),
     zoning: str(s.zoning) ?? str(o.zoningCode),
     councilArea: str(s.council_area) ?? str(o.councilArea),
   };

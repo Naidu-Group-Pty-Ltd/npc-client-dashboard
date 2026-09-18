@@ -6,7 +6,7 @@
 import type { Block } from '../templateSchema';
 import { evalConditional, resolveBindable, resolveBindableColor } from '../bindingResolver';
 import { boundValueResolved } from '../boundValuePresence';
-import { esc, type HtmlBlockContext } from './_shared.html';
+import { imgTag, esc, type HtmlBlockContext } from './_shared.html';
 import { LONE_SURVIVOR_FLOOR, resolveDataPath } from './_data';
 
 type R = Record<string, unknown>;
@@ -169,7 +169,10 @@ export function renderPullQuoteHtml(block: Block, ctx: HtmlBlockContext): string
   return `<div style="${box(p, ctx)}padding:20pt 28pt;border-left:6pt solid ${accent};background:#FAFAF7;">
     <div style="font:300 22pt/1.3 Georgia,serif;color:${ink(ctx)};font-style:italic;">“${esc(resolveBindable(p.quote, ctx))}”</div>
     <div style="margin-top:10pt;display:flex;align-items:center;gap:10pt;">
-      ${p.avatarUrl ? `<img src="${esc(resolveBindable(p.avatarUrl, ctx))}" style="width:28pt;height:28pt;border-radius:50%;object-fit:cover;"/>` : ''}
+      ${p.avatarUrl ? imgTag(resolveBindable(p.avatarUrl, ctx), {
+        alt: `Portrait of ${resolveBindable(p.attribution, ctx) || 'the person quoted'}`,
+        style: 'width:28pt;height:28pt;border-radius:50%;object-fit:cover;',
+      }) : ''}
       <div>
         <div style="font:600 10pt ${BODY};color:${ink(ctx)};">${esc(resolveBindable(p.attribution, ctx))}</div>
         ${p.role ? `<div style="font:400 9pt ${BODY};color:${muted(ctx)};">${esc(resolveBindable(p.role, ctx))}</div>` : ''}
@@ -280,7 +283,10 @@ export function renderMapHtml(block: Block, ctx: HtmlBlockContext): string {
   const src = resolveBindable(p.staticMapUrl, ctx);
   const caption = resolveBindable(p.caption, ctx);
   return `<div style="${box(p, ctx, 240)}border-radius:6pt;overflow:hidden;background:${line(ctx)};">
-    ${src ? `<img src="${esc(src)}" style="width:100%;height:100%;object-fit:cover;display:block;"/>` : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font:500 11pt ${BODY};color:${muted(ctx)};background:repeating-linear-gradient(45deg,${line(ctx)},${line(ctx)} 8pt,${line(ctx)} 8pt,${line(ctx)} 16pt);">Map preview</div>`}
+    ${src ? imgTag(src, {
+      alt: resolveBindable(p.alt, ctx) || caption || 'Map of the location',
+      style: 'width:100%;height:100%;object-fit:cover;display:block;',
+    }) : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font:500 11pt ${BODY};color:${muted(ctx)};background:repeating-linear-gradient(45deg,${line(ctx)},${line(ctx)} 8pt,${line(ctx)} 8pt,${line(ctx)} 16pt);">Map preview</div>`}
     ${caption ? `<div style="position:absolute;left:0;right:0;bottom:0;background:rgba(15,23,42,0.75);color:#fff;font:500 9pt ${BODY};padding:6pt 10pt;">${esc(caption)}</div>` : ''}
   </div>`;
 }
@@ -470,11 +476,17 @@ export function renderBeforeAfterHtml(block: Block, ctx: HtmlBlockContext): stri
   const after = resolveBindable(p.afterUrl, ctx);
   return `<div style="${box(p, ctx, 220)}display:flex;gap:8pt;">
     <div style="flex:1;position:relative;border-radius:4pt;overflow:hidden;background:${line(ctx)};">
-      ${before ? `<img src="${esc(before)}" style="width:100%;height:100%;object-fit:cover;"/>` : ''}
+      ${before ? imgTag(before, {
+        alt: resolveBindable(p.beforeAlt, ctx) || 'The subject before',
+        style: 'width:100%;height:100%;object-fit:cover;',
+      }) : ''}
       <div style="position:absolute;top:8pt;left:8pt;background:rgba(15,23,42,0.8);color:#fff;font:700 8pt ${BODY};padding:3pt 8pt;border-radius:3pt;text-transform:uppercase;letter-spacing:0.5pt;">Before</div>
     </div>
     <div style="flex:1;position:relative;border-radius:4pt;overflow:hidden;background:${line(ctx)};">
-      ${after ? `<img src="${esc(after)}" style="width:100%;height:100%;object-fit:cover;"/>` : ''}
+      ${after ? imgTag(after, {
+        alt: resolveBindable(p.afterAlt, ctx) || 'The subject after',
+        style: 'width:100%;height:100%;object-fit:cover;',
+      }) : ''}
       <div style="position:absolute;top:8pt;left:8pt;background:#BF9B50;color:#fff;font:700 8pt ${BODY};padding:3pt 8pt;border-radius:3pt;text-transform:uppercase;letter-spacing:0.5pt;">After</div>
     </div>
   </div>`;
@@ -486,7 +498,10 @@ export function renderImageTextHtml(block: Block, ctx: HtmlBlockContext): string
   const src = resolveBindable(p.imageUrl, ctx);
   const side = String(p.imageSide ?? 'left');
   const img = `<div style="flex:1;border-radius:4pt;overflow:hidden;background:${line(ctx)};min-height:160pt;">
-    ${src ? `<img src="${esc(src)}" style="width:100%;height:100%;object-fit:cover;display:block;"/>` : ''}
+    ${src ? imgTag(src, {
+      alt: resolveBindable(p.alt, ctx) || resolveBindable(p.heading, ctx),
+      style: 'width:100%;height:100%;object-fit:cover;display:block;',
+    }) : ''}
   </div>`;
   const text = `<div style="flex:1;">
     ${title(resolveBindable(p.heading, ctx), ctx)}

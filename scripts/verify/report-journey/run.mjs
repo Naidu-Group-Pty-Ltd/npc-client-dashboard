@@ -154,6 +154,38 @@ check('page remains interactive after closing the editor', interactive, interact
 check('edit persists on the page', (await page.locator('body').innerText()).includes(MARK.slice(0, 12)), 'the document card shows the new text');
 await shot(page, '02-edited');
 
+/*
+ * The edit fixture and the acceptance document are separated here.
+ *
+ * Everything above proves the edit path: the marker was typed, written through
+ * `manage-investment-reports`, and read back onto the page. Everything below
+ * finalises a document a person is asked to accept — and until this step
+ * existed the two were the same bytes, so all five supplied PDFs carried
+ * `[VERIFY-EDIT …]` in their prose.
+ *
+ * The fixture is put back rather than the text being stripped out. A scrubber
+ * that deletes bracketed text from a stored document would delete a real
+ * user's edit just as readily; restoring the fixture can only ever write what
+ * the fixture already said, so it cannot reach a customer's content at all.
+ *
+ * `KEEP_VERIFY_EDIT=1` keeps the marker through to the PDF, which is how the
+ * edit-preservation claim is demonstrated end to end when that is what is
+ * being demonstrated. It is off by default, so the ordinary run of this
+ * harness produces a clean document.
+ */
+const keepEdit = process.env.KEEP_VERIFY_EDIT === '1';
+if (keepEdit) {
+  check('edit deliberately carried into the document', true, 'KEEP_VERIFY_EDIT=1 — this run is edit-preservation evidence, not an acceptance document');
+} else {
+  const restored = dbl.restoreReportFields(['report_content']);
+  check('edit fixture reset before the acceptance render', restored.includes('report_content'),
+    'the document finalised below is the fixture\'s own content, with no harness marker in it');
+  await page.reload({ waitUntil: 'networkidle', timeout: 90_000 });
+  await page.waitForTimeout(800);
+  const cleaned = !(await page.locator('body').innerText()).includes('[VERIFY-EDIT');
+  check('no harness marker on the page after the reset', cleaned, cleaned ? '' : 'the marker survived the reset');
+}
+
 // ── 3. Templates selector → picker → selection persists ─────────────────
 const chooser = page.getByRole('button', { name: /choose template|change template/i }).first();
 check('templates selector visible', await chooser.isVisible().catch(() => false));

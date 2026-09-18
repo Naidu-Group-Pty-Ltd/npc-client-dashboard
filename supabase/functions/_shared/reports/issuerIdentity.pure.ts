@@ -107,6 +107,21 @@ const NON_IDENTITIES = new Set([
   'npc property',
 ]);
 
+/**
+ * Is this name the absence of a brand rather than a brand?
+ *
+ * Exported so the presentation layer asks the same question the issuer line
+ * does. `companyBlock.pure.ts` carried its own fallback — the literal
+ * `'Property Consulting'`, which is IN the set below — so an unbranded
+ * deployment printed "Property Consulting" in the running foot of every body
+ * page and as the closing page's lockup while the issuer line beside them said
+ * "Aurixa Systems". Two answers to one question, in one document.
+ */
+export function isNonIdentity(name: unknown): boolean {
+  if (!isNonEmpty(name)) return true;
+  return NON_IDENTITIES.has(name.trim().toLowerCase());
+}
+
 export type IssuerKind = 'workspace' | 'platform';
 
 export interface ReportIssuer {

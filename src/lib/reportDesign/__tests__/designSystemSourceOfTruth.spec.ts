@@ -14,7 +14,7 @@
  *
  * Structural assertions, not snapshots, so this guards from the first run.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -77,14 +77,38 @@ describe('report design system — single source of truth', () => {
     const importSpecs = (code: string): string[] =>
       [...code.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom '([^']+)'/gm)].map((m) => m[1]);
 
-    it('imports only sibling .pure modules, so Deno and Vite both resolve it', () => {
+    /*
+     * The rule is that a canonical module imports only a RELATIVE `.pure.ts`
+     * path — no `@/` alias, no npm package, no module with side effects — so
+     * Deno and Vite both resolve it.
+     *
+     * It used to require a SIBLING (`^\./`), on the stated reason that "Edge
+     * Functions cannot resolve anything else", and that reason is not true: a
+     * relative path into another `_shared` directory resolves in Deno exactly
+     * as a sibling does, which `check-edge-functions.mjs` confirms by type-
+     * checking all 413 entry points. The sibling form was blocking
+     * `companyBlock.pure.ts` from asking `issuerIdentity.pure.ts` who the
+     * issuer is — and the cost of not asking was two answers in one document:
+     * "Aurixa Systems" on the issuer line and "Property Consulting", a name
+     * that module lists as the ABSENCE of a brand, in the running foot of
+     * every page.
+     *
+     * The replacement is stricter, not looser: the path must still be
+     * relative, must still end `.pure.ts`, and must now RESOLVE ON DISK, which
+     * the sibling pattern never checked.
+     */
+    it('imports only relative .pure modules, and every one of them exists', () => {
       const imports = importSpecs(source);
       for (const spec of imports) {
         expect(
           spec,
           `${file} imports "${spec}" — canonical modules may only import `
-            + 'sibling .pure.ts modules (Edge Functions cannot resolve anything else)',
-        ).toMatch(/^\.\/[\w.]+\.pure\.ts$/);
+            + 'relative .pure.ts modules (an alias or a package is not resolvable from an Edge Function)',
+        ).toMatch(/^\.{1,2}\/(?:[\w.-]+\/)*[\w.-]+\.pure\.ts$/);
+        expect(
+          existsSync(resolve(CANONICAL_DIR, spec)),
+          `${file} imports "${spec}", which does not exist`,
+        ).toBe(true);
       }
     });
 

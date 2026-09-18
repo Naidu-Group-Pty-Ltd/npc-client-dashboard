@@ -37,22 +37,38 @@
  * keeps its stamp; a withholding keeps its stamp; the next run of a report is
  * the first to carry `authority: 'v2'`.
  *
- * ## The one rule activation adds: Growth is required
+ * ## Publication: three valid dimensions, proportionally weighted
  *
- * The engine's own floor is three measured dimensions. On the evidence this
- * deployment holds today, three can be reached WITHOUT Growth — Yield (the
- * record's own rent and price), Demand (Domain's market readings plus the
- * ABS population series) and, once repaired, Location. A grade formed that
- * way would answer to the delivered-points ceiling: with Growth's 40 points
- * unmeasured the best deliverable is 60 of 100, so the printed grade would be
- * a B at most and typically a C — **a letter that is a statement about
- * missing data wearing the shape of a statement about the property.** That is
- * exactly the reading a client cannot tell apart from a poor property.
+ * Two rules used to stand between a measured assessment and a published
+ * grade, and S5/S6 §4 and §8 removed both.
  *
- * So `requiredDimensions` names Growth. Where it is unmeasured the grade is
- * withheld and the gap is named — which market, which provider, why. The
- * owner may relax this condition by editing the activation record; nothing
- * else in the pipeline assumes it.
+ * **Growth was required**, over and above the engine's floor. The reasoning
+ * was sound on its own terms: without Growth's 40 points the DELIVERED-points
+ * ceiling capped the letter at a B and typically a C, so the grade read as a
+ * statement about missing data wearing the shape of a statement about the
+ * property. But the premise was that ceiling, and the ceiling itself was the
+ * defect — `gradeEligibility` 3.0.0 removed it, because it lowered a grade
+ * solely because a dimension was unavailable, which contradicts proportional
+ * scoring. With the ceiling gone the premise goes with it: a three-dimension
+ * assessment is scored across the dimensions it HAS, and 70% of the matrix
+ * assessed is a real finding rather than a 60-point cap.
+ *
+ * **The five-dimension completion gate** (18 September 2026) withheld the
+ * letter until all five scored. That is the right answer to "is this
+ * assessment complete" and the wrong answer to "may a client be told what we
+ * measured". It is superseded by the same sections.
+ *
+ * What rules now is `scorePublicationPolicy.pure.ts`: five of five issues a
+ * score and grade; four and three issue a QUALIFIED score and grade computed
+ * proportionally over the valid dimensions' original weights; two or fewer
+ * publish no score, no grade, no gauge and no score-derived verdict, and say
+ * briefly why. A dimension counts only where it produced a finite 0–100
+ * score — a genuine zero counts, a `scored: true` flag alone never does.
+ *
+ * Every remaining safeguard is about the EVIDENCE rather than the count: the
+ * A/A+ growth-confidence and evidence-quality ceilings stand, because they
+ * answer "can this evidence carry this claim", which is a different question
+ * from "how many dimensions answered".
  *
  * ## Absence is named, never hidden
  *
@@ -69,6 +85,11 @@
  * asserted by the pin spec.
  */
 
+import {
+  connectRiskEvidence,
+  readStoredRiskReadings,
+  type RiskEvidenceConnection,
+} from '../risk/riskEvidenceConnection.pure.ts';
 import {
   type EvidenceKey,
   type EvidencePoint,
@@ -92,12 +113,21 @@ import { applyEligibility } from './gradeEligibility.pure.ts';
 import {
   admissibleInputs,
   claimPermits,
+  LOCATION_PRESENTED_UNVERIFIED,
   NOT_ASSESSED_REASON,
   OVERALL_GRADE_UNAVAILABLE,
   SCORING_INPUT_POLICY_VERSION,
   type ScoredDimension,
 } from './scoringInputPolicy.pure.ts';
 import { dwellingTypeFor } from './domainEvidence.pure.ts';
+import { riskRemedyFor } from '../risk/propertyRiskSchema.pure.ts';
+import {
+  MIN_VALID_DIMENSIONS_TO_PUBLISH,
+  PUBLICATION_DIMENSIONS,
+  SCORE_PUBLICATION_POLICY_VERSION,
+  decidePublication,
+  type PublicationDecision,
+} from './scorePublicationPolicy.pure.ts';
 
 export { dwellingTypeFor };
 
@@ -118,10 +148,39 @@ export const SCORING_V2_ACTIVATION = {
   minDimensions: MIN_DIMENSIONS_FOR_GRADE,
   /**
    * Dimensions that must be measured before a grade is issued, over and above
-   * the floor. See the header: without Growth the best deliverable grade is a
-   * statement about missing data.
+   * the floor.
+   *
+   * **Empty, and deliberately kept rather than deleted** (S5/S6 §8: "do not
+   * retain a blanket Growth-required publication rule"). It named Growth
+   * until 18 September 2026, for a reason that rested entirely on the
+   * delivered-points ceiling `gradeEligibility` 3.0.0 removed — see the
+   * header. The field stays so the supersession is legible and so an
+   * evidence-based requirement, if one is ever justified, has somewhere to go
+   * that is not a second gate: `describeGaps` and the publication decision
+   * both still read it.
    */
-  requiredDimensions: ['growth'] as ReadonlyArray<DimensionKey>,
+  requiredDimensions: [] as ReadonlyArray<DimensionKey>,
+} as const;
+
+/**
+ * The publication rule, as a record of the decision that set it.
+ *
+ * A constant rather than configuration, for the reason `SCORING_V2_ACTIVATION`
+ * is: deciding when a client may be shown a grade is a decision with a review
+ * behind it, and an environment variable is not that decision.
+ */
+export const SCORE_PUBLICATION_GATE = {
+  effectiveFrom: '2026-09-18',
+  reference: 'S5/S6 §4, §7 and §8',
+  decidedBy: 'platform owner instruction, 18 September 2026 — issue a qualified score and grade '
+    + 'on four or three validly assessed dimensions, calculated proportionally over their '
+    + 'original weights; publish no score below three',
+  policyVersion: SCORE_PUBLICATION_POLICY_VERSION,
+  minValidDimensions: MIN_VALID_DIMENSIONS_TO_PUBLISH,
+  supersedes: 'the five-dimension completion gate (18 September 2026) and the Growth-required '
+    + 'publication rule (ME-8, 15 September 2026)',
+  changes: 'WHEN a score and grade are published, and how the score is weighted when fewer than '
+    + 'five dimensions were assessed. No weight, anchor, threshold or measurement changes.',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -174,6 +233,15 @@ export interface ProductionScoringInput {
    * postcode. Named so the gap can say so rather than "provider unavailable".
    */
   evidenceWithheldReason?: string | null;
+  /**
+   * What the planning and hazard registers answered FOR THIS ASSESSMENT, as
+   * stored on the record. Absent means no register was queried for this run,
+   * which is a different state from every register answering and finding
+   * nothing — `connectRiskEvidence` keeps the two apart.
+   */
+  riskEvidence?: unknown;
+  /** The questions the subject's asset class actually asks, from the schema. */
+  riskQuestionIds?: readonly string[];
   now: Date;
 }
 
@@ -186,6 +254,20 @@ export interface ScoringV2PolicyStamp {
   scoringSystem: 'scoring-v2';
   inputPolicyVersion: string;
   methodologyVersion: string;
+  /**
+   * Which publication methodology graded this record.
+   *
+   * Version-aware by construction: a record stamped with this was graded
+   * PROPORTIONALLY, over the original weights of the dimensions that were
+   * validly scored, with no delivered-points ceiling. A record WITHOUT it
+   * predates the policy and was graded under the superseded rule, where the
+   * delivered points at the original weights capped the letter.
+   *
+   * `scoreAssessmentReading` reads its presence to decide which explanation to
+   * give, so a historical grade is explained by the method that produced it
+   * rather than silently recomputed under a newer one.
+   */
+  publicationPolicyVersion: string;
   authority: 'v2';
   dimensionScoresAuthoritative: true;
   gradeIssued: boolean;
@@ -225,6 +307,16 @@ export interface ProductionScoreRecord {
   grade: string | null;
   recommendation: string;
   breakdown: Record<ProductionBreakdownKey, ProductionDimensionScore>;
+  /**
+   * The publication decision (S5/S6 §4 and §7): which dimensions were validly
+   * assessed, their original and effective weights, whether a score may be
+   * published, and the qualification that must travel with it.
+   *
+   * Carried on the record so every surface draws the RUN's own decision
+   * rather than re-deriving it — one canonical assessment result across
+   * generation, persistence, comparison and all five reports.
+   */
+  publication: PublicationDecision;
   coverage: {
     dimensionsScored: number;
     totalDimensions: number;
@@ -255,7 +347,15 @@ export interface ProductionScoreRecord {
     internalEvidenceStatement: EvidenceStatement;
     /** Dimensions whose figures may not be printed to a client under their licence. */
     renderRestricted: { growth: boolean; demand: boolean };
-    /** Why the grade was withheld although the engine formed a composite, or null. */
+    /**
+     * Why no score was published, or null.
+     *
+     * `engine_floor` is the only value a run writes now: fewer than
+     * {@link MIN_VALID_DIMENSIONS_TO_PUBLISH} dimensions produced a valid
+     * score. `required_dimension` is retained in the union because rows
+     * written before 18 September 2026 carry it — a stored value must stay
+     * readable — and nothing writes it any more.
+     */
     withheldBy: 'engine_floor' | 'required_dimension' | null;
   };
 }
@@ -298,6 +398,72 @@ export const RECOMMENDATION_BY_GRADE: Readonly<Record<string, string>> = {
   'F': 'AVOID - Poor investment opportunity with multiple red flags',
 };
 
+/** Dimension keys in the words a client reads, for the basis sentence. */
+const DIMENSION_PROSE: Readonly<Record<string, string>> = {
+  growth: 'capital growth',
+  yield: 'rental yield',
+  demand: 'demand',
+  location: 'location',
+  risk: 'property risk',
+};
+
+/**
+ * A verdict never stands unqualified on an incomplete assessment.
+ *
+ * `RECOMMENDATION_BY_GRADE` is written as though every dimension had been
+ * measured — "AVOID - Poor investment opportunity with multiple red flags",
+ * "STRONG BUY … across all metrics". Measured 18 September 2026, **9 of 9
+ * production runs that issued a grade did so on 3 of 5 dimensions**, location
+ * and property risk excluded on every one, and two of those grades are F. So
+ * the strongest negative sentence this product can print was reaching clients
+ * on an assessment that had not looked at where the property is.
+ *
+ * It is also not merely a coverage caveat. The engine caps the grade at the
+ * points actually DELIVERED, so an unmeasured dimension pushes the letter down
+ * by arithmetic: on 18 Annabelle Crescent the uncapped composite is 40 (C) and
+ * the delivered figure is 27.8 (F). An F formed that way is partly a statement
+ * about missing data, and printing "multiple red flags" beside it is a claim
+ * about the property that the run did not make.
+ *
+ * Two rules. **It says what the assessment RESTS ON, never what it lacks** —
+ * the same rule the governed authority's recovery sentence answers to, because
+ * a confession reads as a broken product where a basis reads as a scope. And
+ * **full coverage is not qualified at all**, so the caveat keeps its meaning
+ * rather than becoming a line every verdict wears.
+ */
+export function qualifyRecommendation(
+  grade: string | null,
+  measured: readonly string[],
+  total: number,
+): string {
+  if (!grade) return OVERALL_GRADE_UNAVAILABLE.explanation;
+  const raw = RECOMMENDATION_BY_GRADE[grade] ?? OVERALL_GRADE_UNAVAILABLE.explanation;
+  if (measured.length >= total || measured.length === 0) return raw;
+  // Two of the sentences describe a breadth the run did not reach. "Excellent
+  // … across all metrics" beside "assessed on 4 of 5" contradicts itself in
+  // one line, and the caveat loses to the claim because the claim comes
+  // first. The scope is narrowed in the sentence rather than appended to it.
+  const base = raw
+    .replace(' across all metrics', ' across the metrics assessed')
+    .replace(' in most areas', ' in most of the areas assessed');
+  const names = measured.map((k) => DIMENSION_PROSE[k] ?? k);
+  const list = names.length > 1
+    ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+    : names[0];
+  return `${base}. Assessed on ${measured.length} of ${total} dimensions: ${list}.`;
+}
+
+/*
+ * A note that outlives the completion gate it was written for.
+ *
+ * `openDataGrowthWiring.spec.ts` scans this module's SOURCE for the first
+ * `case 'growth':` and reads the remedy after it, to pin that `describeGaps`
+ * sends an operator to the sales-register loader as well as to Domain. A
+ * second switch on the same key defeats that guard by being found first, so
+ * anything here that needs a per-dimension lookup uses a record rather than a
+ * switch. The guard is right; the code avoids the collision instead.
+ */
+
 const num = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null;
 
@@ -314,6 +480,20 @@ export function assembleEvidence(subject: EvidenceSubject, market: ProductionMar
   ev.providersConsulted = [...market.providersConsulted];
   ev.providersUnavailable = market.providersUnavailable.map((u) => ({ ...u }));
   return ev as MarketEvidence;
+}
+
+/**
+ * The risk answer set for this assessment, with its audit.
+ *
+ * Derived here rather than passed in, for the reason
+ * `scoreAssessmentReading` records: a parameter a caller forgets takes a whole
+ * dimension off the page with nothing reporting it.
+ */
+export function riskConnection(input: ProductionScoringInput): RiskEvidenceConnection {
+  return connectRiskEvidence(
+    input.riskQuestionIds ?? [],
+    readStoredRiskReadings(input.riskEvidence),
+  );
 }
 
 /** The engine input, with the policy ruling on Location's inputs. */
@@ -343,7 +523,14 @@ export function assembleEngineInput(input: ProductionScoringInput): ShadowScoreI
     },
     propertyRisk: {
       propertyType: input.property.propertyType,
-      answers: {},
+      // Was a hardcoded `{}`, which made Property Risk structurally null on
+      // every report this platform has ever produced — an unwired input, not a
+      // methodology limit. The connection reads what the registers actually
+      // answered for THIS assessment and produces an answer wherever an
+      // approved, versioned conversion applies. None is approved yet, so the
+      // set is still empty today; the difference is that it is now empty for a
+      // recorded reason per question rather than by construction.
+      answers: riskConnection(input).answers,
       growth1Year: evidence.growth1Year?.value ?? null,
     },
     finance: {
@@ -381,6 +568,8 @@ export function describeGaps(
     const dimension = key as ScoredDimension;
     let detail: string;
     let remedy: string;
+    /** Set where the client sentence differs by cause. See `NOT_ASSESSED_REASON.location`. */
+    let reasonOverride: string | undefined;
     switch (key) {
       case 'growth':
         detail = `No suburb capital-growth series for ${subjectLabel(input.subject)} (${providerClause(input.market, input.evidenceWithheldReason)}).`;
@@ -399,6 +588,9 @@ export function describeGaps(
       case 'location': {
         const presentedLoc = presentedFor('location', input);
         const verifiedLoc = input.verifiedInputs ?? [];
+        // Two causes, two client sentences. Nothing presented says nothing
+        // about the standard of the information — see the policy constant.
+        if (presentedLoc.length > 0) reasonOverride = LOCATION_PRESENTED_UNVERIFIED;
         detail = presentedLoc.length === 0
           ? 'No location readings (walk score, commute, schools) were presented for this run.'
           : `Location readings were presented (${presentedLoc.join(', ')}) but not verified: the `
@@ -409,20 +601,29 @@ export function describeGaps(
           + 'acquisition stamp (RF-7.2B), and stamped, stage-proven readings verify automatically.';
         break;
       }
-      case 'risk':
+      case 'risk': {
         detail = result.risk.eligibility.reason;
-        remedy = 'Answered property-risk questions from the per-class schema (hazard, planning, condition, strata).';
+        // Derived from the schema, so the remedy cannot name as outstanding
+        // something the platform already retrieves. See `riskRemedyFor`.
+        remedy = riskRemedyFor(result.risk.assetClass);
         break;
+      }
       default:
         detail = 'Not measured.';
         remedy = 'Supply the dimension\'s evidence.';
     }
     gaps.push({
       dimension,
-      reason: NOT_ASSESSED_REASON[dimension],
+      reason: reasonOverride ?? NOT_ASSESSED_REASON[dimension],
       detail,
       remedy,
-      withholdsGrade: withheldBy === 'required_dimension' ? required.has(key) : withheldBy === 'engine_floor',
+      // A gap withholds the score only where the score was actually
+      // withheld — under proportional publication an unassessed dimension is
+      // disclosed and excluded, not a reason to publish nothing. Where a
+      // requirement IS declared (the list is empty today), it is named.
+      withholdsGrade: withheldBy === null
+        ? false
+        : required.size > 0 ? required.has(key) : true,
     });
   }
   return gaps;
@@ -582,17 +783,39 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
   const out = buildScoreOutput(result, engineInput.evidence);
 
   const measured = result.measured.map((k) => k as ScoredDimension);
-  const requiredMissing = SCORING_V2_ACTIVATION.requiredDimensions
-    .filter((k) => !result.measured.includes(k));
-  const withheldBy: ProductionScoreRecord['v2']['withheldBy'] = result.grade === null
-    ? 'engine_floor'
-    : requiredMissing.length ? 'required_dimension' : null;
-  const gradeIssued = withheldBy === null && result.grade !== null && result.compositeScore !== null;
+
+  // The publication decision (S5/S6 §4 and §7), from the engine's own
+  // per-dimension scores. It rules on VALIDITY — finite, 0-100, a genuine
+  // zero counted — never on the value: there is no path here that can choose
+  // which dimensions to include by what they would do to the result.
+  const publication = decidePublication(Object.fromEntries(
+    PUBLICATION_DIMENSIONS.map((key) => {
+      const dim = out.dimensions.find((x) => x.key === key);
+      return [key, {
+        scored: dim?.available === true,
+        score: dim?.performance,
+        reason: dim?.available ? null : (dim?.reason ?? null),
+      }];
+    }),
+  ));
+
+  // The engine still owns the arithmetic. `publication.overallScore` is the
+  // same figure by construction — both renormalise the same valid dimensions
+  // over the same canonical weights through `proportionalWeighting.pure.ts`
+  // — so the record carries ONE number, the engine's, and a spec pins the
+  // equality rather than a runtime check papering over a divergence.
+  const gradeIssued = publication.publishes
+    && result.grade !== null && result.compositeScore !== null;
+
+  const withheldBy: ProductionScoreRecord['v2']['withheldBy'] = gradeIssued ? null : 'engine_floor';
+
+  const preGaps = describeGaps(input, result, withheldBy);
 
   const stamp: ScoringV2PolicyStamp = {
     scoringSystem: 'scoring-v2',
     inputPolicyVersion: SCORING_INPUT_POLICY_VERSION,
     methodologyVersion: result.methodologyVersion,
+    publicationPolicyVersion: SCORE_PUBLICATION_POLICY_VERSION,
     authority: 'v2',
     dimensionScoresAuthoritative: true,
     gradeIssued,
@@ -610,7 +833,17 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
   for (const d of out.dimensions) {
     breakdown[BREAKDOWN_KEY[d.key]] = {
       score: d.performance ?? 0,
-      weight: gradeIssued ? Math.round(d.effectiveWeight * 100) : 0,
+      // The adjusted weight, whichever way the grade went.
+      //
+      // This used to be `gradeIssued ? … : 0`, and that wrote a contradiction
+      // into every withheld run: growth, yield and demand stored as
+      // `hasData: true, excluded: false, weight: 0` — measured, and claiming to
+      // have contributed nothing. `dimensionWasScored` reads the weight, so a
+      // withheld report's dimension table came out EMPTY, telling the reader
+      // nothing about what had been measured at the one moment that matters.
+      // An unavailable dimension still lands on 0 because `effectiveWeight` is
+      // already 0 for it, so the conditional only ever destroyed information.
+      weight: Math.round(d.effectiveWeight * 100),
       details: dimensionDetails(d.key, result, out),
       hasData: d.available,
       dataPoints: dataPointsFor(d.key, result, input),
@@ -618,7 +851,7 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     };
   }
 
-  const gaps = describeGaps(input, result, withheldBy);
+  const gaps = preGaps;
   const notAssessed: Record<string, string> = {};
   for (const gap of gaps) notAssessed[gap.dimension] = gap.reason;
 
@@ -631,13 +864,17 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     .filter((d) => d.available)
     .reduce((s, d) => s + d.nominalWeight, 0).toFixed(2));
   const total = out.dimensions.length;
+  // The one text field every surface already reads for this, so the
+  // qualification reaches the report page, the library card and the hero
+  // without a new frontend component (S5/S6 §8). It is the policy's own
+  // wording, not a second phrasing of it.
   const partialLabel = !gradeIssued
-    ? withheldBy === 'required_dimension'
-      ? `Grade withheld — ${requiredMissing.join(', ')} not measured (${measured.length} of ${total} dimensions measured)`
-      : `Insufficient evidence — qualitative review only (${measured.length} of ${total} dimensions)`
-    : measured.length === total
-      ? `Full coverage (${total} of ${total} dimensions)`
-      : `Partial score: ${measured.length} of ${total} dimensions`;
+    ? `Insufficient evidence — qualitative review only (${publication.validCount} of ${total} dimensions assessed)`
+    : publication.qualified
+      ? `Qualified score — based on ${publication.validCount} of ${total} assessed dimensions `
+        + `(${Math.round(publication.nominalWeightCovered * 100)}% of the scoring matrix by its `
+        + 'original weights)'
+      : `Full coverage (${total} of ${total} dimensions)`;
 
   const internalEvidenceStatement = buildEvidenceStatement({
     growth: result.growth,
@@ -646,8 +883,7 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     eligibility: result.eligibility ?? applyEligibility({
       compositeScore: 0,
       growth: result.growth,
-      overallCoverage: result.evidenceCoverage,
-      nominalMeasuredScore: result.nominalMeasuredScore,
+      evidenceQualityCoverage: result.evidenceQualityCoverage,
     }),
     evidence: engineInput.evidence,
     audience: 'internal',
@@ -657,10 +893,9 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
   return {
     totalScore: gradeIssued ? result.compositeScore : null,
     grade,
-    recommendation: grade
-      ? (RECOMMENDATION_BY_GRADE[grade] ?? OVERALL_GRADE_UNAVAILABLE.explanation)
-      : OVERALL_GRADE_UNAVAILABLE.explanation,
+    recommendation: qualifyRecommendation(grade, measured, total),
     breakdown,
+    publication,
     coverage: {
       dimensionsScored: measured.length,
       totalDimensions: total,
@@ -672,12 +907,17 @@ export function scoreForProduction(input: ProductionScoringInput): ProductionSco
     },
     ...swot(result, input, measured),
     policy: stamp,
+    // §4: below the floor the report is produced without a score, a grade, a
+    // gauge or a score-derived verdict, and says BRIEFLY why — the policy's
+    // own sentence, which names how many dimensions were assessed and which,
+    // rather than the generic "insufficient verified evidence" that sent an
+    // operator looking for a fault.
     evidenceStatement: gradeIssued
       ? null
       : {
           heading: OVERALL_GRADE_UNAVAILABLE.heading,
           value: OVERALL_GRADE_UNAVAILABLE.value,
-          explanation: OVERALL_GRADE_UNAVAILABLE.explanation,
+          explanation: publication.withheldReason ?? OVERALL_GRADE_UNAVAILABLE.explanation,
         },
     notAssessed,
     dataPointsPresented,

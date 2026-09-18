@@ -34,6 +34,10 @@ import {
 } from '../risk/riskModelD.pure';
 import { FINANCE_SUITABILITY_VERSION } from '../risk/financeSuitability.pure';
 import { SCORING_V2_ACTIVATION } from '../market/scoringV2Production.pure';
+import {
+  MIN_VALID_DIMENSIONS_TO_PUBLISH,
+  SCORE_PUBLICATION_POLICY_VERSION,
+} from '../market/scorePublicationPolicy.pure';
 
 const ROOT = join(__dirname, '..', '..', '..', '..');
 const DOC = readFileSync(join(ROOT, 'docs', 'reports', 'SCORING_V2_METHODOLOGY.md'), 'utf8');
@@ -78,8 +82,43 @@ describe('the methodology document agrees with the code', () => {
     expect(DOC).toContain(`**${r.aPlusMinGrowthConfidence}**`);
     expect(DOC).toContain(`**${r.aMinGrowthCoverage.toFixed(2)}**`);
     expect(DOC).toContain(`**${r.aPlusMinGrowthCoverage.toFixed(2)}**`);
-    expect(DOC).toContain(`**${r.aMinOverallCoverage.toFixed(2)}**`);
-    expect(DOC).toContain(`**${r.aPlusMinOverallCoverage.toFixed(2)}**`);
+    expect(DOC).toContain(`**${r.aMinEvidenceQuality.toFixed(2)}**`);
+    expect(DOC).toContain(`**${r.aPlusMinEvidenceQuality.toFixed(2)}**`);
+    // 3.0.0 — the gate is about the QUALITY of what was assessed, never how
+    // many dimensions happened to answer. The document must say so, because
+    // the number alone is the same on both readings.
+    expect(DOC).toContain('minimum evidence quality over the assessed dimensions');
+    expect(DOC).not.toContain('minimum overall evidence coverage');
+  });
+
+  it('records that the delivered-points ceiling is gone, and what replaced it', () => {
+    // S5/S6 §8. The supersession is documented rather than tidied away: a
+    // reader who finds the 2.0.0 reasoning elsewhere must be able to see why
+    // it no longer applies, or the ceiling comes back.
+    expect(DOC).toMatch(/why 3\.0\.0 removed it/i);
+    expect(DOC).toMatch(/solely because a dimension was unavailable/);
+    // And the rule that replaced it is stated as a SELECTION rule.
+    expect(DOC).toMatch(/never omit a low-scoring dimension to\s+improve the result/);
+    expect(DOC).toContain('`gradeEligibility.pure.ts`, version `4.0.0`');
+    expect(ELIGIBILITY_VERSION).toBe('4.0.0');
+    // 4.0.0 — the third hiding place of the same penalty. The doc must say
+    // which absence stopped capping and which quality floor still does, or
+    // the `hasGrowth &&` comes back on the next edit.
+    expect(DOC).toMatch(/4\.0\.0/);
+    // Newline-tolerant: the doc is wrapped, so `.` would stop at the break.
+    expect(DOC.replace(/\s+/g, ' ')).toMatch(/an absence is no longer a cap/i);
+    expect(DOC).toMatch(/evidenceQualityCoverage/);
+  });
+
+  it('states the publication policy the five-dimension gate was superseded by', () => {
+    expect(DOC).toContain(`\`${SCORE_PUBLICATION_POLICY_VERSION}\``);
+    expect(DOC).toMatch(/\| 4 of 5 \| issue a \*\*qualified\*\* score and grade/);
+    expect(DOC).toMatch(/\| 3 of 5 \| issue a \*\*qualified\*\* score and grade/);
+    expect(DOC).toMatch(/\| 0–2 of 5 \| no overall score, no grade, no gauge/);
+    expect(MIN_VALID_DIMENSIONS_TO_PUBLISH).toBe(3);
+    // §7's arithmetic, in the document, in the same words as the code.
+    expect(DOC).toMatch(/Σ\(score × original weight\) \/ Σ\(original weights of\s*\n?\s*valid\)/);
+    expect(DOC).toMatch(/rounded \*\*once\*\*/);
   });
 
   it('states the composition floors and Model D rules as the code has them', () => {
@@ -97,9 +136,14 @@ describe('the methodology document agrees with the code', () => {
     expect(DOC).toMatch(/production grade engine/i);
     expect(DOC).toMatch(/ME-8/);
     expect(DOC).toContain(`\`${SCORING_V2_ACTIVATION.approvedOn}\``);
-    // The activation condition is stated where the methodology is.
-    expect(DOC).toMatch(/Growth is required/);
-    expect(SCORING_V2_ACTIVATION.requiredDimensions).toContain('growth');
+    // RENEGOTIATED — S5/S6 §8. The condition is gone and the document says so
+    // rather than falling silent, which is what lets a later reader tell a
+    // removed rule from one nobody wrote down.
+    expect(DOC).toMatch(/Growth was required, and is not any more/);
+    expect(SCORING_V2_ACTIVATION.requiredDimensions).toEqual([]);
+    // The safeguard that DID survive is named in the same breath, so the
+    // removal cannot read as "no growth evidence, no consequence".
+    expect(DOC).toMatch(/printed letter cannot exceed \*\*B\+\*\*/);
   });
 });
 

@@ -305,8 +305,18 @@ describe('the Due Diligence scorer can actually score', () => {
 });
 
 describe('the engines stamp lineage and compose rather than slice', () => {
-  const fork = read('supabase/functions/fork-investment-report/index.ts');
-  const condense = read('supabase/functions/condense-investment-report/index.ts');
+  // The handler AND the composition it calls: `forkSplit.pure.ts` holds the
+  // routing, the composed chapters and the hygiene pass that used to be 257
+  // lines of `index.ts`, and a rule about what the fork does is satisfied by
+  // either.
+  const fork = read('supabase/functions/fork-investment-report/index.ts')
+    + '\n' + read('supabase/functions/_shared/reports/investment/forkSplit.pure.ts');
+  // The handler AND the composition it calls: `condenseCompose.pure.ts` holds
+  // the composed sections, the registry trim, the declared-order assembly and
+  // the hygiene passes that used to be 156 lines of `index.ts`, and a rule
+  // about what condensation does is satisfied by either.
+  const condense = read('supabase/functions/condense-investment-report/index.ts')
+    + '\n' + read('supabase/functions/_shared/reports/investment/condenseCompose.pure.ts');
 
   it('fork: composed chapters, hygiene, score fallback, engine + scope', () => {
     expect(fork).toContain('composeFinancialChapters');
@@ -327,7 +337,18 @@ describe('the engines stamp lineage and compose rather than slice', () => {
     expect(condense).not.toContain('Loan Analysis (P&I and Interest-Only)');
     expect(condense).not.toContain('Current Market Performance (Q3/Q4 2025)');
     expect(condense).toContain('attached programmatically');
-    expect(condense).toContain('composeFinancialChapters');
+    /*
+     * `composeFinancialChapters` used to be asserted here. The Briefing no
+     * longer composes the five detailed chapters (S5/S6 §4, 18 Sep 2026;
+     * `TIER_FRAMEWORK` Decision F) — they contradicted the same tier's
+     * `financialModelling: false` and the companion note printed on its own
+     * cover. What this test is actually for is that the guide demands nothing
+     * the parent cannot give, so the two things that remain composed from the
+     * record are asserted instead, and the guide's prohibition with them.
+     */
+    expect(condense).toContain('composeScoreBreakdownSection');
+    expect(condense).toContain('composeSwotSection');
+    expect(condense).toContain('Do NOT write any financial table');
     expect(condense).toContain('trimToDeclaredSections');
     expect(condense).toContain('stripPlaceholderRows');
     const engineStamps = condense.match(/generation_engine: parentReport\.generation_engine \?\? 'legacy'/g);

@@ -26,40 +26,88 @@
  * missing vacancy rate as equivalent to a missing five-year growth series, and
  * they are nothing alike: one is a nice-to-have, the other is the single most
  * important input to a property investment grade. The rule below is about
- * Growth specifically, plus a floor on overall coverage — so a strongly
- * evidenced property is not blocked by one absent minor metric, and a property
- * with no credible suburb growth evidence cannot reach A+ on Yield and
- * Location alone.
+ * Growth specifically, plus a floor on how well evidenced the assessed
+ * dimensions are — so a strongly evidenced property is not blocked by one
+ * absent minor metric, and a property with no credible suburb growth evidence
+ * cannot reach A+ on Yield and Location alone.
  *
- * ## The second ceiling (2.0.0): absence never lifts a grade
+ * ## The second ceiling (2.0.0) and why 3.0.0 removed it
  *
- * The composite renormalises over measured dimensions, which is right for the
- * SCORE — three strong dimensions are a claim about those three. But the
- * arithmetic has a reward hiding in it: drop the WEAKEST dimension and the
- * renormalised composite rises, and with the coverage floor at 0.70 a strong
- * property missing a mediocre Demand could cross the A+ line it would not
- * cross with Demand measured. Found by fixture before any real evidence was
- * scored: growth 90 / location 80 / yield 85 / demand 55 composites to ~81
- * with Demand and ~86 without it.
+ * 2.0.0 added a second cap: the printed grade also answered to the
+ * NOMINAL-weight sum of what was measured, so a strong property missing a
+ * mediocre Demand could not cross an A+ line it would not have crossed with
+ * Demand measured. The arithmetic concern was real — renormalising over the
+ * measured dimensions does lift the composite when the weakest one drops out.
  *
- * So the printed grade also answers to the **nominal-weight sum of what was
- * measured**: the points the evidence actually delivered, over the full 100.
- * Missing evidence still never scores — the composite, the coverage and the
- * disclosure are untouched — but it can no longer LIFT the badge, because a
- * dimension that was not measured contributes nothing toward the higher
- * grade's floor. Adding evidence can only raise this ceiling (a measured
- * score is ≥ 0), so the property the mandate demands holds by construction:
- * **missing data never improves the grade, and arriving data never lowers
- * this ceiling.** With Risk structurally unavailable today the ceiling's
- * maximum is 95 of 100, so A+ (85) remains mathematically reachable — on
- * genuinely exceptional evidence across the four live dimensions, which is
- * what an A+ is supposed to mean.
+ * It was the wrong instrument. It lowered the grade **solely because a
+ * dimension was unavailable**, which contradicts proportional scoring: a
+ * three-dimension assessment covering 70% of the matrix could not exceed the
+ * grade its 70 delivered points allowed, however strong those three were, so
+ * a qualified score and a qualified grade disagreed with each other by
+ * construction. S5/S6 §8 removes it.
+ *
+ * What replaces it is a rule about SELECTION rather than a cap on the result:
+ * every dimension that produces a valid score is included, and none may be
+ * omitted to improve the outcome (`scorePublicationPolicy.pure.ts`, pinned by
+ * test). The engine filters on validity alone and has no path that chooses
+ * dimensions by their value, so the 2.0.0 scenario — dropping the weak one —
+ * cannot arise from the engine; it could only arise from evidence genuinely
+ * being absent, which is disclosed rather than punished.
+ *
+ * ## Coverage: quality, not count (3.0.0)
+ *
+ * The A and A+ gates below used `overallCoverage`, the share of the FULL
+ * matrix weight that was measured — which mixes two different things: how
+ * many dimensions were assessed, and how well each assessed one was
+ * evidenced. Gating on the mixture is another missing-dimension penalty: a
+ * perfectly evidenced three-dimension assessment could not reach A because
+ * two dimensions were unavailable.
+ *
+ * 3.0.0 gates on `evidenceQualityCoverage` — the share of the MEASURED
+ * dimensions' weight that their evidence actually covered. It answers "how
+ * well evidenced is what we assessed", which is the question an over-claim
+ * guard should ask, and it is unaffected by how many dimensions were
+ * available. The dimension count and the original weight coverage are still
+ * recorded and disclosed; they simply no longer cap the badge.
+ *
+ * ## 4.0.0 — the third place the same penalty was hiding
+ *
+ * 3.0.0 removed the delivered-points ceiling and believed the remaining cap
+ * was about evidence quality. It was not, quite. Both gates below opened with
+ * `hasGrowth &&`, so a property with **no** growth evidence failed both
+ * however strong and however well evidenced its other dimensions were, and
+ * `ceiling` fell to **B+**. That is the missing-dimension penalty again,
+ * reintroduced through this module after being removed from the other two:
+ * the grade was lowered *because a dimension was unavailable*, which is
+ * exactly what proportional weighting already accounts for by renormalising.
+ *
+ * The distinction 4.0.0 draws is between a fact about the EVIDENCE and a fact
+ * about its ABSENCE:
+ *
+ * - **Growth present but weak or thin** — `confidence` under the threshold,
+ *   or `weightCovered` under it. That is a statement about evidence this
+ *   report actually has, and it still caps. The opening case of this module
+ *   is untouched: Growth 93 on 10% coverage at low confidence cannot print
+ *   A+, because the growth evidence is present and cannot carry the claim.
+ * - **Growth absent** — nothing was measured, the dimension carries no score,
+ *   no weight and no contribution, and the composite is built from what WAS
+ *   measured. There is no over-claim to guard against, because no growth
+ *   claim is being made. `evidenceQualityCoverage` still gates, over the
+ *   dimensions that did answer.
+ *
+ * So the growth thresholds bind **only when growth is present**, and the
+ * quality floor binds always. The consequence is real and intended: a
+ * three-dimension assessment whose three dimensions are strongly evidenced
+ * can now reach A. What tells the reader its scope is the QUALIFICATION —
+ * "based on 3 of the 5 assessment dimensions" — carried by
+ * `scorePublicationPolicy.pure.ts` on every surface, which is disclosure
+ * rather than a silent deduction.
  */
 
 import type { GrowthResult } from './growthScoring.pure.ts';
 
 /** Bumped whenever a threshold changes. Persisted beside the grade. */
-export const ELIGIBILITY_VERSION = '2.0.0';
+export const ELIGIBILITY_VERSION = '4.0.0';
 
 /** The grade thresholds. Unchanged, and not this module's to move. */
 export const GRADE_THRESHOLDS: ReadonlyArray<readonly [number, string]> = [
@@ -72,32 +120,38 @@ export function gradeFor(score: number): string {
 }
 
 export const ELIGIBILITY_RULES = {
-  /** A needs Growth evidence that is at least credible. */
+  /**
+   * A needs Growth evidence that is at least credible — **where growth
+   * evidence exists**. Absence is not weakness (4.0.0): a dimension nobody
+   * measured makes no claim to over-state, and the composite is already
+   * renormalised over what was measured.
+   */
   aMinGrowthConfidence: 45,
   /** …and enough of the Growth weight actually measured. */
   aMinGrowthCoverage: 0.45,
   /** A+ needs Growth evidence that is strong. */
   aPlusMinGrowthConfidence: 70,
   aPlusMinGrowthCoverage: 0.70,
-  /** A+ also needs the composite to rest on most of its dimensions. */
-  aPlusMinOverallCoverage: 0.70,
-  /** A needs the composite to rest on more than half of its dimensions. */
-  aMinOverallCoverage: 0.55,
+  /**
+   * A+ also needs the dimensions it DID assess to be well evidenced. This is
+   * a quality measure over the measured weight, never a count of how many
+   * dimensions were available.
+   */
+  aPlusMinEvidenceQuality: 0.70,
+  /** A needs the assessed dimensions to be more than half evidenced. */
+  aMinEvidenceQuality: 0.55,
 } as const;
 
 export interface EligibilityInput {
   /** The composite score, 0-100. */
   compositeScore: number;
   growth: GrowthResult;
-  /** Share of the composite's nominal weight that was measured, 0-1. */
-  overallCoverage: number;
   /**
-   * Σ (measured dimension score × nominal weight) — the points the evidence
-   * actually delivered over the full 100. The renormalised composite answers
-   * "how strong is what we measured"; this answers "how much did the evidence
-   * deliver", and the printed grade may not exceed what was delivered.
+   * How well evidenced the MEASURED dimensions are, 0-1: the share of their
+   * own weight that their evidence covered. Not a dimension count, and not
+   * the share of the full matrix — see the 3.0.0 note above.
    */
-  nominalMeasuredScore: number;
+  evidenceQualityCoverage: number;
 }
 
 export interface EligibilityResult {
@@ -121,7 +175,7 @@ export interface EligibilityResult {
  * over-claim, not a second opinion on the arithmetic.
  */
 export function applyEligibility(input: EligibilityInput): EligibilityResult {
-  const { compositeScore, growth, overallCoverage, nominalMeasuredScore } = input;
+  const { compositeScore, growth, evidenceQualityCoverage } = input;
   const scoreGrade = gradeFor(compositeScore);
   const reasons: string[] = [];
   const r = ELIGIBILITY_RULES;
@@ -130,35 +184,44 @@ export function applyEligibility(input: EligibilityInput): EligibilityResult {
   const gCover = growth.weightCovered;
   const hasGrowth = growth.score !== null;
 
+  /*
+   * The growth gates judge growth evidence that EXISTS (4.0.0). Where growth
+   * was not measured they do not apply — there is no growth claim to
+   * over-state — and the quality floor over the measured dimensions carries
+   * the guard on its own. `hasGrowth &&` here was the missing-dimension
+   * penalty reintroduced after being removed from the other two modules.
+   */
+  const growthCarriesAPlus = !hasGrowth
+    || (gConf >= r.aPlusMinGrowthConfidence && gCover >= r.aPlusMinGrowthCoverage);
+  const growthCarriesA = !hasGrowth
+    || (gConf >= r.aMinGrowthConfidence && gCover >= r.aMinGrowthCoverage);
+
   // Can the evidence carry an A+?
-  const aPlusOk =
-    hasGrowth
-    && gConf >= r.aPlusMinGrowthConfidence
-    && gCover >= r.aPlusMinGrowthCoverage
-    && overallCoverage >= r.aPlusMinOverallCoverage;
+  const aPlusOk = growthCarriesAPlus && evidenceQualityCoverage >= r.aPlusMinEvidenceQuality;
 
   // Can it carry an A?
-  const aOk =
-    hasGrowth
-    && gConf >= r.aMinGrowthConfidence
-    && gCover >= r.aMinGrowthCoverage
-    && overallCoverage >= r.aMinOverallCoverage;
+  const aOk = growthCarriesA && evidenceQualityCoverage >= r.aMinEvidenceQuality;
 
-  const growthCeiling = aPlusOk ? 'A+' : aOk ? 'A' : 'B+';
-
-  // The second ceiling: the grade the DELIVERED points support. Unmeasured
-  // weight contributes nothing toward a higher badge — it is not scored, and
-  // it does not lift.
-  const nominalCeiling = gradeFor(nominalMeasuredScore);
+  // The one remaining ceiling, and it is about the QUALITY of the evidence
+  // this report holds — never about how many dimensions happened to answer.
+  const ceiling = aPlusOk ? 'A+' : aOk ? 'A' : 'B+';
 
   const order = ['F', 'D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
-  const ceiling = order[Math.min(order.indexOf(growthCeiling), order.indexOf(nominalCeiling))];
 
   // Only explain the constraint that actually binds.
   const wanted = scoreGrade === 'A+' ? 'A+' : scoreGrade === 'A' ? 'A' : null;
   if (wanted === 'A+' && !aPlusOk) {
-    if (!hasGrowth) reasons.push('No capital-growth evidence was available for this property.');
-    else {
+    // The quality floor explains itself whether or not growth was measured:
+    // it is a statement about the dimensions that DID answer, so it must not
+    // sit inside the growth branch (4.0.0).
+    if (evidenceQualityCoverage < r.aPlusMinEvidenceQuality) {
+      reasons.push(
+        `The assessed dimensions are ${Math.round(evidenceQualityCoverage * 100)}% evidenced; `
+          + `A+ requires at least ${Math.round(r.aPlusMinEvidenceQuality * 100)}%.`,
+      );
+    }
+    // Absence is no longer a reason, because it is no longer a cause (4.0.0).
+    if (hasGrowth) {
       if (gConf < r.aPlusMinGrowthConfidence) {
         reasons.push(
           `Growth evidence confidence is ${gConf} (${growth.confidence.band}); ` +
@@ -171,16 +234,16 @@ export function applyEligibility(input: EligibilityInput): EligibilityResult {
             `A+ requires at least ${Math.round(r.aPlusMinGrowthCoverage * 100)}%.`,
         );
       }
-      if (overallCoverage < r.aPlusMinOverallCoverage) {
-        reasons.push(
-          `Only ${Math.round(overallCoverage * 100)}% of the scoring dimensions were measured; ` +
-            `A+ requires at least ${Math.round(r.aPlusMinOverallCoverage * 100)}%.`,
-        );
-      }
     }
   } else if (wanted === 'A' && !aOk) {
-    if (!hasGrowth) reasons.push('No capital-growth evidence was available for this property.');
-    else {
+    if (evidenceQualityCoverage < r.aMinEvidenceQuality) {
+      reasons.push(
+        `The assessed dimensions are ${Math.round(evidenceQualityCoverage * 100)}% evidenced; `
+          + `A requires at least ${Math.round(r.aMinEvidenceQuality * 100)}%.`,
+      );
+    }
+    // Absence is no longer a reason, because it is no longer a cause (4.0.0).
+    if (hasGrowth) {
       if (gConf < r.aMinGrowthConfidence) {
         reasons.push(
           `Growth evidence confidence is ${gConf} (${growth.confidence.band}); ` +
@@ -193,26 +256,12 @@ export function applyEligibility(input: EligibilityInput): EligibilityResult {
             `A requires at least ${Math.round(r.aMinGrowthCoverage * 100)}%.`,
         );
       }
-      if (overallCoverage < r.aMinOverallCoverage) {
-        reasons.push(
-          `Only ${Math.round(overallCoverage * 100)}% of the scoring dimensions were measured; ` +
-            `A requires at least ${Math.round(r.aMinOverallCoverage * 100)}%.`,
-        );
-      }
     }
   }
 
-  // Say when the delivered-points ceiling is the binding one.
-  const capIndex = order.indexOf(ceiling);
-  const scoreIndex = order.indexOf(scoreGrade);
-  if (scoreIndex > capIndex && order.indexOf(nominalCeiling) < order.indexOf(growthCeiling)) {
-    reasons.push(
-      `The measured evidence delivers ${Math.round(nominalMeasuredScore)} of the composite's 100 `
-        + `nominal points, which supports at most ${nominalCeiling}. A dimension that was not `
-        + 'measured is never scored — and never lifts the grade.',
-    );
-  }
 
+  const scoreIndex = order.indexOf(scoreGrade);
+  const capIndex = order.indexOf(ceiling);
   const grade = scoreIndex > capIndex ? ceiling : scoreGrade;
 
   return {

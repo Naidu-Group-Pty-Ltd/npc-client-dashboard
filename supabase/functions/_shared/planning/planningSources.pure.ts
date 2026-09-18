@@ -97,6 +97,29 @@ export interface DevelopmentInstrumentReading {
   status: string | null;
   gazetted: string | null;
   detail: string | null;
+  /**
+   * The publisher's own stable reference for this feature, where the layer
+   * publishes one. Null where it does not — and null is never read as a match.
+   *
+   * It is preserved HERE because this is the boundary that was discarding it:
+   * an infrastructure designation's `id_reference` was read only as a fallback
+   * NAME and then thrown away, so a consumer asking "is this the same
+   * designation the other register returned?" had nothing to answer with, and
+   * a name was the best it could do. A name is a candidate; a reference is an
+   * answer.
+   *
+   * `OBJECTID` is deliberately NOT used. It is the feature service's own row
+   * id, it is re-issued when a layer is republished, and identity built on it
+   * would be stable only until the next publication — which is worse than no
+   * identifier, because it looks like one.
+   *
+   * The other three kinds read no published reference from their layers, so
+   * they carry null and, under `infrastructureEvidence`'s rule 10, do not
+   * merge. That is the conservative direction: a duplicate row is a
+   * presentation fault, and suppressing a record that was never confirmed to
+   * be a duplicate destroys evidence.
+   */
+  reference: string | null;
 }
 
 /** One parsed answer: a reading, a definite empty, or a transport-level failure. */
@@ -342,19 +365,22 @@ export function parseQldInstrument(
     if (kind === 'priority_development_area') {
       const name = str(a['pda_name']);
       if (!name) continue;
-      readings.push({ kind, name, status: str(a['pda_status']), gazetted: epochMsToIsoDate(a['gazetted_date']), detail: str(a['lga_name']) });
+      readings.push({ kind, name, status: str(a['pda_status']), gazetted: epochMsToIsoDate(a['gazetted_date']), detail: str(a['lga_name']), reference: null });
     } else if (kind === 'state_development_area') {
       const name = str(a['sda_name']);
       if (!name) continue;
-      readings.push({ kind, name, status: null, gazetted: epochMsToIsoDate(a['gazdate']), detail: null });
+      readings.push({ kind, name, status: null, gazetted: epochMsToIsoDate(a['gazdate']), detail: null, reference: null });
     } else if (kind === 'coordinated_project') {
       const name = str(a['name']);
       if (!name) continue;
-      readings.push({ kind, name, status: str(a['projectstatus']), gazetted: null, detail: str(a['description']) });
+      readings.push({ kind, name, status: str(a['projectstatus']), gazetted: null, detail: str(a['description']), reference: null });
     } else {
-      const name = str(a['id_description']) ?? str(a['id_reference']);
+      // `id_reference` is the designation's own published reference. It was
+      // read only as a name fallback and discarded; it is preserved now.
+      const reference = str(a['id_reference']);
+      const name = str(a['id_description']) ?? reference;
       if (!name) continue;
-      readings.push({ kind, name, status: str(a['id_type__per_legislation_']), gazetted: epochMsToIsoDate(a['date_of_gazettal']), detail: str(a['address']) });
+      readings.push({ kind, name, status: str(a['id_type__per_legislation_']), gazetted: epochMsToIsoDate(a['date_of_gazettal']), detail: str(a['address']), reference });
     }
   }
   return readings.length === 0 ? { kind: 'empty' } : { kind: 'ok', reading: readings };

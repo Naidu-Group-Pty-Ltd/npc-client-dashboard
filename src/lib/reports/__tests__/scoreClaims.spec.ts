@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import {
   findScoreClaims,
   recordedScoreValues,
+  sentencesOf,
   suppressUnrecordedScores,
   suppressUnrecordedVerdictVisuals,
 } from '@/lib/reports/investment/scoreClaims.pure';
@@ -328,5 +329,56 @@ describe('a rating you invented may not be drawn, in any primitive', () => {
     const bars = rules.slice(rules.indexOf('Any list of 3+ ranked metrics'));
     expect(bars.slice(0, 400)).toMatch(/MEASURED quantities/);
     expect(bars.slice(0, 400)).toMatch(/not a set of metrics/);
+  });
+});
+
+describe('the sentence splitter is total, and a citation stays with its claim', () => {
+  /*
+   * Found while building the claim corrector, 18 Sep 2026.
+   *
+   * `sentencesOf` was `text.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)`, which
+   * requires every part to end at a terminator FOLLOWED BY WHITESPACE. The
+   * generator's prose puts its citation immediately after the stop with no
+   * space — "…last updated.[Property.com.au, 119, 120, …]" — so that stop
+   * satisfied neither alternative, the engine walked the start position
+   * forward, and the text in between was silently DROPPED: the real Redfern
+   * Street paragraph came back as two parts whose second began mid-domain, at
+   * "au, 119, …".
+   *
+   * Every caller rebuilds the line with `kept.join(' ')`, so on a paragraph
+   * that happened to carry an unrecorded score claim the guard would have
+   * deleted a sentence and a half nothing had decided to remove — a
+   * blanket removal wearing a sentence-level rule's clothes.
+   */
+  const MEASURED =
+    'The lot is 612 square metres and falls gently to the rear. The subject site sits within an '
+    + 'established residential pocket, with multiple nearby addresses on the street recording no '
+    + 'bushfire, flood or heritage overlays on public mapping at the time they were last '
+    + 'updated.[Property.com.au, 119, 120, 137 and 139 Redfern Street profiles, 2024-2026] '
+    + 'A parcel-level check of the State hazard registers is listed in the due diligence schedule.';
+
+  it('loses no character of the input', () => {
+    const parts = sentencesOf(MEASURED);
+    expect(parts.join(' ')).toBe(MEASURED);
+  });
+
+  it('cuts at the stop that a citation follows, keeping the citation with its sentence', () => {
+    const parts = sentencesOf(MEASURED);
+    expect(parts).toHaveLength(3);
+    expect(parts[1].endsWith('2024-2026]')).toBe(true);
+    expect(parts[2]).toBe('A parcel-level check of the State hazard registers is listed in the '
+      + 'due diligence schedule.');
+  });
+
+  it('so a score guard on such a paragraph removes the claim and nothing else', () => {
+    const line = 'Growth is supported by three registers. The suburb rates 82/100 for commuter '
+      + 'appeal.[Property.com.au suburb profile, 2026] Median rent is $640 a week.';
+    const { markdown, removed } = suppressUnrecordedScores(line, { recorded: [39] });
+    expect(removed).toHaveLength(1);
+    expect(markdown).toBe('Growth is supported by three registers. Median rent is $640 a week.');
+  });
+
+  it('a paragraph with no terminator at all comes back whole', () => {
+    expect(sentencesOf('An unterminated fragment')).toEqual(['An unterminated fragment']);
   });
 });

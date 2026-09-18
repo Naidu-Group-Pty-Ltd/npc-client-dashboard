@@ -127,6 +127,33 @@ export const VIZ_DIRECTIVE_RE = /\{\{\s*([a-zA-Z_]+)\s*:([^}]*)\}\}/;
 /** The same, global, for scanning a block. */
 export const VIZ_DIRECTIVE_RE_G = new RegExp(VIZ_DIRECTIVE_RE.source, 'g');
 
+/**
+ * A directive the model NAMED and gave nothing to draw: `{{stat block}}`.
+ *
+ * Found by drawing a document rather than by reading code. On the Due
+ * Diligence report for 18 Annabelle Crescent, `{{stat block}}` printed as body
+ * copy between two paragraphs about schools — the model asking for a figure,
+ * on a client's page, in braces.
+ *
+ * `VIZ_DIRECTIVE_RE` requires a colon, so a payload-less token matches
+ * nothing, `directiveOnlyBlock` answers false, and the line falls through to a
+ * paragraph. Measured over the whole corpus: **12 occurrences across 5
+ * reports**, every one a bare kind — `timeline` ×3, `donut` ×2, `bars` ×2,
+ * `glance` ×2, `stat block`, `tiles`, `gauge`.
+ *
+ * There is nothing to draw, so there is nothing to print. It is the same rule
+ * the template renderer already holds — an unresolved `{{…}}` renders as the
+ * empty string, never as a visible one — and it is counted as a refusal
+ * rather than dropped quietly, because a silent drop looks exactly like a
+ * report the model chose not to illustrate.
+ *
+ * Interior spaces are admitted for `stat block`; a dot is not, so a template
+ * binding (`{{financials.weeklyRent}}`) is left to the renderer that owns it.
+ */
+export const VIZ_DIRECTIVE_EMPTY_RE = /\{\{\s*[a-zA-Z_][a-zA-Z_ ]*\s*\}\}/;
+
+const VIZ_DIRECTIVE_EMPTY_RE_G = new RegExp(VIZ_DIRECTIVE_EMPTY_RE.source, 'g');
+
 /** `1,234.5`, `$1.2M`, `-13,101`, `+50,000` → a number, or null. */
 function looseNumber(raw: string): number | null {
   const cleaned = String(raw).replace(/[^0-9.\-+]/g, '');
@@ -498,8 +525,12 @@ export function parseVizDirective(kind: string, body: string): VizDirective | nu
  * left as prose — replacing inline would leave a dangling clause.
  */
 export function directiveOnlyBlock(text: string): boolean {
-  const stripped = text.replace(VIZ_DIRECTIVE_RE_G, '').trim();
-  return stripped.length === 0 && VIZ_DIRECTIVE_RE.test(text);
+  const stripped = text
+    .replace(VIZ_DIRECTIVE_RE_G, '')
+    .replace(VIZ_DIRECTIVE_EMPTY_RE_G, '')
+    .trim();
+  return stripped.length === 0
+    && (VIZ_DIRECTIVE_RE.test(text) || VIZ_DIRECTIVE_EMPTY_RE.test(text));
 }
 
 /** Every directive in a block, in order. Unparseable ones are omitted. */
@@ -525,5 +556,9 @@ export function scanVizDirectives(
     if (parsed) directives.push(parsed);
     else refused++;
   }
+  // A kind the model named with nothing to draw is a refusal, not silence —
+  // see `VIZ_DIRECTIVE_EMPTY_RE`. Counted here so the one caller that reports
+  // figures (`renderMarkdown`'s `figuresDropped`) sees it.
+  for (const _ of text.matchAll(VIZ_DIRECTIVE_EMPTY_RE_G)) refused++;
   return { directives, refused };
 }

@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
 import { SEMANTIC_ANNOTATION_VERSION } from '@/lib/reportTemplate/pdfImport/semanticRole.pure';
+import { MISSING_ALT } from '../blocks/_shared.html';
 
 const W = 595;
 const H = 842;
@@ -30,6 +31,21 @@ const text = (over: Record<string, unknown> = {}) => ({
 const semantics = (role: string, headingLevel?: number) => ({
   semantics: { version: SEMANTIC_ANNOTATION_VERSION, role, ...(headingLevel ? { headingLevel } : {}) },
 });
+
+/**
+ * The drawn page, without the document's own title heading.
+ *
+ * `renderTemplateToHtml` emits the report's title as an `<h1>` before the first
+ * page and off the visual surface, because PDF/UA-1 clause 7.4.2 requires the
+ * first heading in a file to be level 1 and the catalogue's masters set their
+ * cover title as positioned display type, which carries no heading role. That
+ * heading is a property of the document; these assertions are about what an
+ * OVERLAY becomes, so they read the page.
+ */
+function page(html: string): string {
+  const i = html.indexOf('<section');
+  return i < 0 ? html : html.slice(i);
+}
 
 function render(overlays: unknown[]): string {
   return renderTemplateToHtml({
@@ -53,7 +69,7 @@ describe('a heading is emitted as a heading', () => {
   it('leaves every other role as a div', () => {
     for (const role of ['body', 'caption', 'footnote', 'pageHeader', 'pageFooter', 'listItem', 'code']) {
       const html = render([text(semantics(role))]);
-      expect(html, role).not.toMatch(/<h[1-6][ >]/);
+      expect(page(html), role).not.toMatch(/<h[1-6][ >]/);
       expect(html, role).toContain('<div ');
     }
   });
@@ -62,7 +78,7 @@ describe('a heading is emitted as a heading', () => {
     // Every template that predates this stage, and every import path that emits
     // no labels, must render byte-identically.
     expect(render([text()])).toBe(render([text()]));
-    expect(render([text()])).not.toMatch(/<h[1-6][ >]/);
+    expect(page(render([text()]))).not.toMatch(/<h[1-6][ >]/);
   });
 
   it('zeroes the margin the heading element would otherwise inherit', () => {
@@ -110,10 +126,35 @@ describe('a figure carries its alternative text', () => {
       .toContain('alt="Bar chart of income by source"');
   });
 
-  it('omits the attribute rather than emitting an empty one', () => {
-    expect(render([image()])).not.toContain(' alt=');
-    expect(render([image({ alt: '   ' })])).not.toContain(' alt=');
-    expect(render([image({ alt: 42 })])).not.toContain(' alt=');
+  it('names an absent description rather than omitting the attribute', () => {
+    // This asserted the opposite — no description, no attribute — on the
+    // reasoning that an empty `alt` marks a picture decorative. **Measured on
+    // WeasyPrint 69.0, the pinned engine, it does not.** `<img alt="">` and
+    // `<img>` with no attribute produce a byte-identical PDF (7,167 bytes each
+    // on a one-image probe) and in both the figure is tagged `/Figure` with no
+    // `/Alt`, which veraPDF 1.30.2 fails under clause 7.3. There is no
+    // "decorative" escape on this engine, so an undescribed picture cannot be
+    // made conformant by saying less about it; `MISSING_ALT` says the
+    // description is missing, which is true and which a reader can act on.
+    for (const nothing of [{}, { alt: '   ' }]) {
+      const html = render([image(nothing)]);
+      const emitted = /<img[^>]*\salt="([^"]*)"/.exec(html);
+      expect(emitted, `no img with an alt for ${JSON.stringify(nothing)}`).not.toBeNull();
+      expect(emitted![1]).toBe(MISSING_ALT);
+      expect(html).not.toContain(' alt=""');
+    }
+  });
+
+  it('is refused by the schema when it is not a string at all', () => {
+    // This case used to sit in the loop above, asserting `not.toContain(' alt=')`
+    // on `{ alt: 42 }`, and it passed for a reason that had nothing to do with
+    // alternative text: `OverlaySchema.alt` is `z.string().optional()`, so a
+    // number fails the parse, the template is rejected whole and the document
+    // renders EMPTY. An empty document contains no `alt=` and also no picture,
+    // no page and no text. Asserted here for what it is, so that the loop above
+    // is left testing the renderer.
+    const html = render([image({ alt: 42 })]);
+    expect(html).not.toContain('<img');
   });
 
   it('escapes alternative text like any other untrusted string', () => {

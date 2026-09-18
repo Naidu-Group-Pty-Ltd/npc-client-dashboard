@@ -144,16 +144,41 @@ export function developmentActivityBlock(input: PlanningPromptInput): string {
     .filter((b): b is string => b !== null);
   if (statusBits.length > 0) parts.push(`- Status (of ${scope}): ${statusBits.join(', ')}`);
 
-  const costTotal = num(s['statedCostTotal']);
-  const rowsWithCost = num(s['rowsWithCost']);
-  if (costTotal !== null && costTotal > 0 && rowsWithCost) {
-    parts.push(`- Stated cost of development: **${fmtMoney(costTotal)}** across the ${fmtInt(rowsWithCost)} applications that stated a cost (as stated by applicants, not an assessed value)`);
-  }
-  const dwellings = num(s['newDwellingsTotal']);
-  const rowsWithDwellings = num(s['rowsWithDwellings']);
-  if (dwellings !== null && dwellings > 0 && rowsWithDwellings) {
-    parts.push(`- New dwellings proposed: **${fmtInt(dwellings)}** across ${fmtInt(rowsWithDwellings)} applications`);
-  }
+  /*
+   * New proposals and amendments are reported on SEPARATE lines and are never
+   * added. A modification restates the development it modifies — the register
+   * carries the whole cost and the whole dwelling count on the modification
+   * row — so a combined figure counts the same building twice. Measured on
+   * this register (The Hills Shire, all 659 applications lodged over six
+   * months to 17 Sep 2026): the combined form stated $2.367bn against
+   * $1.177bn of new proposals, and 3,447 dwellings against 1,412.
+   *
+   * The model reads these lines, so the wording carries the distinction: an
+   * un-labelled pair of numbers is one a narrative will add up.
+   */
+  const totals = (key: string) => {
+    const v = s[key];
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  };
+  const line = (t: Record<string, unknown> | null, label: string, note: string) => {
+    if (!t) return;
+    const cost = num(t['statedCostTotal']);
+    const rowsCost = num(t['rowsWithCost']);
+    if (cost !== null && cost > 0 && rowsCost) {
+      parts.push(`- ${label} — stated cost: **${fmtMoney(cost)}** across the ${fmtInt(rowsCost)} that stated one (as stated by applicants, not an assessed value). ${note}`);
+    }
+    const dw = num(t['newDwellingsTotal']);
+    const rowsDw = num(t['rowsWithDwellings']);
+    if (dw !== null && dw > 0 && rowsDw) {
+      parts.push(`- ${label} — new dwellings: **${fmtInt(dw)}** across ${fmtInt(rowsDw)} applications`);
+    }
+  };
+  line(totals('newApplications'), 'New development applications',
+    'These are the new proposals.');
+  line(totals('amendments'), 'Modifications of approved developments',
+    'Each restates the development it modifies, so this figure MUST NOT be added to the one above.');
+  line(totals('unclassified'), 'Applications of an unrecognised type',
+    'Type not recognised by the classifier; reported separately and not counted as new development.');
 
   const types = Array.isArray(s['topDevelopmentTypes']) ? (s['topDevelopmentTypes'] as Array<Record<string, unknown>>) : [];
   const typeBits = types
@@ -162,17 +187,36 @@ export function developmentActivityBlock(input: PlanningPromptInput): string {
     .slice(0, 6);
   if (typeBits.length > 0) parts.push(`- Most common development types: ${typeBits.join(', ')}`);
 
-  const largest = Array.isArray(s['largestByCost']) ? (s['largestByCost'] as Array<Record<string, unknown>>) : [];
+  // One line per DEVELOPMENT, not per application. This ranked rows, so on
+  // the Kellyville report three of the five largest "projects" were the same
+  // Norwest data centre, once for each time it had been modified.
+  const largest = Array.isArray(s['largestDevelopments']) ? (s['largestDevelopments'] as Array<Record<string, unknown>>) : [];
   const largestLines = largest
     .map((l) => {
-      const cost = num(l['cost']);
+      const cost = num(l['statedCost']);
       if (cost === null) return null;
       const types = Array.isArray(l['types']) ? (l['types'] as unknown[]).map(str).filter((t): t is string => t !== null) : [];
-      const bits = [types.slice(0, 2).join(' / ') || null, str(l['suburb']), str(l['status'])].filter((b): b is string => b !== null);
+      const amendments = num(l['amendmentsInWindow']) ?? 0;
+      const bits = [
+        str(l['reference']),
+        types.slice(0, 2).join(' / ') || null,
+        str(l['address']) ?? str(l['suburb']),
+        str(l['status']),
+        // So a development that reached this window only through its
+        // amendments cannot read as something newly proposed in it.
+        l['parentOutsideWindow'] === true ? 'approved before this window opened' : null,
+        amendments > 0 ? `amended ${fmtInt(amendments)} time${amendments === 1 ? '' : 's'} in this window` : null,
+      ].filter((b): b is string => b !== null);
       return `  - ${fmtMoney(cost)}${bits.length ? ` — ${bits.join(', ')}` : ''}`;
     })
     .filter((l): l is string => l !== null);
-  if (largestLines.length > 0) parts.push(`- Largest applications by stated cost:\n${largestLines.join('\n')}`);
+  if (largestLines.length > 0) {
+    parts.push(
+      `- Largest developments by stated cost (one entry per development; a figure is the applicant's own `
+      + `stated cost of development and is NOT funding, and this register publishes no delivery date for `
+      + `any of them):\n${largestLines.join('\n')}`,
+    );
+  }
 
   if (sampled) {
     parts.push(`- Coverage note: aggregate figures above are computed over ${scope}.`);

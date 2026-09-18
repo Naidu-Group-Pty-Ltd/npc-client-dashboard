@@ -1,17 +1,5 @@
 import { buildRecordedFactsBlock } from '../_shared/reports/investment/condenseFacts.pure.ts';
-import { composeFinancialChapters, composeFinancialSnapshotSection } from '../_shared/reports/investment/financialChapters.pure.ts';
-import {
-  composeScoreBreakdownSection,
-  composeScoreDimensionsSection,
-  composeSwotSection,
-  composeVerdictSection,
-} from '../_shared/reports/investment/scoreSections.pure.ts';
-import { recordedScoreValues, suppressUnrecordedScores } from '../_shared/reports/investment/scoreClaims.pure.ts';
-import { dropEmptySections, stripPlaceholderRows, trimToDeclaredSections } from '../_shared/reports/investment/derivedHygiene.pure.ts';
-import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
-import { authoredHeadingsForTier, markdownHeadingsForTier } from '../_shared/reports/investment/sectionRegistry.pure.ts';
-import { assembleInDeclaredOrder, type ComposedPlacement } from '../_shared/reports/investment/tierAssembly.pure.ts';
-import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
+import { composeCondensedDocument } from '../_shared/reports/investment/condenseCompose.pure.ts';
 import { projectInvestmentReport, type InvestmentReportRowLike } from '../_shared/reportBindingProjection.pure.ts';
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
@@ -54,9 +42,9 @@ const TIER_CONFIG = {
     name: 'Executive Briefing',
     targetPages: 12,
     structureGuide: `
-EXECUTIVE BRIEFING STRUCTURE (~7 pages of prose — financial tables, the
-score breakdown and the SWOT are attached programmatically from the recorded
-calculation AFTER your output; do NOT write them yourself):
+EXECUTIVE BRIEFING STRUCTURE (~7 pages of prose — the score breakdown and the
+SWOT are attached programmatically from the recorded calculation AFTER your
+output; do NOT write them yourself):
 
 ## Executive Summary
 - The verdict and the case for it in 4-6 sentences, condensed from the
@@ -103,15 +91,21 @@ calculation AFTER your output; do NOT write them yourself):
 
 HARD RULES:
 - Do NOT write any financial table (costs, yield, loan, cashflow,
-  sensitivity, projections, LVR) — they are attached from the recorded
-  calculation after your output and anything you write would duplicate or
-  contradict them.
-- Do NOT write an Investment Score Breakdown or SWOT section — same reason.
+  sensitivity, projections, LVR, repayments, the weekly position). This
+  document is the ASSESSMENT condensed for a decision; the financial position
+  belongs to the Financial Analysis Report, which its own cover names, and
+  nothing here attaches one. Writing it would put the modelling in a document
+  that tells its reader the modelling is somewhere else.
+  You MAY refer to the purchase price and the indicative rent, which are
+  facts about the asset and are published on every tier.
+- Do NOT write an Investment Score Breakdown or SWOT section — those two ARE
+  attached from the recorded calculation after your output, and anything you
+  write under those headings would duplicate or contradict them.
 - Include a metric ONLY when its value is stated in the report or the
   recorded figures; NEVER write "N/A", "TBD" or a placeholder — omit the
   row, or the table, entirely.
 
-WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the source material's own section
 headings after them — anything outside this structure is discarded.
 `
   },
@@ -165,7 +159,7 @@ or the score components anywhere else either.
 - Only sources actually cited in the report or the recorded figures; omit
   the section entirely rather than writing "N/A" for a source you do not have
 
-WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the original report's own section
+WRITE ONLY THE SECTIONS ABOVE. Do NOT copy the source material's own section
 headings after them — anything outside this structure is discarded.
 `
   },
@@ -541,18 +535,32 @@ Deno.serve(async (req) => {
       projectInvestmentReport(parentReport as InvestmentReportRowLike, { tier: targetTier }),
     );
 
+    // The block's LABEL is part of the contract. It used to read "ORIGINAL
+    // COMPREHENSIVE REPORT", and the model handed that phrase straight to the
+    // client: row 89b451f6 carries four sentences of the form "N/A (Historical
+    // price growth data not provided in the original report.)" and one of them
+    // reached page 4 of the rendered Briefing as a prose bullet — where the
+    // read-path placeholder scrub correctly cannot go, because prose is never
+    // regex-scrubbed. Banning the TOKEN without naming the permitted form is
+    // how a model routes around a prohibition: denied "N/A" in a cell, it
+    // wrote a sentence narrating the gap instead, and parenthesised the token
+    // inside it. So the source is named as pipeline input, the reader's
+    // single-document position is stated, and the permitted form — omit the
+    // line — is given.
     const userPrompt = `Please condense the following comprehensive investment report into a ${tierConfig.name} format (~${tierConfig.targetPages} pages).
 
 Use the structure template from the system prompt and extract the relevant data from this report:
 
 ---
-ORIGINAL COMPREHENSIVE REPORT:
+SOURCE MATERIAL (pipeline input — the reader has never seen this document):
 ${parentReport.report_content}
 ---
 ${factsBlock ? `\n${factsBlock}\n` : ''}
 IMPORTANT:
-- Copy all numerical values, percentages, and scores EXACTLY — from the RECORDED FIGURES block first, then from the report
+- Copy all numerical values, percentages, and scores EXACTLY — from the RECORDED FIGURES block first, then from the source material
 - Include a metric's table row ONLY when its value is known from those sources; NEVER write "N/A", "TBD" or any placeholder — omit the row entirely
+- The reader is handed exactly ONE document: this one. Never mention the source material, "the original report", "the parent report", "the full report" or what it did or did not contain. "Vacancy rate was not provided in the original report" describes our pipeline, not their property, and names a document they cannot open.
+- Where the source material and the RECORDED FIGURES are both silent on something, OMIT the line, the bullet or the row. Do not write a sentence reporting the gap, and do not put the gap in a heading with nothing under it — a reader who is not told a number has lost nothing.
 - Keep all table data intact
 - Follow the section structure precisely
 - Maintain professional formatting throughout`;
@@ -615,172 +623,35 @@ IMPORTANT:
     // shipped a double document (its 8 declared sections followed by a copy
     // of the parent's own headings: 17 H2s and 2.5× the format's length on
     // row 8c6edc56) with nothing to catch it.
-    let postProcessReport: unknown = null;
-    // Sections composed from the record, addressed by the registry id that
-    // decides where each one goes. Collected for both condensed tiers and
-    // placed by `assembleInDeclaredOrder` below.
-    const composedPlacements: ComposedPlacement[] = [];
     let qaReport: unknown = null;
-    const hygiene: Record<string, unknown> = {};
+    let hygiene: Record<string, unknown> = {};
+    let postProcessReport: unknown = null;
     try {
       const { runQAValidation } = await import('../_shared/compassQAValidator.ts');
 
-      if (targetTier === 'briefing') {
-        const { postProcessReportMarkdown } = await import('../_shared/compassPostProcessor.ts');
-        const result = postProcessReportMarkdown(condensedContent, 'compass-40');
-        condensedContent = result.markdown;
-        postProcessReport = result.report;
-
-        // The financial tables, the score breakdown and the SWOT are COMPOSED
-        // from the row's own record, never asked of the model — the guide
-        // forbids it, and the model's version is what wrote 87 N/As on the
-        // newest briefing. The parent's score and calculations were copied
-        // onto this child above, so the composed sections and the templated
-        // KPI tiles read the same record.
-        //
-        // Each chapter is tagged with the section id the registry places it at.
-        // The map is here rather than in the composer because the composer
-        // answers to the Financial tier's layout and the registry answers to
-        // the Briefing's.
-        const CHAPTER_SECTION_ID: Record<number, ComposedPlacement['id']> = {
-          4: 'purchaseHolding', 5: 'rentalYield', 6: 'loan', 8: 'sensitivity', 9: 'tenYear',
-        };
-        for (const ch of composeFinancialChapters(
-          { financialCalculations: parentReport.financial_calculations, investmentScore: parentReport.investment_score },
-          { scenarios: 'primary' },
-        )) {
-          // 12 and 14 are the FIN-titled scorecard and SWOT; the briefing
-          // carries them under its own headings below.
-          const id = CHAPTER_SECTION_ID[ch.ordinal];
-          if (id) composedPlacements.push({ id, markdown: ch.markdown });
-        }
-        const scoreSection = composeScoreBreakdownSection(parentReport.investment_score, 'Investment Score Breakdown');
-        if (scoreSection) composedPlacements.push({ id: 'scorecard', markdown: scoreSection });
-        const swotSection = composeSwotSection(parentReport.investment_score, 'SWOT Analysis');
-        if (swotSection) composedPlacements.push({ id: 'swot', markdown: swotSection });
-      }
-
-      // The Snapshot composes too, and until now composed NOTHING — the only
-      // member of the family that did not. Briefing 7 sections from the record,
-      // Financial 8, Snapshot 0, while four of its nine model-authored sections
-      // were numeric. Three of those four are figures the record holds outright,
-      // so they are typed from it here; `Key Market Stats` stays authored
-      // because median price, vacancy rate, days on market and walk score are
-      // NOT in `financial_calculations` and composing them would mean inventing
-      // a source, which is the worse failure.
-      if (targetTier === 'snapshot') {
-        const verdictSection = composeVerdictSection(parentReport.investment_score, 'Investment Score');
-        if (verdictSection) composedPlacements.push({ id: 'verdict', markdown: verdictSection });
-        const dimsSection = composeScoreDimensionsSection(parentReport.investment_score, 'Score Breakdown');
-        if (dimsSection) composedPlacements.push({ id: 'scorecard', markdown: dimsSection });
-        const finSection = composeFinancialSnapshotSection(parentReport.financial_calculations, 'Financial Snapshot');
-        if (finSection) composedPlacements.push({ id: 'financialSnapshot', markdown: finSection });
-      }
-      hygiene.composed_sections = composedPlacements.length;
-
-      // Trim to what the tier declares — on BOTH condensed tiers now.
-      //
-      // The snapshot's list used to be typed out here, a ninth copy of the
-      // structure; it comes from the registry, which declares exactly the same
-      // nine headings in the same order, so this half is a no-op.
-      //
-      // The briefing is the change. It had no trim at all, and every one of the
-      // 21 briefings in production carries the PARENT's structure rather than
-      // its own: `Location Overview` on 20, `Historical Price Growth Table` on
-      // 19, `Major Industries & Job Growth` on 19 — while six of its nine
-      // declared headings (`Location & Demand`, `Amenity & Access`, `Market
-      // Position`, `Property Fit`, `Risk Overview`, `Recommendation`) appear on
-      // NONE. Phase 1 re-cut the guide and shipped no enforcement, so the guide
-      // was aspirational; the snapshot got both halves and the briefing got one.
-      //
-      // The trim runs on the model's own output, BEFORE the composed sections
-      // are placed — they are ours and always declared, so including them here
-      // would only make the "did the model follow the guide" question answer
-      // itself.
-      if (targetTier === 'briefing' || targetTier === 'snapshot') {
-        const declared = markdownHeadingsForTier(targetTier);
-        const trimmed = trimToDeclaredSections(condensedContent, declared);
-        // A trim that keeps nothing the MODEL wrote is not a trim, it is a
-        // deletion: the briefing would go out as its composed financial tables
-        // with no case attached to them. In that state, keep the untrimmed text
-        // and record it: a stub is worse than a document with the wrong
-        // headings, and the count belongs in the log rather than in a client's
-        // hands.
-        const authored = authoredHeadingsForTier(targetTier).map((h) => h.toLowerCase());
-        const survivors = [...trimmed.markdown.matchAll(/^##\s+(.+?)\s*$/gm)]
-          .map((m) => m[1].toLowerCase().replace(/\s+/g, ' ').trim());
-        const keptAny = survivors.some((h) => authored.some((a) => h === a || h.startsWith(`${a} `)));
-        if (keptAny) {
-          condensedContent = trimmed.markdown;
-          hygiene.sections_dropped = trimmed.dropped;
-        } else {
-          hygiene.sections_trim_skipped = trimmed.dropped;
-        }
-
-        // Place every section in the order the registry declares, composed
-        // ones included. They used to be appended after everything the model
-        // wrote — so the Briefing's financial tables, score breakdown and SWOT
-        // printed after `Recommendation` (order 20) and after `Market Data
-        // Sources` (order 90), when the registry places them at 11-17. The
-        // trim filters and has never reordered.
-        //
-        // Assembly runs only where the trim actually ran: on untrimmed text a
-        // foreign heading is ABSORBED into whichever section is open rather
-        // than dropped, and the fallback append keeps the composed sections in
-        // the document rather than losing them to a structural safety check.
-        if (composedPlacements.length || keptAny) {
-          if (keptAny) {
-            const assembled = assembleInDeclaredOrder(condensedContent, composedPlacements, targetTier);
-            condensedContent = assembled.markdown;
-            hygiene.sections_placed = assembled.placed;
-            hygiene.sections_authored = assembled.authored;
-            if (assembled.unplaced.length) hygiene.sections_unplaced = assembled.unplaced;
-          } else if (composedPlacements.length) {
-            condensedContent = `${condensedContent.trimEnd()}\n\n${composedPlacements.map((c) => c.markdown).join('\n\n')}`;
-            hygiene.sections_appended_untrimmed = composedPlacements.length;
-          }
-        }
-
-        const stripped = stripEditorialLabelsFromMarkdown(condensedContent);
-        condensedContent = stripped.markdown;
-        hygiene.editorial_blocks_removed = stripped.removedBlocks;
-      }
-
-      // A labelled row is a promise that a figure follows it — on every tier.
-      const scrubbed = stripPlaceholderRows(condensedContent);
-      condensedContent = scrubbed.markdown;
-      hygiene.placeholder_rows_removed = scrubbed.removedRows;
-      hygiene.placeholder_tables_removed = scrubbed.removedTables;
-      // And the heading a scrubbed table leaves standing over nothing goes
-      // with it — a "Key Market Stats" with no stats is a promise unkept.
-      const sections = dropEmptySections(condensedContent);
-      condensedContent = sections.markdown;
-      hygiene.empty_sections_removed = sections.dropped.length;
-
-      // The same rule for the two block types the row scrubber cannot see: a
-      // stat card with no value (the renderer draws its UNIT in display type)
-      // and a chart already drawn earlier in the document.
-      const blocks = scrubBlocks(condensedContent);
-      condensedContent = blocks.markdown;
-      hygiene.empty_stat_cards_removed = blocks.emptyStatCards;
-      hygiene.duplicate_directives_removed = blocks.duplicateDirectives;
-
-      // A summarising report may not invent or re-estimate a score (QA-18):
-      // the Briefing of 291 Stone Mason Drive rated an "overall investment
-      // fit" 68/100 and two "scores of 82" that neither the record nor the
-      // parent holds. The sentence carrying such a claim goes, and the log
-      // says which. Composed tables print only recorded figures and are
-      // untouched; a claim the parent made itself is the parent's.
-      const recordedScores = recordedScoreValues(parentReport.investment_score);
-      const scoreGuard = suppressUnrecordedScores(condensedContent, {
-        recorded: recordedScores,
-        parentText: typeof parentReport.report_content === 'string' ? parentReport.report_content : undefined,
+      // The deterministic half — the composed sections, the registry trim, the
+      // declared-order assembly and the five hygiene passes — lives beside the
+      // other investment modules so it can be run, tested and rendered outside
+      // a deployed Deno runtime. It used to be 156 lines of this file, and the
+      // two documents it produces had never been drawn and read.
+      const composed = composeCondensedDocument({
+        tier: targetTier,
+        modelMarkdown: condensedContent,
+        investmentScore: parentReport.investment_score,
+        financialCalculations: parentReport.financial_calculations,
+        parentContent: typeof parentReport.report_content === 'string' ? parentReport.report_content : undefined,
       });
-      condensedContent = scoreGuard.markdown;
-      hygiene.unrecorded_score_claims_removed = scoreGuard.removed.length;
-      if (scoreGuard.removed.length) hygiene.unrecorded_score_claims = scoreGuard.removed.map((r) => r.text);
-
-      qaReport = runQAValidation(condensedContent, 'compass-40', { recordedScores });
+      condensedContent = composed.markdown;
+      hygiene = composed.hygiene;
+      postProcessReport = composed.postProcessReport;
+      const recordedScores = composed.recordedScores;
+      // The tier this run is PRODUCING, not the tier its parent was. This
+      // said `'compass-40'` and so asserted a Compass's rules over a Briefing
+      // and a Snapshot: a 40-page band on a 12-page tier, a financial
+      // exclusion over the financial chapters the composition above just
+      // attached, and Compass protected sections a condensed tier never
+      // declares. Sixteen errors on a correct Briefing, on every run.
+      qaReport = runQAValidation(condensedContent, targetTier, { recordedScores });
       console.log('Hygiene:', JSON.stringify(hygiene));
       if (postProcessReport) console.log('Post-processor report:', JSON.stringify(postProcessReport, null, 2));
       console.log('QA report:', JSON.stringify(qaReport, null, 2));

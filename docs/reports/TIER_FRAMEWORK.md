@@ -253,3 +253,110 @@ The cover's standfirst now comes from the content policy rather than from
 The Compass's read *"What the property is, what it costs to hold, and what the
 assessment concluded"* — a promise of the modelling it does not carry, printed
 on the cover above a page sequence that then drew it.
+
+---
+
+## Decision F — the Briefing was the same defect in the other direction (18 Sep 2026)
+
+S5/S6 §4:
+
+> "Compass owns asset/locality/market evidence/assessment/planning/
+> infrastructure; Financial owns detailed financing/repayments/cash position/
+> projections; Strategic owns verification priorities/suitability/holding/
+> monitoring/exit; Briefing+Snapshot genuinely condensed. **Confirm that weekly
+> cash position and detailed modelling have not returned through shared
+> key-figure bindings.**"
+
+They have not. The bindings are clean and were measured rather than read.
+
+### What the bindings publish, per tier
+
+`projectInvestmentReport` run on the retained five-tier set — one real
+production row per tier, not a sample:
+
+| tier | row | financial bindings | `weeklyNet` | `weeklyRepayment` | assumptions | `equitySeries` |
+|---|---|---|---|---|---|---|
+| compass | `09f8569e` | 5 | absent | absent | 0 | empty |
+| strategic | `2f1f7f6f` | 5 | absent | absent | 0 | empty |
+| briefing | `89b451f6` | 5 | absent | absent | 0 | empty |
+| financial | `c21ed1fa` | 37 | present | present | 4 | present |
+| snapshot | `8c6edc56` | 37 | present | present | 4 | present |
+
+The five on the withholding tiers are `purchasePrice`, `weeklyRent`,
+`annualRent`, `annualRentAtOccupancy` and `annualRentAtOccupancyLabel` — the
+identity figures, which stay on every tier because the asking price and the
+indicative rent are facts about the asset the way its land size is. The label
+carries the basis (*"Annual rent at 50 occupied weeks"*), so a figure derived
+from an occupancy assumption the tier does not publish is self-describing.
+
+### And then the body contradicted them
+
+Decision E fixed the Compass: the rule was enforced on the PROSE while three
+implementations decided what the document drew. The Briefing was the same
+fault with the terms swapped — **the bindings were right and the body was
+wrong**, and three things this platform already said about that document
+disagreed with a fourth:
+
+| module | what it said about the Briefing |
+|---|---|
+| `tierContent.pure.ts` | `financialModelling: false` |
+| `reportBindingProjection.pure.ts` | withholds 32 bindings, drops three master pages |
+| the cover it prints | *"the financial position in the Financial Analysis Report"* |
+| `sectionRegistry.pure.ts` + `condenseCompose.pure.ts` | composed five detailed chapters into the body |
+
+Measured on row `89b451f6`, those five composed to **3,156 characters over 73
+table rows**: purchase and annual holding costs, gross and net yield, loan
+size, LVR, monthly and **weekly repayment**, total interest over the term, the
+sensitivity grid, and the ten-year value / rent / cashflow / equity / LVR
+series with its equity bridge. Four of the five are **byte-identical** to the
+Financial Analysis Report's own chapters; only `tenYear` differs, and only
+because `scenarios: 'primary'` drops the alternate cases (2,091 → 1,141
+characters).
+
+That is not a condensed financial position. It is the Financial Analysis
+Report's chapters inside a second document — and it fails the test Decision E
+sets: **a reader could not name the document from its contents page.**
+
+### The rule
+
+**A tier that names another document for the modelling does not print the
+modelling.** A companion note is a promise about what is NOT in this document,
+and a body that contradicts it is worse than no note at all.
+
+So the Briefing's registry declaration loses `purchaseHolding`, `rentalYield`,
+`loan`, `sensitivity` and `tenYear`, and `condenseCompose` stops composing
+them. Its contents page is now Executive Summary · Location & Demand · Amenity
+& Access · Market Position · Property Fit · Risk Overview · Investment Score
+Breakdown · SWOT Analysis · Top 3 Opportunities · Top 3 Risks ·
+Recommendation · Market Data Sources.
+
+Three things this does not do.
+
+**It does not remove a control.** The score breakdown and the SWOT are still
+composed from the record rather than asked of the model — they are the
+assessment, which is what a Briefing is for. `composeFinancialChapters` is
+untouched and still serves the Financial tier and the fork.
+
+**It does not blank the document.** The price and the indicative rent still
+reach it, and both other documents are named on its own cover.
+
+**It does not rewrite history.** Stored Briefings keep every byte; this
+decides what the next one contains. The retained fixture is a pre-P1-B
+document and carries the parent's legacy structure (`Loan Analysis (P&I and
+Interest-Only)`, `Cumulative Cashflow Projections`, `LVR Projections`) —
+which is the same reason the cohorts must be distinguished before any claim
+is made about "what a Briefing contains".
+
+The Snapshot is left exactly as it was: `financialModelling: true`, one
+`Financial Snapshot` block composed from the record, standfirst *"The numbers
+that matter and a short assessment"*. One block is condensed; five chapters
+are not.
+
+### Where it lives
+
+| File | What changed |
+|---|---|
+| `_shared/reports/investment/sectionRegistry.pure.ts` | The five financial sections lose their `briefing` tier entry; the reasoning sits beside the declaration. |
+| `_shared/reports/investment/condenseCompose.pure.ts` | The briefing branch stops composing `composeFinancialChapters`; score and SWOT unchanged. |
+| `condense-investment-report/index.ts` | The guide's preamble and its HARD RULE now carry the true reason — the modelling belongs to another document, not "it is attached after your output". |
+| `src/lib/reports/__tests__/tierOwnership.spec.ts` | 14 consumer-level assertions across all five tiers. |

@@ -56,6 +56,7 @@
 import type { MarketEvidence } from './marketEvidence.pure.ts';
 import { type GrowthResult, scoreGrowth, GROWTH_METHODOLOGY_VERSION } from './growthScoring.pure.ts';
 import { type DemandResult, scoreDemand, DEMAND_METHODOLOGY_VERSION } from './demandScoring.pure.ts';
+import { isValidDimensionScore, proportionalScore } from './proportionalWeighting.pure.ts';
 import {
   type YieldInputs, type YieldResult, scoreYield, holdingCashFlowSignal,
   YIELD_METHODOLOGY_VERSION,
@@ -148,14 +149,30 @@ export interface ShadowScoreResult {
   unavailable: ReadonlyArray<DimensionKey>;
 
   /**
-   * Share of the NOMINAL composite weight that was actually measured, 0-1.
-   * The number audit §48's A+ properties would have been caught by.
+   * Share of the NOMINAL composite weight that was actually measured and
+   * evidenced, 0-1. The number audit §48's A+ properties would have been
+   * caught by. It MIXES two things — how many dimensions answered and how
+   * well each was evidenced — which is why it no longer gates a grade; it is
+   * disclosed, and stored rows carry it.
    */
   evidenceCoverage: number;
   /**
+   * Share of the MEASURED dimensions' own weight that their evidence covered,
+   * 0-1. The quality question with the count divided out: an unavailable
+   * dimension cannot move it. This is what `gradeEligibility` 3.0.0 gates on
+   * (S5/S6 §8 — dimension count, original weight coverage and evidence
+   * quality are three separate readings and none stands for another).
+   */
+  evidenceQualityCoverage: number;
+  /**
    * Σ (measured score × nominal weight): the points the evidence delivered
-   * over the full 100. The grade's second ceiling reads this, so a missing
-   * dimension can never lift a badge by renormalisation.
+   * over the full 100.
+   *
+   * **Diagnostic only.** Until 3.0.0 the printed grade also answered to this
+   * figure, which lowered a badge solely because a dimension was unavailable
+   * and contradicted proportional scoring; S5/S6 §8 removed that ceiling. It
+   * is retained because the before/after comparison is measured against it,
+   * and it must never become a cap again.
    */
   nominalMeasuredScore: number;
 
@@ -231,14 +248,20 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     },
   ];
 
-  const measured = raw.filter((d) => d.score !== null);
+  // A dimension counts only where its score satisfies the approved contract
+  // (S5/S6 §4): finite, 0-100, a genuine zero included. `score !== null` let a
+  // NaN or an out-of-range value through to the composite, where it would
+  // either poison the arithmetic or publish a measurement nobody took. One
+  // contract, in `proportionalWeighting.pure.ts`, shared with the publication
+  // policy so the engine and the policy cannot disagree on what was measured.
+  const measured = raw.filter((d) => isValidDimensionScore(d.score));
   const measuredWeight = measured.reduce((s, d) => s + COMPOSITE_WEIGHTS[d.key], 0);
 
   const dimensions: DimensionReading[] = raw.map((d) => ({
     key: d.key,
     score: d.score,
     nominalWeight: COMPOSITE_WEIGHTS[d.key],
-    effectiveWeight: d.score === null || measuredWeight === 0
+    effectiveWeight: !isValidDimensionScore(d.score) || measuredWeight === 0
       ? 0
       : Number((COMPOSITE_WEIGHTS[d.key] / measuredWeight).toFixed(4)),
     coverage: d.coverage,
@@ -250,15 +273,25 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
   // scored on a third of its inputs did not deliver a whole dimension's worth
   // of evidence, and a composite that counted it as one would overstate.
   const evidenceCoverage = Number(
-    raw.reduce((s, d) => s + (d.score === null ? 0 : COMPOSITE_WEIGHTS[d.key] * d.coverage), 0).toFixed(4),
+    raw.reduce((s, d) => s + (isValidDimensionScore(d.score) ? COMPOSITE_WEIGHTS[d.key] * d.coverage : 0), 0).toFixed(4),
+  );
+
+  // The same evidence, with the dimension count divided out: how well the
+  // dimensions that DID answer were evidenced, regardless of how many did.
+  // `evidenceCoverage` normalises over the full matrix and therefore falls
+  // when a dimension is unavailable; this does not, which is precisely what
+  // makes it safe to gate a grade on (S5/S6 §8).
+  const evidenceQualityCoverage = measuredWeight === 0 ? 0 : Number(
+    (measured.reduce((s, d) => s + COMPOSITE_WEIGHTS[d.key] * d.coverage, 0) / measuredWeight).toFixed(4),
   );
 
   const holdingCashFlow = holdingCashFlowSignal(input.yieldInputs);
 
   // The points the evidence delivered at NOMINAL weights, over the full 100.
-  // The composite renormalises (that is the score's meaning); the printed
-  // grade also answers to this figure, so absence can disclose and cap but
-  // never lift (`gradeEligibility.pure.ts`, 2.0.0).
+  // The composite renormalises, and that renormalisation IS the score's
+  // meaning (§7). This figure is kept as a diagnostic and reads nothing:
+  // `gradeEligibility` 3.0.0 no longer caps on it, because capping on it
+  // lowered a grade solely for a dimension being unavailable.
   const nominalMeasuredScore = Number(
     measured.reduce((s, d) => s + (d.score as number) * COMPOSITE_WEIGHTS[d.key], 0).toFixed(2),
   );
@@ -277,8 +310,9 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     },
     dimensions,
     measured: measured.map((d) => d.key),
-    unavailable: raw.filter((d) => d.score === null).map((d) => d.key),
+    unavailable: raw.filter((d) => !isValidDimensionScore(d.score)).map((d) => d.key),
     evidenceCoverage,
+    evidenceQualityCoverage,
     nominalMeasuredScore,
     growth,
     demand,
@@ -287,7 +321,7 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     risk,
     evidenceStatement: buildEvidenceStatement({
       growth, demand, yieldResult,
-      eligibility: applyEligibility({ compositeScore: 0, growth, overallCoverage: evidenceCoverage, nominalMeasuredScore }),
+      eligibility: applyEligibility({ compositeScore: 0, growth, evidenceQualityCoverage }),
       evidence: input.evidence,
       audience,
     }),
@@ -309,11 +343,13 @@ export function scoreInvestmentV2Shadow(input: ShadowScoreInput): ShadowScoreRes
     };
   }
 
+  // §7, from the one implementation the publication policy also states the
+  // published figure with. Full precision from the leaf, rounded ONCE here.
   const compositeScore = Math.round(
-    measured.reduce((s, d) => s + (d.score as number) * (COMPOSITE_WEIGHTS[d.key] / measuredWeight), 0),
+    proportionalScore(measured.map((d) => ({ score: d.score as number, weight: COMPOSITE_WEIGHTS[d.key] }))) as number,
   );
 
-  const eligibility = applyEligibility({ compositeScore, growth, overallCoverage: evidenceCoverage, nominalMeasuredScore });
+  const eligibility = applyEligibility({ compositeScore, growth, evidenceQualityCoverage });
 
   return {
     ...base,

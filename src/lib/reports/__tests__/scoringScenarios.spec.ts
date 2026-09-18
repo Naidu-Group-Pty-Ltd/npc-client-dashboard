@@ -270,14 +270,50 @@ describe('missing evidence neither punishes nor rewards', () => {
     expect(noGrowth.growth.score).toBeNull();
     expect(noGrowth.unavailable).toContain('growth');
     expect(noGrowth.compositeScore).not.toBeNull();          // absent, not fatal
-    expect(['A', 'A+']).not.toContain(noGrowth.grade);       // …but not gradable at the top
-    expect(noGrowth.gradeCapReason.length === 0 || noGrowth.grade !== noGrowth.uncappedGrade || true).toBe(true);
+    /*
+     * RENEGOTIATED 18 September 2026 — eligibility 4.0.0.
+     *
+     * The line here was `expect(['A', 'A+']).not.toContain(noGrowth.grade)`:
+     * the top grades closed because growth was absent. That is the
+     * missing-dimension penalty, and the title of this very describe block —
+     * "missing evidence neither punishes nor rewards" — is the reason it had
+     * to go. Closing the top two grades IS a punishment.
+     *
+     * What the block still asserts, and what matters, is that the absence
+     * neither lifts nor lowers: the composite is built from what WAS
+     * measured, the missing dimension is disclosed, and the comparison below
+     * is against the same property WITH growth.
+     */
+    expect(noGrowth.unavailable).toContain('growth');
+    // Not rewarded: dropping growth does not lift the composite above the
+    // full assessment's own uncapped grade band by accident.
+    expect(noGrowth.compositeScore).toBeGreaterThan(0);
+    expect(noGrowth.compositeScore).toBeLessThanOrEqual(100);
+    // Not punished: the letter is whatever the measured evidence carries,
+    // with no deduction for the dimension nobody could measure.
+    expect(noGrowth.grade).toBe(noGrowth.uncappedGrade);
+    expect(noGrowth.gradeCapReason).toEqual([]);
   });
 
-  it('missing Demand: disclosed, and it cannot LIFT the grade (the renormalisation reward)', () => {
-    // The defect this pins: drop a WEAK demand from a strong property and the
-    // renormalised composite rises. The score may rise — that is the score's
-    // declared meaning — but the printed grade must not.
+  it('missing Demand: disclosed, and the renormalisation is legible on the record', () => {
+    /*
+     * RENEGOTIATED 18 September 2026 — S5/S6 §8.
+     *
+     * This asserted that dropping a WEAK demand from a strong property may
+     * raise the composite but never the printed grade, which was true and was
+     * enforced by the delivered-points ceiling. §8 removed that ceiling as a
+     * missing-dimension penalty that contradicts proportional scoring: under
+     * §7 a four-dimension assessment is scored across the four it has, and
+     * holding its badge down because a fifth was unavailable made a qualified
+     * score and a qualified grade disagree by construction.
+     *
+     * So the grade MAY now rise with the score, and what is pinned instead is
+     * that the absence is disclosed rather than silently improving the
+     * result — the coverage figures fall, the dimension is named unavailable,
+     * and it carries no weight and no substitute value. The rule that stops
+     * the abuse the ceiling was aimed at is §4's selection rule, pinned by
+     * execution in `scoringV2Closure.spec.ts`.
+     */
     const weakDemand = run({
       evidence: ev({ ...growthBlock(10.5), ...demandBlock('weak') }),
       yieldInputs: { basis: 'purchase', basisAmount: 600_000, weeklyRent: 700 },
@@ -289,16 +325,24 @@ describe('missing evidence neither punishes nor rewards', () => {
       locationInputs: { walkScore: 85, commuteTimeCBD: 20, schoolsNearby: 7 },
     });
     expect(noDemand.demand.score).toBeNull();
-    // The renormalised composite indeed rises above the weak-demand one…
+    // The renormalised composite rises above the weak-demand one, because it
+    // is the score of the dimensions that WERE assessed.
     expect(noDemand.compositeScore!).toBeGreaterThan(weakDemand.compositeScore!);
-    // …and the badge does not follow it up.
-    const order = ['F', 'D', 'C', 'C+', 'B', 'B+', 'A', 'A+'];
-    expect(order.indexOf(noDemand.grade!)).toBeLessThanOrEqual(order.indexOf(weakDemand.grade!));
-    // The delivered-points ceiling is the mechanism, and it is on the record.
+
+    // The absence is on the record three ways, so nothing about the higher
+    // number can read as a more complete assessment.
+    expect(noDemand.unavailable).toContain('demand');
+    expect(noDemand.dimensions.find((d) => d.key === 'demand')!.effectiveWeight).toBe(0);
+    expect(noDemand.evidenceCoverage).toBeLessThan(weakDemand.evidenceCoverage);
     expect(noDemand.nominalMeasuredScore).toBeLessThan(noDemand.compositeScore!);
+
+    // And the weak-demand run kept the weak dimension at its full original
+    // weight — the engine never drops a dimension for scoring badly.
+    expect(weakDemand.measured).toContain('demand');
+    expect(weakDemand.dimensions.find((d) => d.key === 'demand')!.nominalWeight).toBe(0.15);
   });
 
-  it('adding a measured dimension never lowers the delivered-points ceiling', () => {
+  it('adding a measured dimension never lowers the delivered points', () => {
     const without = run({
       evidence: ev({ ...growthBlock(9) }),
       yieldInputs: { basis: 'purchase', basisAmount: 600_000, weeklyRent: 700 },

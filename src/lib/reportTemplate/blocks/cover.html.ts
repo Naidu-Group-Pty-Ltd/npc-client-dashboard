@@ -1,6 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { esc, type HtmlBlockContext } from './_shared.html';
+import { imgTag, esc, type HtmlBlockContext } from './_shared.html';
 
 export function renderCoverHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
@@ -35,9 +35,15 @@ export function renderCoverHtml(block: Block, ctx: HtmlBlockContext): string {
    */
   const mark = resolveBindable(p.mark, ctx);
   const markHeight = Number(p.markHeight ?? 40);
+  // A mark's alternative text is the organisation it stands for. `alt=""` was
+  // here and does nothing on the pinned engine — see `imgTag`.
+  const markOwner = resolveBindable('{{org.name}}', ctx);
   const markBlock = mark
-    ? `<img src="${esc(mark)}" alt="" style="position:absolute;left:48pt;top:48pt;`
-      + `height:${markHeight}pt;width:auto;max-width:200pt;object-fit:contain;"/>`
+    ? imgTag(mark, {
+      alt: markOwner ? `${markOwner} logo` : 'Logo of the issuing firm',
+      style: `position:absolute;left:48pt;top:48pt;`
+        + `height:${markHeight}pt;width:auto;max-width:200pt;object-fit:contain;`,
+    })
     : '';
 
   return `

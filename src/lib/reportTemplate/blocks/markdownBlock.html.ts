@@ -35,6 +35,25 @@ interface TagStyle {
   tag: string;
   /** When set, the rule applies only to a tag carrying this class. */
   cls?: string;
+  /**
+   * When set, the rule applies only to a tag whose opening tag contains this
+   * literal attribute text — `scope="row"`.
+   *
+   * A class is not enough to tell the two `th`s apart. `renderDataTable` marks
+   * the first cell of every row `<th scope="row">`, because that is what makes
+   * a table navigable in a tagged PDF, and it carries no class — so a rule
+   * keyed on `th` alone painted the row's LABEL in the column head's gold, at
+   * the head's weight, and never gave it the `vertical-align:top` every `td`
+   * beside it has. Read off a rendered risk register: the risk name set in
+   * heading gold, bold, and floating in the middle of a fifteen-line row whose
+   * other four cells start at the top.
+   *
+   * The shared print stylesheet already states the rule for this exact
+   * element — "it must not look like the column head"
+   * (`reportDesign/css.pure.ts`) — and the template path is the second
+   * implementation that did not have it.
+   */
+  attr?: string;
   style: string;
 }
 
@@ -47,13 +66,18 @@ function styleTags(html: string, rules: readonly TagStyle[]): string {
   }
   let out = html;
   for (const [tag, list] of byTag) {
-    // Class-specific rules first, so `figure.chart-compact` wins over `figure`.
-    const ordered = [...list].sort((a, b) => Number(Boolean(b.cls)) - Number(Boolean(a.cls)));
+    // The more specific rule first, so `figure.chart-compact` wins over
+    // `figure` and `th[scope="row"]` over `th`. Specificity is how many of the
+    // two qualifiers a rule names; a rule naming neither is the fallback and
+    // sorts last.
+    const rank = (r: TagStyle) => Number(Boolean(r.cls)) + Number(Boolean(r.attr));
+    const ordered = [...list].sort((a, b) => rank(b) - rank(a));
     out = out.replace(
       new RegExp(`<${tag}(\\s[^>]*)?>`, 'g'),
       (m, attrs: string | undefined) => {
         const classes = /class="([^"]*)"/.exec(attrs ?? '')?.[1]?.split(/\s+/) ?? [];
-        const rule = ordered.find((r) => !r.cls || classes.includes(r.cls));
+        const rule = ordered.find((r) => (!r.cls || classes.includes(r.cls))
+          && (!r.attr || (attrs ?? '').includes(r.attr)));
         if (!rule) return m;
         // A tag that arrives with a style of its own — an `<ol>` carrying the
         // counter its `start` stands for — keeps it. Two `style` attributes on
@@ -150,6 +174,10 @@ export function renderMarkdownBlockHtml(block: Block, ctx: HtmlBlockContext): st
     { tag: 'ol', style: `margin:0 0 ${pt(T.list.marginBottomPt)};padding-left:${pt(T.list.indentPt)};` },
     { tag: 'li', style: `margin:0 0 ${pt(T.list.itemMarginBottomPt)};` },
     { tag: 'table', style: `width:100%;border-collapse:collapse;margin:0 0 ${pt(T.table.marginBottomPt)};font-size:${(bodySize * T.table.scale).toFixed(1)}pt;` },
+    // The row's LABEL, not a second column head: body ink, body weight, and
+    // the row rule and top alignment its siblings have. See `TagStyle.attr`.
+    { tag: 'th', attr: 'scope="row"', style: `text-align:left;padding:${pt(T.table.cellPaddingPt)} 4pt;`
+      + `border-bottom:${pt(T.table.rowRulePt)} solid ${ruleColor};color:${color};font-weight:500;vertical-align:top;` },
     { tag: 'th', style: `text-align:left;padding:${pt(T.table.cellPaddingPt)} 4pt;border-bottom:${pt(T.table.headRulePt)} solid ${ruleColor};`
       + `color:${headingColor};font-weight:600;` },
     { tag: 'td', style: `padding:${pt(T.table.cellPaddingPt)} 4pt;border-bottom:${pt(T.table.rowRulePt)} solid ${ruleColor};vertical-align:top;` },

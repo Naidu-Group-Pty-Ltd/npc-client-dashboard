@@ -252,6 +252,8 @@ export const SECTION_IDS = [
   'swot',
   'exitStrategy',
   'suitability',
+  'holdingStrategy',
+  'monitoring',
   // the close
   'opportunities',
   'risks',
@@ -439,7 +441,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
       compass: { depth: 'spine', order: 90, label: 'Appendix, Source Notes & Disclaimer', producer: authored('generator.compass') },
       briefing: { depth: 'spine', order: 90, label: 'Market Data Sources', producer: authored('condense.briefing') },
       snapshot: { depth: 'spine', order: 11, label: 'Market Data Sources', producer: authored('condense.snapshot') },
-      financial: { depth: 'spine', order: 19, label: 'Disclaimer', producer: forkDisclaimer },
+      financial: { depth: 'spine', order: 21, label: 'Disclaimer', producer: forkDisclaimer },
       strategic: { depth: 'spine', order: 90, label: 'Disclaimer', producer: forkDisclaimer },
     },
   },
@@ -456,7 +458,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     tiers: {
       compass: merged('provenance'),
       briefing: merged('provenance'),
-      financial: { depth: 'required', order: 18, label: 'Assumptions, Verification Items & Adviser Disclaimer', producer: routed('financial', 16) },
+      financial: { depth: 'required', order: 20, label: 'Assumptions, Verification Items & Adviser Disclaimer', producer: routed('financial', 17) },
     },
   },
 
@@ -691,7 +693,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'How this dwelling aligns with local demand — position, land/build balance, occupier appeal and its limitations.',
     tiers: {
-      compass: { depth: 'required', order: 13, label: 'Property Fit Within the Suburb', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 14, label: 'Property Fit Within the Suburb', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 8, label: 'Property Fit', producer: authored('condense.briefing') },
       strategic: { depth: 'required', order: 14, label: 'Future Buyer and Resale Appeal', producer: routed('dueDiligence', 12) },
     },
@@ -762,9 +764,9 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Every risk in one table with a level, why it matters and the check that would settle it. Protected under page pressure.',
     tiers: {
-      compass: { depth: 'required', order: 14, label: 'Risk Dashboard', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 16, label: 'Risk Dashboard', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 9, label: 'Risk Overview', producer: authored('condense.briefing') },
-      financial: { depth: 'required', order: 13, label: 'Financial Risk Dashboard', producer: routed('financial', 11) },
+      financial: { depth: 'required', order: 14, label: 'Financial Risk Dashboard', producer: routed('financial', 11) },
       strategic: { depth: 'required', order: 18, label: 'Property & Location Risk Dashboard', producer: routed('dueDiligence', 17) },
     },
   },
@@ -801,7 +803,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     aliases: ['Due Diligence Checklist', 'Due Diligence', 'Investment Recommendations'],
     purpose: 'What must be verified before contract, as a list somebody can work through.',
     tiers: {
-      compass: { depth: 'required', order: 15, label: 'Due Diligence Checklist', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 17, label: 'Due Diligence Checklist', producer: authored('generator.compass') },
       strategic: { depth: 'optional', order: 20, label: 'Due Diligence Checklist', producer: null },
     },
   },
@@ -814,6 +816,31 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
   // The Compass carries none of them — it is the location and property case,
   // and detailed modelling belongs to the Financial tier. That is a rule of the
   // Compass registry too, and both are now pinned to this one.
+  //
+  // **And so does the Briefing, from 18 Sep 2026 (S5/S6 §4).** It carried all
+  // five, and that contradicted three statements this platform already made
+  // about the same document — the sentence directly above, and both halves of
+  // `TIER_CONTENT.briefing`: `financialModelling: false`, which withholds 32
+  // bindings and drops three master pages, and a companion note printed on the
+  // cover reading *"the financial position in the Financial Analysis Report"*.
+  // So the templated pages withheld the modelling, the cover said it was in
+  // another document, and the markdown body then printed it.
+  //
+  // Measured on row 89b451f6 (the retained Briefing) the five composed to
+  // **3,156 characters over 73 table rows**, including the weekly repayment,
+  // total interest over the term, the ten-year value/rent/cashflow/equity/LVR
+  // series and the equity bridge. Four of the five are BYTE-IDENTICAL to the
+  // Financial Analysis Report's; only `tenYear` differs, and only because
+  // `scenarios: 'primary'` drops the alternate cases. That is not a condensed
+  // financial position, it is the Financial report's own chapters inside a
+  // second document — which is the test `TIER_FRAMEWORK` Decision E sets:
+  // a reader could not name this document from its contents page.
+  //
+  // The Briefing keeps the ASSESSMENT — the score breakdown and the SWOT —
+  // because that is what it is for, and the price and indicative rent still
+  // reach it through `identityFigures`. Nothing is lost that is not named on
+  // its own cover. Stored Briefings are untouched: this decides what the next
+  // one contains, never what an issued one said.
   {
     id: 'purchaseHolding',
     canonicalLabel: 'Purchase Costs & Annual Holding Cost Breakdown',
@@ -829,7 +856,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'What it costs to buy and what it costs to hold, per year, from the recorded calculation.',
     tiers: {
-      briefing: { depth: 'required', order: 11, label: 'Purchase Costs & Annual Holding Cost Breakdown', producer: composed(4) },
       financial: { depth: 'required', order: 6, label: 'Purchase Costs & Annual Holding Cost Breakdown', producer: composed(4) },
     },
   },
@@ -843,7 +869,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Rent, gross yield and net yield after the holding costs above.',
     tiers: {
-      briefing: { depth: 'required', order: 12, label: 'Rental Assessment, Gross Yield & Net Yield', producer: composed(5) },
       financial: { depth: 'required', order: 7, label: 'Rental Assessment, Gross Yield & Net Yield', producer: composed(5) },
     },
   },
@@ -865,7 +890,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Loan size, LVR, repayments on both structures, and the weekly position that falls out of them.',
     tiers: {
-      briefing: { depth: 'required', order: 13, label: 'Loan Structure, Repayments & Cashflow Impact', producer: composed(6) },
       financial: { depth: 'required', order: 8, label: 'Loan Structure, Repayments & Cashflow Impact', producer: composed(6) },
     },
   },
@@ -884,7 +908,6 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'What a rate move or a rent move does to the position — the recorded grid, not a re-derivation.',
     tiers: {
-      briefing: { depth: 'required', order: 14, label: 'Sensitivity & Scenario Testing', producer: composed(8) },
       financial: { depth: 'required', order: 10, label: 'Sensitivity & Scenario Testing', producer: composed(8) },
     },
   },
@@ -903,18 +926,25 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Value, rent, cashflow and equity year by year under the recorded scenarios.',
     tiers: {
-      briefing: { depth: 'required', order: 15, label: '10-Year Cashflow, Equity & Growth Projection', producer: composed(9) },
       financial: { depth: 'required', order: 11, label: '10-Year Cashflow, Equity & Growth Projection', producer: composed(9) },
     },
   },
   {
     id: 'exitStrategy',
-    canonicalLabel: 'Resale Liquidity & Exit Strategy',
-    provenance: 'authored',
-    aliases: ['Resale Liquidity & Exit Strategy', 'Equity & Exit Scenarios'],
-    purpose: 'How quickly this sells, to whom, and what the exit looks like at year five and year ten.',
+    canonicalLabel: 'Resale Liquidity & Exit Outlook',
+    provenance: 'computed',
+    aliases: [
+      'Resale Liquidity & Exit Outlook', 'Resale Liquidity & Exit Strategy', 'Equity & Exit Scenarios',
+      'Resale Liquidity',
+    ],
+    purpose:
+      'Two questions answered from two kinds of evidence: how deep the market an exit would be tested against is '
+      + '(measured, from a published register) and what the position looks like at year five and year ten '
+      + '(modelled, under the recorded growth rate). The measured half reaches the Compass; the modelled half is '
+      + 'the Financial report\'s.',
     tiers: {
-      financial: { depth: 'optional', order: 12, label: 'Resale Liquidity & Exit Strategy', producer: routed('financial', 10) },
+      compass: { depth: 'required', order: 13, label: 'Resale Liquidity & Exit Outlook', producer: composedFrom('strategyPositions.pure.ts', 'composeExitOutlook') },
+      financial: { depth: 'required', order: 13, label: 'Resale Liquidity & Exit Strategy', producer: composedFrom('strategyPositions.pure.ts', 'composeExitOutlook') },
     },
   },
   {
@@ -930,12 +960,12 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     purpose:
       'The score by dimension with its weights — every row a Computed figure, and a dimension with no data omitted rather than scored zero.',
     tiers: {
-      compass: { depth: 'optional', order: 17, surface: 'document', producer: projection('recommendation.gradedDetailLine') },
+      compass: { depth: 'optional', order: 20, surface: 'document', producer: projection('recommendation.gradedDetailLine') },
       briefing: { depth: 'required', order: 16, label: 'Investment Score Breakdown', producer: composedFn('composeScoreBreakdownSection') },
       // Composed: the guide listed all five dimensions with no omission rule
       // beside it, and the record withholds the ones it could not score.
       snapshot: { depth: 'required', order: 6, label: 'Score Breakdown', producer: composedFn('composeScoreDimensionsSection') },
-      financial: { depth: 'required', order: 14, label: 'Financial Investment Scorecard', producer: composed(12) },
+      financial: { depth: 'required', order: 15, label: 'Financial Investment Scorecard', producer: composed(12) },
     },
   },
   {
@@ -943,20 +973,55 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     canonicalLabel: 'SWOT Analysis',
     provenance: 'computed',
     aliases: ['SWOT Analysis', 'SWOT Analysis Summary', 'Financial SWOT: Returns, Risk & Holding Capacity'],
-    purpose: 'Strengths, weaknesses, opportunities and risks — typed from the stored score, never re-authored.',
+    purpose:
+      'Strengths, weaknesses, opportunities and threats — every entry naming the recorded figure or register '
+      + 'reading it rests on, and an absence appearing as coverage rather than in a quadrant. Never re-authored. '
+      + 'The Compass draws the location and market half; the modelling half travels only to the Financial report.',
     tiers: {
+      compass: { depth: 'required', order: 15, label: 'SWOT Analysis', producer: composedFrom('strategyPositions.pure.ts', 'composeSwot') },
       briefing: { depth: 'required', order: 17, label: 'SWOT Analysis', producer: composedFn('composeSwotSection') },
-      financial: { depth: 'required', order: 16, label: 'Financial SWOT: Returns, Risk & Holding Capacity', producer: composed(14) },
+      financial: { depth: 'required', order: 17, label: 'Financial SWOT: Returns, Risk & Holding Capacity', producer: composed(14) },
     },
   },
   {
     id: 'suitability',
     canonicalLabel: 'Investor Suitability Profile',
-    provenance: 'authored',
+    provenance: 'computed',
     aliases: ['Investor Suitability Profile'],
-    purpose: 'The investor this suits, and the one it does not — holding capacity, horizon and risk appetite.',
+    purpose:
+      'What holding this asset REQUIRES — capital at settlement, weekly contribution, room for the rate to move, '
+      + 'vacancy tolerance, horizon. It describes the asset and never a person: no report here is given anybody\'s '
+      + 'circumstances, so the match is stated as not assessed rather than implied.',
     tiers: {
-      financial: { depth: 'optional', order: 15, label: 'Investor Suitability Profile', producer: routed('financial', 13) },
+      financial: { depth: 'required', order: 16, label: 'Investor Suitability Profile', producer: composedFrom('strategyPositions.pure.ts', 'composeSuitability') },
+    },
+  },
+  {
+    id: 'holdingStrategy',
+    canonicalLabel: 'Holding Strategy',
+    provenance: 'computed',
+    aliases: ['Holding Strategy', 'Hold Strategy & Decision Points'],
+    purpose:
+      'The base case, what has to keep holding for it, and the points at which a decision is actually owed — the '
+      + 'break-even rent, the end of an interest-only term, the lending ratio that gates a refinance. Suitability '
+      + 'says what the asset demands; this says what to do about it across the hold.',
+    tiers: {
+      financial: { depth: 'required', order: 18, label: 'Holding Strategy', producer: composedFrom('strategyPositions.pure.ts', 'composeHoldingStrategy') },
+    },
+  },
+  {
+    id: 'monitoring',
+    canonicalLabel: 'Monitoring & Review Plan',
+    provenance: 'computed',
+    aliases: ['Monitoring & Review Plan', 'Review & Monitoring Plan', 'What to Re-check and When'],
+    purpose:
+      'Every register this report was built from, how often its publisher republishes, what it said on the day, '
+      + 'and what a different answer would mean. It belongs to the two EVIDENCE documents; the Financial report '
+      + 'carries the same duty inside its holding strategy\'s "what would break it", so no reader meets the list '
+      + 'twice. It never promises that this platform watches anything.',
+    tiers: {
+      compass: { depth: 'required', order: 18, label: 'Monitoring & Review Plan', producer: composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan') },
+      strategic: { depth: 'required', order: 21, label: 'Monitoring & Review Plan', producer: composedFrom('strategyPositions.pure.ts', 'composeMonitoringPlan') },
     },
   },
 
@@ -993,11 +1058,11 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'The call, the rationale in a paragraph, and the immediate actions. Proceed / proceed with caution / not suitable.',
     tiers: {
-      compass: { depth: 'required', order: 16, label: 'Final Recommendation', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 19, label: 'Final Recommendation', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 20, label: 'Recommendation', producer: authored('condense.briefing') },
       snapshot: { depth: 'required', order: 10, label: 'Quick Recommendation', producer: authored('condense.snapshot') },
-      financial: { depth: 'required', order: 17, label: 'Financial Recommendation & Portfolio Fit', producer: routed('financial', 15) },
-      strategic: { depth: 'optional', order: 21, label: 'Final Recommendation', producer: null },
+      financial: { depth: 'required', order: 19, label: 'Financial Recommendation & Portfolio Fit', producer: routed('financial', 16) },
+      strategic: { depth: 'optional', order: 22, label: 'Final Recommendation', producer: null },
     },
   },
 

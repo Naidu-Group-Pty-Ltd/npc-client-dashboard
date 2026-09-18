@@ -33,7 +33,7 @@ export function renderInfraTimelineHtml(block: Block, ctx: HtmlBlockContext): st
       const labelText = it.year ? `${esc(String(it.year))} · ${esc(resolveBindable(it.label, ctx))}` : esc(resolveBindable(it.label, ctx));
       return `<div style="margin-bottom:8pt;">
         <div style="color:#1A1A1A;font-weight:700;font-size:8.5pt;line-height:1.3;">${labelText}</div>
-        ${it.confidence ? `<div style="margin-top:3pt;">${confidenceChipHtml(String(it.confidence), 7)}</div>` : ''}
+        ${it.confidence ? `<div style="margin-top:3pt;">${confidenceChipHtml(String(it.confidence), 7, ctx)}</div>` : ''}
       </div>`;
     }).join('');
     return `<div style="flex:1;padding:0 8pt;text-align:center;">

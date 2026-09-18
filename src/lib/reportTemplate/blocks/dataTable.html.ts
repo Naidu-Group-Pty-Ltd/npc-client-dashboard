@@ -117,7 +117,39 @@ export function renderDataTableHtml(block: Block, ctx: HtmlBlockContext): string
   const tbody = `<tbody>${rows.map(({ row, index: i }, drawn) => {
     const cells = row.cells || [];
     if (sections.has(i)) {
-      return `<tr><td colspan="${headers.length}" style="background:${sectionBg};color:${sectionFg};padding:${cellPad}pt 8pt;font-size:${fontSize}pt;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;">${esc(resolveBindable(cells[0], ctx))}</td></tr>`;
+      // A band names a group of rows and reads as one bar across the table.
+      // It was one `<td colspan>`, and *measured on WeasyPrint 69.0* that is a
+      // PDF/UA-1 failure on every table carrying one: the engine writes the
+      // spanning cell into the structure tree as `/TD` with
+      // `/A {/O /Table, /Headers […]}` and **no `/ColSpan`**, so a validator
+      // counts the row one column wide and clause 7.2 test 43 — "table rows
+      // shall have the same number of columns (taking into account column
+      // spans)" — fails. veraPDF 1.30.2 reported exactly that.
+      //
+      // So the band is `headers.length` real cells sharing one ground, and the
+      // label is carried by a block of zero width that is allowed to overflow.
+      // Three arrangements were rendered and measured against the colspan
+      // version they replace:
+      //
+      //   in flow, full width  — clean, but the long label widens the first
+      //                          column and every figure in the table moves
+      //   absolutely positioned — clean of 7.2-43 and fails **7.2-9**: the
+      //                          engine tags an abspos child of a cell as a
+      //                          second `/TD` nested inside the first
+      //   zero-width block     — clean, no nested cell, and 4 pixels of
+      //                          2,005,644 differ at 144 dpi
+      //
+      // The third is what this draws. `width:0` contributes nothing to the
+      // column's intrinsic width, `overflow:visible` lets the label paint
+      // across the band, and being in flow it keeps the row's height — which
+      // is what the spanning cell used to provide.
+      const band = `background:${sectionBg};color:${sectionFg};padding:${cellPad}pt 8pt;`
+        + `font-size:${fontSize}pt;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;`;
+      const label = esc(resolveBindable(cells[0], ctx));
+      return `<tr>${headers.map((_, col) => (col === 0
+        ? `<td style="${band}">`
+          + `<span style="display:block;width:0;overflow:visible;white-space:nowrap;">${label}</span></td>`
+        : `<td style="${band}"></td>`)).join('')}</tr>`;
     }
     const isTotal = totals.has(i);
     return `<tr style="background:${drawn % 2 ? stripeBg : 'transparent'};color:${cellFg};">

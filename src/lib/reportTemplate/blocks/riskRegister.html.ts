@@ -152,8 +152,8 @@ export function renderRiskRegisterHtml(block: Block, ctx: HtmlBlockContext): str
   const rows = items.map((it, i) => `
     <tr style="background:${i % 2 === 1 ? stripeBg : rowBg};vertical-align:top;font-size:8.5pt;">
       <td style="padding:8pt;font-weight:700;color:${cellFg};font-size:9pt;">${esc(resolveBindable(it.risk ?? '', ctx))}</td>
-      <td style="padding:8pt;">${ratingChipHtml(String(it.rating ?? 'Medium'))}</td>
-      <td style="padding:8pt;">${confidenceChipHtml(String(it.confidence ?? 'Indicative'))}</td>
+      <td style="padding:8pt;">${ratingChipHtml(String(it.rating ?? 'Medium'), 8, ctx)}</td>
+      <td style="padding:8pt;">${confidenceChipHtml(String(it.confidence ?? 'Indicative'), 7.5, ctx)}</td>
       <td style="padding:8pt;color:${mutedColor};line-height:1.35;">${esc(resolveBindable(it.why ?? '', ctx))}</td>
       <td style="padding:8pt;color:${mutedColor};line-height:1.35;">${esc(resolveBindable(it.ddAction ?? '', ctx))}</td>
     </tr>`).join('');

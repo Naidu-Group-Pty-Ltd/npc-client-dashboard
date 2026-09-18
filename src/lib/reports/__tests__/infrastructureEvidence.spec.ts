@@ -53,16 +53,48 @@ const WITH_PROJECTS = {
       councilName: 'Fraser Coast Regional Council',
       periodFrom: '2026-03-17', periodTo: '2026-09-16',
       totalInPeriod: 62, rowsRead: 62,
-      statedCostTotal: 41_250_000, rowsWithCost: 48,
-      newDwellingsTotal: 214, rowsWithDwellings: 31,
-      largestByCost: [
-        { cost: 18_400_000, types: ['Residential — multi dwelling'], suburb: 'Maryborough', status: 'Determined - Approved', determined: '2026-06-04', lodged: '2026-01-11' },
-        { cost: 6_900_000, types: ['Retail premises'], suburb: 'Pialba', status: 'Lodged', determined: null, lodged: '2026-05-22' },
+      // New proposals and the amendments that restate them, kept apart. The
+      // pipeline reading takes the NEW figures alone — adding the two counts
+      // the same building twice. See `classifyApplicationType`.
+      newApplications: {
+        rows: 41, statedCostTotal: 41_250_000, rowsWithCost: 48,
+        newDwellingsTotal: 214, rowsWithDwellings: 31,
+      },
+      amendments: {
+        rows: 19, statedCostTotal: 52_900_000, rowsWithCost: 17,
+        newDwellingsTotal: 305, rowsWithDwellings: 12,
+      },
+      unclassified: { rows: 2, statedCostTotal: 0, rowsWithCost: 0, newDwellingsTotal: 0, rowsWithDwellings: 0 },
+      // One entry per DEVELOPMENT, resolved to the parent application an
+      // amendment amends. See `daParentDevelopment.spec.ts`.
+      largestDevelopments: [
+        {
+          reference: '188/2026/HA', address: '4 KENT STREET MARYBOROUGH 4650', suburb: 'Maryborough',
+          statedCost: 18_400_000, newDwellings: 24, types: ['Residential — multi dwelling'],
+          status: 'Determined - Approved', latestDate: '2026-06-04', latestDateKind: 'determined',
+          rowsInWindow: 2, amendmentsInWindow: 1, parentOutsideWindow: false,
+        },
+        {
+          reference: '201/2026/HA', address: '10 MAIN STREET PIALBA 4655', suburb: 'Pialba',
+          statedCost: 6_900_000, newDwellings: null, types: ['Retail premises'],
+          status: 'Lodged', latestDate: '2026-05-22', latestDateKind: 'lodged',
+          rowsInWindow: 1, amendmentsInWindow: 0, parentOutsideWindow: false,
+        },
       ],
     },
   },
   fetchedAt: '2026-09-16T04:12:33.000Z',
 };
+
+/** A cell of the drawn table, by its heading rather than its position. */
+function drawnCell(evidence: Parameters<typeof renderInfrastructureOutlook>[0], name: string) {
+  const lines = renderInfrastructureOutlook(evidence).split('\n');
+  const headerAt = lines.findIndex((l) => l.startsWith('| Reference |'));
+  const headings = lines[headerAt].split('|').map((c) => c.trim());
+  const row = lines.find((l, i) => i > headerAt && l.split('|').map((c) => c.trim()).includes(name));
+  const cells = (row ?? '').split('|').map((c) => c.trim());
+  return (heading: string) => cells[headings.indexOf(heading)];
+}
 
 describe('a status is the publisher’s own word', () => {
   it('reads the ones that map, and only those', () => {
@@ -147,10 +179,43 @@ describe('what the registers do answer', () => {
     expect(evidence.pipelineDwellings).toMatchObject({ total: 214, rowsStating: 31 });
     const rendered = renderInfrastructureOutlook(evidence);
     expect(rendered).toMatch(/214 new dwellings/);
-    expect(rendered).toMatch(/\$41,250,000 of stated development cost/);
+    expect(rendered).toMatch(/\$41,250,000 of development cost/);
     expect(rendered).toMatch(/competing supply/);
     // And never as a claim about this address.
     expect(rendered).toMatch(/not at this address/);
+  });
+
+  it('says what each application count COUNTS, because the two differ', () => {
+    /**
+     * This read "680 new dwellings across 171 applications … with
+     * $808,649,729 of stated development cost across 278 applications" on a
+     * delivered Compass — one window, one council, two different application
+     * counts, and nothing saying why. A reader cannot tell whether 171 or 278
+     * is the number of applications, and the document reads as though it
+     * cannot add up.
+     *
+     * It always could: `rowsStating` is the rows that STATED that figure, and
+     * an application need state neither. The arithmetic was never wrong; the
+     * sentence was. So this asserts the RULE — each count names what it
+     * counts — rather than the sentence, which is what the previous version
+     * pinned and what made it look like a fixture to refresh.
+     */
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).toMatch(/that gave a dwelling count/);
+    expect(rendered).toMatch(/that gave a cost/);
+    // And where they differ, the reader is told why rather than left to guess.
+    expect(evidence.pipelineDwellings!.rowsStating)
+      .not.toBe(evidence.pipelineInvestment!.rowsStating);
+    expect(rendered).toMatch(/need state neither figure/);
+  });
+
+  it('prints the window in the reader\u2019s dates, not the register\u2019s', () => {
+    // `2026-03-18 to 2026-09-17` printed in a sentence otherwise written in
+    // English, on a page already carrying `27 Feb 2026`. Two date formats in
+    // one document is a raw marker like any other.
+    const rendered = renderInfrastructureOutlook(evidence);
+    expect(rendered).not.toMatch(/\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}/);
+    expect(rendered).toMatch(/\d{1,2} [A-Z][a-z]{2} \d{4} to \d{1,2} [A-Z][a-z]{2} \d{4}/);
   });
 
   it('never lets the prose beside it quantify an uplift', () => {
@@ -291,17 +356,49 @@ describe('the strategic designation the point sits inside', () => {
 
     // Read off the drawn row rather than the object, because the defect was
     // visible only in the table: the region must never appear in the Status
-    // column of the row whose name is the living area.
-    const row = renderInfrastructureOutlook(evidence)
-      .split('\n').find((l) => l.startsWith('| Maryborough Priority Living Area')) ?? '';
-    const cells = row.split('|').map((c) => c.trim());
-    expect(cells[3], 'the Status cell').not.toBe('Wide Bay Burnett');
-    expect(cells[5], 'the Where cell').toBe('Wide Bay Burnett');
+    // column of the row whose name is the living area. Columns are looked up
+    // by their HEADING rather than by position — the table has gained a
+    // Reference column since, and a magic index silently reads the neighbour.
+    const cell = drawnCell(evidence, 'Maryborough Priority Living Area');
+    expect(cell('Status')).not.toBe('Wide Bay Burnett');
+    expect(cell('Where')).toBe('Wide Bay Burnett');
   });
 
   it('still forbids quantifying an uplift from a designation', () => {
     const rules = infrastructureRules(evidence);
     expect(rules).toMatch(/Do NOT quantify an uplift/);
     expect(rules).toMatch(/only from items in the table/);
+  });
+});
+
+describe('what the brief asks for, per development', () => {
+  const evidence = buildInfrastructureEvidence({ planningData: WITH_PROJECTS });
+  const cell = drawnCell(evidence, 'Residential — multi dwelling');
+
+  it('names the development so a reader can look it up', () => {
+    // The table used to open on a joined list of development types with no
+    // number and no address, while the register carried both — so nothing in
+    // it could be checked against the council's own record.
+    expect(cell('Reference')).toBe('188/2026/HA');
+    expect(cell('Where')).toBe('4 KENT STREET MARYBOROUGH 4650');
+  });
+
+  it('says the figure is a cost and not funding', () => {
+    // Every register read here publishes the APPLICANT'S own stated cost of
+    // development and no funding at all. A dollar figure with nothing beside
+    // it reads as funding, and funding is one of the six things asked for.
+    expect(cell('Stated cost')).toBe('$18,400,000');
+    expect(cell('Funding')).toContain('Not stated');
+    expect(cell('Funding')).toContain('own cost of development');
+  });
+
+  it('says the register publishes no delivery date, on the row', () => {
+    // "Keep unknown timing explicit" — per entry, not once at the foot of the
+    // table where a reader scanning rows never reaches it.
+    expect(cell('Delivery timing')).toBe('Not published by this register');
+  });
+
+  it('counts the amendments in the entry rather than printing more entries', () => {
+    expect(cell('Type')).toBe('Development application · amended 1 time in this window');
   });
 });

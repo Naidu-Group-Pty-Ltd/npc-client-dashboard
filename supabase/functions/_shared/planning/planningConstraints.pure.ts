@@ -153,6 +153,24 @@ export interface PlanningConstraintReading {
    * the table stated a region as a project's status.
    */
   standingLabel: string | null;
+  /**
+   * The publisher's own layer id inside the service that answered, where the
+   * response carried one.
+   *
+   * It is the only STABLE identifier this reading has. A label is what the
+   * publisher calls a feature today; a layer id is which register the feature
+   * came out of, and it is what lets a consumer tell "the same designation,
+   * read twice" from "two designations with similar names". The infrastructure
+   * outlook needs exactly that distinction, because Queensland's StatePlanning
+   * MapServer is read two ways — layers 25/30/35/40 one at a time by the
+   * instruments probe, and `layers: all` by this register — so the same
+   * feature comes back from both.
+   *
+   * Null where the response published none. A consumer may not treat null as
+   * a match: an unidentified reading is unidentified, not equal to another
+   * unidentified one.
+   */
+  sourceLayer?: number | null;
   /** The administrative or planning region the register named, where it did. */
   region: string | null;
   source: string;
@@ -430,6 +448,7 @@ function nswReading(
   return {
     family: cls.family,
     kind: cls.kind,
+    sourceLayer: id,
     label: cls.family === 'heritage' && heritageName ? heritageName : (attrStr(r.layerName) ?? 'Planning control'),
     code: attrStr(a['Item Number']) ?? attrStr(a['Symbol Code']) ?? attrStr(a['LABEL']),
     value: nswControlValue(cls.family, a),
@@ -577,6 +596,9 @@ export function parseVicOverlays(body: unknown): ConstraintProbeOutcome {
     return {
       family: cls.family,
       kind: cls.kind,
+      // A WFS feature carries no layer id — Victoria publishes features, not
+      // identify results — and an absent identifier identifies nothing.
+      sourceLayer: null,
       // Title-cased by the report, not here: the WFS shouts its descriptions
       // (`DESIGN AND DEVELOPMENT OVERLAY - SCHEDULE 1`) and a renderer that
       // lower-cases loses `DDO`.
@@ -680,6 +702,7 @@ export function parseNamedLayerConstraints(
     return {
       family: cls.family,
       kind: cls.kind,
+      sourceLayer: typeof r.layerId === 'number' ? r.layerId : null,
       /*
        * The feature's own name where it has one, else the layer's. At 262
        * Pallas Street that is the difference between "Priority Living Area"

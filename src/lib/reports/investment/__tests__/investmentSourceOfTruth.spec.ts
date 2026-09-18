@@ -37,7 +37,58 @@ const BRIDGE_SHAPE =
  * like the others here — eleven routes each carried a private copy.
  */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown|vizDirectives|vizFigures|reportDate)\.pure\.ts|\.\.\/market\/(?:marketFactBlocks|marketEvidence|scoreAssessmentReading)\.pure\.ts|\.\.\/\.\.\/(?:reportSplitRegistry|compassPostProcessor)\.ts)$/;
+
+/**
+ * The two market modules a canonical investment module may name, and they may
+ * be named only for their TYPES.
+ *
+ * `strategyPositions.pure.ts` composes the SWOT, the suitability profile and
+ * the rest from the market evidence table the report already carries, so it
+ * has to know that table's row shape and the key union that indexes it. The
+ * alternative was a local copy of both, which is how two shapes come to
+ * disagree — and the key union is exactly what caught four misspelled measure
+ * names on the first render.
+ *
+ * Named individually rather than as `../market/*`, for the reason the note
+ * below gives about `../../*.ts`, and held to `import type` so the dependency
+ * is erased at build time and no runtime edge is created between the two
+ * domains.
+ */
+const TYPE_ONLY_IMPORTS = /^\.\.\/market\/(?!scoreAssessmentReading\.pure\.ts$)/;
+
+/**
+ * The one market module admitted for a VALUE, and why the rule above bends
+ * exactly once.
+ *
+ * `scoreAssessmentReading.pure.ts` exports `readScoreAssessment`, and
+ * `CLAUDE.md` § S5_CORRECTIONS §3a records the decision it serves: **the
+ * assessment is DERIVED where the record is read, never passed in, because a
+ * parameter a caller forgets takes the whole grade rationale off the page with
+ * nothing reporting it.** Holding it to `import type` would force the opposite
+ * of a decision made deliberately after that failure.
+ *
+ * The distinction against `StrategyRowOptions.measuredAt`, which IS passed in,
+ * is the failure mode rather than the direction of travel: a forgotten
+ * assessment loses the reason a grade was given and says nothing; a forgotten
+ * measurement date degrades to a sentence that states the date is not
+ * recorded. One is silent, the other is visible and honest.
+ */
+
+/**
+ * Two modules next door that are not named `.pure.ts` and are admitted anyway.
+ *
+ * `forkSplit.pure.ts` composes the two fork documents, and it cannot do that
+ * without the split registry (the routes, the titles, the lens preambles) or
+ * the editorial-label stripper the hygiene pass runs. Neither is optional and
+ * neither has a pure twin.
+ *
+ * The admission is CHECKED rather than asserted: the test below holds them to
+ * the same purity rule as a canonical module, so this list can only grow to
+ * things that would pass it. They are named individually — a pattern admitting
+ * `../../*.ts` would admit the whole `_shared` tree.
+ */
+const ADMITTED_NEIGHBOURS = ['reportSplitRegistry.ts', 'compassPostProcessor.ts'];
 
 describe('investment report — single source of truth', () => {
   it('has at least one canonical module', () => {
@@ -64,6 +115,16 @@ describe('investment report — single source of truth', () => {
     });
   });
 
+  describe.each(ADMITTED_NEIGHBOURS)('admitted neighbour %s', (file) => {
+    it('is held to the same purity rule as a canonical module', () => {
+      const source = readFileSync(resolve(CANONICAL_DIR, '..', '..', file), 'utf8');
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      for (const forbidden of ['Date.now(', 'new Date(', 'Math.random(', 'fetch(', 'localStorage', 'Deno.']) {
+        expect(code, `${file} uses ${forbidden}`).not.toContain(forbidden);
+      }
+    });
+  });
+
   describe.each(pureModules(CANONICAL_DIR))('canonical %s', (file) => {
     const source = readFileSync(resolve(CANONICAL_DIR, file), 'utf8');
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -75,6 +136,14 @@ describe('investment report — single source of truth', () => {
         .filter((spec) => !/\s/.test(spec));
       for (const spec of imports) {
         expect(spec, `${file} imports "${spec}"`).toMatch(ALLOWED_IMPORT);
+      }
+    });
+
+    it('imports the market domain for its types alone', () => {
+      const statements = [...source.matchAll(/(?:^|\n)\s*import\s+(type\s+)?[^;]*?from '([^']+)'/g)];
+      for (const [, typeOnly, spec] of statements) {
+        if (!TYPE_ONLY_IMPORTS.test(spec)) continue;
+        expect(typeOnly, `${file} imports "${spec}" for a value — market types only`).toBeTruthy();
       }
     });
 

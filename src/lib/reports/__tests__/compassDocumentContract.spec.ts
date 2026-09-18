@@ -130,7 +130,17 @@ describe('the evidence pack is what the report may state', () => {
   });
 
   it('states the price and the rent once, and forbids analysing them', () => {
-    expect(p).toMatch(/\*\*Asking price:\*\*/);
+    // Asserted as the RULE — a price line is present, singular, and not
+    // analysed — rather than as the words. This pinned the literal
+    // `**Asking price:**`, and that label was itself the defect: the figure
+    // behind it is `mergedOverrides.purchasePrice || propertyDetails?.price`,
+    // so an adviser's accepted modelling input was being announced to the
+    // model as the market's asking price. `subjectPriceLine` names the rung
+    // it came from, and the spec that owns the wording is
+    // `subjectPrice.spec.ts`.
+    // The label is COMPUTED now (it depends on which rung the figure came
+    // from), so the source carries the call rather than the words.
+    expect(p).toMatch(/\$\{subjectPriceLine\(subjectPrice\)\}/);
     expect(p).toMatch(/may be stated ONCE, in the\s+property snapshot/);
     expect(p).toMatch(/no yield, no LVR, no loan, no\s+cash flow, no projection/);
   });

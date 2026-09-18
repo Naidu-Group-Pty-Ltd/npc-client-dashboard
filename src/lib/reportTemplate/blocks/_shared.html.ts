@@ -73,6 +73,46 @@ export function esc(s: unknown): string {
  * Returns `null` when the prop is absent, so callers keep whatever default
  * they had before this existed. That is what makes every `*Font` prop additive.
  */
+/**
+ * Every picture this renderer draws, with the alternative text it must carry.
+ *
+ * ## Why this is the only place an `<img>` is written
+ *
+ * The render routes ask WeasyPrint for `pdf_variant: 'pdf/ua-1'`, and PDF/UA-1
+ * clause 7.3 requires every `/Figure` to carry `/Alt` or `/ActualText`. Nine
+ * emitters across this tree wrote their own `<img>`; two of them passed
+ * `alt=""` in the belief that an empty string marks a picture decorative, and
+ * the other seven passed nothing.
+ *
+ * **Measured on WeasyPrint 69.0, the pinned engine, both are the same file.**
+ * An `<img alt="">` and an `<img>` with no attribute at all produce a byte-
+ * identical PDF (7,167 bytes each on a one-image probe), and in both the
+ * figure is tagged `/Figure` with **no** `/Alt`. There is no "mark it
+ * decorative" escape on this engine: the only conforming image is a described
+ * one. veraPDF 1.30.2 confirms it — `7.3 test 1` failed twice on the 36-page
+ * Templates render, once for the cover mark and once for the closing mark,
+ * both of which were carrying `alt=""`.
+ *
+ * ## What the text may say
+ *
+ * `alt` describes what the picture IS, never what it shows. The renderer has
+ * no way to see a photograph, and a description it invented would be the same
+ * fabrication this programme's report rules forbid everywhere else. So a
+ * caller passes the author's own `alt` where the template carries one, the
+ * caption where the block already prints one, or a true statement of the
+ * picture's role — "Naidu Property Consulting Services logo" for a brand mark.
+ * `MISSING_ALT` is the last resort and is deliberately conspicuous rather than
+ * plausible, because a picture nobody described is a gap, and a gap that reads
+ * as a description is worse than one that reads as a gap.
+ */
+export const MISSING_ALT = 'Image — no description recorded';
+
+export function imgTag(src: string, opts: { alt?: unknown; style: string; attrs?: string }): string {
+  const alt = String(opts.alt ?? '').trim() || MISSING_ALT;
+  const attrs = opts.attrs ? `${opts.attrs} ` : '';
+  return `<img ${attrs}src="${esc(src)}" alt="${esc(alt)}" style="${opts.style}"/>`;
+}
+
 export function fontFamilyValue(value: unknown, fallback?: string): string | null {
   if (value == null || value === '') return fallback ?? null;
   const raw = String(value).trim();
@@ -432,8 +472,11 @@ function renderOverlayContent(overlay: Overlay, ctx: ResolveContext): string {
       const alt = typeof (overlay as { alt?: unknown }).alt === 'string'
         ? (overlay as { alt?: string }).alt!.trim()
         : '';
+      // Conditionally emitting the attribute leaves an undescribed overlay as a
+      // `/Figure` with no `/Alt`, which is the same PDF/UA failure as writing
+      // none — so this goes through `imgTag` like every other picture.
       return withCascadeWrapper(
-        `<img src="${esc(src)}"${alt ? ` alt="${esc(alt)}"` : ''} style="${base}object-fit:${fit};"/>`,
+        imgTag(src, { alt, style: `${base}object-fit:${fit};` }),
         overlay as any,
         ctx,
       );

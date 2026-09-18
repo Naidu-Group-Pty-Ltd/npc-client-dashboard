@@ -249,6 +249,7 @@ function productionInputFrom(rawInput: any, now: Date): ProductionScoringInput {
   };
 }
 
+
 // ============= AREA SCORING TYPES & LOGIC =============
 
 interface AreaScoringInput {

@@ -112,6 +112,7 @@
  * the composed financial chapters read the same module so the tile and the
  * table cannot drift.
  */
+import { assessmentReadings } from './reports/investment/assessmentReadings.pure.ts';
 import { renderMarkdown } from './reports/markdown.pure.ts';
 import {
   DEFAULT_LINES_PER_PAGE,
@@ -661,6 +662,37 @@ export function projectInvestmentReport(
   // The score travels with it. A number out of 100 beside no grade is the
   // same claim wearing one fewer word, and `gradedLine` has always refused
   // both together.
+  /**
+   * The four readings, kept apart — owner correction of 17 Sep 2026.
+   *
+   * A cover read "assessment performance F · 40" while the assessment page
+   * said the composite would be a C. Both are in this record and both are
+   * true; one label was carrying two of them. They are published under their
+   * own names so a master binds the one it means, and every one is absent
+   * where the record does not hold it.
+   *
+   * `recommendation.grade` is untouched: it is still the ONE rule that decides
+   * whether this record may state a grade at all, and these sit beside it.
+   */
+  const readings = assessmentReadings(score as never);
+  put(recommendation, 'measuredScore', readings.measuredScore ?? undefined);
+  put(recommendation, 'measuredGrade', readings.measuredGrade ?? undefined);
+  put(recommendation, 'measuredLine', readings.measuredScore !== null && readings.measuredGrade
+    ? `${Math.round(readings.measuredScore)} · ${readings.measuredGrade}`
+    : undefined);
+  put(recommendation, 'coveragePercent', readings.coveragePercent ?? undefined);
+  put(recommendation, 'coverageLabel', readings.coveragePercent === null
+    ? undefined
+    : `${readings.coveragePercent}%`);
+  put(recommendation, 'criteriaMeasuredLine', readings.criteriaMeasured !== null && readings.criteriaTotal !== null
+    ? `${readings.criteriaMeasured} of ${readings.criteriaTotal}`
+    : undefined);
+  put(recommendation, 'gradeCapped', readings.capped ? true : undefined);
+  put(recommendation, 'capExplanation', readings.capExplanation ?? undefined);
+  put(recommendation, 'conclusionLine', readings.conclusionLine ?? undefined);
+  put(recommendation, 'supportsConclusion', readings.supportsConclusion ? true : undefined);
+  put(recommendation, 'weightRoundingNote', readings.weightRoundingNote ?? undefined);
+
   const gradePublishable = publishableGrade(score);
   put(recommendation, 'grade', gradePublishable);
   put(recommendation, 'score', gradePublishable === undefined ? undefined : num(score.totalScore));
@@ -704,6 +736,20 @@ export function projectInvestmentReport(
   // scorer had no data for — `demandScore` and `growthScore` on the sampled
   // rows — so each entry is only emitted where it says something.
   const breakdown = obj(score.breakdown);
+  /**
+   * The engine's per-criterion coverage, keyed for the scorecard.
+   *
+   * `breakdown` carries the score and the weight; only `v2.dimensions` carries
+   * how much of each criterion's own method the evidence reached. Read as a
+   * lookup rather than by index, because the two lists are ordered
+   * independently and pairing them positionally is how a figure ends up
+   * against the wrong label.
+   */
+  const v2Dimensions: Record<string, unknown> = {};
+  for (const d of (Array.isArray((obj(score.v2)).dimensions) ? (obj(score.v2)).dimensions as unknown[] : [])) {
+    const key = str(obj(d).key);
+    if (key) v2Dimensions[key] = d;
+  }
   /*
    * Resolved here rather than beside the document identity below, because the
    * scorecard needs it: a dimension's own explanation can be financial
@@ -712,8 +758,21 @@ export function projectInvestmentReport(
    * The document being produced decides what may be published — the row's own
    * tier for every caller but the condense fork. See `ProjectionOptions`.
    */
-  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
-  const policy = contentPolicyFor(options.tier ?? tier);
+  const storedTier = String(row.report_tier ?? 'compass').trim().toLowerCase();
+  /**
+   * ONE resolved tier, read by everything tier-dependent.
+   *
+   * `options.tier` used to reach `contentPolicyFor` and nothing else, so a
+   * condense fork producing a Financial Analysis from a Compass parent got
+   * the Financial content policy and the PARENT's title, standfirst and
+   * `report.tier` on every page — the defect the identity block below says
+   * was closed, reopened by a second reading of the same question ten lines
+   * apart. Measured: `projectInvestmentReport(row, { tier: 'financial' })` on
+   * a stored Compass answered `documentTitle: "Investment Compass"` while
+   * publishing all thirty financial bindings.
+   */
+  const tier = String(options.tier ?? storedTier).trim().toLowerCase();
+  const policy = contentPolicyFor(tier);
 
   /**
    * Dimensions whose `details` sentence states financial modelling.
@@ -794,6 +853,24 @@ export function projectInvestmentReport(
       put(entry, 'weight', weight);
       put(entry, 'scoreLabel', score !== undefined ? String(Math.round(score)) : undefined);
       put(entry, 'weightLabel', weight !== undefined ? `${Math.round(weight)}%` : undefined);
+      /**
+       * How much of the criterion's own method was measured.
+       *
+       * The scorecard's fourth column used to bind `details`, which is the
+       * criterion's RATIONALE — and for Yield that rationale IS the modelling
+       * ("4.52% gross yield on a $575,000 purchase price"), so a tier that
+       * withholds modelling left the cell blank. A labelled empty cell is a
+       * promise unkept. Coverage is a fact about the METHOD rather than about
+       * the purchase, so it is publishable on every tier, and it is read off
+       * the record rather than composed.
+       */
+      // `breakdown` keys a criterion `growthScore`; `v2.dimensions` keys it
+      // `growth`. Pairing them by position instead would put a figure against
+      // the wrong label the first time either list reorders.
+      const coverage = num(obj(v2Dimensions[key.replace(/Score$/, '')]).coverage);
+      put(entry, 'measuredOn', coverage === undefined
+        ? undefined
+        : coverage >= 1 ? 'Full method' : `${Math.round(coverage * 100)}% of method`);
       // A dimension's own explanation can BE the modelling. The Yield
       // scorer's reads `4.52% gross yield on a $575,000 purchase price.` —
       // a yield, computed against the price, in one sentence — and it was

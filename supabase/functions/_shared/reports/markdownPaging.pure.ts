@@ -309,16 +309,39 @@ export function packMarkdownPages(
     if (!current.length) return;
     let peeled: MarkdownBlock[] = [];
     if (options.keepWithNext) {
-      // Peel a trailing heading / lead-in so it opens the next page instead of
-      // closing this one. At most two blocks (a heading over a lead-in), and
-      // never the whole page.
-      while (current.length > 1 && peeled.length < 2) {
-        const last = current[current.length - 1];
-        if (last.kind !== 'heading' && !leadsIn(last)) break;
-        peeled.unshift(current.pop()!);
+      /*
+       * A page that is NOTHING but a heading is the defect this option exists
+       * to prevent, produced by this option.
+       *
+       * Measured on the Financial report for 18 Annabelle Crescent (17 Sep
+       * 2026): pages 16 and 18 carried `Base case` and `Optimistic` and
+       * nothing else — a heading above a running foot, its scenario table on
+       * the page after. The sequence is the peel's own: a heading is peeled
+       * off a full page onto a fresh one, the block that follows still does
+       * not fit beside it, and the guard below — `current.length > 1`, there
+       * so a page is never carried whole and the packer cannot loop — then
+       * refuses to peel it a second time.
+       *
+       * So a page made ENTIRELY of keep-with-next blocks is carried whole.
+       * It cannot loop: whatever comes next is not peelable, so the page
+       * holding it has a non-peelable block and is pushed.
+       */
+      const peelable = (b: MarkdownBlock) => b.kind === 'heading' || leadsIn(b);
+      if (current.length <= 2 && current.every(peelable)) {
+        peeled = current.splice(0, current.length);
+      } else {
+        // Peel a trailing heading / lead-in so it opens the next page instead
+        // of closing this one. At most two blocks (a heading over a lead-in),
+        // and never the whole page.
+        while (current.length > 1 && peeled.length < 2) {
+          const last = current[current.length - 1];
+          if (last.kind !== 'heading' && !leadsIn(last)) break;
+          peeled.unshift(current.pop()!);
+        }
       }
     }
-    pages.push(current);
+    // …and a page carried away whole leaves nothing to push.
+    if (current.length) pages.push(current);
     // A floated figure is earlier content than anything peeled, so it leads.
     current = [...floated, ...peeled];
     floated = [];
@@ -503,4 +526,84 @@ export function packNarrativeGeometry(
     splitParagraphs: (chars) => paragraphCharge(geometry, chars),
     splitLists: (items) => listCharge(geometry, items.map((it) => ({ chars: it.chars ?? it.text.length, depth: it.depth }))),
   });
+}
+
+/**
+ * Which of the report's own sections landed in which packed bucket.
+ *
+ * ## Why this exists
+ *
+ * The contents page listed the MASTER'S page names — "The report", "The report
+ * (2)" … — because that is all `ctx.pages` carries. On the Compass that is
+ * twenty-two identical entries naming a page archetype, and a reader looking
+ * for Planning has nothing to look for. The report's real sections are
+ * headings inside the flowing narrative, and where each one lands is not
+ * knowable until the narrative has been packed against the template's own
+ * geometry.
+ *
+ * It is knowable at that moment, though, and nothing new has to be computed:
+ * `packMarkdownPages` already returns the buckets, a heading block already
+ * carries its level and a stable `id` in its own html (`<h2 id="…">`), and the
+ * renderer's pre-pass already packs once and memoises. So the index is a read
+ * over what the packer produced.
+ *
+ * Two rules.
+ *
+ * **A bucket is not a page.** This answers in bucket numbers, because a bucket
+ * lands on whichever document page the master drew it on, and only the
+ * renderer knows that. Turning one into the other is the caller's job, and
+ * keeping it out of here is what stops this module guessing at a layout it
+ * cannot see.
+ *
+ * **The label is what printed.** It is taken from the rendered heading with
+ * its inline markup removed, not from the source line, so a section set as
+ * `## **Planning** controls` is listed as "Planning controls" — the words a
+ * reader saw, with the emphasis that carried them dropped.
+ */
+export interface NarrativeSection {
+  /** The heading's text as printed, inline markup removed. */
+  label: string;
+  /** 1–6, as the rendered heading carries it. */
+  level: number;
+  /** The heading's own id, so a contents entry can land on the section. */
+  id: string;
+  /** Which packed bucket it fell in. NOT a document page number. */
+  bucket: number;
+}
+
+const HEADING = /^<h([1-6])\b([^>]*)>([\s\S]*)<\/h\1>\s*$/;
+const ID_ATTR = /\bid="([^"]*)"/;
+
+/** Strip tags, then the entities `esc` writes, in the order that cannot double-decode. */
+function printedText(html: string): string {
+  return html
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function sectionIndexFromBuckets(
+  buckets: readonly (readonly MarkdownBlock[])[],
+): NarrativeSection[] {
+  const out: NarrativeSection[] = [];
+  buckets.forEach((blocks, bucket) => {
+    for (const b of blocks) {
+      if (b.kind !== 'heading') continue;
+      const m = HEADING.exec(b.html);
+      if (!m) continue;
+      const label = printedText(m[3]);
+      // A heading with no words is not a destination. `renderMarkdown` already
+      // drops one with nothing under it; this is the belt for anything else.
+      if (!label) continue;
+      const id = ID_ATTR.exec(m[2])?.[1] ?? '';
+      if (!id) continue;
+      out.push({ label, level: Number(m[1]), id, bucket });
+    }
+  });
+  return out;
 }

@@ -93,8 +93,28 @@ export function dimensionWasScored(raw: unknown): boolean {
   // `available`. Either being explicitly false means the dimension was not
   // scored and must not be tabulated as though it were.
   if (raw.excluded === true) return false;
-  if ((raw.hasData ?? raw.available) === false) return false;
-  // A dimension the engine gave no weight contributed nothing to the total.
+  const flag = raw.hasData ?? raw.available;
+  if (flag === false) return false;
+  // A dimension that POSITIVELY says it has data was measured, and the weight
+  // is not consulted.
+  //
+  // The zero-weight test below is right for a run that issued a grade — there,
+  // an available dimension always carries a positive renormalised weight, so a
+  // zero means it contributed nothing. It was wrong for a run that WITHHELD
+  // one: `scoringV2Production` wrote `weight: 0` on every dimension whenever
+  // `gradeIssued` was false, so all ten withheld rows in production carry
+  // growth, yield and demand as `hasData: true, excluded: false, weight: 0` —
+  // measured, and reported by this predicate as unscored. Every dimension
+  // table on a withheld report was therefore empty, which told the reader
+  // nothing about what HAD been measured at exactly the moment that is the
+  // only thing worth telling them.
+  //
+  // The producer no longer writes that contradiction; this ordering also
+  // repairs the rows that already carry it, with no migration and without
+  // inventing a weight the run never formed.
+  if (flag === true) return true;
+  // Neither flag present — a legacy row. A dimension the engine gave no weight
+  // contributed nothing to the total.
   const weight = num(raw.weight);
   return !(weight !== undefined && weight <= 0);
 }
@@ -192,6 +212,29 @@ export function gradeMayBePublished(score: unknown): boolean {
   return isRecord(score) && overallGradeMayBeShown(score);
 }
 
+/**
+ * How many of the assessment's dimensions carried this score, where the record
+ * says and the answer is fewer than all of them.
+ *
+ * Read from `coverage`, which every scored record has carried since long
+ * before the publication policy — so a historical row qualifies exactly as a
+ * new one does, with no migration and no field invented for it.
+ *
+ * Null where the record does not say, or where every dimension was assessed:
+ * **a full assessment is not qualified at all**, and a caveat printed on every
+ * verdict is a caveat nobody reads.
+ */
+function assessedOfTotal(score: Record<string, unknown>): { scored: number; total: number } | null {
+  const coverage = isRecord(score.coverage) ? score.coverage : undefined;
+  if (!coverage) return null;
+  const scored = num(coverage.dimensionsScored);
+  const total = num(coverage.totalDimensions);
+  if (scored === undefined || total === undefined) return null;
+  if (!Number.isFinite(scored) || !Number.isFinite(total) || total <= 0) return null;
+  if (scored >= total) return null;
+  return { scored, total };
+}
+
 export function gradedLine(score: unknown): string | undefined {
   if (!isRecord(score)) return undefined;
   // An unauthorised engine states no verdict, whatever it computed.
@@ -200,12 +243,24 @@ export function gradedLine(score: unknown): string | undefined {
   const total = num(score.totalScore);
   if (!grade || total === undefined) return undefined;
   const head = `Graded ${grade} at ${Math.round(total)} out of 100`;
+
+  // S5/S6 §8 — a qualified score carries its qualification wherever it goes.
+  //
+  // This sentence is bound by every selectable template on the verdict page
+  // and again on the closing card, and it stated a grade with no indication
+  // that dimensions were unassessed. A reader counting three names in the
+  // weighting clause has no way to know there should be five, so the
+  // incompleteness has to be said rather than left to be inferred from a
+  // list's length — which is the same rule the score line itself answers to.
+  const of = assessedOfTotal(score);
+  const qualifier = of ? ` — ${of.scored} of the ${of.total} assessment dimensions` : '';
+
   const dims = breakdownEntries(score).map((d) => d.label);
-  if (dims.length < 2) return `${head}.`;
+  if (dims.length < 2) return `${head}${qualifier}.`;
   const clause = dims.length === 2
     ? `${dims[0]} and ${dims[1]}`
     : `${dims.slice(0, -1).join(', ')} and ${dims[dims.length - 1]}`;
-  return `${head}, weighted across ${clause}.`;
+  return `${head}, weighted across ${clause}${qualifier}.`;
 }
 
 /** The graded line plus the pointer to the assessment page, for the closing card. */

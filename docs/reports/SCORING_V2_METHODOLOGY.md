@@ -85,26 +85,37 @@ stampless enrichment — every row persisted before RF-7.2B — verifies nothing
 and scores exactly as before; the remedy is regeneration, which re-acquires
 with a stamp. A caller-asserted `verifiedInputs` on the request body is still
 never read, because evidence travels with the object that carries the
-readings. Wiring Location can never lower a grade: the delivered points only
-rise when a dimension is added, and the renormalised composite stays at or
-above the old nominal sum — though the composite NUMBER can move either way,
-because a genuinely weak location (a regional property three hours from its
-capital) now measures instead of being excluded. Risk stays null under the
+readings. Wiring Location moves the composite either way, and that is the
+proportional score's meaning rather than a defect: a genuinely weak location
+(a regional property three hours from its capital) now measures instead of
+being excluded, and a property assessed on four dimensions is scored on the
+four it has. What may never happen is a dimension being dropped because of
+what it would do to the result, which §3 pins by execution. Risk stays null under the
 recorded Model D decision (`propertyRiskSchema.pure.ts`): the platform holds
 no property-level risk evidence, and 95 of 100 nominal points keeps every
 grade to A+ reachable.
 
-**Growth is required.** The engine's own floor is three measured dimensions,
-and on the evidence this deployment holds today three can be reached without
-Growth (Yield from the record's own rent and price, Demand from Domain's
-market readings and the ABS population series, Location once repaired). A
-grade formed that way answers to the delivered-points ceiling (§3): with
-Growth's 40 points unmeasured the best deliverable is 60 of 100, so the
-printed letter would be a B at most and typically a C — a statement about
-missing data wearing the shape of a statement about the property, which a
-client cannot tell from a poor property. `requiredDimensions: ['growth']`
-therefore withholds the grade until suburb capital growth has been measured,
-and names the gap. The owner may relax it by editing the activation record.
+**Growth was required, and is not any more** (S5/S6 §8, 18 September 2026).
+The rule read: the engine's floor is three measured dimensions, three can be
+reached without Growth on the evidence this deployment holds, and a grade
+formed that way answers to the delivered-points ceiling — with Growth's 40
+points unmeasured the best deliverable is 60 of 100, so the printed letter
+would be a B at most and typically a C, a statement about missing data wearing
+the shape of a statement about the property.
+
+Every step of that was true, and the premise was the ceiling. §8 removed the
+ceiling as a missing-dimension penalty, and the requirement falls with it:
+`requiredDimensions` is now `[]`, and three dimensions without Growth receive
+a qualified score across the three they have. The field is kept rather than
+deleted so the supersession is legible, and because an evidence-based
+requirement, if one is ever justified, has somewhere to go that is not a
+second gate.
+
+What still holds is the safeguard that was doing the real work: the
+Growth-centred evidence ceiling (§3). With no capital-growth evidence the
+printed letter cannot exceed **B+** however strong the assessed dimensions
+are — so the badge a client reads is still a claim the evidence can carry,
+while the score they read is a real finding about what was measured.
 
 **Absence is named.** A withheld grade carries `gradeGaps` — one entry per
 unmeasured dimension with the client sentence (`NOT_ASSESSED_REASON`), the
@@ -173,15 +184,25 @@ backtest unable to attribute any change to either.
   `evidenceCoverage` overall).
 - Fewer than **3** measured dimensions → no composite, no grade, a stated
   reason (`MIN_DIMENSIONS_FOR_GRADE`).
+- The composite is **proportional over the ORIGINAL weights of the valid
+  dimensions** (S5/S6 §7): `Σ(score × original weight) / Σ(original weights of
+  valid)`. Never divided by five, never zero-filled, never an equal-weight
+  average. It is computed at full precision and rounded **once**, in
+  `proportionalWeighting.pure.ts`, which the engine and the publication policy
+  both compose with so they cannot disagree.
+- A dimension counts only where it produces a **finite score from 0 to 100**.
+  A genuinely measured zero counts; missing, null, defaulted, fabricated, NaN,
+  infinite and out-of-range values do not, and a `scored: true` flag alone is
+  never sufficient — the flag is a claim and the value is the evidence for it.
 - `nominalMeasuredScore` — Σ (measured score × nominal weight), the points the
-  evidence actually **delivered** over the full 100 — is computed and
-  published beside the renormalised composite. The printed grade answers to it
-  (§3), so a missing dimension can disclose and cap but never lift.
+  evidence actually **delivered** over the full 100 — is still computed and
+  published as a **diagnostic**. Until 18 September 2026 the printed grade also
+  answered to it; that ceiling is removed (§3).
 - The buyer never scores into the property (§5).
 
 ## 2. Grades
 
-`gradeEligibility.pure.ts`, version `2.0.0`.
+`gradeEligibility.pure.ts`, version `4.0.0`.
 
 | grade | floor |
 | --- | ---: |
@@ -197,42 +218,144 @@ backtest unable to attribute any change to either.
 These thresholds are not this programme's to move, and no calibration may
 target a grade distribution.
 
-## 3. A/A+ evidence eligibility — the two ceilings
+## 3. A/A+ evidence eligibility — one ceiling, about the evidence
 
 A grade is a claim; the score says how strong, eligibility says whether the
 evidence can carry it. Eligibility **never changes the score** — it caps the
 printed grade and states why. Deliberately not "N of 5 dimensions": a missing
 vacancy rate and a missing five-year growth series are nothing alike.
 
-**Ceiling one — Growth-centred** (`ELIGIBILITY_RULES`):
+**The ceiling — Growth-centred and quality-gated** (`ELIGIBILITY_RULES`):
 
 | rule | A | A+ |
 | --- | ---: | ---: |
 | minimum Growth confidence | **45** | **70** |
 | minimum Growth coverage | **0.45** | **0.70** |
-| minimum overall evidence coverage | **0.55** | **0.70** |
+| minimum evidence quality over the assessed dimensions | **0.55** | **0.70** |
 
 Growth confidence is itself six measured factors (§4.1): geography precision,
 dwelling-type match, sample size, history depth, source independence,
 freshness — the checklist a client-facing A/A+ must survive.
 
-**Ceiling two — delivered points** (2.0.0): the printed grade may not exceed
-`gradeFor(nominalMeasuredScore)`. Rationale, found by fixture before any real
-evidence was scored: the renormalised composite *rises* when a weak dimension
-drops out (growth 90 / location 80 / yield 85 / demand 55 composites ≈ 81
-with Demand and ≈ 86 without it), so absence could buy a badge. Under this
-ceiling missing evidence still never scores — composite, coverage and
-disclosure are untouched — but it cannot lift: a dimension that was not
-measured contributes nothing toward a higher grade's floor, and adding a
-measured score (≥ 0) can only raise the ceiling. Measured consequence today,
-with Risk structurally unmeasurable (§4.5): the maximum deliverable is ≈ 89 of
-100 (growth saturates at 91, location reaches 95, yield 100, demand 93), so
-**A+ remains mathematically reachable — on genuinely exceptional evidence
-across all four live dimensions**, which is what the badge is supposed to
-mean.
-
 Whenever the printed grade is capped, at least one reason is stated, in the
 operator's words.
+
+### The delivered-points ceiling, and why 3.0.0 removed it
+
+2.0.0 carried a second cap: the printed grade could not exceed
+`gradeFor(nominalMeasuredScore)`. It was found by fixture before any real
+evidence was scored, and the arithmetic behind it is real — the renormalised
+composite *rises* when a weak dimension drops out (growth 90 / location 80 /
+yield 85 / demand 55 composites ≈ 81 with Demand and ≈ 86 without it), so
+absence appeared able to buy a badge.
+
+It was the wrong instrument, and S5/S6 §8 removed it. It lowered the grade
+**solely because a dimension was unavailable**, which contradicts proportional
+scoring: a three-dimension assessment covering 70% of the matrix could not
+exceed the grade its 70 delivered points allowed, however strong those three
+were — so a qualified score and a qualified grade disagreed with each other by
+construction, and the cure for "absence buys a badge" was "presence of
+evidence we do not hold costs a badge".
+
+What replaces it is a rule about **selection** rather than a cap on the
+result. §4's publication policy states it: *include every valid dimension
+available at the assessment cutoff; never omit a low-scoring dimension to
+improve the result.* The engine satisfies it structurally — `measured` is
+`raw.filter(isValidDimensionScore)`, a filter on validity with no path that
+reads a value — and `scoringV2Closure.spec.ts` pins it by driving the same
+evidence from strong to weak and asserting the measured set never moves. That
+is a stronger guarantee than the ceiling gave: the ceiling bounded the
+consequence of dropping a dimension, while this asserts the engine cannot drop
+one.
+
+The third change in 3.0.0 is that the A/A+ coverage gate reads
+`evidenceQualityCoverage` (the share of the **measured** dimensions' weight
+their evidence covered) rather than `evidenceCoverage` (the share of the
+**full** matrix). The old figure mixes two questions — how many dimensions
+answered, and how well each was evidenced — so gating on it was a third
+missing-dimension penalty: a perfectly evidenced three-dimension assessment
+could not reach A because two dimensions were unavailable. Dimension count,
+original weight coverage and evidence quality are recorded and disclosed
+separately, and none of them stands for another.
+
+Measured consequence today, with Risk structurally unmeasurable (§4.5): the
+maximum composite across the four live dimensions is ≈ 89 of 100 (growth
+saturates at 91, location reaches 95, yield 100, demand 93), so **A+ remains
+reachable on genuinely exceptional evidence**, which is what the badge is
+supposed to mean.
+
+### 4.0.0 — the third hiding place of the same penalty
+
+3.0.0 removed the delivered-points ceiling and believed what remained was a
+guard on evidence quality. It was not, quite. **Both** A and A+ gates opened
+with `hasGrowth &&`, so a property with *no* growth reading failed both
+however strong and however well evidenced its other dimensions were, and the
+ceiling fell to **B+**. That is the missing-dimension penalty for the third
+time: the grade lowered *because a dimension was unavailable*, which is what
+proportional weighting already accounts for by renormalising. It was easy to
+miss because it reads as a statement about growth evidence, and it is a
+statement about the absence of any.
+
+4.0.0 draws the line where the evidence is:
+
+| | what it means | does it cap? |
+| --- | --- | --- |
+| growth **present**, confidence or coverage under the threshold | evidence this report holds cannot carry the claim | **yes** — unchanged |
+| growth **absent** | nothing measured, no weight, no contribution, no growth claim made | **no** (4.0.0) |
+| `evidenceQualityCoverage` under the floor | the dimensions that *did* answer are thinly evidenced | **yes** — always |
+
+So the growth thresholds bind **only where growth evidence exists**, and
+`evidenceQualityCoverage` binds always. Stated once, plainly: **an absence is
+no longer a cap.** The module's opening case is
+untouched: growth 93 on 10% coverage at low confidence still cannot print A+,
+because that evidence is present and cannot carry the letter.
+
+The consequence is real and intended. A three-dimension assessment whose three
+dimensions are strongly evidenced can now reach A. What tells the reader its
+scope is the **qualification** — *"based on 3 of the 5 assessment
+dimensions"* — carried on every surface by §3a's publication policy. Absence
+is disclosed with the result, never deducted from it.
+
+## 3a. Publication — when a score and grade reach a client
+
+`scorePublicationPolicy.pure.ts`, version `1.0.0`
+(`SCORE_PUBLICATION_GATE`, S5/S6 §4, §7 and §8, 18 September 2026).
+
+| valid dimensions | outcome |
+| --- | --- |
+| 5 of 5 | issue the score and grade, all five identified as assessed |
+| 4 of 5 | issue a **qualified** score and grade from the four valid dimensions |
+| 3 of 5 | issue a **qualified** score and grade from the three valid dimensions |
+| 0–2 of 5 | no overall score, no grade, no gauge, no score-derived verdict |
+
+Below the floor the substantive report is still produced, and it says briefly
+why no score accompanies it — naming how many dimensions were needed and
+which were assessed, rather than the generic "insufficient verified evidence"
+that read as a fault and sent an operator looking for one.
+
+A qualified score carries its qualification wherever it goes: *"Investment
+score: 78/100 — based on 4 of 5 assessed dimensions."* The record names the
+included and unassessed dimensions, the reason for each absence, the original
+weight coverage and the adjusted weights. Normalising the weights makes the
+arithmetic proportional; it does **not** make the evidence complete, and
+nothing may imply an unassessed dimension is low-risk or favourable.
+
+This supersedes two earlier rules, and the supersession is recorded rather
+than tidied away:
+
+- the **five-dimension completion gate** (18 September 2026), which withheld
+  the letter until all five scored — the right answer to "is this assessment
+  complete" and the wrong answer to "may a client be told what we measured";
+- the **Growth-required publication rule** (ME-8, 15 September 2026), whose
+  premise was the delivered-points ceiling above. With no ceiling, three
+  dimensions without Growth are scored across the three they have.
+
+  This bullet previously ended *"and the Growth-centred evidence ceiling still
+  holds the letter to B+ where no capital-growth evidence exists, which is the
+  safeguard that was actually doing the work."* That was wrong, and eligibility
+  `4.0.0` corrects it: a ceiling triggered by a dimension being **absent** is
+  the penalty this policy removes, not a safeguard it keeps. The safeguard that
+  genuinely survives is the quality floor over the dimensions that answered.
 
 ## 4. The dimensions
 
@@ -330,7 +453,7 @@ For every dimension, *performance unavailable* is distinguishable from
 
 Missing evidence is never 0, never 50, never neutral, never inferred; it is
 never punished as poor performance (the score renormalises over what was
-measured) and never rewarded through renormalisation (the delivered-points
+measured) and never selected on its value (the publication policy's
 ceiling, §3). Coverage is separately visible from performance at every level.
 
 ## 7. Evidence sources and provenance

@@ -119,6 +119,17 @@ function selectRows(rows, { filters, limit, orderBy, orderAsc } = {}) {
 
 export function createSupabaseDouble(fixtures, opts = {}) {
   const log = [];
+  /**
+   * The row as the fixture holds it, kept apart so the journey can put a field
+   * back after it has proved a write reached the broker.
+   *
+   * The edit-persistence step types a marker into the report content and asserts
+   * it was stored — and the SAME run then finalises the document, so every
+   * acceptance PDF this harness produced carried `[VERIFY-EDIT …]` in its prose.
+   * Proving the edit path works and producing a clean document are two jobs, and
+   * one run can do both only if the fixture is put back between them.
+   */
+  const pristine = structuredClone(fixtures.report ?? null);
   const state = {
     report: structuredClone(fixtures.report ?? null),
     selections: [],          // report_template_selections rows this run wrote
@@ -323,6 +334,12 @@ export function createSupabaseDouble(fixtures, opts = {}) {
         return json({ changes: [] });
       case 'mission-control-feedback-prompt':
         return json({ due: false });
+      // Platform notices, mounted by `DashboardLayout` on every dashboard page
+      // and therefore on every report page too. An empty channel is the shape
+      // `parseAnnouncementsPayload` reads and is what a deployment with
+      // nothing published answers; the host then draws nothing.
+      case 'mission-control-announcements':
+        return json({ announcements: [] });
       case 'manage-template-library':
         return json({ success: true, records: [], count: 0 });
       case 'authenticated-data':
@@ -468,5 +485,26 @@ export function createSupabaseDouble(fixtures, opts = {}) {
     return route.fulfill({ status: answer.status, contentType: answer.contentType, body: answer.body, headers: { ...cors, ...(answer.headers ?? {}) } });
   }
 
-  return { handle, state, log };
+  /**
+   * Put named fields of the report row back to the fixture's own values.
+   *
+   * Deliberately narrow: it restores from the pristine clone and never invents
+   * a value, so a field the fixture does not carry is deleted rather than
+   * defaulted, and nothing else the run wrote is touched. It is a fixture
+   * reset, not a content scrubber — it cannot remove a real user's edit,
+   * because it only ever writes what the fixture already said.
+   */
+  function restoreReportFields(fields) {
+    if (!state.report || !pristine) return [];
+    const restored = [];
+    for (const key of fields) {
+      const before = state.report[key];
+      if (key in pristine) state.report[key] = structuredClone(pristine[key]);
+      else delete state.report[key];
+      if (before !== state.report[key]) restored.push(key);
+    }
+    return restored;
+  }
+
+  return { handle, state, log, restoreReportFields };
 }

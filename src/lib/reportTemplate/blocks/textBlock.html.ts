@@ -85,9 +85,31 @@ export function renderTextBlockHtml(block: Block, ctx: HtmlBlockContext): string
   // the gap that would push the title off its rule.
   const anchored = p.anchorBottom != null && Number.isFinite(Number(p.anchorBottom));
   const headingTail = anchored && !body ? '0' : '0 0 8pt';
+  /**
+   * This heading is a HEADING, and it is not a section NAME.
+   *
+   * `<h2>` is right: a reader of the structure tree should hear the page's
+   * headline as its heading, and PDF/UA wants one. But WeasyPrint also builds
+   * the PDF outline from every `h1`–`h6`, and this heading is display type
+   * bound to the record — `{{recommendation.headline}}`, `{{property.address}}`
+   * — so *"AVOID - Poor investment opportunity with multiple red flags"* was
+   * the third entry in every Investment Compass outline, and the page a reader
+   * knows as "The assessment" appeared under the words "Five dimensions,
+   * weighted". A conclusion about a property cannot name a part of a document.
+   *
+   * The page contributes its own name instead (`pageBookmarkStyle` in
+   * `htmlRenderer.ts`), so nothing is lost from the outline and the entry says
+   * what the reader is looking at. Nothing else changes: the element, its
+   * role in the structure tree and every drawn pixel are untouched.
+   *
+   * `includeBookmarks: false` means the renderer emits no outline property at
+   * all, so the opt-out opts out of this one too.
+   */
+  const headingOutline = (ctx as { _includeBookmarks?: boolean })._includeBookmarks === false
+    ? '' : 'bookmark-level:none;';
   return `<div style="${style}">
     ${eyebrow ? `<div style="color:${eyebrowColor};font-size:${eyebrowSize}pt;font-weight:700;text-transform:uppercase;${eyebrowTracking}margin:0 0 6pt;${eyebrowFont}">${esc(eyebrow)}</div>` : ''}
-    ${heading ? `<h2 style="color:${headingColor};font-size:${headingSize}pt;font-weight:${headingWeight};${headingStyle}${headingLineHeight}margin:${headingTail};${headingFont}">${esc(heading)}</h2>` : ''}
+    ${heading ? `<h2 style="color:${headingColor};font-size:${headingSize}pt;font-weight:${headingWeight};${headingStyle}${headingLineHeight}margin:${headingTail};${headingOutline}${headingFont}">${esc(heading)}</h2>` : ''}
     ${body ? `<div style="color:${color};font-size:${bodySize}pt;line-height:${bodyLineHeight};${bodyStyle}${bodyAlign}${bodyTracking}white-space:pre-wrap;${bodyFont}">${esc(body)}</div>` : ''}
   </div>`;
 }

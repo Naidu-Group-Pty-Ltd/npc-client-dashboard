@@ -1,6 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import {
+import { imgTag,
   esc, absBoxStyle, fontFamilyDecl, trackingDecl, type HtmlBlockContext,
 } from './_shared.html';
 
@@ -48,7 +48,16 @@ export function renderImageBlockHtml(block: Block, ctx: HtmlBlockContext): strin
   const capHeight = caption ? captionSize + 6 : 0;
   const imgH = caption ? `calc(100% - ${capHeight}pt)` : '100%';
   const inner = src
-    ? `<img src="${esc(src)}" style="width:100%;height:${imgH};object-fit:${fit};${radius ? `border-radius:${radius}pt;` : ''}display:block;"/>`
+    ? imgTag(src, {
+      // The author's `alt`, then the caption the page already prints, then the
+      // block's own designer label. That last one is not a guess: it is text a
+      // person wrote about this block — the catalogue names its cover monogram
+      // "Brand mark" — and on the 36-page render it is the difference between
+      // a reader being told "Brand mark" and being told the description is
+      // missing. `MISSING_ALT` stays for a block with no name at all.
+      alt: resolveBindable(p.alt, ctx) || caption || block.name,
+      style: `width:100%;height:${imgH};object-fit:${fit};${radius ? `border-radius:${radius}pt;` : ''}display:block;`,
+    })
     : `<div style="width:100%;height:${imgH};border:1pt solid #ddd;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:10pt;">No image</div>`;
   return `<div style="${style}">
     ${inner}

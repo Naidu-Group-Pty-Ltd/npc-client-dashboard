@@ -88,6 +88,30 @@ export interface YieldInputs {
  * Australian investment property achieves is by definition average, and the old
  * bands agreed (4-5% was "Good"). What was wrong was the 20 points taken off
  * afterwards, not where the bands sat.
+ *
+ * ## Measured against a published benchmark, and retained (18 Sep 2026)
+ *
+ * `SCORE_CRITERIA_AND_CALIBRATION.md` §3 held this anchor open pending *"a
+ * published Australian gross rental yield distribution"*, on the rule that the
+ * platform's own sample median must not define "average". One was sourced: the
+ * NSW DCJ Rent and Sales Report publishes median rents and median sale prices
+ * for the same postcodes, and pairing them over 398 NSW postcodes gives a
+ * market median of **3.41%** (p25 2.85%, p75 4.01%) — 0.95 points below this
+ * anchor. Every row is in `docs/reports/evidence/`.
+ *
+ * **The anchor stays, and §5 of that doc records why.** Two reasons, both about
+ * what the two numbers are rather than about which is nicer. The benchmark is
+ * ONE STATE and this anchor serves every state, so substituting it would move
+ * every non-NSW property's score on evidence about New South Wales — a sample
+ * standing in for a population, which is the defect the rule exists to prevent,
+ * with a citation attached. And the two populations differ by construction: the
+ * corpus is stock somebody asked for a report on, the DCJ figure is the whole
+ * market including postcodes nobody buys as an investment, so a gap in that
+ * direction is what you would expect if both are right.
+ *
+ * Moving it down would raise every yield score in the book. That is the thing
+ * S5/S6 §4 forbids by name, and there is no evidence here for a direction —
+ * only for the fact that two different populations have two different medians.
  */
 export const GROSS_YIELD_ANCHORS: ReadonlyArray<readonly [number, number]> = [
   [1.5, 0], [2.5, 15], [3.5, 33], [4.36, 50], [5.5, 72], [6.5, 87], [7.5, 95], [9, 100],

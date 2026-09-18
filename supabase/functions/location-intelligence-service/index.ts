@@ -462,6 +462,11 @@ async function fetchLocationIntelligence(
       feeds: publicTransportData.feeds ?? [],
       sources: publicTransportData.sources ?? [],
       notMeasured: publicTransportData.notMeasured ?? [],
+      // When the contributing feed was last loaded, carried through from the
+      // transport service so the stored block can state the reading's own
+      // currency. A feed with no load stamp answers null; a feed-load date is
+      // never presented as the date this measurement was taken.
+      feedLoadedAt: publicTransportData.feedLoadedAt ?? null,
     }),
   } : {
     // RF-7.2B.1B2 — `'N/A'` is truthy, so it survived every `||` fallback in

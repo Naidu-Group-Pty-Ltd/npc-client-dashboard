@@ -17,7 +17,7 @@ export function renderScorecardHtml(block: Block, ctx: HtmlBlockContext): string
     <tr style="background:${i % 2 === 0 ? '#F8F6F0' : '#FFFFFF'};">
       <td style="padding:8pt 12pt;font-weight:700;color:#1A1A1A;font-size:10pt;width:38%;">${esc(it.category ?? '')}</td>
       <td style="padding:8pt 12pt;color:#555;font-size:8.5pt;">${esc(resolveBindable(it.note ?? '', ctx))}</td>
-      <td style="padding:8pt 12pt;text-align:right;white-space:nowrap;">${ratingChipHtml(String(it.rating ?? 'Moderate'))}</td>
+      <td style="padding:8pt 12pt;text-align:right;white-space:nowrap;">${ratingChipHtml(String(it.rating ?? 'Moderate'), 8, ctx)}</td>
     </tr>`).join('');
 
   return `<div style="position:absolute;left:${x}pt;top:${y}pt;width:${w}pt;border:0.5pt solid #DCDCDC;">

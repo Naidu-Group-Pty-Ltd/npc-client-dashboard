@@ -42,6 +42,21 @@ const ACQUISITION: EnrichmentAcquisition = {
   matchedAddress: '48 Redfern St, Cowra NSW 2794, Australia',
 };
 
+/**
+ * The readings a COMPLETE places run always leaves behind.
+ *
+ * S2 — `assessEnrichmentReuse` now refuses an enrichment whose stamp records
+ * `places: 'complete'` while the readings that stage produces are gone,
+ * because that is what a Client-Safe-Gated object looks like and reusing one
+ * scored Location on nothing. The minimal fixtures below are about the geocode
+ * and commute stages; they carry these two so they describe an object the
+ * service could actually have written.
+ */
+const PLACES_READINGS = {
+  walkScore: 62,
+  schools: { nearestSchool: 'Cowra High', distanceToSchool: 0.47, schoolsWithin3km: 7, topSchools: [] },
+};
+
 /** The shape production actually stores, taken from a real row. */
 const goodEnrichment = () => stampAcquisition({
   coordinates: { lat: -33.8386, lng: 148.6903 },
@@ -74,7 +89,7 @@ describe('B — a complete enrichment for the same subject is reused', () => {
 
   it('a supplied coordinate counts as acquired', () => {
     const stored = stampAcquisition(
-      { coordinates: { lat: -33.8, lng: 148.6 } },
+      { coordinates: { lat: -33.8, lng: 148.6 }, ...PLACES_READINGS },
       { ...ACQUISITION, stages: { ...ACQUISITION.stages, geocode: 'supplied' } },
     );
     expect(assessEnrichmentReuse(stored, SUBJECT).reuse).toBe(true);
@@ -191,7 +206,7 @@ describe('D — an incomplete acquisition may finish the missing work', () => {
     // no known CBD — both are real answers, not failures to acquire.
     for (const commute of ['no_route', 'destination_unknown'] as const) {
       const stored = stampAcquisition(
-        { coordinates: { lat: -33.8, lng: 148.6 } },
+        { coordinates: { lat: -33.8, lng: 148.6 }, ...PLACES_READINGS },
         { ...ACQUISITION, stages: { ...ACQUISITION.stages, commute } },
       );
       expect(assessEnrichmentReuse(stored, SUBJECT).reuse).toBe(true);

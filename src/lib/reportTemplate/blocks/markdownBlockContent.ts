@@ -211,6 +211,29 @@ export function narrativeBuckets(
   const hit = BUCKET_MEMO.get(key);
   if (hit) return hit;
   const blocks = renderMarkdown(cleanSource, {
+    /**
+     * A template page has no long edge to turn to.
+     *
+     * `renderMarkdown` sends a table wider than the portrait measure to
+     * `renderPage('landscape-table', …)` and charges it `LANDSCAPE_BREAK_LINES`
+     * — 38 lines — for the two page boundaries that page opens. That is right
+     * in the FLOWING route, where the boundaries are real. Here a master page
+     * is a fixed box, `page-landscape-table` has no rule in the template's
+     * stylesheet, and the `<section>` is inert: the table draws portrait,
+     * inline, in the space it always had.
+     *
+     * So the charge was paid for a page break that never happened, and the
+     * flag's default — `landscapeWideTables !== false`, i.e. ON unless denied —
+     * meant a path that had never named it got the wrong one. Measured on the
+     * Executive Briefing's ten-year projection (7 columns, 6 rows): charged
+     * 48.8 lines against a 41-line budget, so it fitted in NO bucket. It took a
+     * page of its own at 23% full and stranded its own `## 10-Year Cashflow,
+     * Equity & Growth Projection` heading and standfirst on the page before it
+     * — a heading, the words "The recorded ten-year modelling, shown at years
+     * 1, 3, 5, 7 and 10", and 93% white paper. A promise of a table, with the
+     * table on the next sheet.
+     */
+    landscapeWideTables: false,
     geometry,
     renderDirective: vizDirectiveRenderer(chart, geometry),
     renderInlineSpark: inlineSparkRenderer(chart),
@@ -271,6 +294,8 @@ export function resolveMarkdownBlockContent(
   }
 
   const result = renderMarkdown(cleanSource, {
+    // Same rule, the non-geometry path: see the note above.
+    landscapeWideTables: false,
     charging: profile?.charging,
     renderDirective: vizDirectiveRenderer(templateChartContext(ctx)),
     renderInlineSpark: inlineSparkRenderer(templateChartContext(ctx)),

@@ -1,6 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { esc, fontFamilyDecl, type HtmlBlockContext } from './_shared.html';
+import { imgTag, esc, fontFamilyDecl, type HtmlBlockContext } from './_shared.html';
 
 function sanitise(text: string): string {
   if (!text) return '';
@@ -89,9 +89,13 @@ export function renderDisclaimerHtml(block: Block, ctx: HtmlBlockContext): strin
    */
   const mark = resolveBindable(p.mark, ctx);
   const markHeight = Number(p.markHeight ?? 37);
+  const markOwner = resolveBindable('{{org.name}}', ctx);
   const markBlock = mark
-    ? `<img src="${esc(mark)}" alt="" style="height:${markHeight}pt;width:auto;max-width:180pt;`
-      + `object-fit:contain;display:block;margin:0 0 22pt;"/>`
+    ? imgTag(mark, {
+      alt: markOwner ? `${markOwner} logo` : 'Logo of the issuing firm',
+      style: `height:${markHeight}pt;width:auto;max-width:180pt;`
+        + `object-fit:contain;display:block;margin:0 0 22pt;`,
+    })
     : '';
 
   return `<div style="position:absolute;inset:0;background:${ground};color:${accent};padding:40pt 20pt;font-family:var(--font-body, Helvetica);">

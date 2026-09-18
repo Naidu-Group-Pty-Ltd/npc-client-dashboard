@@ -24,289 +24,30 @@ import { verifyAuth, createCorsHeaders, createForbiddenResponse, createUnauthori
 import { actorIsSuperadmin, requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
-  normaliseStructuralHeading,
   loadSplitRegistry,
-  type LoadedSplitRegistry,
   type ForkVariant,
-  type SplitRoute,
 } from '../_shared/reportSplitRegistry.ts';
+// The deterministic half — routing, the section contracts, the composed
+// chapters and the hygiene pass — lives beside the other investment modules so
+// it can be run, tested and rendered outside a deployed Deno runtime. It used
+// to be 257 lines of this file, reachable only by reading its own source.
+import { composeForkDocuments, countCompositeSections } from '../_shared/reports/investment/forkSplit.pure.ts';
+import { runQAValidation } from '../_shared/compassQAValidator.ts';
+import { correctUnsupportedEvidenceClaims } from '../_shared/reports/investment/evidenceClaims.pure.ts';
 import { scoreFinancial, scorePropertyFundamentals } from '../_shared/investmentScoreEngine.ts';
 import { variantScoreUnderPolicy } from '../_shared/reports/market/variantScorePolicy.pure.ts';
 import { internalError } from '../_shared/errorResponse.ts';
-import {
-  composeFinancialChapters,
-  type ComposedChapter,
-} from '../_shared/reports/investment/financialChapters.pure.ts';
-import { dropEmptySections, stripPlaceholderRows } from '../_shared/reports/investment/derivedHygiene.pure.ts';
 import { readPropertyFacts } from '../_shared/reports/investment/propertyRecord.pure.ts';
-import { scrubBlocks } from '../_shared/reports/investment/blockHygiene.pure.ts';
-import { stripEditorialLabelsFromMarkdown } from '../_shared/compassPostProcessor.ts';
-import {
-  riskDashboardContract,
-  socioeconomicContract,
-  splitRiskRegister,
-} from '../_shared/reports/investment/forkSectionContracts.pure.ts';
-
-interface ParsedSection {
-  rawHeading: string;
-  normalisedHeading: string;
-  body: string;
-}
-
-/** Split markdown into H2-anchored sections, preserving anything before the first H2 as a preamble. */
-function splitIntoSections(markdown: string): { preamble: string; sections: ParsedSection[] } {
-  const lines = (markdown || '').split('\n');
-  const sections: ParsedSection[] = [];
-  let preambleLines: string[] = [];
-  let current: ParsedSection | null = null;
-
-  for (const line of lines) {
-    const h2 = line.match(/^##\s+(.+?)\s*$/);
-    if (h2) {
-      if (current) sections.push(current);
-      current = {
-        rawHeading: h2[1],
-        normalisedHeading: normaliseStructuralHeading(h2[1]),
-        body: '',
-      };
-    } else if (current) {
-      current.body += line + '\n';
-    } else {
-      preambleLines.push(line);
-    }
-  }
-  if (current) sections.push(current);
-  return { preamble: preambleLines.join('\n').trim(), sections };
-}
-
-function buildLensIntro(registry: LoadedSplitRegistry, variant: ForkVariant, rule: SplitRoute['rule']): string {
-  if (rule === 'verbatim') return '';
-  if (variant === 'financial' && rule === 'financial_lens') return registry.finLensPreamble + '\n\n';
-  if (variant === 'due_diligence' && rule === 'property_lens') return registry.plddLensPreamble + '\n\n';
-  return '';
-}
-
-function summariseBody(body: string, maxWords = 200): string {
-  const words = body.trim().split(/\s+/);
-  if (words.length <= maxWords) return body;
-  return words.slice(0, maxWords).join(' ') + '\n\n_…full detail in the companion report._';
-}
-
-interface AssembledSection {
-  ordinal: number;
-  heading: string;
-  body: string;
-}
-
-/** The heading a Due Diligence risk section takes when its body is a list of checks rather than assessed risks. */
-const PLDD_CHECKLIST_HEADING = 'Property & Location Due Diligence Checklist';
-
-/**
- * The route that sends the composite's risk register to both variants. Read
- * from the route's own headings and match list rather than a rule name, so a
- * `split_routes` overlay in `report_engine_config` that still says
- * `verbatim` (every stored copy does) gets the split too.
- */
-function isRiskDashboardRoute(route: SplitRoute): boolean {
-  return route.target === 'both' && (
-    route.match.some((m) => /risk dashboard|risk summary|key risks/i.test(m))
-    || /risk dashboard/i.test(route.newHeadingFinancial ?? '')
-  );
-}
-
-function assembleForVariant(
-  registry: LoadedSplitRegistry,
-  variant: ForkVariant,
-  parsed: ParsedSection[],
-): AssembledSection[] {
-  const buckets: AssembledSection[] = [];
-  const usedOrdinals = new Set<number>();
-  let fallbackOrdinal = 100;
-
-  for (const section of parsed) {
-    const { route } = registry.routeCompositeSection(section.normalisedHeading);
-    if (!route) continue;
-
-    const isTargeted =
-      route.target === 'both' ||
-      route.target === variant;
-    if (!isTargeted) continue;
-    if (route.rule === 'drop') continue;
-
-    let newHeading =
-      variant === 'financial'
-        ? route.newHeadingFinancial || section.normalisedHeading
-        : route.newHeadingDueDiligence || section.normalisedHeading;
-
-    let ordinal =
-      variant === 'financial'
-        ? route.ordinalFinancial
-        : route.ordinalDueDiligence;
-    if (!ordinal || usedOrdinals.has(ordinal)) {
-      ordinal = ordinal && !usedOrdinals.has(ordinal) ? ordinal : fallbackOrdinal++;
-    }
-    usedOrdinals.add(ordinal);
-
-    const lensIntro = buildLensIntro(registry, variant, route.rule);
-    let body = route.rule === 'summarise_only'
-      ? summariseBody(section.body)
-      : section.body;
-
-    // What a section may HOLD is decided from its body, not its heading —
-    // three contracts the audit of 291 Stone Mason Drive found the routing
-    // promising and not keeping (`forkSectionContracts.pure.ts`).
-    //
-    // The risk register goes to both variants, and the route's note has
-    // always said "FIN keeps financial rows, PLDD keeps property/location
-    // rows"; nothing filtered a row, so the Financial report's dashboard
-    // opened with "the main non-financial risks" (QA-31). Each entry is now
-    // classified by what it is about; one nobody can classify goes to both.
-    if (isRiskDashboardRoute(route)) {
-      const split = splitRiskRegister(body, variant);
-      if (split.recognised) body = split.body;
-      if (variant === 'due_diligence') {
-        // A body of things to do is a checklist and is named as one, with
-        // its status, rather than a dashboard of assessed risks (QA-32).
-        const contract = riskDashboardContract(body, newHeading, PLDD_CHECKLIST_HEADING);
-        newHeading = contract.heading;
-        if (contract.status) body = `${contract.status}\n\n${body.trim()}\n`;
-      }
-      // A variant left with nothing to print has no section to print.
-      if (!body.trim()) continue;
-    }
-    // A SEIFA heading needs a SEIFA index; where none is held the heading
-    // stops promising one and the body says so (QA-27).
-    if (variant === 'due_diligence' && /seifa/i.test(newHeading)) {
-      const contract = socioeconomicContract(body, newHeading);
-      newHeading = contract.heading;
-      if (contract.lead) body = `${contract.lead}\n\n${body.trim()}\n`;
-    }
-
-    buckets.push({ ordinal, heading: newHeading, body: lensIntro + body.trim() + '\n' });
-  }
-
-  // De-duplicate consecutive identical headings, keeping the richer body
-  const dedupedMap = new Map<string, AssembledSection>();
-  for (const s of buckets) {
-    const existing = dedupedMap.get(s.heading);
-    if (!existing) dedupedMap.set(s.heading, s);
-    else if (s.body.length > existing.body.length) dedupedMap.set(s.heading, s);
-  }
-  return Array.from(dedupedMap.values()).sort((a, b) => a.ordinal - b.ordinal);
-}
-
-const normHeading = (h: string): string => h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-
-/** FIN ordinal of the risk dashboard — the split registry's, restated for the merge below. */
-const FIN_RISK_DASHBOARD_ORDINAL = 11;
-
-/**
- * Fold the record-composed FIN chapters into the routed prose. A composed
- * chapter REPLACES a routed section holding its ordinal or its heading: the
- * routed version is the parent's prose about the same money, and where the two
- * could disagree the recorded calculation wins — that is framework law I
- * (every figure is typed from the record). From a Compass-40 parent nothing
- * collides, because the parent has no financial sections to route; from a
- * legacy parent the stale prose tables give way to the record's own.
- */
-function mergeComposedChapters(
-  routed: AssembledSection[],
-  composed: ComposedChapter[],
-): { sections: AssembledSection[]; replaced: string[] } {
-  const composedHeadings = new Set(composed.map((c) => normHeading(c.heading)));
-  const composedOrdinals = new Set(composed.map((c) => c.ordinal));
-  const replaced: string[] = [];
-  // The one composed chapter that is not "the same money": the Financial
-  // Risk Dashboard (11) is typed from the record, while the routed section
-  // at that ordinal holds the analysis's own financial risk ENTRIES (the
-  // register, split to its money rows). Those are not prose about figures
-  // the record states better — they are the risks the analysis named — so
-  // they are kept under the composed dashboard rather than replaced by it.
-  const carriedUnder = new Map<number, AssembledSection>();
-  const kept = routed.filter((s) => {
-    if (composedHeadings.has(normHeading(s.heading)) || composedOrdinals.has(s.ordinal)) {
-      if (s.ordinal === FIN_RISK_DASHBOARD_ORDINAL && s.body.trim()) carriedUnder.set(s.ordinal, s);
-      replaced.push(s.heading);
-      return false;
-    }
-    return true;
-  });
-  const composedAsSections: AssembledSection[] = composed.map((c) => {
-    const carried = carriedUnder.get(c.ordinal);
-    // The chapter's markdown carries its own `## heading` line; the renderer
-    // writes headings itself, so the body starts after it.
-    const body = c.markdown.replace(/^##[^\n]*\n/, '').trim();
-    // The register's own group heading ("### Consolidated Risk Register")
-    // survives the split when an entry under it is kept, so a body that
-    // opens with one is nested as it is — a second H3 over it would be a
-    // heading with nothing of its own, which the renderer drops.
-    const carriedBody = carried?.body.trim() ?? '';
-    const tail = carried
-      ? (carriedBody.startsWith('###') ? `\n\n${carriedBody}` : `\n\n### Risks noted in the analysis\n\n${carriedBody}`)
-      : '';
-    return { ordinal: c.ordinal, heading: c.heading, body: `${body}${tail}\n` };
-  });
-  return {
-    sections: [...kept, ...composedAsSections].sort((a, b) => a.ordinal - b.ordinal),
-    replaced,
-  };
-}
-
-/**
- * Hygiene every fork document goes through before it is stored: editorial
- * labels stripped (a legacy parent carries "What This Means" blocks by the
- * dozen and slicing preserves them), then placeholder table rows dropped —
- * a labelled row is a promise that a figure follows it.
- */
-function finaliseVariantMarkdown(md: string): {
-  markdown: string;
-  editorialBlocksRemoved: number;
-  placeholderRowsRemoved: number;
-  emptyStatCardsRemoved: number;
-  duplicateDirectivesRemoved: number;
-} {
-  const stripped = stripEditorialLabelsFromMarkdown(md);
-  const scrubbed = stripPlaceholderRows(stripped.markdown);
-  // A heading the scrub leaves over nothing goes with its table.
-  const sections = dropEmptySections(scrubbed.markdown);
-  // The two block types the row scrubber cannot see. A fork routes the
-  // parent's own prose, so a card the parent left empty and a chart the parent
-  // drew twice both arrive here intact.
-  const blocks = scrubBlocks(sections.markdown);
-  return {
-    markdown: blocks.markdown,
-    editorialBlocksRemoved: stripped.removedBlocks,
-    placeholderRowsRemoved: scrubbed.removedRows,
-    emptyStatCardsRemoved: blocks.emptyStatCards,
-    duplicateDirectivesRemoved: blocks.duplicateDirectives,
-  };
-}
-
-function renderVariantMarkdown(
-  registry: LoadedSplitRegistry,
-  variant: ForkVariant,
-  propertyAddress: string,
-  sections: AssembledSection[],
-): string {
-  const title = variant === 'financial' ? registry.finTitle : registry.plddTitle;
-  const subtitle = variant === 'financial' ? registry.finSubtitle : registry.plddSubtitle;
-  const footer = variant === 'financial' ? registry.finFooter : registry.plddFooter;
-
-  const cover = `# ${title}\n\n_${subtitle}_\n\n**Property:** ${propertyAddress}\n\n**Generated:** ${new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}\n\n---\n\n`;
-
-  const body = sections
-    .map((s) => `## ${s.heading}\n\n${s.body.trim()}\n`)
-    .join('\n');
-
-  const disclaimer = `\n\n---\n\n## Disclaimer\n\n${footer}\n`;
-
-  return cover + body + disclaimer;
-}
-
+import { readStrategyRecord } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import { transportCountReading } from '../_shared/transportReading.pure.ts';
+import { buildMarketFacts } from '../_shared/reports/market/marketFactBlocks.pure.ts';
+import { describeSubjectPrice } from '../_shared/reports/investment/subjectPrice.pure.ts';
+import { reconcileStoredFinancials } from '../_shared/reports/investment/financialEngine.pure.ts';
 async function loadComposite(supabase: any, id: string) {
   const { data, error } = await supabase
     .from('investment_reports')
-    .select('id, property_address, property_listing_id, client_property_id, canonical_property_key, generated_by, report_content, financial_calculations, demographics_data, economic_data, location_intelligence, property_specs, manual_overrides, status, report_variant, report_tier, sources_content, investment_score, generation_engine, report_scope')
+    .select('id, property_address, property_listing_id, client_property_id, canonical_property_key, generated_by, report_content, financial_calculations, demographics_data, economic_data, location_intelligence, data_sources, property_specs, manual_overrides, status, report_variant, report_tier, sources_content, investment_score, generation_engine, report_scope')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Failed to load composite: ${error.message}`);
@@ -535,8 +276,7 @@ Deno.serve(async (req) => {
 
     const parent = await loadComposite(supabase, compositeId);
 
-    const { sections } = splitIntoSections(parent.report_content || '');
-    if (sections.length === 0) {
+    if (countCompositeSections(parent.report_content || '') === 0) {
       return new Response(JSON.stringify({ error: 'Composite has no H2 sections to fork' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -546,10 +286,6 @@ Deno.serve(async (req) => {
     // Load DB-overlaid split registry (falls back to in-code defaults)
     const registry = await loadSplitRegistry(supabase);
     console.log('[fork-investment-report] Split registry source:', registry.source);
-
-    // Build deterministic per-variant markdown
-    const routedFinancialSections = assembleForVariant(registry, 'financial', sections);
-    const dueDiligenceSections = assembleForVariant(registry, 'due_diligence', sections);
 
     // Build the scoring input raw from parent's stored JSON. The price and
     // rent live where the calculator writes them — initialCosts.propertyValue
@@ -615,30 +351,150 @@ Deno.serve(async (req) => {
     const financialScore = resolveVariantScore('financial', scoreInputRaw, parent);
     const strategicScore = resolveVariantScore('due_diligence', scoreInputRaw, parent);
 
-    // The Financial variant's chapters are COMPOSED from the recorded
-    // calculation, not sliced from prose: a Compass-40 parent carries no
-    // financial sections to route, which is how the "Financial Performance
-    // Report" came to hold one dollar sign while its own row held the whole
-    // model. Composed chapters replace any routed prose about the same money.
-    const composedChapters = variants.includes('financial')
-      ? composeFinancialChapters(
-        { financialCalculations: parent.financial_calculations, investmentScore: financialScore },
-        { scenarios: 'all' },
-      )
-      : [];
-    const mergedFinancial = mergeComposedChapters(routedFinancialSections, composedChapters);
-    const financialSections = mergedFinancial.sections;
+    // Both documents, composed. The Financial variant's chapters are typed
+    // from the recorded calculation rather than sliced from prose — a
+    // Compass-40 parent carries no financial sections to route, which is how
+    // the "Financial Performance Report" came to hold one dollar sign while
+    // its own row held the whole model — and they replace any routed prose
+    // about the same money. See `forkSplit.pure.ts`.
+    /*
+     * The record the strategy sections are composed from.
+     *
+     * `carriesModelling: true` because this is the Financial report — the
+     * Compass composes the same sections from the same module with `finance`
+     * null, and `TIER_FRAMEWORK.md` Decision E is what makes that one
+     * parameter rather than two implementations.
+     *
+     * The market evidence is read from `data_sources.marketEvidence`, which
+     * the generator records on the row. A parent written before it did carries
+     * none, `buildMarketFacts` answers `evidenceMissing`, and each composer
+     * simply produces the entries that do not need it — which is the honest
+     * outcome and not an empty heading.
+     */
+    /*
+     * One record, so the tables and the prose state one figure.
+     *
+     * Measured on the stored Financial Analysis for 48 Redfern Street, Cowra
+     * (18 Sep 2026), by executing both paths against the real row:
+     *
+     *   stored    keyMetrics: annualNet -23,383  weeklyNet -450
+     *   reconciled keyMetrics: annualNet -24,273  weeklyNet -467
+     *   weeklyRent 445, occupancyWeeks 50 -> contractual 23,140, occupied
+     *   22,250; the gap is 890 a year, which is 17.12 a week.
+     *
+     * `reconcileStoredFinancials` RE-BASES the metrics from the contractual
+     * rent onto `weeklyRent x occupancyWeeks`, which is `calculateKeyMetrics`'
+     * own definition. `composeFinancialChapters` calls it and printed
+     * `| Weekly net position | -$467 |` twice; `readStrategyRecord` did not,
+     * and the prose two pages later said "$450 a week - $23,383 a year".
+     *
+     * Both figures are defensible and the document named them the same thing,
+     * which is the defect. Nothing here changes an assumption or a formula: it
+     * hands the SAME record to both producers, so a reader is given one
+     * quantity — and the row that prints it now names the basis it rests on.
+     */
+    const reconciledFinancials =
+      reconcileStoredFinancials(parent.financial_calculations).fin ?? parent.financial_calculations;
 
-    const financialOut = finaliseVariantMarkdown(
-      renderVariantMarkdown(registry, 'financial', parent.property_address, financialSections),
+    const strategyRecord = readStrategyRecord(
+      {
+        propertyAddress: parent.property_address,
+        propertySpecs: parent.property_specs,
+        financialCalculations: reconciledFinancials,
+        investmentScore: parent.investment_score,
+        dataSources: parent.data_sources,
+        locationIntelligence: parent.location_intelligence,
+      },
+      {
+        measuredAt: (parent.location_intelligence as any)?.[ENRICHMENT_STAMP]?.acquiredAt ?? null,
+        market: buildMarketFacts({ marketEvidence: (parent.data_sources as any)?.marketEvidence }),
+        price: describeSubjectPrice({
+          overridePurchasePrice: (parent.manual_overrides as any)?.purchasePrice,
+          listingPrice: (parent.property_specs as any)?.price,
+        }),
+        carriesModelling: true,
+        transport: transportCountReading((parent.location_intelligence as any)?.transport),
+      },
     );
-    const dueDiligenceOut = finaliseVariantMarkdown(
-      renderVariantMarkdown(registry, 'due_diligence', parent.property_address, dueDiligenceSections),
-    );
+
+    const docs = composeForkDocuments({
+      registry,
+      parentContent: parent.report_content || '',
+      propertyAddress: parent.property_address,
+      financialCalculations: reconciledFinancials,
+      financialScore,
+      composeFinancial: variants.includes('financial'),
+      strategy: strategyRecord,
+      generatedOn: new Date().toISOString(),
+    });
+    const financialOut = docs.financial;
+    const dueDiligenceOut = docs.dueDiligence;
+
+    /*
+     * QA on the ASSEMBLED child, which this path did not do at all.
+     *
+     * The generator validates its finished markdown and the condenser
+     * validates its composed document; the fork validated nothing — so a
+     * material claim error in the parent's prose (rule 13's hazard clearance
+     * on a listing's authority is the measured one) travelled into the
+     * Financial Analysis and the Due Diligence with nothing reading either.
+     * One bad sentence became three documents and only the first was checked.
+     *
+     * It runs on `markdown` — the composed document, after routing and the
+     * composed chapters — because that is what a client receives, and a rule
+     * about what a document says has to read the document.
+     *
+     * The tier is the CHILD's, never the parent's: a Compass's page band and
+     * financial exclusion asserted over a Financial Analysis is the defect
+     * `condenseCompose` already records, and it produced sixteen errors on a
+     * correct document.
+     */
+    /*
+     * The correction runs FIRST, and on the child.
+     *
+     * A fork routes the parent's prose, so a parent generated before the claim
+     * guard existed hands its hazard-clearance sentence to both children —
+     * every time somebody forks it, for as long as it is on the table. Nothing
+     * here rewrites the parent (its stored row is untouched, and a historical
+     * document is a record); what is corrected is the NEW document this call
+     * is producing, which is the one a client is about to receive.
+     *
+     * Ordering: correct, then validate. QA then measures what the client gets,
+     * so a surviving finding is a real one rather than one the corrector had
+     * already discharged.
+     */
+    const financialClaims = correctUnsupportedEvidenceClaims(financialOut.markdown);
+    const strategicClaims = correctUnsupportedEvidenceClaims(dueDiligenceOut.markdown);
+    const financialMarkdown = financialClaims.markdown;
+    const strategicMarkdown = strategicClaims.markdown;
+    for (const [variant, corrected] of [['financial', financialClaims], ['strategic', strategicClaims]] as const) {
+      for (const r of corrected.removed) {
+        console.log(
+          `[fork-investment-report] claim guard ${variant} [${r.rule}]: removed `
+          + JSON.stringify(r.text.slice(0, 160)),
+        );
+      }
+    }
+
+    const forkQa = {
+      financial: variants.includes('financial')
+        ? runQAValidation(financialMarkdown, 'financial-analysis') : null,
+      strategic: variants.includes('strategic')
+        ? runQAValidation(strategicMarkdown, 'strategic') : null,
+    };
+    for (const [variant, qa] of Object.entries(forkQa)) {
+      if (!qa) continue;
+      const errors = qa.findings.filter((f) => f.severity === 'error');
+      console.log(
+        `[fork-investment-report] QA ${variant}: ${qa.passed ? 'passed' : 'FAILED'} — `
+        + `${errors.length} error(s), ${qa.findings.length - errors.length} warning(s)`,
+      );
+      for (const f of qa.findings) console.log(`   [${f.severity}] ${f.rule}: ${f.message}`);
+    }
 
     const generated = await Promise.all(variants.map(async (variant) => {
-      if (variant === 'financial') return ['financial', await upsertFork(supabase, parent, 'financial', 'financial', financialOut.markdown, financialScore)] as const;
-      return ['strategic', await upsertFork(supabase, parent, 'due_diligence', 'strategic', dueDiligenceOut.markdown, strategicScore)] as const;
+      if (variant === 'financial') return ['financial', await upsertFork(supabase, parent, 'financial', 'financial', financialMarkdown, financialScore)] as const;
+      return ['strategic', await upsertFork(supabase, parent, 'due_diligence', 'strategic', strategicMarkdown, strategicScore)] as const;
     }));
     const result = Object.fromEntries(generated);
 
@@ -648,12 +504,19 @@ Deno.serve(async (req) => {
         composite_report_id: parent.id,
         ...result,
         section_counts: {
-          composite: sections.length,
-          financial: variants.includes('financial') ? financialSections.length : 0,
-          strategic: variants.includes('strategic') ? dueDiligenceSections.length : 0,
+          composite: docs.compositeSections,
+          financial: variants.includes('financial') ? docs.financial.sections : 0,
+          strategic: variants.includes('strategic') ? docs.dueDiligence.sections : 0,
         },
-        composed_financial_chapters: composedChapters.map((c) => c.heading),
-        routed_sections_replaced_by_record: mergedFinancial.replaced,
+        qa: forkQa,
+        // What the claim guard took out of each child, so a caller can see the
+        // correction rather than a document that looks like it never carried it.
+        claim_corrections: {
+          financial: variants.includes('financial') ? financialClaims.removed : null,
+          strategic: variants.includes('strategic') ? strategicClaims.removed : null,
+        },
+        composed_financial_chapters: docs.composedChapters,
+        routed_sections_replaced_by_record: docs.replacedByComposedChapters,
         hygiene: {
           financial: variants.includes('financial')
             ? { editorial_blocks_removed: financialOut.editorialBlocksRemoved, placeholder_rows_removed: financialOut.placeholderRowsRemoved }

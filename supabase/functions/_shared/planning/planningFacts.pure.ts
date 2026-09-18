@@ -522,14 +522,36 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
     : statusOf(activityRaw?.status) === 'stated' && activitySummary
       ? {
         label: 'Development applications',
-        value: str(activitySummary.headline)
-          ?? `${num(activitySummary.total) ?? 0} applications in the register window`,
+        /*
+         * ## The fabricated zero
+         *
+         * This read `summary.headline` and `summary.total`, and `DaSummary`
+         * has neither — its fields are `totalInPeriod`, `rowsRead`,
+         * `newApplications`, `amendments`, `unclassified`, `periodFrom` and
+         * `periodTo`. Both reads were `undefined`, so the `?? 0` fell
+         * through and the planning table printed **"0 applications in the
+         * register window"** on the Kellyville report, directly above an
+         * infrastructure block that said 171 and 278 applications for the
+         * same council over the same six months. One page, two numbers, one
+         * register: the reader cannot tell which is wrong, so both are
+         * worthless.
+         *
+         * It is the class `caseTenant.ts` documents — naming a field the
+         * object does not have and taking the fallback as an answer — and
+         * the fallback is what made it invisible: a real zero and a read
+         * that missed look identical.
+         *
+         * Counted from the same `newApplications` / `amendments` totals the
+         * infrastructure block reads, so the two cannot disagree, and the
+         * two classes are never added (see `classifyApplicationType`).
+         */
+        value: daActivityLine(activitySummary),
         status: 'stated' as const,
         note: null,
         source: str(activityRaw?.source),
         sourceUrl: portal,
         licence: str(activityRaw?.licence),
-        effectiveDate: str(activitySummary.to),
+        effectiveDate: str(activitySummary.periodTo),
         retrievedAt,
         standing: null,
       }
@@ -576,6 +598,41 @@ export function buildPlanningFacts(input: PlanningFactsInput): PlanningFacts {
 
 // ---------------------------------------------------------------------------
 // Rendering
+
+/**
+ * What the development-application register said, in one line.
+ *
+ * New proposals and amendments are counted separately and never added — an
+ * amendment restates the development it modifies, so a combined count is a
+ * number about nothing. Where the walk read fewer rows than the register
+ * states, the line says so rather than presenting a sample as the whole.
+ */
+export function daActivityLine(summary: Record<string, unknown>): string {
+  const rowsOf = (key: string): number | null => {
+    const t = summary[key];
+    return isRecord(t) ? num(t['rows']) : null;
+  };
+  const fresh = rowsOf('newApplications');
+  const amended = rowsOf('amendments');
+  const other = rowsOf('unclassified');
+  if (fresh === null && amended === null) {
+    return 'The register answered, and stated no application counts.';
+  }
+  const bits = [
+    `${(fresh ?? 0).toLocaleString('en-AU')} new application${(fresh ?? 0) === 1 ? '' : 's'}`,
+    `${(amended ?? 0).toLocaleString('en-AU')} amendment${(amended ?? 0) === 1 ? '' : 's'} of approved developments`,
+  ];
+  if (other && other > 0) bits.push(`${other.toLocaleString('en-AU')} of an unrecognised type`);
+  const from = auDate(str(summary['periodFrom']));
+  const to = auDate(str(summary['periodTo']));
+  const window = from && to ? `, lodged ${from} to ${to}` : '';
+  const read = num(summary['rowsRead']);
+  const total = num(summary['totalInPeriod']);
+  const sample = read !== null && total !== null && read < total
+    ? ` (read ${read.toLocaleString('en-AU')} of the ${total.toLocaleString('en-AU')} the register states)`
+    : '';
+  return `${bits.join(', ')}${window}${sample}`;
+}
 
 const INSTRUMENT_LABEL: Record<string, string> = {
   priority_development_area: 'Priority development area',
@@ -626,6 +683,26 @@ function absenceText(cell: PlanningCell): string {
  * about the property — whether it applies, under which instrument, to what
  * figure, current at what date — comes from the reading beside it.
  */
+/**
+ * The layers that were ASKED of a register that answered and matched nothing.
+ *
+ * One implementation, because it is stated twice: on the page as "Checked and
+ * not mapped at this coordinate", and in the rules as the closed list of
+ * absences the prose is permitted to repeat. Two copies of "which layers came
+ * back clear" is how a rule comes to permit a sentence the evidence does not.
+ *
+ * It is deliberately NOT the complement of `constraints` alone: a family is in
+ * this list only because it appears in `constraintsAsked`, which the service
+ * populates from the registers that answered. A layer nobody asked, and a
+ * layer whose register was unreachable, are both absent from it.
+ */
+export function checkedAndNotMapped(facts: PlanningFacts): string[] {
+  const found = new Set(facts.constraints.map((c) => c.family));
+  return facts.constraintsAsked
+    .filter((f) => !found.has(f))
+    .map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f);
+}
+
 export function renderConstraintRegister(facts: PlanningFacts): string {
   const lines: string[] = [];
   const readings = facts.constraints;
@@ -635,14 +712,34 @@ export function renderConstraintRegister(facts: PlanningFacts): string {
     lines.push('| Kind | What the register returned | Instrument | Current at |');
     lines.push('|---|---|---|---|');
     for (const c of readings) {
-      const found = [
-        c.label,
-        c.code && c.code !== c.label ? `(${c.code})` : null,
-        c.value,
-        c.detail,
-      ].filter(Boolean).join(' · ');
-      const instrument = [c.instrument, c.clause && c.clause !== c.code ? `cl. ${c.clause}` : null]
-        .filter(Boolean).join(', ') || '—';
+      /**
+       * A publisher's index is not a reading.
+       *
+       * `code` is the LEP map's own band letter — `K` on The Hills Height of
+       * Buildings map, `Q` on its Minimum Lot Size map. It identifies a BAND
+       * in the publisher's lookup table, and the metres or square metres that
+       * band stands for are already in `value`. Printed beside them it added
+       * nothing a reader could use and read as an artefact:
+       * `Height of Buildings Map · (K) · 10 m`, five times across one
+       * delivered Compass. The letter stays in the record — it is how the
+       * reading is checked against the map — and leaves the client's page.
+       *
+       * `detail` is kept, because it is the band's own RANGE (`700-749`) and
+       * that is a fact about what the control admits rather than an index
+       * into a table.
+       */
+      const found = [c.label, c.value, c.detail].filter(Boolean).join(' · ');
+      /**
+       * `cl. Clause 4.3` — the prefix was added to a value that already
+       * carried it. The guard compared `clause` against `code` (`4.3` against
+       * `K`), which is never equal and so never fired. Compare against what
+       * is actually being prefixed.
+       */
+      const clause = typeof c.clause === 'string' ? c.clause.trim() : '';
+      const citedClause = clause === '' || clause === c.code
+        ? null
+        : /^(cl\.?|clause|s\.?|section)\b/i.test(clause) ? clause : `cl. ${clause}`;
+      const instrument = [c.instrument, citedClause].filter(Boolean).join(', ') || '—';
       lines.push(`| ${KIND_LABEL[c.kind]} | ${found} | ${instrument} | ${auDate(c.currencyDate) ?? '—'} |`);
     }
     lines.push('');
@@ -668,10 +765,7 @@ export function renderConstraintRegister(facts: PlanningFacts): string {
   // the rule the sanctions register and the PEP index both answer to, and the
   // reason an empty answer here is never printed on its own.
   if (facts.constraintsAsked.length) {
-    const found = new Set(readings.map((c) => c.family));
-    const clear = facts.constraintsAsked
-      .filter((f) => !found.has(f))
-      .map((f) => CONSTRAINT_FAMILY_LABEL[f] ?? f);
+    const clear = checkedAndNotMapped(facts);
     if (clear.length) {
       lines.push(
         `**Checked and not mapped at this coordinate:** ${clear.join(', ')}. `
@@ -819,6 +913,45 @@ export function planningFactBlocks(facts: PlanningFacts): string {
       + 'instrument. This holds in every section, and a figure found by live web search is still a figure '
       + 'this report did not retrieve.';
   }
+  /*
+   * Rule 4a — the one absence the prose MAY repeat, and only with its
+   * provenance.
+   *
+   * Rule 4 forbade writing that the property is not flood or bushfire
+   * affected, full stop. That was right when it was written and this module's
+   * own header had already recorded why it became wrong: *"we asked about
+   * bushfire and flood and neither applies" is a finding, and "nobody asked"
+   * is not.* Since §8 the evidence tells the two apart —
+   * `constraintsAsked` names what the answering registers were able to answer,
+   * and `constraintRegisters.unavailable` names what could not be reached — so
+   * a blanket prohibition now forbids the one statement the register actually
+   * supports.
+   *
+   * The Kellyville Compass shows what that costs. Twenty-one layers were asked
+   * of three NSW registers, all three answered, none was unavailable, and
+   * bushfire, flood and landslip matched nothing. The page said so precisely.
+   * The prose, forbidden to, wrote it anyway and wrote it worse:
+   * `✓ No bushfire or flood overlays mapped at this coordinate (verification
+   * still required)` — a tick, no register named, no currency date, no scale
+   * caveat. A prohibition with no permitted form is one a model routes around;
+   * the Compass document contract records the same lesson.
+   *
+   * So the permitted form is given, and the list is CLOSED and generated from
+   * the same `checkedAndNotMapped` the page prints. A layer that is not in it
+   * stays under rule 4.
+   */
+  const clear = checkedAndNotMapped(facts);
+  const clearLayerRule = clear.length
+    ? '4a. Exactly these layers were asked of a register that answered and matched nothing at this coordinate: '
+      + `${clear.join(', ')}. You may report ONE of those as not mapped, and only in a sentence that names the `
+      + `register (${facts.constraintRegisters.answered.join('; ') || 'the register named in the table'}), says it `
+      + 'is indicative at the scale it is published rather than a survey of the lot, and keeps the certificate as '
+      + 'what settles it. Do NOT draw it as a tick, a clearance, a reassurance or a strength, do not rate a risk '
+      + 'from it (see the risk table\u2019s own rule), and do not name a layer outside that list — anything else '
+      + 'falls under rule 4.'
+    : '4a. No layer was asked of an answering register and found clear at this coordinate, so there is no absence '
+      + 'you may report at all. Rule 4 governs every one of them.';
+
   const instrumentRule = facts.jurisdiction === 'NSW'
     ? '3. This property is in New South Wales, so the Local Environmental Plan, the Development Control Plan and '
       + 'the s10.7 certificate are the right instruments to name.'
@@ -837,12 +970,36 @@ export function planningFactBlocks(facts: PlanningFacts): string {
     + 'landscaping percentage, parking minimum or overlay finding that is not in the table. There is no typical '
     + 'value and no default. If it is not in the table it was not retrieved, and the correct sentence says so.',
     instrumentRule,
-    '4. An absence in the table is a statement about what was retrieved, never a finding about the land. Never write '
-    + 'that no overlay applies, that the property is not heritage listed, or that it is not flood or bushfire affected — '
-    + 'not in prose, not in a risk register row, not in a checklist, and not on the authority of a listing portal or a '
-    + 'property data site. Those report what they hold, not what the council scheme maps.',
+    '4. A layer this report did not reach supports nothing. Never write that no overlay applies, that the property '
+    + 'is not heritage listed, or that it is not flood or bushfire affected on the authority of a listing portal, a '
+    + 'property data site, a live web search or a register that was not asked — not in prose, not in a risk register '
+    + 'row, and not in a checklist. Those report what they hold, not what the council scheme maps.',
+    clearLayerRule,
     '5. A zone that admits a use is not approval for it. Describe any development potential as conditional and subject '
     + 'to assessment, and never quantify an uplift.',
     '6. Say plainly that this is desktop research and that the verification instrument is what settles it.',
+    /*
+     * Rule 4 closes the STATEMENT; this closes the RATING.
+     *
+     * On 262 Pallas Street the model obeyed rule 4 exactly where it was
+     * written — the flood and bushfire rows read "Moderate", chipped
+     * "Unverified — no council flood overlay … was retrieved" — and then rated
+     * a row Low from the same kind of absence one line further down:
+     * "Environmental nuisance | **Low** | … | Unverified — no acoustic or
+     * industrial-use overlay was retrieved, streetscape character is INFERRED
+     * from Maryborough's low-density residential pattern." Nothing there is a
+     * statement that no overlay applies, so rule 4 admitted it; the exposure
+     * rating is still drawn from having looked and not found, which is the
+     * same error one level up.
+     */
+    '7. An absence may NOT be rated. Where a risk register, a scorecard, a SWOT table or any other rating has a '
+    + 'row whose evidence is something this report did not retrieve, the rating cell reads "Not assessed" and '
+    + 'the row says what has to be obtained to settle it. Never rate it Low, Minimal, Limited, Negligible or '
+    + 'Favourable, and never '
+    + 'file it as a strength: not retrieving a control is not evidence that the control is absent or benign. An '
+    + 'inference from the area\u2019s general character is not a retrieval either, and may not carry a rating.',
+    '8. An evidence, confidence or verification note describes the RETRIEVAL and never the conclusion beside it. '
+    + '"Verified" may be written of a table reading and may NOT be written of a rating, an outlook or a '
+    + 'recommendation drawn from it.',
   ].join('\n');
 }

@@ -335,12 +335,39 @@ export const OVERALL_GRADE_UNAVAILABLE = {
 export const NOT_ASSESSED_REASON: Readonly<Record<ScoredDimension, string>> = {
   growth: 'Not assessed — verified suburb-level growth evidence is currently unavailable.',
   demand: 'Not assessed — sufficient verified demand evidence is currently unavailable.',
-  location:
-    'Not assessed — the available location information does not meet the current '
-    + 'verification standard.',
+  /**
+   * Neutral about the CAUSE, because this sentence covers two of them and
+   * only one is about the information.
+   *
+   * It used to read "the available location information does not meet the
+   * current verification standard", which tells a reader their evidence was
+   * inadequate. On the reported case the readings were obtained in full and
+   * then not carried into the saved assessment — a defect of this product's
+   * own, traced in `docs/reports/S2_LOCATION_EVIDENCE_TRACE.md` — so the
+   * sentence blamed the customer's address for our own fault.
+   *
+   * A run whose location service genuinely failed also presents nothing, so
+   * the client sentence may not name either cause. It says what is true of
+   * both; the operator `detail` beside it already distinguishes them, and
+   * `LOCATION_PRESENTED_UNVERIFIED` is the one case where the standard IS the
+   * reason and may be stated.
+   */
+  location: 'Not assessed — no location readings reached this assessment for the property.',
   risk: 'Not assessed — insufficient verified property-risk evidence is available.',
   yield: 'Not assessed — a verified purchase price and weekly rent are required.',
 } as const;
+
+/**
+ * Location's other case: readings WERE presented and could not be matched to
+ * this property. Here the verification standard really is the reason, and
+ * saying so is accurate rather than a deflection.
+ */
+export const LOCATION_PRESENTED_UNVERIFIED =
+  // One string rather than a concatenation with `as const` on it: a const
+  // assertion may only be applied to a literal, and `'a' + 'b' as const` is
+  // TS1355. The frontend `tsc` never sees this tree — the edge functions are
+  // checked by Deno alone — so it read clean locally and failed CI.
+  'Not assessed — the location readings recorded for this property could not be matched to it with the evidence stored alongside them.';
 
 /** The label a dimension carries where it did score. */
 export const ASSESSED_LABEL = 'Measured' as const;

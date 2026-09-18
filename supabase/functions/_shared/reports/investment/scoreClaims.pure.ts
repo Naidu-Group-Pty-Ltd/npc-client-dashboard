@@ -115,14 +115,59 @@ export interface ScoreSuppressionResult {
   removed: SuppressedClaim[];
 }
 
-const isProseLine = (t: string): boolean =>
+/**
+ * A line a sentence-level correction may edit: prose, not a heading, a table
+ * row, a directive, a fence or a rule.
+ *
+ * Exported because `evidenceClaims.pure.ts` corrects a different claim by the
+ * same unit, and two copies of "what counts as prose" is how one corrector
+ * comes to edit a table the other leaves alone.
+ */
+export const isProseLine = (t: string): boolean =>
   t !== '' && !t.startsWith('#') && !t.startsWith('|') && !t.startsWith('{{')
   && !t.startsWith(':::') && !/^(-{3,}|\*{3,}|_{3,})$/.test(t);
 
-/** Split a paragraph into sentences, keeping each terminator with its sentence. */
-function sentencesOf(text: string): string[] {
-  const parts = text.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g);
-  return parts ? parts.map((s) => s.trim()).filter(Boolean) : [text];
+/**
+ * Split a paragraph into sentences, keeping each terminator with its sentence
+ * and every character of the input in exactly one part.
+ *
+ * Two things this had to learn, both measured on the 48 Redfern Street prose.
+ *
+ * **It was not total.** `text.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)` requires
+ * each part to END at a terminator that is followed by whitespace, and a full
+ * stop followed by anything else — a bracketed citation, most often — satisfies
+ * neither alternative, so the engine walked the start position forward and the
+ * text in between was DROPPED. On
+ *
+ *     "…at the time they were last updated.[Property.com.au, 119, 120, …]"
+ *
+ * it returned two parts whose second began mid-domain, at `au, 119, …`. Every
+ * caller rebuilds the line with `kept.join(' ')`, so a paragraph carrying a
+ * claim would have lost a sentence and a half that nothing had decided to
+ * remove. Walking the terminators and slicing between them is total by
+ * construction.
+ *
+ * **A citation belongs to the sentence it supports.** The generator's prose
+ * puts `[Source, date]` immediately after the stop, with no space, so a
+ * terminator may be followed by one bracket and still be a terminator. That
+ * keeps the citation with the claim — which matters when the claim is the
+ * thing being removed, because a source left standing over a deleted sentence
+ * reads as the source of the sentence after it.
+ */
+export function sentencesOf(text: string): string[] {
+  const out: string[] = [];
+  // A stop, optionally followed by one bracketed citation, then a boundary.
+  const TERMINATOR = /[.!?]+(?:\s*\[[^\]\n]{0,160}\])?(?=\s|$)/g;
+  let start = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TERMINATOR.exec(text)) !== null) {
+    const end = m.index + m[0].length;
+    out.push(text.slice(start, end));
+    start = end;
+  }
+  if (start < text.length) out.push(text.slice(start));
+  const parts = out.map((s) => s.trim()).filter(Boolean);
+  return parts.length ? parts : [text];
 }
 
 /**

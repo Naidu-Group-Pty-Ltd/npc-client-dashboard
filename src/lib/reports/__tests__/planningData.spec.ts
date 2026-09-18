@@ -112,6 +112,10 @@ const ACT_PHILLIP = {
 /** One real application row from the Online DA response (fields we read). */
 const NSW_DA_ROW = {
   PlanningPortalApplicationNumber: 'PAN-650576',
+  // A modification's number is its parent's plus one segment — the register's
+  // own convention, agreed with its `ApplicationType` on 655 of 655 rows when
+  // measured live (see `parentApplicationKey`).
+  CouncilApplicationNumber: '412/2025/HA/A',
   LodgementDate: '2026-06-23',
   DeterminationDate: '2026-06-25',
   CostOfDevelopment: 958740.0,
@@ -320,37 +324,102 @@ describe('council name resolution', () => {
 // ---------------------------------------------------------------------------
 
 describe('DA summary', () => {
-  const summary = summariseDaRows([NSW_DA_ROW, {
-    ...NSW_DA_ROW,
-    PlanningPortalApplicationNumber: 'PAN-000001',
-    CostOfDevelopment: 12_500_000,
-    NumberOfNewDwellings: 24,
-    ApplicationStatus: 'Under Assessment',
-    DevelopmentType: [{ DevelopmentType: 'Residential flat building' }],
-    Location: [{ Suburb: 'MUSWELLBROOK' }],
-  }], 'Muswellbrook Shire Council', '2026-03-07', '2026-09-06', 62);
+  /*
+   * Three classes, because the register carries three and they must never be
+   * added. `NSW_DA_ROW` is a **Modification Application** — and so, before
+   * this, was the second row of this fixture, because it spread the first.
+   * The old assertion therefore summed two restatements of the same kind of
+   * thing and called the result the area's development activity.
+   */
+  const summary = summariseDaRows([
+    NSW_DA_ROW,
+    {
+      ...NSW_DA_ROW,
+      PlanningPortalApplicationNumber: 'PAN-000001',
+      CouncilApplicationNumber: '900/2026/HA',
+      ApplicationType: 'Development Application',
+      CostOfDevelopment: 12_500_000,
+      NumberOfNewDwellings: 24,
+      ApplicationStatus: 'Under Assessment',
+      DevelopmentType: [{ DevelopmentType: 'Residential flat building' }],
+      Location: [{ Suburb: 'MUSWELLBROOK', FullAddress: '2 MARKET STREET MUSWELLBROOK 2333' }],
+    },
+    {
+      ...NSW_DA_ROW,
+      PlanningPortalApplicationNumber: 'PAN-000002',
+      CouncilApplicationNumber: '901/2026/HA',
+      ApplicationType: 'Some Future Application Kind',
+      CostOfDevelopment: 400_000,
+      NumberOfNewDwellings: 2,
+    },
+  ], 'Muswellbrook Shire Council', '2026-03-07', '2026-09-06', 62);
 
-  it('sums stated costs and dwellings with their row counts', () => {
-    expect(summary.statedCostTotal).toBe(13_458_740);
-    expect(summary.rowsWithCost).toBe(2);
-    expect(summary.newDwellingsTotal).toBe(25);
+  it('counts new proposals apart from the amendments that restate them', () => {
+    expect(summary.newApplications).toMatchObject({
+      rows: 1, statedCostTotal: 12_500_000, rowsWithCost: 1, newDwellingsTotal: 24, rowsWithDwellings: 1,
+    });
+    expect(summary.amendments).toMatchObject({
+      rows: 1, statedCostTotal: 958_740, rowsWithCost: 1, newDwellingsTotal: 1, rowsWithDwellings: 1,
+    });
+  });
+
+  it('puts a type it does not recognise in its own bucket, never in `new`', () => {
+    // The conservative side: a word the register adds tomorrow cannot inflate
+    // the headline figure, and it is visible rather than silently absorbed.
+    expect(summary.unclassified).toMatchObject({ rows: 1, statedCostTotal: 400_000, newDwellingsTotal: 2 });
+    expect(summary.byApplicationType).toContainEqual(
+      { type: 'Some Future Application Kind', klass: 'unclassified', count: 1 },
+    );
+  });
+
+  it('offers no combined total for anything to add up', () => {
+    // The fields that used to carry one are gone rather than redefined: a
+    // number that silently changes meaning is worse than one that stops
+    // compiling.
+    const keys = Object.keys(summary);
+    expect(keys).not.toContain('statedCostTotal');
+    expect(keys).not.toContain('newDwellingsTotal');
+    expect(keys).not.toContain('rowsWithCost');
+    expect(keys).not.toContain('rowsWithDwellings');
   });
 
   it('carries the register total beside the rows read, so a sample says so', () => {
     expect(summary.totalInPeriod).toBe(62);
-    expect(summary.rowsRead).toBe(2);
+    expect(summary.rowsRead).toBe(3);
   });
 
-  it('ranks the largest by stated cost', () => {
-    expect(summary.largestByCost[0].cost).toBe(12_500_000);
-    expect(summary.largestByCost[0].types).toContain('Residential flat building');
+  it('ranks the largest DEVELOPMENTS, each carrying its own identity', () => {
+    expect(summary.largestDevelopments[0].statedCost).toBe(12_500_000);
+    expect(summary.largestDevelopments[0].reference).toBe('900/2026/HA');
+    expect(summary.largestDevelopments[0].address).toBe('2 MARKET STREET MUSWELLBROOK 2333');
+    expect(summary.largestDevelopments[0].types).toContain('Residential flat building');
+    // The modification is still listed — it is real activity — but it is
+    // filed under the development it modifies and says it was approved before
+    // this window, so it cannot be read as something newly proposed in it.
+    const mod = summary.largestDevelopments.find((d) => d.statedCost === 958_740);
+    expect(mod?.reference).toBe('412/2025/HA');
+    expect(mod?.amendmentsInWindow).toBe(1);
+    expect(mod?.parentOutsideWindow).toBe(true);
   });
 
   it('the prompt block labels applicant-stated costs and sampling', () => {
     const block = developmentActivityBlock({ planningData: { developmentActivity: { status: 'ok', summary } } });
     expect(block).toContain('as stated by applicants');
     expect(block).toContain('62');
-    expect(block).toContain('2 applications read of 62');
+    expect(block).toContain('3 applications read of 62');
+  });
+
+  it('the prompt block keeps the three classes apart and says why', () => {
+    // The model reads this block. An unlabelled pair of figures is a pair a
+    // narrative will add together, which is the whole defect.
+    const block = developmentActivityBlock({ planningData: { developmentActivity: { status: 'ok', summary } } });
+    expect(block).toContain('New development applications — stated cost: **$12,500,000**');
+    expect(block).toContain('Modifications of approved developments — stated cost: **$958,740**');
+    expect(block).toContain('MUST NOT be added to the one above');
+    expect(block).toContain('Applications of an unrecognised type');
+    // And no line offers the sum of them.
+    expect(block).not.toContain('$13,458,740');
+    expect(block).not.toContain('$13,858,740');
   });
 });
 

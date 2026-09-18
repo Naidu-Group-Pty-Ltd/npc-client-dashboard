@@ -114,7 +114,14 @@ describe('markup in the source stays inert', () => {
   /** Tag names inside <body>, which is where the block's output lands. */
   function tagsIn(html: string): string[] {
     const from = html.indexOf('<body>') + '<body>'.length;
-    const body = html.slice(from, html.indexOf('</body>'));
+    // The renderer emits the document's own title as an `<h1>` ahead of the
+    // first page, off the visual surface — it is what makes the file's heading
+    // sequence start at level 1, which PDF/UA-1 clause 7.4.2 requires. It is
+    // the renderer's and not the block's, so it is not evidence about
+    // escaping. Only the LEADING one is dropped: an `<h1>` anywhere else would
+    // have come from the source and still fails.
+    const body = html.slice(from, html.indexOf('</body>'))
+      .replace(/^\s*<h1\b[^>]*>[\s\S]*?<\/h1>/, '');
     return [...body.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1].toLowerCase());
   }
 

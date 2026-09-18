@@ -1584,6 +1584,35 @@ contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
 
+## What a report may state about the market
+Read [`MARKET_FIGURES_IN_THE_REPORT.md`](./docs/reports/MARKET_FIGURES_IN_THE_REPORT.md)
+before touching `_shared/reports/market/marketFactBlocks.pure.ts`,
+`enhancedData.marketEvidence` or the market block in `pinnedPlanningContext`.
+`MarketEvidence` reached the SCORING SERVICE and nothing else — the generator
+built `marketPoints`, posted it, took the grade back, and **no prompt was ever
+handed a median**. So the prose supplied its own: 18 Annabelle Crescent stated
+a $1.96m suburb median, a "high-$1.8m to ~$2.0m" range, "high-$700k to
+low-$800k" unit medians, "$900" median weekly rent and "low single digits"
+growth, while `market_fact_snapshot` holds 27 ABS and RBA facts and **not one
+market price**. Same shape as the planning defect: the service answered (growth
+scored 56 at confidence 81 from that very register), the answer was used for
+the grade, and the section that needed it read none of it. **The grammar is the
+tell** — *is consistently reported*, *data sets report*, *is called*: an
+agentless passive is what a sentence uses when it has no source to name, and
+the rule now names those constructions. Four more rules. **A licence decides
+what a client is shown**, applied at the producer because downstream is a model
+— a Domain point scores the grade and is named on the page as held and not
+published, a third state distinct from never measured. **A benchmark is drawn
+apart**, under a heading saying it describes a different geography, because a
+state figure beside a suburb one reads as the suburb's. **An absence says which
+kind**: asked-and-could-not-answer carries the provider's reason, never-held is
+a list. And **nothing there is a valuation** — "below the median" is forbidden
+by name, because that comparison was the Executive Verdict's central claim. Two
+things beyond the module: the evidence is assigned to `enhancedData` **before**
+the scoring call (a scoring failure must not take it with it, and the resume
+worker needs it), and it **rides the pin** so `limitPromptContext` cannot cut
+the authority while leaving the rule.
+
 ## Each report has one purpose, and one module decides it
 
 Read [`docs/reports/TIER_FRAMEWORK.md`](./docs/reports/TIER_FRAMEWORK.md)
@@ -1740,6 +1769,53 @@ a date something HAPPENED rather than a completion, and the coverage
 limitation — council capital works, budget programmes, agency announcements —
 is stated on a full list as well as an empty one.
 
+**And an absence may not be RATED** (§9 of the same doc). The opposite of the
+invented control, committed by the same document: `Infrastructure timing and
+pipeline | **Low** | The absence of a named infrastructure pipeline in the
+registers searched …`, chipped **Verified**. Every fact in that row is true and
+the conclusion is unsupported three times — the `Low` is a statement about the
+area drawn from the coverage of a search, three paragraphs under a sentence
+naming council capital works and agency announcements as things the search does
+not reach; the `Verified` is true of the layer reading and was written against
+the rating; and Queensland's DA register was never "searched" and cannot be, so
+the sentence misdescribes the report's own evidence. Three rules. **An absence
+may not be rated** — `Not assessed` is the level, and never Low, Minimal,
+Limited, Negligible or Favourable, and never a strength (an inference from the
+area's general character is not a retrieval either). **An evidence note
+describes the RETRIEVAL, never the conclusion beside it.** And **the two
+absences are different sentences**: `none_at_point` is a register asked here
+that holds nothing here, the other four are ways of never having asked, so
+`RegisterReading` carries the distinction and the page prints "Searched,
+nothing found." or "Not searched." The same gap existed one level down —
+`planningFactBlocks` rule 4 closed the STATEMENT ("never write that no overlay
+applies") and the model obeyed it, then rated `Environmental nuisance | Low`
+from the same absence one row later. Three things had to be CHECKED rather than
+assumed, because a rule that names a word is worthless if something deletes it:
+the section registry offered only Low/Moderate/High (the two-contradicting-
+prompt-blocks defect again, so it names `Not assessed` now in both mirrors),
+`stripPlaceholderRows` deletes a row whose first value cell is a placeholder,
+and `riskDashboardContract`'s `ASSESSED_ENTRY` does not match it — all three
+pinned by execution.
+
+**A total summed from part of a register is a FLOOR, and says so.** Read
+[`DA_REGISTER_RECONCILIATION.md`](./docs/reports/DA_REGISTER_RECONCILIATION.md)
+before changing `registerWalk`, `summariseDaRows`' class split or the pipeline
+paragraph. Two readings of one register — 680 dwellings / $808,649,729 as the
+report printed it, 1,410 / $1,175,556,030 now — reconcile exactly and into two
+independent halves. Applying the OLD counting rule to the COMPLETE walk gives
+3,442 and $2,364,004,211, so retrieval completeness is **+2,762 dwellings and
++$1.555bn** and the counting rule is **−2,032 and −$1.188bn**, which is the
+amendments bucket to the dwelling and to the dollar. Geography, window and
+publisher are identical. **The larger half is completeness, not definition**:
+the deployed service read **300 of the 650** applications the register stated,
+so the published figures were not a stale reading of the area but a third of
+the register presented as the register. `daActivityLine` had disclosed a
+partial walk since it was written; the PIPELINE paragraph, which is where the
+money is, had not. It does now — each figure a floor, because reading the rest
+can only raise it — with nothing drawn on a complete walk, `null` kept distinct
+from complete, and rule 4a telling the model to carry the qualification
+wherever it uses either figure.
+
 **The first regeneration then found that a rule can reach the model and its
 evidence not** (§6 of the same doc). Regenerated 17 Sep 2026 the placeholders
 were gone and the document still said *"low-density residential zoning"*,
@@ -1880,6 +1956,45 @@ acquisition stamp** (`locationInputVerification.pure.ts`) — subject-matched
 and stage-proven readings count, a stampless legacy enrichment verifies
 nothing, and a request field asserting verification is never read; Risk stays
 null under `propertyRiskSchema.pure.ts`'s recorded decision.
+
+**A renormalised weight is not a nominal one, and all five dimensions are
+always drawn.** Read
+[`docs/reports/S5_CORRECTIONS.md`](./docs/reports/S5_CORRECTIONS.md) §3 and
+§3a before touching
+`_shared/reports/market/scoreAssessmentReading.pure.ts`,
+`composeScoreDimensionTable` or `_shared/reports/risk/propertyRiskSchema.pure.ts`.
+`breakdown[].weight` stores the **adjusted** weight as a whole percentage —
+57/21/21 on 18 Annabelle Crescent, not the nominal .40/.15/.15 — so a table
+printing it as "nominal points" hides the cap and produces arithmetic that
+does not foot (31.9 + 4.8 + 2.7 = 39.4 against a stored 40). The engine rounds
+**once, on the sum**, using exact fractions: 32.00 + 4.93 + 2.79 = 39.71 → 40 →
+C uncapped, against delivered points of 22.40 + 3.45 + 1.95 = 27.80 → F, which
+is the F issued. Four rules bite. **A reading names what the record does not
+retain** rather than substituting a coarser figure — `evidenceCoverage` (the
+57% S1 reported) and the growth eligibility ceiling are computed and not
+persisted, and `coverage.weightCovered` (0.70) is a different measure.
+**The assessment is DERIVED where the record is read**, never passed in, because
+a parameter a caller forgets takes the whole grade rationale off the page with
+nothing reporting it. **Location's exclusion is a defect of ours, not a reading
+about the area** — all nine stamped enrichments record `places: complete` and
+`commute: measured` and carry none of `walkScore`, `commute`,
+`schools.schoolsWithin3km`, because the Client-Safe Gate removes exactly those
+three and the generator persisted the gated object while the stamp survived
+untouched, so `assessEnrichmentReuse` re-served the stripped copy on every
+resume and the printed remedy ("regenerate the report") reproduced it; both
+halves are closed and the repair reaches a row only on its next generation.
+And **a retrieved control is a fact, never a rating**: the planning programme
+now answers `site_hazard_exposure` and `planning_constraints` at parcel grain,
+so both leave `not_held` for **`held_but_unscoreable`** — evidence on the page,
+zero points, off the acquisition backlog because what is outstanding is a
+published SCALE — and `answerableCount()` stays 0, because a capability nothing
+delivers may not be declared. Risk still cannot score even so: hazard and
+planning are ONE independent category (they answer or fail together),
+`MINIMUM_INDEPENDENT_CATEGORIES` is 2, and the only other category a house
+offers needs a construction year, held on **0 of 1,230** stored reports. Four
+of five scored is therefore the honest maximum until an acquisition lands, and
+`riskRemedyFor()` derives what is outstanding from the schema so a remedy can
+never name as missing something the platform already reads.
 
 **The Domain 403 is a portal setting, not a mystery.** Re-measured from the
 production egress on 15 Sep 2026: the key is set and recognised, and both

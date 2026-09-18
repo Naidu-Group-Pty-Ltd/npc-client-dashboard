@@ -196,6 +196,40 @@ export function stampAcquisition<T extends Record<string, unknown>>(
   return { ...data, [ENRICHMENT_STAMP]: acquisition };
 }
 
+/**
+ * The readings a stage is expected to leave behind, and the stage that
+ * produces each.
+ *
+ * Named as data so the guard, the verifier and the Client-Safe Gate can be
+ * compared by a test rather than by reading three files.
+ *
+ * Only the PLACES readings are checked, and that is deliberate. The invariant
+ * is exact — `measuredWalkScore` returns a number whenever every lookup
+ * answered, and `measuredCount` likewise — so `places: 'complete'` beside an
+ * absent `walkScore` cannot be a live acquisition. The commute is left out
+ * because the gate removes all four paths together, so checking one places
+ * reading already catches a gated object, and asserting a shape for the
+ * commute would make this guard depend on which provider measured it.
+ */
+const STAGE_RAN = { places: 'complete' } as const;
+
+const finiteAt = (record: Record<string, unknown>, head: string, tail?: string): boolean => {
+  const outer = record[head];
+  if (tail === undefined) return typeof outer === 'number' && Number.isFinite(outer);
+  if (!outer || typeof outer !== 'object') return false;
+  const inner = (outer as Record<string, unknown>)[tail];
+  return typeof inner === 'number' && Number.isFinite(inner);
+};
+
+const MEASURED_READINGS: ReadonlyArray<{
+  readonly path: string;
+  readonly stage: keyof typeof STAGE_RAN;
+  readonly present: (record: Record<string, unknown>) => boolean;
+}> = [
+  { path: 'walkScore', stage: 'places', present: (r) => finiteAt(r, 'walkScore') },
+  { path: 'schools.schoolsWithin3km', stage: 'places', present: (r) => finiteAt(r, 'schools', 'schoolsWithin3km') },
+];
+
 export type ReuseVerdict =
   | 'reusable'
   | 'nothing_stored'
@@ -203,7 +237,8 @@ export type ReuseVerdict =
   | 'subject_changed'
   | 'missing_coordinates'
   | 'incomplete_acquisition'
-  | 'partial_retry_exhausted';
+  | 'partial_retry_exhausted'
+  | 'readings_missing';
 
 export interface ReuseDecision {
   readonly reuse: boolean;
@@ -265,6 +300,37 @@ export function assessEnrichmentReuse(
       'missing_coordinates',
       'The stored enrichment carries no usable coordinate, so nothing downstream '
       + 'can be built from it. Re-acquiring.',
+    );
+  }
+
+  // S2 — a stamp vouches for the ACQUISITION, not for a field somebody
+  // deleted afterwards.
+  //
+  // Until this was fixed the generator persisted the Client-Safe Gate's
+  // output, which removes `walkScore`, `commute` and
+  // `schools.schoolsWithin3km` — the only three readings
+  // `verifiedLocationInputs` may count. The stamp survived that removal
+  // untouched, so this guard saw a complete, subject-matched acquisition and
+  // reused an object whose evidence was gone; every resume then scored
+  // Location on nothing, and the gap the report printed told the reader to
+  // regenerate, which reproduced it.
+  //
+  // The generator no longer writes the gated copy. This is the other half:
+  // an enrichment already persisted in that state is refused, so it is
+  // re-acquired on the next generation instead of being carried forward for
+  // ever. No migration touches a stored row — the repair happens the next
+  // time the report is generated, which is the same remedy the stamp's own
+  // absence already uses.
+  const readingsMissing = MEASURED_READINGS.filter(
+    ({ stage, present }) => acquisition.stages?.[stage] === STAGE_RAN[stage] && !present(record),
+  );
+  if (readingsMissing.length > 0) {
+    return refuse(
+      'readings_missing',
+      'The stored enrichment records stages that ran but no longer carries what '
+      + `they measured (${readingsMissing.map((r) => r.path).join(', ')}). It was `
+      + 'persisted after the Client-Safe Gate had removed them, so it cannot be '
+      + 'scored. Re-acquiring.',
     );
   }
 

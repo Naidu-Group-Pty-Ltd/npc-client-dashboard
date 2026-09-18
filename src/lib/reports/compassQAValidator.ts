@@ -7,8 +7,37 @@
  *   • Deno tests (compassPostProcessor_test.ts)
  *   • Frontend QA panel (mirror in src/lib/reports/)
  *
+ * ## A tier it does not know is a tier it must not judge
+ *
+ * It took two tier values and `condense-investment-report` called it with
+ * `'compass-40'` for a Briefing and for a Snapshot — neither of which is a
+ * Compass. Every condensation therefore logged and returned a report that
+ * could not pass: a page band for a 40-page document over a 12-page tier,
+ * eleven `financial-exclusion` errors on the financial chapters the
+ * condensation DELIBERATELY attaches, and four to six
+ * `missing-protected-section` errors naming Compass sections a condensed tier
+ * never declares. Sixteen errors on a correct Briefing, every run. It blocks
+ * nothing, which is what made it the familiar fault: a check that always
+ * fails can never report a true one.
+ *
+ * The rules divide more cleanly than that call implied. Most of them are
+ * about a REPORT rather than about a tier — no unresolved placeholder, no
+ * score the record does not hold, no editorial label, no duplicate heading,
+ * no promise of a table with no table — and every one of those is exactly
+ * what you want asserted on a condensed document. Only three are tier-bound,
+ * and two were already guarded.
+ *
+ * So the condensed tiers are admitted and the three tier-bound rules answer
+ * to what each tier actually declares. **A tier with no declared page band
+ * gets no page-band finding**: a Briefing's length is governed by the
+ * registry trim and the post-processor's word caps, and inventing a band for
+ * it would be a threshold nobody measured. **A tier with no section registry
+ * runs no per-section check**, for the same reason — the condensed tiers
+ * declare their headings in `sectionRegistry.pure.ts` and no word caps in
+ * this shape.
+ *
  * Checks:
- *   1. Page band: Compass 20–26, Financial 18–22
+ *   1. Page band: Compass 20–26, Financial 18–22, condensed tiers none
  *   2. Financial content exclusion from Compass (no yield/LVR/cashflow tables)
  *   2b. No unresolved placeholders
  *   2c. No editorial commentary label survives, in any form
@@ -32,6 +61,18 @@ import {
 } from './compassSectionRegistry';
 import { countWords, estimatePages, findEditorialLabels } from './compassPostProcessor';
 import { findScoreClaims } from './investment/scoreClaims.pure';
+import {
+  findPortalCitations,
+  findPortalSourcedClearances,
+  findUnpublishedHorizons,
+  PORTAL_SOURCE_RE,
+} from './investment/evidenceClaims.pure';
+import { findDocumentContradictions } from './investment/documentConsistency.pure';
+import { findFiguresWithoutABasis } from './investment/evidenceClaims.pure';
+import {
+  RISK_REGISTER_CELL_MAX_WORDS,
+  findOverlongRegisterCells,
+} from './investment/riskRegister.pure';
 
 /**
  * The prompt asks for at most 4 `###` a section; this flags at 6+.
@@ -50,6 +91,35 @@ const PAIR_HEADING = /^(?:#{2,4}\s+|\*\*)?strengths?\s*(?:and|&)\s*(?:limitation
 const PAIR_SECOND_LABEL = /^(?:#{3,5}\s+|\*\*)?(?:limitations?|weaknesses|considerations|watch[- ]?points)\b\*{0,2}:?\s*$/i;
 
 
+/**
+ * The tiers this may be asked about.
+ *
+ * `briefing` and `snapshot` are the condensed tiers. They are admitted so the
+ * condense path can name what it is producing instead of borrowing a
+ * Compass's rules; see the note at the head of this file.
+ */
+/**
+ * The tiers this validator may judge.
+ *
+ * `strategic` joined them when `fork-investment-report` started validating its
+ * composed children (18 Sep 2026) — and the fork first passed `'financial'`
+ * and `'strategic'`, neither of which is a member: the financial tier is
+ * spelled `financial-analysis`, and the Due Diligence document had no name
+ * here at all. `deno check` caught both; the repository's `tsc` cannot see
+ * `supabase/functions`, which is why that gate exists.
+ *
+ * `strategic` deliberately declares **no page band and no section registry**,
+ * which is the treatment the condensed tiers already get and is this file's own
+ * rule: *a tier it does not know is a tier it must not judge*. What still
+ * applies to a Due Diligence document is every rule that is about a REPORT —
+ * no unresolved placeholder, no score the record does not hold, no editorial
+ * label, no duplicate heading, no promised table with no table, no hazard
+ * clearance on a listing's authority, no delivery horizon nobody published —
+ * and those are exactly the rules the fork needed, because it routes the
+ * parent's prose into two documents and used to check neither.
+ */
+export type QATier = 'compass-40' | 'financial-analysis' | 'briefing' | 'snapshot' | 'strategic';
+
 export type QASeverity = 'error' | 'warning' | 'info';
 
 export interface QAFinding {
@@ -60,7 +130,7 @@ export interface QAFinding {
 }
 
 export interface QAReport {
-  tier: 'compass-40' | 'financial-analysis';
+  tier: QATier;
   estimatedPages: number;
   wordCount: number;
   passed: boolean;
@@ -119,7 +189,7 @@ function normalize(h: string): string {
   return h.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function findDef(heading: string, registry: CompassSectionDefinition[]) {
+function findDef(heading: string, registry: readonly CompassSectionDefinition[]) {
   const target = normalize(heading);
   return registry.find(
     (s) =>
@@ -155,27 +225,45 @@ export interface QAContext {
   recordedScores?: number[];
 }
 
+/**
+ * The sections a tier declares WITH word caps. A tier absent here runs no
+ * per-section check rather than being judged against another tier's list —
+ * which is what `tier === 'compass-40' ? COMPASS : FINANCIAL` did, handing a
+ * Briefing the Financial Analysis registry.
+ */
+const SECTION_REGISTRY: Partial<Record<QATier, readonly CompassSectionDefinition[]>> = {
+  'compass-40': COMPASS_40_SECTIONS,
+  'financial-analysis': FINANCIAL_ANALYSIS_SECTIONS,
+};
+
+/**
+ * The page band a tier declares. `undefined` is a real answer and means no
+ * finding, never a default band — see the head of this file.
+ */
+const PAGE_BAND: Partial<Record<QATier, { min: number; max: number }>> = {
+  'compass-40': COMPASS_PAGE_BAND,
+  'financial-analysis': { min: 18, max: 22 },
+};
+
 export function runQAValidation(
   markdown: string,
-  tier: 'compass-40' | 'financial-analysis',
+  tier: QATier,
   context: QAContext = {},
 ): QAReport {
   const findings: QAFinding[] = [];
-  const registry =
-    tier === 'compass-40' ? COMPASS_40_SECTIONS : FINANCIAL_ANALYSIS_SECTIONS;
+  const registry = SECTION_REGISTRY[tier] ?? [];
   const wordCount = countWords(markdown);
   const estimatedPages = estimatePages(markdown);
 
-  // Rule 1 — page band
-  const band =
-    tier === 'compass-40' ? COMPASS_PAGE_BAND : { min: 18, max: 22 };
-  if (estimatedPages < band.min) {
+  // Rule 1 — page band, for a tier that declares one
+  const band = PAGE_BAND[tier];
+  if (band && estimatedPages < band.min) {
     findings.push({
       rule: 'page-band',
       severity: 'warning',
       message: `Estimated ${estimatedPages} pages, below target min ${band.min}.`,
     });
-  } else if (estimatedPages > band.max) {
+  } else if (band && estimatedPages > band.max) {
     findings.push({
       rule: 'page-band',
       severity: 'error',
@@ -391,6 +479,196 @@ export function runQAValidation(
           message: `A risk is rated "Confidence: High" while its required check is still outstanding ("${line.trim().slice(0, 80)}"). Confidence describes evidence held, so rate it "Unverified" until the dated check exists.`,
         });
       }
+    });
+  }
+
+  /*
+   * Rule 12 — a timeline bucket is a delivery horizon, and no register here
+   * publishes one.
+   *
+   * The Kellyville Compass drew
+   * `{{timeline: 0-2y "Major mixed-use redevelopment Castle Hill ($181.9m)",
+   * 0-2y "High-tech data centres Norwest (three approvals at $93.18m)",
+   * 0-2y "Terrace housing project Gables ($29.75m)"}}`. Every date behind
+   * those three is a DETERMINATION — a date a decision was recorded — and the
+   * evidence table prints "Not published by this register" in its Delivery
+   * timing column on every row, because neither the NSW DA register nor the
+   * Queensland instrument layers publish a delivery date for anything. "0-2y"
+   * is a completion this report has no source for.
+   *
+   * Judged on the prose, not on the evidence: the evidence table is appended
+   * AFTER this validator runs (so a word cap can never trim a row of
+   * evidence), which means the only thing here to read is what the model
+   * wrote. That is the right thing to read anyway — the claim is the model's.
+   *
+   * Deliberately narrow. It matches a horizon bucket spelled as a duration or
+   * as a relative term, and leaves alone a stop labelled by what a date IS
+   * ("Determined Jul 2026"), by a calendar year, or by "Existing" — all three
+   * of which a register can support.
+   */
+  //
+  // The pattern and the walk live in `evidenceClaims.pure.ts`, which is also
+  // what CORRECTS this finding on the generation path. A detector with its own
+  // copy of the corrector's regex is two ends that drift, and the whole value
+  // of the correction is that what is reported is what is removed.
+  for (const found of findUnpublishedHorizons(markdown)) {
+    findings.push({
+      rule: 'unpublished-delivery-horizon',
+      severity: 'error',
+      message: `A {{timeline:}} places ${found.horizons.length} item${found.horizons.length === 1 ? '' : 's'} in a future `
+        + `delivery horizon (${[...new Set(found.horizons)].join(', ')}). The planning and development registers this `
+        + 'report reads publish no delivery date for anything — every date they carry is a decision or a '
+        + 'declaration — so label each stop with what its date IS ("Determined Jul 2026", "Gazetted 2023") or '
+        + 'draw no horizon timeline.',
+    });
+  }
+
+  /*
+   * 13. A listing is not a planning authority — refined 18 Sep 2026.
+   *
+   * Measured on 48 Redfern Street, read out of the rendered PDFs: four
+   * bracketed inline citations per document, THREE naming `Property.com.au`,
+   * and one of those three carrying
+   *
+   *   "...multiple NEARBY ADDRESSES on the street recording no bushfire, flood
+   *    or heritage overlays on public mapping at the time they were last
+   *    updated.[Property.com.au, 119, 120, 137 and 139 Redfern Street
+   *    profiles, 2024-2026]"
+   *
+   * which is the sentence `planningFacts.pure.ts` forbids by name. The
+   * prohibition reached the model and NOTHING read the document to see whether
+   * it was obeyed — the gap section 10.3 of
+   * `PLANNING_CONTROLS_IN_THE_REPORT.md` named for a different rule and closed
+   * with rule 12. And because the fork routes the parent's prose, one bad
+   * sentence becomes three documents.
+   *
+   * ## Two findings, because they are two different mistakes
+   *
+   * The first version made any portal citation an error, and that was too
+   * broad. **A listing is the authoritative source for the thing it IS** — the
+   * asking price, the advertised configuration, the marketing copy — and
+   * rejecting it wholesale would strip a report of properly recorded evidence
+   * for an identity fact. What a listing can never do is clear the SUBJECT
+   * PROPERTY of a hazard or a planning control.
+   *
+   * So:
+   *
+   *   `portal-sourced-hazard-clearance` (ERROR) — a hazard or planning
+   *   absence asserted about this property on the authority of a listing
+   *   portal or of NEIGHBOURING listings. Two nouns make it worse than a bad
+   *   citation: it is a claim about a different parcel, presented as a
+   *   clearance for this one.
+   *
+   *   `listing-portal-as-source` (WARNING) — any other portal citation.
+   *   Disclosed so a reviewer can see what the prose rests on, not blocking,
+   *   because the legitimate case is real.
+   *
+   * It REPORTS and never scrubs: prose is never regex-scrubbed, on read or on
+   * write. And it is narrow on purpose — a false caveat teaches people to
+   * dismiss the warning.
+   */
+  // The patterns and both finders live in `evidenceClaims.pure.ts` for the
+  // reason rule 12 gives: the error half of this rule is CORRECTED on the
+  // generation path, and a detector holding its own copy of the corrector's
+  // regex reports one thing while the corrector removes another.
+  const portalCitations = findPortalCitations(markdown);
+  const clearances = findPortalSourcedClearances(markdown);
+  if (clearances.length) {
+    findings.push({
+      rule: 'portal-sourced-hazard-clearance',
+      severity: 'error',
+      message: `${clearances.length} sentence${clearances.length === 1 ? '' : 's'} state that a hazard or `
+        + 'planning control does NOT apply, on the authority of a listing portal or of neighbouring '
+        + 'listings. A listing is not a planning authority, and a neighbouring parcel is not this one. '
+        + 'The only absence this report may repeat is a register that was asked and matched nothing, '
+        + 'stated as "Checked and not mapped at this coordinate" and naming the register.',
+    });
+  }
+  if (portalCitations.length) {
+    const named = [...new Set(portalCitations.map((b) => (PORTAL_SOURCE_RE.exec(b) ?? [''])[0].toLowerCase()))];
+    findings.push({
+      rule: 'listing-portal-as-source',
+      severity: 'warning',
+      message: `${portalCitations.length} inline citation${portalCitations.length === 1 ? '' : 's'} name a property `
+        + `listing portal (${named.join(', ')}). A listing is authoritative for what it IS — the asking `
+        + 'price, the advertised configuration — and is not evidence for a market statistic, a planning '
+        + 'control or a hazard. Check each one carries only what the listing itself states.',
+    });
+  }
+
+  /*
+   * ── 14. Does the document agree with ITSELF? ──────────────────────────
+   *
+   * Rules 1-13 ask whether the document is well formed and whether its claims
+   * rest on anything. This one asks whether page 12 agrees with page 17, which
+   * is the shape four of the defects read off the supplied PDFs actually took:
+   * a $467 weekly shortfall beside a $450 one, an interest-only loan beside an
+   * amortising repayment, B/62 beside 60/100, and a bedroom count both stated
+   * and withheld.
+   *
+   * It lives in `documentConsistency.pure.ts` and is imported rather than
+   * restated, for rule 12's reason. It compares figures the document already
+   * printed and computes nothing — there is no second financial calculator
+   * here, and a contradiction is never repaired by deleting one side of it,
+   * because which side is right is a question about the producer.
+   */
+  for (const c of findDocumentContradictions(markdown)) {
+    findings.push({ rule: c.rule, severity: c.severity, message: c.message });
+  }
+
+  /*
+   * ── 15. A figure that names no basis ──────────────────────────────────
+   *
+   * The occupier mixes, property-fit gauges, evidence mixes, risk scores and
+   * investor-readiness ratings read off the supplied PDFs. Some of those
+   * numbers are sound — an occupier mix from the Census, an evidence mix from
+   * the register — and the reader has no way to tell them from the ones a
+   * model chose, because the figure names no dataset, no period and no model
+   * basis anywhere near it.
+   *
+   * REPORTED, never removed. `suppressUnrecordedVerdictVisuals` removes a
+   * rating the record does not hold, which is right because that number is
+   * untrue; deleting a sound figure to silence a warning takes real data off
+   * the page. The remedy is a caption.
+   */
+  const unbased = findFiguresWithoutABasis(markdown);
+  if (unbased.length) {
+    const named = [...new Set(unbased.map((f) => f.title || f.kind))].slice(0, 6);
+    findings.push({
+      rule: 'figure-without-a-stated-basis',
+      severity: 'warning',
+      message: `${unbased.length} figure${unbased.length === 1 ? '' : 's'} draw numbers with no dataset, `
+        + `period or model basis stated near them (${named.join('; ')}). Every number a reader acts on `
+        + 'needs a traceable dataset or an approved calculation, and a figure states it in a caption: '
+        + 'the units, the period, the geography, and the source or the model basis. Where none can be '
+        + 'given, say the finding in words rather than drawing it.',
+    });
+  }
+
+  /*
+   * ── 16. A register cell carrying a paragraph ──────────────────────────
+   *
+   * The risk section was declared as four columns, one of them an explanation
+   * and another an instruction, over roughly eight risks inside a 550-word
+   * cap. A grid is the wrong container for two paragraphs, so what printed was
+   * the paragraph-heavy table read off the supplied documents: cells running
+   * to four and five lines, and a reader who has to read across a column
+   * boundary to follow one thought.
+   *
+   * The register is a scan and the detail blocks are the reading now, so a
+   * cell carrying a paragraph is a cell in the wrong container. The cap is the
+   * one `riskRegisterInstruction` states to the model, imported rather than
+   * restated so what is asked for and what is judged cannot become two
+   * standards.
+   */
+  for (const cell of findOverlongRegisterCells(markdown)) {
+    findings.push({
+      rule: 'risk-register-cell-overlong',
+      severity: 'warning',
+      message: `The risk register's "${cell.column}" cell for ${cell.risk || 'a risk'} runs to `
+        + `${cell.words} words (the register's cells hold ${RISK_REGISTER_CELL_MAX_WORDS}). A register `
+        + 'is scanned, not read: put the finding, the evidence, what it means for this purchase and '
+        + 'the next check in a detail block under the table, and leave a phrase in the cell.',
     });
   }
 

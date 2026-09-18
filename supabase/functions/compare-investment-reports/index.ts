@@ -303,8 +303,20 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
         },
 
         // Location Intelligence
+        //
+        // S2 — `walkScore` is withheld here, not absent from the record.
+        // The Client-Safe Gate disowns it (`DISOWNED_LOCATION_PATHS`) as a
+        // bespoke composite published under a third party's product name, and
+        // it stopped reaching this payload only because the generator used to
+        // persist the GATED enrichment. The record now keeps what was measured
+        // so Location can be scored, which puts the field back within reach of
+        // this projection — so the gate is applied here instead, at the
+        // boundary where a model is handed the figure. `transitScore` and the
+        // three counts below are not disowned; they are simply absent from
+        // every enrichment this platform writes, and a null is the honest
+        // reading for a field nothing fills.
         locationData: {
-          walkScore: location.walkScore ?? null,
+          walkScore: null,
           transitScore: location.transitScore ?? null,
           schoolRating: location.averageSchoolRating ?? null,
           nearbySchools: location.schoolsNearby ?? null,
@@ -359,7 +371,7 @@ This comparison MUST contain ALL of the following 10 sections in exact order. Mi
     **DATA QUALITY INSTRUCTIONS:**
     - **SCORING SCALE**: ALL finalScore values MUST be on a 0-100 scale (e.g., 85.2, not 8.5). PREFER the overallScore provided in the data. If overallScore is null, compute from scoreBreakdown using standard weights (yield 15, growth 40, location 25, demand 15, risk 5) — never invent.
     - **STRICT GROUNDING**: Every numeric claim MUST come from structured fields under financialMetrics / scoreBreakdown / scoreDetails / locationData. If a field is null, write "Data unavailable" — do NOT estimate or back-fill from reportTextSnippet.
-    - **NO PARAPHRASING**: reportTextSnippet is context only. You MUST NOT copy, paraphrase, or restate it across multiple properties. Differentiate properties ONLY on structured metric differences (purchasePrice, grossRentalYield, weeklyNet, monthlyCashFlow, year5/year10 roi, scoreBreakdown deltas, walkScore, schoolRating, lvr, interestRate, capitalGrowthAssumption).
+    - **NO PARAPHRASING**: reportTextSnippet is context only. You MUST NOT copy, paraphrase, or restate it across multiple properties. Differentiate properties ONLY on structured metric differences (purchasePrice, grossRentalYield, weeklyNet, monthlyCashFlow, year5/year10 roi, scoreBreakdown deltas, schoolRating, lvr, interestRate, capitalGrowthAssumption).
     - **TIED SCORES**: If two or more properties share the same overallScore, do NOT duplicate strengths/concerns text. Explicitly note the tie and differentiate on underlying scoreBreakdown numbers and financialMetrics deltas (e.g. "Ties Property 3 on overall but leads on grossRentalYield 4.31% vs 3.82%").
     - **DIFFERENTIATION REQUIREMENT**: primaryStrengths, primaryConcerns, competitiveAdvantages and redFlags MUST be unique per property. Cite the specific numeric metric that justifies each bullet (e.g. "Strong yield 4.31% gross vs basket avg 3.95%"). Generic statements that could apply to every property are forbidden.
     - **MISSING DATA**: If demographics or marketData fields are null, omit them. Do not fabricate medianIncome, vacancyRate, etc.

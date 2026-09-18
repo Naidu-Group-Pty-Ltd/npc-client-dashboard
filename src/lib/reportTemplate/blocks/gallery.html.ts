@@ -1,8 +1,8 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { esc, absBoxStyle, type HtmlBlockContext } from './_shared.html';
+import { imgTag, esc, absBoxStyle, type HtmlBlockContext } from './_shared.html';
 
-interface Item { src: string; caption?: string }
+interface Item { src: string; caption?: string; alt?: string }
 
 export function renderGalleryHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
@@ -17,7 +17,10 @@ export function renderGalleryHtml(block: Block, ctx: HtmlBlockContext): string {
     const src = resolveBindable(it.src, ctx);
     const cap = resolveBindable(it.caption, ctx);
     const inner = src
-      ? `<img src="${esc(src)}" style="width:100%;flex:1;object-fit:cover;"/>`
+      ? imgTag(src, {
+        alt: resolveBindable(it.alt, ctx) || cap,
+        style: 'width:100%;flex:1;object-fit:cover;',
+      })
       : `<div style="width:100%;flex:1;border:1pt solid #ddd;"></div>`;
     return `<div style="display:flex;flex-direction:column;">
       ${inner}

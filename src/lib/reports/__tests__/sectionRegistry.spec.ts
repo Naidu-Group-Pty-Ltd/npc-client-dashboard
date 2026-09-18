@@ -57,12 +57,30 @@ import {
   PLDD_SECTION_ORDER,
 } from '../../../../supabase/functions/_shared/reportSplitRegistry';
 import { compassSections } from '../../../../supabase/functions/_shared/compassSectionRegistry';
+import {
+  composeExitOutlook,
+  composeHoldingStrategy,
+  composeMonitoringPlan,
+  composeSuitability,
+  composeSwot,
+  type StrategyRecord,
+} from '../investment/strategyPositions.pure';
 
 const REPO = resolve(__dirname, '../../../..');
-const read = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
+const readFile = (p: string) => readFileSync(resolve(REPO, p), 'utf8');
+const read = (p: string) => (p === FORK ? `${readFile(FORK)}\n${readFile(FORK_SPLIT)}` : readFile(p));
 
 const CONDENSE = 'supabase/functions/condense-investment-report/index.ts';
+/**
+ * The fork is two files: the handler and the composition it calls.
+ *
+ * `forkSplit.pure.ts` holds the routing, the section contracts, the composed
+ * chapters and the hygiene pass, which used to be 257 lines of `index.ts`. A
+ * rule about what the fork DOES is satisfied by either, so `read(FORK)`
+ * returns both — which also means the next move cannot silently pass.
+ */
 const FORK = 'supabase/functions/fork-investment-report/index.ts';
+const FORK_SPLIT = 'supabase/functions/_shared/reports/investment/forkSplit.pure.ts';
 const PROJECTION = 'supabase/functions/_shared/reportBindingProjection.pure.ts';
 
 /** Every (section, tier) placement in the registry, flattened. */
@@ -201,6 +219,81 @@ const FIN = {
   assumptions: { capitalGrowth: 6, cpiGrowth: 3, occupancyWeeks: 52 },
 };
 
+/**
+ * A record with every input the strategy composers read, so a declaration that
+ * names one of them is checked by RUNNING it — the same standard the financial
+ * chapters and the score sections answer to a few lines below.
+ */
+const STRATEGY: StrategyRecord = {
+  property: {
+    address: '18 Annabelle Crescent, Kellyville NSW 2155',
+    propertyType: 'house', landSqm: 765, councilArea: 'THE HILLS SHIRE', parking: 2, bedrooms: 4,
+  },
+  price: {
+    basis: 'accepted_input', value: 1_490_000,
+    label: 'Purchase price this analysis is modelled on',
+    provenance: 'recorded by the adviser for this assessment',
+  },
+  market: {
+    rows: ([
+      ['medianPrice', 'Median sale price', '$1,808,000'],
+      ['growth1Year', 'Price growth, 1 year', '6.3%'],
+      ['growth3YearCagr', 'Price growth, 3 years (compound annual)', '4.4%'],
+      ['growth5YearCagr', 'Price growth, 5 years (compound annual)', '6.2%'],
+      ['priceSeries', 'Median price series', '4 periods, 2021-03 to 2026-03'],
+      ['salesCount', 'Sales in the period', '162'],
+    ] as const).map(([key, label, value]) => ({
+      key, label, value,
+      describes: 'postcode 2155, NSW — houses, 162 sales, 2026-03-31',
+      publisher: 'NSW Department of Communities and Justice — Rent and Sales Report',
+      note: null, benchmark: false,
+    })),
+    withheld: [], unavailable: [], consulted: ['nsw_dcj_rent_sales'],
+    anyStated: true, evidenceMissing: false,
+  },
+  finance: {
+    grossYield: 2.97, netYield: 2.18, weeklyNet: -926, annualNet: -48_166,
+    lvr: 80, upfront: 363_537, annualCosts: 14_886,
+    loanAmount: 1_192_000, interestRate: 6.5,
+    loanStructure: 'Interest only for 5 years (term not recorded; assumed), then principal and interest',
+    interestOnlyYears: 5, interestOnlyAssumed: true,
+    capitalGrowth: 6.2, weeklyRent: 850, occupancyWeeks: 52,
+  },
+  planning: {
+    zone: 'R2 — Low Density Residential', zoneStatus: 'stated',
+    zoneSource: 'NSW Planning Portal — Principal Planning Layers (Land Zoning)',
+    zoneEffectiveDate: '2026-08-07', council: 'THE HILLS SHIRE',
+    verification: 'A spatial layer is indicative; a s10.7 certificate settles it.',
+    retrievedAt: '2026-09-17T08:58:23.845Z',
+  },
+  transport: {
+    source: 'gtfs', verdict: 'stops_nearby',
+    countReading: { count: 117, radiusMetres: 1600, label: '117 boarding places within 1.6 km', radiusAssumed: false },
+    nearestKm: 0.1, nearestName: 'Windsor Rd Before President Rd',
+    sources: ['Transport for NSW Open Data (CC BY 4.0)'],
+    feedLoadedAt: '2026-09-07T05:22:15.603Z', measuredAt: '2026-09-17T08:58:02.529Z',
+    notMeasured: ['Mode of transport is not published per stop.'],
+  },
+  score: {
+    grade: 'F', total: 40, gaps: [],
+    dimensions: [
+      { key: 'growth', label: 'Capital growth', score: 56, nominalPoints: 57, deliveredPoints: 31.92,
+        evidence: 'Five-year capital growth: 6.2% per annum over five years.',
+        inputs: ['longTerm'], excluded: false },
+      { key: 'risk', label: 'Property risk', score: null, nominalPoints: 0, deliveredPoints: null,
+        evidence: null, inputs: [], excluded: true },
+    ],
+    coverageLabel: 'Partial score: 3 of 5 dimensions',
+    weightCovered: 0.7,
+    notAssessed: { risk: 'Not assessed — insufficient verified property-risk evidence is available.' },
+    authority: null,
+  },
+};
+
+const STRATEGY_COMPOSERS: Record<string, (rec: StrategyRecord, heading: string) => string> = {
+  composeSwot, composeSuitability, composeHoldingStrategy, composeExitOutlook, composeMonitoringPlan,
+};
+
 const SCORE = {
   grade: 'B', totalScore: 62,
   recommendation: 'HOLD/BUY - Moderate investment potential',
@@ -317,6 +410,24 @@ describe('every declared section names a producer that resolves', () => {
         const markdown = fn!(SCORE, label!);
         expect(markdown, `${ref} produced nothing from a full score`).toBeTruthy();
         expect(markdown!.startsWith(`## ${label}`)).toBe(true);
+      } else if (producer.ref.startsWith('strategyPositions')) {
+        /*
+         * Run it, for the reason the financial chapters are run: a composer
+         * that returns nothing from a full record is a section the tier
+         * promises and no reader ever sees. The Compass placements are run
+         * with `finance: null` as well, because that is the shape the tier
+         * actually hands them and a composer that only works with the
+         * modelling would draw a heading over nothing there.
+         */
+        const fn = STRATEGY_COMPOSERS[ref];
+        expect(fn, `strategyPositions has no export ${ref}`).toBeTruthy();
+        const carriesModelling = tier === 'financial' || tier === 'briefing';
+        const record = carriesModelling ? STRATEGY : { ...STRATEGY, finance: null };
+        const markdown = fn!(record, label!);
+        expect(markdown, `${ref} produced nothing from a full record on ${tier}`).toBeTruthy();
+        expect(markdown.startsWith(`## ${label}`)).toBe(true);
+        // A heading with nothing under it is the defect this catches.
+        expect(markdown.split('\n').filter((l) => l.trim()).length).toBeGreaterThan(3);
       } else {
         // The fork writes its disclaimer directly; assert the heading is really
         // in the source that claims to write it.

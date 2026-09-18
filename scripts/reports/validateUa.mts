@@ -32,6 +32,13 @@
  * where the render container puts it. Without one this script says so and
  * exits non-zero rather than passing quietly — a validator that is not there
  * is not a validator that agrees with you.
+ *
+ * veraPDF's own distribution is not reachable from every egress — measured
+ * 17 Sep 2026, `software.verapdf.org` answers 403 through the proxy here
+ * while Maven Central answers 200, and veraPDF publishes its validation model
+ * there. `scripts/reports/verapdf/get.sh` resolves it and compiles a front
+ * end speaking this same command line; see that directory's README. It is the
+ * official engine with a local wrapper, not a re-implementation of any check.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -67,6 +74,9 @@ const VERAPDF = process.env.VERAPDF ?? '/opt/verapdf/verapdf';
 if (!existsSync(VERAPDF)) {
   console.error(`no validator at ${VERAPDF}.`);
   console.error('Set VERAPDF, or install veraPDF there — the render container does.');
+  console.error('Where veraPDF\'s own downloads are unreachable, run');
+  console.error('  scripts/reports/verapdf/get.sh');
+  console.error('which builds one from the validation model on Maven Central.');
   console.error('A claim nothing checked is the thing this script exists to prevent.');
   process.exit(2);
 }

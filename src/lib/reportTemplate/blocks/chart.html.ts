@@ -1,6 +1,6 @@
 import type { Block } from '../templateSchema';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
-import { esc, absBoxStyle, type HtmlBlockContext } from './_shared.html';
+import { imgTag, esc, absBoxStyle, type HtmlBlockContext } from './_shared.html';
 
 export function renderChartHtml(block: Block, ctx: HtmlBlockContext): string {
   const p = block.props as Record<string, unknown>;
@@ -13,7 +13,10 @@ export function renderChartHtml(block: Block, ctx: HtmlBlockContext): string {
   // panel, which is a placeholder on a client's page — exactly the structured
   // absence the report rules forbid. An unresolved chart is omitted.
   if (!url) return '';
-  const inner = `<img src="${esc(url)}" style="width:100%;height:${imgH};object-fit:contain;"/>`;
+  const inner = imgTag(url, {
+    alt: resolveBindable(p.alt, ctx) || caption || 'Chart',
+    style: `width:100%;height:${imgH};object-fit:contain;`,
+  });
   return `<div style="${style}">
     ${inner}
     ${caption ? `<div style="text-align:center;font-style:italic;font-size:8pt;color:${capColor};margin-top:4pt;">${esc(caption)}</div>` : ''}

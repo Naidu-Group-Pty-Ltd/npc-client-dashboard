@@ -183,8 +183,13 @@ describe('a heading with nothing under it is dropped', () => {
 
   it('the write paths apply it after the placeholder scrub', () => {
     for (const rel of [
-      'supabase/functions/condense-investment-report/index.ts',
-      'supabase/functions/fork-investment-report/index.ts',
+      // BOTH hygiene passes moved to the composition modules with the rest of
+      // each engine's deterministic half — which is what makes a briefing, a
+      // snapshot and the two fork documents producible outside a deployed
+      // Deno runtime at all. The rule is about the PATH a document takes, not
+      // about the file the pass happens to live in.
+      'supabase/functions/_shared/reports/investment/condenseCompose.pure.ts',
+      'supabase/functions/_shared/reports/investment/forkSplit.pure.ts',
     ]) {
       expect(src(rel), rel).toContain('dropEmptySections(');
     }

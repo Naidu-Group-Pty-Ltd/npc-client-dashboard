@@ -36,6 +36,18 @@ import {
   councilNameCandidates, resolveCouncilName, summariseDaRows,
   type NswDaRow,
 } from '../_shared/planning/developmentActivity.pure.ts';
+import {
+  parseQtripAnswer,
+  PROGRAMME_PUBLISHERS,
+  PROGRAMME_RADIUS_KM,
+  QTRIP_EDITIONS,
+  QTRIP_LICENCE,
+  QTRIP_SOURCE,
+  qtripQuery,
+  programmeCoverageNote,
+  type ProgrammeInvestment,
+} from '../_shared/planning/investmentProgramme.pure.ts';
+import { planningCacheKey } from '../_shared/planning/planningAnswerVersion.pure.ts';
 
 /**
  * Property planning data — zoning, parcel and development intelligence from
@@ -138,7 +150,13 @@ Deno.serve(async (req) => {
     }
 
     // ── Cache ────────────────────────────────────────────────────────────
-    const cacheKey = `${lat.toFixed(6)},${lng.toFixed(6)}`;
+    // The key carries the answer's SHAPE as well as the coordinate. A property
+    // does not move, but the answer widens when a register is added — and
+    // Maryborough's row was a complete, live, in-date answer from before the
+    // constraint register existed, so for seven days every report at that
+    // coordinate was served an answer with no overlay, hazard or
+    // strategic-designation reading in it. See `planningAnswerVersion.pure.ts`.
+    const cacheKey = planningCacheKey(lat, lng);
     const cutoff = new Date(Date.now() - CACHE_TTL_HOURS * 3600 * 1000).toISOString();
     const { data: cached } = await supabase
       .from('planning_data_cache')
@@ -303,6 +321,85 @@ Deno.serve(async (req) => {
       };
     }
 
+    /*
+     * ── the forward investment programme ─────────────────────────────────
+     *
+     * What a government has FUNDED, as against what somebody has applied to
+     * build. The DA register answers the second question and the outlook
+     * section has only ever had that answer, which is why §5's coverage
+     * limitation names budget programmes and agency announcements.
+     *
+     * One jurisdiction publishes it as a feed. QTRIP's DataStore answered this
+     * egress in **0.59 s for a 25 km bounding box** on 18 Sep 2026 — 14 rows,
+     * HTTP 200, CC BY 4.0 — so this is a live read at report time through the
+     * mechanism every other register here already uses, and it needs no table,
+     * no scheduled ingest and no migration.
+     *
+     * Everywhere else the cell is `not_served` and NAMES the jurisdiction's
+     * own programme and publisher (§4: *"'No equivalent structured dataset
+     * found' must not become 'NSW has no relevant programme.'"*). The note is
+     * composed by `programmeCoverageNote`, which cannot spell an absence as a
+     * finding about the area.
+     */
+    let programmeCell: Cell<{
+      investments: ProgrammeInvestment[];
+      edition: string;
+      radiusKm: number;
+      unplaced: number;
+      source: string;
+      licence: string;
+    }>;
+    if (jurisdiction === 'QLD') {
+      let settled = false;
+      let lastFailure = '';
+      programmeCell = { status: 'unavailable', note: 'the investment programme was not reached' };
+      // Newest edition first; the first that RETURNS ROWS is the current one.
+      // The 2026-27 package is published and its DataStore holds nothing, so
+      // "newest" and "current" are not the same question — asserted by effect.
+      for (const edition of QTRIP_EDITIONS) {
+        const res = await fetchJson(qtripQuery(edition, lat, lng, PROGRAMME_RADIUS_KM));
+        if (!res.ok) { lastFailure = res.message; continue; }
+        const parsed = parseQtripAnswer(res.body, edition, { lat, lon: lng }, PROGRAMME_RADIUS_KM);
+        if (!parsed.ok) { lastFailure = parsed.reason; continue; }
+        if (parsed.investments.length === 0 && parsed.unplaced === 0) {
+          // An edition that answers with nothing inside the radius is either
+          // the empty edition or a genuinely quiet area, and the two are told
+          // apart by whether a LATER edition answers. Keep looking; if none
+          // does, this stands as the searched-and-empty answer.
+          programmeCell = {
+            status: 'none_at_point',
+            note: `${QTRIP_SOURCE} (${edition.edition}) was read for ${PROGRAMME_RADIUS_KM} km around this `
+              + 'property and names no investment inside it.',
+          };
+          settled = true;
+          continue;
+        }
+        programmeCell = {
+          status: 'ok',
+          investments: parsed.investments,
+          edition: edition.edition,
+          radiusKm: PROGRAMME_RADIUS_KM,
+          unplaced: parsed.unplaced,
+          source: QTRIP_SOURCE,
+          licence: QTRIP_LICENCE,
+        };
+        settled = true;
+        break;
+      }
+      if (!settled) {
+        anyTransportFailure = true;
+        programmeCell = {
+          status: 'unavailable',
+          note: `the Queensland investment programme could not be read (${lastFailure || 'no edition answered'})`,
+        };
+      }
+    } else {
+      programmeCell = {
+        status: jurisdiction && PROGRAMME_PUBLISHERS[jurisdiction] ? 'not_served' : 'not_integrated',
+        note: programmeCoverageNote(jurisdiction),
+      };
+    }
+
     // ── the constraint register ──────────────────────────────────────────
     // What is MAPPED OVER the land: heritage, bushfire, flood, landslip, acid
     // sulfate soils, riparian corridors, height and floor space limits, the
@@ -427,6 +524,7 @@ Deno.serve(async (req) => {
       },
       developmentInstruments: instrumentsCell,
       developmentActivity: activityCell,
+      investmentProgramme: programmeCell,
       verification: jurisdiction
         ? `A spatial layer is indicative; what settles the question is ${VERIFICATION_INSTRUMENT[jurisdiction]}.`
         : 'A spatial layer is indicative; verify with the relevant council or planning authority.',

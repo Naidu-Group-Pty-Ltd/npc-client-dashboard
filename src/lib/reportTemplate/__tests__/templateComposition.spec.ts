@@ -8,6 +8,14 @@
  * their headings, and a disclaimer — because every binding on it
  * (`client.deposit`, `finance.capacity`, `grants.fhog`, `steps.0`) is a
  * sample-preset vocabulary no adapter publishes. Nothing measured that.
+ *
+ * And the first composition kept that template's COVER unconditionally, so on
+ * 16 Sep 2026 an Investment report shipped with page 1 reading "FIRST HOME /
+ * Your First Property" — static words the coverage measure cannot judge, on a
+ * page whose only bindings are the tenant's mark and the client's name,
+ * neither of which says which document it fronts. A chosen cover is now kept
+ * only where it resolves this report's identity; otherwise the donor's cover
+ * leads under the merged tokens.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -131,18 +139,76 @@ describe('measureBindingCoverage', () => {
 });
 
 describe('composeTemplateWithDonor', () => {
-  it('keeps the chosen cover and closing pages, drops what resolves nothing, and carries the donor body between them', () => {
+  it('drops a cover that cannot name this report, keeps the closing page, and leads with the donor cover', () => {
+    // The First-Home Buyer cover binds `org.markMono` (the tenant, on every
+    // report) and `client.name` (absent here) — nothing that names THIS
+    // document — so its static "Your First Property" cannot front an
+    // Investment report. The donor's cover leads instead, in document order.
     const result = composeTemplateWithDonor(firstHomeBuyer, master, investmentData)!;
     expect(result).not.toBeNull();
-    expect(result.kept).toEqual([{ name: 'Cover', kind: 'cover' }, { name: 'Important information', kind: 'closing' }]);
-    expect(result.dropped.map((p) => p.name)).toEqual(['What you can do', 'The real cost']);
+    expect(result.kept).toEqual([{ name: 'Important information', kind: 'closing' }]);
+    expect(result.dropped).toEqual([
+      { name: 'Cover', kind: 'cover' },
+      { name: 'What you can do', kind: 'content' },
+      { name: 'The real cost', kind: 'content' },
+    ]);
+    expect(result.coverFrom).toBe('donor');
     const names = (result.schema.pages as Array<{ id: string; name: string }>).map((p) => `${p.id}:${p.name}`);
     expect(names).toEqual([
-      'seed-page-2:Cover',
+      'm-cover:Cover',
       'm-contents:Contents', 'm-narr-0:The report', 'm-narr-1:The report', 'm-method:Sources and methodology',
       'seed-page-n:Important information',
     ]);
+    expect(result.bodyPages).toBe(5);
+  });
+
+  it('keeps a chosen cover that resolves this report\'s identity, and scrubs only its absent labels', () => {
+    // The same cover with the property's address on it IS this report's
+    // cover: the author's design fronts the document it can name. The
+    // addressee alone is not identity — `client.name` resolving would keep a
+    // "Your First Property" cover on an Investment report prepared for the
+    // same person.
+    const identified = {
+      ...firstHomeBuyer,
+      pages: [
+        {
+          ...firstHomeBuyer.pages[0],
+          blocks: [{
+            id: 'c',
+            type: 'cover',
+            props: {
+              mark: '{{org.markMono}}',
+              subtitle: 'Prepared for {{client.name}}',
+              title: 'Portfolio Analysis',
+              footnote: '{{property.address}}',
+            },
+          }],
+        },
+        ...firstHomeBuyer.pages.slice(1),
+      ],
+    };
+    const result = composeTemplateWithDonor(identified, master, investmentData)!;
+    expect(result.coverFrom).toBe('chosen');
+    expect(result.kept.map((p) => p.name)).toEqual(['Cover', 'Important information']);
+    const pages = result.schema.pages as Array<{ id: string; blocks: Array<{ props: Record<string, unknown> }> }>;
+    expect(pages[0].id).toBe('seed-page-2');
+    // "Prepared for {{client.name}}" binds only an absence: blank, never "Prepared for".
+    expect(pages[0].blocks[0].props.subtitle).toBe('');
+    expect(pages[0].blocks[0].props.title).toBe('Portfolio Analysis');
+    expect(pages[0].blocks[0].props.footnote).toBe('{{property.address}}');
     expect(result.bodyPages).toBe(4);
+
+    const addressee = {
+      ...identified,
+      pages: [
+        { ...identified.pages[0], blocks: [{ id: 'c', type: 'cover', props: { mark: '{{org.markMono}}', subtitle: 'Prepared for {{client.name}}', title: 'Your First Property' } }] },
+        ...identified.pages.slice(1),
+      ],
+    };
+    const withClient = { ...investmentData, client: { name: 'Jordan Example' } };
+    const result2 = composeTemplateWithDonor(addressee, master, withClient)!;
+    expect(result2.coverFrom).toBe('donor');
+    expect(result2.dropped.map((p) => p.kind)).toContain('cover');
   });
 
   it('draws the body in the chosen palette, with the donor filling any token the chosen template does not declare', () => {
@@ -158,16 +224,13 @@ describe('composeTemplateWithDonor', () => {
     expect(Object.keys(result.schema.pageMasters as object)).toEqual(['std']);
   });
 
-  it('leaves a kept label unprinted when everything it binds is absent, and the donor pages untouched', () => {
+  it('carries the donor pages untouched — their bindings and conditionals are never rewritten', () => {
     const result = composeTemplateWithDonor(firstHomeBuyer, master, investmentData)!;
     const pages = result.schema.pages as Array<{ id: string; blocks: Array<{ props: Record<string, unknown> }> }>;
-    const cover = pages.find((p) => p.id === 'seed-page-2')!;
-    // "Prepared for {{client.name}}" binds only an absence: blank, never "Prepared for".
-    expect(cover.blocks[0].props.subtitle).toBe('');
-    expect(cover.blocks[0].props.title).toBe('Your First Property');
-    expect(cover.blocks[0].props.mark).toBe('{{org.markMono}}');
     const donorNarrative = pages.find((p) => p.id === 'm-narr-0')!;
     expect(donorNarrative.blocks[0].props.source).toBe('{{narrative.source}}');
+    const donorCover = pages.find((p) => p.id === 'm-cover')!;
+    expect(donorCover.blocks[1].props.heading).toBe('{{report.address}}');
   });
 
   it('keeps the donor cover when the chosen template has none, and the donor closing page when it has none', () => {
@@ -177,6 +240,7 @@ describe('composeTemplateWithDonor', () => {
     expect(names[0]).toBe('Cover');
     expect(names[names.length - 1]).toBe('Important information');
     expect(result.kept).toEqual([]);
+    expect(result.coverFrom).toBe('donor');
   });
 
   it('composes nothing when the chosen template resolves content of its own, binds nothing at all, or the donor resolves nothing', () => {
@@ -198,22 +262,26 @@ describe('composeTemplateWithDonor', () => {
     expect(composeTemplateWithDonor(snapshot, master, investmentData)).toBeNull();
   });
 
-  it('keeps a static page of the chosen template in front of the body, and drops only the blank ones', () => {
+  it('keeps a static page of the chosen template in front of the body, behind whichever cover leads', () => {
     const withStatic = {
       ...firstHomeBuyer,
       pages: [firstHomeBuyer.pages[0], { id: 'static', name: 'How to read this', blocks: [{ id: 's', type: 'text-block', props: { heading: 'How to read this', body: 'Static prose.' } }] }, ...firstHomeBuyer.pages.slice(1)],
     };
     const result = composeTemplateWithDonor(withStatic, master, investmentData)!;
-    expect(result.kept.map((p) => p.name)).toEqual(['Cover', 'How to read this', 'Important information']);
-    expect(result.dropped.map((p) => p.name)).toEqual(['What you can do', 'The real cost']);
+    expect(result.kept.map((p) => p.name)).toEqual(['How to read this', 'Important information']);
+    expect(result.dropped.map((p) => p.name)).toEqual(['Cover', 'What you can do', 'The real cost']);
+    // The donor's cover still LEADS: a kept front page never prints before page 1.
+    const names = (result.schema.pages as Array<{ name: string }>).map((p) => p.name);
+    expect(names.slice(0, 2)).toEqual(['Cover', 'How to read this']);
   });
 
   it('never leaves two pages with one id', () => {
-    const clash = { ...master, pages: master.pages.map((p) => (p.id === 'm-contents' ? { ...p, id: 'seed-page-2' } : p)) };
+    // The donor's contents page arrives wearing the kept closing page's id.
+    const clash = { ...master, pages: master.pages.map((p) => (p.id === 'm-contents' ? { ...p, id: 'seed-page-n' } : p)) };
     const result = composeTemplateWithDonor(firstHomeBuyer, clash, investmentData)!;
     const ids = (result.schema.pages as Array<{ id: string }>).map((p) => p.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(ids).toContain('seed-page-2-body');
+    expect(ids).toContain('seed-page-n-chosen');
   });
 });
 

@@ -25,9 +25,13 @@
  * does not tune it.
  *
  * **Nothing about what may count.** The forward-only input policy still rules
- * on Location: its three inputs are `requires_repair` and are refused until a
- * caller declares them verified, so Location is null today and the composite
- * renormalises without it — disclosed, never defaulted.
+ * on Location: its three inputs are `requires_repair` and count only when
+ * declared verified for the run. Since IPV 1.1.0 (16 Sep 2026) that
+ * declaration is DERIVED by the scoring service from the enrichment's own
+ * RF-7.2B acquisition stamp — subject-matched, stage-proven readings verify
+ * (`locationInputVerification.pure.ts`); a stampless legacy enrichment
+ * verifies nothing, and Location then stays null and disclosed exactly as
+ * before, with regeneration (which re-acquires with a stamp) as the remedy.
  *
  * **Nothing stored.** No historical row is recomputed. A score issued under V1
  * keeps its stamp; a withholding keeps its stamp; the next run of a report is
@@ -98,7 +102,7 @@ import { dwellingTypeFor } from './domainEvidence.pure.ts';
 export { dwellingTypeFor };
 
 /** Bumped whenever the projection or the activation conditions change. */
-export const SCORING_V2_PRODUCTION_VERSION = '1.0.0';
+export const SCORING_V2_PRODUCTION_VERSION = '1.1.0';
 
 /**
  * The activation record. Editing it is the decision; nothing reads an
@@ -392,10 +396,19 @@ export function describeGaps(
           : 'No purchase price is established for this property.';
         remedy = 'A recorded rent (rental evidence) and purchase price on the report.';
         break;
-      case 'location':
-        detail = 'Location inputs (walk score, commute, schools) are refused by the input policy until the location service is repaired (SCORING_INPUT_INTEGRITY_CLOSEOUT.md).';
-        remedy = 'Repair the location measurements, then declare them verified on the scoring request.';
+      case 'location': {
+        const presentedLoc = presentedFor('location', input);
+        const verifiedLoc = input.verifiedInputs ?? [];
+        detail = presentedLoc.length === 0
+          ? 'No location readings (walk score, commute, schools) were presented for this run.'
+          : `Location readings were presented (${presentedLoc.join(', ')}) but not verified: the `
+            + 'enrichment carries no subject-matched RF-7.2B acquisition stamp for them '
+            + `(${verifiedLoc.length ? `only ${verifiedLoc.join(', ')} verified` : 'none verified'}; `
+            + 'locationInputVerification.pure.ts).';
+        remedy = 'Regenerate the report: the location service re-acquires the enrichment with its '
+          + 'acquisition stamp (RF-7.2B), and stamped, stage-proven readings verify automatically.';
         break;
+      }
       case 'risk':
         detail = result.risk.eligibility.reason;
         remedy = 'Answered property-risk questions from the per-class schema (hazard, planning, condition, strata).';

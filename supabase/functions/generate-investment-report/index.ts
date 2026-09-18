@@ -3710,6 +3710,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               },
               marketEvidence: { points: marketPoints, providersConsulted, providersUnavailable },
               evidenceWithheldReason,
+              // IPV-1.1.0 — the subject the location enrichment was acquired
+              // for (RF-7.2B), restated so the scoring service can check the
+              // enrichment's acquisition stamp names THIS property before
+              // Location's inputs may count. The service derives the
+              // verification itself; nothing here asserts trust.
+              locationSubject: enrichmentSubject,
             })
           });
           

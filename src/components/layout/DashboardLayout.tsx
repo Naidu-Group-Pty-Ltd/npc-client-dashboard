@@ -14,6 +14,7 @@ import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
 import { PaymentGateOutlet } from '@/components/billing/PaymentGateOutlet';
+import { AnnouncementHost } from '@/components/announcements/AnnouncementHost';
 import { PaymentGateBanner } from '@/components/billing/PaymentGateScreen';
 import { PlanChangeBanner } from '@/components/billing/PlanChangeBanner';
 import { FeedbackPromptBanner } from '@/components/billing/FeedbackPromptBanner';
@@ -42,6 +43,7 @@ export function DashboardLayout() {
             <ErrorBoundary>
               <DashboardPageShell>
                 <PaymentGateBanner />
+                <AnnouncementHost />
                 <PlanChangeBanner />
                 <FeedbackPromptBanner />
                 <TokenBalanceBanner />
@@ -79,6 +81,7 @@ export function DashboardLayout() {
               <ErrorBoundary>
                 <DashboardPageShell>
                   <PaymentGateBanner />
+                  <AnnouncementHost />
                   <PlanChangeBanner />
                   <FeedbackPromptBanner />
                   <TokenBalanceBanner />

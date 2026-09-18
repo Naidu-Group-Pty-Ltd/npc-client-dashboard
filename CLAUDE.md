@@ -1587,7 +1587,12 @@ rule the crime evidence answers to — so an unresolved geography seeks nothing
 and says so. And **Domain's licensing is `unverified` until the rights
 follow-up is answered**: the engine scores on the points and the client-facing
 evidence statement withholds their provenance; declaring it licensed is a
-decision with a document behind it, not a default.
+decision with a document behind it, not a default. Since IPV 1.1.0 (16 Sep
+2026), **Location's verification is derived from the enrichment's own RF-7.2B
+acquisition stamp** (`locationInputVerification.pure.ts`) — subject-matched
+and stage-proven readings count, a stampless legacy enrichment verifies
+nothing, and a request field asserting verification is never read; Risk stays
+null under `propertyRiskSchema.pure.ts`'s recorded decision.
 
 **The Domain 403 is a portal setting, not a mystery.** Re-measured from the
 production egress on 15 Sep 2026: the key is set and recognised, and both
@@ -1721,9 +1726,15 @@ near-empty pages as a `succeeded` render: it binds a sample-preset vocabulary
 existing guards catch a static copy and an empty context, not the wrong
 vocabulary. Coverage is now measured **against the data the adapter built**,
 never a sample, and the rule is narrow on purpose: a template is composed only
-when it binds content and **none** of it resolves — its cover, closing and
-static pages kept, its blank pages left out, the body drawn from a donor that
-carries the report under the chosen template's tokens. A template that binds
+when it binds content and **none** of it resolves — its closing and static
+pages kept, its blank pages left out, the body drawn from a donor that
+carries the report under the chosen template's tokens. **The cover must speak
+for THIS report**: static cover prose is invisible to the coverage measure,
+which is how "FIRST HOME / Your First Property" shipped as page 1 of an
+Investment report — a chosen cover is kept only where it resolves a binding
+outside the tenant (`org`, `brand`) and addressee (`client`) namespaces, and
+otherwise the donor's cover leads under the merged tokens
+(`coverNamesThisReport`). A template that binds
 nothing is a brochure and one that resolves a single field is the author's
 document; both are drawn as designed. The ranking is not a safe donor on its
 own (`resolve_report_template` ranks a person's own templates first, so the

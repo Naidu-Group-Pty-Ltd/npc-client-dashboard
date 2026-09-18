@@ -503,16 +503,34 @@ author's document and is drawn as designed, blank pages included — that is
 their call, and the toast is the place to say so.
 
 `templateComposition.pure.ts` is what happens instead of the empty document.
-The chosen template is honoured as a **design**: its cover and closing pages
-are kept, its pages of static prose are kept, its pages that bind content and
-resolve none of it are left out, and the report body is drawn from a **donor**
-— a published template for the format that carries it — under the chosen
+The chosen template is honoured as a **design**: its closing pages are kept,
+its pages of static prose are kept, its pages that bind content and resolve
+none of it are left out, and the report body is drawn from a **donor** — a
+published template for the format that carries it — under the chosen
 template's own tokens. Both kinds of template share one `TokensSchema`, which
 is what makes the palette portable; a token the chosen template does not
 declare falls back to the donor's, so a block naming `token:info` never prints
 the literal. A kept label whose every binding is absent is blanked rather than
 half-printed ("Prepared for" with nothing after it). The donor's pages are
 never rewritten: their conditionals still decide what prints.
+
+**The cover must speak for THIS report** (measured 16 Sep 2026). The first
+composition kept the chosen cover unconditionally, and an Investment report
+for 85 Bronze Street, Maryborough shipped with page 1 reading "FIRST HOME /
+Your First Property" — static words the coverage measure cannot judge,
+because text between bindings is invisible to it. That cover's only bindings
+are `org.markMono` (the tenant's mark, which resolves on every report of
+every format) and `client.name` (the addressee, which resolves on every
+format prepared for that person), so nothing on it could ever say which
+document it fronts. The rule (`coverNamesThisReport`): a chosen cover is kept
+only where it resolves at least one binding outside the tenant (`org`,
+`brand`) and addressee (`client`) namespaces — `report.title`,
+`property.address`, a content field. A cover that cannot goes with the blank
+pages, and the donor's cover **leads** the composed document under the merged
+tokens — the choice still decides how page 1 looks; the record decides what
+it says. `CompositionResult.coverFrom` records whose cover leads, and the
+toast says so ("the cover and report body were drawn from … in your
+template's palette").
 
 The donor is found by `findBodyDonor` in the route: the ranking's own answer
 first — except that `resolve_report_template` ranks a person's own templates

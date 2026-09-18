@@ -70,17 +70,28 @@
  * and it is not a label change inside this service either — see
  * {@link LegacyScoringAuthority}.
  *
- * **The field is not wired to the live request path.** Measured 2026-09-11:
- * `transformInputData` builds its result field by field from the nested
- * request shape and does not carry `verifiedInputs` through, so the only way
- * to set it is the flat-passthrough branch — and no caller in this repository
- * sets it by either route. It exists so the policy can be exercised directly
- * in tests and internal diagnostics. Wiring it to a caller would be a change
- * with a decision behind it, not a detail.
+ * **The field is wired to exactly one live path, and it is derived, never
+ * read.** Until 16 September 2026 nothing set it: `transformInputData` (V1)
+ * does not carry it and `productionInputFrom` (V2) passed `[]`, with this
+ * header recording that wiring it needed "the repair of the location service,
+ * with a decision behind it". Both arrived. The repair is the measured
+ * location chain — granularity-gated geocoding
+ * (`GEOCODING_WITHOUT_GOOGLE.md`), coordinate-true amenities from the OSM
+ * register or Places, a real commute route (OSRM or the Distance Matrix) —
+ * with every acquisition stamped by RF-7.2B with its subject and stage
+ * outcomes. The decision is the platform owner's instruction of 16 September
+ * 2026 that a measured run stop scoring as partial. So
+ * `productionInputFrom` now DERIVES `verifiedInputs` from that acquisition
+ * stamp (`locationInputVerification.pure.ts`): subject-matched, stage-proven
+ * readings verify; a stampless enrichment — every row persisted before
+ * RF-7.2B — verifies nothing and scores exactly as before. The request
+ * field itself is still never trusted: a caller cannot assert verification,
+ * because the evidence travels with the enrichment object, not the request.
+ * V1's path is untouched and still cannot grade.
  */
 
 /** Bumped whenever a class or a rule changes. Stamped on every new score. */
-export const SCORING_INPUT_POLICY_VERSION = '1.0.0';
+export const SCORING_INPUT_POLICY_VERSION = '1.1.0';
 
 /**
  * How an input earns its place in a score.
@@ -106,7 +117,12 @@ export const INPUT_CLASSES: Readonly<Record<string, InputClass>> = {
   weeklyRent: 'operator_entered',
   cashFlow: 'operator_entered',
   lvr: 'operator_entered',
-  // Measured, but measured wrongly — see the integrity closeout.
+  // Measured wrongly before the location repair (the integrity closeout).
+  // The class deliberately stays `requires_repair`: what changed is that a
+  // run whose enrichment carries a subject-matched RF-7.2B acquisition stamp
+  // is declared verified per run (`locationInputVerification.pure.ts`), so a
+  // stamped, stage-proven reading counts and a stampless legacy one still
+  // cannot.
   walkScore: 'requires_repair',
   commuteTimeCBD: 'requires_repair',
   schoolsNearby: 'requires_repair',

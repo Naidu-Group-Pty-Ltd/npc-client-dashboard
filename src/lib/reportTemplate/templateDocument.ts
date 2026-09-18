@@ -190,17 +190,24 @@ export function notifyTemplateDrawnInBrowser(detail: string, cause?: string): vo
  */
 export function notifyTemplateComposed(composed: {
   kept: string[]; dropped: string[]; bodyPages: number; donorName: string | null;
+  coverFrom: 'chosen' | 'donor' | 'none';
 }): void {
+  const donor = composed.donorName ?? "the format's default template";
   const kept = composed.kept.length
     ? `its ${composed.kept.join(' and ')} ${composed.kept.length === 1 ? 'page was' : 'pages were'} kept`
     : 'none of its pages could be kept';
   const dropped = composed.dropped.length
-    ? `, ${composed.dropped.length === 1 ? 'one page' : `${composed.dropped.length} pages`} that bound nothing of this report `
+    ? `, ${composed.dropped.length === 1 ? 'one page' : `${composed.dropped.length} pages`} that named nothing of this report `
       + `${composed.dropped.length === 1 ? 'was' : 'were'} left out`
     : '';
+  // The cover is the page a person judges the document by, so when the
+  // donor's cover leads — the chosen one could not name this report — the
+  // toast says so rather than leaving page 1's provenance to be guessed.
+  const carried = composed.coverFrom === 'donor'
+    ? `the cover and report body were drawn from ${donor} in your template's palette`
+    : `the report body was drawn in its palette from ${donor}`;
   toast.info('Your chosen template was composed around this report', {
-    description: `Its pages bind none of this report's content, so ${kept}${dropped}, and the report body `
-      + `was drawn in its palette from ${composed.donorName ?? "the format's default template"}.`,
+    description: `Its pages bind none of this report's content, so ${kept}${dropped}, and ${carried}.`,
     duration: 15_000,
   });
 }

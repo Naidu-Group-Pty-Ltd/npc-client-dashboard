@@ -161,10 +161,20 @@ async function loadSlice(
   const windowMs = () => deadlineAt - Date.now() - 5_000;
 
   try {
+    const filters = AMENITY_FILTERS[category];
+    // The union-first window is a HOLD-BACK for the per-pair ladder below,
+    // and a category of ONE tag pair has no ladder to hold anything back
+    // for: its union IS its only query, so the shorter window buys nothing
+    // and costs the difference. Measured 16 Sep 2026, the nightly sweep
+    // under a slow mirror (~45-50 s a request): VIC and QLD `schools` —
+    // one pair each — were aborted at 50 s and the slice failed outright,
+    // where the 100 s ceiling they were entitled to would have carried
+    // them. A single-pair category therefore gets the whole ceiling on its
+    // first and only attempt.
     let fetched = await fetchSliceCsv(
       supabase,
       buildSliceQuery(category, state),
-      Math.min(UNION_FIRST_WINDOW_MS, windowMs()),
+      Math.min(filters.length > 1 ? UNION_FIRST_WINDOW_MS : FETCH_CEILING_MS, windowMs()),
     );
 
     // A union of several tag pairs can outgrow the granted window while
@@ -172,7 +182,6 @@ async function loadSlice(
     // the four-way transit union). Ask per pair, merge, and demand every
     // pair succeed — a category missing one pair's rows would undercount
     // as confidently as a complete one.
-    const filters = AMENITY_FILTERS[category];
     if ('error' in fetched && filters.length > 1) {
       console.warn(`[amenity-register-ingest] ${category}/${state} union failed (${fetched.error}); retrying per tag pair`);
       const parts: string[] = [];

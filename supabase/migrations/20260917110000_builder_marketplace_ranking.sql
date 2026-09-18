@@ -121,7 +121,17 @@ CREATE INDEX IF NOT EXISTS builder_network_stock_items_rank_idx
  * both and fails when they drift, because two numbers that must agree and are
  * written twice is how a page comes to be laid out two different ways.
  */
-CREATE OR REPLACE VIEW public.builder_network_stock_ranked AS
+/*
+ * `security_invoker = true`, because a view without it reads its base tables
+ * with the OWNER's rights and the caller's RLS never applies. This one selects
+ * the whole mirror, so owner rights here would hand anyone who can reach the
+ * view every builder's stock regardless of what `builder_network_stock_items`
+ * permits them — and it would do it silently, looking exactly like a view that
+ * works. The policies on the base table are the access rule; this view is a
+ * sort over it and must not be a way around it.
+ */
+CREATE OR REPLACE VIEW public.builder_network_stock_ranked
+WITH (security_invoker = true) AS
 SELECT
   i.*,
   COALESCE(i.rank_builder_band, 2)::smallint AS ranked_band,

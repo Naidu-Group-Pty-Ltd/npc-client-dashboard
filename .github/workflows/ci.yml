@@ -515,6 +515,13 @@ jobs:
       # from the prime while the ledger said their version had run.
       - name: A migration version names exactly one file
         run: node scripts/security/check-migration-version-collisions.mjs
+      # A version is the order a migration RUNS in, and this tree's versions run
+      # months ahead of the wall clock — so today's timestamp lands in the middle
+      # of applied history. A file numbered 20260917110000 altered a table created
+      # by 20261123000000 and reached a merged pull request: every gate here reads
+      # migrations one at a time, and that fault is in the order of two.
+      - name: A migration runs after the objects it needs
+        run: npm run check:migration-order
 
       # Catalog introspection brings a tenant up and never drops, so an object
       # these migrations DELETE survives on every existing tenant while every

@@ -355,15 +355,76 @@ sequence numbers, not dates. On any rebuild from the repo the migration would
 have run against a table that did not exist yet. It only applied during
 verification because the prerequisites were applied by hand first, which is
 exactly the shape of a test that proves less than it appears to. It is
-`20261202090000` now, after the last migration in the tree. **Nothing in either
-repo's CI checks that a migration sorts after what it depends on** — this was
-found by reading, not by a gate.
+`20261202090000` now, after the last migration in the tree. That gap is closed now, in all six
+repositories: `check-migration-dependency-order.mjs` walks every migration in
+version order and fails when a statement runs before the object it needs.
+See §"The gate that was missing" below.
 
 The two that generalise: **a string the compiler must read cannot be composed**,
-and **the gate is the evidence** — but only where a gate exists. Three of these
-six passed a parse check, a lint and a local build; one passed a full green CI
-run on the network, because the network has no collision gate; and the ordering
-fault would have passed every gate either repo owns.
+and **the gate is the evidence — but only where a gate exists.** Three of these
+six passed a parse check, a lint and a local build. One passed a full green CI
+run on the network, because the network had no collision gate. And the ordering
+fault would have passed every gate every one of these repositories owned.
+
+Both of those holes are closed: the collision gate is ported to the network
+with an empty baseline, and the dependency-order gate below now runs in all
+six — the four deployments, the network and Mission Control.
+
+## The gate that was missing
+
+The ordering fault above was found by reading a directory listing. Nothing in
+any of these repositories could have found it, because every migration gate
+here reads one file at a time and that fault is in the ORDER of two.
+`check-migration-dependency-order.mjs` is the gate that closes it, in all six
+repositories: `scripts/security/` on the four deployments, `scripts/db/` on the
+network and `scripts/` on Mission Control, each following where that repository
+already keeps this kind of script.
+
+**What it judges.** Every migration in version order, against a timeline of
+CREATE and DROP events built from the whole corpus. A statement that needs an
+object not live at that point is a finding, carrying the file, the line, the
+form of the reference and the migration that creates it later.
+
+**Liveness, not first creation.** An object dropped and recreated is absent in
+between, so events carry offsets and are compared within a file as well as
+between files — which is what makes the idempotent `drop … if exists` followed
+by `create`, most of this corpus, resolve correctly.
+
+Two rules keep it usable, and both are about refusing to judge:
+
+**A PL/pgSQL body is not a reference.** It is stored as text and resolved when
+it RUNS, not when the function is created, so a body naming a table a later
+migration creates is correct and ordinary. Bodies of any dollar-quote tag are
+stripped before anything is read, along with comments and string literals.
+Without that, every real finding drowns.
+
+**An object no migration creates is unjudgeable, never absent.** These
+migrations are not the only thing that has ever created an object in these
+databases — six functions and three triggers ran in production with no file at
+all until `20260917095000` captured them — so silence about an object means
+the gate cannot say, and it says nothing.
+
+**Every semantic rule was measured, not recalled.** The first version assumed
+`drop policy if exists p on t` required `t`. It does not: the guard covers the
+relation, not just the policy, and that single assumption produced 88 findings
+on this corpus, every one of them wrong. `alter table if exists` behaves the
+same way. Thirteen forms were probed against PostgreSQL 16 and the eleven that
+genuinely require are the ones counted — `create policy`, `create trigger`,
+`create index … on`, `alter table`, `references`, `insert`/`update`/`delete`,
+`grant … on`, `comment on`, `alter sequence`, `alter type`, and a view body,
+which IS resolved as the view is created.
+
+**It is a ratchet.** Thirty-three findings are frozen on the clones and none on
+the network: six 2025-01 RLS and rollback files whose own headers record that
+they could never have run, plus two genuine 2026 ordering faults
+(`aml_screening_repair` against `aml.party_screening_subjects`, and an index on
+`workflow_trigger_events`). A frozen finding that stops firing fails too, so
+the baseline cannot only grow.
+
+It was checked in all three directions before being trusted: silent on the
+corpus, failing with file and line when the real defect is reintroduced, and
+failing when a frozen entry goes stale. The spec was checked the same way —
+breaking the body stripping, or the `if exists` rule, each fails it.
 
 ## Operating it
 

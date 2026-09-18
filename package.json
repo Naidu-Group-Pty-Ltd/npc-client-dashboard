@@ -173,7 +173,8 @@
     "test:e2e:report-template-picker": "vite build --config tests-e2e/report-template-picker/harness/vite.config.ts && playwright test tests-e2e/report-template-picker",
     "security:fabricated-data": "node scripts/security/check-fabricated-data.mjs",
     "verify:journey": "node scripts/verify/report-journey/run.mjs",
-    "verify:pdf": "node scripts/verify/report-pdf/measure.mjs"
+    "verify:pdf": "node scripts/verify/report-pdf/measure.mjs",
+    "check:migration-order": "node --max-old-space-size=4096 scripts/security/check-migration-dependency-order.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

@@ -82,8 +82,31 @@ export const STOCK_ITEM_SELECT = `
  * they cannot act on and a builder's measured weaknesses to every agency that
  * sells their stock.
  */
+/*
+ * Written out rather than composed from `STOCK_ITEM_SELECT`, and it has to
+ * stay that way. supabase-js derives a query's row type by parsing the select
+ * at the TYPE level, which it can only do while the string has a literal
+ * type — and any substitution that is not itself literal widens the whole
+ * template to `string`. `${STOCK_ITEM_SELECT.trim()}` is such a substitution
+ * (`.trim()` returns `string`), which cost this file sixteen type errors and
+ * every row on the marketplace its type.
+ *
+ * The duplication that buys back is held by `builderMarketplaceOrder.spec.ts`,
+ * which fails if this select stops carrying every column `STOCK_ITEM_SELECT`
+ * names. A test is a cheaper guard than a template the compiler cannot read.
+ */
 export const RANKED_ITEM_SELECT = `
-  ${STOCK_ITEM_SELECT.trim()},
+  id, organisation_id, upload_id, first_upload_id, created_by_builder_user_id,
+  builder_project_id, builder_unit_id, external_reference,
+  development_name, project_name, address_line, suburb, state, postcode,
+  lot_number, unit_number, bedrooms, bathrooms, car_spaces, property_type,
+  land_size_sqm, building_size_sqm, price, price_display,
+  availability_status, expected_completion, description,
+  lifecycle_status, enrichment_status, enriched_at, primary_image_id,
+  created_at, updated_at, last_seen_at,
+  image_work_stage,
+  house_design:source_row->>house_design,
+  manual_stats,
   rank_item_score, rank_item_confidence,
   rank_builder_score, rank_builder_confidence, rank_builder_band,
   rank_placement_kind, rank_placement_position, rank_placement_tier,

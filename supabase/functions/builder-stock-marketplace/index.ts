@@ -170,7 +170,14 @@ Deno.serve(async (req) => {
        * as it did before this shipped rather than reshuffling into an arbitrary
        * order. Absent is never zero.
        */
-      const ordered = (query: ReturnType<typeof supabase.from>) => query
+      /*
+       * `any`, as `withFilters` below and the rest of this runtime already
+       * take these builders: what arrives is a filter builder, and
+       * `ReturnType<typeof supabase.from>` is the QUERY builder it came from,
+       * which carries no `.order`. Naming the wrong one failed to compile and
+       * pushed an `as never` onto the call site to hide it.
+       */
+      const ordered = (query: any) => query
         .order('interleave_bucket', { ascending: true })
         .order('ranked_placement_order', { ascending: true })
         .order('ranked_band', { ascending: true })
@@ -196,7 +203,7 @@ Deno.serve(async (req) => {
       const { data, count, error } = await ordered(withFilters(
         supabase.from('builder_network_stock_ranked')
           .select(RANKED_ITEM_SELECT, { count: 'exact' }),
-      ) as never).range(from, to);
+      )).range(from, to);
       if (error) {
         console.error('[builder-stock-marketplace] list failed', error.message);
         return json({ error: 'Builder stock could not be loaded.' }, 500);
@@ -223,9 +230,16 @@ Deno.serve(async (req) => {
       const pinned = (pinnedRead.data ?? []) as unknown as RankedRow[];
       const pinnedIds = new Set(pinned.map((row) => row.id));
 
-      const body = ((data ?? []) as unknown as RankedRow[])
+      /*
+       * NOT `body`. That name is the request payload, bound at the top of the
+       * handler and read five lines into this branch — shadowing it here put
+       * those reads in the temporal dead zone of this declaration, so every
+       * `list_stock` call would have thrown `ReferenceError` before it reached
+       * a query. The compiler saw it; a parse check could not.
+       */
+      const unpinned = ((data ?? []) as unknown as RankedRow[])
         .filter((row) => !pinnedIds.has(row.id));
-      const paged = splicePinsIntoPage(body, pinned, from, pageSize);
+      const paged = splicePinsIntoPage(unpinned, pinned, from, pageSize);
 
       const records = await decorate(supabase, paged as never[]);
       return json({

@@ -159,3 +159,52 @@ describe('promoted slots are capped, and the cap is not a revocation', () => {
     expect(promotedOrganisations(rows)).toEqual(promotedOrganisations([...rows].reverse()));
   });
 });
+
+describe('the ranked select is a literal, and it carries the whole base select', () => {
+  const projection = readFileSync(
+    join(process.cwd(), 'supabase/functions/_shared/builderStock/projection.pure.ts'),
+    'utf8',
+  );
+
+  const literal = (name: string): string => {
+    const m = projection.match(new RegExp(`export const ${name} = \`\\n([\\s\\S]*?)\\n\`;`));
+    if (!m) throw new Error(`${name} is not a plain template literal in projection.pure.ts`);
+    return m[1];
+  };
+
+  const columns = (body: string): string[] => body
+    .split(',')
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  /*
+   * supabase-js parses the select at the TYPE level to derive a row type, and
+   * it can only do that while the string has a literal type. One non-literal
+   * substitution — `${STOCK_ITEM_SELECT.trim()}` was the one that shipped —
+   * widens the template to `string`, the row type degrades to
+   * `GenericStringError`, and every typed read of this view stops compiling.
+   * So the select may hold no substitution at all.
+   */
+  it('RANKED_ITEM_SELECT interpolates nothing', () => {
+    expect(literal('RANKED_ITEM_SELECT')).not.toMatch(/\$\{/);
+  });
+
+  // The price of that literal is a duplicated column list. This is the guard.
+  it('carries every column STOCK_ITEM_SELECT names', () => {
+    const base = columns(literal('STOCK_ITEM_SELECT'));
+    const ranked = columns(literal('RANKED_ITEM_SELECT'));
+    expect(base.length).toBeGreaterThan(0);
+    for (const column of base) expect(ranked).toContain(column);
+  });
+
+  it('adds the rank columns the view publishes and nothing is left behind', () => {
+    const ranked = columns(literal('RANKED_ITEM_SELECT'));
+    for (const column of [
+      'rank_item_score', 'rank_item_confidence', 'rank_builder_score',
+      'rank_builder_confidence', 'rank_builder_band', 'rank_placement_kind',
+      'rank_placement_position', 'rank_placement_tier', 'rank_disclose',
+      'rank_version', 'rank_computed_at', 'ranked_band', 'ranked_item_score',
+      'ranked_placement_kind', 'ranked_placement_order', 'interleave_bucket',
+    ]) expect(ranked).toContain(column);
+  });
+});

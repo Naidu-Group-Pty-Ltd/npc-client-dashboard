@@ -43,9 +43,12 @@ import { rankImage } from '../_shared/builderStock/imagePriority.pure.ts';
 import { readAllRows } from '../_shared/builderStock/pagedRead.ts';
 import {
   COMMAND_SELECTION_SELECT, COMMAND_SELECTION_STATUSES, STOCK_IMAGE_SELECT,
-  STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
+  RANKED_ITEM_SELECT, STOCK_ITEM_SELECT, isSelectableAvailability, stockPagination,
 } from '../_shared/builderStock/projection.pure.ts';
 import { applyManualStatsToAll } from '../_shared/builderStock/manualStats.pure.ts';
+import {
+  promotedOrganisations, splicePinsIntoPage, type RankedRow,
+} from '../_shared/builderStock/marketplaceOrder.pure.ts';
 import {
   derivativeToServe, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
@@ -152,33 +155,101 @@ Deno.serve(async (req) => {
       const availability = cleanText(body.availability_status, 40);
       const state = cleanText(body.state, 8);
 
-      let query = supabase
-        .from('builder_network_stock_items')
-        .select(STOCK_ITEM_SELECT, { count: 'exact' })
-        .eq('lifecycle_status', 'active');
-      if (organisationId) query = query.eq('organisation_id', organisationId);
-      if (availability) query = query.eq('availability_status', availability);
-      if (state) query = query.eq('state', state);
-      if (search) {
-        const escaped = search.replace(/[%,()]/g, ' ');
-        query = query.or(
-          ['address_line', 'suburb', 'development_name', 'project_name', 'external_reference']
-            .map((column) => `${column}.ilike.%${escaped}%`).join(','),
-        );
-      }
-
-      const { data, count, error } = await query
+      /*
+       * THE ORDER IS THE NETWORK'S, AND THE PAGE SHAPE IS THIS DEPLOYMENT'S.
+       *
+       * `builder_network_stock_ranked` is the mirror plus the interleave bucket
+       * that stops one builder owning a page — a window function, so it is part
+       * of the ordering rather than a pass over rows that have already been
+       * fetched, which could not help on a page that is already one builder's.
+       * It drops exactly one thing: a property an operator explicitly
+       * suppressed on the network.
+       *
+       * A row with no rank yet sorts at the NEUTRAL band with `created_at DESC`
+       * behind it, so a deployment the ranking has not reached behaves exactly
+       * as it did before this shipped rather than reshuffling into an arbitrary
+       * order. Absent is never zero.
+       */
+      /*
+       * `any`, as `withFilters` below and the rest of this runtime already
+       * take these builders: what arrives is a filter builder, and
+       * `ReturnType<typeof supabase.from>` is the QUERY builder it came from,
+       * which carries no `.order`. Naming the wrong one failed to compile and
+       * pushed an `as never` onto the call site to hide it.
+       */
+      const ordered = (query: any) => query
+        .order('interleave_bucket', { ascending: true })
+        .order('ranked_placement_order', { ascending: true })
+        .order('ranked_band', { ascending: true })
+        .order('ranked_item_score', { ascending: false })
         .order('created_at', { ascending: false })
-        .range(from, to);
+        .order('id', { ascending: true });
+
+      const withFilters = (query: any) => {
+        let next = query.eq('lifecycle_status', 'active');
+        if (organisationId) next = next.eq('organisation_id', organisationId);
+        if (availability) next = next.eq('availability_status', availability);
+        if (state) next = next.eq('state', state);
+        if (search) {
+          const escaped = search.replace(/[%,()]/g, ' ');
+          next = next.or(
+            ['address_line', 'suburb', 'development_name', 'project_name', 'external_reference']
+              .map((column) => `${column}.ilike.%${escaped}%`).join(','),
+          );
+        }
+        return next;
+      };
+
+      const { data, count, error } = await ordered(withFilters(
+        supabase.from('builder_network_stock_ranked')
+          .select(RANKED_ITEM_SELECT, { count: 'exact' }),
+      )).range(from, to);
       if (error) {
         console.error('[builder-stock-marketplace] list failed', error.message);
         return json({ error: 'Builder stock could not be loaded.' }, 500);
       }
 
-      const records = await decorate(supabase, data ?? []);
+      /*
+       * PINS ARE ABSOLUTE POSITIONS, SO THEY ARE PLACED AFTER THE PAGE IS CUT.
+       *
+       * "This builder sits at number one until the end of November" means
+       * position one in the whole marketplace, not first among pinned rows — so
+       * a pin at 27 has to land on whichever page holds index 26. They are read
+       * separately (there are never many), spliced at their absolute positions
+       * with the page's own offset applied, and the page is re-cut to its size
+       * so the offsets of every later page stay true.
+       *
+       * A pinned row is excluded from the body query it would otherwise appear
+       * in twice.
+       */
+      const pinnedRead = await withFilters(
+        supabase.from('builder_network_stock_ranked')
+          .select(RANKED_ITEM_SELECT)
+          .eq('rank_placement_kind', 'pinned'),
+      ).order('rank_placement_position', { ascending: true });
+      const pinned = (pinnedRead.data ?? []) as unknown as RankedRow[];
+      const pinnedIds = new Set(pinned.map((row) => row.id));
+
+      /*
+       * NOT `body`. That name is the request payload, bound at the top of the
+       * handler and read five lines into this branch — shadowing it here put
+       * those reads in the temporal dead zone of this declaration, so every
+       * `list_stock` call would have thrown `ReferenceError` before it reached
+       * a query. The compiler saw it; a parse check could not.
+       */
+      const unpinned = ((data ?? []) as unknown as RankedRow[])
+        .filter((row) => !pinnedIds.has(row.id));
+      const paged = splicePinsIntoPage(unpinned, pinned, from, pageSize);
+
+      const records = await decorate(supabase, paged as never[]);
       return json({
         success: true,
         records,
+        /*
+         * WHICH BUILDERS HOLD THE PROMOTED SLOTS IS DECIDED OVER THE WHOLE SET,
+         * not per page, so it does not change as an adviser pages through.
+         */
+        promoted_organisations: promotedOrganisations(pinned.concat(body)),
         pagination: {
           page, page_size: pageSize, total: count ?? 0,
           total_pages: Math.max(1, Math.ceil((count ?? 0) / pageSize)),

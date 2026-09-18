@@ -114,7 +114,51 @@ export interface BuilderStockImage {
   created_at: string;
 }
 
-export interface BuilderStockItem {
+/**
+ * Why this property is where it is in the marketplace.
+ *
+ * Published by the Builders Network and mirrored — a clone computes none of it.
+ * `disclose` is the one field a card must honour: it is true exactly when
+ * something other than merit decided the position, and the chip it draws is
+ * what an adviser reads before recommending the property to a client.
+ *
+ * Every field is optional because every mirror row predates the ranking and
+ * because an unranked property is a real, ordinary state rather than a fault.
+ */
+export interface BuilderStockRank {
+  rank_item_score?: number | null;
+  rank_item_confidence?: number | null;
+  rank_builder_score?: number | null;
+  rank_builder_confidence?: number | null;
+  rank_builder_band?: number | null;
+  rank_placement_kind?: 'organic' | 'promoted' | 'pinned' | 'suppressed' | null;
+  rank_placement_position?: number | null;
+  rank_placement_tier?: string | null;
+  rank_disclose?: boolean | null;
+  rank_version?: number | null;
+  rank_computed_at?: string | null;
+}
+
+/**
+ * The chip a card draws, or null where there is nothing to state.
+ *
+ * DATABASE VOCABULARY NEVER REACHES THE OPERATOR — the same rule the partner
+ * roster answers to. `promoted` is a column value; "Partner" is what an adviser
+ * can act on. And a chip with nothing to say is not drawn at all rather than
+ * drawn empty.
+ */
+export function stockPlacementLabel(item: BuilderStockRank): string | null {
+  if (!item.rank_disclose) return null;
+  if (item.rank_placement_kind === 'pinned') return 'Featured placement';
+  if (item.rank_placement_kind === 'promoted') {
+    return item.rank_placement_tier === 'featured' ? 'Featured partner'
+      : item.rank_placement_tier === 'premium' ? 'Premium partner'
+      : 'Partner';
+  }
+  return null;
+}
+
+export interface BuilderStockItem extends BuilderStockRank {
   id: string;
   organisation_id: string;
   upload_id: string | null;

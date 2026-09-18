@@ -8,7 +8,7 @@
  * that the cap written in TypeScript and the cap written in the ordering view's
  * SQL are the same number.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -23,10 +23,26 @@ import {
 import { stockPlacementLabel } from '../builderStock';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
-const MIGRATION = join(
-  REPO_ROOT, 'supabase', 'migrations',
-  '20260917110000_builder_marketplace_ranking.sql',
-);
+const MIGRATIONS = join(REPO_ROOT, 'supabase', 'migrations');
+
+/*
+ * Found by SUFFIX rather than by full name. A migration's version prefix is not
+ * stable — this one was renumbered once already, because the version it first
+ * carried was taken by a migration that had been on `main` for five days, and
+ * one version records one ledger row, so the loser can never be told apart
+ * from applied. A test pinned to the whole filename breaks on that rename and
+ * says nothing about the rule it is actually guarding.
+ *
+ * Exactly one match is asserted, so a file that vanishes or is duplicated
+ * fails here rather than quietly reading the wrong one.
+ */
+const migrationNamed = (suffix: string): string => {
+  const matches = readdirSync(MIGRATIONS).filter((f) => f.endsWith(suffix));
+  expect(matches, `expected exactly one migration ending ${suffix}`).toHaveLength(1);
+  return join(MIGRATIONS, matches[0]);
+};
+
+const MIGRATION = migrationNamed('_builder_marketplace_ranking.sql');
 
 const row = (id: string, org: string, patch: Partial<RankedRow> = {}): RankedRow => ({
   id, organisation_id: org, rank_placement_kind: 'organic', rank_disclose: false, ...patch,

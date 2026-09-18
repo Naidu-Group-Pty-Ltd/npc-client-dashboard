@@ -2481,7 +2481,7 @@ explicitly suppressed.
 Two findings from the same work, recorded in §"What is asserted" of that doc:
 the **stock-sync producer existed only in production** (six functions, three
 triggers, no file — captured verbatim in
-`20260917090000_capture_stock_sync_producer.sql`, because `baseline-check.mjs`
+`20260917095000_capture_stock_sync_producer.sql`, because `baseline-check.mjs`
 rebuilds from the repo and a rebuilt environment would have come up with the
 mirror wiring absent), and **a builder's stated figures have never crossed to a
 clone** — the payload composer reads `manual_stats->'bedrooms'` where the

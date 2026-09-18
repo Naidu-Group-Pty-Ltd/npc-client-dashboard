@@ -286,7 +286,7 @@ directory* and asserts it matches production's catalog fingerprint, so a rebuilt
 environment — a branch, a restore, a second region — would have come up with the
 mirror wiring absent and every clone's marketplace silently frozen at whatever
 it last received. They are captured verbatim in
-`20260917090000_capture_stock_sync_producer.sql`.
+`20260917095000_capture_stock_sync_producer.sql`.
 
 **A builder's stated figures have never crossed to a clone.** The payload
 composer reads `manual_stats->'bedrooms'`, while the column's own CHECK
@@ -299,9 +299,9 @@ and the fix belongs in its own change with its own test.
 
 ## What the gates caught, and why the local checks could not
 
-Four defects in this work reached CI. Each is worth recording, because none of
-them was visible to anything short of the real gate, and two of them would have
-shipped a broken page.
+Six defects in this work reached CI. Each is worth recording, because none of
+them was visible to anything short of the real gate, and three of them would
+have shipped something broken.
 
 **A composed select string is a row type nothing can read.** supabase-js derives
 a query's row type by parsing the select *at the type level*, which it can only
@@ -338,9 +338,32 @@ that shape, after `DimensionRail`, `TitleBlock` and `bd-chip`. An unused export
 compiles, lints and builds. It is mounted under the confidence figure it
 explains, because that percentage is exactly what it is short for.
 
+**A migration version is a ledger key, and it was taken.** Both halves of this
+work picked a version another migration already held —
+`20260917090000` against `an_activation_opens_a_project` on the network, and
+`20260917110000` against `refresh_active_masters_from_library_v10` on the
+clones, the latter having sat on `main` for five days before this branch
+existed. One version records one ledger row, so the loser can never be told
+apart from applied: it is skipped in silence, for ever. The clones have a gate
+for this (`check-migration-version-collisions.mjs`); **the network does not**,
+which is why its CI went green carrying the same defect.
+
+**And the clone's migration sorted before the table it altered.** It was
+numbered `20260917110000` while `builder_network_stock_items` is created at
+`20261123000000` — this repo's versions run ahead of the wall clock and are
+sequence numbers, not dates. On any rebuild from the repo the migration would
+have run against a table that did not exist yet. It only applied during
+verification because the prerequisites were applied by hand first, which is
+exactly the shape of a test that proves less than it appears to. It is
+`20261202090000` now, after the last migration in the tree. **Nothing in either
+repo's CI checks that a migration sorts after what it depends on** — this was
+found by reading, not by a gate.
+
 The two that generalise: **a string the compiler must read cannot be composed**,
-and **the gate is the evidence**. Three of these four passed a parse check, a
-lint and a local build.
+and **the gate is the evidence** — but only where a gate exists. Three of these
+six passed a parse check, a lint and a local build; one passed a full green CI
+run on the network, because the network has no collision gate; and the ordering
+fault would have passed every gate either repo owns.
 
 ## Operating it
 

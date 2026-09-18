@@ -201,7 +201,21 @@ export function formatCell(value: any, format: CellFormat = 'auto'): string {
   if (format === 'percent') {
     const n = toNumber(value, NaN);
     if (!Number.isFinite(n)) return String(value);
-    return `${(n * (n > 1 ? 1 : 100)).toFixed(1)}%`;
+    /*
+     * The magnitude heuristic reads a RATIO, and a ratio has no sign.
+     *
+     * `n > 1 ? 1 : 100` sends every negative number down the scaling branch,
+     * so a cash-on-cash return of -2.9% printed as **-290.0%** — and the
+     * bigger the loss, the worse the misprint. No convention makes -2.9 mean
+     * -290%; only its magnitude can be a ratio.
+     *
+     * The positive side is untouched, because 0.85 genuinely is ambiguous
+     * between "0.85%" and "85%" and this formatter was written for callers
+     * storing ratios. `bindingResolver`'s `| percent` filter deliberately
+     * does NOT scale — production stores whole-number percent, measured — so
+     * a caller who wants that reading uses the filter.
+     */
+    return `${(n * (Math.abs(n) > 1 ? 1 : 100)).toFixed(1)}%`;
   }
   if (format === 'number') {
     const n = toNumber(value, NaN);

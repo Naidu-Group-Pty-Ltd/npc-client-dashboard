@@ -127,7 +127,25 @@ export function ledgerForInput(input: LoanCalculationInput & { interestRate: num
     annualRatePercent: input.interestRate,
     termYears: input.loanTerm,
     loanType: input.loanType,
-    interestOnlyYears: input.interestOnlyYears ?? 0,
+    /*
+     * Passed through, NOT defaulted.
+     *
+     * This read `input.interestOnlyYears ?? 0`, which turns "no term was
+     * recorded" into "the term is zero" one line before `buildLoanLedger` can
+     * tell the two apart — so the distinction that module draws between an
+     * absence and a recorded zero was unreachable through the only path the
+     * calculator service uses. Measured on the 17 Sep 2026 regeneration of 262
+     * Pallas Street: the operator's overrides said `loanType: 'interest_only'`
+     * and named no term, and the stored row came back
+     * `interestOnlyPeriod: 0`, `interestOnlyPeriodAssumed: false`,
+     * `structure: "Principal and interest over 30 years"` and
+     * `annualPayment: 34,890` — the P&I figure, against $29,900 interest-only.
+     *
+     * `buildLoanLedger` already treats undefined and null as absent and an
+     * explicit 0 as principal and interest, so there is nothing to default
+     * here.
+     */
+    interestOnlyYears: input.interestOnlyYears,
   });
 }
 
@@ -353,9 +371,12 @@ export function calculateLandTax(propertyValue: number, state: string): number {
 export function operatingExpensesFrom(annualCosts: any): number {
   const footed = annualCosts?.totalAnnual;
   if (typeof footed === 'number' && Number.isFinite(footed)) return footed;
+  // All EIGHT components `calculateAnnualCosts` writes. `lettingFees` was
+  // missing, so a row carrying no footed total was charged seven of its eight
+  // costs and its net position came out that much better than the record said.
   const LINE_ITEMS = [
-    'councilRates', 'waterRates', 'landlordInsurance',
-    'propertyManagement', 'maintenance', 'landTax', 'strataFees',
+    'councilRates', 'waterRates', 'landlordInsurance', 'propertyManagement',
+    'lettingFees', 'maintenance', 'landTax', 'strataFees',
   ];
   return LINE_ITEMS.reduce(
     (sum, key) => sum + (typeof annualCosts?.[key] === 'number' ? annualCosts[key] : 0),
@@ -781,6 +802,34 @@ export function reconcileStoredFinancials(raw: unknown): StoredFinancialsReconci
   const annualLoanPayments = monthlyPayment !== null ? monthlyPayment * 12 : null;
   const weeklyRent = asNum(income.weeklyRent);
   const annualRent = weeklyRent !== null ? weeklyRent * 52 : asNum(income.annualRent);
+  /*
+   * The rent the CASH FLOW receives, which is not the contractual rent.
+   *
+   * `calculateKeyMetrics` builds `annualNet` from `weeklyRent ×
+   * occupancyWeeks` and `calculateSensitivityAnalysis` moves its scenarios
+   * off the same figure (QA-06). This reconciliation recomputed both from
+   * `weeklyRent × 52` — so on a row assuming anything under 52 weeks it did
+   * not repair the metrics, it RE-BASED them, quietly, on read, and stamped
+   * `metricsReconciled`. 62 of 153 production reports carry an occupancy
+   * assumption below 52, and on each the printed net position gained
+   * `weeklyRent × (52 − occupancyWeeks)` it was never entitled to.
+   *
+   * The contractual reading stays under its own name because the yields rest
+   * on it (`rentBasis.pure.ts`) and because the historical fold below is
+   * detected against whichever basis the row was written on.
+   */
+  const occupancyWeeks = occupancyWeeksOf({
+    occupancyWeeks: isRecord(raw.assumptions) ? asNum(raw.assumptions.occupancyWeeks) : null,
+  });
+  const cashFlowRent = weeklyRent !== null ? weeklyRent * occupancyWeeks : asNum(income.annualRent);
+  /*
+   * Year-one debt service off the ledger the engine itself charged, where the
+   * row carries it. `monthlyPayment × 12` is a second opinion about a number
+   * `loanLedger` already computed, and the two part company wherever the
+   * schedule is not twelve equal instalments — an interest-only period above
+   * all. It stays the fallback for rows written before the ledger existed.
+   */
+  const ledgerAnnualPayments = asNum(loan.annualPayment) ?? annualLoanPayments;
 
   // What the old fold summed for THIS row: the line items (= totalAnnual)
   // plus every aggregate the object carries plus the percentage.
@@ -848,17 +897,24 @@ export function reconcileStoredFinancials(raw: unknown): StoredFinancialsReconci
     // Identity check before touching anything: the stored base the fold
     // produced must reconstruct from this row's own numbers, or the block
     // was written by some other hand and stays as it is.
-    const expectedFoldBaseNet = annualRent - foldBase - annualLoanPayments;
-    if (storedMinus10 !== null && Math.abs(storedMinus10 + annualRent * 0.1 - expectedFoldBaseNet) <= 5) {
+    // Whichever rent reconstructs the stored block is the basis the row was
+    // written on, and the fold repair is made on that one: this step removes
+    // the fold's excess cost, and re-basing a row's rent while doing it would
+    // hide a second change inside a repair. Rows at 52 occupied weeks — the
+    // majority — reconstruct identically either way.
+    const basisRent = [cashFlowRent, annualRent].find((r) =>
+      r !== null && storedMinus10 !== null
+      && Math.abs(storedMinus10 + r * 0.1 - (r - foldBase - annualLoanPayments)) <= 5) ?? null;
+    if (basisRent !== null) {
       const excess = foldBase - totalAnnual;
-      const healedBaseNet = annualRent - totalAnnual - annualLoanPayments;
+      const healedBaseNet = basisRent - totalAnnual - annualLoanPayments;
       const healedSens: Record<string, any> = { ...sens };
       if (rents) {
         healedSens.rentChanges = {
           ...rents,
-          minus10Percent: healedBaseNet - annualRent * 0.1,
-          plus10Percent: healedBaseNet + annualRent * 0.1,
-          plus20Percent: healedBaseNet + annualRent * 0.2,
+          minus10Percent: healedBaseNet - basisRent * 0.1,
+          plus10Percent: healedBaseNet + basisRent * 0.1,
+          plus20Percent: healedBaseNet + basisRent * 0.2,
         };
       }
       if (isRecord(sens.interestRateChanges)) {
@@ -908,9 +964,12 @@ export function reconcileStoredFinancials(raw: unknown): StoredFinancialsReconci
   }
 
   // ── headline metrics recomputed from components ───────────────────────────
-  if (isRecord(raw.keyMetrics) && totalAnnual > 0 && annualRent !== null && annualLoanPayments !== null && annualLoanPayments > 0) {
+  if (isRecord(raw.keyMetrics) && totalAnnual > 0 && cashFlowRent !== null && ledgerAnnualPayments !== null && ledgerAnnualPayments > 0) {
     const km = raw.keyMetrics;
-    const netCashFlow = annualRent - totalAnnual - annualLoanPayments;
+    // `calculateKeyMetrics`' own definition, term for term: the rent the
+    // occupancy assumption expects to collect, the cash-flow cost base, and
+    // the ledger's year-one debt service.
+    const netCashFlow = cashFlowRent - totalAnnual - ledgerAnnualPayments;
     const denominator = derivedUpfront ?? asNum(initial.totalUpfront) ?? asNum(km.totalInvestment);
     const healedKm: Record<string, any> = {
       ...km,

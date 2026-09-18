@@ -145,9 +145,12 @@ gate that is already paid — a CTA is the one place that is easy to click twice
 The screen never dead-ends. If minting fails, the fallback is the pricing page
 carrying this workspace's billing uid, which is always present in the gate
 response for that reason. Returning from Stripe with `?activation=success`
-re-reads the verdict every three seconds for half a minute, so a webhook that
+re-reads the verdict every three seconds for a minute, so a webhook that
 lands a beat after the redirect opens the screen by itself rather than leaving
 somebody looking at a wall they have just paid to remove.
+
+Two sentences of that paragraph were an INTENTION rather than a description
+until 18 Sep 2026, and the section below is what it took to make them true.
 
 Copy is about the **account**, never the reader: the person looking at it may
 have joined last week and have no idea a payment was owed. It never says a
@@ -201,6 +204,93 @@ was returning 429 to everything.
 The repair is `20260916170000_rate_limit_bucket_and_public.sql`; the guard is
 `rateLimitBucket.test.ts`, which fails any call site that composes its key id.
 
+## A way to pay in every state where paying helps (18 Sep 2026)
+
+The screen was audited end to end because an operator locked a clone by hand
+and asked where its Stripe button had gone. It was gone correctly — and four
+other things were wrong, on both sides, each of which reported as a working
+gate.
+
+### The button is decided by what is OWED, not by a reason word
+
+The rule was `verdict.reason !== "operator_locked"`, which answers *yes* to
+every reason word a build has never heard of — including the `unknown` this
+module returns for a body it could not read. A lost signal therefore drew a
+full-width demand for money over a verdict whose entire meaning is that we do
+not know why.
+
+`payingCanUnlock` replaces it with an ALLOW-list — `grace_expired`,
+`within_grace`, `no_deadline` — so a new reason shows no CTA until somebody
+decides it should, and the customer is left with support rather than a charge.
+It is the near side of Mission Control's own refusal, and they agree because
+they are the same rule stated twice on purpose:
+
+> An operator's standing lock outranks the money. `resolveGateState` reads
+> `manual_override` BEFORE `paid_at`, deliberately — locking is how a workspace
+> is suspended even though it once paid — and `settleGatePayment` never clears
+> it. So a pay button on an `operator_locked` gate takes the money, stamps
+> `paid_at`, and leaves the workspace exactly as shut.
+
+`lockedCopy` answers to the same rule: where paying is not what lifts this, it
+no longer says "complete the payment" over a page with no button on it.
+
+### A gate on no clock at all had no way to pay, anywhere
+
+`shouldWarn` required `counting`, so a gate an operator armed with no deadline
+was `gated`, unpaid, open — and had no button, link or page in the product from
+which to settle it, because the banner is the only payment CTA inside an
+unlocked dashboard. It now asks the same question the screen asks.
+
+### `verdict.pricingUrl` had zero call sites
+
+Mission Control sends `checkout.pricing_url` on every gated read and this
+module's own comment calls it *"always a real URL when gated, never null,
+because a locked screen with no way out is worse than no screen"*. Nothing in
+the product read it. The fallback appeared only where a refusal happened to
+carry its own copy — three of the checkout route's refusal shapes — so on every
+other one, and whenever Mission Control was unreachable at all, the screen was
+the dead end its own comment forbade.
+
+### Paying twice was one click away
+
+The only guard against minting a second activation checkout is Mission
+Control's `paid_at`, which the Stripe webhook writes — so for the whole
+interval between the customer paying and that webhook landing, the server would
+mint another one, on the screen they were returned to, where the button is the
+only thing that looks like progress. `already_paid` is now read as what it is
+(not a retryable failure), the primary button is withheld while a payment is
+being confirmed, and the screen says so rather than going quiet.
+
+### And Mission Control quoted the wrong price
+
+`resolvePlanPricing` used `tier.monthlyInclGstCents` — the tier WITHOUT the
+AML/CTF module — while `seatPlanForTier` refuses a catalogue row whose
+`price_cents` disagrees with the quoted price. Scale is $2,015 base against a
+$2,210 headline, so a newly armed gate would have answered `plan_not_purchasable`
+on every click. The three live rows were armed with the headline figure and were
+never affected; the fix is `tierHeadlineCents`, and a contract test now asserts
+which of the two the gate may read.
+
+Three more on that side, from the same audit: the checkout route did not refuse
+an `operator_locked` gate (it would have taken the money Mission Control's own
+state machine says changes nothing); the return URL was not confined to the
+clone's own origin; and `settleGatePayment` notified operators "gate unlocked"
+on a payment that settled a gate an operator had locked, which is the one case
+where the workspace stays shut.
+
+### An operator can send the link
+
+The gap the audit was opened on turned out to be real, and on the other side:
+the clone had a button and **Mission Control had no way to send a customer to
+Stripe at all**. Billing → Payment Gates now offers **Payment link** on any gate
+where paying is what lifts it, minted through `mintGateActivationCheckout` —
+the same module the clone's own CTA calls, so the operator's link and the
+customer's button cannot charge different amounts or refuse on different
+grounds. It is the one gate act that demands no reason, because it changes
+nothing: it mints a link and writes no state. The URL is rendered in a readonly
+input carrying a `value` — never a `placeholder`, which is the uncopyable-empty-box
+defect this fleet has already shipped twice.
+
 ## Files
 
 **Mission Control**
@@ -212,7 +302,9 @@ The repair is `20260916170000_rate_limit_bucket_and_public.sql`; the guard is
 | `src/server/payment-gate.server.ts` | Arm, override, window, settle, guard |
 | `src/server/payment-gate.functions.ts` | Operator RPCs (`requireAdmin` to mutate, `requireOperator` to read) |
 | `src/routes/api.public.clones.gate.ts` | What a clone asks about itself |
-| `src/routes/api.public.clones.gate.checkout.ts` | The CTA's destination |
+| `src/routes/api.public.clones.gate.checkout.ts` | The CTA's destination. A thin mapping onto the mint |
+| `src/server/gateCheckout.server.ts` | The one mint. Both the clone's CTA and the operator's link |
+| `src/components/clone-gate-actions.tsx` | The operator's acts, Payment link among them |
 | `src/routes/billing.gates.tsx` | The console |
 
 **This workspace**

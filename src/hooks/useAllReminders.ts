@@ -2,26 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { formatFullName } from '@/utils/nameFormatting';
 import { isAfter, startOfDay, subDays } from 'date-fns';
-import {
-  DEFAULT_REMINDER_PRIORITY,
-  type ReminderPriority,
-} from '@/lib/reminders/priority.pure';
 
 export interface UnifiedReminder {
   id: string;
   title: string;
   description: string | null;
   due_date: string;
-  /**
-   * The column's own vocabulary, all four values of it.
-   *
-   * This used to read `'high' | 'medium' | 'low'`, which is narrower than
-   * `client_reminders.priority`'s CHECK constraint and narrower than what
-   * the reminder forms write. TypeScript then vouched for the hub's
-   * three-key badge lookup as total, and an urgent reminder crashed the
-   * page — see `lib/reminders/priority.pure`.
-   */
-  priority: ReminderPriority;
+  priority: 'high' | 'medium' | 'low';
   status: 'pending' | 'completed' | 'snoozed';
   source: 'client_reminder' | 'follow_up' | 'deal_milestone';
   source_label: string;
@@ -93,9 +80,7 @@ export function useAllReminders() {
           title: r.title,
           description: r.description,
           due_date: r.due_date,
-          // `|| DEFAULT_…` restores the column's own default for a row with
-          // none; it never re-labels a priority the row actually carries.
-          priority: r.priority || DEFAULT_REMINDER_PRIORITY,
+          priority: r.priority || 'medium',
           status: r.status === 'completed' ? 'completed' : 'pending',
           source: 'client_reminder',
           source_label: 'Client Reminder',
@@ -120,7 +105,7 @@ export function useAllReminders() {
           title: `Follow up with ${clientMap[clientId] || 'client'}`,
           description: null,
           due_date: followUpDate,
-          priority: DEFAULT_REMINDER_PRIORITY,
+          priority: 'medium',
           status: 'pending',
           source: 'follow_up',
           source_label: 'Client Follow-Up',
@@ -135,7 +120,7 @@ export function useAllReminders() {
       }
 
       // 3) Deal Milestones
-      const milestoneFields: { field: string; label: string; type: string; priority: ReminderPriority }[] = [
+      const milestoneFields: { field: string; label: string; type: string; priority: 'high' | 'medium' | 'low' }[] = [
         { field: 'settlement_date', label: 'Settlement', type: 'settlement', priority: 'high' },
         { field: 'finance_clause_expiry', label: 'Finance Clause Expiry', type: 'finance', priority: 'high' },
         { field: 'land_settlement_date', label: 'Land Settlement', type: 'settlement', priority: 'high' },

@@ -111,11 +111,21 @@ async function drawnText(
   return out.replace(/\s+/g, '');
 }
 
-/** What the selected templates are bound to, for this record. */
-function templateFinancials(financialData: unknown): Record<string, number | undefined> {
+/**
+ * What the selected templates are bound to, for this record AT THIS TIER.
+ *
+ * The tier is part of the question now. `tierContent.pure.ts` decides what a
+ * tier's document may publish and the projection withholds accordingly, so a
+ * projection with no tier is a projection of a Compass — which is the right
+ * default and the wrong fixture for asserting arithmetic.
+ */
+function templateFinancials(
+  financialData: unknown,
+  tier: 'compass' | 'financial' = 'financial',
+): Record<string, number | undefined> {
   const ctx = applyInvestmentProjection(
     { report: {}, brand: {} } as Record<string, unknown>,
-    { financial_calculations: financialData } as never,
+    { financial_calculations: financialData, report_tier: tier } as never,
   ) as Record<string, any>;
   return (ctx.financials ?? {}) as Record<string, number | undefined>;
 }
@@ -132,29 +142,46 @@ describe('the Compass standard presentation carries the core investment facts', 
    * this is parity against the other presentation rather than against a list.
    */
   it('publishes the same core values a selected template is bound to', async () => {
+    /*
+     * The parity this file exists for is unchanged: the two presentations must
+     * never disagree about one document. What they agree ABOUT moved.
+     *
+     * `compassSectionRegistry` has said since v2.0 that a Compass carries no
+     * financial modelling. The original defect here was the opposite one —
+     * `if (reportTier !== 'financial') return null` drew no band on a Compass
+     * while the template drew every figure — and the fix made both show
+     * everything, which is how the Investment Compass came to open on purchase
+     * price, gross yield, LVR and a ten-year equity projection while the
+     * Financial Analysis carried the location case.
+     *
+     * `tierContent.pure.ts` decides it now, once, and all three implementations
+     * read it: this band, the projection the templates bind, and the masters'
+     * page conditionals. Withholding the modelling is not withholding the
+     * price — the price and the rent are facts about the asset the way its land
+     * size is, and they stay on every tier.
+     */
     const flat = await drawnText(reportWith(COWRA_FINANCIALS), 'compass');
-    const bound = templateFinancials(COWRA_FINANCIALS);
+    const bound = templateFinancials(COWRA_FINANCIALS, 'compass');
 
-    // The band is present at all — it was absent on every Compass report.
-    expect(flat).toContain('PURCHASEPRICE');
-
+    // What a Compass publishes, in both presentations, at the same magnitude.
     for (const [label, formatted] of [
       ['PURCHASEPRICE', money(bound.purchasePrice!)],
       ['WEEKLYRENT', money(bound.weeklyRent!)],
-      ['DEPOSIT', money(bound.deposit!)],
-      ['LOANAMOUNT', money(bound.loanAmount!)],
-      ['LVR', Number(bound.lvr).toFixed(1) + '%'],
-      ['GROSSYIELD', Number(bound.grossYield).toFixed(2) + '%'],
-      ['NETYIELD', Number(bound.netYield).toFixed(2) + '%'],
-      ['STAMPDUTY', money(bound.stampDuty!)],
-      ['TOTALUPFRONT', money(bound.totalCost!)],
-      // A negative holding position is stated as one; the figure is the
-      // record's own `weeklyNet`, and the sign is part of the fact.
-      ['WEEKLYNETCASHFLOW', '-' + money(Math.abs(bound.weeklyNet!))],
     ] as Array<[string, string]>) {
       expect(flat, `${label} must be published by the standard presentation`).toContain(label);
       expect(flat, `${label} must read ${formatted}`).toContain(formatted.replace(/\s+/g, ''));
     }
+
+    // And what it does not, in both.
+    for (const withheld of ['DEPOSIT', 'LOANAMOUNT', 'LVR', 'GROSSYIELD', 'NETYIELD', 'STAMPDUTY', 'TOTALUPFRONT', 'INTERESTRATE']) {
+      expect(flat, `${withheld} is modelling and belongs in the Financial Analysis`).not.toContain(withheld);
+      expect(bound, withheld).not.toHaveProperty(withheld.toLowerCase());
+    }
+    // Never a hole where a withheld tile was: the band closes up around what
+    // the tier does publish, which `renderKpiGridHtml` already did for the
+    // templates and this band does by omitting the tile entirely.
+    expect(flat).not.toContain('N/A');
+    expect(flat).not.toContain('$NaN');
   }, 180_000);
 
   /**
@@ -173,14 +200,16 @@ describe('the Compass standard presentation carries the core investment facts', 
       initialCosts: { propertyValue: 555000, deposit: 555000, stampDuty: 19162 },
       assumptions: { capitalGrowth: 3.5 },
     };
-    const bound = templateFinancials(sparse);
+    const bound = templateFinancials(sparse, 'financial');
     // The projection itself withholds them — this is the parity being pinned.
     expect(bound.grossYield).toBeUndefined();
     expect(bound.netYield).toBeUndefined();
     expect(bound.weeklyRent).toBeUndefined();
     expect(bound.loanAmount).toBeUndefined();
 
-    const flat = await drawnText(reportWith(sparse), 'compass');
+    // Drawn at the tier that MAY carry the modelling, because this asserts
+    // what an unestablished figure does — not what a tier withholds.
+    const flat = await drawnText(reportWith(sparse), 'financial');
 
     // What the record does hold is published.
     expect(flat).toContain('PURCHASEPRICE');
@@ -215,7 +244,7 @@ describe('the Compass standard presentation carries the core investment facts', 
     ]) {
       expect(flat, `${label} must survive at the Financial tier`).toContain(label);
     }
-    const bound = templateFinancials(COWRA_FINANCIALS);
+    const bound = templateFinancials(COWRA_FINANCIALS, 'financial');
     expect(flat).toContain(money(bound.purchasePrice!).replace(/\s+/g, ''));
     expect(flat).toContain(Number(bound.grossYield).toFixed(2) + '%');
   }, 180_000);

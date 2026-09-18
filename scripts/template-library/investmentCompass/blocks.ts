@@ -1053,7 +1053,17 @@ export function sectionHeading(opts: {
         accent: 'token:primary',
         titleSize: c.scale.heading,
         x: c.contentLeft, y, width: c.contentWidth, height,
-      }, 'Section band'),
+        // 'Section opener', like the other four kinds.
+        //
+        // The name is load-bearing: `pagesWithContent` and
+        // `closeDroppedBlocks` classify furniture by block NAME, and
+        // 'Section band' was in neither set. So on a band-header master a
+        // heading counted as content that draws — which meant a page whose
+        // only real block was conditional could never be dropped, and the
+        // hole its absence left could never be closed. That is the Risk page
+        // opening "Risk register / Manageable with verification, not without
+        // it" over a third of a page of white.
+      }, 'Section opener'),
     };
   }
 
@@ -1365,19 +1375,33 @@ export function kpis(items: KpiItem[]): FlowItem {
   }
 
   if (plan.variant === 'tile') {
-    const height = 82;
+    /*
+     * Measured, like `display` and `ruled`, and spreading `shared` like all
+     * four others.
+     *
+     * This declared `height = 82` and spread nothing, so it was the one
+     * variant whose box was a guess and the one variant whose `labelLines`
+     * reserve never reached the renderer. `kpiGrid.html.ts` draws a tile with
+     * `overflow:hidden`, so where the others spill this one CLIPS: a prose
+     * value — a withheld-grade sentence, say — was cut off mid-word, and
+     * labels of different lengths wrapped independently so the tiles' bottoms
+     * fell out of line. `card_row_with_trend` maps here, and the trend note
+     * its name is about had nowhere to go.
+     */
+    const valueSize = Math.round(c.scale.kpiValue * 0.7);
+    const height = gridHeight(plan.columns, valueSize);
     return {
       height,
       block: (y) => block('kpi-grid', {
-        items: shown,
+        ...shared,
+        variant: 'tile',
         columns: plan.columns,
         gap: 10,
         tileBg: 'token:panel',
         accent: 'token:primary',
         labelColor: 'token:mutedInk',
         radius: c.radius,
-        valueSize: Math.round(c.scale.kpiValue * 0.7),
-        x: c.contentLeft, y, width: c.contentWidth, height,
+        valueSize, y, height,
       }, 'KPI cards'),
     };
   }

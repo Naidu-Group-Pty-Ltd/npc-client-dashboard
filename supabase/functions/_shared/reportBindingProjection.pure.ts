@@ -127,6 +127,7 @@ import { rentIsEstablished } from './reports/investment/rentalEvidence.pure.ts';
 import { gradedDetailLine, gradedLine, publishableGrade } from './reports/investment/scoreSections.pure.ts';
 import { OVERALL_GRADE_UNAVAILABLE } from './reports/market/scoringInputPolicy.pure.ts';
 import { DOCUMENT_IDENTITY, documentTitleForTier } from './reports/investment/tierIdentity.pure.ts';
+import { contentPolicyFor } from './reports/investment/tierContent.pure.ts';
 
 /** Loose row shape — the caller passes the `investment_reports` row as stored. */
 export interface InvestmentReportRowLike {
@@ -168,6 +169,25 @@ function strArray(v: unknown): string[] {
 /** Per-week from a per-year figure. Undefined in, undefined out. */
 function weekly(annual: number | undefined): number | undefined {
   return annual === undefined ? undefined : annual / WEEKS_PER_YEAR;
+}
+
+/**
+ * The sum of cost components, or undefined where the record states none.
+ *
+ * A component the record does not carry contributes nothing rather than
+ * zero — `rentalEvidence`'s rule applied to costs — so a sum over
+ * components that are all absent is itself absent, and `put` then omits the
+ * key rather than publishing a figure nobody stated. A component that IS
+ * present contributes even at zero, because a stated nil is a fact.
+ */
+function sumCosts(...parts: unknown[]): number | undefined {
+  let total: number | undefined;
+  for (const part of parts) {
+    const value = num(part);
+    if (value === undefined) continue;
+    total = (total ?? 0) + value;
+  }
+  return total;
 }
 
 /**
@@ -283,6 +303,7 @@ function specReader(
  * every reader that already resolves it through the projection.
  */
 export { DOCUMENT_IDENTITY, documentTitleForTier };
+export { contentPolicyFor };
 
 export interface ProjectedNamespaces {
   property: Record<string, unknown>;
@@ -396,7 +417,26 @@ export function projectReportNarrative(
  *
  * Every namespace returned is partial by design; merge it over the raw ones.
  */
-export function projectInvestmentReport(row: InvestmentReportRowLike): ProjectedNamespaces {
+/**
+ * Options for a caller that is not rendering the row as its own document.
+ *
+ * `tier` overrides the row's. It exists for ONE caller and the reason matters:
+ * `condense-investment-report` projects the PARENT Compass to assemble the
+ * facts block for a Briefing or a Snapshot, and a Snapshot's whole purpose is
+ * the figures. Keying the withholding on the row being read would have handed
+ * the Snapshot's prompt a parent with no modelling in it and quietly emptied
+ * the one tier that exists to carry it. The document being PRODUCED decides
+ * what may be published, so the producer names its own tier.
+ */
+export interface ProjectionOptions {
+  /** The tier of the document being produced, when it is not the row's own. */
+  tier?: string | null;
+}
+
+export function projectInvestmentReport(
+  row: InvestmentReportRowLike,
+  options: ProjectionOptions = {},
+): ProjectedNamespaces {
   const specs = obj(row.property_specs);
   // Stored financials are reconciled before anything reads them: historic
   // rows carry the pre-fix fold's inflated series and totals that do not
@@ -450,10 +490,42 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(property, 'configuration', configuration(spec));
 
   // ── financials ────────────────────────────────────────────────────────────
-  const annualRates = num(costs.councilRates);
+  // ── the cash-flow table has to FOOT ──────────────────────────────────────
+  //
+  // The engine subtracts EIGHT annual cost components from the net position
+  // (`financialEngine.calculateAnnualCosts`: council rates, water rates,
+  // landlord insurance, property management, maintenance, land tax, strata,
+  // letting fees). This projection published FOUR, and the masters bind
+  // exactly what is published — so "Net position" carried costs no row
+  // listed and the table could not be added up.
+  //
+  // Measured on 262 Pallas Street, Maryborough (16 Sep 2026): the printed
+  // rows came to $10,780 against a net position built on $12,880, and the
+  // $2,100 a reader could not find was `waterRates` 1,600 + `lettingFees`
+  // 500. Worse, the row is LABELLED "Council and water rates" while it bound
+  // `councilRates` alone, so the omission was hiding behind a label that
+  // promised the very figure it left out.
+  //
+  // Two of the eight now join the row whose label already claims them, and
+  // the rest are published in their own right:
+  //
+  //   * water rates join council rates — the row says "Council and water
+  //     rates" and now means it;
+  //   * letting fees join management — both are the managing agent's fee,
+  //     which is how a statement groups them;
+  //   * land tax and strata are their own line (`annualOtherCosts`), because
+  //     neither is maintenance and folding them anywhere would be a false
+  //     label. They are zero on a sub-threshold house and material on a unit.
+  //
+  // `reportBindingProjection.spec.ts` asserts the four printed lines plus
+  // the other line equal the engine's own `totalAnnual` over the stored
+  // shape, so a ninth component added upstream fails a test instead of
+  // silently reopening the gap.
+  const annualRates = sumCosts(costs.councilRates, costs.waterRates);
   const annualInsurance = num(costs.landlordInsurance);
-  const annualManagement = num(costs.propertyManagement);
+  const annualManagement = sumCosts(costs.propertyManagement, costs.lettingFees);
   const annualMaintenance = num(costs.maintenance);
+  const annualOtherCosts = sumCosts(costs.landTax, costs.strataFees);
   const weeklyRent = num(income.weeklyRent);
   const occupancyWeeks = num(assumptions.occupancyWeeks);
   const monthlyPayment = num(loan.monthlyPayment);
@@ -487,6 +559,21 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'annualRent', rent.contractual);
   put(financials, 'annualRentAtOccupancy', rent.atOccupancy);
   put(financials, 'annualRentAtOccupancyLabel', rent.occupancyLabel);
+  // The gap between the two, as a deduction, so a cash flow table that opens
+  // on the contractual rent can still foot to the net position the engine
+  // built on the occupied one. `atOccupancy` is undefined at 52 weeks and
+  // where no assumption is carried, which is exactly when there is no gap to
+  // state — 62 of 153 reports assume under 52 and on those the income row and
+  // the net position were built on different rents with nothing between them
+  // to explain the difference.
+  put(financials, 'annualVacancyAllowance',
+    rent.contractual !== undefined && rent.atOccupancy !== undefined
+      ? rent.contractual - rent.atOccupancy
+      : undefined);
+  put(financials, 'weeklyVacancyAllowance',
+    rent.contractual !== undefined && rent.atOccupancy !== undefined
+      ? weekly(rent.contractual - rent.atOccupancy)
+      : undefined);
   // A yield rests on a rent. Where the record establishes none, these describe
   // nothing — and this projection is the widest of the four readers, feeding
   // every bound template AND the recorded-facts block the model is handed, so
@@ -501,7 +588,15 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'lvr', num(metrics.lvr) ?? num(loan.lvr));
   put(financials, 'totalInvestment', num(metrics.totalInvestment));
   put(financials, 'weeklyRepayment', num(loan.weeklyPayment));
-  put(financials, 'annualRepayment', monthlyPayment === undefined ? undefined : monthlyPayment * 12);
+  // The ledger's own annual figure first. `monthlyPayment * 12` is a second
+  // opinion about a number `loanLedger` already computed and stored, and the
+  // two disagree wherever the schedule is not twelve equal months — an
+  // interest-only period, a rounded final instalment — while "Net position"
+  // below is built on the ledger's. A repayments row that cannot be
+  // subtracted from the rent to reach the net position is the same class of
+  // defect as the missing cost rows above.
+  put(financials, 'annualRepayment',
+    num(loan.annualPayment) ?? (monthlyPayment === undefined ? undefined : monthlyPayment * 12));
   put(financials, 'annualRates', annualRates);
   put(financials, 'weeklyRates', weekly(annualRates));
   put(financials, 'annualInsurance', annualInsurance);
@@ -510,6 +605,17 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   put(financials, 'weeklyManagement', weekly(annualManagement));
   put(financials, 'annualMaintenance', annualMaintenance);
   put(financials, 'weeklyMaintenance', weekly(annualMaintenance));
+  // Land tax and strata, under a label that is true of both, and published
+  // only where they come to something. Both are nil on an ordinary
+  // owner-occupier-grade house — 262 Pallas carries 0 and 0 — and a fifth row
+  // reading "$0" is a line the reader has to discount rather than read. It
+  // costs the reconciliation nothing: a suppressed line is nil, so the four
+  // printed rows still foot to the engine's total.
+  const otherCostsStated = annualOtherCosts === undefined || annualOtherCosts === 0
+    ? undefined
+    : annualOtherCosts;
+  put(financials, 'annualOtherCosts', otherCostsStated);
+  put(financials, 'weeklyOtherCosts', weekly(otherCostsStated));
   put(financials, 'annualCosts', num(costs.totalAnnual));
 
   // ── assumptions ───────────────────────────────────────────────────────────
@@ -598,6 +704,28 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // scorer had no data for — `demandScore` and `growthScore` on the sampled
   // rows — so each entry is only emitted where it says something.
   const breakdown = obj(score.breakdown);
+  /*
+   * Resolved here rather than beside the document identity below, because the
+   * scorecard needs it: a dimension's own explanation can be financial
+   * modelling. See `MODELLING_DETAIL_DIMENSIONS`.
+   *
+   * The document being produced decides what may be published — the row's own
+   * tier for every caller but the condense fork. See `ProjectionOptions`.
+   */
+  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
+  const policy = contentPolicyFor(options.tier ?? tier);
+
+  /**
+   * Dimensions whose `details` sentence states financial modelling.
+   *
+   * Narrow by construction and keyed on the dimension rather than matched on
+   * the text, for the reason `MODELLING_KEYS` is a list: a regex over a
+   * model-adjacent sentence either misses a phrasing or eats a legitimate
+   * one, and both are silent. Growth, Location, Demand and Risk explain
+   * themselves in market and locality terms and are published on every tier.
+   */
+  const MODELLING_DETAIL_DIMENSIONS = new Set(['yieldScore']);
+
   const DIMENSIONS: Array<{ key: string; label: string }> = [
     { key: 'growthScore', label: 'Growth' },
     { key: 'locationScore', label: 'Location' },
@@ -666,7 +794,20 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
       put(entry, 'weight', weight);
       put(entry, 'scoreLabel', score !== undefined ? String(Math.round(score)) : undefined);
       put(entry, 'weightLabel', weight !== undefined ? `${Math.round(weight)}%` : undefined);
-      put(entry, 'details', humaniseScoreDetail(str(d.details)));
+      // A dimension's own explanation can BE the modelling. The Yield
+      // scorer's reads `4.52% gross yield on a $575,000 purchase price.` —
+      // a yield, computed against the price, in one sentence — and it was
+      // printed on page 4 of a Compass that publishes neither. Withholding
+      // `financials.grossYield` and leaving its rationale on the scorecard
+      // is the same figure through a second door.
+      //
+      // The dimension keeps its label, its score and its weight: it was
+      // measured and it carries weight in the grade, and saying so is not
+      // modelling. What goes is the arithmetic behind it, which belongs in
+      // the Financial Analysis with the rest.
+      if (policy.financialModelling || !MODELLING_DETAIL_DIMENSIONS.has(key)) {
+        put(entry, 'details', humaniseScoreDetail(str(d.details)));
+      }
     }
     return entry;
     // A dimension the record does not carry at all has no score AND no
@@ -718,15 +859,71 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
   // now, and THIS is the one place the tier is translated into them; an
   // unrecognised or absent tier reads as compass, which is what the ranking's
   // default document has always been.
-  const tier = String(row.report_tier ?? 'compass').trim().toLowerCase();
   const identity = DOCUMENT_IDENTITY[tier] ?? DOCUMENT_IDENTITY.compass;
   put(report, 'tier', tier);
   put(report, 'documentTitle', identity.title);
-  put(report, 'standfirst', identity.standfirst);
+  // The standfirst comes from the CONTENT policy, not from the identity table,
+  // because it is a promise about what the document holds. The Compass's read
+  // "What the property is, what it costs to hold, and what the assessment
+  // concluded" — which promised the financial modelling the Compass does not
+  // carry, on the cover, above a page sequence that then drew it.
+  put(report, 'standfirst', policy.standfirst);
+  put(report, 'companionNote', policy.companionNote ?? undefined);
+  put(report, 'drawsFinancialModelling', policy.financialModelling);
+
+  /*
+   * What the tier may publish.
+   *
+   * This is the authority, and it is HERE rather than in a renderer because
+   * this projection is what every template is bound from: withholding a
+   * namespace once reaches all 500 seeded masters, every future one, and both
+   * render routes, while a fix inside one composer reaches one composer.
+   *
+   * `compassSectionRegistry.ts` has said since v2.0 that a Compass carries no
+   * financial modelling and the generator obeys it — the prose has no
+   * financial section in it. The MASTERS drew it anyway, from these bindings,
+   * so the Compass opened on purchase price, gross yield, LVR and a ten-year
+   * equity projection. One rule, one module, both ends.
+   *
+   * Withholding the modelling is not withholding the price: `identityFigures`
+   * keeps the asking price and the indicative rent on every tier, because they
+   * are facts about the asset in the way its land size is. What leaves is the
+   * analysis of a PURCHASE — yield, LVR, loan structure, cash flow, the
+   * ten-year series — and a block bound only to those draws nothing, which is
+   * how a conditional page drops cleanly rather than printing labelled holes.
+   */
+  const MODELLING_KEYS = [
+    'grossYield', 'netYield', 'cashOnCash', 'lvr', 'weeklyNet', 'annualNet',
+    'loanAmount', 'weeklyRepayment', 'annualRepayment', 'stampDuty', 'legalFees',
+    'inspectionFees', 'lmi', 'totalCost', 'deposit', 'totalInvestment',
+    'annualRates', 'weeklyRates', 'annualInsurance', 'weeklyInsurance',
+    'annualManagement', 'weeklyManagement', 'annualMaintenance', 'weeklyMaintenance',
+    'annualOtherCosts', 'weeklyOtherCosts', 'annualCosts',
+    'annualVacancyAllowance', 'weeklyVacancyAllowance',
+  ] as const;
+  const financialsOut = policy.financialModelling
+    ? financials
+    : Object.fromEntries(
+      Object.entries(financials).filter(([k]) => !(MODELLING_KEYS as readonly string[]).includes(k)),
+    );
+  // The modelled assumptions go with the modelling: a capital-growth rate and
+  // an interest rate on a location report are an analysis nobody asked for.
+  const assumptionsPublished = policy.financialModelling ? assumptionsOut : {};
 
   return {
-    property, financials, assumptions: assumptionsOut, recommendation,
-    summary, risks, assessment, opportunities, equitySeries, report,
+    property,
+    financials: financialsOut,
+    assumptions: assumptionsPublished,
+    recommendation,
+    summary,
+    risks,
+    assessment,
+    opportunities,
+    // The ten-year equity chart is modelling by definition. Absent rather than
+    // empty, so a master's conditional drops the page instead of drawing an
+    // axis with no series on it.
+    equitySeries: policy.financialModelling ? equitySeries : [],
+    report,
     narrative: projectReportNarrative(row.report_content),
   };
 }
@@ -741,8 +938,9 @@ export function projectInvestmentReport(row: InvestmentReportRowLike): Projected
 export function applyInvestmentProjection(
   data: Record<string, any>,
   row: InvestmentReportRowLike,
+  options: ProjectionOptions = {},
 ): Record<string, any> {
-  const p = projectInvestmentReport(row);
+  const p = projectInvestmentReport(row, options);
   const merge = (key: string, extra: Record<string, unknown>) => {
     if (!Object.keys(extra).length) return;
     data[key] = { ...obj(data[key]), ...extra };

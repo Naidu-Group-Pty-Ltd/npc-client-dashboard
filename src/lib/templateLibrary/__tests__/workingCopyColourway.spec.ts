@@ -181,16 +181,31 @@ describe('baking the colourway into the copy', () => {
     expect((payload.config as any).libraryLineage).toBeDefined();
   });
 
-  it('adds no lineage block to a copy of a non-family template', () => {
-    // The forty voice templates have no family, no variant axis and no
-    // colourway. Writing eleven null fields into a column other code
-    // round-trips would be a behaviour change with nothing to show for it.
+  it('writes the lineage on a copy of a non-family template too', () => {
+    /*
+     * This used to assert the opposite, on the reasoning that a voice
+     * template has no family, no variant axis and no colourway and would
+     * carry eleven null fields for nothing.
+     *
+     * The eleven fields are not what the block is for. `entryId` is, and four
+     * readers key identity on it: the picker's stored-choice resolution, its
+     * "is this the current one" mark, `matchesReportUseCopy` (which opens
+     * `if (!lineage) return false`) and the SQL dedupe on
+     * `config->libraryLineage->>entryId`. Without it a voice template adopted
+     * for reports came back unrecognisable — not marked current, listed a
+     * second time as a standalone template, and minting another active
+     * `report_templates` row on every save.
+     */
     const payload = buildWorkingCopyPayload({
       ...base,
       entry: { ...voiceEntry(), config: { a: 1 } },
       colourway: null,
     });
-    expect(payload.config).toEqual({ a: 1 });
+    expect(payload.config.a).toBe(1);
+    expect(payload.config.libraryLineage.entryId).toBe(voiceEntry().id);
+    // The family half is null rather than absent — there is no family to name.
+    expect(payload.config.libraryLineage.familyKey).toBeNull();
+    expect(payload.config.libraryLineage.colourway).toBeNull();
   });
 
   it('still refuses to make the copy live, owned or default', () => {

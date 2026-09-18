@@ -98,11 +98,14 @@ describe('buildWorkingCopyPayload', () => {
   });
 
   it('always supplies config, which is NOT NULL on the column', () => {
-    expect(payload.config).toEqual({ a: 1 });
+    // The entry's own config, plus the lineage every copy now carries — the
+    // `entryId` four separate readers resolve a copy's identity by.
+    expect(payload.config.a).toBe(1);
+    expect(payload.config.libraryLineage.entryId).toBe('entry-1');
     const noConfig = buildWorkingCopyPayload({
       userId: 'u', name: 'n', entry: { ...entry, config: undefined }, schema: {},
     });
-    expect(noConfig.config).toEqual({});
+    expect(Object.keys(noConfig.config)).toEqual(['libraryLineage']);
   });
 
   it('carries the report type through so the copy resolves like its source', () => {

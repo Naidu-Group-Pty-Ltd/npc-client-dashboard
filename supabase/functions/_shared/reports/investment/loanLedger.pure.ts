@@ -28,6 +28,30 @@
 
 export type LoanProduct = 'principal_interest' | 'interest_only';
 
+/**
+ * The interest-only period used when a loan is STATED to be interest only and
+ * no period is recorded.
+ *
+ * Measured on 262 Pallas Street, 17 Sep 2026: the operator's overrides carried
+ * `loanType: 'interest_only'` and no `interestOnlyPeriodYears`, so this module
+ * read the term as zero and published a 30-year principal-and-interest
+ * schedule — $34,890 a year against $29,900 — on an object whose own
+ * `loanType` still said `interest_only`, under the sentence "Principal and
+ * interest over 30 years". The operator's statement was overruled by a missing
+ * second field, silently, and the record contradicted itself.
+ *
+ * Five years is the ordinary Australian IO term. The value is NOT this
+ * module's invention: `readBaseFinancials` has run the Cash Flow report on it
+ * since QA-04 and imports it from here, because the two reports describing one
+ * loan must not answer differently. It is disclosed wherever the structure is
+ * printed — an assumed term is never presented as a stated one.
+ *
+ * An EXPLICIT `interestOnlyYears: 0` still means principal and interest. "No
+ * interest-only period" and "no interest-only period recorded" are different
+ * statements, and only the second one is assumed for.
+ */
+export const ASSUMED_INTEREST_ONLY_YEARS = 5;
+
 export interface LoanLedgerInput {
   loanAmount: number;
   /** Nominal annual rate in percent (6.5 for 6.5%). */
@@ -53,6 +77,8 @@ export interface LoanLedgerYear {
 export interface LoanLedger {
   loanType: LoanProduct;
   interestOnlyYears: number;
+  /** True when the loan said interest-only and no term was recorded, so `ASSUMED_INTEREST_ONLY_YEARS` was used. */
+  interestOnlyYearsAssumed: boolean;
   termYears: number;
   annualRatePercent: number;
   /** The repayment in the first month — interest alone during an IO period. */
@@ -89,7 +115,16 @@ export function buildLoanLedger(input: LoanLedgerInput): LoanLedger {
   const termYears = Math.max(1, Math.round(Number(input.termYears) || 30));
   const annualRatePercent = Number(input.annualRatePercent) || 0;
   const loanType = normaliseLoanProduct(input.loanType);
-  const ioYearsRaw = loanType === 'interest_only' ? Math.max(0, Number(input.interestOnlyYears) || 0) : 0;
+  // A term that was RECORDED — including a recorded zero — is used as given.
+  // Only an absent one is assumed for, and only on a loan that says it is
+  // interest only. See `ASSUMED_INTEREST_ONLY_YEARS`.
+  const ioYearsStated = input.interestOnlyYears !== undefined
+    && input.interestOnlyYears !== null
+    && Number.isFinite(Number(input.interestOnlyYears));
+  const interestOnlyYearsAssumed = loanType === 'interest_only' && !ioYearsStated;
+  const ioYearsRaw = loanType !== 'interest_only'
+    ? 0
+    : (ioYearsStated ? Math.max(0, Number(input.interestOnlyYears) || 0) : ASSUMED_INTEREST_ONLY_YEARS);
   const interestOnlyYears = Math.min(ioYearsRaw, termYears - 1 >= 0 ? termYears - 1 : 0);
   const monthlyRate = annualRatePercent / 100 / 12;
   const totalMonths = termYears * 12;
@@ -132,6 +167,7 @@ export function buildLoanLedger(input: LoanLedgerInput): LoanLedger {
   return {
     loanType,
     interestOnlyYears,
+    interestOnlyYearsAssumed: interestOnlyYearsAssumed && interestOnlyYears > 0,
     termYears,
     annualRatePercent,
     firstMonthlyPayment,
@@ -152,7 +188,11 @@ export function ledgerYear(ledger: LoanLedger, year: number): LoanLedgerYear | u
 export function describeLoanStructure(ledger: LoanLedger): string {
   if (ledger.loanType === 'interest_only' && ledger.interestOnlyYears > 0) {
     const rest = ledger.termYears - ledger.interestOnlyYears;
-    return `Interest only for ${ledger.interestOnlyYears} year${ledger.interestOnlyYears === 1 ? '' : 's'}, then principal and interest over the remaining ${rest} year${rest === 1 ? '' : 's'} (${ledger.termYears}-year term)`;
+    // An assumed term says so in the sentence a reader sees. The alternative —
+    // printing it as though the operator had stated it — is how a default
+    // becomes a fact about somebody's loan.
+    const basis = ledger.interestOnlyYearsAssumed ? ' (term not recorded; assumed)' : '';
+    return `Interest only for ${ledger.interestOnlyYears} year${ledger.interestOnlyYears === 1 ? '' : 's'}${basis}, then principal and interest over the remaining ${rest} year${rest === 1 ? '' : 's'} (${ledger.termYears}-year term)`;
   }
   return `Principal and interest over ${ledger.termYears} years`;
 }

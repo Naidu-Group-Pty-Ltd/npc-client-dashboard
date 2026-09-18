@@ -40,6 +40,26 @@ import {
 } from '../colourways';
 import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
 
+/**
+ * The sample as a tier that carries the financial modelling.
+ *
+ * `SAMPLE` previews the COMPASS, and since seed v14 a Compass draws no
+ * acquisition table, no cash flow and no ten-year equity chart — the rule
+ * `compassSectionRegistry` has stated since v2.0, enforced at the projection
+ * by `tierContent.pure.ts` so it reaches all 500 masters at once.
+ *
+ * These are catalogue assertions about the MASTERS, though: whether fifty
+ * designs are fifty designs, and whether every page a master declares can
+ * draw. Rendering them as a Compass would exercise three fewer pages and
+ * would let a master differ from its sibling only on a page neither drew. So
+ * the structural tests render the tier that has every page, and
+ * `the Compass drops the financial modelling` below asserts the other half.
+ */
+const SAMPLE_WITH_MODELLING = {
+  ...SAMPLE,
+  report: { ...(SAMPLE.report as object), tier: 'financial', drawsFinancialModelling: true },
+};
+
 /** Visible text, with tags and whitespace collapsed. */
 function textOf(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
@@ -140,7 +160,7 @@ describe('the fifty are structurally distinct, not fifty recolours', () => {
     // Stronger than comparing manifests: two different manifests could still
     // resolve to identical output if a resolver flattened them.
     const rendered = INVESTMENT_COMPASS_TEMPLATES.map(
-      (t) => renderTemplateToHtml(t.schema, { data: SAMPLE }).html,
+      (t) => renderTemplateToHtml(t.schema, { data: SAMPLE_WITH_MODELLING }).html,
     );
     expect(new Set(rendered).size).toBe(50);
   });
@@ -152,7 +172,7 @@ describe('the fifty are structurally distinct, not fifty recolours', () => {
       );
       // A family's five share a palette by construction, so if their documents
       // differ it is structure that differs.
-      const rendered = templates.map((t) => renderTemplateToHtml(t.schema, { data: SAMPLE }).html);
+      const rendered = templates.map((t) => renderTemplateToHtml(t.schema, { data: SAMPLE_WITH_MODELLING }).html);
       expect(new Set(rendered).size, family.name).toBe(5);
     }
   });
@@ -288,17 +308,40 @@ describe.each(INVESTMENT_COMPASS_TEMPLATES.map((t) => [
      * which would assert that a template prints its maximum, not that it
      * prints what it has.
      */
-    const { html } = renderTemplateToHtml(template.schema, { data: SAMPLE });
+    const { html } = renderTemplateToHtml(template.schema, { data: SAMPLE_WITH_MODELLING });
     const pages = html.match(/class="[^"]*tpl-page/g) ?? [];
     // Every page except the narrative run, whose buckets the sample has none
     // of. The pre-existing conditionals — the assessment's per-dimension prose,
     // the opportunity, the risk row — all resolve against the sample and are
-    // therefore still counted, exactly as before.
+    // therefore still counted, exactly as before. The three financial pages
+    // resolve here because this data is a tier that carries them.
     const expected = template.schema.pages.filter(
       (p: any) => !/^(The report|Not the whole report)/.test(p.name),
     );
     expect(pages.length).toBe(expected.length);
     expect(expected.length).toBeGreaterThan(4);
+  });
+
+  it('drops the financial modelling on a tier that may not carry it', () => {
+    /*
+     * The other half of the same rule. `compassSectionRegistry` has said since
+     * v2.0 that "ALL detailed financial modelling ... MUST NOT appear here",
+     * the generator obeyed it, and one master served five document kinds — so
+     * the Investment Compass opened on purchase price, gross yield, LVR and a
+     * ten-year projection while the Financial Analysis carried the location
+     * case. Each report answered the other's question.
+     */
+    const asCompass = renderTemplateToHtml(template.schema, { data: SAMPLE }).html;
+    const asFinancial = renderTemplateToHtml(template.schema, { data: SAMPLE_WITH_MODELLING }).html;
+    const count = (h: string) => (h.match(/class="[^"]*tpl-page/g) ?? []).length;
+    const dropped = template.schema.pages.filter(
+      (p: any) => p.conditional === 'report && report.drawsFinancialModelling',
+    );
+    expect(dropped.length, 'the master must make its financial pages conditional').toBeGreaterThanOrEqual(2);
+    expect(count(asCompass)).toBe(count(asFinancial) - dropped.length);
+    // And the drop is clean: no labelled empty rows survive where the tables were.
+    expect(textOf(asCompass)).not.toContain('Total upfront cash');
+    expect(textOf(asCompass)).not.toContain('Loan repayments');
   });
 
   it('makes every narrative page conditional on the projection having it', () => {

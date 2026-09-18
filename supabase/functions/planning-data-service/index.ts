@@ -21,6 +21,18 @@ import {
 } from '../_shared/planning/planningSources.pure.ts';
 import { deriveZoneFamily, ZONE_FAMILY_LABEL } from '../_shared/planning/zoneFamily.pure.ts';
 import {
+  buildNswHazardIdentify, buildNswPrincipalIdentify, buildNswProtectionIdentify,
+  buildQldFloodIdentify, buildQldMsesIdentify, buildQldStatePlanningIdentify,
+  buildTasOverlayQuery, buildVicOverlayQuery,
+  mergeConstraintOutcomes, parseNamedLayerConstraints, parseNswConstraints,
+  parseNswInstrument, parseTasOverlays, parseVicOverlays,
+  NSW_HAZARD_LAYERS, NSW_HAZARD_SOURCE, NSW_PRINCIPAL_CONTROL_LAYERS,
+  NSW_PRINCIPAL_SOURCE, NSW_PROTECTION_LAYERS, NSW_PROTECTION_SOURCE,
+  QLD_FLOODCHECK_SOURCE, QLD_LICENCE, QLD_MSES_SOURCE,
+  QLD_STATE_PLANNING_CONTEXT_SOURCE,
+  type ConstraintProbeOutcome,
+} from '../_shared/planning/planningConstraints.pure.ts';
+import {
   councilNameCandidates, resolveCouncilName, summariseDaRows,
   type NswDaRow,
 } from '../_shared/planning/developmentActivity.pure.ts';
@@ -291,11 +303,128 @@ Deno.serve(async (req) => {
       };
     }
 
+    // ── the constraint register ──────────────────────────────────────────
+    // What is MAPPED OVER the land: heritage, bushfire, flood, landslip, acid
+    // sulfate soils, riparian corridors, height and floor space limits, the
+    // regional plan the area sits in. Until this block existed the report said
+    // "overlay mapping ... is not retrieved by this platform" on every
+    // property in the country, and the registers below had been answering the
+    // whole time — measured from this egress on 17 Sep 2026, all HTTP 200, all
+    // open-licensed, none needing a key.
+    //
+    // Each jurisdiction's registers are asked in PARALLEL and merged by
+    // `mergeConstraintOutcomes`, which keeps what each one covers. A register
+    // that could not be reached contributes no coverage at all, so an outage
+    // can never read as a property with nothing on it.
+    const constraintOutcomes: ConstraintProbeOutcome[] = [];
+    const fetchConstraint = async (
+      url: string,
+      parse: (body: unknown) => ConstraintProbeOutcome,
+      source: string,
+      licence: string,
+      asked: Parameters<typeof mergeConstraintOutcomes>[0][number]['asked'],
+    ): Promise<ConstraintProbeOutcome> => {
+      const res = await fetchJson(url);
+      if (!res.ok) return { asked, status: 'unavailable', readings: [], source, licence, note: res.message };
+      return parse(res.body);
+    };
+
+    if (jurisdiction === 'NSW') {
+      const [principal, hazard, protection] = await Promise.all([
+        fetchJson(buildNswPrincipalIdentify(lng, lat)),
+        fetchJson(buildNswHazardIdentify(lng, lat)),
+        fetchJson(buildNswProtectionIdentify(lng, lat)),
+      ]);
+      constraintOutcomes.push(
+        principal.ok
+          ? parseNswConstraints(principal.body, NSW_PRINCIPAL_CONTROL_LAYERS, NSW_PRINCIPAL_SOURCE)
+          : { asked: [], status: 'unavailable', readings: [], source: NSW_PRINCIPAL_SOURCE, licence: 'CC BY 4.0', note: principal.message },
+        hazard.ok
+          ? parseNswConstraints(hazard.body, NSW_HAZARD_LAYERS, NSW_HAZARD_SOURCE)
+          : { asked: [], status: 'unavailable', readings: [], source: NSW_HAZARD_SOURCE, licence: 'CC BY 4.0', note: hazard.message },
+        protection.ok
+          ? parseNswConstraints(protection.body, NSW_PROTECTION_LAYERS, NSW_PROTECTION_SOURCE)
+          : { asked: [], status: 'unavailable', readings: [], source: NSW_PROTECTION_SOURCE, licence: 'CC BY 4.0', note: protection.message },
+      );
+      // The LEP itself is not a control and draws no row; it is what lets the
+      // report name WHICH instrument the height and lot size come from.
+      if (principal.ok) {
+        const lep = parseNswInstrument(principal.body);
+        if (lep) console.log('[planning-data-service] NSW instrument', lep.name, lep.amendment ?? '');
+      }
+    } else if (jurisdiction === 'VIC') {
+      constraintOutcomes.push(await fetchConstraint(
+        buildVicOverlayQuery(lng, lat), parseVicOverlays,
+        'Vicmap Planning — plan_overlay', 'CC BY 4.0', [],
+      ));
+    } else if (jurisdiction === 'QLD') {
+      const [context, flood, mses] = await Promise.all([
+        fetchJson(buildQldStatePlanningIdentify(lng, lat)),
+        fetchJson(buildQldFloodIdentify(lng, lat)),
+        fetchJson(buildQldMsesIdentify(lng, lat)),
+      ]);
+      constraintOutcomes.push(
+        context.ok
+          ? parseNamedLayerConstraints(context.body, {
+            asked: ['regionalPlan', 'growthArea', 'environmentallySensitive'],
+            source: QLD_STATE_PLANNING_CONTEXT_SOURCE, licence: QLD_LICENCE,
+          })
+          : { asked: [], status: 'unavailable', readings: [], source: QLD_STATE_PLANNING_CONTEXT_SOURCE, licence: QLD_LICENCE, note: context.message },
+        flood.ok
+          ? parseNamedLayerConstraints(flood.body, {
+            asked: ['flood'], source: QLD_FLOODCHECK_SOURCE, licence: QLD_LICENCE,
+            instrument: 'Queensland FloodCheck rapid hazard assessment',
+            // A single-purpose register states its own family. This one
+            // answers with the sub-basin's NAME — `Lower Mary River` at
+            // 262 Pallas Street — which carries no flood keyword, so
+            // classifying by label filed a flood hazard as strategic context.
+            family: { family: 'flood', kind: 'hazard' },
+          })
+          : { asked: [], status: 'unavailable', readings: [], source: QLD_FLOODCHECK_SOURCE, licence: QLD_LICENCE, note: flood.message },
+        mses.ok
+          // MSES publishes 26 layers under descriptive names — regulated
+          // vegetation, wildlife habitat, wetlands, watercourses — so this one
+          // classifies by label, which is what `familyFromLabel` is for.
+          ? parseNamedLayerConstraints(mses.body, {
+            asked: ['biodiversity', 'wetlands', 'riparian', 'vegetation'],
+            source: QLD_MSES_SOURCE, licence: QLD_LICENCE,
+            instrument: 'Environmental Offsets Act 2014 (Qld)',
+          })
+          : { asked: [], status: 'unavailable', readings: [], source: QLD_MSES_SOURCE, licence: QLD_LICENCE, note: mses.message },
+      );
+    } else if (jurisdiction === 'TAS') {
+      const [code, general] = await Promise.all([
+        fetchJson(buildTasOverlayQuery(14, lng, lat)),
+        fetchJson(buildTasOverlayQuery(15, lng, lat)),
+      ]);
+      for (const r of [code, general]) {
+        constraintOutcomes.push(r.ok
+          ? parseTasOverlays(r.body)
+          : { asked: [], status: 'unavailable', readings: [], source: 'theLIST — Tasmanian Planning Scheme overlays', licence: 'CC BY 3.0 AU', note: r.message });
+      }
+    }
+
+    const merged = mergeConstraintOutcomes(constraintOutcomes);
+    if (merged.registersUnavailable.length) anyTransportFailure = true;
+    console.log('[planning-data-service] constraints', {
+      jurisdiction,
+      found: merged.readings.length,
+      asked: merged.askedFamilies.length,
+      registers: merged.registersAnswered.length,
+      unavailable: merged.registersUnavailable.length,
+    });
+
     const data = {
       jurisdiction,
       coordinate: { latitude: lat, longitude: lng },
       zoning: zoningCell,
       parcel: parcelCell,
+      constraints: merged.readings,
+      constraintsAsked: merged.askedFamilies,
+      constraintRegisters: {
+        answered: merged.registersAnswered,
+        unavailable: merged.registersUnavailable,
+      },
       developmentInstruments: instrumentsCell,
       developmentActivity: activityCell,
       verification: jurisdiction

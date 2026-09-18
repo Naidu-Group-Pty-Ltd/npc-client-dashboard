@@ -15,6 +15,7 @@ const outlet = readFileSync('src/components/billing/PaymentGateOutlet.tsx', 'utf
 const pure = readFileSync('supabase/functions/_shared/paymentGate.pure.ts', 'utf8');
 const edge = readFileSync('supabase/functions/mission-control-gate/index.ts', 'utf8');
 const config = readFileSync('supabase/config.toml', 'utf8');
+const screen = readFileSync('src/components/billing/PaymentGateScreen.tsx', 'utf8');
 
 describe('mounting', () => {
   it('gates both breakpoints of the dashboard shell', () => {
@@ -58,6 +59,33 @@ describe('fail-open', () => {
     // has no verdict at all; the whole contract is that a failure is an OPEN
     // verdict the caller can read.
     expect(edge).not.toMatch(/json\(unknownVerdict\(\),\s*5\d\d\)/);
+  });
+});
+
+describe('the way out is actually drawn', () => {
+  it('decides the pay button by one shared rule, not by naming a reason', () => {
+    // `reason !== "operator_locked"` answered yes to every word this build has
+    // never heard of. The rule now lives in the pure module, where both the
+    // button and the copy read it.
+    expect(screen).toMatch(/payingCanUnlock\(verdict\)/);
+    expect(screen).not.toMatch(/reason !== ["']operator_locked["']/);
+  });
+
+  it("renders the verdict's own pricing URL, which had no call site at all", () => {
+    // Mission Control sends `checkout.pricing_url` on every gated read and
+    // calls it "always a real URL when gated, never null, because a locked
+    // screen with no way out is worse than no screen" — and nothing in the
+    // product read it. The fallback appeared only when a refusal happened to
+    // carry its own copy, which is a minority of the refusal shapes.
+    expect(screen).toMatch(/verdict\.pricingUrl/);
+  });
+
+  it('stops offering the button while a payment is being confirmed', () => {
+    // The only anti-double-charge guard is Mission Control's `paid_at`, which
+    // the Stripe webhook writes — so between paying and that webhook landing,
+    // a second click buys a second subscription.
+    expect(screen).toMatch(/confirming/);
+    expect(screen).toMatch(/already_paid/);
   });
 });
 

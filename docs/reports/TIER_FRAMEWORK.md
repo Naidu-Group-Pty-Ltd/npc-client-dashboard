@@ -118,3 +118,138 @@ and Phase 3's fix.
 5. **Comparison & the gates** — store what the comparison asks for, stamp its
    scale, one render path; the five validation gates (input, record, section,
    assembly, render) as CI-tested modules; delete the legacy branch.
+
+---
+
+## Decision E — one purpose each (17 Sep 2026)
+
+> "There is financial information currently being projected within the Compass
+> Report that should be clearly incorporated into the Financial Report instead
+> of remaining within the Compass Report. This needs to be properly reviewed
+> and separated so that each report has a clear purpose and presents the
+> relevant information in the correct place."
+> — the owner, 17 Sep 2026
+
+### What was wrong
+
+`compassSectionRegistry.ts` has said since v2.0 that
+
+> ALL detailed financial modelling (purchase costs, yield, loan, cashflow,
+> sensitivity, 10-year projections, land tax, equity) lives in the separate
+> Financial Analysis Report and MUST NOT appear here
+
+and every Compass section's own `purpose` repeats it — *NO purchase price,
+LVR, yield, cashflow or any financial figure*. The generator obeys it: the
+prose a model writes for a Compass has no financial section in it. The 17 Sep
+regeneration of 262 Pallas Street carries eleven H2 headings and not one is
+financial.
+
+And the document a client opens led with three pages of it.
+
+The rule was enforced on the PROSE while **three** implementations decided
+what a document draws, and none of them read the registry:
+
+1. `render-investment-report-pdf` reads the tier at line ~2997 and uses it for
+   the document's LABEL and nothing else. It drew the KPI strip, the three
+   financial charts and the price-and-rent paragraphs from
+   `financial_calculations` on every tier.
+2. The Investment Compass masters carry an executive KPI dashboard, an
+   acquisition-and-cash-flow page and a ten-year equity chart in one page
+   sequence that serves all five tiers.
+3. `extractKPIMetrics` in the frontend PDF once opened
+   `if (reportTier !== 'financial') return null` — so a Compass drew no band
+   while the template drew every figure. The fix for that made the rule
+   *availability, not tier*, and both presentations then showed everything.
+
+So the Investment Compass opened on purchase price, gross yield, LVR and a
+ten-year equity projection, and the Financial Analysis carried the location
+case. Each report answered the other's question.
+
+### The rule
+
+`_shared/reports/investment/tierContent.pure.ts` is the one module that
+decides what a tier's document contains, and the authority sits in
+`reportBindingProjection` because that projection is what every template is
+bound from: **withholding a namespace once reaches all 500 seeded masters,
+every future one, and both render routes**, while a fix inside one composer
+reaches one composer.
+
+| Tier | Financial modelling | Price & rent | Location depth | DD register |
+|---|---|---|---|---|
+| `compass` | — | ✓ | ✓ | ✓ |
+| `financial` | ✓ | ✓ | — | — |
+| `strategic` (Due Diligence) | — | ✓ | ✓ | ✓ |
+| `briefing` | — | ✓ | — | — |
+| `snapshot` | ✓ | ✓ | — | — |
+| `composite` (legacy) | ✓ | ✓ | ✓ | ✓ |
+
+Three rules.
+
+**A tier is a PURPOSE, not a length.** The Compass is not a Financial Analysis
+with fewer pages. The honest test of the split is whether a reader could tell
+which document they are holding from the contents page alone.
+
+**Withholding the modelling is not withholding the price.** A location report
+that will not say what the property costs is coy rather than focused, so
+`identityFigures` stays true on every tier: the asking price and the
+indicative rent are facts about the asset in the way its land size is. What
+leaves the Compass is the analysis of a PURCHASE — yield, LVR, loan structure,
+cash flow, sensitivity, the ten-year series.
+
+**The drop has to be clean.** The projection withholds the bindings AND the
+three master pages carry
+`conditional: report && report.drawsFinancialModelling`, because a page kept
+with nothing to bind prints labelled empty rows, which is worse than a page
+the reader never sees. Two things needed no change: `renderKpiGridHtml`
+already drops a tile whose bound value resolved to nothing, so the dashboard
+closes up around the figures the tier does publish; and the `toc` block reads
+the pages that actually rendered, so the contents list corrects itself.
+
+That second claim was then MEASURED rather than left as an expectation, and
+the measurement is the interesting half. Dropping the three pages does not
+finish the job: the masters are one design serving five tiers, so a page drawn
+on every tier may still bind a withheld figure somewhere inside it. Walked
+over all 50 masters, that is **three pages and four blocks**:
+
+| Page | Block | Withheld bindings |
+|---|---|---|
+| Cover | `kpi-grid` (fact band) | `financials.weeklyNet` |
+| Executive dashboard | `kpi-grid` (five variants) | eleven, incl. `grossYield`, `netYield`, `loanAmount`, `cashOnCash` |
+| Executive dashboard | `data-table` | `annualRepayment`, `loanAmount` |
+| Sources and methodology | `definition-list` | `assumptions.capitalGrowth`, `assumptions.interestRate` |
+
+All four close up, each by a rule its own renderer already carried and each
+written for this class of defect — a `kpi-grid` drops the tile and recomputes
+its column count from the survivors (so the cover band closes from four cells
+to three rather than leaving a gap), a `data-table` drops a row whose bound
+cells all resolved to nothing, and a `definition-list` drops an item whose
+definition is bound and empty.
+
+So the rule is not "no page may bind a withheld figure" — that would forbid
+one design serving five tiers, which is the point of the catalogue. It is
+that **a withheld figure may only ever sit somewhere that closes up around
+it**, and `reportBindingProjection.spec.ts` walks every master's every page
+and fails on any withheld binding outside those three block types, naming the
+master, the page, the block and the path.
+
+### The one escape, and why it exists
+
+`projectInvestmentReport(row, { tier })` overrides the row's tier for exactly
+one caller. `condense-investment-report` projects the PARENT Compass to
+assemble the facts block for a Briefing or a Snapshot — and a Snapshot's whole
+purpose is the figures. Keying the withholding on the row being READ would
+have handed the Snapshot's prompt a parent with no modelling in it and quietly
+emptied the one tier that exists to carry it. **The document being PRODUCED
+decides what may be published**, so the producer names its own tier.
+
+### Shipped as
+
+Seed **v14** (`20261203000000_seed_template_library_v14_tier_separation.sql`)
+plus the active-master refresh (`20261203010000`), exactly as v13 did: adopted
+masters are COPIES and nothing else updates one after adoption.
+
+The cover's standfirst now comes from the content policy rather than from
+`DOCUMENT_IDENTITY`, because it is a promise about what the document holds.
+The Compass's read *"What the property is, what it costs to hold, and what the
+assessment concluded"* — a promise of the modelling it does not carry, printed
+on the cover above a page sequence that then drew it.

@@ -528,7 +528,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Where this property sits in its local market — medians, growth, days on market, and the comparables that anchor them.',
     tiers: {
-      compass: { depth: 'required', order: 6, label: 'Market Positioning', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 12, label: 'Market Positioning', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 7, label: 'Market Position', producer: authored('condense.briefing') },
       financial: { depth: 'required', order: 5, label: 'Price, Rent & Yield Market Positioning', producer: routed('financial', 3) },
       strategic: merged('supplyPipeline'),
@@ -667,7 +667,13 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Real commute times to the places people actually go, and what the road and rail plans change.',
     tiers: {
-      compass: merged('amenityAccess'),
+      // v4.0: its own section on the Compass. It was merged into a 600-word
+      // Amenity & Access that also carried schools, healthcare, retail and
+      // recreation — five sections and ~25,000 characters in the legacy
+      // long-form document — so transport was a bullet. A section with
+      // nothing behind it should be merged and one with a register behind it
+      // should not; `transport_stops` carries 185,177 GTFS stops.
+      compass: { depth: 'required', order: 9, label: 'Transport & Connectivity', producer: authored('generator.compass') },
       briefing: merged('amenityAccess'),
       strategic: { depth: 'required', order: 9, label: 'Transport, Commute & Daily Movement', producer: routed('dueDiligence', 7) },
     },
@@ -685,7 +691,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'How this dwelling aligns with local demand — position, land/build balance, occupier appeal and its limitations.',
     tiers: {
-      compass: { depth: 'required', order: 9, label: 'Property Fit Within the Suburb', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 13, label: 'Property Fit Within the Suburb', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 8, label: 'Property Fit', producer: authored('condense.briefing') },
       strategic: { depth: 'required', order: 14, label: 'Future Buyer and Resale Appeal', producer: routed('dueDiligence', 12) },
     },
@@ -714,32 +720,32 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     purpose:
       'Zone, overlays, easements, title, and what must be confirmed on the certificate before contract. On the Due Diligence tier this is the defining section — and nothing can currently produce it; see the gap below.',
     tiers: {
-      compass: merged('riskDashboard'),
+      // v4.0 — THE GAP DECLARED HERE IS CLOSED, and what closed it is worth
+      // recording because the reasoning below was right when it was written.
+      //
+      // It read: "COMPOSITION cannot, because the record holds no planning
+      // data. Measured across all 1,199 stored reports: `property_specs`
+      // carries a `zoning` key on 1,071 of them and a zoning VALUE on
+      // **zero** ... The platform does not acquire this data, so the fix is
+      // upstream of the reporting engine and cannot be made here."
+      //
+      // The fix WAS made upstream. `planning-data-service` has answered since
+      // 2026-09-06 and `planningConstraints.pure.ts` (17 Sep 2026) added the
+      // registers that carry the controls themselves: NSW answers height,
+      // floor space ratio, minimum lot size, heritage, bushfire, flood,
+      // landslide and acid sulfate soils with the clause and currency date of
+      // each; Victoria answers every overlay at the point; Queensland answers
+      // the regional plan and the priority living areas; Tasmania answers both
+      // overlay layers. The Compass therefore has a planning section (ordinal
+      // 8 in `compassSectionRegistry`) and the routing this comment said could
+      // not exist now has something to route.
+      //
+      // The strategic tier keeps `producer: null` on purpose: a Due Diligence
+      // report's planning section also needs TITLE and easements, which no
+      // register here reads. Half a section declared as a whole one is the
+      // failure this registry exists to stop.
+      compass: { depth: 'required', order: 10, label: 'Planning, Zoning & What Is Mapped Over the Land', producer: authored('generator.compass') },
       briefing: merged('riskDashboard'),
-      // DECLARED GAP. It appeared on 1 of the 11 Due Diligence reports ever
-      // produced, and neither available producer can fix that:
-      //
-      //  - ROUTING cannot, because the Compass parent has no planning section
-      //    to route. The Compass folds planning into Risk Dashboard, which this
-      //    registry states two lines above; there is nothing there to match.
-      //  - COMPOSITION cannot, because the record holds no planning data.
-      //    Measured across all 1,199 stored reports: `property_specs` carries a
-      //    `zoning` key on 1,071 of them and a zoning VALUE on **zero**;
-      //    `council_area` and `land_size_sqm` are likewise present-but-empty on
-      //    every row; and `location_intelligence`, present on 1,112, holds only
-      //    amenities, commute, coordinates, healthcare, lifestyle, schools,
-      //    transport and walkScore — no planning, zoning, overlays, title or
-      //    environmental keys at all.
-      //
-      // Nor is it a wiring problem. No table in the schema carries residential
-      // zoning, land size or council area: `zoning` exists only on
-      // `commercial_properties` and `industrial_properties`, a different
-      // product. The platform does not acquire this data, so the fix is
-      // upstream of the reporting engine and cannot be made here.
-      //
-      // Declaring a producer it does not have would be exactly the failure this
-      // registry exists to stop — a declaration nothing can honour — so the
-      // tier keeps its promise and the gap is named.
       strategic: { depth: 'required', order: 15, label: 'Planning, Zoning and Title Due Diligence', producer: null },
     },
   },
@@ -756,7 +762,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Every risk in one table with a level, why it matters and the check that would settle it. Protected under page pressure.',
     tiers: {
-      compass: { depth: 'required', order: 10, label: 'Risk Dashboard', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 14, label: 'Risk Dashboard', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 9, label: 'Risk Overview', producer: authored('condense.briefing') },
       financial: { depth: 'required', order: 13, label: 'Financial Risk Dashboard', producer: routed('financial', 11) },
       strategic: { depth: 'required', order: 18, label: 'Property & Location Risk Dashboard', producer: routed('dueDiligence', 17) },
@@ -779,7 +785,11 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'Flood, bushfire, heat, coastal and crime — each with its source, its measured level and its insurance consequence.',
     tiers: {
-      compass: merged('riskDashboard'),
+      // v4.0: its own section. Climate, environment and crime were folded
+      // into the Risk Dashboard, a 500-word table whose own purpose says "the
+      // table IS the section", which had room for a row each. Four states of
+      // recorded crime and a climate reading are behind it now.
+      compass: { depth: 'required', order: 11, label: 'Environment, Climate & Safety', producer: authored('generator.compass') },
       briefing: merged('riskDashboard'),
       strategic: { depth: 'required', order: 19, label: 'Climate, Environmental, Insurance, Crime and Safety Risk', producer: routed('dueDiligence', 15) },
     },
@@ -791,7 +801,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     aliases: ['Due Diligence Checklist', 'Due Diligence', 'Investment Recommendations'],
     purpose: 'What must be verified before contract, as a list somebody can work through.',
     tiers: {
-      compass: { depth: 'required', order: 11, label: 'Due Diligence Checklist', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 15, label: 'Due Diligence Checklist', producer: authored('generator.compass') },
       strategic: { depth: 'optional', order: 20, label: 'Due Diligence Checklist', producer: null },
     },
   },
@@ -920,7 +930,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     purpose:
       'The score by dimension with its weights — every row a Computed figure, and a dimension with no data omitted rather than scored zero.',
     tiers: {
-      compass: { depth: 'optional', order: 12, surface: 'document', producer: projection('recommendation.gradedDetailLine') },
+      compass: { depth: 'optional', order: 17, surface: 'document', producer: projection('recommendation.gradedDetailLine') },
       briefing: { depth: 'required', order: 16, label: 'Investment Score Breakdown', producer: composedFn('composeScoreBreakdownSection') },
       // Composed: the guide listed all five dimensions with no omission rule
       // beside it, and the record withholds the ones it could not score.
@@ -983,7 +993,7 @@ export const SECTION_REGISTRY: readonly SectionDefinition[] = [
     ],
     purpose: 'The call, the rationale in a paragraph, and the immediate actions. Proceed / proceed with caution / not suitable.',
     tiers: {
-      compass: { depth: 'required', order: 13, label: 'Final Recommendation', producer: authored('generator.compass') },
+      compass: { depth: 'required', order: 16, label: 'Final Recommendation', producer: authored('generator.compass') },
       briefing: { depth: 'required', order: 20, label: 'Recommendation', producer: authored('condense.briefing') },
       snapshot: { depth: 'required', order: 10, label: 'Quick Recommendation', producer: authored('condense.snapshot') },
       financial: { depth: 'required', order: 17, label: 'Financial Recommendation & Portfolio Fit', producer: routed('financial', 15) },

@@ -21,9 +21,31 @@
  * Suppression removes the SENTENCE carrying the claim — the unit of the
  * assertion — and reports what went, so the hygiene log can say "the model
  * invented a score" rather than the document silently reading differently
- * from the model's draft. Tables and chart directives are never edited here:
- * a composed table prints only recorded figures, and a directive is drawn
- * from its own numbers.
+ * from the model's draft. A composed table is never edited here, because it
+ * prints only recorded figures.
+ *
+ * A chart directive was left alone for the same reason — "a directive is drawn
+ * from its own numbers" — and that reason was wrong for the two primitives a
+ * MODEL writes as a verdict. Measured on 262 Pallas Street, 17 Sep 2026, whose
+ * record issues no grade at all:
+ *
+ *   {{gauge: 85 | Land Appeal | Large block relative to typical suburban lots}}
+ *   {{gauge: 82 | Large-block lifestyle appeal | …}}
+ *   {{wheel: 25,45,30,40,35 | labels=Environmental,Crime,Planning & overlays,…}}
+ *
+ * Eight numbers, none of them in `investment_score`, three of them drawn as
+ * dials — and a gauge on a denominator of 100 prints a verdict band beside the
+ * figure, so "85 · STRONG" reaches a client as a measurement of their
+ * property. The prompt asked for it: "Investment Score, Affordability, Risk,
+ * Suitability, Confidence, and similar 0-100 ratings MUST use {{gauge}}". That
+ * line is narrowed at the source and `suppressUnrecordedVerdictVisuals` is the
+ * check that it was obeyed.
+ *
+ * It is deliberately NARROW. `gauge` and `wheel` are rating primitives and
+ * nothing else; `pictograph`, `bars`, `donut`, `heatmap` and `tiles` carry
+ * proportions and measured series, and dropping those on a number-match would
+ * take real data off the page. A pictograph asserting a proportion nobody
+ * measured is a residual, named rather than guessed at.
  *
  * Deno-compatible: no imports.
  */
@@ -140,4 +162,127 @@ export function suppressUnrecordedScores(
   // A paragraph that lost its only line leaves two blank lines behind.
   const markdownOut = out.join('\n').replace(/\n{3,}/g, '\n\n');
   return { markdown: markdownOut, removed };
+}
+
+/** A verdict visual that was removed, and the numbers it asserted. */
+export interface SuppressedVisual {
+  /** `gauge`, `wheel`, `bars`, `heatmap` or `radar`. */
+  kind: string;
+  /** The whole directive, as removed. */
+  directive: string;
+  /** The values it asserted that the record does not hold. */
+  values: number[];
+}
+
+export interface VisualSuppressionResult {
+  markdown: string;
+  removed: SuppressedVisual[];
+}
+
+/**
+ * The primitives that can carry a 0–100 rating.
+ *
+ * The first version of this guard named `gauge` and `wheel`, because those
+ * were the two the prompt asked for. The model obeyed the narrowed rule and
+ * put the SAME invented ratings into `{{bars}}` and `{{heatmap}}` instead —
+ * pages 9, 15, 16 and 20 of the 17 Sep 2026 regeneration of 262 Pallas
+ * Street. The rule had been written about a PRIMITIVE when it needed to be
+ * written about a CLAIM, and a rule about a primitive is one the next
+ * primitive walks around.
+ */
+const RATING_KINDS = ['gauge', 'wheel', 'bars', 'heatmap', 'radar'] as const;
+
+/** Every number a rating visual asserts, rounded. */
+function ratingValues(kind: string, payload: string): number[] {
+  // The first field before `|` carries the value(s); everything after is
+  // labels, captions and options, which may legitimately contain numbers
+  // ("Around seven in ten…", "max=100").
+  const head = payload.split('|')[0] ?? '';
+  const out: number[] = [];
+  const push = (v: string) => {
+    const n = Number(v.trim());
+    if (Number.isFinite(n)) out.push(Math.round(n));
+  };
+  if (kind === 'wheel') {
+    for (const part of head.split(',')) push(part);
+    return out;
+  }
+  if (kind === 'heatmap') {
+    // `0.55,0.52 / 0.49,0.51` — rows divided by `/`, cells by `,`.
+    for (const row of head.split('/')) for (const cell of row.split(',')) push(cell);
+    return out;
+  }
+  if (kind === 'bars' || kind === 'radar') {
+    // `Label 88, Label 92` — the value is the trailing number of each item,
+    // and a label that itself ends in a number ("Stage 2") is why this reads
+    // the LAST token rather than scanning the item for digits.
+    for (const item of head.split(',')) {
+      const m = item.trim().match(/(-?\d+(?:\.\d+)?)\s*%?$/);
+      if (m) push(m[1]);
+    }
+    return out;
+  }
+  // gauge: `VALUE` or `VALUE/MAX` — the value is the assertion, the max is the
+  // scale.
+  push((head.split('/')[0] ?? ''));
+  return out;
+}
+
+/**
+ * Does the directive declare a 0–100 RATING scale?
+ *
+ * Measured over the 611 `{{bars}}` directives the generator produced in the
+ * 60 days to 17 Sep 2026: **383 declare `max=100`**, and every one of the 25
+ * most frequent titles among them is a minted rating rather than a sourced
+ * statistic — "Market depth & cycle risk", "Risk focus areas (higher = more
+ * attention needed)", "Planning certainty snapshot", "Property lifestyle fit
+ * (0–100)", "Relative risk by category". One is worse than minted: "Typical
+ * commuting times by car", which is minutes drawn on a rating scale.
+ *
+ * So the declaration is the tell. A genuine measured series — a renter share,
+ * a median, a count — does not announce that it is scored out of a hundred,
+ * and the 228 bars that declare no maximum are left alone.
+ */
+function declaresRatingScale(payload: string): boolean {
+  const options = payload.split('|').slice(1).join('|');
+  return /\bmax\s*=\s*100\b/.test(options);
+}
+
+/**
+ * Remove every rating visual whose numbers the record does not hold.
+ *
+ * A directive is a whole line in this vocabulary, so the line goes — leaving no
+ * hole, because the renderer draws nothing for a directive that is not there
+ * and the prose around it introduces the finding in words.
+ *
+ * Two triggers, and the second is the one the first version was missing.
+ * `gauge` and `wheel` are rating primitives by construction, so any value they
+ * assert must be one the scoring engine recorded. `bars`, `heatmap` and
+ * `radar` can carry a real measured series, so they are judged only where the
+ * directive DECLARES a 0–100 rating scale — which is exactly how the invented
+ * scorecards were spelled once the narrower rule pushed them out of the gauge.
+ */
+export function suppressUnrecordedVerdictVisuals(
+  markdown: string,
+  opts: { recorded: number[] },
+): VisualSuppressionResult {
+  const supported = new Set(opts.recorded.map((n) => Math.round(n)));
+  const removed: SuppressedVisual[] = [];
+  const out: string[] = [];
+  const pattern = new RegExp(`^\\{\\{(${RATING_KINDS.join('|')})\\s*:\\s*([\\s\\S]*)\\}\\}$`);
+  for (const line of markdown.split('\n')) {
+    const m = line.trim().match(pattern);
+    if (!m) { out.push(line); continue; }
+    const kind = m[1];
+    const payload = m[2];
+    const alwaysRating = kind === 'gauge' || kind === 'wheel';
+    if (!alwaysRating && !declaresRatingScale(payload)) { out.push(line); continue; }
+    const values = ratingValues(kind, payload);
+    const unsupported = values.filter((v) => !supported.has(v));
+    // A directive with no readable number is left alone: it is malformed
+    // rather than untrue, and that is a different control's business.
+    if (!values.length || !unsupported.length) { out.push(line); continue; }
+    removed.push({ kind, directive: line.trim(), values: unsupported });
+  }
+  return { markdown: out.join('\n').replace(/\n{3,}/g, '\n\n'), removed };
 }

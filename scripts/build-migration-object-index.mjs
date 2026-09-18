@@ -98,12 +98,46 @@ export function buildIndex(dir = MIGRATIONS_DIR) {
   };
 }
 
+/**
+ * Is this repository the one that PUBLISHES the index, or one that CARRIES it?
+ *
+ * Mission Control reads exactly one index — the prime's
+ * (`fetchMigrationObjectIndex` resolves the prime source and never a clone's)
+ * — so currency is a claim the publishing repository makes and the only place
+ * it protects anything. A clone receives the file because the cascade mirrors
+ * the whole tree, and it CANNOT hold the migration set the file counts: the
+ * v13 and v14 template-library seeds are 39.7 MB each, over the 8 MB a cascade
+ * will carry in one file, so they are permanently absent on every clone while
+ * the copied index still counts them. A clone that lands a migration of its
+ * own diverges the other way at the same time.
+ *
+ * So the assertion could never pass there, and it failed every cascade pull
+ * request on all three clones at once — a fleet-wide delivery stop, on a file
+ * nothing on that side reads. It stands down where Mission Control owns the
+ * backend, which is the same marker `deploy-supabase-functions.yml` stands
+ * down on, and it FAILS CLOSED: an unset or unrecognised value asserts, so a
+ * repository that claims to author its own backend is held to its own index.
+ */
+export function indexIsCarriedNotAuthored(env = process.env) {
+  return env.BACKEND_DEPLOYED_BY === "mission-control";
+}
+
 function main() {
   const check = process.argv.includes("--check");
   const index = buildIndex();
   const json = `${JSON.stringify(index, null, 2)}\n`;
 
   if (check) {
+    if (indexIsCarriedNotAuthored()) {
+      console.log(
+        `${OUT} is carried here, not authored: Mission Control owns this ` +
+          "repository's backend, and the index it holds is the prime's. " +
+          "Nothing reads this copy and the migrations it counts include files " +
+          "no cascade can deliver, so its currency is not this repository's " +
+          "to assert.",
+      );
+      return;
+    }
     if (!existsSync(OUT)) {
       console.error(`${OUT} is missing. Run \`npm run migrations:index\`.`);
       process.exit(1);

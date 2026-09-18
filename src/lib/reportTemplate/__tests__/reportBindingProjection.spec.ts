@@ -18,6 +18,7 @@ import {
 import { applyOrganisationProjection } from '../../../../supabase/functions/_shared/organisationProjection.pure';
 import { OVERALL_GRADE_UNAVAILABLE } from '../../../../supabase/functions/_shared/reports/market/scoringInputPolicy.pure';
 import { INVESTMENT_COMPASS_TEMPLATES } from '../../../../scripts/template-library/investmentCompass/templates';
+import { visibleTableRows } from '../blocks/_data';
 
 /** Shaped exactly like a stored row. See the header. */
 const ROW = {
@@ -53,13 +54,23 @@ const ROW = {
     },
     income: { weeklyRent: 920 },
     keyMetrics: {
-      grossRentalYield: 3.71, netRentalYield: 2.44, cashOnCashReturn: 4.12,
-      weeklyNet: -184.5, annualNet: -9594, lvr: 80, totalInvestment: 1349640,
+      grossRentalYield: 3.71, netRentalYield: 2.95, cashOnCashReturn: -2.9,
+      weeklyNet: -753.5, annualNet: -39182, lvr: 80, totalInvestment: 1349640,
     },
     loanDetails: { loanAmount: 1032000, interestRate: 6.14, monthlyPayment: 6280, weeklyPayment: 1449, lvr: 80 },
+    /*
+     * All EIGHT components the engine subtracts, because that is what a stored
+     * row carries. This fixture held four and a `totalAnnual` that did not
+     * foot with them, and that is exactly the defect it was meant to guard:
+     * the projection published the same four, the masters bound the four, and
+     * the missing $2,328 sat inside "Net position" with no row naming it. On
+     * 262 Pallas Street, Maryborough the same gap was $2,100 of water rates
+     * and letting fees.
+     */
     annualCosts: {
-      councilRates: 1980, landlordInsurance: 720, propertyManagement: 2392,
-      maintenance: 1290, totalAnnual: 8710,
+      councilRates: 1980, waterRates: 1100, landlordInsurance: 720,
+      propertyManagement: 2392, lettingFees: 920, maintenance: 1290,
+      landTax: 1420, strataFees: 0, totalAnnual: 9822,
     },
     assumptions: { capitalGrowth: 4.2, cpiGrowth: 2.5, occupancyWeeks: 50 },
     cashFlow: { taxRate: null },
@@ -177,8 +188,24 @@ describe('after projection', () => {
     disclaimer: { text: 'As a Professional Property Consultant & Buyers Agent…', font_size: 'medium', is_enabled: true },
   };
 
+  /*
+   * Projected for the FINANCIAL tier, and that is the whole point of the
+   * parameter.
+   *
+   * `catalogueBindings()` reads every master in the catalogue, and those
+   * masters serve five tiers. The question this file asks is whether a bound
+   * path has a SOURCE IN THE RECORD — which is a fact about the row, not about
+   * which document draws it — so it has to be asked at the tier that publishes
+   * the most. The compass tier withholds the financial modelling by design
+   * (`TIER_CONTENT`), and asking here at the compass tier would report
+   * `financials.annualRepayment` as a binding with nowhere to come from, which
+   * is exactly the false claim the expected-absent list below must never make.
+   *
+   * What the compass withholds, and that no page is left with a hole by it, is
+   * pinned by its own describe block at the foot of this file.
+   */
   const data = applyOrganisationProjection(
-    applyInvestmentProjection(rawContext(), ROW),
+    applyInvestmentProjection(rawContext(), ROW, { tier: 'financial' }),
     ORGANISATION,
     { mark: MARK, markMono: MARK },
     SETTINGS,
@@ -271,7 +298,7 @@ describe('after projection', () => {
 
   it('converts units without inventing a model', () => {
     // Weekly is annual/52 — arithmetic, not a forecast.
-    expect(data.financials.weeklyRates).toBeCloseTo(1980 / 52, 6);
+    expect(data.financials.weeklyRates).toBeCloseTo((1980 + 1100) / 52, 6);
     expect(data.financials.annualRepayment).toBe(6280 * 12);
     // `annualRent` is the CONTRACTUAL rent — 52 weeks — because that is the
     // basis the stored yields rest on (149 of 153 production reports) and what
@@ -337,5 +364,250 @@ describe('after projection', () => {
     expect(sparse.property.address).toBe('1 Test St');
     expect(Object.keys(sparse.financials)).toHaveLength(0);
     expect(sparse.risks).toEqual([]);
+  });
+});
+
+/**
+ * The cash flow table adds up.
+ *
+ * Measured on 262 Pallas Street, Maryborough (report
+ * `aa41bcec-5a5c-434d-9162-96deb50e9bdb`, 16 Sep 2026): the printed rows came
+ * to $10,780 a year against a "Net position" the engine built on $12,880, so
+ * a client reading page 5 was $2,100 short with no line to attribute it to.
+ * The engine subtracts eight annual components; the projection published four
+ * and the masters bound those four — and the row that was missing water rates
+ * was LABELLED "Council and water rates".
+ *
+ * These tests resolve the real masters' real rows against the projection and
+ * add them up, so a ninth component added upstream, a renamed key or a row
+ * dropped from a master fails here rather than shipping a table a reader
+ * cannot foot.
+ */
+describe('the cash flow table foots to the net position', () => {
+  /*
+   * At the FINANCIAL tier throughout this block, because that is the only tier
+   * on which the table is drawn: the masters' cash-flow pages are conditional
+   * on `report.drawsFinancialModelling`, and the compass tier withholds the
+   * eight components by design. Measuring the arithmetic at a tier that does
+   * not print the table would prove nothing about the document that does.
+   */
+  const TIER = { tier: 'financial' } as const;
+  const data = applyOrganisationProjection(applyInvestmentProjection({}, ROW, TIER), {});
+  const ctx = { data, tokens: {} as any };
+
+  /** Every master's "Cash flow" table, wherever in its schema it sits. */
+  function cashFlowTables(schema: unknown): any[] {
+    const found: any[] = [];
+    const walk = (node: any) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node.headers) && node.headers[0] === 'Cash flow' && Array.isArray(node.rows)) found.push(node);
+      Object.values(node).forEach(walk);
+    };
+    walk(schema);
+    return found;
+  }
+
+  /** The number a bound annual cell resolves to, by the key it names. */
+  function annualOf(row: any): { label: string; key: string; value: number | undefined } {
+    const label = String(row.cells?.[0] ?? '');
+    const key = String(row.cells?.[2] ?? '').match(/financials\.([A-Za-z0-9_]+)/)?.[1] ?? '';
+    const value = (data.financials as Record<string, unknown>)[key];
+    return { label, key, value: typeof value === 'number' ? value : undefined };
+  }
+
+  it('publishes every component the engine subtracted', () => {
+    const c = ROW.financial_calculations.annualCosts;
+    const f = data.financials as Record<string, number>;
+    // Two join the row whose label already claimed them; two more are their
+    // own line. Nothing is dropped and nothing is counted twice.
+    expect(f.annualRates).toBe(c.councilRates + c.waterRates);
+    expect(f.annualManagement).toBe(c.propertyManagement + c.lettingFees);
+    expect(f.annualInsurance).toBe(c.landlordInsurance);
+    expect(f.annualMaintenance).toBe(c.maintenance);
+    expect(f.annualOtherCosts).toBe(c.landTax + c.strataFees);
+    expect(f.annualRates + f.annualInsurance + f.annualManagement + f.annualMaintenance + f.annualOtherCosts)
+      .toBe(c.totalAnnual);
+  });
+
+  it('draws the land tax row only where there is a figure to draw', () => {
+    // Both are nil on an ordinary house — 262 Pallas carries 0 and 0 — and a
+    // row reading "$0" is a line the reader has to discount rather than read.
+    const house = applyInvestmentProjection({}, {
+      ...ROW,
+      financial_calculations: {
+        ...ROW.financial_calculations,
+        annualCosts: { ...ROW.financial_calculations.annualCosts, landTax: 0, strataFees: 0, totalAnnual: 8402 },
+      },
+    }, TIER);
+    expect('annualOtherCosts' in (house.financials as object)).toBe(false);
+    expect('weeklyOtherCosts' in (house.financials as object)).toBe(false);
+  });
+
+  it('names the vacancy assumption instead of hiding it in the rent', () => {
+    // `annualRent` stays contractual, because that is the basis the stored
+    // yields rest on. The difference the occupancy assumption makes is its own
+    // deduction, so the table can open on the contractual rent and still reach
+    // a net position the engine built on the occupied one.
+    const f = data.financials as Record<string, number>;
+    expect(f.annualRent).toBe(920 * 52);
+    expect(f.annualVacancyAllowance).toBe(920 * 52 - 920 * 50);
+    // At 52 weeks there is no gap, so no row and no key.
+    const full = applyInvestmentProjection({}, {
+      ...ROW,
+      financial_calculations: { ...ROW.financial_calculations, assumptions: { ...ROW.financial_calculations.assumptions, occupancyWeeks: 52 } },
+    }, TIER);
+    expect('annualVacancyAllowance' in (full.financials as object)).toBe(false);
+  });
+
+  it('resolves every line the master draws', () => {
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      for (const table of cashFlowTables(t.schema)) {
+        for (const { row } of visibleTableRows(table.rows, ctx)) {
+          const { label, key, value } = annualOf(row);
+          expect(key, `${t.name}: "${label}" binds no financials key`).not.toBe('');
+          expect(value, `${t.name}: "${label}" (financials.${key}) resolved to nothing`).toBeTypeOf('number');
+        }
+      }
+    }
+  });
+
+  it('adds up, on every master that draws it', () => {
+    const net = ROW.financial_calculations.keyMetrics.annualNet;
+    let tablesChecked = 0;
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      for (const table of cashFlowTables(t.schema)) {
+        tablesChecked += 1;
+        let running = 0;
+        let stated: number | undefined;
+        for (const { row } of visibleTableRows(table.rows, ctx)) {
+          const { label, value } = annualOf(row);
+          if (value === undefined) continue;
+          if (label === 'Net position') { stated = value; continue; }
+          // Income adds; every other line is a deduction printed positive.
+          running += label === 'Rental income' ? value : -value;
+        }
+        expect(stated, `${t.name}: no net position row`).toBe(net);
+        expect(running, `${t.name}: the rows do not foot to the net position`).toBeCloseTo(net, 6);
+      }
+    }
+    expect(tablesChecked).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The compass tier withholds the financial modelling, and no page is left with
+ * a hole by it.
+ *
+ * `TIER_CONTENT` moved the modelling out of the Investment Compass and into the
+ * Financial Analysis, on the owner's instruction that each document have one
+ * purpose. The projection withholds the keys and three master pages are
+ * conditional on `report.drawsFinancialModelling`, so those pages are simply
+ * not drawn.
+ *
+ * The residual risk is the other kind of page: one that is drawn on every tier
+ * and binds a withheld figure somewhere inside it. An unresolved binding
+ * renders as the empty string, so what a reader would get is a label over
+ * nothing — "Loan repayments" beside a blank — which is the placeholder defect
+ * under a different name.
+ *
+ * Measured on this branch, that is three pages: the cover's fact band, the
+ * executive dashboard's KPI variants and table, and the methodology page's
+ * definition list. All three close up, each by a rule its own renderer already
+ * carried and each written for this class of defect:
+ *
+ *   - `kpi-grid`      drops a tile whose value is bound and resolved to nothing
+ *                     and recomputes its column count from the survivors, so
+ *                     the cover band closes from four cells to three.
+ *   - `data-table`    drops a row whose bound cells all resolved to nothing.
+ *   - `definition-list` drops an item whose definition is bound and empty.
+ *
+ * So the rule pinned here is not "no page binds a withheld figure" — that would
+ * forbid one design serving five tiers, which is the whole point of the
+ * catalogue. It is that a withheld figure may only ever sit somewhere that
+ * closes up around it.
+ */
+describe('a tier that withholds the modelling leaves no empty slot', () => {
+  /** Block types whose renderers drop an item that resolved to nothing. */
+  const CLOSES_UP = new Set(['kpi-grid', 'data-table', 'definition-list']);
+
+  const bindingsIn = (o: unknown): string[] =>
+    [...new Set([...JSON.stringify(o).matchAll(/\{\{\s*([a-zA-Z0-9_.]+)/g)].map((m) => m[1]))];
+
+  const compass = applyInvestmentProjection({}, ROW, { tier: 'compass' });
+  const financial = applyInvestmentProjection({}, ROW, { tier: 'financial' });
+
+  it('withholds the modelling on the compass and publishes it on the financial', () => {
+    const f = financial.financials as Record<string, unknown>;
+    const c = compass.financials as Record<string, unknown>;
+    // The figures the Financial Analysis exists for.
+    for (const key of ['grossYield', 'netYield', 'lvr', 'loanAmount', 'annualRepayment', 'weeklyNet']) {
+      expect(f[key], `financial tier: ${key}`).not.toBeUndefined();
+      expect(key in c, `compass tier: ${key} must be withheld`).toBe(false);
+    }
+    // And the two figures the Compass keeps, because they describe the
+    // property rather than a model of it: what it costs and what it rents for.
+    expect(c.purchasePrice).toBe(1290000);
+    expect(c.weeklyRent).toBe(920);
+    expect(compass.report.drawsFinancialModelling).toBe(false);
+    expect(financial.report.drawsFinancialModelling).toBe(true);
+  });
+
+  it('withholds the Yield rationale but keeps the dimension itself', () => {
+    /*
+     * A dimension's own explanation can BE the modelling. The Yield scorer's
+     * reads `4.52% gross yield on a $575,000 purchase price.` — a yield,
+     * computed against the price, in one sentence — and it printed on page 4
+     * of a Compass whose `financials` withholds both. Withholding the figure
+     * and leaving its rationale on the scorecard is the same number through a
+     * second door.
+     *
+     * The dimension stays: it was measured, it carries weight in the grade,
+     * and saying so is not modelling.
+     */
+    const withScores = {
+      ...ROW,
+      investment_score: {
+        ...(ROW.investment_score as Record<string, unknown>),
+        breakdown: {
+          yieldScore: { score: 62, weight: 20, details: '4.52% gross yield on a $575,000 purchase price.' },
+          locationScore: { score: 71, weight: 25, details: 'Walkable to a shopping centre and two schools.' },
+        },
+      },
+    };
+    const row = (t: 'compass' | 'financial') => (applyInvestmentProjection({}, withScores, { tier: t })
+      .assessment as Array<Record<string, unknown>>);
+
+    const compassYield = row('compass').find((a) => a.label === 'Yield');
+    expect(compassYield?.score, 'the dimension is still scored').toBe(62);
+    expect(compassYield?.weightLabel).toBe('20%');
+    expect('details' in (compassYield ?? {}), 'the arithmetic goes').toBe(false);
+
+    // Location explains itself in locality terms and is published everywhere.
+    expect(row('compass').find((a) => a.label === 'Location')?.details)
+      .toContain('Walkable');
+
+    // And the Financial Analysis, which exists for the figures, keeps it.
+    expect(row('financial').find((a) => a.label === 'Yield')?.details)
+      .toContain('gross yield');
+  });
+
+  it('puts every withheld binding on a conditional page or in a block that closes up', () => {
+    const offences: string[] = [];
+    for (const t of INVESTMENT_COMPASS_TEMPLATES) {
+      for (const page of ((t.schema as Record<string, any>)?.pages ?? []) as any[]) {
+        // A page the compass never draws may bind anything.
+        if (String(page?.conditional ?? '').includes('drawsFinancialModelling')) continue;
+        for (const block of (page?.blocks ?? []) as any[]) {
+          if (CLOSES_UP.has(String(block?.type))) continue;
+          for (const path of bindingsIn(block)) {
+            if (resolves(financial, path) && !resolves(compass, path)) {
+              offences.push(`${t.name} · ${page?.name} · ${block?.type} · ${path}`);
+            }
+          }
+        }
+      }
+    }
+    expect([...new Set(offences)].sort()).toEqual([]);
   });
 });

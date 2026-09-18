@@ -117,9 +117,19 @@ describe('the Financial chapters are composed from the record', () => {
 
   it('states the reconciled figures, locale-free', () => {
     const ch8 = chapters.find((c) => c.ordinal === 8)!.markdown;
-    expect(ch8).toContain('-$7,012');
+    /*
+     * The record's OWN net position, not a recomputation of it.
+     *
+     * This asserted -$7,012 and -5.31%, which is what the read-time
+     * reconciliation used to write over the stored -$7,562 / -5.72%. The
+     * difference is exactly this row's $550 letting fee: the fallback cost
+     * base listed seven of the engine's eight components, so a row carrying
+     * no footed total was charged seven of its costs and came out $550 better
+     * than the record said. The chapter now prints what the calculator wrote.
+     */
+    expect(ch8).toContain('-$7,562');
     expect(ch8).toContain('$132,100');
-    expect(ch8).toContain('-5.31%');
+    expect(ch8).toContain('-5.72%');
     expect(ch8).toContain('Interest rate +2%');
     const ch4 = chapters.find((c) => c.ordinal === 4)!.markdown;
     expect(ch4).toContain('**$132,100**');

@@ -519,6 +519,31 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   ]), FOOTER));
   pages.push(...platesFor('thesis'));
 
+  /**
+   * The financial modelling pages, and the tiers that may carry them.
+   *
+   * One master serves five document kinds, so the acquisition table, the cash
+   * flow and the ten-year equity chart were drawn on all five: the Investment
+   * Compass — a Location & Property Fit report whose own section registry says
+   * "ALL detailed financial modelling ... MUST NOT appear here" — opened on
+   * purchase price, gross yield, LVR and a ten-year projection, and the
+   * Financial Analysis carried the location case. Each report answered the
+   * other's question.
+   *
+   * `report.drawsFinancialModelling` is published by
+   * `reportBindingProjection` from `tierContent.pure.ts`, the one module that
+   * decides what a tier contains. It is a PAGE conditional rather than a set of
+   * row guards because the projection also withholds the bindings: a page kept
+   * with nothing to bind would print labelled empty rows, which is worse than
+   * the page a reader never sees. `visiblePages` filters before layout, so a
+   * dropped page costs nothing and the narrative pages behind it move up.
+   *
+   * The KPI band needs no guard: `renderKpiGridHtml` already drops a tile whose
+   * bound value resolved to nothing and draws nothing when none survive, so the
+   * dashboard closes up around the figures the tier does publish.
+   */
+  const FINANCIAL_TIERS = 'report && report.drawsFinancialModelling';
+
   // ── 04 Dense data ────────────────────────────────────────────────────────
   /**
    * What the purchase costs, and what of it is cash.
@@ -556,17 +581,37 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
     ['LVR at settlement', '{{financials.lvr | percent:0}}', 'Loan over price'],
     ['Total upfront cash', '{{financials.totalCost | currency}}', 'Cash required at settlement'],
   ];
-  const cashflowRows = [
+  /**
+   * The cash flow table foots, and every line it subtracts is on it.
+   *
+   * The engine holds EIGHT annual cost components and this table printed four
+   * of them, so on 262 Pallas Street the rows came to $10,780 against a net
+   * position built on $12,880 and the reader was $2,100 short with nowhere
+   * to look. The projection now folds water rates into the row whose label
+   * already claims them and letting fees into management, and publishes land
+   * tax and strata as `annualOtherCosts` — a row that draws only where they
+   * come to something, because both are nil on an ordinary house and a line
+   * of $0 is one the reader has to discount rather than read.
+   */
+  const cashflowRows: TableRowDef[] = [
     ['Rental income', '{{financials.weeklyRent | currency}}', '{{financials.annualRent | currency}}'],
+    {
+      cells: ['Vacancy allowance', '{{financials.weeklyVacancyAllowance | currency}}', '{{financials.annualVacancyAllowance | currency}}'],
+      when: 'financials && financials.annualVacancyAllowance',
+    },
     ['Loan repayments', '{{financials.weeklyRepayment | currency}}', '{{financials.annualRepayment | currency}}'],
     ['Council and water rates', '{{financials.weeklyRates | currency}}', '{{financials.annualRates | currency}}'],
     ['Insurance', '{{financials.weeklyInsurance | currency}}', '{{financials.annualInsurance | currency}}'],
     ['Management', '{{financials.weeklyManagement | currency}}', '{{financials.annualManagement | currency}}'],
     ['Maintenance', '{{financials.weeklyMaintenance | currency}}', '{{financials.annualMaintenance | currency}}'],
+    {
+      cells: ['Land tax and strata', '{{financials.weeklyOtherCosts | currency}}', '{{financials.annualOtherCosts | currency}}'],
+      when: 'financials && financials.annualOtherCosts',
+    },
     ['Net position', '{{financials.weeklyNet | currency}}', '{{financials.annualNet | currency}}'],
   ];
 
-  pages.push(withFurniture(page('Financial position', [
+  pages.push({ ...withFurniture(page('Financial position', [
     ...furniture(DOCUMENT_LABEL, nextPart('Financials'), 'Financial position'),
     ...flow([
       sectionHeading({
@@ -593,10 +638,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         }),
       ]),
     ], contentTop()),
-  ]), FOOTER));
+  ]), FOOTER), conditional: FINANCIAL_TIERS });
 
   if (spacious) {
-    pages.push(withFurniture(page('Cash flow', [
+    pages.push({ ...withFurniture(page('Cash flow', [
       ...furniture(DOCUMENT_LABEL, nextPart('Cash flow'), 'Cash flow'),
       ...flow([
         sectionHeading({
@@ -613,11 +658,11 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         // No funding callout: `financials.fundingNote` has no column and no
         // producer, so it printed a titled panel with nothing in it.
       ], contentTop()),
-    ]), FOOTER));
+    ]), FOOTER), conditional: FINANCIAL_TIERS });
   }
 
   // ── 05 Chart and scenario ────────────────────────────────────────────────
-  pages.push(withFurniture(page('Ten-year projection', [
+  pages.push({ ...withFurniture(page('Ten-year projection', [
     ...furniture(DOCUMENT_LABEL, nextPart('Projection'), 'Ten-year projection'),
     ...flow([
       sectionHeading({
@@ -645,7 +690,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         { term: 'Occupancy', definition: '{{assumptions.occupancyWeeks}} weeks a year' },
       ]),
     ], contentTop()),
-  ]), FOOTER));
+  ]), FOOTER), conditional: FINANCIAL_TIERS });
   pages.push(...platesFor('projection'));
 
   // ── 06 Risk and recommendation ───────────────────────────────────────────
@@ -674,6 +719,24 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
           why: '{{assessment.4.details}}', ddAction: 'Verify before exchange',
         }], DETAIL_CHARS.risk),
         conditional: 'risks && risks[0] && risks[0].risk',
+      },
+      // A withheld register renders its reason.
+      //
+      // The register above is conditional and the heading over it is not, so
+      // on a report whose record holds no risk string — 197 carry no score
+      // object at all — the page opened "Risk register / Manageable with
+      // verification, not without it" over nothing. An empty area under a
+      // heading reads as a broken page, and it is also the wrong reading:
+      // this is a fact about what the record carries, not a finding that the
+      // property has no risks.
+      {
+        ...callout(
+          'No risk recorded',
+          'No risk was recorded against this property’s assessment. That is a statement about the record '
+          + 'rather than a finding: it does not mean no risk applies. The assessment section sets out the '
+          + 'risk dimension’s own reasoning, and the recommendation below stands either way.',
+        ),
+        conditional: '!(risks && risks[0] && risks[0].risk)',
       },
       recommendation(
         '{{recommendation.headline}}',

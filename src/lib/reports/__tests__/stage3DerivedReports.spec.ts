@@ -71,11 +71,45 @@ const SCORE = {
 
 describe('one annual rent, and the basis it is stated on', () => {
   it('publishes the contractual rent, which is what the stored yield rests on', () => {
-    const p = projectInvestmentReport({ financial_calculations: FIN, investment_score: SCORE });
+    // A tier that MAY carry the modelling, because this asserts the
+    // projection's arithmetic. What a tier may publish is the test below.
+    const p = projectInvestmentReport({ financial_calculations: FIN, investment_score: SCORE, report_tier: 'financial' });
     const f = p.financials as Record<string, unknown>;
     expect(f.annualRent).toBe(31200);
     // The whole point: the figure and the yield beside it reconcile.
     expect((31200 / 550000) * 100).toBeCloseTo(Number(f.grossYield), 2);
+  });
+
+  it('withholds the modelling from a tier that may not carry it, and keeps the rent', () => {
+    /*
+     * `compassSectionRegistry` has said since v2.0 that a Compass carries no
+     * financial modelling, and the masters drew it anyway because the rule
+     * was enforced on the prose and the bindings came from here.
+     * `tierContent.pure.ts` decides it now, at the projection, so one rule
+     * reaches all 500 seeded masters and both render routes.
+     *
+     * The rent and the price stay: withholding the modelling is not
+     * withholding the price, and a location report that will not say what the
+     * property costs is coy rather than focused.
+     */
+    const compass = projectInvestmentReport({ financial_calculations: FIN, investment_score: SCORE, report_tier: 'compass' });
+    const f = compass.financials as Record<string, unknown>;
+    expect(f.weeklyRent).toBe(600);
+    expect(f.annualRent).toBe(31200);
+    expect(f.purchasePrice).toBe(550000);
+    for (const withheld of ['grossYield', 'netYield', 'lvr', 'loanAmount', 'weeklyNet', 'annualNet', 'cashOnCash']) {
+      expect(f, withheld).not.toHaveProperty(withheld);
+    }
+    expect(compass.equitySeries).toEqual([]);
+    expect((compass.report as Record<string, unknown>).drawsFinancialModelling).toBe(false);
+
+    // And the Snapshot, which condenses from a Compass parent, still gets the
+    // figures — because the tier being PRODUCED decides, not the row read.
+    const forSnapshot = projectInvestmentReport(
+      { financial_calculations: FIN, investment_score: SCORE, report_tier: 'compass' },
+      { tier: 'snapshot' },
+    );
+    expect((forSnapshot.financials as Record<string, unknown>).grossYield).toBeDefined();
   });
 
   it('keeps the occupancy assumption under its own name', () => {

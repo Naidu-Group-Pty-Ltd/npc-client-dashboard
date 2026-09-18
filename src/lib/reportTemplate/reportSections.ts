@@ -122,6 +122,13 @@ export function markdownToPlainText(markdown: string): string {
       .replace(/\*([^*]+)\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
       .replace(/_([^_]+)_/g, '$1')
+      // A sparkline directive is removed WHOLE, not unwrapped.
+      //
+      // The generator's prompt asks the model for `~~[3,5,8,13]~~` inline
+      // sparklines "liberally". Unwrapping one leaves `[3,5,8,13]` — a bare
+      // array of numbers inside a client's sentence, which is how 262 Pallas
+      // Street printed one. Ordinary strikethrough still unwraps.
+      .replace(/~~\[[\d.,\s+-]+\]~~/g, '')
       .replace(/~~([^~]+)~~/g, '$1');
     out.push(line.replace(/[ \t]+$/g, ''));
   }

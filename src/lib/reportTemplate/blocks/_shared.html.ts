@@ -194,7 +194,10 @@ function fmtCell(value: any, format?: string): string {
       return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(n);
     }
     case 'number': { const n = Number(value); return Number.isFinite(n) ? new Intl.NumberFormat('en-AU').format(n) : String(value); }
-    case 'percent': { const n = Number(value); return Number.isFinite(n) ? `${(n * (n <= 1 ? 100 : 1)).toFixed(1)}%` : String(value); }
+    // Magnitude, not sign — see the note on `formatCell` in `_data.ts`. This
+    // spelling is the same heuristic inverted, and it had the same defect:
+    // -2.9 is `<= 1`, so a negative return printed a hundred times too large.
+    case 'percent': { const n = Number(value); return Number.isFinite(n) ? `${(n * (Math.abs(n) <= 1 ? 100 : 1)).toFixed(1)}%` : String(value); }
     case 'date': {
       const d = new Date(value); return isNaN(d.getTime()) ? String(value) : d.toLocaleDateString('en-AU');
     }

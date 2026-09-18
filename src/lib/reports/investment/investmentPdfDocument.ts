@@ -46,6 +46,7 @@ import {
 import { tabulateVizDirectives } from '@/lib/reports/vizDirectiveTables.pure';
 import { rentIsEstablished } from '@/lib/reports/investment/rentalEvidence.pure';
 import { presenceOf } from '../../../../supabase/functions/_shared/reports/contract/visibilityPolicy.pure';
+import { contentPolicyFor } from './tierContent.pure';
 import { documentTitleForTier } from '../../../../supabase/functions/_shared/reportBindingProjection.pure';
 import { meaningfulPropertyType } from '@/lib/reports/investment/propertyRecord.pure';
 import {
@@ -2452,6 +2453,29 @@ export async function generateInvestmentPdfBlob(
          * fabricated `$0`.
          */
         const has = (v: unknown): boolean => presenceOf(v) !== 'absent';
+        /*
+         * And what the TIER may publish, which is a separate question from
+         * what the record holds.
+         *
+         * This band used to open `if (reportTier !== 'financial') return null`
+         * — so a Compass drew no band while every selectable template bound
+         * `financials.*` and printed the same figures from the same record.
+         * The fix made the rule availability rather than tier, and both
+         * presentations then showed everything, which is how the Investment
+         * Compass came to open on purchase price, gross yield, LVR and a
+         * ten-year projection. `compassSectionRegistry` has said since v2.0
+         * that a Compass carries none of it.
+         *
+         * `tierContent.pure.ts` decides it now, once, and the projection the
+         * templates bind reads the same module — so the parity this test file
+         * exists to protect holds, and what the two presentations agree ABOUT
+         * is the tier's own content. Withholding the modelling is not
+         * withholding the price: `identityFigures` keeps the price and the
+         * rent on every tier.
+         */
+        const tierPolicy = contentPolicyFor(reportTier);
+        const modelled = (v: unknown): boolean => tierPolicy.financialModelling && has(v);
+        const identity = (v: unknown): boolean => tierPolicy.identityFigures && has(v);
         const money = (v: unknown) => {
           const n = Number(v);
           return (n < 0 ? '-$' : '$') + Math.abs(n).toLocaleString('en-AU', { maximumFractionDigits: 0 });
@@ -2462,12 +2486,12 @@ export async function generateInvestmentPdfBlob(
         // fabricated price is worse than a shorter band, and a report missing
         // one materially is the readiness layer's to stop, not this band's to
         // paper over.
-        if (has(initialCosts?.propertyValue)) {
+        if (identity(initialCosts?.propertyValue)) {
           row1.push({ label: 'Purchase Price', value: money(initialCosts.propertyValue) });
         }
 
         // Weekly Rent, through the rent authority rather than a local test.
-        if (rentIsEstablished(income) && has(income?.weeklyRent)) {
+        if (tierPolicy.identityFigures && rentIsEstablished(income) && has(income?.weeklyRent)) {
           row1.push({
             label: 'Weekly Rent',
             value: money(income.weeklyRent),
@@ -2486,7 +2510,7 @@ export async function generateInvestmentPdfBlob(
         // converting it to "missing" would describe a cash purchase as an
         // unknown one.
         const lvr = has(keyMetrics?.lvr) ? keyMetrics.lvr : loanDetails?.lvr;
-        if (has(lvr)) {
+        if (modelled(lvr)) {
           row1.push({ label: 'LVR', value: pct(lvr, 1), subtitle: 'Loan-to-Value Ratio' });
         }
 
@@ -2505,22 +2529,22 @@ export async function generateInvestmentPdfBlob(
         const grossYield = has(keyMetrics?.grossRentalYield)
           ? keyMetrics.grossRentalYield
           : keyMetrics?.grossYield;
-        if (yieldIsFounded && has(grossYield)) {
+        if (tierPolicy.financialModelling && yieldIsFounded && has(grossYield)) {
           row1.push({ label: 'Gross Yield', value: pct(grossYield, 2), subtitle: 'Annual rental return' });
         }
 
-        if (yieldIsFounded && has(keyMetrics?.netRentalYield)) {
+        if (tierPolicy.financialModelling && yieldIsFounded && has(keyMetrics?.netRentalYield)) {
           row1.push({ label: 'Net Yield', value: pct(keyMetrics.netRentalYield, 2), subtitle: 'After all costs' });
         }
 
         // Deposit and loan. A $0 loan is a cash acquisition — a fact about the
         // transaction, not a gap in the record — so it is stated.
-        if (has(initialCosts?.deposit)) {
+        if (modelled(initialCosts?.deposit)) {
           row1.push({ label: 'Deposit', value: money(initialCosts.deposit), subtitle: 'Cash contribution' });
         }
 
         const loanAmount = has(loanDetails?.loanAmount) ? loanDetails.loanAmount : initialCosts?.loanAmount;
-        if (has(loanAmount)) {
+        if (modelled(loanAmount)) {
           row1.push({ label: 'Loan Amount', value: money(loanAmount), subtitle: 'At settlement' });
         }
 
@@ -2528,14 +2552,14 @@ export async function generateInvestmentPdfBlob(
         // states it ("Interest rate assumed 6.50%") and the standard document
         // stated it nowhere, so a reader could not tell what the cash-flow
         // figures beside it had been modelled at.
-        if (has(loanDetails?.interestRate)) {
+        if (modelled(loanDetails?.interestRate)) {
           row1.push({ label: 'Interest Rate', value: pct(loanDetails.interestRate, 2), subtitle: 'Assumed for modelling' });
         }
 
         // The holding position. An authoritative $0 is a breakeven investment
         // outcome and is one of the most consequential things this band can
         // say, so it must survive.
-        if (has(keyMetrics?.weeklyNet)) {
+        if (modelled(keyMetrics?.weeklyNet)) {
           row1.push({
             label: 'Weekly Net Cash Flow',
             value: money(keyMetrics.weeklyNet),
@@ -2555,17 +2579,17 @@ export async function generateInvestmentPdfBlob(
          */
         const dutyWasCalculated = has(initialCosts?.stampDutyScheduleYear)
           || has(initialCosts?.stampDutyScheduleSource);
-        if (has(initialCosts?.stampDuty) && (Number(initialCosts.stampDuty) !== 0 || dutyWasCalculated)) {
+        if (modelled(initialCosts?.stampDuty) && (Number(initialCosts.stampDuty) !== 0 || dutyWasCalculated)) {
           row1.push({ label: 'Stamp Duty', value: money(initialCosts.stampDuty), subtitle: 'Transfer duty payable' });
         }
 
-        if (has(initialCosts?.totalUpfront)) {
+        if (modelled(initialCosts?.totalUpfront)) {
           row1.push({ label: 'Total Upfront', value: money(initialCosts.totalUpfront), subtitle: 'Cash required to settle' });
         }
 
         // Capital growth is last because it describes the forecast rather
         // than the property. A stated 0% forecast is a position, not a gap.
-        if (has(assumptions?.capitalGrowth)) {
+        if (modelled(assumptions?.capitalGrowth)) {
           // An assumption is Recorded; a forecast is Computed from a method
           // and a date. The value is read from `assumptions`, so it is
           // captioned as one (QA-24 found it labelled "Annual forecast" here

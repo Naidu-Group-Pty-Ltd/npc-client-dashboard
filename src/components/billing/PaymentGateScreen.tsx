@@ -16,6 +16,7 @@ import {
   formatMoney,
   formatRemaining,
   lockedCopy,
+  payingCanUnlock,
   remainingMs,
 } from "@/lib/paymentGate/state";
 import { toast } from "sonner";
@@ -44,6 +45,18 @@ export function PaymentGateScreen() {
   const { signOut } = useAuth();
   const [busy, setBusy] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  /**
+   * The buyer has just come back from Stripe and the webhook has not landed.
+   *
+   * The only guard against minting a second activation checkout is Mission
+   * Control's `paid_at`, which is written by the Stripe webhook — so for the
+   * whole interval between the customer paying and that webhook arriving, the
+   * server would happily mint another one. Leaving the primary button live
+   * over that window invites a second subscription on the screen they were
+   * returned to, and for those seconds it is the only thing on the page that
+   * looks like progress.
+   */
+  const [confirming, setConfirming] = useState(false);
 
   const copy = lockedCopy(verdict);
   const price = formatMoney(
@@ -60,8 +73,17 @@ export function PaymentGateScreen() {
     if (params.get("activation") !== "success") return;
     let cancelled = false;
     let attempts = 0;
+    setConfirming(true);
     const tick = () => {
-      if (cancelled || attempts >= 10) return;
+      if (cancelled) return;
+      if (attempts >= 20) {
+        // Out of patience, not out of hope: the payment is captured and the
+        // webhook will land. Handing the button back is the wrong end of that
+        // — it reads as "pay again" — so the screen says what is true and
+        // leaves the manual re-check in the footer.
+        setConfirming(false);
+        return;
+      }
       attempts += 1;
       void refresh().then(() => {
         if (!cancelled) setTimeout(tick, 3000);
@@ -84,6 +106,18 @@ export function PaymentGateScreen() {
           window.location.assign(result.url);
           return;
         case false:
+          // "You have already paid" is not a retryable failure, and telling a
+          // customer to try again after their money has arrived invites a
+          // second subscription. The right answer is to re-read the verdict:
+          // the gate is about to open, or already has.
+          if (result.error === "already_paid") {
+            setConfirming(true);
+            void refresh();
+            toast.success(
+              "Your payment is already recorded — unlocking this workspace now.",
+            );
+            return;
+          }
           if (result.pricingUrl) {
             setFallbackUrl(result.pricingUrl);
             toast.error(
@@ -91,7 +125,7 @@ export function PaymentGateScreen() {
             );
           } else {
             toast.error(
-              "Could not start the payment. Please try again, or contact support.",
+              "Could not start the payment. Please try again, or use the payment page link below.",
             );
           }
           return;
@@ -119,7 +153,9 @@ export function PaymentGateScreen() {
           </div>
         </div>
 
-        {(planLabel || price) && verdict.reason !== "operator_locked" && (
+        {/* The same rule as the button: quoting a price to somebody who
+            cannot settle it is an offer that does not exist. */}
+        {(planLabel || price) && payingCanUnlock(verdict) && (
           <dl className="space-y-2 rounded-md border border-border bg-muted/40 p-4 text-sm">
             {planLabel && (
               <div className="flex items-baseline justify-between gap-4">
@@ -141,7 +177,24 @@ export function PaymentGateScreen() {
           </dl>
         )}
 
-        {verdict.reason !== "operator_locked" && (
+        {/* Just back from Stripe. The money is captured and Mission Control is
+            waiting on the webhook; offering the button again here is offering
+            a second subscription. */}
+        {confirming && (
+          <Alert>
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            <AlertDescription>
+              <span className="font-medium">Confirming your payment…</span> This
+              usually takes a few seconds. The dashboard opens by itself the
+              moment it clears — there is no need to pay again.
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Offered only where paying is what lifts this. An operator hold is
+            not payable and neither is a state this build cannot read — see
+            `payingCanUnlock`. */}
+        {payingCanUnlock(verdict) && !confirming && (
           <div className="space-y-3">
             <Button size="lg" className="w-full" onClick={pay} disabled={busy}>
               {busy ? (
@@ -165,19 +218,31 @@ export function PaymentGateScreen() {
           </div>
         )}
 
-        {fallbackUrl && (
+        {/* The standing way out.
+            `verdict.pricingUrl` is sent by Mission Control on every gated read
+            — its own comment calls it "always a real URL when gated, never
+            null, because a locked screen with no way out is worse than no
+            screen" — and until now nothing in the product read it. The
+            fallback appeared only when a refusal happened to carry its own
+            copy, which is three of the checkout route's fifteen refusal
+            shapes. On the other twelve, and whenever Mission Control is
+            unreachable at all, this screen was a dead end. */}
+        {payingCanUnlock(verdict) && (fallbackUrl ?? verdict.pricingUrl) && (
           <Alert>
             <ExternalLink className="h-4 w-4" />
             <AlertDescription>
+              {fallbackUrl
+                ? "Could not open the checkout from here. "
+                : "Prefer to pay another way? "}
               <a
-                href={fallbackUrl}
+                href={(fallbackUrl ?? verdict.pricingUrl) as string}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-medium underline underline-offset-4"
               >
                 Open the Aurixa Systems payment page
-              </a>{" "}
-              to complete your activation.
+              </a>
+              .
             </AlertDescription>
           </Alert>
         )}
@@ -277,6 +342,12 @@ function ActivateNowButton() {
             break;
           case false:
             setBusy(false);
+            // Same rule as the lock screen: already paid is not a failure to
+            // retry, and a second click here buys a second subscription.
+            if (result.error === "already_paid") {
+              toast.success("Your payment is already recorded — thank you.");
+              break;
+            }
             if (result.pricingUrl)
               window.open(result.pricingUrl, "_blank", "noopener,noreferrer");
             else toast.error("Could not start the payment. Please try again.");

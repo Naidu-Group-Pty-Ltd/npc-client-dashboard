@@ -1150,7 +1150,13 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     // `DOCUMENT_IDENTITY` translates the other tiers at render time.
     tier: 'compass',
     documentTitle: 'Investment Compass',
-    standfirst: 'What the property is, what it costs to hold, and what the assessment concluded.',
+    // Both come from `tierContent.pure.ts`, the one module that decides what a
+    // tier's document contains. The old standfirst read "what it costs to
+    // hold" — a promise of the financial modelling the Compass does not carry,
+    // printed on the cover above a page sequence that then drew it.
+    standfirst: 'Where the property is, who wants to live there, what is mapped over the land, and what the assessment concluded.',
+    drawsFinancialModelling: false,
+    companionNote: 'Purchase costs, yield, loan structure, cash flow and the ten-year projection are set out in the Financial Analysis Report for this property.',
     // The lender profile a Borrowing Capacity run was assessed under. Set on
     // 26 of 143 assessments, so the masters keep the block conditional; the
     // sample shows the named-lender path and matches `loan.lender` below.

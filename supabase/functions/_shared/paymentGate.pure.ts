@@ -172,9 +172,53 @@ export function shouldBlock(verdict: GateVerdict): boolean {
   return verdict.gated && verdict.locked;
 }
 
-/** Should the workspace be warned that time is running out? */
+/**
+ * Should the workspace be prompted to activate while it still works?
+ *
+ * `counting` is the running-out case and was once the whole rule. It missed
+ * the gate an operator gave no deadline: `gated`, unpaid, open, and not on a
+ * clock — a workspace that owes an activation payment and had no button, link
+ * or page anywhere in the product from which to pay it, because the banner is
+ * the only payment CTA that exists inside an unlocked dashboard.
+ *
+ * So the question is "does this workspace owe money it can still settle",
+ * which is `payingCanUnlock` minus the locked case the screen handles.
+ */
 export function shouldWarn(verdict: GateVerdict): boolean {
-  return verdict.gated && !verdict.locked && verdict.counting && !verdict.paid;
+  return !verdict.locked && payingCanUnlock(verdict);
+}
+
+/**
+ * Can this customer pay their way out of this state?
+ *
+ * ## Why this is not `!paid`
+ *
+ * An operator's standing lock outranks the money. Mission Control's resolver
+ * reads the override BEFORE `paid_at`, deliberately — locking is how a
+ * workspace is suspended even though it once paid — and settling a payment
+ * never clears it. So a pay button on an `operator_locked` gate takes the
+ * money, stamps `paid_at`, and leaves the workspace exactly as shut. Mission
+ * Control refuses to mint that checkout for the same reason; this is the same
+ * rule said on the near side, so the button is not offered and then rejected.
+ *
+ * ## Why an ALLOW-list
+ *
+ * The screen used to ask `reason !== "operator_locked"`, which answers "yes"
+ * to every reason word this build has never heard of — including the `unknown`
+ * this module returns for a body it could not read. That is a full-width
+ * demand for money over a verdict whose entire meaning is that we do not know
+ * why. Naming the states paying DOES discharge fails closed instead: a new
+ * reason shows no CTA until somebody decides it should, and the customer is
+ * left with support rather than a charge.
+ */
+export function payingCanUnlock(verdict: GateVerdict): boolean {
+  if (!verdict.gated) return false;
+  if (verdict.paid) return false;
+  return (
+    verdict.reason === "grace_expired" ||
+    verdict.reason === "within_grace" ||
+    verdict.reason === "no_deadline"
+  );
 }
 
 /**
@@ -245,6 +289,15 @@ export function lockedCopy(verdict: GateVerdict): {
     return {
       headline: "This workspace is on hold",
       body: "Access has been paused by Aurixa Systems. Your data is untouched and nothing has been deleted. Get in touch and we will get you moving again.",
+    };
+  }
+  // Locked, and paying is not what lifts it — a reason word this build does
+  // not recognise. It must not say "complete the payment", because there is no
+  // payment button under it and no reason to believe one would help.
+  if (!payingCanUnlock(verdict)) {
+    return {
+      headline: "This workspace is on hold",
+      body: "Access is paused and we cannot confirm why from here. Your data is untouched and nothing has been deleted. Get in touch and we will sort it out.",
     };
   }
   const plan = verdict.plan?.name ?? verdict.plan?.slug ?? null;

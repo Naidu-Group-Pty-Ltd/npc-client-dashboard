@@ -35,6 +35,7 @@
 import {
   chartFigure,
   renderBars,
+  renderInlineSpark,
   renderDonut,
   renderGauge,
   renderHeatmap,
@@ -312,4 +313,19 @@ export function vizDirectiveRenderer(
   geometry: NarrativeGeometry | null = null,
 ): (d: VizDirective) => VizFigure | null {
   return (d) => renderVizDirective(ctx, d, geometry);
+}
+
+/**
+ * The inline-sparkline callback `renderMarkdown` wants, bound to one column's
+ * context — beside the directive one, for the same reason.
+ *
+ * `renderInlineSpark` has existed in `charts.pure.ts` since the chart
+ * primitives were written, is covered by its own tests, and had zero
+ * production call sites: the same defect this module's header records about
+ * the other eleven. Meanwhile the generator's prompt tells the model to use
+ * `~~[…]~~` "liberally", and with nothing drawing it a bare array of numbers
+ * printed in a client's sentence.
+ */
+export function inlineSparkRenderer(ctx: ChartContext): (values: number[]) => string | null {
+  return (values) => renderInlineSpark(ctx, values) || null;
 }

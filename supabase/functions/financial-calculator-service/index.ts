@@ -215,6 +215,14 @@ async function calculateFinancialProjections(input: LoanCalculationInput, supaba
       loanTerm,
       loanType: ledger.loanType,
       interestOnlyPeriod: ledger.interestOnlyYears,
+      /**
+       * True when the loan said interest-only and no term was recorded, so the
+       * ledger used `ASSUMED_INTEREST_ONLY_YEARS`. Published because a reader
+       * who sees a five-year interest-only period is entitled to know whether
+       * anybody stated it — `structure` says so in words, this says so in a
+       * field.
+       */
+      interestOnlyPeriodAssumed: ledger.interestOnlyYearsAssumed,
       /** The month's interest on the opening balance — what an interest-only period repays. */
       interestOnlyPayment: Math.round((loanAmount * rateInfo.rate / 100 / 12) * 100) / 100,
       amortisingMonthlyPayment: Math.round(ledger.amortisingMonthlyPayment * 100) / 100,

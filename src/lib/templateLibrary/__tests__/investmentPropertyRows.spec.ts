@@ -100,7 +100,21 @@ const COMPLETE = {
 };
 
 function render(row: unknown): string {
-  const data = applyInvestmentProjection({ report: {}, brand: {} } as Record<string, unknown>, row as never);
+  /*
+   * Projected as a tier that carries the financial modelling.
+   *
+   * The stored row below is a Compass, and since `tierContent.pure.ts` a
+   * Compass publishes no yield, no LVR, no loan and no ten-year equity series
+   * — the rule `compassSectionRegistry` has stated since v2.0, enforced at the
+   * projection so it reaches all 500 masters at once. These assertions are
+   * about how the masters BIND a stored record, so they project the tier that
+   * has every binding; `investmentCompassCatalogue.spec.ts` asserts the drop.
+   */
+  const data = applyInvestmentProjection(
+    { report: {}, brand: {} } as Record<string, unknown>,
+    row as never,
+    { tier: 'financial' },
+  );
   // The spacious variants are the ones that give the property its own page; one
   // of each arrangement is enough for a binding question.
   const masters = INVESTMENT_COMPASS_TEMPLATES.filter((t) => /-(01|03)-/.test(String((t as { slug?: string }).slug ?? '')));

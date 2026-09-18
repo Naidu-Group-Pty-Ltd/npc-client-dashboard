@@ -174,6 +174,9 @@ function segments(body: string, positionalOnly = false): Segments {
  */
 const ITEM_COMMA = /,(?!\d{3}(?:\D|$))/;
 
+/** What follows a comma when that comma is a thousands separator: exactly three digits. */
+const THOUSANDS_TAIL = /^\d{3}(?:\D|$)/;
+
 /**
  * `Structure 75`, `Rent 45%`, `Median $1.2M`, `Tin Can Bay ~15 min` → a
  * labelled value.
@@ -244,8 +247,15 @@ function splitOutsideQuotes(raw: string, separator = ','): string[] {
   const out: string[] = [];
   let buf = '';
   let inQuote = false;
-  for (const ch of raw) {
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
     if (ch === '"') { inQuote = !inQuote; buf += ch; continue; }
+    // A comma inside a number is a THOUSANDS SEPARATOR, never an item break.
+    // `labelledValues` and `waterfall` have always known this (ITEM_COMMA);
+    // tiles split on every comma and so cut `>2,000 m2` into `>2` and
+    // `000 m2` — measured on the 262 Pallas Street report, which printed a
+    // tile reading `>2` beside another reading `000 M2`.
+    if (ch === separator && !inQuote && THOUSANDS_TAIL.test(raw.slice(i + 1))) { buf += ch; continue; }
     if (ch === separator && !inQuote) { out.push(buf); buf = ''; continue; }
     buf += ch;
   }
@@ -282,6 +292,24 @@ const TILE_VALUE_TAIL = /^([\s\S]+?)\s+((?:[+\-−]\s*)?[$€£]?\d[\d,.]*\s*(?:
  * and its `sub` and omits the display line. That is a thinner tile than the
  * model intended; it is not a wrong one, and inventing the break to fill the
  * slot would put an arbitrary word in the largest type on the page.
+ *
+ * **A one-word label is not a signal either**, and that is the rule the 262
+ * Pallas Street report bought. A capital in the SECOND word is far more often
+ * the middle of a proper noun than the start of a value — measured on that
+ * document, every failure broke there and printed a place name cut in half:
+ *
+ * ```
+ *   Pallas St local shops        → "Pallas" / "St local shops"
+ *   Pallas St large-block houses → "Pallas" / "St large-block houses"
+ *   Fraser Coast region          → "Fraser" / "Coast region"
+ * ```
+ *
+ * Every case this function was built on breaks at the third word or later
+ * (`Economic & Mining Cycle` / `Moderate-High` at 4, `Tin Can Bay` /
+ * `Coastal leisure` at 3, `Cooloola Cove` / `Calm & space` at 2), so requiring
+ * at least two words of label keeps all of them and loses none. A tile whose
+ * only break would orphan one word keeps its whole name and prints no value,
+ * which is the thinner-not-wrong outcome above.
  */
 export function splitTileLabelValue(text: string): { label: string; value: string } {
   const quoted = /^([\s\S]+?)\s*"([^"]+)"$/.exec(text);
@@ -291,7 +319,7 @@ export function splitTileLabelValue(text: string): { label: string; value: strin
   if (figure) return { label: figure[1].trim(), value: figure[2].trim() };
 
   const words = text.split(/\s+/).filter(Boolean);
-  for (let i = words.length - 1; i > 0; i--) {
+  for (let i = words.length - 1; i > 1; i--) {
     if (/^[A-ZÀ-Þ]/.test(words[i])) {
       return { label: words.slice(0, i).join(' '), value: words.slice(i).join(' ') };
     }

@@ -57,6 +57,7 @@
  * itself resolves them in — so it is reproduced exactly rather than
  * rationalised. Changing it here changes every projection in the product.
  */
+import { ASSUMED_INTEREST_ONLY_YEARS } from '@/lib/reports/investment/loanLedger.pure';
 import type { LoanType, RepaymentFrequency } from '@/utils/mortgageCalculations';
 import { caseInputsFingerprint } from './caseFingerprint.pure';
 
@@ -76,8 +77,13 @@ export type InputProvenance = 'override' | 'record' | 'legacy' | 'default' | 'ab
  * and no period is recorded. Five years is the ordinary Australian IO term; it
  * is disclosed as an assumption wherever the loan structure is printed, and it
  * is what stops "interest only" from silently running a P&I schedule (QA-04).
+ *
+ * It is DECLARED in `loanLedger.pure.ts` and re-exported here. It was declared
+ * in both, and the two answered differently: on 262 Pallas Street the cash flow
+ * ran five interest-only years while the investment report ran a 30-year P&I
+ * schedule over the same loan, $4,990 a year apart, from one set of overrides.
  */
-export const ASSUMED_INTEREST_ONLY_YEARS = 5;
+export { ASSUMED_INTEREST_ONLY_YEARS };
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const num = (v: unknown): number | undefined => {

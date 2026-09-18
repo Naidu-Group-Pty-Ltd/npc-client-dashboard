@@ -365,6 +365,34 @@ out somebody who has paid. And **a top-up does not activate a workspace** —
 `seat_plan` and `setup_package` settle the gate, so a $50 credit pack cannot
 open a $2,015/month plan.
 
+**The pay button is decided by what is OWED, never by a reason word.** An
+operator locked a clone by hand and asked where its Stripe button had gone; it
+was gone correctly — `resolveGateState` reads `manual_override` BEFORE
+`paid_at` and `settleGatePayment` never clears it, so paying an
+`operator_locked` gate takes the money and leaves the workspace exactly as
+shut — and four other things were wrong. The rule was
+`reason !== "operator_locked"`, which answers yes to every word this build has
+never heard of, INCLUDING the `unknown` an unreadable body resolves to, so a
+lost signal drew a full-width demand for money; `payingCanUnlock` is an
+ALLOW-list (`grace_expired`, `within_grace`, `no_deadline`) and fails closed,
+and `lockedCopy` stops saying "complete the payment" over a page with no button.
+**A gate on no clock at all had no way to pay anywhere in the product** —
+`shouldWarn` required `counting`, and the banner is the only CTA inside an
+unlocked dashboard. **`verdict.pricingUrl` had zero call sites**, though the
+module's own comment calls it "always a real URL when gated … because a locked
+screen with no way out is worse than no screen". And **paying twice was one
+click away**, because the only guard is Mission Control's `paid_at` and the
+Stripe webhook writes it after the redirect. On Mission Control's side the gate
+quoted `tier.monthlyInclGstCents` — the price WITHOUT the AML module, $2,015
+against Scale's $2,210 headline — which `seatPlanForTier` refuses as a
+`price_mismatch`, so every newly armed gate's button would have died; the
+checkout route did not refuse an `operator_locked` gate; and the operator page
+had no way to send a customer to Stripe at all. **Payment Gates offers a
+payment link now**, minted by `mintGateActivationCheckout` — the same module
+the clone's CTA calls, so the two cannot charge different amounts or refuse on
+different grounds — and it is the one gate act that demands no reason, because
+it writes nothing.
+
 ## Workflow Playground (the automation canvas)
 Read [`docs/workflows/DISPATCH.md`](./docs/workflows/DISPATCH.md) before touching
 the run engine, the trigger-capture triggers or the dispatcher. One engine serves
@@ -1555,6 +1583,265 @@ left alone; of the 13 with an independent witness, 13 agree and none
 contradict. Placement is load-bearing: **after** the series heal (the ROI
 denominator is the stored deposit) and **before** the upfront total (which is
 the deposit plus the acquisition lines).
+
+## Each report has one purpose, and one module decides it
+
+Read [`docs/reports/TIER_FRAMEWORK.md`](./docs/reports/TIER_FRAMEWORK.md)
+§ Decision E before touching `_shared/reports/investment/tierContent.pure.ts`,
+the financial pages in `scripts/template-library/investmentCompass/templates.ts`,
+`extractKPIMetrics` or the `financials` block in `reportBindingProjection`.
+`compassSectionRegistry` has said since v2.0 that **ALL detailed financial
+modelling lives in the separate Financial Analysis Report and MUST NOT appear**
+in the Compass, and the generator obeys it — the prose a model writes for a
+Compass has no financial section in it. The document a client opens led with
+three pages of it, because the rule was enforced on the PROSE while THREE
+implementations decided what a document draws and none read the registry: the
+standard renderer read the tier for the document's LABEL alone, one master page
+sequence served all five tiers, and the frontend band had had its own
+tier test removed for a different defect. So the Compass opened on purchase
+price, gross yield, LVR and a ten-year equity projection while the Financial
+Analysis carried the location case — each report answering the other's
+question. The authority is in the PROJECTION, because that is what every
+template binds: withholding a namespace once reaches all 500 seeded masters,
+every future one and both routes, while a fix inside one composer reaches one
+composer. Three rules. **A tier is a PURPOSE, not a length** — the test of the
+split is whether a reader could name the document from its contents page.
+**Withholding the modelling is not withholding the price**: the asking price
+and the indicative rent are facts about the asset the way its land size is, and
+stay on every tier; what leaves is the analysis of a PURCHASE. And **the drop
+has to be clean** — the projection withholds the bindings AND the three master
+pages carry `conditional: report && report.drawsFinancialModelling`, because a
+page kept with nothing to bind prints labelled empty rows. `renderKpiGridHtml`
+and the `toc` block needed no change: one already drops a tile whose bound
+value resolved to nothing, the other reads the pages that actually rendered.
+The one escape is `projectInvestmentReport(row, { tier })`, for the condense
+fork alone: **the document being PRODUCED decides**, and keying it on the row
+being READ would hand a Snapshot's prompt a Compass parent with no modelling in
+it. Shipped as seed **v14** plus the active-master refresh.
+
+## The Compass prompt was 96% a different report
+
+Read the header of
+[`_shared/reports/investment/compassDocumentContract.pure.ts`](./supabase/functions/_shared/reports/investment/compassDocumentContract.pure.ts)
+before touching `propertyPrompt` or the evidence pack under it. Measured
+17 Sep 2026: `propertyPrompt` was 79,603 bytes and **76,415 of them (96%) were
+the legacy 38-page reference template**, carried verbatim under "MANDATORY
+REPORT STRUCTURE — 38-PAGE REFERENCE TEMPLATE / YOU MUST FOLLOW THIS EXACT
+STRUCTURE, LENGTH, AND FORMAT". The property's own facts were the other 3,188.
+That template declares 27 sections including *Purchase & Ongoing Costs*,
+*Rental Assessment & Yield Calculation*, *Loan Structure & Repayment Analysis*
+and *Sensitivity Analysis* — the modelling the Compass is defined by not
+carrying — demands "12,000-15,000 words minimum" against a registry capping the
+document at 5,010, is written as fill-in-the-blanks (`[Suburb name] is a
+[description] community located [XX] kilometres`), and its point 8 instructs
+the model to "Include [citation] markers" while another line of the same prompt
+forbids them and a regex downstream strips them. `generateReportSection` trims
+head-tail, so **both ends of every trim were legacy**: about 53 KB of the wrong
+contract on each of eleven section calls, which the model resolved by writing
+the requested section in the legacy template's habits. Two rules. **The
+contract is about METHOD, never structure** — the registry owns the structure,
+and two statements of one structure is how the two come to disagree. And **a
+prohibition with no demonstration of the permitted form is one a model routes
+around**, so the contract carries three worked examples (thin, substantial,
+invented) and says why the invented one is dangerous: the reader cannot tell it
+from the good one. The same lesson twice over — the `{{bars}}` primitive's own
+documentation called it "perfect for scorecards" over a worked example minting
+five ratings out of ten, which is exactly what the model produced once the
+narrower `{{gauge}}` rule pushed the invented scorecards out of the gauge. **A
+rating you invented may not be drawn in ANY primitive**; `bars`, `heatmap` and
+`radar` are judged where the directive declares `max=100`, measured at 383 of
+611 with no legitimate counter-example in the 25 most frequent titles.
+
+## The Compass has room for what it retrieves (v4.0)
+
+Zoning had **no section**. `Zoning` and `Planning` were sourceHeadings of the
+RISK DASHBOARD — a 500-word table whose own purpose says "the table IS the
+section — no prose restating rows" — so a retrieved planning control had
+nowhere to be explained and the reader got a row. That is most of what "the
+Zoning, Planning and Infrastructure sections are simply not good enough"
+describes. The legacy long-form report ran to **~110,000 characters across 27
+sections in one pass**; the 17 Sep Compass is 38,648 across 11. v4.0 is 8,150
+words across 15 sections against a 34-page budget, and three sections are split
+back out of merges that had put them where nothing could be said: Planning
+(900 words), Transport (450) and Environment, Climate & Safety (650). **The
+v3.0 merge was right for the reason it was made** — those sections repeated
+each other — and what changed is that there is now a register behind each: a
+constraint register with per-control explanation, 185,177 GTFS stops, four
+states of recorded crime. A section with nothing behind it should be merged; a
+section with a register behind it should not. Two rules bite. **A heading
+belongs to exactly ONE section** — listed in two it resolves to whichever comes
+first and the other silently loses it, and `fork-investment-report` drops an
+unmatched heading from both forks without saying so. And **`sectionRegistry`'s
+DECLARED GAP for planning is closed, with its reasoning kept**: it said "the
+record holds no planning data … the fix is upstream of the reporting engine",
+which was true when written and was then fixed upstream; the strategic tier
+keeps `producer: null` because a Due Diligence planning section also needs
+title and easements, which no register here reads.
+
+## What a report may state about planning, and what it may not
+Read [`docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md`](./docs/reports/PLANNING_CONTROLS_IN_THE_REPORT.md)
+before touching `_shared/planning/planningFacts.pure.ts`,
+`_shared/planning/infrastructureEvidence.pure.ts`, the
+`pinnedPlanningContext` in `generate-investment-report`, or
+`dataSources.planning`.
+**And the overlay registers were answering the whole time.** Read §8 of that
+doc before touching `_shared/planning/planningConstraints.pure.ts` or
+`planningControlGuide.pure.ts`. The module said "overlay mapping (heritage,
+flood, bushfire, character, acoustic) is held in the council scheme and is not
+retrieved by this platform" on every property in the country, from a premise —
+*no integrated layer publishes overlays at a point yet* — that had never been
+measured and is wrong for four of the eight jurisdictions. Probed from the
+PRODUCTION egress on 17 Sep 2026, all HTTP 200, all open licence, no key: NSW
+answers the LEP, the zone, the maximum building height in metres, the floor
+space ratio, the minimum lot size, heritage, bushfire, flood, landslide, acid
+sulfate soils and nine more **each with the legislative clause that creates it
+and its own currency date**; Victoria's overlays sit on the SAME WFS endpoint
+as its zones, one word different in the typeName; Queensland answers its
+regional plan and priority living areas, flood hazard and 26 MSES layers;
+Tasmania answers both overlay registers. Four rules. **A constraint is named
+only where a layer named it.** **A layer that was never asked is evidence of
+nothing** — coverage travels with the answer and an unreachable register
+contributes none; measured, `layers=all` on the NSW Hazard service answers
+`{"results":[]}` because ArcGIS reads `all` as all VISIBLE and that group is
+hidden, an empty answer to a question nobody asked, which reads as a property
+with no bushfire and no flood. **A value carries its unit, its instrument and
+its clause** — `8.5` is not a fact. And **a retrieval is not information**:
+`planningControlGuide` explains what each control obliges and what to obtain,
+about the CONTROL and never the property, which is what lets it be written in
+advance and still be true; a spec rejects any currency amount, percentage,
+measurement or BAL rating in it. The legacy report is the benchmark for
+structure and the opposite of it for provenance — **three copies of its own
+zoning section, on one lot, in one document, disagree on every control**, and
+one cites a New South Wales council for a Victorian property.
+
+`planning-data-service` has worked since 2026-09-06 and the generator has
+always stored its answer on `enhancedData.planningData` — **and the zoning
+section read none of it**. On 262 Pallas Street, Maryborough the row carries
+`spec_zoning` null, `spec_council` null and no `planning` source, while a live
+call at that report's own coordinate answers `QLD` / `Fraser Coast Regional` /
+`Maryborough` under CC BY 4.0 with an evidenced `none_at_point`. What the
+reader got was 101 lines of prompt template — `[XX]%` site coverage, `[X]m`
+setbacks, "Refer to LEP", "typically 450m²" — handed to a model with nothing
+to fill it from, so **the model filled it**: 450 m², 8.5 m and 0.5:1 reached a
+client's document, under New South Wales instrument names on a Queensland
+property. Three rules bite. **A control with no source is never a number** —
+every cell is a value with its provenance (publisher, licence, the
+instrument's own currency date, the retrieval stamp, adopted vs draft) or one
+of five named absences, and `not_served` / `not_integrated` /
+`licence_restricted` / `none_at_point` / `unavailable` are five different
+sentences. **An audited operator override outranks a layer and says so**,
+labelled `operator_stated` rather than dressed as a published control. And
+**a zone that admits a use is not approval for it**, so no development
+potential is quantified and no uplift is stated. The infrastructure half
+answers to the same shape: a project is named only where a register named it,
+a status is the publisher's own word (an approval is never read as funding,
+funding never as a start on site), a gazettal or determination is labelled as
+a date something HAPPENED rather than a completion, and the coverage
+limitation — council capital works, budget programmes, agency announcements —
+is stated on a full list as well as an empty one.
+
+**The first regeneration then found that a rule can reach the model and its
+evidence not** (§6 of the same doc). Regenerated 17 Sep 2026 the placeholders
+were gone and the document still said *"low-density residential zoning"*,
+*"no identified bushfire, flood or heritage overlays"* (sourced to a listing
+portal) and drew a four-item `{{timeline:}}` of road, TAFE and school projects
+on horizons nobody published — from an enrichment that had answered
+`not_served` and `none_at_point` on all eleven sections. The base prompt is
+**92,129 bytes and `limitPromptContext` trims it to ~52,830 on every section**
+(62% head, 38% tail): the two tables sat in the dropped middle while the rule
+pointing at them sat in the section instructions, which are budgeted for first
+and never trimmed — under a truncation notice that tells the model to
+"request fresh web research for missing details", with live search available.
+Three rules follow. **What a client document may state about planning may not
+depend on a byte boundary** — `generateReportSection` takes a `pinnedContext`
+whose bytes come off the budget BEFORE the base prompt is measured and which is
+concatenated AFTER the trim, carried into the emergency compact prompt too,
+because that is the prompt that runs when the full one was refused. **The rules
+are the report's, not a section's**: they said "RULES FOR THIS SECTION" on a
+Compass list that has no planning section, so the contradictions landed in the
+risk register and the checklist. And **a web search is not a retrieval** — a
+listing site, a news page, a budget page or an agency media release is not an
+entry in the table, said in the rules because this model searches. The two
+tables are also appended to the document verbatim after the post-processor
+(property reports only), because asking a model to reproduce a table is how a
+table comes back paraphrased.
+
+**The pages then found three more** (§7 of the same doc, from all 29 pages of
+the regenerated report drawn through the Chancery master). **A dial the record
+cannot back**: page 9 drew a gauge reading `85 · /100 · STRONG` titled *Land
+Appeal*, page 18 a second at 82, page 20 a five-value risk `{{wheel}}` — eight
+numbers, none in `investment_score`, on a record that issues no grade — because
+the prompt said "Investment Score, Affordability, Risk, Suitability, Confidence,
+and similar 0-100 ratings MUST use `{{gauge}}`". That line is narrowed and
+`suppressUnrecordedVerdictVisuals` checks it was obeyed, on `gauge` and `wheel`
+alone: `bars`, `tiles`, `heatmap`, `donut` and `pictograph` carry measured
+series and dropping those on a number match takes real data off the page.
+**An instruction must never occupy a value slot** — `propertyTypeLabel` WAS the
+sentence "Not stated in the record — … never write 'Residential Property'" when
+nothing resolved, interpolated into `| Property Type | … |` cells, and the model
+quoted it back as the property's recorded attribute; the slot carries the fact
+or nothing now. And **the type was known all along**: `rawPropertyType` read
+`propertyDetails?.propertyType` alone, while every Compass report is finished by
+the resume worker, which calls back with `{reportId, propertyAddress,
+continueFrom}` and no `propertyDetails` — so it was `''` on the run that writes
+the document, on every report. It reads `sourcePropertyType` now. Four residuals
+are named in the doc rather than guessed at: clipped labels in three primitives,
+a timeline drawing horizons no item reaches, a model-written `Verified` evidence
+chip, and two sections drawn twice.
+
+**An interest-only loan whose term nobody recorded.** Read the note on
+`ASSUMED_INTEREST_ONLY_YEARS` in `_shared/reports/investment/loanLedger.pure.ts`
+before touching `buildLoanLedger` or `describeLoanStructure`. The same
+regeneration stored `loanType: "interest_only"` beside `structure: "Principal
+and interest over 30 years"` and `annualPayment: 34,890` — the P&I figure,
+$4,990 a year above the interest-only one — because the operator's overrides
+named the product and not the term, so the ledger read the absence as a zero
+and overruled them silently. `readBaseFinancials` has assumed five years since
+QA-04 and disclosed it, so **one loan was being described two ways by two
+modules**; the constant now lives in the ledger and the cash flow imports it.
+Two rules: **an EXPLICIT zero still means principal and interest** ("none" and
+"not recorded" are different statements), and **an assumed term says so in the
+sentence a reader sees** — `interestOnlyYearsAssumed` rides the ledger and
+`loanDetails.interestOnlyPeriodAssumed` is published beside the figure.
+
+## The cash flow table adds up
+Read §1 of the same doc's companion rule in
+`_shared/reportBindingProjection.pure.ts` before touching the annual-cost
+block, `reconcileStoredFinancials` or the Compass `cashflowRows`. The engine
+subtracts **eight** annual components; the projection published four and the
+masters bound those four, so on 262 Pallas Street the printed rows came to
+$10,780 against a "Net position" built on $12,880 — and the row that omitted
+the water rates was **labelled "Council and water rates"**. Water joins that
+row, letting fees join management, and land tax + strata are their own line,
+drawn only where they come to something. Three rules bite. **A repair must
+not change the BASIS while repairing the arithmetic**:
+`reconcileStoredFinancials` recomputed `annualNet` from `weeklyRent × 52`
+while `calculateKeyMetrics` builds it from `weeklyRent × occupancyWeeks`, so
+on the 62 of 153 reports assuming under 52 weeks it re-based them silently on
+read and stamped `metricsReconciled`. **The ledger's own year is the debt
+service**, never `monthlyPayment × 12`. And **`operatingExpensesFrom`'s
+fallback list is all eight components** — `lettingFees` was missing, so a row
+with no footed total was charged seven of its eight costs.
+
+## A template choice sticks, and a substitution is consented to
+Read `templateFormatFit.pure.ts` and the header of
+`src/components/reports/ReportTemplatePicker.tsx` before touching the picker's
+state machine or `buildWorkingCopyPayload`'s lineage block. **A family tile
+that looks like a choice must BE one** — it painted itself with `ChoiceTile`'s
+checked treatment and a "Current" badge while setting only `openFamilyKey`, so
+Save changed nothing and was disabled anyway. **The re-seed follows the server
+until the person touches something, and never afterwards**: gating on "seed
+once at open" opens the dialog on the wrong choice (the library query is
+`enabled: open`, so the stored value resolves after the dialog is
+interactive), and gating on "both queries have landed" still overwrites
+somebody who clicked while they were loading. **Lineage is written for every
+adopted entry**, family or not: four readers key identity on `entryId`, so the
+43 voice templates came back unrecognisable and minted another active
+`report_templates` row on every save. And **a design that cannot carry the
+format is named before the document is made** — the chosen template is
+otherwise composed around the report and announced by a toast after the PDF
+exists; every uncertain case answers `unknown` and is offered unchanged,
+because a false caveat teaches people to dismiss the warning.
 
 ## The Investment Grade — Scoring V2 in production
 Read the *Activation* section of

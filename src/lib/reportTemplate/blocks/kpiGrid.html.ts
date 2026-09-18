@@ -217,8 +217,24 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
     return `<div style="${style}border-left:2pt solid ${accentDefault};padding-left:14pt;">${stack}</div>`;
   }
 
-  // ── tile: the original arrangement, unchanged ────────────────────────────
-  const tiles = items.slice(0, cols).map((item) => {
+  /*
+   * Tiles.
+   *
+   * Three things this used to do that the other variants do not. It drew
+   * `items.slice(0, cols)` — one row only, so anything past the column count
+   * vanished, where `ruled` and `display` deliberately wrap ("slicing to one
+   * row instead would silently drop half the dashboard"). It never called
+   * `note(item)`, although `card_row_with_trend` maps to this variant and the
+   * trend note is what its name is about. And it set the label at a literal
+   * `8pt` with no `labelReserve`, so labels of different lengths wrapped
+   * independently and the tiles' bottoms fell out of line — while
+   * `overflow:hidden` clipped whatever did not fit into a box the authoring
+   * side had declared at a flat 82pt.
+   *
+   * The clip stays: it is the right guard once the box is measured, which it
+   * now is.
+   */
+  const tiles = items.map((item) => {
     const value = valueText(item);
     const accent = item.accent ? resolveBindableColor(item.accent, ctx, accentDefault) : accentDefault;
     const valueStyle = isProse(value)
@@ -227,7 +243,8 @@ export function renderKpiGridHtml(block: Block, ctx: HtmlBlockContext): string {
     return `<div style="position:relative;background:${tileBg};border-radius:${radius}pt;padding:12pt 12pt 10pt 16pt;overflow:hidden;">
       <div style="position:absolute;left:0;top:0;bottom:0;width:3pt;background:${accent};"></div>
       <div style="${valueStyle}">${esc(value)}</div>
-      <div style="color:${labelColor};font-size:8pt;text-transform:uppercase;letter-spacing:0.08em;margin-top:8pt;">${esc(resolveBindable(String(item.label || ''), ctx))}</div>
+      <div style="color:${labelColor};font-size:${labelSize}pt;text-transform:uppercase;letter-spacing:0.08em;margin-top:8pt;${labelReserve}">${esc(resolveBindable(String(item.label || ''), ctx))}</div>
+      ${note(item)}
     </div>`;
   }).join('');
 

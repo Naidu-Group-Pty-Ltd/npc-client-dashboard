@@ -132,7 +132,10 @@ describe('adoption safety — a report WITH rental evidence is untouched', () =>
     expect(model.grossYield).toBe(5.67);
     expect(model.netYield).toBe(4.1);
 
-    const p = projectInvestmentReport({ financial_calculations: FOUNDED } as never) as {
+    // A tier that MAY carry the modelling: this asserts the projection keeps
+    // the figures it is given, not what a tier is allowed to publish (which
+    // `tierContent.pure.ts` decides and stage 3 covers).
+    const p = projectInvestmentReport({ financial_calculations: FOUNDED, report_tier: 'financial' } as never) as {
       financials?: Record<string, unknown>;
     };
     expect(p.financials?.grossYield).toBe(5.67);

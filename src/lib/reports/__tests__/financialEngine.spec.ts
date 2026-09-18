@@ -114,9 +114,25 @@ describe('operatingExpensesFrom — the one cost base', () => {
     expect(operatingExpensesFrom(items)).toBe(21_418);
   });
 
-  it('ignores unknown numeric fields another writer may add (e.g. lettingFees)', () => {
+  it('ignores a numeric field that is not one of the engine\u2019s components', () => {
+    // The guard is against folding whatever an object happens to carry, which
+    // is how costs came to be charged three times over. `lettingFees` used to
+    // be the example here and is no longer one: `calculateAnnualCosts` writes
+    // it and foots `totalAnnual` over it, so leaving it out of this list
+    // charged seven of eight costs on any row with no stored footing.
     const { totalAnnual: _t, totalAnnualExcludingLandTax: _x, ...items } = annualCosts;
-    expect(operatingExpensesFrom({ ...items, lettingFees: 739 })).toBe(21_418);
+    expect(operatingExpensesFrom({ ...items, someVendorRebate: 739 })).toBe(21_418);
+  });
+
+  it('counts letting fees, because the engine foots its own total over them', () => {
+    const lines = {
+      councilRates: 3400, waterRates: 1600, landlordInsurance: 2800,
+      propertyManagement: 2080, lettingFees: 500, maintenance: 2500,
+      landTax: 0, strataFees: 0,
+    };
+    // 262 Pallas Street's own components, which the record foots at 12,880.
+    expect(operatingExpensesFrom(lines)).toBe(12_880);
+    expect(operatingExpensesFrom({ ...lines, totalAnnual: 12_880 })).toBe(12_880);
   });
 });
 
@@ -443,6 +459,55 @@ describe('reconcileStoredFinancials — healing historic rows at read time', () 
     expect(twice.metricsReconciled).toBe(false);
     expect(twice.totalUpfrontDerived).toBe(false);
     expect(twice.fin.projections.moderate).toEqual(once.fin.projections.moderate);
+  });
+
+  /*
+   * The repair must not change the BASIS while it is repairing the arithmetic.
+   *
+   * `calculateKeyMetrics` builds the net position from the rent the occupancy
+   * assumption expects to collect; this reconciliation recomputed it from
+   * `weeklyRent × 52`. On a row assuming under 52 weeks — 62 of 153 in
+   * production — that is not a repair, it is a silent re-basing on read, and
+   * it stamped `metricsReconciled` while doing it.
+   */
+  it('recomputes the net position on the rent the cash flow receives', () => {
+    const fin = storedFin();
+    fin.assumptions = { occupancyWeeks: 50 };
+    const r = reconcileStoredFinancials(fin);
+    const totalAnnual = 21_418; // the row's own footed total, which is what the engine charges
+    const expected = Math.round(739 * 50 - totalAnnual - loanPmts);
+    expect(r.fin.keyMetrics.annualNet).toBe(expected);
+    // And the 52-week reading is NOT what it used to answer.
+    expect(r.fin.keyMetrics.annualNet).not.toBe(Math.round(739 * 52 - totalAnnual - loanPmts));
+  });
+
+  it('leaves a correctly stored row at 50 weeks alone', () => {
+    // The whole point: a row whose metrics already agree with the engine must
+    // not be rewritten, and before this fix every such row was.
+    const fin = storedFin();
+    fin.assumptions = { occupancyWeeks: 50 };
+    const totalAnnual = 21_418; // the row's own footed total, which is what the engine charges
+    const net = Math.round(739 * 50 - totalAnnual - loanPmts);
+    fin.keyMetrics = {
+      ...fin.keyMetrics,
+      annualNet: net,
+      weeklyNet: Math.round(net / 52),
+      totalInvestment: 288_237,
+      cashOnCashReturn: Math.round((net / 288_237) * 100 * 100) / 100,
+    };
+    const r = reconcileStoredFinancials(fin);
+    expect(r.metricsReconciled).toBe(false);
+  });
+
+  it('charges the ledger\u2019s own year-one debt service, not twelve monthly payments', () => {
+    // An interest-only year is not twelve amortising instalments. The ledger
+    // already computed the year and stored it; recomputing it here is a second
+    // opinion that the "Net position" a client reads then disagrees with.
+    const fin = storedFin();
+    fin.loanDetails = { ...fin.loanDetails, annualPayment: 61_880, loanType: 'interest_only' };
+    const r = reconcileStoredFinancials(fin);
+    const totalAnnual = 21_418; // the row's own footed total, which is what the engine charges
+    expect(r.fin.keyMetrics.annualNet).toBe(Math.round(739 * 52 - totalAnnual - 61_880));
   });
 
   it('never mutates the stored object and never guesses on missing components', () => {

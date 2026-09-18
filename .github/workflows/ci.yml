@@ -253,6 +253,18 @@ jobs:
       - name: Unit tests (Cash Flow analysis)
         run: npx vitest run src/lib/cashFlow src/components/cash-flow
 
+      # Exactly the failure the comment above describes, on the feature with
+      # money attached. `paymentGate.spec.ts` and `paymentGateWiring.spec.ts`
+      # have existed since the gate shipped and no step's filter has ever
+      # reached them — every assertion in both (fail-open parsing, both
+      # dashboard breakpoints gated, the provider inside AuthProvider, exactly
+      # one `status === "locked"` expression, `verify_jwt = false` on
+      # mission-control-gate, and now the rules that decide whether a customer
+      # is ever shown a way to pay) has been reading as coverage while running
+      # nowhere.
+      - name: Unit tests (activation payment gate)
+        run: npx vitest run src/lib/paymentGate
+
       # An identifier that does not exist is not type debt, and `npm run build`
       # cannot see it — Vite strips types instead of checking them, and the
       # obvious `tsc -p tsconfig.json` compiles nothing because that file
@@ -501,6 +513,12 @@ jobs:
       - name: Every security gate is wired (WP-16)
         run: node scripts/security/check-gates-wired.mjs
 
+      # Wired is not armed. A gate that decides whether to assert from the
+      # environment is starved, not skipped, when the step running it never
+      # maps the variable — and it then asserts, which is the failing side.
+      - name: Every stand-down is handed the value that arms it
+        run: node scripts/security/check-gate-env-wiring.mjs
+
       # WP-17: the database layer had no gate of its own, and it was the layer
       # that regressed. Three weeks after the July hardening closed at 3/116/9
       # -> 0/9/0, the live advisor read 2 SECURITY DEFINER views, 96 over-broad
@@ -529,7 +547,23 @@ jobs:
       # index is what lets Mission Control tell this repository's leftover from
       # the tenant's own object, so it has to stay current with the migrations
       # it describes. Generated, never hand-edited.
+      #
+      # It stands ITSELF down on a repository whose backend Mission Control
+      # owns — see `indexIsCarriedNotAuthored`. A clone carries the prime's
+      # index and cannot hold the migrations it counts (the two template
+      # seeds are 39.7 MB each, over what a cascade will carry in one file),
+      # so asserting it there stopped every cascade pull request on all three
+      # clones at once over a file nothing on that side reads.
       - name: The migration object index is current
+        # A repository variable is NOT a process environment variable until a
+        # step maps it. `indexIsCarriedNotAuthored` reads
+        # `process.env.BACKEND_DEPLOYED_BY`, so without this block it read
+        # `undefined`, failed closed exactly as designed, and asserted on every
+        # clone — which stopped the cascade pull request on all three of them
+        # from 17 Sep 2026 over a file nothing on that side reads.
+        # `check-gate-env-wiring.mjs` fails if this mapping goes again.
+        env:
+          BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}
         run: npm run migrations:index:check
 
       # WP-18: 329 catch blocks across 275 functions returned the caught error

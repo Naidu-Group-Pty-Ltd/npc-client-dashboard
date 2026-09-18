@@ -479,9 +479,25 @@ export function renderGauge(
       + `stroke="${ctx.palette.rule}" stroke-width="${i % 5 === 0 ? 1.4 : 0.6}"/>`;
   }).join('');
 
-  const band = pct >= 0.8 ? 'Strong' : pct >= 0.65 ? 'Solid' : pct >= 0.5 ? 'Mixed' : 'Cautious';
-  const bandColor = pct >= 0.65 ? ctx.palette.positive
-    : pct >= 0.5 ? ctx.palette.caution : ctx.palette.negative;
+  /*
+   * A verdict word, on a 0-100 score and nowhere else.
+   *
+   * These thresholds are calibrated for a score out of a hundred, and they
+   * were applied to `v / max` whatever `max` was. A SEIFA decile handed in as
+   * `{{gauge: 7/10}}` therefore printed "7 / 10 · SOLID" inside the ring — a
+   * grading of a customer's suburb that no record holds, minted from an
+   * arbitrary denominator. An ordinal rank is not a share of anything, and the
+   * caller who has one is better served by `renderBullet`.
+   *
+   * Where no band is drawn the rule beneath it takes the neutral accent, so
+   * the drawing keeps its shape and loses only the claim.
+   */
+  const banded = max === 100;
+  const band = !banded ? null
+    : pct >= 0.8 ? 'Strong' : pct >= 0.65 ? 'Solid' : pct >= 0.5 ? 'Mixed' : 'Cautious';
+  const bandColor = !banded ? ctx.palette.accent
+    : pct >= 0.65 ? ctx.palette.positive
+      : pct >= 0.5 ? ctx.palette.caution : ctx.palette.negative;
 
   return `${svgOpen(w, h)}
     <defs>
@@ -494,7 +510,7 @@ export function renderGauge(
     ${valuePath ? `<path d="${valuePath}" stroke="url(#${gradId})" stroke-width="22" fill="none" stroke-linecap="round"/>` : ''}
     <g>${ticks}</g>
     ${text(ctx, w, { x: cx, y: cy - 6, pt: 'hero', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, String(Math.round(v)))}
-    ${text(ctx, w, { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.6 }, svgEscape(`/${max}  ·  ${band}`.toUpperCase()))}
+    ${text(ctx, w, { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.6 }, svgEscape((band ? `/${max}  ·  ${band}` : `/${max}`).toUpperCase()))}
     <rect x="${cx - 38}" y="${cy + 30}" width="76" height="3" fill="${bandColor}" rx="1.5"/>
     ${opts.label ? text(ctx, w, { x: cx, y: 26, pt: 'title', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700 }, svgEscape(opts.label)) : ''}
     ${captionLines.map((line, i) => text(ctx, w, { x: cx, y: (opts.label ? 46 : 26) + i * 16, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.9 }, svgEscape(line))).join('')}

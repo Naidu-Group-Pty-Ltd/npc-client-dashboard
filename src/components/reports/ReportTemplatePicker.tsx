@@ -45,7 +45,8 @@
  * the legacy document — it is selectable because it is what the ranking would
  * have picked anyway.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { assessTemplateFit, templateFitCaveat } from '@/lib/reportTemplate/templateFormatFit.pure';
 import { useQuery } from '@tanstack/react-query';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -197,6 +198,13 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   // family's five layouts appear only once it is opened, which is the ordering
   // this dialog exists to fix — variants never crowd out the next family.
   const [openFamilyKey, setOpenFamilyKey] = useState<string | null>(null);
+  // A design whose vocabulary this format does not publish is composed around
+  // the report at render time — its empty pages left out, another design's
+  // body spliced in under its palette. That used to be announced by a toast
+  // raised after the PDF existed. It is asked here instead, before anything
+  // is made, and the answer is remembered only for the design it was given
+  // for.
+  const [consentedChoice, setConsentedChoice] = useState<string | null>(null);
 
   const format = normaliseReportType(reportType);
 
@@ -273,15 +281,39 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
   // saving never carries a phantom choice into the next viewing. The stored
   // selection's colourway seeds its family's swatch, and its family opens
   // pre-expanded, so "what you have" is on screen before anything is touched.
+  //
+  // Once per opening, and only once the answers have landed. The library
+  // query is `enabled: open`, so `storedChoice` provably changes value AFTER
+  // the dialog is interactive — automatic, then the raw row id, then
+  // `lib:<entryId>` as the library resolves — and this effect's dependency
+  // array used to include it. Each transition re-ran the seed over whatever
+  // the person had done: a tile clicked in that window was reverted, the tray
+  // they opened was closed and the stored family's reopened, and their
+  // colourway was overwritten by the stored one.
+  //
+  // What stops it is a TOUCH, not a load. Gating on "both queries have landed"
+  // was the first attempt and it is wrong in the same direction: a person who
+  // clicks while the library is still resolving is still overwritten when it
+  // lands. Gating on "seed once at open" is wrong in the other direction — the
+  // stored choice resolves after the dialog is interactive, so the dialog
+  // would open on "Choose automatically" for somebody who has a choice. So the
+  // seed keeps following the server until the person touches something, and
+  // never afterwards.
+  const touched = useRef(false);
+  useEffect(() => { if (!open) touched.current = false; }, [open]);
   useEffect(() => {
-    if (!open) return;
+    if (!open || touched.current) return;
+    setConsentedChoice(null);
     setChoice(storedChoice);
     setOpenFamilyKey(storedFamilyKey);
     const lineage = state?.status === 'selected' ? state.template?.libraryLineage : null;
     if (lineage?.familyKey && lineage.colourway) {
       setColourwayByFamily((prev) => ({ ...prev, [lineage.familyKey!]: lineage.colourway! }));
     }
-  }, [open, storedChoice, storedFamilyKey]);
+  }, [open, storedChoice, storedFamilyKey, state]);
+
+  /** Every control that changes a choice says so, so the seed stops following. */
+  const chooseTemplate = (value: string) => { touched.current = true; setChoice(value); };
 
   // Opening a family from the gallery's second row would otherwise reveal its
   // tray below the fold — a click that appears to do nothing. `nearest` keeps
@@ -309,7 +341,11 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
     return map;
   }, [families, loose]);
 
-  const unchanged = choice === storedChoice && (() => {
+  // An unavailable selection is ALWAYS a change worth saving. It collapses to
+  // `AUTOMATIC` above, so choosing "Choose automatically" left `unchanged`
+  // true and Save disabled — while the alert on screen asked the reader to
+  // pick another. The orphan row stayed, and so did the alert.
+  const unchanged = state?.status !== 'unavailable' && choice === storedChoice && (() => {
     // A library choice is also its colourway: the same design in a different
     // palette is a different document.
     if (!choice.startsWith('lib:')) return true;
@@ -321,16 +357,39 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
     return normalisedColourway(found.group, found.entry) === storedColourway;
   })();
 
+  /** What the chosen design's own declared bindings say about this format. */
+  const chosenFit = useMemo(() => {
+    if (!choice.startsWith('lib:')) return null;
+    const found = entryById.get(choice.slice(4));
+    if (!found) return null;
+    const reading = assessTemplateFit(found.entry.requiredBindings, normaliseReportType(reportType) ?? reportType);
+    const caveat = templateFitCaveat(reading, formatLabel);
+    return caveat ? { reading, caveat } : null;
+  }, [choice, entryById, reportType, formatLabel]);
+  const needsConsent = !!chosenFit && consentedChoice !== choice;
+
   const busy = isSaving || adopt.isPending;
 
   const save = async () => {
+    // Nothing is produced until the substitution has been agreed to. The
+    // caveat and its "Use it anyway" sit in the footer, so the question and
+    // the answer are in one place.
+    if (needsConsent) return;
     try {
       if (choice === AUTOMATIC) {
         await clear();
         toast.success(`${formatLabel} reports will use the default template again.`);
       } else if (choice.startsWith('lib:')) {
         const found = entryById.get(choice.slice(4));
-        if (!found) return;
+        if (!found) {
+          // This used to `return` with no toast, no close and no state
+          // change, so any drift between the checked tile and the loaded
+          // library — a background refetch, a deprecation, a read that failed
+          // after the tile was drawn — turned Save into a button that does
+          // nothing at all.
+          toast.error('That design is no longer in the library. Reopen the chooser and pick again.');
+          return;
+        }
         const colourwayId = normalisedColourway(found.group, found.entry);
         // An active row that already IS this (design, version, colourway) —
         // the seeded house master, or a copy adopted earlier — is selected
@@ -419,7 +478,7 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
             )}
 
             <div data-testid="template-picker-scroll" className="max-h-[62vh] space-y-5 overflow-y-auto pr-1">
-              <RadioGroup value={choice} onValueChange={setChoice} className="space-y-5">
+              <RadioGroup value={choice} onValueChange={chooseTemplate} className="space-y-5">
                 <label
                   className={cn(
                     'flex cursor-pointer items-start gap-3 rounded-md border p-3 transition',
@@ -464,7 +523,31 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                             type="button"
                             aria-expanded={isOpen}
                             aria-controls={`family-tray-${group.key}`}
-                            onClick={() => setOpenFamilyKey(isOpen ? null : group.key)}
+                            onClick={() => {
+                              // Opening a family CHOOSES it.
+                              //
+                              // This tile used to set `openFamilyKey` and
+                              // nothing else, while painting itself
+                              // `border-primary ring-1 ring-primary` — the
+                              // same treatment `ChoiceTile` uses for
+                              // `checked` — and carrying a "Current" badge.
+                              // So a person who clicked a family, picked a
+                              // colourway and pressed Save had changed
+                              // nothing `save()` can persist, and the button
+                              // was disabled anyway because `choice` had not
+                              // moved. The tray still offers the five
+                              // layouts; this only makes the family's own
+                              // reference layout the standing choice while it
+                              // is open, which is what the tile already
+                              // looked like it was doing.
+                              touched.current = true;
+                              const opening = !isOpen;
+                              setOpenFamilyKey(opening ? group.key : null);
+                              if (opening && representative
+                                && !group.entries.some((e) => choice === libValue(e.id))) {
+                                setChoice(libValue(representative.id));
+                              }
+                            }}
                             className={cn(
                               'group flex flex-col overflow-hidden rounded-lg border text-left transition',
                               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1',
@@ -536,8 +619,10 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
                                   <button
                                     key={c.id}
                                     type="button"
-                                    onClick={() =>
-                                      setColourwayByFamily((prev) => ({ ...prev, [openGroup.key]: c.id }))}
+                                    onClick={() => {
+                                      touched.current = true;
+                                      setColourwayByFamily((prev) => ({ ...prev, [openGroup.key]: c.id }));
+                                    }}
                                     title={`${c.name} · ${c.ground}`}
                                     aria-label={`${c.name}, ${c.ground} ground`}
                                     aria-pressed={active}
@@ -710,15 +795,29 @@ export function ReportTemplatePicker({ reportType, formatLabel, open, onOpenChan
           </div>
         )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={busy || unchanged || isLoading || !!error}>
-            {busy
-              ? <><Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" /> Saving…</>
-              : <><CheckCircle2 className="mr-1 h-4 w-4" aria-hidden="true" /> Save choice</>}
-          </Button>
+        <DialogFooter className="flex-col items-stretch gap-2 sm:flex-col sm:items-stretch">
+          {chosenFit && (
+            <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-left text-xs">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden="true" />
+              <p className="text-muted-foreground">{chosenFit.caveat}</p>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
+              Cancel
+            </Button>
+            {needsConsent ? (
+              <Button variant="outline" onClick={() => setConsentedChoice(choice)} disabled={busy || isLoading}>
+                Use it anyway
+              </Button>
+            ) : (
+              <Button onClick={save} disabled={busy || unchanged || isLoading || !!error}>
+                {busy
+                  ? <><Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" /> Saving…</>
+                  : <><CheckCircle2 className="mr-1 h-4 w-4" aria-hidden="true" /> Save choice</>}
+              </Button>
+            )}
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

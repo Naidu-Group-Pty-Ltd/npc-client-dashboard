@@ -391,6 +391,24 @@ const CASES = [
     replace: 'console.warn(logPrefix(err), JSON.stringify({',
   },
 
+  // ── A stand-down that is never handed the value that arms it ─────────────
+  {
+    /* The object-index check stands itself down on a clone via
+       `indexIsCarriedNotAuthored`, which reads
+       `process.env.BACKEND_DEPLOYED_BY`. The logic shipped and the `env:`
+       mapping did not, so it read `undefined`, failed closed as designed, and
+       asserted a claim no clone can satisfy — stopping the cascade pull
+       request on all three clones at once from 17 Sep 2026.
+
+       Renaming the mapped key is the same starvation with the wiring still
+       visibly present, which is the version hardest to spot in review. */
+    gate: 'check-gate-env-wiring.mjs',
+    file: '.github/workflows/ci.yml',
+    what: 'the step running the object-index check stops mapping BACKEND_DEPLOYED_BY',
+    find: 'BACKEND_DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}',
+    replace: 'DEPLOYED_BY: ${{ vars.BACKEND_DEPLOYED_BY }}',
+  },
+
 ];
 
 /**

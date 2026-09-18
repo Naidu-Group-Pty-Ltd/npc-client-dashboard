@@ -511,28 +511,38 @@ export function buildWorkingCopyPayload(req: WorkingCopyRequest): Record<string,
   // this records what it was copied AS — the family, the variant and the
   // colourway — which that row cannot know.
   //
-  // Written ONLY for a design-family entry. A copy of one of the forty voice
-  // templates has no family, no variant axis and no colourway, so a lineage
-  // block there would be eleven null fields added to a column other code
-  // round-trips — a behaviour change with nothing to show for it.
-  const config = meta.familyKey
-    ? {
-      ...baseConfig,
-      libraryLineage: {
-        entryId: entry.id ?? null,
-        entrySlug: entry.slug ?? null,
-        entryVersion: entry.version ?? null,
-        familyKey: meta.familyKey ?? null,
-        familyName: meta.familyName ?? null,
-        templateCode: meta.templateCode ?? null,
-        variantAxis: meta.variantAxis ?? null,
-        density: meta.density ?? null,
-        colourway: req.colourway?.id ?? null,
-        colourwayName: req.colourway?.name ?? null,
-        ground: req.colourway?.ground ?? null,
-      },
-    }
-    : baseConfig;
+  // Written for EVERY entry, family or not.
+  //
+  // It used to be written only where `meta.familyKey` existed, on the
+  // reasoning that a voice template has no family, no variant axis and no
+  // colourway and would carry eleven null fields for nothing. The eleven
+  // fields are not what the block is for: `entryId` is, and four separate
+  // readers key identity on it — the picker's stored-choice resolution, its
+  // "is this the current one" mark, `matchesReportUseCopy` below (which
+  // opens `if (!lineage) return false`) and the SQL filter on
+  // `config->libraryLineage->>entryId` that the adopt path dedupes with.
+  //
+  // So a voice template adopted for reports came back lineage-less: the
+  // library tile was not marked current, the same design appeared a second
+  // time under the standalone templates, and because nothing could match it,
+  // every press of Save minted ANOTHER active `report_templates` row. Forty
+  // three designs round-tripped that way.
+  const config = {
+    ...baseConfig,
+    libraryLineage: {
+      entryId: entry.id ?? null,
+      entrySlug: entry.slug ?? null,
+      entryVersion: entry.version ?? null,
+      familyKey: meta.familyKey ?? null,
+      familyName: meta.familyName ?? null,
+      templateCode: meta.templateCode ?? null,
+      variantAxis: meta.variantAxis ?? null,
+      density: meta.density ?? null,
+      colourway: req.colourway?.id ?? null,
+      colourwayName: req.colourway?.name ?? null,
+      ground: req.colourway?.ground ?? null,
+    },
+  };
 
   return {
     name: req.name,

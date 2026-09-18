@@ -481,6 +481,22 @@ export interface MarkdownOptions {
   renderDirective?: (
     directive: VizDirective,
   ) => string | { html: string; lines?: number } | null;
+
+  /**
+   * Draw an inline sparkline for `~~[3,5,8,13]~~`, or decline it.
+   *
+   * The generator's prompt demands this construct — "Use `~~[…]~~` inline
+   * sparklines liberally for any time-series mentioned in prose" — and this
+   * module had no handling of `~~` at all, so on 262 Pallas Street a bare
+   * array of numbers printed inside a client's sentence. Where the marker was
+   * stripped instead (`markdownToPlainText`), the numbers printed without
+   * even the tildes to mark them as a directive.
+   *
+   * Returning null, or omitting the option, REMOVES the construct rather than
+   * printing it — the same decision `renderDirective` records: a shortcode is
+   * instruction to the renderer and not something to show a client either way.
+   */
+  renderInlineSpark?: (values: number[]) => string | null;
 }
 
 /**
@@ -575,6 +591,10 @@ export interface MarkdownNotices {
   unmatchedEmphasis: number;
   /** Runs too long or too marker-dense to parse emphasis in. */
   inlineSkipped: number;
+  /** `~~[…]~~` inline sparklines that became a drawing. */
+  sparksDrawn: number;
+  /** ... and those removed: fewer than two numbers, or a caller that declined. */
+  sparksDropped: number;
   /** `{{…}}` chart directives that became a figure. */
   figuresDrawn: number;
   /**
@@ -695,6 +715,8 @@ const emptyNotices = (): MarkdownNotices => ({
   inlineSkipped: 0,
   figuresDrawn: 0,
   figuresDropped: 0,
+  sparksDrawn: 0,
+  sparksDropped: 0,
   headingsDroppedEmpty: 0,
   footnotesRendered: 0,
   footnoteRefsDropped: 0,
@@ -801,14 +823,46 @@ export function inlinePlainText(value: string): string {
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 }
 
-export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): string {
+/**
+ * The inline sparkline the generator's prompt asks for: `~~[3,5,8,13]~~`.
+ *
+ * Matched after escaping, because none of `~`, `[`, `]`, a digit, a comma,
+ * a dot, a minus or a space is escaped — so the construct survives `escapeHtml`
+ * intact and can be recognised as a unit there, the way a code span is.
+ */
+const INLINE_SPARK = /~~\[([\d.,\s+-]+)\]~~/g;
+
+/** Draw, or remove. Never print. */
+function drawSparks(part: string, notices?: MarkdownNotices, opts?: InlineMarkdownOptions): string {
+  if (!INLINE_SPARK.test(part)) { INLINE_SPARK.lastIndex = 0; return part; }
+  INLINE_SPARK.lastIndex = 0;
+  return part.replace(INLINE_SPARK, (_whole, list: string) => {
+    const values = String(list).split(',').map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
+    const html = values.length >= 2 ? (opts?.renderInlineSpark?.(values) ?? null) : null;
+    if (!html) { if (notices) notices.sparksDropped++; return ''; }
+    if (notices) notices.sparksDrawn++;
+    return html;
+  });
+}
+
+/** What the inline pass needs from the caller. A subset of `MarkdownOptions`. */
+export interface InlineMarkdownOptions {
+  renderInlineSpark?: (values: number[]) => string | null;
+}
+
+export function renderInlineMarkdown(
+  value: string,
+  notices?: MarkdownNotices,
+  opts?: InlineMarkdownOptions,
+): string {
   const raw = value ?? '';
   if (!raw) return '';
 
   const markers = (raw.match(/[*_`]/g) ?? []).length;
   if (raw.length > MAX_INLINE_CHARS || markers > MAX_INLINE_MARKERS) {
     if (notices) notices.inlineSkipped++;
-    return applyFootnoteRefs(escapeHtml(stripMarkers(raw)));
+    // Even the run this pass declines to parse must not print a directive.
+    return applyFootnoteRefs(drawSparks(escapeHtml(stripMarkers(raw)), notices, opts));
   }
 
   // Links first, on the *raw* string: the target has to be recognised as a unit
@@ -826,9 +880,19 @@ export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): 
   // token that could also occur in the prose. Escaping has already run, so no
   // literal `<code>` can exist in the text and the split is exact.
   s = s.replace(/`+([^`]+?)`+/g, (_m, inner: string) => `<code>${inner}</code>`);
+  // Code spans are left alone, then a sparkline is drawn outside them, then
+  // emphasis is applied outside the drawing. Three splits rather than three
+  // placeholder tokens, for the reason above: a token is a string the prose
+  // could also contain, and a tag is not.
   return s
     .split(/(<code>[\s\S]*?<\/code>)/)
-    .map((part, idx) => (idx % 2 === 1 ? part : applyFootnoteRefs(emphasise(part, notices))))
+    .map((part, idx) => {
+      if (idx % 2 === 1) return part;
+      return drawSparks(part, notices, opts)
+        .split(/(<svg\b[\s\S]*?<\/svg>)/)
+        .map((piece, i) => (i % 2 === 1 ? piece : applyFootnoteRefs(emphasise(piece, notices))))
+        .join('');
+    })
     .join('');
 }
 
@@ -1148,7 +1212,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     if (!paragraph.length) return true;
     const joined = paragraph.join('\n');
     paragraph = [];
-    const html = paragraphHtml(joined, notices);
+    const html = paragraphHtml(joined, notices, options);
     return push('paragraph', html, geometry ? paragraphCharge(geometry, printedChars(joined)) : textLines(joined) + 0.5);
   };
 
@@ -1177,7 +1241,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       while (i < lines.length && !/^:::\s*$/.test(lines[i].trim())) { body.push(lines[i]); i++; }
       if (i < lines.length) i++;
       const inner = body.join('\n').trim();
-      const oneLine = renderInlineMarkdown(inner.replace(/\s*\n+\s*/g, ' '), notices);
+      const oneLine = renderInlineMarkdown(inner.replace(/\s*\n+\s*/g, ' '), notices, options);
       const innerChars = printedChars(inner.replace(/\s*\n+\s*/g, ' '));
       if (kind === 'pullquote' || kind === 'quote-page') {
         if (!inner) continue;
@@ -1374,7 +1438,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       const joined = body.join('\n').trim();
       const innerHtml = joined
         .split(/\n{2,}/)
-        .map((p) => paragraphHtml(p, notices))
+        .map((p) => paragraphHtml(p, notices, options))
         .join('');
       if (!push(
         'blockquote',
@@ -1450,7 +1514,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
       const listMeta: MarkdownListMeta = {
         items: kept.map((it) => ({ depth: it.depth, text: it.text, chars: printedChars(it.text), ordered: it.ordered })), ordered, start: startNum,
       };
-      if (!push('list', listHtml(kept, ordered, notices, startNum), listCost, undefined, listMeta)) break scan;
+      if (!push('list', listHtml(kept, ordered, notices, startNum, options), listCost, undefined, listMeta)) break scan;
       continue;
     }
 
@@ -1482,7 +1546,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     const items = footnoteOrder
       .map((id) => footnoteDefs.get(id) ?? '')
       .filter(Boolean)
-      .map((def, idx) => `<li value="${idx + 1}">${renderInlineMarkdown(def, notices)}</li>`);
+      .map((def, idx) => `<li value="${idx + 1}">${renderInlineMarkdown(def, notices, options)}</li>`);
     if (items.length) {
       const html = `<h4>Notes</h4><ol class="fn-notes">${items.join('')}</ol>`;
       const notesCost = geometry
@@ -1580,7 +1644,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
     // emitted yet — later on, a heading of the same name is a real subsection.
     if (!blocks.length && chapterTitle && sameWords(plain, chapterTitle)) return true;
 
-    const html = `<h${level} id="${id}">${renderInlineMarkdown(raw, notices)}</h${level}>`;
+    const html = `<h${level} id="${id}">${renderInlineMarkdown(raw, notices, options)}</h${level}>`;
     const index = blocks.length;
     if (!push('heading', html, geometry ? headingCharge(geometry, level, plain.length) : headingCost)) return false;
     headings.push({ level, sourceLevel, text: plain, id, blockIndex: index });
@@ -1639,7 +1703,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
         ? (head ? headingCharge(geometry, 4, cols[0].label.length) : 0)
           + listCharge(geometry, items.map((it) => ({ chars: printedChars(it.text), depth: 0 })))
         : listLines(items) + 2;
-      return push('list', head + listHtml(items, false, notices), singleCost);
+      return push('list', head + listHtml(items, false, notices, 1, options), singleCost);
     }
 
     const rows: TableRow[] = cells.map((r) => {
@@ -1733,21 +1797,21 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): M
   }
 }
 
-function paragraphHtml(block: string, notices: MarkdownNotices): string {
+function paragraphHtml(block: string, notices: MarkdownNotices, opts?: InlineMarkdownOptions): string {
   return block
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean)
-    .map((p) => `<p>${inlineWithBreaks(p, notices)}</p>`)
+    .map((p) => `<p>${inlineWithBreaks(p, notices, opts)}</p>`)
     .join('');
 }
 
 /** Two trailing spaces or a trailing backslash is a hard break; a bare newline is a space. */
-function inlineWithBreaks(paragraph: string, notices: MarkdownNotices): string {
+function inlineWithBreaks(paragraph: string, notices: MarkdownNotices, opts?: InlineMarkdownOptions): string {
   return paragraph
     .split('\n')
     .map((l) => ({ text: l.replace(/(?: {2,}|\\)$/, ''), hard: /(?: {2,}|\\)$/.test(l) }))
-    .map((l, idx, all) => renderInlineMarkdown(l.text.trim(), notices) + (idx < all.length - 1 ? (l.hard ? '<br>' : ' ') : ''))
+    .map((l, idx, all) => renderInlineMarkdown(l.text.trim(), notices, opts) + (idx < all.length - 1 ? (l.hard ? '<br>' : ' ') : ''))
     .join('');
 }
 
@@ -1762,7 +1826,7 @@ function inlineWithBreaks(paragraph: string, notices: MarkdownNotices): string {
  * nesting the author wrote is simply not on the page. Caught by looking at the
  * output rather than by the type checker, which is happy either way.
  */
-function listHtml(items: readonly ListItem[], ordered: boolean, notices: MarkdownNotices, start = 1): string {
+function listHtml(items: readonly ListItem[], ordered: boolean, notices: MarkdownNotices, start = 1, opts?: InlineMarkdownOptions): string {
   if (!items.length) return '';
   const tagOf = (o: boolean) => (o ? 'ol' : 'ul');
   const topTag = tagOf(ordered);
@@ -1802,7 +1866,7 @@ function listHtml(items: readonly ListItem[], ordered: boolean, notices: Markdow
       }
       if (itemOpen) { out += '</li>'; itemOpen = false; }
     }
-    out += `<li>${renderInlineMarkdown(item.text, notices)}`;
+    out += `<li>${renderInlineMarkdown(item.text, notices, opts)}`;
     itemOpen = true;
   }
   while (stack.length > 1) {

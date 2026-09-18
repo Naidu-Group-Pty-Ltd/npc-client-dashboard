@@ -533,7 +533,13 @@ Deno.serve(async (req) => {
     // numbers wrote N/A nineteen times on a real snapshot whose row held every
     // figure. The block is authoritative; a metric absent from it and from the
     // prose loses its row rather than gaining a placeholder.
-    const factsBlock = buildRecordedFactsBlock(projectInvestmentReport(parentReport as InvestmentReportRowLike));
+    // The TARGET tier, not the parent's. A Snapshot exists to carry the
+    // figures and condenses from a Compass that may not; keying the
+    // projection's content policy on the row being read would hand this
+    // prompt a parent with no modelling in it.
+    const factsBlock = buildRecordedFactsBlock(
+      projectInvestmentReport(parentReport as InvestmentReportRowLike, { tier: targetTier }),
+    );
 
     const userPrompt = `Please condense the following comprehensive investment report into a ${tierConfig.name} format (~${tierConfig.targetPages} pages).
 

@@ -103,11 +103,48 @@ export const EDITORIAL_LABELS: readonly string[] = [
   'our view',
 ];
 
-// ─── Investment Location & Property Fit Report (≈23 pages, 11 sections) ─────
-// v3.0 — the commentary strip. ALL detailed financial modelling (purchase
-// costs, yield, loan, cashflow, sensitivity, 10-year projections, land tax,
-// equity) lives in the separate Financial Analysis Report and MUST NOT appear
-// here; that rule is unchanged from v2.0.
+// ─── Investment Location & Property Fit Report (≈34 pages, 15 sections) ─────
+// v4.0 — the document has room for what it retrieves. ALL detailed financial
+// modelling (purchase costs, yield, loan, cashflow, sensitivity, 10-year
+// projections, land tax, equity) lives in the separate Financial Analysis
+// Report and MUST NOT appear here; that rule is unchanged from v2.0, and as of
+// v14 of the template library it is enforced by `tierContent.pure.ts` at the
+// projection as well as in the prose.
+//
+// WHAT CHANGED IN v4.0, AND WHY
+//
+// The owner's review of the 17 Sep 2026 Compass: "the Zoning, Planning and
+// Infrastructure sections are simply not good enough ... the information being
+// incorporated does not provide the client with sufficiently solid, meaningful
+// or valuable information", benchmarked against the legacy long-form report,
+// "approximately 80 pages or more".
+//
+// Measured, both halves of that:
+//
+//   * **Zoning had no section.** 'Zoning' and 'Planning' were sourceHeadings
+//     of the RISK DASHBOARD — a 500-word table whose own purpose says "the
+//     table IS the section — no prose restating rows". So the controls the
+//     platform retrieves had nowhere to be explained, and the reader got a
+//     row. It is ordinal 8 now, with 900 words, and
+//     `planningConstraints.pure.ts` gives it a register to explain.
+//   * **The legacy report ran to ~110,000 characters across 27 sections in
+//     ONE pass** (`df813535`, Lot 2410 Prescott Road — 338,471 characters
+//     because a resume defect wrote it three times). The 17 Sep Compass is
+//     38,648 across 11, against a v3.0 cap of 5,010 words. v4.0 is 8,150
+//     across 15, which is what the retrieved evidence can carry honestly.
+//
+// Three sections were split back out because the merge had put them where
+// nothing could be said: Transport (was one bullet inside a 600-word Amenity
+// & Access covering schools, healthcare, retail, recreation AND transport —
+// five sections and ~25,000 characters in the legacy document), Environment
+// and Climate & Safety (folded into the risk table), and Planning.
+//
+// The v3.0 merge was the right decision for the reason it was made — the
+// sections repeated each other. What changed is that there is now measured
+// evidence behind each of them: a constraint register with per-control
+// explanation, GTFS stops, four states of recorded crime, climate readings.
+// A section with nothing behind it should be merged; a section with a
+// register behind it should not.
 //
 // WHAT CHANGED, AND WHY
 //
@@ -179,7 +216,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 450,
+    maxWordCount: 550,
     visualComponents: ['kpiTiles', 'scorecard'],
     purpose: 'The verdict, first: location call, property fit, tenant demand, the top 2–3 risks, and a Proceed / Proceed with caution / Not suitable recommendation. Write it as findings, not as a preview of the sections below. NO purchase price, LVR, yield, cashflow or any financial figure — those belong in the Financial Analysis Report.',
   },
@@ -194,7 +231,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'High',
-    maxWordCount: 300,
+    maxWordCount: 350,
     visualComponents: ['attributeTable', 'kpiTiles'],
     purpose: 'Facts in a table, not prose: property type, bed/bath/car, land size, dwelling configuration, estate, suburb, LGA, target occupier, locality fit. Bed/bath/car must be internally consistent throughout the whole report. NO price, rent, yield, LVR, loan or any financial field.',
   },
@@ -203,13 +240,13 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     ordinal: 4,
     name: 'Why This Location Matters',
     sourceHeadings: ['Location Overview', 'Why This Location Matters', 'Future Infrastructure', 'Infrastructure & Development', 'Growth Corridor'],
-    pageBudget: 3,
+    pageBudget: 4,
     includeInCompass: true,
     includeInFinancialReport: false,
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 700,
+    maxWordCount: 900,
     visualComponents: ['narrative', 'infrastructureTimeline', 'confidenceChip'],
     purpose: 'The macro thesis: growth corridor, master-planned estate, LGA, economic links, and the staged infrastructure pipeline (schools, town centre, transport, roads, health, parks) as a timeline. Each infrastructure item carries a confidence chip (Verified / Planned / Under Construction). Name the project, the stage and the date — not what the project means for the reader.',
   },
@@ -231,13 +268,13 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
       'Employment & Industry',
       'Economic Context',
     ],
-    pageBudget: 3,
+    pageBudget: 4,
     includeInCompass: true,
     includeInFinancialReport: false,
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'High',
-    maxWordCount: 750,
+    maxWordCount: 950,
     visualComponents: ['trendTable', 'kpiTiles', 'attributeTable'],
     purpose: 'One section answering who wants to live here and why — merged from the v2.0 population, tenant/buyer and employment sections, which repeated each other. Covers population growth and household formation, the supply pipeline, the tenant and buyer profile (household types, income brackets, a small SEIFA evidence box), and the corridor industries, major employers and employment-hub access that support that demand. Render employment ONCE, here. Macro demand only — no rent or yield numbers.',
   },
@@ -245,6 +282,9 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     id: 'compass.amenityAccess',
     ordinal: 6,
     name: 'Amenity & Access',
+    // Transport left this list for its own section (ordinal 7). A heading in
+    // TWO sections resolves to whichever comes first and the other silently
+    // loses it — the same rule a workspace path answers to.
     sourceHeadings: [
       'Amenity & Access',
       'Schools & Education',
@@ -258,12 +298,6 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
       'Suburb Character',
       'Lifestyle',
       'Retail, Healthcare & Lifestyle Amenity',
-      'Transport & Accessibility',
-      'Public Transport Access',
-      'Public Transport Network',
-      'Commute Metrics',
-      'Connectivity & Transport',
-      'Transport & Connectivity',
     ],
     pageBudget: 3,
     includeInCompass: true,
@@ -271,15 +305,22 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: true,
     isInternalOnly: false,
     sectionPriority: 'Medium',
-    maxWordCount: 600,
+    maxWordCount: 700,
     visualComponents: ['amenityMatrix', 'attributeTable'],
     purpose: 'One section answering what is nearby and how long it takes to reach — merged from the v2.0 education, retail/healthcare/lifestyle and transport sections. Lead with a single matrix: Amenity / Distance / Current / Future. Covers schools and childcare, healthcare, shopping and dining, parks and recreation, and rail, road, bus and real commute times including honest car-reliance. Top 3–5 per category; full school and facility lists go to the appendix. Render each ONCE.',
   },
   {
-    id: 'compass.marketPositioning',
+    id: 'compass.transportAccess',
     ordinal: 7,
-    name: 'Market Positioning',
-    sourceHeadings: ['Market Positioning', 'Current Market Performance', 'Market Analysis'],
+    name: 'Transport & Connectivity',
+    sourceHeadings: [
+      'Transport & Connectivity',
+      'Transport & Accessibility',
+      'Public Transport Access',
+      'Public Transport Network',
+      'Commute Metrics',
+      'Connectivity & Transport',
+    ],
     pageBudget: 2,
     includeInCompass: true,
     includeInFinancialReport: false,
@@ -287,12 +328,71 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     isInternalOnly: false,
     sectionPriority: 'High',
     maxWordCount: 450,
+    visualComponents: ['attributeTable', 'amenityMatrix'],
+    purpose: 'How a household here actually moves: the nearest stops on record and their distance, the modes recorded, and any measured commute — then honest car reliance, which is a finding that needs a measurement like every other. A stop found is a fact about this area; no stop found is a fact about the feeds that were loaded, and neither is a score. Where no transport reading was retrieved, say so and describe nothing. NO financial figures.',
+  },
+  {
+    id: 'compass.planningConstraints',
+    ordinal: 8,
+    name: 'Planning, Zoning & What Is Mapped Over the Land',
+    sourceHeadings: [
+      'Planning, Zoning & What Is Mapped Over the Land',
+      'Zoning & Planning Analysis',
+      'Planning controls and development registers',
+      'Zoning',
+      'Planning',
+      'Planning Controls',
+      'Overlays',
+    ],
+    pageBudget: 4,
+    includeInCompass: true,
+    includeInFinancialReport: false,
+    includeInAppendix: false,
+    isInternalOnly: false,
+    sectionPriority: 'Protected',
+    maxWordCount: 900,
+    visualComponents: ['planningActionTable', 'attributeTable', 'confidenceChip'],
+    purpose: 'The section this report had no home for. Zoning and planning were sourceHeadings of the Risk Dashboard — a 500-word table whose own purpose says "the table IS the section" — so the controls retrieved for the property had nowhere to be explained and the reader got a row. Lead with the retrieved register: the zone and its instrument, the height, floor space and minimum-lot controls with the clause that creates each one, and every overlay or hazard a register returned, each with its currency date. Then explain what each control OBLIGES — not what it is called — and close with the certificate that settles it in this jurisdiction and the questions to put with it. State only what the register returned; where a register answered and found nothing, say it was checked; where none was reached, say the council scheme has not been read. An absence is never a clearance and a zone that admits a use is never approval for it. NO financial figures.',
+  },
+  {
+    id: 'compass.environmentSafety',
+    ordinal: 9,
+    name: 'Environment, Climate & Safety',
+    sourceHeadings: [
+      'Environment, Climate & Safety',
+      'Environmental Risks & Climate',
+      'Crime & Safety',
+      'Environmental Risk',
+      'Climate',
+    ],
+    pageBudget: 2,
+    includeInCompass: true,
+    includeInFinancialReport: false,
+    includeInAppendix: true,
+    isInternalOnly: false,
+    sectionPriority: 'Protected',
+    maxWordCount: 650,
+    visualComponents: ['attributeTable', 'confidenceChip', 'narrative'],
+    purpose: 'What the environmental and crime registers returned for this area, and what each reading means for a holder — insurance, construction, liveability, tenant appeal. The two are together because both are facts about the AREA that a buyer weighs the same way, and both were folded into a risk table that had room for neither. A recorded crime count is a fact about a register and a geography, never a character assessment of the people who live there; state the period, the area and the publisher, and never compose a movement claim without a real local total beside it. Where a reading was withheld, say which and why, and print no digit. NO financial figures.',
+  },
+  {
+    id: 'compass.marketPositioning',
+    ordinal: 10,
+    name: 'Market Positioning',
+    sourceHeadings: ['Market Positioning', 'Current Market Performance', 'Market Analysis'],
+    pageBudget: 3,
+    includeInCompass: true,
+    includeInFinancialReport: false,
+    includeInAppendix: false,
+    isInternalOnly: false,
+    sectionPriority: 'High',
+    maxWordCount: 600,
     visualComponents: ['trendTable', 'kpiTiles'],
     purpose: 'Where this property sits in the local market: new-estate context, owner-occupier appeal, comparable supply, demand signals. Qualitative growth drivers only — NO yield, cashflow, capital growth %, repayment or loan numbers.',
   },
   {
     id: 'compass.propertyFit',
-    ordinal: 8,
+    ordinal: 11,
     name: 'Property Fit Within the Suburb',
     sourceHeadings: ['Property Fit Within the Suburb', 'Property-Level Information', 'Strategic Assessment', 'Property Fit'],
     pageBudget: 2,
@@ -301,28 +401,33 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 450,
+    maxWordCount: 550,
     visualComponents: ['strengthsWatchPoints', 'attributeTable'],
     purpose: 'How this specific dwelling aligns with local demand: lot position, layout, land/build balance, tenant appeal, resale story, limitations. Strengths and limitations as two short lists, not as paragraphs. Bed/bath/car must match the Property & Locality Snapshot. NO valuation, yield or financial assessment.',
   },
   {
     id: 'compass.riskDashboard',
-    ordinal: 9,
+    ordinal: 12,
     name: 'Risk Dashboard',
-    sourceHeadings: ['Risk Dashboard', 'Risk Summary', 'Environmental Risks & Climate', 'Crime & Safety', 'Environmental Risk', 'Zoning', 'Planning', 'Key Risks Before Proceeding'],
+    // Environment, crime, zoning and planning left this list for the two
+    // sections that now carry them (ordinals 8 and 9). They were folded in
+    // here because there was nowhere else, and a 500-word table whose own
+    // purpose says "the table IS the section" is not a home for a planning
+    // control or a climate reading.
+    sourceHeadings: ['Risk Dashboard', 'Risk Summary', 'Key Risks Before Proceeding'],
     pageBudget: 2,
     includeInCompass: true,
     includeInFinancialReport: false,
     includeInAppendix: true,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 500,
+    maxWordCount: 550,
     visualComponents: ['riskRegister', 'confidenceChip'],
     purpose: 'One consolidated risk table: Risk / Level / Why It Matters / Required Check. Covers crime, environmental (bushfire, flood), planning overlays and covenants, supply, transport reliance and infrastructure timing. Every risk carries an evidence chip and a required DD action. The chip states EVIDENCE HELD, never reassurance: "Verified" only where a dated, parcel-level source is cited; "Unverified" while the required check is still to be done; "Conflicting" where sources disagree (say which). A level (Low/Moderate/High) describes exposure and is separate from the chip; never rate confidence High for a risk whose check is outstanding, and never let a checklist of work still to do read as a clearance. The table IS the section — no prose restating rows.',
   },
   {
     id: 'compass.dueDiligenceChecklist',
-    ordinal: 10,
+    ordinal: 13,
     name: 'Due Diligence Checklist',
     sourceHeadings: ['Due Diligence Checklist', 'Due Diligence', 'Investment Recommendations'],
     pageBudget: 1,
@@ -331,13 +436,13 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 250,
+    maxWordCount: 350,
     visualComponents: ['dueDiligenceChecklist'],
     purpose: 'A plain checklist of what to verify before proceeding: planning certificate, title/covenant, overlays, insurance/BAL position, comparables, rent, contract and estate covenants. Checklist items only — one line each, no explanatory paragraphs.',
   },
   {
     id: 'compass.finalRecommendation',
-    ordinal: 11,
+    ordinal: 14,
     name: 'Final Recommendation',
     sourceHeadings: ['Final Recommendation', 'Final Conclusion', 'Investment Recommendation'],
     pageBudget: 1,
@@ -346,13 +451,13 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 250,
+    maxWordCount: 350,
     visualComponents: ['narrative'],
     purpose: 'Open with the verdict in bold on its own line — **Proceed**, **Proceed with caution** or **Not suitable** — then 150–250 words of continuous rationale tied to location, tenant demand and risk, then the immediate actions as a short list. Write the rationale as one unlabelled passage: this section carried four labelled commentary blocks in v2.0 and they were 39% of it. NO financial verdict and no financial figures.',
   },
   {
     id: 'compass.disclaimer',
-    ordinal: 12,
+    ordinal: 15,
     name: 'Appendix, Source Notes & Disclaimer',
     sourceHeadings: ['PROFESSIONAL DISCLAIMER', 'Disclaimer', 'Source Appendix', 'Appendix'],
     pageBudget: 1,
@@ -361,7 +466,7 @@ export const COMPASS_40_SECTIONS: CompassSectionDefinition[] = [
     includeInAppendix: false,
     isInternalOnly: false,
     sectionPriority: 'Protected',
-    maxWordCount: 250,
+    maxWordCount: 300,
     visualComponents: ['narrative'],
     purpose: 'Back matter, not an analysis section: data sources, appendix listings (full school and facility lists moved out of Amenity & Access), general advice warning, report limitations. Replaces any inline "[citation]" placeholders.',
   },
@@ -598,7 +703,7 @@ export const COMPASS_FINANCIAL_HANDOFF_COPY =
  * 86. The budgets above now sum to 23, which is inside this band with room for
  * the part-full chapter tail every chaptered document pays per section.
  */
-export const COMPASS_PAGE_BAND = { min: 20, max: 26 } as const;
+export const COMPASS_PAGE_BAND = { min: 30, max: 38 } as const;
 
 export const COMPASS_40_PAGE_BUDGET = COMPASS_40_SECTIONS.reduce((s, x) => s + x.pageBudget, 0);
 export const FINANCIAL_PAGE_BUDGET  = FINANCIAL_ANALYSIS_SECTIONS.reduce((s, x) => s + x.pageBudget, 0);

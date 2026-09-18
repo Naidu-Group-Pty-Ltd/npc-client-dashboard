@@ -189,10 +189,44 @@ const REPO = resolve(__dirname, '../..');
  * `recommendation.gradedLine` / `.gradedDetailLine`, composed by the
  * projection from the score's own dimensions and absent when the record
  * cannot say them (scoreSections.pure.ts).
+ *
+ * ## v13 — the cash flow table foots
+ *
+ * `20261112000000` is recorded and `template_library_entries` holds 543 rows,
+ * so v12 has run and editing it would be inert. v13 carries the Financial
+ * position page's new lines: the engine subtracts eight annual cost components
+ * and the table drew four, so on 262 Pallas Street, Maryborough the rows came
+ * to $10,780 against a net position built on $12,880 — and the row that left
+ * water rates out was labelled "Council and water rates". The projection now
+ * folds water into that row and letting fees into management, and publishes
+ * land tax and strata (`financials.annualOtherCosts`) and the occupancy gap
+ * (`financials.annualVacancyAllowance`) as conditional rows that draw only
+ * where there is a figure to draw.
+ *
+ * ## v14 — the Compass stops drawing the Financial Analysis
+ *
+ * `20261202000000` is recorded, so v13 has run and editing it would be inert.
+ *
+ * One Investment master serves five document kinds, so the acquisition table,
+ * the cash flow and the ten-year equity chart were drawn on all five — and
+ * `compassSectionRegistry.ts` has said since v2.0 that "ALL detailed financial
+ * modelling ... lives in the separate Financial Analysis Report and MUST NOT
+ * appear here". The generator obeyed it and the master did not, so the
+ * Investment Compass opened on purchase price, gross yield, LVR and a
+ * ten-year projection while the Financial Analysis carried the location case.
+ *
+ * v14 makes those three pages conditional on `report.drawsFinancialModelling`,
+ * published by `reportBindingProjection` from `tierContent.pure.ts` — the one
+ * module that decides what a tier's document contains. The projection also
+ * WITHHOLDS the modelling bindings on those tiers, which is what makes the
+ * drop clean: a page kept with nothing to bind prints labelled empty rows.
+ *
+ * Run the same one-query check before editing this file: if
+ * `20261203000000` is already recorded, the next change needs a v15.
  */
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261112000000_seed_template_library_v12_guarded_verdict_line.sql',
+  'supabase/migrations/20261203000000_seed_template_library_v14_tier_separation.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

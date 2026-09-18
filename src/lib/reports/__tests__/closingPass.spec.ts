@@ -40,7 +40,12 @@ describe('a fact and a modelling default are different things (F17 at source)', 
     // table reads `effectiveBeds`, and the modelling default of 3 never
     // reaches it.
     const table = generator.slice(generator.indexOf('| Property Characteristic |'));
-    const rows = table.slice(0, table.indexOf('**Property Position Relative to Market:**'));
+    // The specification table ends where its own rule does. The anchor used to
+    // be `**Property Position Relative to Market:**`, a heading of the legacy
+    // 38-page reference template that was 96% of this prompt until it was
+    // removed; the rule that follows the table is what bounds it now.
+    const rows = table.slice(0, table.indexOf('The table above contains every physical attribute'));
+    expect(rows.length).toBeGreaterThan(200);
     expect(rows).toContain("['Bedrooms', effectiveBeds || null]");
     expect(rows).not.toContain('modelledBeds');
     expect(rows).not.toContain('typical for property type');

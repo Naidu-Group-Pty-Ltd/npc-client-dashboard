@@ -56,12 +56,22 @@ describe('navigation registry coherence', () => {
     expect(new Set(titles).size).toBe(titles.length);
   });
 
-  it('reaches the Workflow Playground and the Builder / Developer Portal', () => {
+  it('reaches the Workflow Playground from the registry, not from a private list', () => {
     const titles = ADMIN_NAVIGATION_ITEMS.map((item) => item.title);
     expect(titles).toContain('Workflow Playground');
-    // Previously unlisted-by-design in MobileSidebar; the registry renders it
-    // everywhere, closing that recorded gap.
-    expect(titles).toContain('Builder / Developer Portal');
+    /*
+     * The Builder / Developer Portal used to be asserted here beside it: it
+     * was unlisted-by-design in `MobileSidebar`, and putting it in the
+     * registry was what closed that gap.
+     *
+     * It left the prime in "Phase 7 wave 3 — the builder portal leaves the
+     * prime, one way" (d545665), which took the entry out with it. The rule
+     * that entry existed to prove is the one still asserted, and it is
+     * asserted over the whole registry rather than over one title: every
+     * navigation surface reads this array, so nothing can be reachable on the
+     * desktop and missing on a phone.
+     */
+    expect(titles).not.toContain('Builder / Developer Portal');
   });
 
   it('assigns every main item to a rendered group', () => {

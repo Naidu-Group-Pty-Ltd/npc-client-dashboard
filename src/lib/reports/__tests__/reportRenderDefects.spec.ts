@@ -176,7 +176,15 @@ describe('a condensed report is written against the recorded figures', () => {
 
   it('the condense prompt carries the block and forbids placeholders', () => {
     const fn = code('supabase/functions/condense-investment-report/index.ts');
-    expect(fn).toContain('buildRecordedFactsBlock(projectInvestmentReport(parentReport');
+    // Whitespace-insensitive, because the call wraps: what is pinned is that
+    // the block is built from the PARENT report's projection, and that the
+    // projection is taken for the TARGET tier. `condense` reads a Compass row
+    // to write a Briefing or a Snapshot, so keying the tier on the row it read
+    // would withhold the modelling from the one document that exists for it.
+    const dense = fn.replace(/\s+/g, '');
+    expect(dense).toContain('buildRecordedFactsBlock(projectInvestmentReport(parentReport');
+    expect(dense, 'the facts block is projected for the tier being written')
+      .toContain('{tier:targetTier}');
     expect(fn).toContain('NEVER write "N/A"');
     expect(fn).toContain('omit the row');
   });

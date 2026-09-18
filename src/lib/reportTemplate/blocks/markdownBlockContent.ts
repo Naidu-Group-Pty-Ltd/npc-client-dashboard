@@ -25,7 +25,7 @@ import {
 import { calloutCharge, type NarrativeGeometry } from '../../../../supabase/functions/_shared/reports/narrativeGeometry.pure';
 import { escapeHtml, renderCallout } from '../../../../supabase/functions/_shared/reportDesign/primitives.pure';
 import { stripBakedCover } from '../../../../supabase/functions/_shared/reports/investment/narrativeClean.pure';
-import { vizDirectiveRenderer } from '../../../../supabase/functions/_shared/reports/vizFigures.pure';
+import { inlineSparkRenderer, vizDirectiveRenderer } from '../../../../supabase/functions/_shared/reports/vizFigures.pure';
 import { CHART_TARGET_WIDTH_MM, type ChartContext } from '../../../../supabase/functions/_shared/reportDesign/charts.pure';
 
 export { DEFAULT_LINES_PER_PAGE };
@@ -213,6 +213,7 @@ export function narrativeBuckets(
   const blocks = renderMarkdown(cleanSource, {
     geometry,
     renderDirective: vizDirectiveRenderer(chart, geometry),
+    renderInlineSpark: inlineSparkRenderer(chart),
   }).blocks;
   const pages = packNarrativeGeometry(blocks, geometry, reserve);
   if (BUCKET_MEMO.size >= BUCKET_MEMO_LIMIT) {
@@ -272,6 +273,7 @@ export function resolveMarkdownBlockContent(
   const result = renderMarkdown(cleanSource, {
     charging: profile?.charging,
     renderDirective: vizDirectiveRenderer(templateChartContext(ctx)),
+    renderInlineSpark: inlineSparkRenderer(templateChartContext(ctx)),
   });
   const pages = profile
     ? packNarrativePages(result.blocks, profile, linesPerPage)

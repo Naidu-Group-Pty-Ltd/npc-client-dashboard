@@ -62,10 +62,47 @@ describe('compass registry parity', () => {
   });
 });
 
-describe('the Compass structure the v3.0 brief asked for', () => {
-  it('is eleven client-facing sections plus back matter', () => {
-    expect(COMPASS_40_SECTIONS).toHaveLength(12);
+describe('the Compass structure the v4.0 brief asked for', () => {
+  it('is fourteen client-facing sections plus back matter', () => {
+    expect(COMPASS_40_SECTIONS).toHaveLength(15);
     expect(COMPASS_40_SECTIONS.at(-1)?.id).toBe('compass.disclaimer');
+  });
+
+  it('gives zoning and planning a section of their own', () => {
+    /*
+     * The owner's review of the 17 Sep 2026 Compass: "the Zoning, Planning and
+     * Infrastructure sections are simply not good enough".
+     *
+     * They had no section. 'Zoning' and 'Planning' were sourceHeadings of the
+     * RISK DASHBOARD, whose own purpose says "the table IS the section — no
+     * prose restating rows", so a retrieved planning control had nowhere to be
+     * explained and the reader got a row in a risk table.
+     */
+    const planning = COMPASS_40_SECTIONS.find((s) => s.id === 'compass.planningConstraints');
+    expect(planning).toBeDefined();
+    expect(planning!.includeInCompass).toBe(true);
+    expect(planning!.sectionPriority).toBe('Protected');
+    expect(planning!.maxWordCount).toBeGreaterThanOrEqual(800);
+    const risk = COMPASS_40_SECTIONS.find((s) => s.id === 'compass.riskDashboard');
+    expect(risk!.sourceHeadings).not.toContain('Zoning');
+    expect(risk!.sourceHeadings).not.toContain('Planning');
+  });
+
+  it('routes every heading to exactly one section', () => {
+    // A heading in TWO sections resolves to whichever comes first and the
+    // other silently loses it. Two legacy aliases are grandfathered: they
+    // predate the split and the partition has always resolved them first-wins.
+    const GRANDFATHERED = new Set(['property-level information', 'investment recommendation']);
+    const owner = new Map<string, string>();
+    const clashes: string[] = [];
+    for (const section of COMPASS_40_SECTIONS) {
+      for (const heading of section.sourceHeadings) {
+        const key = heading.toLowerCase();
+        if (owner.has(key) && !GRANDFATHERED.has(key)) clashes.push(`${heading}: ${owner.get(key)} vs ${section.id}`);
+        owner.set(key, section.id);
+      }
+    }
+    expect(clashes).toEqual([]);
   });
 
   it('drops the Client Reading Guide, which duplicated the contents page', () => {
@@ -88,25 +125,29 @@ describe('the Compass structure the v3.0 brief asked for', () => {
     }
   });
 
-  it('keeps every merged section\'s source headings, so no fork loses content', () => {
+  it('keeps every legacy source heading SOMEWHERE, so no fork loses content', () => {
     // reportSplitRegistry routes the derived FIN/PLDD variants by heading, and
     // fork-investment-report drops an unmatched heading from both silently.
-    const demand = COMPASS_40_SECTIONS.find((s) => s.id === 'compass.demandDrivers');
-    const amenity = COMPASS_40_SECTIONS.find((s) => s.id === 'compass.amenityAccess');
-    expect(demand?.sourceHeadings).toEqual(
-      expect.arrayContaining([
-        'Population & Housing Demand',
-        'Tenant & Buyer Profile',
-        'Employment & Economic Linkages',
-      ]),
+    // The rule is that the heading is still ROUTABLE — not which section holds
+    // it, which is what v4.0 changed when Transport, Environment and Planning
+    // were split back out of the merges.
+    const everyHeading = new Set(
+      COMPASS_40_SECTIONS.flatMap((s) => s.sourceHeadings.map((h) => h.toLowerCase())),
     );
-    expect(amenity?.sourceHeadings).toEqual(
-      expect.arrayContaining([
-        'Education & Family Amenity',
-        'Retail, Healthcare & Lifestyle Amenity',
-        'Transport & Connectivity',
-      ]),
-    );
+    for (const heading of [
+      'Population & Housing Demand',
+      'Tenant & Buyer Profile',
+      'Employment & Economic Linkages',
+      'Education & Family Amenity',
+      'Retail, Healthcare & Lifestyle Amenity',
+      'Transport & Connectivity',
+      'Transport & Accessibility',
+      'Environmental Risks & Climate',
+      'Crime & Safety',
+      'Zoning & Planning Analysis',
+    ]) {
+      expect(everyHeading, heading).toContain(heading.toLowerCase());
+    }
   });
 
   it('has page budgets that land inside the band they declare', () => {
@@ -119,8 +160,22 @@ describe('the Compass structure the v3.0 brief asked for', () => {
 
   it('has a word budget consistent with the page budget', () => {
     const words = COMPASS_40_SECTIONS.reduce((sum, s) => sum + s.maxWordCount, 0);
-    // ~5,000 words against 9,170 declared in v2.0 and ~21,000 actually produced.
-    expect(words).toBeLessThan(6_000);
+    /*
+     * v2.0 declared 9,170 words and produced about 21,000 — the failure this
+     * budget exists to stop. v3.0 cut to ~5,010 and the document came out at
+     * 38,648 characters, which the owner's 17 Sep review called "simply not
+     * good enough" against a legacy report of ~110,000 characters across 27
+     * sections in one pass.
+     *
+     * v4.0 is 8,150 across 15 sections against a 34-page budget — about 240
+     * words a page, which is what a page carrying a table or a figure holds.
+     * The ceiling is what the retrieved evidence can carry honestly, not a
+     * target: a section still writes what it has and stops.
+     */
+    expect(words).toBeGreaterThan(7_000);
+    expect(words).toBeLessThan(9_170);
+    const pages = COMPASS_40_SECTIONS.reduce((sum, s) => sum + s.pageBudget, 0);
+    expect(Math.round(words / pages)).toBeLessThan(300);
   });
 
   it('names every protected section', () => {

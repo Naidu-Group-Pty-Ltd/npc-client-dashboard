@@ -12,6 +12,7 @@ import {
   lockedCopy,
   openVerdict,
   parseGateResponse,
+  payingCanUnlock,
   remainingMs,
   shouldBlock,
   shouldWarn,
@@ -171,5 +172,78 @@ describe('formatting', () => {
   it('formats money in the workspace currency', () => {
     expect(formatMoney(86000, 'AUD')).toContain('860');
     expect(formatMoney(null)).toBeNull();
+  });
+});
+
+describe('whether paying is what lifts this', () => {
+  const gated = (over: Record<string, unknown>) =>
+    parseGateResponse({
+      ok: true,
+      gated: true,
+      status: 'locked',
+      reason: 'grace_expired',
+      locked: true,
+      paid: false,
+      plan: { slug: 'scale', name: 'Scale', amount_due_cents: 221000, currency: 'AUD' },
+      checkout: { pricing_url: 'https://pay.example/' },
+      ...over,
+    });
+
+  it('offers the payment on the states a payment discharges', () => {
+    expect(payingCanUnlock(gated({ reason: 'grace_expired' }))).toBe(true);
+    expect(
+      payingCanUnlock(gated({ reason: 'within_grace', status: 'open', locked: false })),
+    ).toBe(true);
+    expect(
+      payingCanUnlock(gated({ reason: 'no_deadline', status: 'open', locked: false })),
+    ).toBe(true);
+  });
+
+  it('never offers it on an operator hold, which a payment cannot lift', () => {
+    // Mission Control's resolver reads the override before `paid_at` and
+    // settling never clears it, so a payment here is taken and changes
+    // nothing. Mission Control refuses to mint that checkout for the same
+    // reason; this is the near side of the same rule.
+    expect(payingCanUnlock(gated({ reason: 'operator_locked' }))).toBe(false);
+  });
+
+  it('never offers it to somebody who has already paid', () => {
+    expect(payingCanUnlock(gated({ reason: 'grace_expired', paid: true }))).toBe(false);
+  });
+
+  it('fails CLOSED on a reason this build does not know', () => {
+    // The rule this replaces was `reason !== "operator_locked"`, which answers
+    // yes to every word it has never heard of — including the `unknown` a body
+    // we could not read resolves to. That draws a full-width demand for money
+    // over a verdict whose whole meaning is that we do not know why.
+    expect(payingCanUnlock(gated({ reason: 'something_new_entirely' }))).toBe(false);
+    expect(payingCanUnlock(unknownVerdict())).toBe(false);
+    expect(payingCanUnlock(openVerdict())).toBe(false);
+  });
+
+  it('says so in the copy too — no "complete the payment" without a button', () => {
+    expect(lockedCopy(gated({ reason: 'something_new_entirely' })).body).not.toMatch(
+      /complete the payment/i,
+    );
+    expect(lockedCopy(gated({ reason: 'grace_expired' })).body).toMatch(/payment/i);
+  });
+
+  it('prompts an unpaid gate that is on no clock at all', () => {
+    // `shouldWarn` once required `counting`, so a gate an operator gave no
+    // deadline showed no way to pay anywhere in the product.
+    const noDeadline = gated({
+      reason: 'no_deadline',
+      status: 'open',
+      locked: false,
+      counting: false,
+    });
+    expect(shouldWarn(noDeadline)).toBe(true);
+  });
+
+  it('stops prompting once it is paid or locked', () => {
+    expect(shouldWarn(gated({ reason: 'paid', status: 'open', locked: false, paid: true }))).toBe(
+      false,
+    );
+    expect(shouldWarn(gated({ reason: 'grace_expired' }))).toBe(false);
   });
 });

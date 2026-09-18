@@ -76,10 +76,26 @@ afterAll(() => { globalThis.fetch = realFetch; });
  * the spaces, because word boundaries are the whole mechanism of the
  * placeholder scan below.
  */
-async function drawn(financialData: unknown): Promise<{ flat: string; spaced: string }> {
+async function drawn(
+  financialData: unknown,
+  /*
+   * The tier the document is drawn at.
+   *
+   * Every assertion in this file is about the difference between an
+   * AUTHORITATIVE ZERO and a MISSING VALUE, which is a question about the
+   * record. `tierContent.pure.ts` answers a separate question — what a tier's
+   * document may publish at all — and since seed v14 a Compass publishes no
+   * deposit, loan, duty, LVR or yield, because that modelling is the Financial
+   * Analysis Report. Drawing these fixtures as a Compass would test the tier
+   * rule and say nothing about zero-versus-missing, so they are drawn at the
+   * tier that carries the modelling. `compassKpiContentParity.spec.ts` asserts
+   * the tier half.
+   */
+  reportTier: 'compass' | 'financial' = 'financial',
+): Promise<{ flat: string; spaced: string }> {
   const { generateInvestmentPdfBlob } = await import('../investmentPdfDocument');
   const { blob } = await generateInvestmentPdfBlob({
-    report: reportWith(financialData) as any, reportTier: 'compass',
+    report: reportWith(financialData) as any, reportTier,
   });
   const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs');
   const doc = await pdfjs.getDocument({

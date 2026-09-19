@@ -1292,6 +1292,30 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
     headline: 'STRONG BUY - Excellent investment opportunity with strong '
       + 'fundamentals across the metrics assessed.',
     scopeNote: 'Assessed on 4 of 5 dimensions: capital growth, location, rental yield and demand.',
+    /*
+     * The two BODY slots, which the fixture had never carried at all.
+     *
+     * The heading above was the half of this defect that was found first. The
+     * same blocks bind a body: `verdict()` sets `{{recommendation.gradedLine}}`
+     * under its headline and `recommendation()` sets
+     * `{{recommendation.gradedDetailLine}}` under its own — and
+     * `renderTextBlockHtml` draws nothing for a bound part that resolved to
+     * nothing, so every one of the 510 renders measured a two-element block
+     * where the product draws three. The gate could not have seen a body
+     * overrun however badly one set.
+     *
+     * Derived, not chosen: `gradedSlotBound.spec.ts` walks the same grade ×
+     * coverage space `gradedLine` can be called with and pins 115 and 193 as
+     * the maxima, so if the sentence grows these strings are what has to grow
+     * with it. Both are the A+ / 100 / four-of-five form, which is the longest
+     * because the coverage qualifier and the weighting clause are longest
+     * together one dimension short of complete.
+     */
+    gradedLine: 'Graded A+ at 100 out of 100, weighted across growth, location, yield '
+      + 'and demand — 4 of the 5 assessment dimensions.',
+    gradedDetailLine: 'Graded A+ at 100 out of 100, weighted across growth, location, yield '
+      + 'and demand — 4 of the 5 assessment dimensions. The weighted dimensions behind that '
+      + 'grade are set out on the assessment page.',
     rationale:
       'The holding clears our land-value and tenant-demand tests, and the shortfall is '
       + 'serviceable inside the stated surplus. Value is in the land and the approved '

@@ -127,3 +127,47 @@ describe('a stored document draws each chart once', () => {
     expect(presentStoredMarkdown(stored)).not.toContain('[Zoning & Planning table]');
   });
 });
+
+/**
+ * The fourth guarantee: a section the model wrote twice reaches the reader
+ * once.
+ *
+ * `foldStraySections` is pinned in detail by `sectionWrittenTwice.spec.ts`.
+ * What is asserted here is the thing that decides whether any of it reaches a
+ * client — that it runs inside `presentStoredMarkdown`, the one scrub all four
+ * renderers apply, so every document already stored is repaired for every
+ * reader rather than only the next one generated.
+ */
+describe('a section written twice is presented once, on the read path', () => {
+  const stored = [
+    '## Risk Dashboard', '',
+    'The register sets out what was retrieved.', '',
+    '### Due Diligence Checklist', '',
+    '1. Obtain the section 10.7 planning certificate from the council.',
+    '2. Commission a building and pest inspection before settlement.', '',
+    '## Due Diligence Checklist', '',
+    '- Obtain the section 10.7 planning certificate from the council.',
+    '- Arrange finance approval in writing before the cooling-off period ends.', '',
+  ].join('\n');
+
+  it('folds the nested copy forward through the stored-document scrub', () => {
+    const presented = presentStoredMarkdown(stored);
+    const headings = presented.split('\n').filter((l) => /Due Diligence Checklist/.test(l));
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toBe('## Due Diligence Checklist');
+    expect(presented.split('section 10.7 planning certificate')).toHaveLength(2);
+    // Both copies' own contributions survive.
+    expect(presented).toContain('2. Commission a building and pest inspection before settlement.');
+    expect(presented).toContain('Arrange finance approval in writing');
+    // And the section it was nested inside keeps its own prose.
+    expect(presented).toContain('The register sets out what was retrieved.');
+  });
+
+  it('is byte-identical on a document that writes each section once', () => {
+    const clean = [
+      '## Risk Dashboard', '', 'The register sets out what was retrieved.', '',
+      '## Due Diligence Checklist', '', '1. Obtain the planning certificate.', '',
+    ].join('\n');
+    expect(presentStoredMarkdown(clean)).toBe(clean);
+  });
+});

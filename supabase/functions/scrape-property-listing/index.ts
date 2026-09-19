@@ -4,6 +4,9 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callLLM, LLMError } from '../_shared/llmRouter.ts';
 import { normalizePropertyListingUrl } from './urlPolicy.ts';
 import { describeScrapeFailure, shouldRetryWithoutSchema } from './scrapeFailure.pure.ts';
+import {
+  brokeredPageReadUrl, refusePageReadUrl, resolvePageReadRoute, type PageReadRoute,
+} from '../_shared/pageRead/pageReadRoute.pure.ts';
 import { contradictionMessage, corroborateAddress } from './addressCorroboration.pure.ts';
 
 /**
@@ -410,20 +413,102 @@ function buildListingMarkdown(inputUrl: string, extracted: ListingExtraction, ci
   return lines.join("\n");
 }
 
-async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
-  const apiKey = Deno.env.get("FIRECRAWL_API_KEY");
-  if (!apiKey) {
-    console.warn("[scrape-property-listing] FIRECRAWL_API_KEY not set — skipping page scrape, falling back to URL-only extraction.");
+/**
+ * Ask Mission Control to read the page.
+ *
+ * It answers the same shape Firecrawl's own reader produces, so the caller
+ * cannot tell the two apart and `scrapedFromPage` means the same thing on
+ * every deployment. A refusal is logged and answered as null — which is what
+ * "the page could not be read" already means here — rather than failing the
+ * job, because the search fallback and its warning are still a better outcome
+ * than no scrape at all.
+ *
+ * NOT metered here. Mission Control made the vendor call and writes the usage
+ * row; both ends billing is worse than neither.
+ */
+async function readPageThroughBroker(
+  url: string,
+  route: Extract<PageReadRoute, { via: 'broker' }>,
+): Promise<{ markdown: string; title?: string; description?: string } | null> {
+  // The broker enforces this too — it must not trust a caller — but refusing
+  // here saves a round trip and keeps the refusal in this function's own log.
+  const refusal = refusePageReadUrl(url);
+  if (refusal) {
+    console.warn(`[scrape-property-listing] brokered read refused before sending: ${refusal}`);
     return null;
   }
+  try {
+    const resp = await fetch(brokeredPageReadUrl(route), {
+      method: 'POST',
+      headers: route.headers,
+      body: JSON.stringify({ url }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      // Who refused is read from Mission Control's own header rather than
+      // guessed from a body: both ends answer similar JSON and send an
+      // operator to opposite remedies.
+      const refusedBy = resp.headers.get('x-mission-control-refusal')
+        ? 'Mission Control'
+        : 'the page reader';
+      console.error(
+        `[scrape-property-listing] brokered read failed (${refusedBy}, ${resp.status}):`,
+        body.slice(0, 300).replaceAll(route.secret, '[redacted]'),
+      );
+      return null;
+    }
+    const j = await resp.json();
+    const markdown: string = String(j?.markdown ?? j?.data?.markdown ?? '');
+    if (!markdown || markdown.length < 80 || isBadScrapeContent(markdown)) {
+      console.warn('[scrape-property-listing] brokered read returned unusable markdown:', markdown.length);
+      return null;
+    }
+    return {
+      markdown,
+      title: j?.title ?? j?.data?.metadata?.title,
+      description: j?.description ?? j?.data?.metadata?.description,
+    };
+  } catch (e) {
+    console.error('[scrape-property-listing] brokered read exception', e);
+    return null;
+  }
+}
+
+/**
+ * Read the listing page, through whichever route this deployment has.
+ *
+ * A clone holds no `FIRECRAWL_API_KEY` and cannot be given one sensibly — see
+ * `pageReadRoute.pure.ts`. Where it can reach Mission Control, the CALL
+ * travels instead of the credential and Mission Control performs the read and
+ * meters it. Where it can do neither, this returns null exactly as it did
+ * before and the caller falls through to the reader mode and then the model,
+ * under the provenance warning the surface already draws.
+ */
+async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
+  const route = resolvePageReadRoute({
+    firecrawlKey: Deno.env.get("FIRECRAWL_API_KEY"),
+    missionControlUrl: Deno.env.get("MISSION_CONTROL_URL"),
+    cloneApiKey: Deno.env.get("MISSION_CONTROL_CLONE_API_KEY"),
+  });
+
+  if (route.via === 'none') {
+    console.warn(`[scrape-property-listing] no page-read route: ${route.why}`);
+    return null;
+  }
+
+  if (route.via === 'broker') {
+    if (route.trimmedPath) {
+      console.warn(`[scrape-property-listing] MISSION_CONTROL_URL carried the path ${route.trimmedPath}; reading from its origin instead`);
+    }
+    return await readPageThroughBroker(url, route);
+  }
+
   const attempt = { formats: ["markdown"], onlyMainContent: false, waitFor: 1000, timeout: 25000 };
   try {
     const resp = await fetch("https://api.firecrawl.dev/v2/scrape", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: route.headers,
       body: JSON.stringify({
         url,
         ...attempt,

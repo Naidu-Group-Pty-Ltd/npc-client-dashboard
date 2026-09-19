@@ -219,6 +219,18 @@ export function BuilderStockTab() {
         </div>
       ) : (
         <>
+          {stockQuery.data?.ranked === false && (
+            /*
+              The ranking migration has not reached this deployment, so the
+              order is `created_at DESC` and means nothing. Said plainly rather
+              than letting an arbitrary order read as a considered one — and
+              only when the server actually said so, never inferred.
+            */
+            <p className="text-xs text-muted-foreground">
+              Listed newest first. Builder ranking is not enabled on this
+              workspace, so the order does not reflect builder merit.
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {records.map((item) => (
               <StockCard

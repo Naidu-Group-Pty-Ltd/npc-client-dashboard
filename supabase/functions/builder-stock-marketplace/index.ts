@@ -52,7 +52,9 @@ import {
 import {
   derivativeToServe, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
-import type { MirrorSource } from '../_shared/builderStock/mirrorAvailability.pure.ts';
+import {
+  isMissingRankingRelation, type MirrorSource,
+} from '../_shared/builderStock/mirrorAvailability.pure.ts';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -186,6 +188,22 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: false })
         .order('id', { ascending: true });
 
+      /*
+       * The order a deployment the ranking has not reached can actually ask
+       * for. Every column `ordered` leads with is a ranking column, so using
+       * it against the base table answers 42703 exactly as the view answered
+       * 42P01 — the fallback would fail the same way it was added to survive.
+       *
+       * This is `created_at DESC`, which is what the marketplace ordered by
+       * before ranking existed. It is not a good ordering — 47-builder-ranking
+       * says so at length, it rewards whoever uploaded last — and it is the
+       * honest one for a deployment that has no merit scores to sort on. The
+       * answer says `ranked: false` so nothing presents it as merit.
+       */
+      const orderedUnranked = (query: any) => query
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true });
+
       const withFilters = (query: any) => {
         let next = query.eq('lifecycle_status', 'active');
         if (organisationId) next = next.eq('organisation_id', organisationId);
@@ -201,10 +219,40 @@ Deno.serve(async (req) => {
         return next;
       };
 
-      const { data, count, error } = await ordered(withFilters(
+      /*
+        THE RANKING IS AN IMPROVEMENT ON THE MARKETPLACE, NOT A CONDITION OF IT.
+
+        `builder_network_stock_ranked` and the `rank_*` columns arrive with
+        migration 20261202090000. Measured 19 Sep 2026, none of the three
+        clones has it — the whole fleet stops at 20261123000000 — so this
+        query answers PostgREST 42P01 and the tab, which has no other reading
+        for a 500, said "Builder stock could not be loaded" over a mirror that
+        may be perfectly full.
+
+        A deployment without the ranking can still show a marketplace; what it
+        cannot do is order it by merit. So the ranked read is attempted, a
+        missing relation or column falls back to the base table in the order
+        the marketplace used before ranking existed, and the answer SAYS which
+        it was rather than presenting an unranked list as a ranked one.
+      */
+      let ranked = true;
+      let { data, count, error } = await ordered(withFilters(
         supabase.from('builder_network_stock_ranked')
           .select(RANKED_ITEM_SELECT, { count: 'exact' }),
       )).range(from, to);
+
+      if (error && isMissingRankingRelation(error)) {
+        console.warn(
+          '[builder-stock-marketplace] ranking not present on this deployment; '
+          + 'serving the unranked marketplace:', error.message,
+        );
+        ranked = false;
+        ({ data, count, error } = await orderedUnranked(withFilters(
+          supabase.from('builder_network_stock_items')
+            .select(STOCK_ITEM_SELECT, { count: 'exact' }),
+        )).range(from, to));
+      }
+
       if (error) {
         console.error('[builder-stock-marketplace] list failed', error.message);
         return json({ error: 'Builder stock could not be loaded.' }, 500);
@@ -223,11 +271,14 @@ Deno.serve(async (req) => {
        * A pinned row is excluded from the body query it would otherwise appear
        * in twice.
        */
-      const pinnedRead = await withFilters(
-        supabase.from('builder_network_stock_ranked')
-          .select(RANKED_ITEM_SELECT)
-          .eq('rank_placement_kind', 'pinned'),
-      ).order('rank_placement_position', { ascending: true });
+      // No ranking means no pins: the column that records one does not exist.
+      const pinnedRead = ranked
+        ? await withFilters(
+          supabase.from('builder_network_stock_ranked')
+            .select(RANKED_ITEM_SELECT)
+            .eq('rank_placement_kind', 'pinned'),
+        ).order('rank_placement_position', { ascending: true })
+        : { data: [] as unknown[], error: null };
       const pinned = (pinnedRead.data ?? []) as unknown as RankedRow[];
       const pinnedIds = new Set(pinned.map((row) => row.id));
 
@@ -260,6 +311,13 @@ Deno.serve(async (req) => {
           beside it; both queries are indexed single-row reads.
         */
         source: await readMirrorSource(supabase),
+        /*
+          Whether this marketplace is ordered by merit. False says the ranking
+          migration has not reached this deployment — the list is real and the
+          ORDER is not meaningful, which is a different thing from an error and
+          a different thing from a ranked page.
+        */
+        ranked,
         /*
          * WHICH BUILDERS HOLD THE PROMOTED SLOTS IS DECIDED OVER THE WHOLE SET,
          * not per page, so it does not change as an adviser pages through.

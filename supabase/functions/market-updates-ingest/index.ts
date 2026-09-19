@@ -3,6 +3,7 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { decideRegistrySeed, seedRows } from "../_shared/marketSources/registrySeed.pure.ts";
 import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { adapterFor } from "./adapters/index.ts";
@@ -281,19 +282,103 @@ Deno.serve(async (req) => {
   // is that nothing they produce can reach status 'published'. See the item loop.
   let query = sb.from("market_sources").select("*").eq("registry_status", "canonical").in("ingest_mode", ["live", "shadow"]);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
-  const { data: sources, error } = await query;
+  // `let`, because a registry that seeds itself below re-reads into it.
+  const { data: initialSources, error } = await query;
+  let sources = initialSources;
   if (error) {
     await checkedMutation(sb.from("market_ingestion_runs").update({ status: "failed", completed_at: new Date().toISOString(), error_summary: "Unable to read the source registry." }).eq("id", run.id), 'run_registry_failure_update_failed');
     return json({ error: "Unable to read the Market Updates source registry." }, 500, cors);
   }
   if (!sources?.length) {
-    const { count, error:countError } = await sb.from("market_sources").select("id", { count: "exact", head: true }).eq("registry_status", "canonical");
-    if (countError) return json({ runId:run.id, status:'failed', error:'Unable to inspect the Market Updates source registry.' }, 500, cors);
-    const message = count === 0
-      ? "The Market Updates source registry has not been seeded in this environment."
-      : "No enabled market sources are configured in the connected database.";
-    await checkedMutation(sb.from("market_ingestion_runs").update({ status: "failed", completed_at: new Date().toISOString(), error_summary: message }).eq("id", run.id), 'run_empty_registry_update_failed');
-    return json({ runId: run.id, status: "failed", error: message }, 422, cors);
+    /*
+      NOTHING TO INGEST FROM — AND ONE OF THE TWO CASES CAN REPAIR ITSELF.
+
+      `market_sources` is reference data a migration INSERTs, and a clone is
+      provisioned by copying the schema and the migration LEDGER. The rows do
+      not travel with it: measured 19 Sep 2026, all three clones had every
+      seeding migration recorded as applied and the table holding ZERO rows,
+      with hundreds of ingestion runs behind them that had produced nothing.
+      No act available inside the product could change it, and every clone
+      provisioned afterwards started the same way.
+
+      Code reaches a clone even though rows do not, so an EMPTY registry fills
+      itself from the shipped catalogue and the run carries on. A registry that
+      merely has nothing ENABLED is an operator's decision and is left exactly
+      as it is — `registrySeed.pure.ts` carries why the line is drawn there.
+    */
+    const { count: totalCount, error: totalError } = await sb
+      .from("market_sources").select("id", { count: "exact", head: true });
+    if (totalError) return json({ runId:run.id, status:'failed', error:'Unable to inspect the Market Updates source registry.' }, 500, cors);
+
+    let seeded = 0;
+    const decision = decideRegistrySeed({ total: totalCount ?? 0 });
+    if (decision.seed) {
+      const rows = seedRows(decision.sources);
+      /*
+        A PLAIN INSERT, NOT AN UPSERT.
+
+        The only unique index on `source_key` is PARTIAL —
+        `create unique index market_sources_source_key_uidx on
+        public.market_sources(source_key) where source_key is not null`. Postgres
+        will infer a partial index for ON CONFLICT only when the statement
+        repeats its predicate, which is why the seeding migrations all write
+        `on conflict(source_key) where source_key is not null`. PostgREST's
+        `on_conflict=` emits no predicate, so an upsert here answers 42P10
+        "no unique or exclusion constraint matching the ON CONFLICT
+        specification" — on every deployment, every time, into a catch that
+        logs and carries on. The repair would never once have run.
+
+        A plain insert is right anyway: this only ever acts on an EMPTY
+        registry, so there is nothing to conflict with. The one case left is
+        two runs racing, and 23505 from the loser means the winner filled it —
+        which is the outcome either way.
+      */
+      const { error: seedError } = await sb.from("market_sources").insert(rows);
+      if (!seedError) {
+        seeded = rows.length;
+        console.log('[market-updates-ingest] registry self-seeded from the built-in catalogue:', rows.length, 'source(s)');
+        logMarketEvent('info',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'seeded',run_id:run.id});
+      } else if (seedError.code === '23505') {
+        // Another run seeded first. The re-read below is what decides whether
+        // there is anything to ingest from, so treat this as filled and verify.
+        seeded = rows.length;
+        console.log('[market-updates-ingest] registry seeded concurrently by another run');
+        logMarketEvent('info',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'seeded_concurrently',run_id:run.id});
+      } else {
+        // Logged and then ignored: the run reports the condition it already
+        // had rather than a second, more confusing one about the repair.
+        console.error('[market-updates-ingest] registry self-seed failed:', seedError.code, seedError.message);
+        logMarketEvent('error',{function:'market-updates-ingest',stage:'registry_seed',correlation_id:correlationId,status:'failed',run_id:run.id});
+      }
+    }
+
+    if (seeded > 0) {
+      // Re-read through the SAME query, so what runs next is what the registry
+      // actually holds rather than what the insert claimed — asserted by
+      // effect, never by configuration.
+      let verify = sb.from("market_sources").select("*")
+        .eq("registry_status", "canonical").in("ingest_mode", ["live", "shadow"]);
+      if (Array.isArray(sourceIds) && sourceIds.length) verify = verify.in("id", sourceIds);
+      const reread = await verify;
+      if (!reread.error && reread.data?.length) {
+        sources = reread.data;
+        console.log('[market-updates-ingest] continuing with', sources.length, 'seeded source(s)');
+      }
+    }
+
+    if (!sources?.length) {
+      const { count, error:countError } = await sb.from("market_sources").select("id", { count: "exact", head: true }).eq("registry_status", "canonical");
+      if (countError) return json({ runId:run.id, status:'failed', error:'Unable to inspect the Market Updates source registry.' }, 500, cors);
+      const message = count === 0
+        ? (decision.seed
+          ? "The Market Updates source registry is empty and could not be filled from the built-in catalogue."
+          : "The Market Updates source registry has not been seeded in this environment.")
+        : "No enabled market sources are configured in the connected database.";
+      await checkedMutation(sb.from("market_ingestion_runs").update({ status: "failed", completed_at: new Date().toISOString(), error_summary: message }).eq("id", run.id), 'run_empty_registry_update_failed');
+      // The code the surface reads, rather than leaving it to infer one from
+      // the sentence. See `operationalIssue.pure.ts`.
+      return json({ runId: run.id, status: "failed", error: message, code: count === 0 ? 'registry_empty' : 'sources_disabled' }, 422, cors);
+    }
   }
 
   const summary = {

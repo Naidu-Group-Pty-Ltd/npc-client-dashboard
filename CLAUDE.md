@@ -279,6 +279,63 @@ before the allow-list with a message that names the rule. The page's Airtable
 card is the **workflow** connection, under its own names (`AIRTABLE_API_KEY`,
 `AIRTABLE_WORKFLOW_BASE_ID`), and the workflow catalog reads only those.
 
+## What a clone does not get when it is provisioned
+Read [`docs/operations/CLONE_PROVISIONING_GAPS.md`](./docs/operations/CLONE_PROVISIONING_GAPS.md)
+before concluding that a clone's Market News Feed, listing scrape or Builder
+Stock is broken. **A clone's migration LEDGER is not a record of what ran** —
+measured 19 Sep 2026 on `plisdzywzleljorrphxv`, all seven `market_sources`
+seeding migrations recorded as applied and the table holding ZERO rows, behind
+310 ingestion runs that had produced nothing. Provisioning copies the schema
+and the ledger; **the rows a migration INSERTs do not travel**, so anything
+seeded by one is absent on every clone while looking, from the ledger, exactly
+like it is present. All three clones also stop at `20261123000000`, missing the
+same seventeen migrations.
+
+Three rules follow. **Reference data has to be able to travel as code** —
+`canonicalRegistry.generated.ts` is the source registry extracted from the
+migrations that define it, and `market-updates-ingest` fills an EMPTY registry
+from it rather than refusing; only empty, because a registry with rows is one
+somebody has decided about and re-inserting there would overrule an operator.
+**What decides brokering is SCOPE, not spend** — and getting that backwards is
+the mistake this section was first written to record. There is no keyless path
+to the listing portals (`r.jina.ai` answers HTTP 200 with an "Access Denied"
+body for both, measured), so the first answer was to broker the page read the
+way `AIRTABLE_TOKEN` and the Didit key are. That was the wrong precedent:
+those two are withheld because their scope EXCEEDS the job — every base a
+personal access token was minted with, every session in a Didit application
+including other tenants' passport portraits. A Firecrawl key fetches the URL
+it is handed and can read nothing of anyone else's; what it carries is spend,
+and spend is what forwarding already handles, since `apiUsageBilling.pure.ts`
+maps it to a billable vendor and recharges the tenant. `FIRECRAWL_API_KEY` is
+accordingly already a `prime_secret_forwards` row on Mission Control with **no
+value behind it**, and `hooks/fleet-secret-forward-reconcile` pushes fleet
+policy to clones that already exist — so the remedy is one value in Mission
+Control's environment, which its own secrets page states in those words.
+`pageReadRoute.pure.ts` stays as the fallback that makes a deployment with no
+key SAY so rather than fall silently through to a model search, and as the one
+home of the eight-host allow-list, because a broker must enforce it rather
+than trust its caller. And **a feature the migrations have
+not reached degrades rather than failing**: `builder_network_stock_ranked`
+exists on no clone, so the marketplace falls back to the base table and says
+`ranked: false` instead of answering 42P01 into a 500 — with its own
+pre-ranking ORDER, because `ordered` leads with four ranking-only columns and
+would have failed the same way.
+
+**And a gap that reads like a clone's is sometimes nobody's.**
+`builder_network_connections` is empty on the PRIME as well as every clone,
+because nothing anywhere writes it: the product reads it in four places and
+writes it in none, and `_shared/builderNetwork.ts` says so outright —
+"Nothing here invents a connection." Three documents name three different
+owners for that write (the mirror migration says Mission Control's
+provisioning machinery; Mission Control's trust-anchor migration says it is
+"the trust anchor and nothing else … operator visibility only, never
+authoritative"; the extraction plan says the clone mints at connection time)
+and none of them implemented it. The network is complete and hands the shared
+transport credential back exactly once from `provision_transport`, under a
+comment naming a catcher Mission Control never wrote. So before concluding a
+deployment is missing something, check whether the thing is present anywhere:
+a feature absent on every deployment is unbuilt, not unprovisioned.
+
 ## What the API gateway checks (`verify_jwt`)
 Read [`docs/security/VERIFY_JWT.md`](./docs/security/VERIFY_JWT.md) before
 changing a `verify_jwt` line in `supabase/config.toml`, the deploy workflow's

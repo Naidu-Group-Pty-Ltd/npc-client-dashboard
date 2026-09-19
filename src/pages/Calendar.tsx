@@ -967,43 +967,66 @@ export default function Calendar() {
           );
 
           if (result.success) {
-            // Send notifications to recipients if any
-            const allNotificationRecipients = [
+            /**
+             * Tell everyone who was invited, whether or not the operator
+             * re-typed them.
+             *
+             * This used to send only to whoever was re-selected on the
+             * reschedule form, and to skip the call entirely when nobody was —
+             * so the additional contact and the finance partner from the
+             * original booking heard nothing unless somebody remembered to add
+             * them again by hand. `send-appointment-notification` already
+             * resolves the invited list from the booking when it is handed
+             * none, which is how cancellation works; a reschedule just never
+             * reached that path.
+             *
+             * An empty list is therefore sent deliberately, and means "whoever
+             * was invited" rather than "nobody".
+             */
+            const reselected = [
               ...(data.secondaryRecipients || []),
               ...(data.bookingRecipients || []).map(br => ({
-                financeContactId: `booking-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                // No fabricated id. `finance_contact_id` is nullable now, and
+                // a made-up one is not a finance partner — it wrote a row the
+                // ledger could not interpret, when the column let it through.
+                financeContactId: null,
+                role: 'additional_contact' as const,
                 name: br.name,
                 email: br.email,
               })),
             ];
 
-            if (allNotificationRecipients.length > 0) {
-              try {
-                const calendarName = selectedCal?.name;
-                await invokeSecureFunction('send-appointment-notification', {
-                  appointmentGhlId: eventId,
-                  appointmentTitle: selectedEvent?.title || 'Appointment',
-                  appointmentStart: data.newStartTime,
-                  appointmentEnd: data.newEndTime,
-                  // Not sent for the same reason: 'reschedule' is the kind
-                  // of notice, not a kind of meeting, and it printed verbatim.
-                  appointmentNotes: selectedEvent?.notes,
-                  appointmentLocation: selectedEvent?.address || undefined,
-                  calendarName,
-                  recipients: allNotificationRecipients,
-                });
+            try {
+              const calendarName = selectedCal?.name;
+              const { data: notifyResult } = await invokeSecureFunction('send-appointment-notification', {
+                kind: 'rescheduled',
+                appointmentGhlId: eventId,
+                appointmentTitle: selectedEvent?.title || 'Appointment',
+                appointmentStart: data.newStartTime,
+                appointmentEnd: data.newEndTime,
+                // Not sent for the same reason: 'reschedule' is the kind
+                // of notice, not a kind of meeting, and it printed verbatim.
+                appointmentNotes: selectedEvent?.notes,
+                appointmentLocation: selectedEvent?.address || undefined,
+                calendarName,
+                recipients: reselected,
+              });
+              const notified = Array.isArray(notifyResult?.results)
+                ? notifyResult.results.length
+                : reselected.length;
+              if (notified > 0) {
                 toast({
                   title: 'Notifications sent',
-                  description: `${allNotificationRecipients.length} recipient(s) notified of reschedule.`,
-                });
-              } catch (err: any) {
-                console.error('Failed to send reschedule notifications:', err);
-                toast({
-                  title: 'Rescheduled, but notifications failed',
-                  description: err.message || 'Could not send email notifications.',
-                  variant: 'destructive',
+                  description: `${notified} recipient(s) notified of reschedule.`,
                 });
               }
+            } catch (err: any) {
+              console.error('Failed to send reschedule notifications:', err);
+              toast({
+                title: 'Rescheduled, but notifications failed',
+                description: err.message || 'Could not send email notifications.',
+                variant: 'destructive',
+              });
             }
           }
 
@@ -2035,7 +2058,11 @@ export default function Calendar() {
               crm: { linked: !!data.contactId, sendsClientConfirmation: false },
             });
             const allNotificationRecipients = notificationPlan.recipients.map(r => ({
-              financeContactId: r.financeContactId,
+              financeContactId: r.financeContactId ?? null,
+              // Recorded on the invitation ledger, so a later reschedule or
+              // cancellation can tell a client from an additional contact from
+              // a finance partner without inferring it from a missing id.
+              role: r.role,
               name: r.name,
               email: r.email,
             }));
@@ -2055,7 +2082,12 @@ export default function Calendar() {
                   // meeting was booked — including a Zoom one.
                   appointmentType: data.appointmentType || 'call',
                   appointmentNotes: data.notes,
-                  appointmentLocation: result.event?.address || undefined,
+                  // The join link, read back from GoHighLevel after it
+                  // provisioned the meeting. `result.location` carries it even
+                  // when the create response was too thin to normalise into an
+                  // event — which is exactly when it used to be lost, leaving
+                  // the participants an invitation to a Zoom they cannot join.
+                  appointmentLocation: result.event?.address || result.location || undefined,
                   calendarName,
                   recipients: allNotificationRecipients,
                 });

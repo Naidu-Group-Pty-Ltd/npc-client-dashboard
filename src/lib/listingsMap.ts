@@ -818,6 +818,48 @@ const OSM_CREDIT =
   '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const ESRI_ATTRIBUTION = `Tiles &copy; Esri &mdash; Esri, HERE, Garmin, ${OSM_CREDIT}`;
 
+/**
+ * The deepest zoom a tile may be REQUESTED at, given Leaflet's retina handling.
+ *
+ * ## The defect this exists for
+ *
+ * The marketplace map drew Esri's grey "Map data not yet available" tile past a
+ * zoom level — the 19 Sep 2026 clone audit's report, and nothing to do with the
+ * clone: it depends on the screen.
+ *
+ * `detectRetina` is set on the base layer. On a HiDPI display Leaflet's
+ * `TileLayer.initialize` does this (leaflet 1.9, `leaflet-src.js`):
+ *
+ * ```js
+ * options.tileSize = Math.floor(options.tileSize / 2);
+ * options.zoomOffset++;
+ * options.maxZoom = Math.max(options.minZoom, options.maxZoom - 1);
+ * ```
+ *
+ * It decrements `maxZoom` and **leaves `maxNativeZoom` alone**. The tile zoom
+ * is clamped by `maxNativeZoom` (`_clampZoom`) and the URL zoom is
+ * `_tileZoom + zoomOffset` (`_getZoomForUrl`) — so every request at the cap
+ * asks for `maxNativeZoom + 1`, one level past the cache the number was chosen
+ * to describe.
+ *
+ * Measured from the production egress on 18 Sep 2026, over Sydney CBD,
+ * Traralgon and Kirwan: the "no data" tile is ONE fixed 2,521-byte image
+ * (sha256 `9eafd300d6…`) served with **HTTP 200**, and it appears at exactly
+ * one level past each configured cap — z20 for World_Street_Map (19), z17 for
+ * Dark_Gray_Base (16), z19 for World_Imagery (18) at Traralgon. Because it is
+ * a 200 carrying a valid image, Leaflet's `tileerror` never fires and nothing
+ * in the product can detect it.
+ *
+ * So the cap is a statement about the CACHE and the request has to respect the
+ * offset the retina option adds to it.
+ */
+export function effectiveMaxNativeZoom(maxNativeZoom: number, retina: boolean): number {
+  // Leaflet's own guard is `maxZoom > 0`; below that the retina branch never
+  // runs and no offset is added.
+  if (!retina) return maxNativeZoom;
+  return Math.max(0, maxNativeZoom - 1);
+}
+
 export const BASEMAP_CATALOG: BasemapCatalog = {
   light: {
     id: 'light',

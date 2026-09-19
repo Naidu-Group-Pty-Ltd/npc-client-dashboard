@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, UserPlus } from 'lucide-react';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 
 interface StandardAddClientFormProps {
   active: boolean;
@@ -183,7 +184,7 @@ export function StandardAddClientForm({ active, onCancel, onCreated }: StandardA
         entityName: `${formData.primary_first_name} ${formData.primary_surname}`.trim(),
         metadata: { synced_to_ghl: syncToGHL }
       });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      invalidateClientQueries(queryClient, newClient?.id);
       if (!syncToGHL) {
         toast.success('Client created successfully');
       }

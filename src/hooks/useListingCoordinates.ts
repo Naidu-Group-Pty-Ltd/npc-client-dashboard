@@ -8,6 +8,10 @@ import {
 } from '@/lib/listingCoordinateCache';
 import { isTrustworthyAuPoint } from '../../supabase/functions/_shared/auPointTrust.pure';
 import type { PropertyListing } from '@/lib/airtable';
+import {
+  coordinateFailureIsRetryable, readCoordinateFailure,
+  type CoordinateFailure as CoordinateFailureReading,
+} from '@/lib/listings/coordinateFailure.pure';
 
 export interface ResolvedPoint {
   lat: number;
@@ -24,8 +28,12 @@ export interface ResolvedPoint {
 /**
  * Why a pass stopped early. Surfaced so the map can say "the lookup service
  * refused" instead of blaming the listing addresses.
+ *
+ * The reading and its words live in `coordinateFailure.pure.ts` — three server
+ * conditions used to share one 503 and one sentence. Re-exported here because
+ * this hook is where every consumer already imports the type from.
  */
-export type CoordinateFailure = 'rate_limited' | 'unavailable' | 'unauthorized' | 'failed';
+export type { CoordinateFailure } from '@/lib/listings/coordinateFailure.pure';
 
 interface ListingPayload {
   id: string;
@@ -123,7 +131,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
   });
 
   const [isResolving, setIsResolving] = useState(false);
-  const [failure, setFailure] = useState<CoordinateFailure | null>(null);
+  const [failure, setFailure] = useState<CoordinateFailureReading | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
   const payload = useMemo<ListingPayload[]>(
@@ -279,12 +287,19 @@ export function useListingCoordinates(listings: PropertyListing[]) {
         if (unmountedRef.current) return;
 
         if (error) {
+          const reading = readCoordinateFailure(error.status, (error as { code?: unknown }).code);
           // Back off automatically without burning listing attempts. A manual
           // retry remains available, but the map no longer stays empty forever
           // merely because the first request landed during provider pressure.
-          if (error.status === 429 || error.status === 503) {
+          //
+          // Only where a retry can CHANGE something: a deployment whose
+          // geocoding kill switch is on, or a session without the permission,
+          // would otherwise be retried for ever, and every one of those
+          // requests can only be refused.
+          if (error.status === 429 || error.status === 503 || reading === 'unauthorized') {
             stoppedRef.current = true;
-            setFailure(error.status === 429 ? 'rate_limited' : 'unavailable');
+            setFailure(reading);
+            if (!coordinateFailureIsRetryable(reading)) return;
             transientFailuresRef.current += 1;
             const delay = Math.min(
               RETRY_MAX_MS,
@@ -297,11 +312,6 @@ export function useListingCoordinates(listings: PropertyListing[]) {
               stoppedRef.current = false;
               setRetryNonce((n) => n + 1);
             }, delay);
-            return;
-          }
-          if (error.status === 401 || error.status === 403) {
-            stoppedRef.current = true;
-            setFailure('unauthorized');
             return;
           }
           setFailure('failed');

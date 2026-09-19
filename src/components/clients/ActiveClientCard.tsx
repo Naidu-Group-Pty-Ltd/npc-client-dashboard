@@ -42,6 +42,7 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { VoiceNoteRecorder } from './VoiceNoteRecorder';
 import { FollowUpFlag } from './FollowUpFlag';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 
 interface ClientNote {
   id: string;
@@ -210,8 +211,7 @@ export function ActiveClientCard({ client, stageInfo }: ActiveClientCardProps) {
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['client-tracker'] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      invalidateClientQueries(queryClient, client.id);
       toast.success(client.is_favorite ? 'Removed from active clients' : 'Added to active clients');
     },
     onError: (error: any) => {

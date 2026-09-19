@@ -412,7 +412,7 @@ async function extractFromSingleImage(
 
 async function completeAddressThroughGeocoder(
   payload: StructuredPropertyPayload,
-  originalExtractedAddress: string | undefined,
+  originalExtractedAddress: string | null | undefined,
   // The geocoding chain's cache and allowances live in the database, because
   // a ceiling held in an isolate is not a ceiling under horizontal scaling.
   db: unknown,
@@ -425,7 +425,7 @@ async function completeAddressThroughGeocoder(
     return payload;
   }
   
-  if (!payload.propertyAddress || payload.propertyAddress === 'Address Not Found') {
+  if (!payload.propertyAddress) {
     return payload;
   }
   
@@ -479,15 +479,21 @@ async function completeAddressThroughGeocoder(
   return payload;
 }
 
+/**
+ * The full address, or NULL where there is nothing to compose one from.
+ *
+ * Never a worded absence: the caller decides how to say "no address was read",
+ * and a sentence in this slot is truthy and travels as though it were one.
+ */
 function buildFullAddress(
-  streetAddress: string | undefined,
+  streetAddress: string | null | undefined,
   suburb: string | undefined,
   state: string | undefined,
   postcode: string | undefined
-): string {
+): string | null {
   const parts: string[] = [];
   
-  if (streetAddress && streetAddress !== 'Address Not Found') {
+  if (streetAddress) {
     let cleanStreet = streetAddress;
     // Escape the interpolated values: an unescaped suburb like "St. Kilda"
     // matched "St4 Kilda" too, and a metacharacter could throw outright.
@@ -514,7 +520,7 @@ function buildFullAddress(
     parts.push(postcode);
   }
   
-  return parts.join(', ') || 'Address Not Found';
+  return parts.join(', ') || null;
 }
 
 // ============= MAIN HANDLER =============
@@ -610,7 +616,7 @@ Deno.serve(async (req) => {
     
     const needsGeocoding = !structuredPayload.postcode || !structuredPayload.state || !structuredPayload.suburb;
     
-    if (needsGeocoding && structuredPayload.propertyAddress !== 'Address Not Found') {
+    if (needsGeocoding && structuredPayload.propertyAddress) {
       // Through the geocoding chain, which needs no Google key.
       console.log('🗺️ Attempting to complete the address through the geocoding chain...');
       structuredPayload = await completeAddressThroughGeocoder(
@@ -641,6 +647,17 @@ Deno.serve(async (req) => {
         extractedPropertyType: structuredPayload.propertyType,
         extractedLandPrice: structuredPayload.landPrice,
         extractedBuildPrice: structuredPayload.buildPrice,
+        // Asked of the model, coerced by `propertyExtraction.pure.ts` and
+        // carried on the payload — and never published here, so the two reads
+        // the report generator already had for them were always `undefined`.
+        extractedStampDuty: structuredPayload.stampDuty,
+        extractedAgentFee: structuredPayload.agentFee,
+        extractedCouncilRates: structuredPayload.councilRates,
+        extractedWaterRates: structuredPayload.waterRates,
+        extractedStrataFees: structuredPayload.strataFees,
+        extractedInsurance: structuredPayload.insuranceEstimate,
+        extractedPropertyManagementPercent: structuredPayload.propertyManagementPercent,
+        extractedYearBuilt: structuredPayload.yearBuilt,
         isNewBuild: structuredPayload.isNewBuild,
         extractedIsNewBuild: structuredPayload.isNewBuild,
         extractedAssetClass: structuredPayload.assetClass,

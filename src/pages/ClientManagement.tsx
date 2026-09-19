@@ -51,6 +51,7 @@ import { PortfolioAnalysisReportsList } from '@/components/clients/PortfolioAnal
 import { AddClientModal } from '@/components/clients/AddClientModal';
 import { GHLExportDialog } from '@/components/shared/GHLExportDialog';
 import { toast } from 'sonner';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -440,7 +441,9 @@ export default function ClientManagement() {
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      // A deleted client has no record left to refresh; the lists that showed
+      // it do. `invalidateClientQueries` with no id invalidates exactly those.
+      invalidateClientQueries(queryClient, null);
       toast.success('Client deleted successfully');
       setClientToDelete(null);
     },

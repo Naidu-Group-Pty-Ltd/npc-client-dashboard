@@ -4,6 +4,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { callLLM, LLMError } from '../_shared/llmRouter.ts';
 import { normalizePropertyListingUrl } from './urlPolicy.ts';
 import { describeScrapeFailure, shouldRetryWithoutSchema } from './scrapeFailure.pure.ts';
+import { contradictionMessage, corroborateAddress } from './addressCorroboration.pure.ts';
 
 /**
  * The Model Hub agent whose binding drives this extraction
@@ -932,6 +933,40 @@ async function runScrapeJob(
       return;
     }
 
+    // Did the model answer about the property this URL names?
+    //
+    // Only where the page was NOT read: the search fallback's own prompt asks
+    // for nulls when it cannot find the listing, and what comes back instead
+    // is a plausible property — the audit's 13 Silky Oak Court URL answered
+    // with 10 Railway Avenue. `corroborateAddress` is deliberately reluctant
+    // (two distinctive URL tokens to refuse, any one to accept), because a
+    // false refusal breaks a scrape that works while a missed one leaves the
+    // operator exactly where the provenance warning already puts them.
+    const corroboration = corroborateAddress({
+      addressHint: deriveListingHints(formattedUrl).addressHint,
+      scrapedFromPage: result.scrapedFromPage,
+      extractedParts: [
+        result.extracted.address,
+        result.extracted.suburb,
+        result.extracted.postcode,
+        result.extracted.title,
+      ],
+    });
+    if (corroboration.verdict === 'contradicted') {
+      console.warn('[scrape-property-listing] extraction contradicts the URL', {
+        jobId, hintTokens: corroboration.hintTokens,
+      });
+      await supabase.from('property_scrape_jobs').update({
+        status: 'failed',
+        error: contradictionMessage(
+          deriveListingHints(formattedUrl).addressHint,
+          result.extracted.address || result.extracted.title,
+        ),
+        completed_at: new Date().toISOString(),
+      }).eq('id', jobId);
+      return;
+    }
+
     const extractedDetails = toExtractedDetails(result.extracted, result.extracted.title);
     const markdown = buildListingMarkdown(formattedUrl, result.extracted, result.citations);
     const metadata = {
@@ -943,6 +978,7 @@ async function runScrapeJob(
         .filter(Boolean).join('+'),
       model: { route: result.routeUsed, modelId: result.modelUsed, schemaEnforced: result.schemaEnforced },
       scrapedFromPage: result.scrapedFromPage,
+      addressCorroboration: corroboration.verdict,
       citations: result.citations,
       confidence: result.extracted.confidence,
     };

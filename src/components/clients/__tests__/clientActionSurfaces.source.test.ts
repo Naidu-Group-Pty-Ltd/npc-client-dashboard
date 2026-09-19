@@ -39,7 +39,12 @@ describe('the client card opens a client in one interaction', () => {
    */
   it('routes it through the existing onView, not its own navigation', () => {
     expect(card).not.toContain('useNavigate');
-    expect(card).not.toContain('/clients/');
+    // A client URL in a navigation, not a substring anywhere in the file: the
+    // bare `/clients/` also matched the module path of a shared helper this
+    // card imports, so the rule had to name what it is actually about.
+    expect(card).not.toMatch(/navigate\(\s*[`'"][^`'"]*\/clients\//);
+    expect(card).not.toMatch(/<Link[^>]*to=\{?[`'"][^`'"]*\/clients\//);
+    expect(card).not.toMatch(/href=\{?[`'"][^`'"]*\/clients\//);
     expect((card.match(/onClick=\{onView\}/g) ?? []).length).toBeGreaterThanOrEqual(1);
   });
 

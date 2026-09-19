@@ -53,7 +53,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils';
 import { PropertyListing } from '@/lib/airtable';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
-import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
+import { useListingCoordinates } from '@/hooks/useListingCoordinates';
+import { COORDINATE_FAILURE_COPY } from '@/lib/listings/coordinateFailure.pure';
 import { HeatLayer } from './ListingsHeatLayer';
 import { ListingStackPager, type StackPager } from './ListingStackPager';
 import {
@@ -90,6 +91,7 @@ import {
   type PriceTier,
   type PriceTiers,
   type PropertyGlyph,
+  effectiveMaxNativeZoom,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
 import { isBuilderStockMapId } from '@/lib/builderStockMapPoint';
@@ -104,6 +106,7 @@ import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPos
 import { BUILD_ID } from '@/lib/buildVersion';
 
 import type { StoredListingImage } from '@/lib/listingImages';
+import { hasListingUrl, openListingUrl } from '@/lib/listings/listingLinks.pure';
 
 export type { GeoPoint } from '@/lib/listingsMap';
 
@@ -543,28 +546,13 @@ function MapIconButton({
   );
 }
 
-const FAILURE_COPY: Record<CoordinateFailure, { title: string; detail: string }> = {
-  rate_limited: {
-    title: 'Address lookups are rate limited',
-    detail:
-      'The location service is throttling this session. Listings already placed stay on the map — try again in a minute for the rest.',
-  },
-  unavailable: {
-    title: 'The location service is unavailable',
-    detail:
-      'Address resolution is paused while the upstream provider recovers. Listings with saved coordinates are still shown.',
-  },
-  unauthorized: {
-    title: 'Not permitted to resolve addresses',
-    detail:
-      'Your session cannot use the location service. Sign out and back in, or ask an administrator to grant Listings access.',
-  },
-  failed: {
-    title: 'Some addresses could not be resolved',
-    detail:
-      'The location service returned an error for part of this result set. Listings it did place are shown below.',
-  },
-};
+/**
+ * One set of words, shared with the hook that decides which of them applies.
+ *
+ * It used to be declared here with four readings, and three different server
+ * conditions collapsed onto one of them — see `coordinateFailure.pure.ts`.
+ */
+const FAILURE_COPY = COORDINATE_FAILURE_COPY;
 
 const PIN_TIER_LEGEND: Array<{ tier: PriceTier; label: string }> = [
   { tier: 'low', label: 'Lower quartile' },
@@ -1275,13 +1263,13 @@ function ListingPopupCard({
         <Button size="sm" className="flex-1" onClick={onOpenDetails}>
           Open details
         </Button>
-        {listing.url ? (
+        {hasListingUrl(listing.url) ? (
           <Button
             size="sm"
             variant="outline"
             className="shrink-0"
             aria-label="Open the source listing"
-            onClick={() => window.open(listing.url!, '_blank', 'noopener,noreferrer')}
+            onClick={() => openListingUrl(listing.url)}
           >
             <ExternalLink className="h-3.5 w-3.5" />
           </Button>
@@ -1419,6 +1407,13 @@ export function ListingsMapView({
   const heatLegendVisible = showHeat && heatModel.points.length > 0;
 
   const basemap = resolveBasemap(basemapPref, isDark);
+  /*
+    Whether Leaflet's retina branch is the one that will run for this layer.
+    Read from Leaflet itself rather than from `devicePixelRatio` directly, so
+    the cap below can only ever disagree with the offset Leaflet actually adds
+    if Leaflet changes its own mind.
+  */
+  const retinaTiles = Boolean(L.Browser?.retina);
   const selected = useMemo(
     () => markers.find((m) => m.listing.id === selectedId) ?? null,
     [markers, selectedId],
@@ -1817,11 +1812,18 @@ export function ListingsMapView({
           attributionControl={false}
         >
           <AttributionControl position="bottomright" prefix={LEAFLET_CREDIT} />
+          {/*
+            `detectRetina` adds a zoom offset to every request and leaves
+            `maxNativeZoom` alone, so the cap has to absorb it — otherwise a
+            HiDPI screen asks Esri for one level past the cache and gets the
+            grey "Map data not yet available" tile back, with HTTP 200. See
+            `effectiveMaxNativeZoom`.
+          */}
           <TileLayer
-            key={basemap.id}
+            key={`${basemap.id}:${retinaTiles ? 'hidpi' : 'std'}`}
             attribution={basemap.attribution}
             url={basemap.url}
-            maxNativeZoom={basemap.maxNativeZoom}
+            maxNativeZoom={effectiveMaxNativeZoom(basemap.maxNativeZoom, retinaTiles)}
             maxZoom={MAX_ZOOM}
             detectRetina
           />

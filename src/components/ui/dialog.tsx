@@ -114,6 +114,27 @@ export function declaresOwnMaxHeight(className?: string): boolean {
  * Only an UNPREFIXED `overflow-*` counts, for the same reason as width: a
  * caller writing `sm:overflow-hidden` alone conflicts with the default on the
  * same modifier, so the merge already resolves it correctly.
+ *
+ * ## What honouring the caller did NOT fix
+ *
+ * 230 of the 318 `DialogContent` call sites state no overflow at all, and the
+ * default they then got was `sm:overflow-visible` beside `sm:max-h-[85dvh]` —
+ * a bounded box told not to clip. Content past the bound paints straight
+ * through the bottom border with no scrollbar on either axis, which is the
+ * same unreachable-footer the paragraph above describes, arrived at from the
+ * other direction. The 19 Sep clone audit reported five of them as five
+ * unrelated defects: the listing "Email the agent" dialog, the Client Tracker
+ * export, the Email Copilot send confirmation, the CGT calculator and the
+ * compose window.
+ *
+ * The desktop default is now `sm:overflow-y-auto`, which is what the mobile
+ * bottom sheet has always done (`max-h-[92dvh] overflow-y-auto`) — so the two
+ * breakpoints agree instead of disagreeing. A dialog whose content fits
+ * renders identically, because `auto` draws no scrollbar it does not need;
+ * only the dialogs that were already painting outside themselves change, and
+ * they change into something reachable. Every overlay primitive in this
+ * codebase (`select`, `popover`, `dropdown-menu`, `tooltip`) renders through a
+ * Portal, so nothing legitimately drawn outside the box is clipped by it.
  */
 export function declaresOwnOverflow(className?: string): boolean {
   if (!className) return false;
@@ -145,7 +166,7 @@ const DialogContent = React.forwardRef<
           // height and 99 for an overflow, and none of the three arrived.
           !declaresOwnWidth(className) && "sm:max-w-lg",
           !declaresOwnMaxHeight(className) && "sm:max-h-[85dvh]",
-          !declaresOwnOverflow(className) && "sm:overflow-visible",
+          !declaresOwnOverflow(className) && "sm:overflow-y-auto",
           "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
         ],
         className

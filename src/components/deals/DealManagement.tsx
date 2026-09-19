@@ -92,6 +92,36 @@ const STAGE_STATUS_ICONS: Record<string, React.ReactNode> = {
 };
 
 // ─── Inline Editable Field (defaultValue + onBlur pattern) ───
+/**
+ * How a deal's `responsible_person` reads.
+ *
+ * The column holds a `custom_users.id` — that is what the table's picker
+ * writes — but the expanded row rendered the raw value in a free-text box, so
+ * an assigned deal showed `2d7ea1e8-f3e2-4e38-a7f3-7d1146ced85b` where it
+ * should show a name. Two controls for one field, disagreeing about what the
+ * field contains; the 19 Sep 2026 clone audit saw the one that was wrong.
+ *
+ * Legacy rows hold a typed name rather than an id, so an unmatched value is
+ * shown as itself — it is still the answer somebody recorded, just not a
+ * reference. A raw UUID is never shown: it means nothing to a reader, and
+ * database vocabulary does not reach the operator.
+ */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function responsiblePersonLabel(
+  value: string | null | undefined,
+  teamUsers: readonly { id: string; username?: string | null; email?: string | null }[],
+): string | null {
+  const trimmed = (value ?? '').trim();
+  if (!trimmed) return null;
+  const match = teamUsers.find((u) => u.id === trimmed);
+  if (match) return smartCapitalize(match.username || match.email || 'Unknown');
+  // An id we cannot resolve names a user this list does not carry. Printing it
+  // tells the reader nothing; saying so tells them what they are looking at.
+  if (UUID_SHAPE.test(trimmed)) return 'Unknown user';
+  return smartCapitalize(trimmed);
+}
+
 function InlineEditField({
   defaultValue,
   onSave,
@@ -203,10 +233,12 @@ function StageActions({
 // ─── Expanded Stage Detail (rendered as a separate <tr>) ───
 function DealExpandedRow({
   deal,
+  teamUsers,
   onUpdateDeal,
   onUpdateStage,
 }: {
   deal: DealWithClient;
+  teamUsers: TeamUser[];
   onUpdateDeal?: (dealId: string, clientId: string, data: any) => void;
   onUpdateStage?: (stageId: string, clientId: string, data: any, dealId?: string, allStages?: any[]) => void;
 }) {
@@ -284,12 +316,34 @@ function DealExpandedRow({
                   <User className="h-3 w-3" /> Responsible Person
                 </p>
                 <p className="mb-3 text-[11px] leading-4 text-muted-foreground">Assign ownership for follow-up and operational accountability.</p>
-                <InlineEditField
+                {/*
+                  The same picker the table row uses, over the same list. This
+                  was a free-text box showing `deal.responsible_person` raw —
+                  and that column holds a user id, so an assigned deal printed
+                  a UUID. Two controls for one field is how they disagreed.
+                */}
+                <Select
                   key={`${deal.id}-responsible-input`}
-                  defaultValue={deal.responsible_person || ''}
-                  onSave={(val) => handleUpdateField('responsible_person', val || null)}
-                  placeholder="Enter name..."
-                />
+                  value={deal.responsible_person || UNASSIGNED_SENTINEL}
+                  onValueChange={(v) => handleUpdateField('responsible_person', v === UNASSIGNED_SENTINEL ? null : v)}
+                >
+                  <SelectTrigger className="h-8 w-full rounded-xl border-brand-200/15 bg-background/60 text-xs shadow-inner focus:ring-brand-300/40">
+                    <SelectValue placeholder="Assign..." />
+                  </SelectTrigger>
+                  <SelectContent className="border-brand-200/15 bg-background dark:bg-background">
+                    <SelectItem value={UNASSIGNED_SENTINEL} className="text-xs italic">Unassigned</SelectItem>
+                    {teamUsers.map(u => (
+                      <SelectItem key={u.id} value={u.id} className="text-xs">
+                        {smartCapitalize(u.username || u.email || 'Unknown')}
+                      </SelectItem>
+                    ))}
+                    {deal.responsible_person && !teamUsers.some(u => u.id === deal.responsible_person) && (
+                      <SelectItem value={deal.responsible_person} className="text-xs text-muted-foreground">
+                        {responsiblePersonLabel(deal.responsible_person, teamUsers)}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -402,7 +456,7 @@ function DealManageRow({
               ))}
               {deal.responsible_person && !teamUsers.some(u => u.id === deal.responsible_person) && (
                 <SelectItem value={deal.responsible_person} className="text-xs text-muted-foreground">
-                  {smartCapitalize(deal.responsible_person)}
+                  {responsiblePersonLabel(deal.responsible_person, teamUsers)}
                 </SelectItem>
               )}
             </SelectContent>
@@ -493,6 +547,7 @@ function DealManageRow({
       {expanded && (
         <DealExpandedRow
           deal={deal}
+          teamUsers={teamUsers}
           onUpdateDeal={onUpdateDeal}
           onUpdateStage={onUpdateStage}
         />

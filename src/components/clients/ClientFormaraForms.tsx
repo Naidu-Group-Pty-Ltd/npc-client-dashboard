@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,14 @@ interface ImportSummary {
   liabilityRecords: number;
   propertyRecords: number;
   portfolioUpdated: boolean;
+  /**
+   * Whether the `client_files` row recording the uploaded workbook was
+   * written. Separate from the import itself: the parsed data lands either
+   * way, and the file record is what the "Imported Client Detail Forms" list
+   * reads — so when it is missing, the page must say so rather than show an
+   * empty list under a green tick.
+   */
+  fileRecorded: boolean;
 }
 
 /**
@@ -219,7 +228,8 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
         assetRecords: 0,
         liabilityRecords: 0,
         propertyRecords: 0,
-        portfolioUpdated: false
+        portfolioUpdated: false,
+        fileRecorded: false
       };
 
       // 1. Update personal details
@@ -462,8 +472,16 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
         resourceId: clientId,
       });
 
+      // The stored object and the row that records it are two writes, and the
+      // second one used to be issued and never read. When it failed — as it did
+      // on every import for seven weeks, because `client_files_storage_bucket_check`
+      // predates the rename and did not list `formara-forms` — the import still
+      // reported "Import Complete!" over a list that read "(0)". The parsed
+      // client data is genuinely imported either way, so this is not a failure
+      // of the import; it is a failure of the FILE RECORD, and it is said as
+      // that rather than as a red toast over work that succeeded.
       if (uploadResult.success) {
-        await invokeSecureFunction('manage-client-data', {
+        const { data: fileRow, error: fileError } = await invokeSecureFunction('manage-client-data', {
           operation: 'create',
           table: 'client_files',
           clientId,
@@ -480,6 +498,15 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
             uploaded_by: user?.id
           }
         });
+        if (fileError || !fileRow?.success) {
+          summary.fileRecorded = false;
+          console.error('[ClientFormaraForms] client_files row rejected:', fileError ?? fileRow?.error, fileRow?.details);
+        } else {
+          summary.fileRecorded = true;
+        }
+      } else {
+        summary.fileRecorded = false;
+        console.error('[ClientFormaraForms] upload failed:', uploadResult.error);
       }
 
       setProgress(100);
@@ -487,14 +514,10 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
       setUploadStatus('complete');
 
       // Invalidate all related queries
-      queryClient.invalidateQueries({ queryKey: ['client-formara-forms', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      queryClient.invalidateQueries({ queryKey: ['client-details', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-properties', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-employment', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-income', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-assets', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-liabilities', clientId] });
+      // An import rewrites most of the client, and the card reading it is
+      // `secure-client-data` — which this list never named, so every tab kept
+      // the values it had until the card was closed and reopened.
+      invalidateClientQueries(queryClient, clientId);
 
       toast.success('Client detail form imported successfully');
       
@@ -559,14 +582,10 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
     },
     onSuccess: () => {
       // Invalidate all related queries to refresh UI
-      queryClient.invalidateQueries({ queryKey: ['client-formara-forms', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      queryClient.invalidateQueries({ queryKey: ['client-details', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-properties', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-employment', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-income', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-assets', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['client-liabilities', clientId] });
+      // An import rewrites most of the client, and the card reading it is
+      // `secure-client-data` — which this list never named, so every tab kept
+      // the values it had until the card was closed and reopened.
+      invalidateClientQueries(queryClient, clientId);
       toast.success('Client detail form and associated data deleted');
     },
     onError: (error: any) => {
@@ -733,6 +752,20 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
                   <div className="flex items-center gap-2 p-2 bg-muted/50 rounded col-span-2">
                     <CheckCircle2 className="h-3 w-3 text-success" />
                     <span>Portfolio summary updated</span>
+                  </div>
+                )}
+                {/*
+                  The data landed; the record of the file it came from did not.
+                  Saying so is the difference between an empty list somebody
+                  reports as a defect and an empty list that explains itself.
+                */}
+                {!importSummary.fileRecorded && (
+                  <div className="col-span-2 flex items-start gap-2 rounded border border-warning/30 bg-warning/10 p-2">
+                    <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-warning" />
+                    <span>
+                      The client data was imported, but this form could not be filed against the
+                      client, so it will not appear in the list below.
+                    </span>
                   </div>
                 )}
               </div>

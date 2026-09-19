@@ -27,6 +27,7 @@ import {
   Home,
 } from 'lucide-react';
 import { calculateCGT, type CGTInputs, type CGTCostBaseItem, type CGTResult } from '@/lib/cgtCalculations';
+import { CurrencyInput } from '@/components/ui/currency-input';
 import {
   Tooltip,
   TooltipContent,
@@ -148,8 +149,20 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
           CGT
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-3xl max-h-[90vh] p-0 w-[95vw] sm:w-auto">
-        <DialogHeader className="px-4 sm:px-6 pt-4 sm:pt-6 pb-2">
+      {/*
+        The shell owns the bound and the body owns the scrolling.
+
+        It used to state `max-h-[90vh]` on the shell AND `max-h-[calc(90vh-100px)]`
+        on the ScrollArea inside it — two independent heights for one box, with
+        the header charged at a flat 100px it does not cost. Whenever the header
+        wrapped, the two disagreed and the scroller's track was drawn past the
+        dialog's own rounded bottom edge, which is the "scroll bar extends beyond
+        the window frame" the 19 Sep audit reported. A flex column with
+        `min-h-0 flex-1` takes the second height out of the picture entirely: the
+        body gets exactly the room the header leaves, whatever the header does.
+      */}
+      <DialogContent className="flex max-h-[90vh] w-[95vw] max-w-3xl flex-col overflow-hidden p-0 sm:w-auto">
+        <DialogHeader className="shrink-0 px-4 sm:px-6 pt-4 sm:pt-6 pb-2">
           <DialogTitle className="flex items-center gap-2 text-base sm:text-lg">
             <Calculator className="h-5 w-5" />
             Capital Gains Tax Calculator
@@ -159,7 +172,7 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="max-h-[calc(90vh-100px)] px-4 sm:px-6 pb-4 sm:pb-6">
+        <ScrollArea className="min-h-0 flex-1 px-4 sm:px-6 pb-4 sm:pb-6">
           <div className="space-y-5">
             {/* Main Residence Toggle */}
             <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
@@ -188,11 +201,10 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-xs font-medium">Estimated Sale Price</Label>
-                <Input
-                  type="number"
-                  value={salePrice || ''}
-                  onChange={e => setSalePrice(Number(e.target.value))}
-                  placeholder="800000"
+                <CurrencyInput
+                  value={salePrice || null}
+                  onValueChange={(v) => setSalePrice(v ?? 0)}
+                  placeholder="800,000"
                 />
               </div>
               <div className="space-y-2">
@@ -205,11 +217,10 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-                <Input
-                  type="number"
-                  value={purchasePrice || ''}
-                  onChange={e => setPurchasePrice(Number(e.target.value))}
-                  placeholder="600000"
+                <CurrencyInput
+                  value={purchasePrice || null}
+                  onValueChange={(v) => setPurchasePrice(v ?? 0)}
+                  placeholder="600,000"
                 />
               </div>
               <div className="space-y-2">
@@ -248,10 +259,9 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                     </Tooltip>
                   </TooltipProvider>
                 </div>
-                <Input
-                  type="number"
-                  value={grossIncome || ''}
-                  onChange={e => setGrossIncome(Number(e.target.value))}
+                <CurrencyInput
+                  value={grossIncome || null}
+                  onValueChange={(v) => setGrossIncome(v ?? 0)}
                 />
               </div>
             </div>
@@ -276,12 +286,11 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                       onChange={e => updateCostItem(i, 'label', e.target.value)}
                       placeholder="Description"
                     />
-                    <Input
+                    <CurrencyInput
                       className="w-32 h-8 text-xs"
-                      type="number"
-                      value={item.amount || ''}
-                      onChange={e => updateCostItem(i, 'amount', e.target.value)}
-                      placeholder="$0"
+                      value={item.amount || null}
+                      onValueChange={(v) => updateCostItem(i, 'amount', v ?? 0)}
+                      placeholder="0"
                     />
                     <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={() => removeCostItem(i)}>
                       <Trash2 className="h-3 w-3" />
@@ -311,12 +320,11 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                       onChange={e => updateSellingCost(i, 'label', e.target.value)}
                       placeholder="Description"
                     />
-                    <Input
+                    <CurrencyInput
                       className="w-32 h-8 text-xs"
-                      type="number"
-                      value={item.amount || ''}
-                      onChange={e => updateSellingCost(i, 'amount', e.target.value)}
-                      placeholder="$0"
+                      value={item.amount || null}
+                      onValueChange={(v) => updateSellingCost(i, 'amount', v ?? 0)}
+                      placeholder="0"
                     />
                     <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={() => removeSellingCost(i)}>
                       <Trash2 className="h-3 w-3" />
@@ -368,23 +376,23 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                     <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Breakdown</CardTitle>
                   </CardHeader>
                   <CardContent className="px-4 pb-3 space-y-1.5 text-xs">
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Estimated Sale Price</span>
                       <span className="font-medium">{formatCurrency(salePrice)}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Total Cost Base</span>
                       <span className="font-medium">{formatCurrency(result.totalCostBase)}</span>
                     </div>
                     <Separator className="my-1" />
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Gross Capital Gain</span>
                       <span className={`font-medium ${result.isCapitalLoss ? 'text-destructive' : 'text-success'}`}>
                         {formatCurrency(result.grossCapitalGain)}
                       </span>
                     </div>
                     {ownershipPercentage < 100 && (
-                      <div className="flex justify-between">
+                      <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                         <span>Your Share ({ownershipPercentage}%)</span>
                         <span className="font-medium">{formatCurrency(result.yourShareOfGain)}</span>
                       </div>
@@ -417,39 +425,39 @@ export function CGTCalculator({ property, clientGrossAnnualIncome }: CGTCalculat
                       <span>Taxable Capital Gain</span>
                       <span>{formatCurrency(result.taxableCapitalGain)}</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Marginal Tax Rate (incl. Medicare)</span>
                       <span className="font-medium">{(result.marginalTaxRate * 100).toFixed(0)}%</span>
                     </div>
-                    <div className="flex justify-between">
+                    <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Effective CGT Rate on Gain</span>
                       <span className="font-medium">{(result.effectiveCGTRate * 100).toFixed(1)}%</span>
                     </div>
                     <Separator className="my-1" />
-                    <div className="flex justify-between font-semibold text-sm">
+                    <div className="flex justify-between gap-3 text-sm font-semibold [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Estimated CGT Payable</span>
                       <span className={result.estimatedCGT > 0 ? 'text-warning' : 'text-success'}>
                         {formatCurrency(result.estimatedCGT)}
                       </span>
                     </div>
                     {result.totalSellingCosts > 0 && (
-                      <div className="flex justify-between">
+                      <div className="flex justify-between gap-3 [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                         <span>Total Selling Costs</span>
                         <span className="font-medium">{formatCurrency(result.totalSellingCosts)}</span>
                       </div>
                     )}
-                    <div className="flex justify-between font-semibold text-sm pt-1 border-t">
+                    <div className="flex justify-between gap-3 border-t pt-1 text-sm font-semibold [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                       <span>Net Proceeds (After CGT & Costs)</span>
                       <span>{formatCurrency(result.netProceeds)}</span>
                     </div>
                     {property.loan_remaining && Number(property.loan_remaining) > 0 && (
-                      <div className="flex justify-between text-muted-foreground">
+                      <div className="flex justify-between gap-3 text-muted-foreground [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                         <span>Less Loan Remaining</span>
                         <span>-{formatCurrency(Number(property.loan_remaining))}</span>
                       </div>
                     )}
                     {property.loan_remaining && Number(property.loan_remaining) > 0 && (
-                      <div className="flex justify-between font-semibold text-sm">
+                      <div className="flex justify-between gap-3 text-sm font-semibold [&>span:last-child]:whitespace-nowrap [&>span:last-child]:tabular-nums">
                         <span>Cash in Hand</span>
                         <span>{formatCurrency(result.netProceeds - Number(property.loan_remaining))}</span>
                       </div>

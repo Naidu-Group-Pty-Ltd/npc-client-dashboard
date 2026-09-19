@@ -86,7 +86,34 @@ export const REPORT_TYPE_LABELS: Record<string, string> = {
   statewide: 'Statewide Analysis',
   comparison: 'Comparison Report',
   formara: 'Formara / Client Form',
+  // The migrated formats. These keys were never added, so the library's
+  // Report-type row printed them raw — `cash_flow_comparison`,
+  // `client_details`, `commercial_capacity`, `investment_compass`,
+  // `market_intelligence` — five underscore-cased column values in a filter an
+  // operator reads. That is most of what the 19 Sep 2026 clone audit called
+  // "too messy and looks unprofessional".
+  cash_flow_comparison: 'Cash Flow Comparison',
+  client_details: 'Client Details Form',
+  commercial_capacity: 'Commercial & Industrial Capacity',
+  investment_compass: 'Investment Compass',
+  market_intelligence: 'Market Intelligence',
 };
+
+/**
+ * A readable name for a key this map has not heard of.
+ *
+ * Returning the key was the old behaviour and it is how database vocabulary
+ * reached the page. A key still has to be shown — an unlabelled filter chip is
+ * worse than an ugly one — so it is title-cased rather than printed raw, and a
+ * new format that nobody has labelled reads as words instead of an identifier.
+ */
+function humaniseReportType(value: string): string {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export function categoryLabel(value: string): string {
   return CATEGORY_OPTIONS.find((o) => o.value === value)?.label ?? value;
@@ -99,5 +126,5 @@ export function styleLabel(value: string | null | undefined): string | null {
 
 export function reportTypeLabel(value: string | null | undefined): string | null {
   if (!value) return null;
-  return REPORT_TYPE_LABELS[value] ?? value;
+  return REPORT_TYPE_LABELS[value] ?? humaniseReportType(value);
 }

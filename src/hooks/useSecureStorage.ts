@@ -111,46 +111,22 @@ function base64ToBlob(base64: string, contentType: string = 'application/octet-s
 export function useSecureStorage() {
   
   /**
-   * Upload a file to secure storage
+   * Upload a file to secure storage.
+   *
+   * Delegates rather than posting its own request. This was a second, complete
+   * copy of the upload — and the copy never sent `resource_id`, which the
+   * server requires from every human caller on every bucket but the two with no
+   * owning row. It has no call sites today, so nothing was refused by it; a
+   * dormant helper that would fail the moment somebody reached for it is worse
+   * than none, and two copies of one request is how the field came to be
+   * missing from one of them in the first place.
    */
-  const upload = async (
+  const upload = (
     bucket: StorageBucket,
     path: string,
     file: File | Blob,
     options?: UploadOptions
-  ): Promise<UploadResult> => {
-    try {
-      const fileData = await fileToBase64(file);
-      const contentType = options?.contentType || (file instanceof File ? file.type : 'application/octet-stream');
-
-      const { data, error } = await invokeSecureFunction('secure-storage', {
-        operation: 'upload',
-        bucket,
-        path,
-        file_data: fileData,
-        content_type: contentType,
-        upsert: options?.upsert || false
-      });
-
-      if (error) {
-        console.error('[SecureStorage] Upload error:', error);
-        return { success: false, error: error.message };
-      }
-
-      if (!data?.success) {
-        return { success: false, error: data?.error || 'Upload failed' };
-      }
-
-      return { 
-        success: true, 
-        path: data.data.path,
-        fullPath: data.data.fullPath
-      };
-    } catch (err: any) {
-      console.error('[SecureStorage] Upload exception:', err);
-      return { success: false, error: err.message };
-    }
-  };
+  ): Promise<UploadResult> => secureStorageUpload(bucket, path, file, options);
 
   /**
    * Download a file from secure storage

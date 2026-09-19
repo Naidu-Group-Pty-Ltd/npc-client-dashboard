@@ -5,7 +5,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { cleanListingTitle, composePropertyAddress } from '../propertyAddress.pure';
+import {
+  addressPrecision, addressPrecisionNotice, cleanListingTitle, composePropertyAddress,
+} from '../propertyAddress.pure';
 
 describe('composePropertyAddress', () => {
   it('uses every part the scrape extracted', () => {
@@ -93,5 +95,37 @@ describe('cleanListingTitle', () => {
 
   it('leaves a title that carries no furniture alone', () => {
     expect(cleanListingTitle('6 Acer Court, Bowral NSW 2576')).toBe('6 Acer Court, Bowral NSW 2576');
+  });
+});
+
+describe('addressPrecision', () => {
+  it('names a street-level composition', () => {
+    expect(addressPrecision({ address: '6 Acer Court', suburb: 'Bowral' })).toBe('address');
+  });
+
+  it('names a locality-only composition rather than calling it an address', () => {
+    // Both are correct compositions of what was extracted; only one of them
+    // identifies a property.
+    expect(addressPrecision({ suburb: 'Pokolbin', state: 'NSW', postcode: '2320' }))
+      .toBe('locality');
+  });
+
+  it('names nothing at all', () => {
+    expect(addressPrecision({})).toBe('none');
+    expect(addressPrecision({ address: '   ' })).toBe('none');
+  });
+});
+
+describe('addressPrecisionNotice', () => {
+  it('says nothing where a street was read', () => {
+    expect(addressPrecisionNotice('address')).toBeNull();
+  });
+
+  it('names the act it wants for a suburb-only address', () => {
+    expect(addressPrecisionNotice('locality')).toMatch(/street address/i);
+  });
+
+  it('calls a fallback name a placeholder rather than an address', () => {
+    expect(addressPrecisionNotice('none')).toMatch(/placeholder/i);
   });
 });

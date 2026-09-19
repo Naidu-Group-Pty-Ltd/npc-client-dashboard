@@ -20,6 +20,7 @@ import { VoiceToTextButton } from '@/components/ui/VoiceToTextButton';
 import { format, isPast, isToday } from 'date-fns';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -67,12 +68,10 @@ export function FollowUpFlag({ clientId, followUpDate, invalidateKeys = [], size
     setReminderType('follow_up');
   };
 
+  // The open client card reads `secure-client-data`; this list never named it,
+  // so a follow-up set from here was invisible until the card was reopened.
   const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ['clients'] });
-    queryClient.invalidateQueries({ queryKey: ['client-tracker'] });
-    queryClient.invalidateQueries({ queryKey: ['client-reminders', clientId] });
-    queryClient.invalidateQueries({ queryKey: ['all-reminders'] });
-    invalidateKeys.forEach(key => queryClient.invalidateQueries({ queryKey: key }));
+    invalidateClientQueries(queryClient, clientId, { also: invalidateKeys });
   };
 
   // Create reminder + set follow_up_date

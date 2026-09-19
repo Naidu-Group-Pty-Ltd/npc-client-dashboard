@@ -1,11 +1,13 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
-import { DollarSign, Bell, CheckCircle, Clock, Circle, ReceiptText, Send, Banknote } from 'lucide-react';
+import { DollarSign, Bell, CheckCircle, Clock, Circle, ReceiptText, Send, Banknote, Calendar as CalendarIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -21,6 +23,54 @@ const tableShellClass = 'overflow-hidden rounded-2xl border border-border/70 bg-
 const tableHeaderClass = '[&_tr]:border-b [&_tr]:border-border/70 [&_th]:bg-muted/55 [&_th]:py-3 [&_th]:text-[10px] [&_th]:font-bold [&_th]:uppercase [&_th]:tracking-[0.16em] [&_th]:text-muted-foreground';
 const rowHoverClass = 'border-border/55 transition-colors hover:bg-brand-500/5 data-[state=selected]:bg-muted';
 const emptyDashClass = 'inline-flex min-w-6 justify-center rounded-full border border-dashed border-border/80 bg-muted/35 px-2 py-0.5 font-mono text-xs text-muted-foreground';
+
+/**
+ * The day a commission was received, editable in place.
+ *
+ * `agentFeeReceiptPatch` is the one rule that writes the flag and the date
+ * together, so correcting the date goes through it rather than writing the
+ * column directly — otherwise a correction could leave `commission_received`
+ * and `commission_received_date` disagreeing, which is the shape
+ * `healFinanceIdentity` exists to repair elsewhere.
+ */
+function ReceiptDateCell({
+  value,
+  onChange,
+}: {
+  value: string | null | undefined;
+  onChange: (isoDate: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = value ? new Date(value) : undefined;
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 gap-1.5 px-2 text-xs font-normal"
+          title="Change the date this commission was received"
+          aria-label="Change the date this commission was received"
+        >
+          <CalendarIcon className="h-3 w-3 text-muted-foreground" />
+          {selected ? format(selected, 'dd MMM yyyy') : 'Set date'}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="single"
+          selected={selected}
+          onSelect={(date) => {
+            if (date) onChange(format(date, 'yyyy-MM-dd'));
+            setOpen(false);
+          }}
+          className="p-3 pointer-events-auto"
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface Props {
   deals: DealWithClient[];
@@ -404,8 +454,32 @@ export function CommissionDashboard({ deals, isLoading, onUpdatePayment, onUpdat
                       <TableCell className="text-right font-mono text-xs font-bold text-brand-700 sm:text-sm">
                         {row.commissionAmount ? formatCurrency(row.commissionAmount) : <span className={emptyDashClass}>—</span>}
                       </TableCell>
+                      {/*
+                        The date the money arrived, not the date somebody
+                        clicked. "Mark received" stamps today and this column
+                        was read-only, so an agent recording a payment that
+                        cleared on Friday had no way to say Friday — asked for
+                        in the 19 Sep 2026 clone audit. Editable only where the
+                        surface can write; otherwise it reads as before.
+                      */}
                       <TableCell className="text-xs sm:text-sm">
-                        {row.commissionReceivedDate ? format(new Date(row.commissionReceivedDate), 'dd MMM yyyy') : <span className={emptyDashClass}>—</span>}
+                        {(row.source === 'deal' ? onUpdateDeal : onUpdatePayment) ? (
+                          <ReceiptDateCell
+                            value={row.commissionReceivedDate}
+                            onChange={(next) => {
+                              const patch = agentFeeReceiptPatch(true, next);
+                              if (row.source === 'deal') {
+                                onUpdateDeal?.(row.dealId, row.clientId, patch);
+                              } else {
+                                onUpdatePayment?.(row.recordId, row.clientId, patch);
+                              }
+                            }}
+                          />
+                        ) : row.commissionReceivedDate ? (
+                          format(new Date(row.commissionReceivedDate), 'dd MMM yyyy')
+                        ) : (
+                          <span className={emptyDashClass}>—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

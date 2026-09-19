@@ -40,6 +40,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { MonthlyRepaymentField, computeMonthlyRepayment, type RepaymentType } from '@/components/shared/MonthlyRepaymentField';
+import { OwnedOutrightToggle } from './OwnedOutrightToggle';
+import { CurrencyInput } from '@/components/ui/currency-input';
 
 interface PropertyManualEntryProps {
   clientId: string;
@@ -164,8 +166,25 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
     setFormData(prev => ({ ...prev, [field]: value }));
   };
 
+  /** Local to the form; `loan_remaining: 0` is what it means in the record. */
+  const [ownedOutright, setOwnedOutrightState] = useState(false);
+
+  const setOwnedOutright = (next: boolean) => {
+    setOwnedOutrightState(next);
+    if (!next) return;
+    setFormData(prev => ({
+      ...prev,
+      loan_remaining: 0,
+      interest_rate: 0,
+      monthly_interest_repayment: 0,
+      autoCalculateInterest: false,
+    }));
+  };
+
   const updateNumberField = (field: keyof PropertyFormData, value: string) => {
     const numValue = parseFloat(value) || 0;
+    // Typing a loan balance says this property is not owned outright.
+    if (field === 'loan_remaining' && numValue > 0) setOwnedOutrightState(false);
     updateField(field, numValue as any);
   };
 
@@ -353,10 +372,9 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
         <div className="flex gap-2">
           <div className="relative flex-1">
             <DollarSign className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="number"
-              value={expense.value || ''}
-              onChange={(e) => updateExpenseField(field, 'value', parseFloat(e.target.value) || 0)}
+            <CurrencyInput
+              value={expense.value || null}
+              onValueChange={(v) => updateExpenseField(field, 'value', v ?? 0)}
               className="pl-7 h-9 text-sm"
               placeholder="0"
             />
@@ -669,10 +687,9 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
                   <Label>Value</Label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="number"
-                      value={formData.value || ''}
-                      onChange={(e) => updateNumberField('value', e.target.value)}
+                    <CurrencyInput
+                      value={formData.value || null}
+                      onValueChange={(v) => updateNumberField('value', v === null ? '' : String(v))}
                       className="pl-9"
                       placeholder="0"
                     />
@@ -682,16 +699,20 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
                   <Label>Loan Remaining ($)</Label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="number"
-                      value={formData.loan_remaining || ''}
-                      onChange={(e) => updateNumberField('loan_remaining', e.target.value)}
+                    <CurrencyInput
+                      value={formData.loan_remaining || null}
+                      onValueChange={(v) => updateNumberField('loan_remaining', v === null ? '' : String(v))}
                       className="pl-9"
-                      placeholder="0"
+                      placeholder={ownedOutright ? 'No loan' : '0'}
+                      disabled={ownedOutright}
                     />
                   </div>
                 </div>
               </div>
+
+              {/* See OwnedOutrightToggle: a recorded zero and an unrecorded
+                  loan drew the same empty box. */}
+              <OwnedOutrightToggle ownedOutright={ownedOutright} onChange={setOwnedOutright} />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">

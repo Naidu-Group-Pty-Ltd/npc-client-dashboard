@@ -91,7 +91,20 @@ export interface ExtractedPropertyData {
 }
 
 export interface StructuredPropertyPayload {
-  propertyAddress: string;
+  /**
+   * The composed address, or NULL where the extraction read none.
+   *
+   * It used to be the literal string "Address Not Found", which is a sentinel
+   * sitting in a value slot: truthy, so it survived every `||` fallback
+   * downstream and arrived at `PropertyImportPanel`, `documentExtract` and the
+   * report's own `property_address` as though it were the property's recorded
+   * address. The 19 Sep 2026 clone audit reported exactly that, as the address
+   * shown on an import. Same rule `propertyTypeLabel` already answers to —
+   * **an instruction must never occupy a value slot** — so the slot carries
+   * the address or nothing, and each reader states the absence in its own
+   * words.
+   */
+  propertyAddress: string | null;
   suburb?: string;
   state?: string;
   postcode?: string;
@@ -382,7 +395,7 @@ export function processToStructuredPayload(extractedData: ExtractedPropertyData)
   }
   
   return {
-    propertyAddress: propertyAddress || 'Address Not Found',
+    propertyAddress: propertyAddress || null,
     suburb: extractedData.suburb,
     state: extractedData.state,
     postcode: extractedData.postcode,

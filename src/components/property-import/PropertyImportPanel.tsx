@@ -9,9 +9,18 @@ import { Progress } from '@/components/ui/progress';
 import { toast } from '@/hooks/use-toast';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { convertPdfToImages, imageFileToBase64, isImageFile, isPdfFile } from '@/utils/pdfToImages';
+import { provenanceNotice, readScrapeProvenance } from '@/lib/reports/scrapeProvenance.pure';
 
 export type PropertyImportCategory = 'commercial' | 'industrial';
 
+/**
+ * A scrape that could not read the listing page says so.
+ *
+ * The server records `metadata.scrapedFromPage` on every job and nothing here
+ * read it, so "URL listing imported · Populated: …" was the same sentence
+ * whether the figures came off the page or from a web search for it. See
+ * `scrapeProvenance.pure.ts`.
+ */
 export interface ImportedPropertyData {
   address?: string;
   suburb?: string;
@@ -146,7 +155,11 @@ export function PropertyImportPanel({ category, onImported }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [conversionProgress, setConversionProgress] = useState<{ current: number; total: number } | null>(null);
 
-  const applyImportedData = (data: ImportedPropertyData, sourceLabel: string) => {
+  const applyImportedData = (
+    data: ImportedPropertyData,
+    sourceLabel: string,
+    metadata?: unknown,
+  ) => {
     onImported(data);
     const found = [
       data.address,
@@ -156,9 +169,19 @@ export function PropertyImportPanel({ category, onImported }: Props) {
       data.glaSqm ? `${data.glaSqm.toLocaleString('en-AU')}m² GLA` : undefined,
     ].filter(Boolean);
 
+    const notice = metadata === undefined
+      ? null
+      : provenanceNotice(readScrapeProvenance(metadata));
+    const populated = found.length > 0
+      ? `Populated: ${found.join(', ')}.`
+      : 'Limited details extracted.';
+
     toast({
-      title: `${sourceLabel} imported`,
-      description: found.length > 0 ? `Populated: ${found.join(', ')}. Review the fields below before saving.` : 'Limited details extracted. Review and complete the fields below before saving.',
+      title: notice ? `${sourceLabel} imported — check the figures` : `${sourceLabel} imported`,
+      description: notice
+        ? `${populated} ${notice.title} — check the address and the price against the listing.`
+        : `${populated} Review the fields below before saving.`,
+      variant: notice ? 'destructive' : undefined,
     });
   };
 
@@ -231,6 +254,7 @@ export function PropertyImportPanel({ category, onImported }: Props) {
       applyImportedData(
         normalizeDetails(finalData, category, finalData?.sourceUrl || propertyUrl),
         'URL listing',
+        finalData?.metadata,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to scrape property listing';

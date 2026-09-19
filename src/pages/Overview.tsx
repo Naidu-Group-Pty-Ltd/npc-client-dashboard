@@ -12,6 +12,13 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfidenceBadge } from '@/components/dashboard/ConfidenceBadge';
 import { OverviewFilters } from '@/components/overview/OverviewFilters';
+import {
+  buildListingFacets,
+  listingPostcode,
+  listingPropertyType,
+  listingState,
+  listingSuburb,
+} from '@/lib/listings/listingFacets.pure';
 import { DataIntegrityPanel } from '@/components/debug/DataIntegrityPanel';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { UpcomingRemindersWidget } from '@/components/overview/UpcomingRemindersWidget';
@@ -347,17 +354,15 @@ export default function Overview() {
     }
   }, []);
 
-  // Extract state from address
-  const extractState = useCallback((address: string): string | null => {
-    const match = address.match(/\b(NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\b/i);
-    return match ? match[0].toUpperCase() : null;
-  }, []);
-
-  // Extract postcode from address
-  const extractPostcode = useCallback((address: string): string | null => {
-    const match = address.match(/\b(\d{4})\b/);
-    return match ? match[0] : null;
-  }, []);
+  // The state and postcode a listing is in come from `lib/listings/listingFacets`.
+  //
+  // This page used to keep private copies of both extractors — and both read
+  // the ADDRESS alone, never the record's own `state` / `zipCode` columns. The
+  // address is the street line, so almost every listing resolved to no state
+  // at all: the filter offered three states where the marketplace offered
+  // four, off the same data, and filtering by one of them dropped every
+  // listing whose state lives in the column. Two copies of "where is this
+  // property" is how the two pages came to disagree.
 
   // ─── STEP 1: Fetch raw data (cached, only re-fetches when cache expires) ───
   // Listings are Property Marketplace data. A workspace without that
@@ -394,35 +399,24 @@ export default function Overview() {
 
     const listings = allListings;
 
-    // Extract unique values for filters (from ALL data, not filtered)
-    const states = [...new Set(listings.map(l => extractState(l.address || '')).filter(Boolean))] as string[];
-    const postcodes = [...new Set(listings.map(l => l.zipCode || extractPostcode(l.address || '')).filter(Boolean))] as string[];
-    const suburbs = [...new Set(listings.map(l => l.suburb).filter(Boolean))] as string[];
-    const propertyTypes = [...new Set(listings.map(l => l.propertyType).filter(Boolean))] as string[];
-
-    setUniqueValues({
-      states: states.sort(),
-      postcodes: postcodes.sort(),
-      suburbs: suburbs.sort(),
-      propertyTypes: propertyTypes.sort(),
-    });
+    // Filter options, from ALL data rather than the filtered set — and read
+    // the same way the predicates below read them, so an option can never
+    // select nothing.
+    setUniqueValues(buildListingFacets(listings));
 
     // Apply filters
     let filtered = listings;
     if (filters.state !== 'all') {
-      filtered = filtered.filter(l => extractState(l.address || '') === filters.state);
+      filtered = filtered.filter(l => listingState(l) === filters.state);
     }
     if (filters.postcode !== 'all') {
-      filtered = filtered.filter(l => {
-        const pc = l.zipCode || extractPostcode(l.address || '');
-        return pc === filters.postcode;
-      });
+      filtered = filtered.filter(l => listingPostcode(l) === filters.postcode);
     }
     if (filters.suburb !== 'all') {
-      filtered = filtered.filter(l => l.suburb === filters.suburb);
+      filtered = filtered.filter(l => listingSuburb(l) === filters.suburb);
     }
     if (filters.propertyType !== 'all') {
-      filtered = filtered.filter(l => l.propertyType === filters.propertyType);
+      filtered = filtered.filter(l => listingPropertyType(l) === filters.propertyType);
     }
 
     // Calculate KPIs
@@ -495,7 +489,7 @@ export default function Overview() {
     const sourceChartData = chartDataService.generateSourceData(filtered, 10);
     setSourceData(sourceChartData.data.map(item => ({ source: item.label, count: item.value })));
 
-  }, [allListings, filters, safeParseDate, extractState, extractPostcode]);
+  }, [allListings, filters, safeParseDate]);
 
   // Adopt background revalidations.
   //
@@ -530,14 +524,14 @@ export default function Overview() {
     recentListings: recentListings.map(l => ({
       address: l.address,
       suburb: l.suburb,
-      postcode: l.zipCode || extractPostcode(l.address || '') || undefined,
+      postcode: listingPostcode(l) || undefined,
       price: l.price,
       propertyType: l.propertyType,
       beds: l.beds,
       baths: l.baths,
       source: l.source,
     })),
-  }), [allListings, kpis, contentStats, filters, suburbData, propertyTypeData, agencyData, recentListings, extractPostcode]);
+  }), [allListings, kpis, contentStats, filters, suburbData, propertyTypeData, agencyData, recentListings]);
 
   const propertyTypeTotal = useMemo(() => propertyTypeData.reduce((sum, item) => sum + item.count, 0), [propertyTypeData]);
 
@@ -1063,9 +1057,9 @@ export default function Overview() {
                           <span className="inline-flex items-center gap-1.5 font-medium text-foreground/80">
                             <MapPin className="h-3.5 w-3.5 text-primary/70" />
                             {listing.suburb || 'Unknown Suburb'}
-                            {(listing.zipCode || extractPostcode(listing.address || '')) && (
+                            {listingPostcode(listing) && (
                               <span className="text-muted-foreground/70">
-                                {listing.zipCode || extractPostcode(listing.address || '')}
+                                {listingPostcode(listing)}
                               </span>
                             )}
                           </span>

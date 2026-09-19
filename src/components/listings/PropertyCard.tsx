@@ -28,6 +28,7 @@ import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
+import { hasListingUrl } from '@/lib/listings/listingLinks.pure';
 
 const LISTING_CARD_BADGE_BASE = 'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold leading-none tracking-[0.02em] shadow-sm';
 const LISTING_CARD_PROPERTY_TYPE_BADGE = 'border-border/80 bg-muted/90 text-foreground dark:border-white/10 dark:bg-white/[0.06] dark:text-foreground';
@@ -147,7 +148,7 @@ export function PropertyCard({
               <DropdownMenuItem onClick={onOpenDetails} className="min-h-10 focus:bg-accent focus:text-accent-foreground">
                 Open Details
               </DropdownMenuItem>
-              {listing.url && onOpenSource && (
+              {hasListingUrl(listing.url) && onOpenSource && (
                 <DropdownMenuItem onClick={onOpenSource} className="min-h-10 focus:bg-accent focus:text-accent-foreground">
                   <ExternalLink className="h-4 w-4 mr-2" />
                   Open Source

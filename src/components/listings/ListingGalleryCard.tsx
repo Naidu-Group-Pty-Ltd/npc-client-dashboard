@@ -22,6 +22,7 @@ import {
 } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
 import { marketPresence, MARKET_PRESENCE_TONE } from '@/lib/marketPresence';
+import { hasListingUrl } from '@/lib/listings/listingLinks.pure';
 
 const PILL = 'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold leading-none tracking-[0.02em] shadow-sm';
 
@@ -276,7 +277,7 @@ export function ListingGalleryCard({
                   <a href={`tel:${contact.phone.replace(/\s/g, '')}`}>Call {contact.phone}</a>
                 </DropdownMenuItem>
               )}
-              {listing.url && onOpenSource && (
+              {hasListingUrl(listing.url) && onOpenSource && (
                 <DropdownMenuItem onClick={onOpenSource}>Open source listing</DropdownMenuItem>
               )}
             </DropdownMenuContent>

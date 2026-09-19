@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { verifyAuth, createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { releaseInvestmentReportRunTokens } from '../_shared/reportMetering.ts';
 
@@ -7,27 +7,30 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { internalError } from '../_shared/errorResponse.ts';
 import { applyDisplayOverrides, buildCalculatorInput, overridesAffectModel } from '../_shared/reports/investment/overrides.pure.ts';
 import { healFinanceIdentity } from '../_shared/reports/investment/financialEngine.pure.ts';
-// Dynamic CORS headers for credential-based requests
-function createCorsHeaders(origin: string | null): Record<string, string> {
-  // Support Lovable preview + published domains for credentialed requests
-  const allowedOrigin = origin && (
-    origin === 'https://command-centre.npcservices.com.au' ||
-    origin.endsWith('.lovable.app') ||
-    origin.endsWith('.lovableproject.com') ||
-    origin.endsWith('.npcservices.com.au') ||
-    origin.includes('localhost')
-  )
-    ? origin 
-    : 'https://command-centre.npcservices.com.au';
-
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token',
-    'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  };
-}
+/**
+ * CORS comes from `_shared/auth.ts`, like every other function's.
+ *
+ * This was the ONE function in the repository that defined its own
+ * `createCorsHeaders`, and the allowlist it defined was a set of hostnames
+ * compiled in: `command-centre.npcservices.com.au`, any `.npcservices.com.au`,
+ * any `.lovable.app` / `.lovableproject.com`, and localhost. It never read
+ * `ALLOWED_ORIGINS`, which is the variable every deployment is configured
+ * through — so a clone served from its own domain got the deliberately
+ * mismatched fallback origin, the browser refused to expose the response, and
+ * `fetch` rejected with an opaque `TypeError`.
+ *
+ * The clone audit of 19 Sep 2026 reported that twice, as two defects: "Failed
+ * to create report: Network/CORS error calling manage-investment-reports" from
+ * the Reports page, and the marketplace listing's report dialog closing with
+ * nothing generated. Both were this. The prime was unaffected because its
+ * hostname is one of the five.
+ *
+ * The shared helper answers an allowlisted origin exactly and everyone else
+ * with a mismatch, which is the same posture — it just reads the allowlist
+ * from configuration instead of from source. It also carries the full request
+ * and response header lists (`x-command-centre-session-token`, `content-range`
+ * and the rest), which the local copy had drifted away from.
+ */
 
 const isRecord = (v: unknown): v is Record<string, any> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);

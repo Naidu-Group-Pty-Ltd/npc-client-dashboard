@@ -11,6 +11,7 @@ import { useTeamUsers } from '@/hooks/useTeamUsers';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { UserCog, Save, Loader2, Briefcase, Users } from 'lucide-react';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 
 interface Props {
   clientId: string;
@@ -66,9 +67,9 @@ export function ClientAssignmentsCard({
       if (error) throw new Error(error.message);
       if (data && data.success === false) throw new Error(data.error || 'Failed to save');
       toast.success('Assignments updated');
-      queryClient.invalidateQueries({ queryKey: ['client', clientId] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      queryClient.invalidateQueries({ queryKey: ['full-client', clientId] });
+      invalidateClientQueries(queryClient, clientId, {
+        also: [['client', clientId], ['full-client', clientId]],
+      });
       onSaved?.();
     } catch (e: any) {
       toast.error(e.message || 'Failed to save assignments');

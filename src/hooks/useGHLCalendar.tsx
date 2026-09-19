@@ -651,7 +651,15 @@ export function useGHLCalendar() {
     address?: string;
     assignedUserId?: string;
     overrideAvailability?: boolean;
-  }): Promise<{ success: boolean; event?: GHLEvent }> => {
+    /**
+     * Where the meeting happens, as GoHighLevel finally recorded it.
+     *
+     * Reported separately from `event` because `normalizeEvent` answers null
+     * whenever GHL's create response omits a timestamp — and the join link for
+     * a Zoom booking would then be discarded along with it. The people who are
+     * emailed the invitation need the link, not a normalised event.
+     */
+  }): Promise<{ success: boolean; event?: GHLEvent; location?: string }> => {
     setIsUpdating(true);
 
     try {
@@ -691,7 +699,10 @@ export function useGHLCalendar() {
           title: 'Appointment created',
           description: `"${payload.title}" has been scheduled.`,
         });
-        return { success: true, event: newEvent ?? undefined };
+        const location = typeof data.event?.address === 'string' && data.event.address.trim()
+          ? data.event.address.trim()
+          : undefined;
+        return { success: true, event: newEvent ?? undefined, location };
       } else {
         // Surface the actual GHL error message to the user
         const errorMsg = data?.error || 'Failed to create appointment';

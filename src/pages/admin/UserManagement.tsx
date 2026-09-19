@@ -68,6 +68,8 @@ export default function UserManagement() {
   
   const [users, setUsers] = useState<User[]>([]);
   const [modules, setModules] = useState<Module[]>([]);
+  const [modulesState, setModulesState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [modulesError, setModulesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   
   // Invite state
@@ -136,18 +138,43 @@ export default function UserManagement() {
     finally { setLoading(false); }
   };
 
+  /**
+   * The module list, and why it is empty when it is.
+   *
+   * This used to swallow every failure into `console.error` and leave
+   * `modules` at `[]`, so a 403 from `list_modules` — which requires
+   * superadmin, and an ADMIN can reach this page — drew an empty permission
+   * grid with no explanation. That is the 19 Sep 2026 clone audit's "it
+   * doesn't allow to modify any module permissions. None of it is clickable
+   * and there is no list of permission that appears below."
+   *
+   * Three readings, not one: loading, loaded, and could-not-be-read with the
+   * server's own reason.
+   */
   const fetchModules = async () => {
+    setModulesState('loading');
+    setModulesError(null);
     try {
-      const { data } = await invokeSecureFunction('admin-user-management', { action: 'list_modules' });
-      if (data?.success) {
-        setModules(data.modules);
-        const defaultPerms = data.modules.map((m: Module) => ({
-          module_key: m.module_key, can_view: true, can_edit: false, can_delete: false,
-        }));
-        setInvitePermissions(defaultPerms);
-        setCreatePermissions(defaultPerms);
+      const { data, error } = await invokeSecureFunction('admin-user-management', { action: 'list_modules' });
+      if (error || !data?.success) {
+        setModules([]);
+        setModulesState('unavailable');
+        setModulesError(data?.error || error?.message || null);
+        return;
       }
-    } catch (err) { console.error('Failed to fetch modules:', err); }
+      setModules(data.modules);
+      setModulesState('ready');
+      const defaultPerms = (data.modules as Module[]).map((m: Module) => ({
+        module_key: m.module_key, can_view: true, can_edit: false, can_delete: false,
+      }));
+      setInvitePermissions(defaultPerms);
+      setCreatePermissions(defaultPerms);
+    } catch (err: any) {
+      console.error('Failed to fetch modules:', err);
+      setModules([]);
+      setModulesState('unavailable');
+      setModulesError(err?.message || null);
+    }
   };
 
   const fetchUserPermissions = async (userId: string) => {
@@ -554,6 +581,8 @@ export default function UserManagement() {
                     permissions={createPermissions}
                     onUpdate={updatePermission(setCreatePermissions)}
                     onApplyPreset={setCreatePermissions}
+                    loadState={modulesState}
+                    loadError={modulesError}
                   />
                 </div>
               </div>
@@ -619,6 +648,8 @@ export default function UserManagement() {
                     permissions={invitePermissions}
                     onUpdate={updatePermission(setInvitePermissions)}
                     onApplyPreset={setInvitePermissions}
+                    loadState={modulesState}
+                    loadError={modulesError}
                   />
                 </div>
                 <Button onClick={handleSendInvite} disabled={inviteSending} className="w-full shadow-lg shadow-primary/15">
@@ -769,6 +800,8 @@ export default function UserManagement() {
               permissions={editPermissions}
               onUpdate={updatePermission(setEditPermissions)}
               onApplyPreset={setEditPermissions}
+              loadState={modulesState}
+              loadError={modulesError}
             />
             <Button onClick={handleSavePermissions} disabled={savingPermissions} className="w-full">
               {savingPermissions ? 'Saving...' : 'Save Permissions'}

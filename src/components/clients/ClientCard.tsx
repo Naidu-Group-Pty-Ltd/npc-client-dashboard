@@ -30,6 +30,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 
 /**
  * Pipeline stage → status-chip tone.
@@ -163,7 +164,7 @@ export function ClientCard({ client, ghlLocationId, onView, onDelete, onSyncComp
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      invalidateClientQueries(queryClient, client.id);
       toast.success(client.is_favorite ? 'Removed from favorites' : 'Added to favorites');
     },
     onError: (error: any) => {

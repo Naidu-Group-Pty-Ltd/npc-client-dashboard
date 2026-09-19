@@ -52,6 +52,7 @@ import {
 import {
   derivativeToServe, type DisplayableImage,
 } from '../_shared/builderStock/primaryImage.ts';
+import type { MirrorSource } from '../_shared/builderStock/mirrorAvailability.pure.ts';
 
 const FEATURE_FLAG_KEY = 'builder_stock_marketplace';
 const IMAGE_URL_TTL_SECONDS = 300;
@@ -246,10 +247,33 @@ Deno.serve(async (req) => {
         success: true,
         records,
         /*
+          WHICH ABSENCE AN EMPTY TAB IS.
+
+          `builder_network_stock_*` is a MIRROR fed by the network's events, so
+          an empty one on a clone with no link says nothing whatever about what
+          builders have supplied — and the page used to read "No builder stock
+          has been uploaded yet … when a builder uploads a stock list in their
+          portal", pointing the reader at somebody else's deployment to fix
+          something that is not broken there. See `mirrorAvailability.pure.ts`.
+
+          Read on every list so the reading cannot go stale against the rows
+          beside it; both queries are indexed single-row reads.
+        */
+        source: await readMirrorSource(supabase),
+        /*
          * WHICH BUILDERS HOLD THE PROMOTED SLOTS IS DECIDED OVER THE WHOLE SET,
          * not per page, so it does not change as an adviser pages through.
          */
-        promoted_organisations: promotedOrganisations(pinned.concat(body)),
+        /*
+          `unpinned`, NOT `body`. The comment above renamed this array away
+          from `body` to get it out of the request payload's temporal dead
+          zone, and this call was left behind pointing at the payload object —
+          which carries no `rank_placement_kind`, so `promotedOrganisations`
+          skipped it and the list came back EMPTY on every request. A
+          commercial placement that `builder_stock_item_ranks_disclosure`
+          refuses to store undisclosed was then never disclosed.
+        */
+        promoted_organisations: promotedOrganisations(pinned.concat(unpinned)),
         pagination: {
           page, page_size: pageSize, total: count ?? 0,
           total_pages: Math.max(1, Math.ceil((count ?? 0) / pageSize)),
@@ -618,6 +642,63 @@ Deno.serve(async (req) => {
 });
 
 /** Images and builder identity for a page of stock. Two queries, not 2N. */
+/**
+ * What this workspace can say about the link its stock mirror is fed by.
+ *
+ * Deliberately narrow: the CONNECTION's state and whether anything has ever
+ * arrived. Nothing here decides what to render — `readStockEmptyState` does
+ * that, once, so the tab and any future surface cannot word the same absence
+ * two ways.
+ *
+ * Both reads FAIL to `unknown` rather than to `none`: "we could not tell" and
+ * "there is no link" send an administrator to opposite places, and only one of
+ * them is a job.
+ */
+async function readMirrorSource(supabase: any): Promise<MirrorSource> {
+  try {
+    const [connectionRead, freshest] = await Promise.all([
+      supabase
+        .from('builder_network_connections')
+        .select('state')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from('builder_network_stock_items')
+        .select('last_seen_at')
+        .not('last_seen_at', 'is', null)
+        .order('last_seen_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
+
+    if (connectionRead.error) {
+      console.warn('[builder-stock-marketplace] connection read failed', connectionRead.error.message);
+      return { connection: 'unknown', lastSyncedAt: null };
+    }
+
+    const state = connectionRead.data?.state as string | undefined;
+    const connection: MirrorSource['connection'] = state === 'active'
+      ? 'active'
+      : state === 'revoked'
+        ? 'revoked'
+        // No row at all is a workspace that was never linked. An 'invited' row
+        // is a link nobody has completed, which delivers nothing either — the
+        // same thing to read and the same act to finish.
+        : state === undefined || state === 'invited'
+          ? 'none'
+          : 'unknown';
+
+    return {
+      connection,
+      lastSyncedAt: freshest.error ? null : (freshest.data?.last_seen_at ?? null),
+    };
+  } catch (e) {
+    console.warn('[builder-stock-marketplace] mirror source read threw', e);
+    return { connection: 'unknown', lastSyncedAt: null };
+  }
+}
+
 async function decorate(supabase: any, items: any[]): Promise<any[]> {
   if (!items.length) return [];
   /*

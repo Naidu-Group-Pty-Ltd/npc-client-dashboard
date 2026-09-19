@@ -367,8 +367,20 @@ Deno.serve(async (req) => {
       // the per-request lookup cap, the wall-clock budget and the circuit
       // breaker below.
 
+      // Three different conditions used to answer this one 503 with one body,
+      // and the map reported all three as "the upstream provider recovers":
+      // a provider that is genuinely failing, a deployment whose kill switch
+      // is on, and a failed read of our OWN circuit state. Waiting fixes only
+      // the first. A failure says which kind it was.
       const { data: circuitOpen, error: circuitReadError } = await supabase.rpc('provider_circuit_is_open', { p_scope: CIRCUIT_SCOPE });
-      if (circuitReadError || circuitOpen === true) return j({ error: 'temporarily_unavailable', success: false }, 503);
+      if (circuitReadError) {
+        console.warn('[resolve-listing-coordinates] circuit state unreadable', redactError(circuitReadError));
+        // Fail closed — but never as a claim about the provider.
+        return j({ error: 'temporarily_unavailable', code: 'circuit_state_unreadable', success: false }, 503);
+      }
+      if (circuitOpen === true) {
+        return j({ error: 'temporarily_unavailable', code: 'provider_circuit_open', success: false }, 503);
+      }
 
       const lookupsStartedAt = Date.now();
       for (const item of needsLookup) {
@@ -473,7 +485,9 @@ Deno.serve(async (req) => {
         }
       }
     } else {
-      return j({ error: 'temporarily_unavailable', success: false }, 503);
+      // `GEOCODING_KILL_SWITCH` is on. No provider is involved and no amount of
+      // waiting changes it, so it must not be reported as one recovering.
+      return j({ error: 'temporarily_unavailable', code: 'geocoding_disabled', success: false }, 503);
     }
 
     if (inserts.length > 0) {

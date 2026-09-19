@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Bed, Bath, Building2, Car, CheckCircle2, ChevronLeft, ChevronRight,
-  ExternalLink, HardHat, Image as ImageIcon, Inbox, Loader2, Sparkles, UserPlus,
+  ExternalLink, HardHat, Image as ImageIcon, Inbox, Link2Off, Loader2, Sparkles, UserPlus,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { cn } from '@/lib/utils';
 import { StockPicture } from '@/components/stock/StockPicture';
+import { readStockEmptyState } from '../../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
 import {
   marketplaceStockImageUrl, useMarketplaceBuilderStock, useMarketplaceBuilders,
   useMarketplaceClientSearch, useSelectBuilderStockForClient,
@@ -102,6 +103,12 @@ export function BuilderStockTab() {
   const records = stockQuery.data?.records ?? [];
   const pagination = stockQuery.data?.pagination;
   const builders = buildersQuery.data?.records ?? [];
+  const filtersApplied = Boolean(debounced)
+    || organisationId !== 'all' || availability !== 'all' || state !== 'all';
+  const emptyState = readStockEmptyState({
+    filtersApplied,
+    source: stockQuery.data?.source ?? null,
+  });
 
   const disabled = (stockQuery.error as (Error & { code?: string }) | null)?.code
     === 'builder_stock_disabled';
@@ -190,18 +197,23 @@ export function BuilderStockTab() {
           </div>
         </div>
       ) : !records.length ? (
+        /*
+          WHICH absence this is. It used to read "No builder stock has been
+          uploaded yet · Properties appear here when a builder uploads a stock
+          list in their portal" for every empty result — a statement about
+          BUILDERS made out of a fact about the LINK, pointing the reader at a
+          deployment they cannot reach. See `mirrorAvailability.pure.ts`.
+        */
         <div className={SURFACE}>
           <div className="py-12 text-center">
-            <Inbox className="mx-auto h-10 w-10 text-muted-foreground/50" aria-hidden />
-            <p className="mt-3 text-sm font-semibold">
-              {debounced || organisationId !== 'all' || availability !== 'all' || state !== 'all'
-                ? 'No builder stock matches those filters'
-                : 'No builder stock has been uploaded yet'}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {debounced || organisationId !== 'all' || availability !== 'all' || state !== 'all'
-                ? 'Clear the filters to see everything builders have supplied.'
-                : 'Properties appear here when a builder uploads a stock list in their portal.'}
+            {emptyState.actionable ? (
+              <Link2Off className="mx-auto h-10 w-10 text-warning/70" aria-hidden />
+            ) : (
+              <Inbox className="mx-auto h-10 w-10 text-muted-foreground/50" aria-hidden />
+            )}
+            <p className="mt-3 text-sm font-semibold">{emptyState.title}</p>
+            <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-muted-foreground">
+              {emptyState.detail}
             </p>
           </div>
         </div>

@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useGenerationHistory } from '@/hooks/useGenerationHistory';
+import { UNFINISHED_REPORT_IS_FREE, describeTokenRelease } from '@/lib/billing/tokenHold.pure';
 import {
   GenerationProgressHeader,
   GenerationProgressItem,
@@ -707,7 +708,12 @@ function ReportGenerationProgressInner() {
             finishedAt: Date.now(),
           });
         } else if (final.status === 'failed') {
-          toast.error(`Report failed: ${final.property_address}`);
+          // The release itself is reported by whoever marked the report
+          // failed; this path only observed it, so it states the RULE rather
+          // than a figure it cannot confirm. See `tokenHold.pure.ts`.
+          toast.error(`Report failed: ${final.property_address}`, {
+            description: UNFINISHED_REPORT_IS_FREE,
+          });
           addHistory({
             id: final.id,
             property_address: final.property_address,
@@ -875,22 +881,33 @@ function ReportGenerationProgressInner() {
         ),
       );
       try {
-        const { error } = await invokeSecureFunction('manage-investment-reports', {
-          action: 'update',
-          reportId,
-          data: {
-            status: 'failed',
-            error_message: reason,
-            updated_at: new Date().toISOString(),
+        const { data, error } = await invokeSecureFunction<{ tokenRelease?: unknown }>(
+          'manage-investment-reports',
+          {
+            action: 'update',
+            reportId,
+            data: {
+              status: 'failed',
+              error_message: reason,
+              updated_at: new Date().toISOString(),
+            },
           },
-        });
+        );
         if (error) {
           toast.error(`Failed to stop generation: ${error.message || 'Unknown error'}`);
           return;
         }
+        // `manage-investment-reports` releases (or refunds) the Mission Control
+        // job for a run it marks failed, and returns what it released — a
+        // figure nothing in the frontend had ever read. A balance that goes
+        // 200 → 180 → 200 around a failed report reads as a charge and a
+        // correction unless somebody says otherwise, which is what the
+        // 19 Sep 2026 clone audit reported.
+        const releaseNotice = describeTokenRelease(data?.tokenRelease);
         if (!opts.silent) {
           toast.success(
             r ? `Stopped "${r.property_address}" — marked as failed` : 'Generation stopped',
+            releaseNotice ? { description: releaseNotice } : undefined,
           );
         }
         if (r) {

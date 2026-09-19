@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { BuilderStockItem, BuilderStockSelection } from '@/lib/builderStock';
+import type { MirrorSource } from '../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
 
 export const marketplaceStockKeys = {
   root: () => ['marketplace', 'builder-stock'] as const,
@@ -35,6 +36,14 @@ export interface MarketplaceStockFilters {
 export interface Paginated<T> {
   records: T[];
   pagination: { page: number; page_size: number; total: number; total_pages: number };
+  /**
+   * What the workspace can say about the Builders Network link this mirror is
+   * fed by. Absent on a deployment running ahead of the function, which
+   * `readStockEmptyState` reads as `unknown` rather than as "no link".
+   */
+  source?: MirrorSource;
+  /** Organisations holding a disclosed commercial placement on this result set. */
+  promoted_organisations?: string[];
 }
 
 export interface MarketplaceBuilder {

@@ -294,7 +294,7 @@ describe('the reading as a whole', () => {
   it('the QA validator carries it, at every tier', () => {
     const md = '# Report\n\n## Executive Verdict\n\n| Weekly net position | -$467 |\n\n'
       + 'The investor funds a weekly shortfall of $450.\n';
-    for (const tier of ['compass', 'financial', 'strategic', 'briefing', 'snapshot']) {
+    for (const tier of ['compass-40', 'financial-analysis', 'strategic', 'briefing', 'snapshot'] as const) {
       const report = runQAValidation(md, tier);
       expect(report.findings.map((f) => f.rule), tier).toContain('weekly-cash-position-disagrees');
       expect(report.passed, tier).toBe(false);

@@ -214,3 +214,131 @@ export function mergeAcquired<T>(stored: T | null | undefined, fresh: T | null |
   if (stored !== null && stored !== undefined) return stored;
   return null;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIRING: which dependencies a later invocation may reuse, and from where
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Where the stamp lives inside the stored packet.
+ *
+ * The packet IS `enhancedData` — `traceStartRun` persists it to
+ * `report_generation_runs.data_packet` on every run, after the acquisition
+ * block, so the research a run bought is already durable. Nothing needed a new
+ * column; what was missing was a statement of WHAT the object describes, and
+ * that rides inside the object the generator composes itself.
+ */
+export const ACQUISITION_STAMP_KEY = '__acquisition';
+
+/**
+ * Bump when the shape of any reusable value changes.
+ *
+ * A packet stamped with a different version is refused outright rather than
+ * read field by field: a reader that guesses which half of a changed shape it
+ * understands is how a stale field survives a migration.
+ */
+export const ACQUISITION_SCHEMA_VERSION = 1;
+
+export interface ReusableDependency extends DependencyPolicy {
+  /** The acquisition ledger's producer name, which is not always the key. */
+  producer: string;
+}
+
+/**
+ * The dependencies worth reusing, keyed by their `enhancedData` field.
+ *
+ * Every one is **geography-sensitive only**: a register's answer about a place
+ * does not change because the operator revised the interest rate. Anything
+ * derived from the accepted inputs is deliberately absent —
+ * `financial_calculations` is a local calculator and costs nothing, and
+ * `investmentScore` must re-run because it grades the evidence this run
+ * assembled, reused or not. `locationIntelligence` is absent too: it already
+ * has `assessEnrichmentReuse`, and two modules deciding one question is how
+ * they come to disagree.
+ *
+ * The ceilings these replace, per invocation: planning 45s, climate 40s,
+ * regional 30s, Domain 30s, crime 30s, risk 25s, SEIFA 25s, employment 25s,
+ * demographics 30s, RBA 20s.
+ */
+export const REUSABLE_ACQUISITIONS: Record<string, ReusableDependency> = {
+  planningData:    { producer: 'planning',        sensitivity: 'geography', reuseClass: 'cadastral' },
+  climateData:     { producer: 'climate',         sensitivity: 'geography', reuseClass: 'statistical' },
+  regionalTrends:  { producer: 'regionalTrends',  sensitivity: 'geography', reuseClass: 'statistical' },
+  domainData:      { producer: 'marketData',      sensitivity: 'geography', reuseClass: 'market' },
+  crimeStatistics: { producer: 'crimeStatistics', sensitivity: 'geography', reuseClass: 'register' },
+  schoolData:      { producer: 'schools',         sensitivity: 'geography', reuseClass: 'register' },
+  riskAssessment:  { producer: 'riskAssessment',  sensitivity: 'geography', reuseClass: 'register' },
+  seifaData:       { producer: 'seifa',           sensitivity: 'geography', reuseClass: 'statistical' },
+  demographics:    { producer: 'demographics',    sensitivity: 'geography', reuseClass: 'statistical' },
+  employmentData:  { producer: 'employment',      sensitivity: 'geography', reuseClass: 'statistical' },
+  // The cash rate is national rather than local, so no geography change
+  // invalidates it — but it moves, so it is priced as market data and expires
+  // in a day.
+  economics:       { producer: 'economics',       sensitivity: 'geography', reuseClass: 'market' },
+};
+
+/** Compose the stamp a run writes beside what it acquired. */
+export function acquisitionStamp(subject: AcquisitionSubject, nowIso: string): AcquisitionStamp {
+  return {
+    address: subject.address,
+    postcode: subject.postcode,
+    state: subject.state,
+    inputRevision: subject.inputRevision,
+    acquiredAt: nowIso,
+    schemaVersion: ACQUISITION_SCHEMA_VERSION,
+    outcome: 'answered',
+  };
+}
+
+export interface ReusePlanEntry {
+  key: string;
+  producer: string;
+  decision: ReuseDecision;
+}
+
+export interface ReusePlan {
+  /** Values this invocation may adopt without asking anybody. */
+  values: Record<string, unknown>;
+  /** Every dependency considered, with why it was or was not reused. */
+  entries: ReusePlanEntry[];
+  /** Whether a usable stamp was found at all. */
+  stamped: boolean;
+}
+
+/**
+ * Decide, per dependency, what this invocation may take from a previous one.
+ *
+ * Refusal is the default and every refusal is named. A packet with no stamp —
+ * which is every run recorded before this shipped — reuses nothing and the
+ * invocation acquires exactly as it always did.
+ */
+export function planReuse(args: {
+  storedPacket: Record<string, unknown> | null | undefined;
+  subject: AcquisitionSubject;
+  nowMs: number;
+}): ReusePlan {
+  const { storedPacket, subject, nowMs } = args;
+  const rawStamp = storedPacket?.[ACQUISITION_STAMP_KEY];
+  const stamp = (rawStamp && typeof rawStamp === 'object')
+    ? (rawStamp as AcquisitionStamp)
+    : null;
+
+  const values: Record<string, unknown> = {};
+  const entries: ReusePlanEntry[] = [];
+
+  for (const [key, policy] of Object.entries(REUSABLE_ACQUISITIONS)) {
+    const storedValue = storedPacket?.[key];
+    const decision = assessReuse({
+      storedValue,
+      stamp,
+      subject,
+      policy,
+      currentSchemaVersion: ACQUISITION_SCHEMA_VERSION,
+      nowMs,
+    });
+    entries.push({ key, producer: policy.producer, decision });
+    if (decision.reuse) values[key] = storedValue;
+  }
+
+  return { values, entries, stamped: stamp !== null };
+}

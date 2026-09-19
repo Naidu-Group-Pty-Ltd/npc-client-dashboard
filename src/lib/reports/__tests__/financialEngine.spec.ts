@@ -300,7 +300,15 @@ describe('reconcileStoredFinancials — healing historic rows at read time', () 
   // aggregates (nothing ever rewrote them — which is exactly why the heal can
   // reconstruct the fold base), a total that does not foot against its own
   // lines, and the fold-inflated moderate series.
-  const storedFin = () => ({
+  const storedFin: () => {
+    annualCosts: Record<string, number>;
+    loanDetails: { monthlyPayment: number; interestRate: number; annualPayment?: number; loanType?: string };
+    income: { weeklyRent: number; annualRent: number };
+    initialCosts: Record<string, number>;
+    keyMetrics: Record<string, number>;
+    projections: { moderate: Record<string, number>[] };
+    assumptions?: { occupancyWeeks: number };
+  } = () => ({
     annualCosts: {
       landTax: 0,
       strataFees: 0,

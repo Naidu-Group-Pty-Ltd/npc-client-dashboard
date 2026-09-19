@@ -53,6 +53,13 @@ import {
   type CallClass,
 } from '../_shared/reports/investment/acquisitionBudget.pure.ts';
 import {
+  ACQUISITION_STAMP_KEY,
+  acquisitionStamp,
+  inputRevisionOf,
+  planReuse,
+  type AcquisitionSubject,
+} from '../_shared/reports/investment/acquisitionReuse.pure.ts';
+import {
   coordinateProvenance,
   enrichmentCoordinate,
   ledgerOutcomeFor,
@@ -2883,6 +2890,36 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     
     let enhancedData: EnhancedData = {};
 
+    /**
+     * What this invocation adopted from its own earlier one, if anything.
+     *
+     * Held rather than acted on immediately because the acquisition ledger is
+     * last-write-wins and every reused dependency still reaches its call site,
+     * which records a skip — so the provenance is written once, at the end.
+     */
+    let reusePlan: ReturnType<typeof planReuse> | null = null;
+
+    /**
+     * What the acquisition this run performs is ABOUT.
+     *
+     * Declared at handler scope because it is written inside the acquisition
+     * block and read at `traceStartRun`, which sits outside it — the stamp and
+     * the packet have to describe the same subject or the reuse decision is
+     * made against the wrong facts.
+     */
+    let acquisitionSubject: AcquisitionSubject | null = null;
+
+    /**
+     * Already held for this subject — do not buy it twice.
+     *
+     * Only ever true for a value `planReuse` admitted, which means it came from
+     * this report's own earlier invocation, for this address, inside its shelf
+     * life. A dependency that was never acquired, or failed, or expired, is
+     * absent here and is fetched exactly as before.
+     */
+    const alreadyHeld = (key: keyof EnhancedData): boolean =>
+      enhancedData[key] !== undefined && enhancedData[key] !== null;
+
     /*
      * The coordinate the planning registers and the published-project register
      * are asked at, resolved once and qualified once. Declared here beside
@@ -2968,6 +3005,70 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       
       console.log('Using for API calls:', { suburb, postcode, state });
 
+      // ──────────────────────────────────────────────────────────────────
+      // RESEARCH BOUGHT ONCE
+      //
+      // A fifteen-section report takes several invocations, and every one of
+      // them re-ran the whole acquisition phase: the same planning registers,
+      // the same climate grid, the same Domain call, for the same property,
+      // minutes apart. That is not just spend — it is the reason so few
+      // sections fit in an invocation, because acquisition eats the budget the
+      // section loop needs.
+      //
+      // Nothing new is stored to fix it. `traceStartRun` has always persisted
+      // this object to `report_generation_runs.data_packet` AFTER the
+      // acquisition block, so the research is already durable; what was
+      // missing was a statement of what it describes. `planReuse` reads that
+      // stamp and refuses per dependency — no stamp, a different subject,
+      // changed inputs where they matter, an expired shelf life, or simply no
+      // stored value. Every legacy packet is unstamped, so every existing
+      // report acquires exactly as it did.
+      //
+      // This is emphatically NOT "skip acquisition on continuation": that
+      // would reuse a result acquired for somewhere else, and freeze a
+      // four-second silence as a permanent absence.
+      acquisitionSubject = {
+        address: propertyAddress,
+        postcode: postcode ?? null,
+        state: state ?? null,
+        inputRevision: inputRevisionOf(mergedOverrides as Record<string, unknown>),
+      };
+      if (isContinuation && reportId && supabaseClient) {
+        try {
+          const { data: priorRun } = await supabaseClient
+            .from('report_generation_runs')
+            .select('data_packet, started_at')
+            .eq('report_id', reportId)
+            .not('data_packet', 'is', null)
+            .order('started_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const plan = planReuse({
+            storedPacket: (priorRun?.data_packet ?? null) as Record<string, unknown> | null,
+            subject: acquisitionSubject,
+            nowMs: Date.now(),
+          });
+
+          if (Object.keys(plan.values).length > 0) {
+            enhancedData = { ...enhancedData, ...plan.values };
+            // The ledger entries are written at the END of the block, not
+            // here: the recorder's rule is last-write-wins, and a reused
+            // dependency still passes its own call site, which records a skip.
+            reusePlan = plan;
+          }
+          console.log(
+            `♻️ Acquisition reuse: ${Object.keys(plan.values).length} of `
+            + `${plan.entries.length} dependencies adopted`
+            + (plan.stamped ? '' : ' (no stamp on the stored packet — nothing reused)')
+          );
+        } catch (reuseError: any) {
+          // Reuse is an optimisation. Failing to read the previous packet must
+          // never stop a report being produced — it just costs the calls again.
+          console.warn('♻️ Acquisition reuse unavailable (non-blocking):', reuseError?.message);
+        }
+      }
+
       // ============================================================================
       // PHASE 1: PARALLEL INDEPENDENT DATA FETCHING
       // These services don't depend on each other, so fetch them all simultaneously
@@ -3000,7 +3101,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         Promise.resolve({ success: false, serviceName: 'domain-data-service', error: 'Missing trusted geography (fetched after geography resolution)' }),
 
         // 2. ABS demographic data
-        postcode ? fetchServiceWithFallback('abs-data-service', async () => {
+        (postcode && !alreadyHeld('demographics')) ? fetchServiceWithFallback('abs-data-service', async () => {
           const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-data-service`, {
             method: 'POST',
             headers,
@@ -3015,7 +3116,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }) : Promise.resolve({ success: false, serviceName: 'abs-data-service', error: 'Missing postcode' }),
 
         // 3. RBA economic data
-        fetchServiceWithFallback('rba-data-service', async () => {
+        !alreadyHeld('economics') ? fetchServiceWithFallback('rba-data-service', async () => {
           const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/rba-data-service`, {
             method: 'POST',
             headers
@@ -3026,10 +3127,10 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             return data.data || null;
           }
           return null;
-        }),
+        }) : Promise.resolve({ success: false, serviceName: 'rba-data-service', error: "Missing — held from this report's own earlier invocation" }),
 
         // 4. SEIFA socioeconomic data
-        postcode ? fetchServiceWithFallback('abs-seifa-service', async () => {
+        (postcode && !alreadyHeld('seifaData')) ? fetchServiceWithFallback('abs-seifa-service', async () => {
           const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-seifa-service`, {
             method: 'POST',
             headers,
@@ -3059,7 +3160,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // only trusted source available here is a STRUCTURED postcode the caller
         // supplied as a field. Where there is none this call does not go out at
         // all, and the re-key below picks it up once the coordinate lands.
-        (suburb && state && crimePostcodeAtIntake.trusted)
+        (suburb && state && crimePostcodeAtIntake.trusted && !alreadyHeld('crimeStatistics'))
           ? fetchServiceWithFallback('crime-statistics-service', async () => {
           const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
@@ -3079,7 +3180,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }),
 
         // 6. Employment data
-        state ? fetchServiceWithFallback('abs-employment-service', async () => {
+        (state && !alreadyHeld('employmentData')) ? fetchServiceWithFallback('abs-employment-service', async () => {
           const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-employment-service`, {
             method: 'POST',
             headers,
@@ -3170,7 +3271,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       console.log('🔄 Starting Phase 2 (dependent services)...');
 
       // Fetch risk assessment data (can use coordinates from location intelligence)
-      if (postcode && state) {
+      if (postcode && state && !alreadyHeld('riskAssessment')) {
         try {
           const riskResponse = await acquisitionFetch(`${supabaseUrl}/functions/v1/risk-assessment-service`, {
             method: 'POST',
@@ -3588,7 +3689,15 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // three would put a 3024 population table beside a 3338 industry mix on
       // one page. The gate withholds them as one for the same reason.
       const trustedPostcode = subjectPostcodeOf(subjectGeography);
-      if (trustedPostcode && trustedPostcode !== postcode) {
+      // The trusted-POA re-query overwrites all three ABS reads, so it is
+      // skipped only when all three are already held — a reused value came
+      // from a run where this same re-query had already happened, and a
+      // partial reuse is better served by letting it run than by leaving two
+      // of the three keyed on the postcode we have stopped believing.
+      const absAllReused = alreadyHeld('demographics')
+        && alreadyHeld('seifaData')
+        && alreadyHeld('employmentData');
+      if (trustedPostcode && trustedPostcode !== postcode && !absAllReused) {
         const trustedState = typeof subjectGeography?.state === 'string' && subjectGeography.state
           ? subjectGeography.state as string
           : state;
@@ -3894,7 +4003,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
         ?? abbreviateState(state);
 
-      const planningRequest = (planningCoords?.lat && planningCoords?.lng)
+      const planningRequest = (!alreadyHeld('planningData') && planningCoords?.lat && planningCoords?.lng)
         ? startAcquisition(`${supabaseUrl}/functions/v1/planning-data-service`, {
             method: 'POST',
             headers,
@@ -3906,7 +4015,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             }),
           }, 45000, 'planning-data-service')
         : null;
-      const climateRequest = (climateCoords?.lat && climateCoords?.lng)
+      const climateRequest = (!alreadyHeld('climateData') && climateCoords?.lat && climateCoords?.lng)
         ? startAcquisition(`${supabaseUrl}/functions/v1/climate-data-service`, {
             method: 'POST',
             headers,
@@ -3919,7 +4028,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             }),
           }, 40000, 'climate-data-service')
         : null;
-      const regionalRequest = (regionalCoords?.lat && regionalCoords?.lng)
+      const regionalRequest = (!alreadyHeld('regionalTrends') && regionalCoords?.lat && regionalCoords?.lng)
         ? startAcquisition(`${supabaseUrl}/functions/v1/abs-regional-service`, {
             method: 'POST',
             headers,
@@ -3932,7 +4041,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             }),
           }, 30000, 'abs-regional-service')
         : null;
-      const domainRequest = (!isAreaReport && marketPostcode && marketSuburb && marketState)
+      const domainRequest = (!isAreaReport && !alreadyHeld('domainData') && marketPostcode && marketSuburb && marketState)
         ? startAcquisition(`${supabaseUrl}/functions/v1/domain-data-service`, {
             method: 'POST',
             headers,
@@ -4460,7 +4569,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // NOTE: SEIFA, Crime, Employment, and Climate data are now fetched in Phase 1 parallel block above
 
       // Fetch school data
-      if (suburb && state && postcode) {
+      if (suburb && state && postcode && !alreadyHeld('schoolData')) {
         try {
           console.log('Fetching school data for:', suburb, state, postcode);
           
@@ -4514,6 +4623,24 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     // deliberately a log and not a column: the run trace's schema is a contract
     // with its own readers, and a number nobody has asked to store does not
     // earn a migration.
+    // The reuse provenance goes in LAST. `AcquisitionRecorder` is
+    // last-write-wins and a reused dependency still passes its own call site,
+    // which records a skip — so writing it here is what makes the ledger say
+    // the true thing: this report acquired it, for this subject, earlier.
+    if (reusePlan) {
+      for (const entry of reusePlan.entries) {
+        if (!entry.decision.reuse) continue;
+        acquisition.record({
+          producer: entry.producer,
+          outcome: 'answered',
+          detail:
+            "Reused from this report's own earlier invocation, acquired "
+            + `${entry.decision.ageHours.toFixed(1)}h ago for the same subject`,
+          service: 'acquisition-reuse',
+        });
+      }
+    }
+
     const acquisitionMs = Date.now() - runStartedAt;
     console.log(
       `⏱️ acquisition finished at +${(acquisitionMs / 1000).toFixed(1)}s of the run's `
@@ -6687,7 +6814,20 @@ YOUR DEDICATED PROPERTY PARTNER
       trigger_source: isContinuation ? 'chunked-resume' : 'generate',
       template_ids: [],
       system_prompt: systemMessage,
-      data_packet: enhancedData ?? null,
+      // The packet carries a statement of WHAT it describes, so a later
+      // invocation can decide per dependency whether it may reuse any of it.
+      // `report_generation_runs.data_packet` was already persisting this
+      // object on every run; what it could not say was which property, under
+      // which accepted inputs, and when. See `acquisitionReuse.pure.ts`.
+      data_packet: (enhancedData && acquisitionSubject)
+        ? {
+            ...enhancedData,
+            [ACQUISITION_STAMP_KEY]: acquisitionStamp(
+              acquisitionSubject,
+              new Date().toISOString(),
+            ),
+          }
+        : (enhancedData ?? null),
       model: 'sonar-pro',
     });
     if (_traceRunId) console.log(`🔭 generation-trace run started: ${_traceRunId}`);

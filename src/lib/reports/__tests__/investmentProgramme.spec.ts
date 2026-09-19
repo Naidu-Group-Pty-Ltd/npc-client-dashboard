@@ -29,6 +29,7 @@ import {
   QTRIP_LICENCE,
   QTRIP_SOURCE,
   stageSentence,
+  type ProgrammeParse,
 } from '@/lib/reports/../../../supabase/functions/_shared/planning/investmentProgramme.pure';
 import {
   buildInfrastructureEvidence,
@@ -43,7 +44,7 @@ const answer = () => JSON.parse(
 );
 const parsed = () => {
   const out = parseQtripAnswer(answer(), CURRENT, SUBJECT, PROGRAMME_RADIUS_KM);
-  if (!out.ok) throw new Error(out.reason);
+  if (!out.ok) throw new Error((out as Extract<ProgrammeParse, { ok: false }>).reason);
   return out;
 };
 

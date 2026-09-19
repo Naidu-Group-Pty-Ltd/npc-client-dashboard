@@ -95,10 +95,30 @@ describe('it travels the same route as the page count', () => {
 describe('the master binds it, and drops the heading that said nothing', () => {
   const src = readFileSync('scripts/template-library/investmentCompass/templates.ts', 'utf8');
 
+  /*
+   * This assertion passed while 39 of the 50 masters drew `Part 05 · Report`
+   * on every page of the body.
+   *
+   * `furniture()` branches on `navigation_style`: a RAILED family draws the
+   * part and the section, and a RUNNING-HEAD family draws the part and
+   * DISCARDS the section. So the chapter was passed in on all fifty and drawn
+   * on eleven, and a source-level check of the call site could not see the
+   * difference — the argument is there, and on 39 masters it goes nowhere.
+   *
+   * The call sites still carry it, and are still checked here, because the
+   * railed half reads it. What a source string cannot vouch for is now
+   * asserted against the BUILT masters, in
+   * `templateLibrary/__tests__/runningHeadFitsTheChapter.spec.ts`: that every
+   * master names the chapter by one route or the other, and that the marker
+   * fits the two lines the rule reserves.
+   */
   it('the running head takes the chapter rather than the word "Report"', () => {
-    expect(src).toContain("furniture(DOCUMENT_LABEL, reportPart, '{{narrative.chapters.0}}')");
-    expect(src).toContain('furniture(DOCUMENT_LABEL, reportPart, `{{narrative.chapters.${i}}}`)');
+    expect(src).toContain("furniture(DOCUMENT_LABEL, reportPart, '{{narrative.chapters.0}}', reportChapter(0))");
+    expect(src).toContain('furniture(DOCUMENT_LABEL, reportPart, `{{narrative.chapters.${i}}}`, reportChapter(i))');
     expect(src).not.toContain("furniture(DOCUMENT_LABEL, reportPart, 'The report')");
+    // The running-head half: the part NUMBER plus the chapter, never the
+    // part's label, which is what made 29 pages read alike.
+    expect(src).toContain("`${reportPart.split(' · ')[0]} · {{narrative.chapters.${i}}}`");
   });
 
   it('the body no longer opens on a heading naming the document', () => {

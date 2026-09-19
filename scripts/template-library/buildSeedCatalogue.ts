@@ -255,19 +255,60 @@ const REPO = resolve(__dirname, '../..');
  * re-copies the ACTIVE masters from it, because an adopted master is a COPY
  * and nothing else updates a copy after adoption.
  *
+ * ## v16 — the verdict fits its box, and the running head names the chapter
+ *
+ * `20261204020000` **is recorded** — checked 19 Sep 2026 against the project's
+ * applied migration list (986 of them), which is the one-query check this
+ * header has always asked for. So v15 has run, editing it would be inert, and
+ * this is v16.
+ *
+ * Two master changes, both geometry, both measured against all fifty.
+ *
+ * **The verdict heading printed over the KPI band.** `verdict()` reserved
+ * `scale.verdict * 2.2` at a leading of 1.1 — exactly two lines — and the
+ * reservation was never measured against the sentence that fills it. At this
+ * catalogue's own 0.52 display advance, `RECOMMENDATION_BY_GRADE` set past two
+ * lines on **27 of 50** masters unqualified, and on **50 of 50** once
+ * `qualifyRecommendation` began appending its coverage sentence. The masters
+ * position every block at an absolute `y`, so the surplus did not overflow the
+ * page — it printed on top of what came next, and every arithmetic check in
+ * the build passed. On 42 Patya Circuit `$1,975,000` and `$850` were struck
+ * through by the heading's last two lines.
+ *
+ * The dashboard page has 15pt of slack above the footer on 49 of the 50, so
+ * the block could not grow. It keeps its footprint exactly and the heading is
+ * fitted to it: `fitToLines` picks the largest quarter-point size at which the
+ * longest publishable headline still sets in two lines. 23 masters were
+ * already inside it and are byte-identical; the rest move from 23-34.25pt to
+ * 16.5-19.5pt. The coverage sentence also leaves the heading for a `scopeNote`
+ * of its own (`splitVerdictScope`), which is a projection change rather than a
+ * master one.
+ *
+ * **The running head said `Part 05 · Report` on 29 of 36 pages.** v15 made the
+ * head name the chapter and reached eleven masters: `furniture()` draws the
+ * part AND the section on a railed family, and on a running-head family draws
+ * the part and DISCARDS the section. The Compass's report pages now pass an
+ * explicit `headMarker` — the part number plus the chapter — which only the
+ * running-head branch reads, so the railed eleven and the other nine formats'
+ * 450 masters are untouched.
+ *
+ * The version is `20261207000000`: `20261206000000` is taken and already
+ * applied. `20261207010000` re-copies the ACTIVE masters from it, because an
+ * adopted master is a COPY and nothing else updates a copy after adoption.
+ *
  * Run the same one-query check before editing this file: if
- * `20261204020000` is already recorded, the next change needs a v16.
+ * `20261207000000` is already recorded, the next change needs a v17.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261204020000_seed_template_library_v15_running_head_and_columns';
+const RELEASE_ID = '20261207000000_seed_template_library_v16_verdict_and_running_head';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261204020000_seed_template_library_v15_running_head_and_columns.sql',
+  'supabase/migrations/20261207000000_seed_template_library_v16_verdict_and_running_head.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

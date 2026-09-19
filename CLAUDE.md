@@ -2161,6 +2161,68 @@ property's grade — the child restates the parent's decision, a variant score
 never stands for the property while a composite exists, and the literal `N/A`
 the scoring service stores is a placeholder no surface draws.
 
+## What the page actually draws
+
+Read [`WHAT_THE_PAGE_ACTUALLY_DRAWS.md`](./docs/reports/WHAT_THE_PAGE_ACTUALLY_DRAWS.md)
+before changing a declared block height, `verdict()`, `furniture()`,
+`presentStoredMarkdown` or `SAMPLE_REPORT_DATA`. Four defects were reported
+against one 36-page Compass and each passed every gate, for the same reason in
+four places: **the thing that was checked was not the thing the page draws.**
+
+**The verdict heading printed through the KPI band.** `verdict()` reserved
+`scale.verdict * 2.2` at a leading of 1.1 — exactly TWO lines — and never
+measured that against the sentence filling it; at the catalogue's own 0.52
+display advance the vocabulary sets past two lines on **27 of 50** masters
+unqualified and on **50 of 50** once `qualifyRecommendation` appends its
+coverage sentence. `flow()` fixes the next block's `y` from the DECLARED
+height, so the surplus did not overflow the page — it printed on top of
+`$1,975,000` and `$850`. The dashboard has 15pt of slack on 49 of the 50, so
+the box cannot grow: `fitToLines` keeps the footprint and fits the TYPE, never
+enlarging, and **stepping down until `displayLines` agrees** rather than
+trusting the closed form — `481 / (50 × 0.52)` is exactly 18.5 and
+`Math.floor(481 / (18.5 × 0.52))` is 49, so the "perfect fit" was one character
+short on five masters. Two more rules: **reading
+`RECOMMENDATION_BY_GRADE` is not enough** (`qualifyRecommendation` REWRITES the
+base sentence before appending — "across all metrics" → "across the metrics
+assessed" — so the A+ claim is 99 characters, not 89, and `verdictVocabulary.ts`
+walks the qualified forms), and **the coverage sentence leaves the heading**
+for a `scopeNote` of its own, losing nothing because `gradedLine` already names
+the same dimensions one line below.
+
+**A fixture shorter than the product turns a real measurement into a statement
+about the fixture.** `templates:compass:qa` renders all 510 masters in a real
+Chromium and compares every text node's client rects — the exact gate this
+class belongs to — and it passed every run, because
+`SAMPLE_REPORT_DATA.recommendation.headline` was a 35-character operator
+verdict while production carries 59–99. With the honest fixture and the fit
+removed it names the collision (`Bullion Rail / p3: 3pt`); with the fit it is
+clean over 510 renders. The sample must be the LONGEST thing that can land in a
+slot being measured geometrically, not a representative one.
+
+**Twenty-nine pages read `Part 05 · Report`.** v15 made the running head name
+the chapter and reached eleven masters: `furniture()` draws the part and the
+section on a RAILED family and, on a running-head family, draws the part and
+**discards the section**. The body is one part, correctly — what was missing is
+that the chapter had nowhere to be drawn. `headMarker` is what the running-head
+branch takes instead, passed only by the Compass's report pages, so the railed
+eleven and the other nine formats' 450 masters are byte-identical. The test
+that vouched for this asserted the call site's ARGUMENT, which 39 masters
+discard; the property is now asserted against the built masters.
+
+**And two scrubs ran where they could not reach a stored document.** Both now
+run in `presentStoredMarkdown`, the one read-path scrub all four renderers
+apply. The generator pins its planning evidence under four headings that are
+INSTRUCTIONS, and the pinned block already tells the model never to write a
+bracketed pointer to them — nine of ten delivered documents carried one anyway,
+which is `stripEditorialBlocks`' lesson again: **an instruction is a request;
+this is the guarantee.** It SUBSTITUTES rather than deletes (the tables are
+appended verbatim under *Planning controls and development registers*, so
+deleting the bracket would leave the sentence unsourced). And
+`dedupeChartDirectives` has existed since Stage 4 on the WRITE path alone, so
+the identical three-bar price chart was drawn five times on one report; it is a
+no-op on a document that already draws each chart once. Shipped as seed **v16**
+plus the active-master refresh.
+
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
 else here.** The design system renders **0.14%** of the documents this product

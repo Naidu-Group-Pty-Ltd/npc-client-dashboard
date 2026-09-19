@@ -82,6 +82,7 @@ import {
   type CompassSeedTemplate,
   type ReportFormat,
 } from './master';
+import { VERDICT_HEADLINE_CHARS } from './verdictVocabulary';
 import { STANDARD_DISCLAIMER } from '../designSystem';
 
 /** Investment Compass: the format the ten families were drawn for. */
@@ -407,6 +408,10 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
         // scores, whose dimensions are not the composite five. Absent score →
         // absent binding → no sentence, never a broken one.
         body: '{{recommendation.gradedLine}}',
+        // The heading is a binding, so it is sized from what it can RESOLVE to
+        // rather than from its own 27 characters. See `verdictVocabulary.ts`:
+        // the vocabulary is closed, so this is exact rather than estimated.
+        headingChars: VERDICT_HEADLINE_CHARS,
       }),
       kpis(dashboardKpis),
       ...(splitSnapshot ? [] : [
@@ -869,9 +874,27 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // the empty string, which is the right answer: an unresolved binding is
   // never a visible `{{…}}`.
   const reportPart = nextPart('Report');
+  /**
+   * What a running-head family puts on the right of these pages.
+   *
+   * The body is ONE part, correctly — so `reportPart` is the same string on
+   * every one of its pages, and a running-head family (which draws the part
+   * and discards the section, unlike a rail) printed `Part 05 · Report` on 29
+   * of the 36 pages of the 42 Patya Circuit report. The part NUMBER still
+   * orients the reader; the chapter is what tells them where they are, and it
+   * is already measured per page by the same pre-pass that decides the page
+   * breaks.
+   *
+   * `runningChapters` leaves a heading longer than `CHAPTER_MAX_CHARS` (64) to
+   * the fallback, so the longest marker this can compose is `Part NN · ` plus
+   * 64 — which `runningHeadFitsTheChapter.spec.ts` measures against the two
+   * lines `runningHead` reserves, on every master.
+   */
+  const reportChapter = (i: number): string =>
+    `${reportPart.split(' · ')[0]} · {{narrative.chapters.${i}}}`;
   pages.push({
     ...withFurniture(page('The report', [
-      ...furniture(DOCUMENT_LABEL, reportPart, '{{narrative.chapters.0}}'),
+      ...furniture(DOCUMENT_LABEL, reportPart, '{{narrative.chapters.0}}', reportChapter(0)),
       ...flow([
         markdown('{{narrative.source}}', 0, firstNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
       ], contentTop()),
@@ -884,7 +907,7 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   for (let i = 1; i < NARRATIVE_PAGES; i += 1) {
     pages.push({
       ...withFurniture(page(`The report (${i + 1})`, [
-        ...furniture(DOCUMENT_LABEL, reportPart, `{{narrative.chapters.${i}}}`),
+        ...furniture(DOCUMENT_LABEL, reportPart, `{{narrative.chapters.${i}}}`, reportChapter(i)),
         ...flow([
           markdown('{{narrative.source}}', i, contNarrativeHeight, MARKDOWN_LINES_PER_PAGE),
         ], contentTop()),

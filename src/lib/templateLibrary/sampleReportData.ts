@@ -1268,7 +1268,30 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   opportunities: ['Approved secondary-dwelling footprint not yet built out'],
 
   recommendation: {
-    headline: 'Proceed to offer at or below $1.29m',
+    /*
+     * The LONGEST verdict the projection can publish, not a pleasant one.
+     *
+     * This read `Proceed to offer at or below $1.29m` — 35 characters, an
+     * operator-written verdict. Every graded production row carries one of the
+     * eight `RECOMMENDATION_BY_GRADE` sentences instead, narrowed by
+     * `qualifyRecommendation` where coverage was partial, and those run 59 to
+     * **99** characters.
+     *
+     * `templates:compass:qa` renders all 510 masters in a real Chromium and
+     * measures every text node's client rect against every other — a genuine
+     * overlap measure, and exactly the gate this class belongs to. It passed
+     * on 510 renders while the shipped verdict printed through the KPI band on
+     * 27 of 50 masters, because a 35-character heading fits everywhere.
+     *
+     * A fixture shorter than what the product publishes turns a real
+     * measurement into a statement about the fixture. This is the A+ claim at
+     * partial coverage — `verdictSlotBound.spec.ts` walks all 248 grade ×
+     * coverage combinations and pins 99 as the maximum, so if the vocabulary
+     * grows this string is what has to grow with it.
+     */
+    headline: 'STRONG BUY - Excellent investment opportunity with strong '
+      + 'fundamentals across the metrics assessed.',
+    scopeNote: 'Assessed on 4 of 5 dimensions: capital growth, location, rental yield and demand.',
     rationale:
       'The holding clears our land-value and tenant-demand tests, and the shortfall is '
       + 'serviceable inside the stated surplus. Value is in the land and the approved '

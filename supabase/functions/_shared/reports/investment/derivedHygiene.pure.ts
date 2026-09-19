@@ -21,6 +21,7 @@
 
 import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
 import { alignChartScales } from './chartScale.pure.ts';
+import { dedupeChartDirectives } from './blockHygiene.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -390,6 +391,80 @@ export function stripEmptyCitations(markdown: string): { markdown: string; remov
   return { markdown: out, removed };
 }
 
+/**
+ * The prompt's own scaffolding, quoted back at the reader.
+ *
+ * `generate-investment-report` pins the planning and infrastructure evidence
+ * into every section under four headings, and those headings are INSTRUCTIONS:
+ * nobody reading the document has ever seen them. The pinned block carries a
+ * rule saying so in as many words — "**never write a bracketed pointer** such
+ * as `[Zoning & Planning table]` … A bracket like that lands mid-sentence in a
+ * client document and refers to nothing they can open" — and the delivered
+ * suite carried them anyway: nine of ten documents with at least one, one
+ * Compass with nine.
+ *
+ * That is the lesson `stripEditorialBlocks` already wrote down one file over:
+ * **an instruction is a request; this is the guarantee.** The v2.0 prompt said
+ * "at most one per section" twice and production carried ninety.
+ *
+ * ## Why this substitutes rather than deletes
+ *
+ * The claim behind the pointer is SOUND. Both tables are appended verbatim to
+ * the finished document under `## Planning controls and development
+ * registers`, so there is a real section to point at. Deleting the bracket
+ * would leave the sentence unsourced, which is worse than an ugly sentence
+ * that is sourced — the pinned rule says exactly that, and it is right.
+ *
+ * So the pointer is rewritten into the reference the rule asks for: the
+ * report's own section, named in the sentence, where the reader can turn to
+ * it. Nothing else in the sentence is touched. This is punctuation, not prose:
+ * a closed set of four strings the prompt itself wrote, not a pattern over
+ * what a model might say.
+ *
+ * ## It runs on READ
+ *
+ * Every document already stored carries these. A write-path fix repairs
+ * nothing that has shipped, which is the same argument that moved the
+ * placeholder scrub and the chart-evidence contract here.
+ */
+const SCAFFOLDING_POINTERS = [
+  'Zoning & Planning table',
+  'Zoning & Planning notes',
+  'Infrastructure table',
+  'Infrastructure section',
+] as const;
+
+/** The section those tables are appended under, verbatim, by the generator. */
+export const PLANNING_REGISTER_SECTION = 'Planning controls and development registers';
+
+const SCAFFOLDING_RE = new RegExp(
+  `\\[\\s*(?:${SCAFFOLDING_POINTERS.map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*\\]`,
+  'gi',
+);
+
+export function rewriteScaffoldingPointers(
+  markdown: string,
+): { markdown: string; rewritten: number } {
+  let rewritten = 0;
+  const out = (markdown || '').replace(SCAFFOLDING_RE, (_whole, offset: number, whole: string) => {
+    rewritten += 1;
+    // "See [Zoning & Planning notes]" must not become "See (see …)". Where the
+    // sentence already introduces the reference, only the section is named.
+    const before = whole.slice(Math.max(0, offset - 12), offset);
+    return /\b(?:see|in|under|per)\s*$/i.test(before)
+      ? `*${PLANNING_REGISTER_SECTION}*`
+      : ` (see *${PLANNING_REGISTER_SECTION}*)`;
+  })
+    // The pointer is usually set hard against the sentence it closes —
+    // "…resale expectations.[Infrastructure section] The recorded 680…" — so
+    // the reference is introduced with its own space and any double space the
+    // substitution leaves is closed up. A space before a full stop or comma is
+    // closed the same way, for the form that sits mid-sentence.
+    .replace(/[ 	]{2,}\(see \*/g, ' (see *')
+    .replace(/\(see \*([^*]+)\*\)([.,;:])/g, '(see *$1*)$2');
+  return { markdown: out, rewritten };
+}
+
 export function presentStoredMarkdown(
   markdown: string | null | undefined,
   /*
@@ -425,11 +500,31 @@ export function presentStoredMarkdown(
   const tidied = cited.removed ? cited.markdown : (columns.removed.length ? columns.markdown : glance.markdown);
   const sections = dropEmptySections(tidied);
   const clean = sections.dropped.length === 0 ? tidied : sections.markdown;
+  // A bracketed pointer into the prompt's own scaffolding, rewritten into the
+  // report's own section. See `rewriteScaffoldingPointers`.
+  const pointed = rewriteScaffoldingPointers(clean);
+  const sourced = pointed.rewritten ? pointed.markdown : clean;
+  /*
+   * The same chart, drawn five times.
+   *
+   * `dedupeChartDirectives` has existed since Stage 4 and ran on the WRITE
+   * path alone — the post-processor, the fork and the condense. So a document
+   * stored before that wiring, or one whose repeats arrive after it, keeps
+   * every copy for ever and so does every child forked from it. On the
+   * 42 Patya Circuit Compass the identical three-bar price chart was drawn on
+   * five pages and the planning controls table on four.
+   *
+   * It is the same implementation, imported rather than repeated, and it is a
+   * no-op on a document that carries each drawing once — which is what makes
+   * adopting it on the read path safe for everything already correct.
+   */
+  const deduped = dedupeChartDirectives(sourced);
+  const single = deduped.removed ? deduped.markdown : sourced;
   // One scale per quantity across the whole document. Unconditional, because
   // it needs no record to know that two charts of kilometres must agree, and
   // it is a no-op on a document with one chart per unit.
-  const scaled = alignChartScales(clean);
-  const levelled = scaled.aligned.length ? scaled.markdown : clean;
+  const scaled = alignChartScales(single);
+  const levelled = scaled.aligned.length ? scaled.markdown : single;
   if (!evidence) return levelled;
   const judged = enforceChartEvidence(levelled, evidence);
   return judged.findings.length ? judged.markdown : levelled;

@@ -5,14 +5,15 @@
  * the filter state is reachable and announced. Filtering itself is pure and
  * lives in `filterEntries.ts`.
  */
-import { Input } from '@/components/ui/input';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Badge } from '@/components/ui/badge';
 import { SearchInput } from '@/components/ui/search-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { X } from 'lucide-react';
+import { ChevronDown, SlidersHorizontal, X } from 'lucide-react';
 import {
   CATEGORY_OPTIONS, INDUSTRY_OPTIONS, ORIENTATION_OPTIONS, STYLE_OPTIONS, reportTypeLabel,
 } from '@/lib/templateLibrary/taxonomy';
@@ -88,6 +89,23 @@ export function TemplateLibraryFilters({
   onClear, resultCount, totalCount,
 }: Props) {
   const active = hasActiveFilters(filters);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  /**
+   * How many of the collapsed axes are in use.
+   *
+   * A disclosure that hides an ACTIVE filter is a filter nobody can find, so
+   * the count is on the trigger and the panel opens itself when there is one.
+   */
+  const refinementCount =
+    filters.densities.length
+    + filters.useBuckets.length
+    + filters.categories.length
+    + filters.styles.length
+    + filters.industries.length
+    + filters.orientations.length
+    + (filters.productionReadyOnly ? 1 : 0);
+  const showMore = moreOpen || refinementCount > 0;
 
   return (
     <div className="space-y-4">
@@ -114,7 +132,22 @@ export function TemplateLibraryFilters({
         </Select>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {/*
+        Ten chip groups, all open, ~60 chips above the grid they filter.
+
+        That is what the 19 Sep 2026 clone audit called "too messy and looks
+        unprofessional", and the arithmetic bears it out: the filters took more
+        vertical space than the templates. The same shape the AML action list
+        had, and the same answer — the axes a person reaches for are open, the
+        rest are a disclosure that says how many of them are in use so nothing
+        is hidden silently.
+
+        Which axes are "open" is not a taste call: design family and report
+        type are the two the catalogue is organised by (families × variants ×
+        colourways, serving ten report formats), and they are what a reader
+        narrows on first.
+      */}
+      <div className="grid gap-4 sm:grid-cols-2">
         {/* Design-family axes come first: in a catalogue organised as families ×
             variants × colourways, those are the questions a user asks before
             "which report type is this". They hide entirely when the catalogue
@@ -149,43 +182,6 @@ export function TemplateLibraryFilters({
           </ChipGroup>
         )}
 
-        {densities.length > 0 && (
-          <ChipGroup legend="Density">
-            {densities.map((d) => (
-              <FilterChip
-                key={d}
-                label={d.charAt(0).toUpperCase() + d.slice(1)}
-                pressed={filters.densities.includes(d)}
-                onClick={() => onChange({ ...filters, densities: toggle(filters.densities, d) })}
-              />
-            ))}
-          </ChipGroup>
-        )}
-
-        {useBuckets.length > 0 && (
-          <ChipGroup legend="Recommended use">
-            {useBuckets.map((b) => (
-              <FilterChip
-                key={b}
-                label={b}
-                pressed={filters.useBuckets.includes(b)}
-                onClick={() => onChange({ ...filters, useBuckets: toggle(filters.useBuckets, b) })}
-              />
-            ))}
-          </ChipGroup>
-        )}
-
-        <ChipGroup legend="Category">
-          {CATEGORY_OPTIONS.map((o) => (
-            <FilterChip
-              key={o.value}
-              label={o.label}
-              pressed={filters.categories.includes(o.value)}
-              onClick={() => onChange({ ...filters, categories: toggle(filters.categories, o.value) })}
-            />
-          ))}
-        </ChipGroup>
-
         {reportTypes.length > 0 && (
           <ChipGroup legend="Report type">
             {reportTypes.map((t) => (
@@ -198,6 +194,61 @@ export function TemplateLibraryFilters({
             ))}
           </ChipGroup>
         )}
+      </div>
+
+      <Collapsible open={showMore} onOpenChange={setMoreOpen}>
+        <CollapsibleTrigger asChild>
+          <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs">
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+            More filters
+            {refinementCount > 0 && (
+              <Badge variant="secondary" className="ml-0.5 h-5 min-w-5 justify-center px-1 text-[10px]">
+                {refinementCount}
+              </Badge>
+            )}
+            <ChevronDown
+              className={`h-3.5 w-3.5 transition-transform ${showMore ? 'rotate-180' : ''}`}
+              aria-hidden="true"
+            />
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="grid gap-4 pt-4 sm:grid-cols-2 lg:grid-cols-3">
+          {densities.length > 0 && (
+            <ChipGroup legend="Density">
+              {densities.map((d) => (
+                <FilterChip
+                  key={d}
+                  label={d.charAt(0).toUpperCase() + d.slice(1)}
+                  pressed={filters.densities.includes(d)}
+                  onClick={() => onChange({ ...filters, densities: toggle(filters.densities, d) })}
+                />
+              ))}
+            </ChipGroup>
+          )}
+
+          {useBuckets.length > 0 && (
+            <ChipGroup legend="Recommended use">
+              {useBuckets.map((b) => (
+                <FilterChip
+                  key={b}
+                  label={b}
+                  pressed={filters.useBuckets.includes(b)}
+                  onClick={() => onChange({ ...filters, useBuckets: toggle(filters.useBuckets, b) })}
+                />
+              ))}
+            </ChipGroup>
+          )}
+
+          <ChipGroup legend="Category">
+            {CATEGORY_OPTIONS.map((o) => (
+              <FilterChip
+                key={o.value}
+                label={o.label}
+                pressed={filters.categories.includes(o.value)}
+                onClick={() => onChange({ ...filters, categories: toggle(filters.categories, o.value) })}
+              />
+            ))}
+          </ChipGroup>
 
         <ChipGroup legend="Style">
           {STYLE_OPTIONS.map((o) => (
@@ -232,14 +283,15 @@ export function TemplateLibraryFilters({
           ))}
         </ChipGroup>
 
-        <ChipGroup legend="Compatibility">
-          <FilterChip
-            label="Report-ready only"
-            pressed={filters.productionReadyOnly}
-            onClick={() => onChange({ ...filters, productionReadyOnly: !filters.productionReadyOnly })}
-          />
-        </ChipGroup>
-      </div>
+          <ChipGroup legend="Compatibility">
+            <FilterChip
+              label="Report-ready only"
+              pressed={filters.productionReadyOnly}
+              onClick={() => onChange({ ...filters, productionReadyOnly: !filters.productionReadyOnly })}
+            />
+          </ChipGroup>
+        </CollapsibleContent>
+      </Collapsible>
 
       <div className="flex items-center gap-3">
         <p className="text-xs text-muted-foreground" aria-live="polite">

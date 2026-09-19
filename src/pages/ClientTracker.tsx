@@ -67,6 +67,7 @@ import { EventDetailsModal } from '@/components/calendar/EventDetailsModal';
 import { toast } from 'sonner';
 import { formatFullName } from '@/utils/nameFormatting';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 
 // Types for GHL pipeline data
 interface GHLPipeline {
@@ -421,8 +422,7 @@ export default function ClientTracker() {
           queryClient.invalidateQueries({ queryKey: ['ghl-pipelines'] });
           queryClient.invalidateQueries({ queryKey: ['ghl-pipeline-stages'] });
           queryClient.invalidateQueries({ queryKey: ['ghl-client-opportunities'] });
-          queryClient.invalidateQueries({ queryKey: ['client-tracker'] });
-          queryClient.invalidateQueries({ queryKey: ['clients'] });
+          invalidateClientQueries(queryClient, null);
           
           // Also refresh calendar events
           const now = new Date();
@@ -536,9 +536,10 @@ export default function ClientTracker() {
         }
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['client-tracker'] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+    onSuccess: (_result, variables: Partial<TrackedClient> & { id: string }) => {
+      // A pipeline save writes the client's own record, so the open client
+      // card has to hear about it too — this list named neither of its keys.
+      invalidateClientQueries(queryClient, variables.id);
       setEditingClient(null);
       toast.success('Pipeline data saved successfully');
     },

@@ -156,17 +156,49 @@ export default function GammaTemplateManager() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  /**
+   * Make one template the default.
+   *
+   * Three things were wrong with this, and the 19 Sep 2026 clone audit saw the
+   * third: "set to default does not work in real time, page has to be
+   * refreshed for action to be implemented".
+   *
+   * **The clearing write's error was discarded.** `await supabase…update({
+   * is_default: false })` with no `error` check: refused by RLS, it left the
+   * old default standing while the new one was also set, so the table held two
+   * defaults and nothing said so.
+   *
+   * **The order left a gap with no default at all.** Clearing first and then
+   * setting means any failure of the second write — or a reload in between —
+   * leaves the blueprint unset. Setting first and clearing after leaves two
+   * defaults in the same fault, which is recoverable by clicking again.
+   *
+   * **The toast fired before the list was re-read.** `invalidateQueries`
+   * returns a promise and it was not awaited, so "Default template updated"
+   * appeared over the old list; when the refetch then failed (which is exactly
+   * what this panel does on a deployment where the read is refused), nothing
+   * reported it and only a page reload showed the truth.
+   */
   const setDefaultMutation = useMutation({
     mutationFn: async (id: string) => {
-      // Unset all defaults first
-      await supabase.from('gamma_agreement_templates' as any).update({ is_default: false } as any).neq('id', id);
-      const { error } = await supabase.from('gamma_agreement_templates' as any).update({ is_default: true } as any).eq('id', id);
-      if (error) throw error;
+      const { error: setError } = await supabase
+        .from('gamma_agreement_templates' as any)
+        .update({ is_default: true } as any)
+        .eq('id', id);
+      if (setError) throw setError;
+
+      const { error: clearError } = await supabase
+        .from('gamma_agreement_templates' as any)
+        .update({ is_default: false } as any)
+        .neq('id', id);
+      if (clearError) throw clearError;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['gamma-templates'] });
+    onSuccess: async () => {
+      // Awaited, so the toast describes a list that has actually been re-read.
+      await queryClient.invalidateQueries({ queryKey: ['gamma-templates'] });
       toast.success('Default template updated');
     },
+    onError: (e: Error) => toast.error(e.message || 'Could not set the default template'),
   });
 
   const addMapping = () => setMappings([...mappings, { placeholder: '', field: '' }]);

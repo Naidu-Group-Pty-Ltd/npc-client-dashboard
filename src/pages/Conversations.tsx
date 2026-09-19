@@ -69,8 +69,23 @@ import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
 import { isCorrespondence, summariseWithheldEntries, withheldEntriesSentence } from "@/lib/ghl/conversationEntry";
 
 // ── Channel helpers ──────────────────────────────────────────
-function normalizeChannel(ch: string | undefined): string {
-  if (!ch) return "sms";
+/**
+ * The channel a stored value names.
+ *
+ * `UNKNOWN_CHANNEL` rather than `"sms"` for an absent or unrecognised value.
+ * The default used to be SMS, so every thread GoHighLevel had not labelled was
+ * drawn as an SMS thread — badge, avatar, bubble colour and the Send-via
+ * control alike. The 19 Sep 2026 clone audit reported that twice: an email
+ * tagged SMS in the header, and a client listed under the SMS filter who had
+ * never been sent one.
+ *
+ * "We do not know" is a real answer and it is rendered as one; a caller that
+ * must pick a channel to SEND on picks it explicitly.
+ */
+export const UNKNOWN_CHANNEL = 'unknown';
+
+function normalizeChannel(ch: string | undefined | null): string {
+  if (!ch) return UNKNOWN_CHANNEL;
   const lower = ch.trim().toLowerCase();
   const map: Record<string, string> = {
     type_phone: "sms",
@@ -98,7 +113,26 @@ function normalizeChannel(ch: string | undefined): string {
     type_activity_opportunity: "activity",
     type_activity_appointment: "activity",
   };
-  return map[lower] || lower;
+  return map[lower] || lower || UNKNOWN_CHANNEL;
+}
+
+/**
+ * What this thread is actually on, read from the correspondence in it.
+ *
+ * A conversation carries ONE stored `channel_type` and many messages, and the
+ * two disagree: the audit's screenshot shows an email thread badged SMS. The
+ * messages are the evidence, so the most recent correspondence wins and the
+ * stored column is the fallback for a thread whose messages have not loaded.
+ */
+function threadChannel(
+  conversation: { channel_type?: string | null } | null | undefined,
+  correspondence: readonly { channel_type?: string | null }[],
+): string {
+  for (let i = correspondence.length - 1; i >= 0; i -= 1) {
+    const channel = normalizeChannel(correspondence[i]?.channel_type);
+    if (channel !== UNKNOWN_CHANNEL) return channel;
+  }
+  return normalizeChannel(conversation?.channel_type);
 }
 
 const channelIcons: Record<string, any> = {
@@ -108,6 +142,7 @@ const channelIcons: Record<string, any> = {
   instagram: Camera,
   facebook: ThumbsUp,
   live_chat: Globe,
+  [UNKNOWN_CHANNEL]: MessageSquare,
 };
 
 const channelColors: Record<string, string> = {
@@ -122,6 +157,8 @@ const channelColors: Record<string, string> = {
     "bg-accent/10 text-accent-foreground border-accent/35 shadow-[0_0_24px_rgba(99,102,241,0.16)]",
   live_chat:
     "bg-accent/10 text-accent-foreground border-accent/35 shadow-[0_0_24px_rgba(168,85,247,0.16)]",
+  // Deliberately neutral: an unrecorded channel must not borrow another's colour.
+  [UNKNOWN_CHANNEL]: "bg-muted/40 text-muted-foreground border-border",
 };
 
 // Avatar bubble uses opaque endpoints so the parent row's read/unread tint
@@ -337,10 +374,20 @@ export default function Conversations() {
     queryKey: ["all-conversations"],
     queryFn: async () => {
       // Fetch all conversations through the secure edge function
+      // The columns this page actually reads. It used to ask for `*` across
+      // every conversation on the deployment — 1,000 rows of every column,
+      // `last_message_body` included, on each mount and each window focus,
+      // which is most of what "this page is super laggy" (19 Sep 2026 clone
+      // audit) was paying for. `available_channels` feeds the channel filter
+      // and `client_id` resolves the names below.
       const { data, error } = await invokeSecureFunction("get-client-data", {
         listMode: true,
         listOptions: {
           table: "ghl_conversations",
+          select:
+            "id, client_id, ghl_conversation_id, ghl_contact_id, channel_type, "
+            + "last_message_body, last_message_date, last_message_direction, "
+            + "unread_count, conversation_status, available_channels",
           orderBy: "last_message_date",
           order_asc: false,
         },
@@ -621,15 +668,35 @@ export default function Conversations() {
     };
   }, [selectedId]);
 
+  /**
+   * What this thread is on, from the messages in it.
+   *
+   * Computed once and used for the header badge, the avatar and the default
+   * reply channel, so those three cannot say different things — and so none of
+   * them says "SMS" about an email thread because the stored column happens to
+   * be unset.
+   */
+  const activeChannel = useMemo(
+    () => threadChannel(selectedConversation, correspondence),
+    [selectedConversation, correspondence],
+  );
+
   // ── When conversation changes ──
   useEffect(() => {
     if (selectedConversation) {
-      const ch = normalizeChannel(selectedConversation.channel_type);
-      setReplyChannel(["sms", "email", "whatsapp"].includes(ch) ? ch : "sms");
+      // A thread whose channel we cannot read still has to be replied to on
+      // something, and SMS is the product's default outbound channel — but it
+      // is chosen here, deliberately, rather than arriving as the answer to
+      // "what channel is this?"
+      setReplyChannel(["sms", "email", "whatsapp"].includes(activeChannel) ? (activeChannel as 'sms' | 'email' | 'whatsapp') : "sms");
       setEmailSubject("");
       setReplyText("");
     }
-  }, [selectedId]);
+    // Seeded on the thread and on the first reading of its channel; not on
+    // every message that arrives afterwards, which would move the control
+    // under the operator mid-reply.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, activeChannel]);
 
   // ── Auto-scroll messages ──
   useEffect(() => {
@@ -1690,18 +1757,18 @@ export default function Conversations() {
                   <div className="relative flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex min-w-0 flex-1 items-start gap-3.5">
                       {!isMobile && (
-                        <div className={cn('relative flex h-16 w-16 shrink-0 items-center justify-center rounded-[1.35rem] border border-border dark:border-white/10 bg-gradient-to-br shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_16px_34px_rgba(0,0,0,0.30)] ring-1 ring-border dark:ring-white/[0.045]', avatarBackgrounds[normalizeChannel(selectedConversation.channel_type)] || 'from-muted/30 via-muted/16 to-card dark:to-background')}>
+                        <div className={cn('relative flex h-16 w-16 shrink-0 items-center justify-center rounded-[1.35rem] border border-border dark:border-white/10 bg-gradient-to-br shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_16px_34px_rgba(0,0,0,0.30)] ring-1 ring-border dark:ring-white/[0.045]', avatarBackgrounds[activeChannel] || 'from-muted/30 via-muted/16 to-card dark:to-background')}>
                           <span className="relative z-10 text-base font-bold tracking-[-0.03em] text-foreground dark:text-white drop-shadow">{getContactInitials(selectedConversation.client_name)}</span>
-                          <span className={cn('absolute -bottom-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-full border border-border/90 bg-background dark:bg-background shadow-[0_8px_18px_rgba(0,0,0,0.36)] ring-1 ring-border dark:ring-white/10', channelColors[normalizeChannel(selectedConversation.channel_type)] || 'text-foreground dark:text-foreground')}>
-                            {(() => { const I = channelIcons[normalizeChannel(selectedConversation.channel_type)] || MessageSquare; return <I className="h-3.5 w-3.5" />; })()}
+                          <span className={cn('absolute -bottom-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-full border border-border/90 bg-background dark:bg-background shadow-[0_8px_18px_rgba(0,0,0,0.36)] ring-1 ring-border dark:ring-white/10', channelColors[activeChannel] || 'text-foreground dark:text-foreground')}>
+                            {(() => { const I = channelIcons[activeChannel] || MessageSquare; return <I className="h-3.5 w-3.5" />; })()}
                           </span>
                           <span className="absolute inset-0 rounded-[1.35rem] bg-gradient-to-br from-white/12 to-transparent opacity-60" />
                         </div>
                       )}
                       <div className="min-w-0 flex-1 space-y-2">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <Badge className={cn('rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]', channelColors[normalizeChannel(selectedConversation.channel_type)] || 'border-border dark:border-white/10 bg-white/[0.04] text-foreground dark:text-foreground')}>
-                            {normalizeChannel(selectedConversation.channel_type).replace('_', ' ')}
+                          <Badge className={cn('rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]', channelColors[activeChannel] || 'border-border dark:border-white/10 bg-white/[0.04] text-foreground dark:text-foreground')}>
+                            {activeChannel === UNKNOWN_CHANNEL ? 'channel not recorded' : activeChannel.replace('_', ' ')}
                           </Badge>
                           <Badge variant="outline" className="rounded-full border-success/25 bg-success/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-success">
                             <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-success/30 shadow-[0_0_10px_rgba(110,231,183,0.75)]" />
@@ -1852,7 +1919,10 @@ export default function Conversations() {
                                   case "email":
                                     return "rounded-br-md border-brand-200/40 bg-[linear-gradient(135deg,rgba(245,158,11,0.55),rgba(120,53,15,0.85))] text-white shadow-[0_12px_34px_rgba(245,158,11,0.22)]";
                                   default:
-                                    return "rounded-br-md border-info/40 bg-[linear-gradient(135deg,rgba(59,130,246,0.55),rgba(30,64,175,0.85))] text-white shadow-[0_12px_34px_rgba(37,99,235,0.22)]";
+                                    // Neutral. Painting an unrecorded channel
+                                    // in SMS blue is how an email came to look
+                                    // like a text message.
+                                    return "rounded-br-md border-border bg-[linear-gradient(135deg,rgba(82,82,91,0.55),rgba(39,39,42,0.85))] text-white shadow-[0_12px_34px_rgba(0,0,0,0.22)]";
                                 }
                               };
 
@@ -1888,11 +1958,39 @@ export default function Conversations() {
                                         : "rounded-bl-md border-border dark:border-white/10 bg-[linear-gradient(135deg,rgba(39,39,42,0.96),rgba(9,9,11,0.92))] text-foreground dark:text-foreground shadow-[0_12px_30px_rgba(0,0,0,0.22)]",
                                     )}
                                   >
-                                    {!isOutbound && msg.sender_name && (
-                                      <p className="text-[10px] font-medium mb-0.5 opacity-70">
-                                        {msg.sender_name}
-                                      </p>
-                                    )}
+                                    {/*
+                                      Which channel this message came on.
+
+                                      The outbound bubble's colour already said
+                                      it and the inbound one said nothing, so
+                                      under the "All" filter an email and an
+                                      SMS from a client were the same charcoal
+                                      box — the 19 Sep 2026 clone audit's "no
+                                      color difference … to distinguish which is
+                                      email and which is SMS". A word beside the
+                                      icon rather than colour alone, because
+                                      colour is not readable by everyone and is
+                                      not readable at all on the inbound side.
+                                    */}
+                                    <p className={cn(
+                                      'mb-0.5 flex items-center gap-1 text-[10px] font-medium uppercase tracking-[0.12em]',
+                                      isOutbound ? 'opacity-80' : 'opacity-70',
+                                    )}>
+                                      {(() => {
+                                        const I = channelIcons[msgChannel] || MessageSquare;
+                                        return <I className="h-2.5 w-2.5 shrink-0" />;
+                                      })()}
+                                      <span>
+                                        {msgChannel === UNKNOWN_CHANNEL
+                                          ? 'channel not recorded'
+                                          : msgChannel.replace('_', ' ')}
+                                      </span>
+                                      {!isOutbound && msg.sender_name && (
+                                        <span className="ml-1 truncate normal-case tracking-normal">
+                                          · {msg.sender_name}
+                                        </span>
+                                      )}
+                                    </p>
                                     {msg.body && (
                                       <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">
                                         {renderFormattedMessage(
@@ -2016,46 +2114,51 @@ export default function Conversations() {
                   </DropdownMenu>
                 </div>
 
+                {/*
+                  Mailbox and subject on ONE row.
+
+                  They were two stacked rows, each of them a single line of
+                  controls, and the composer is `shrink-0` above a `flex-1`
+                  message list — so choosing email took about 80px off the
+                  history every time. That is the 19 Sep 2026 clone audit's
+                  "when switch to send via email, the chat history becomes too
+                  small". They wrap back to two rows when the pane is narrow.
+                */}
                 {replyChannel === "email" && (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                        Mailbox:
-                      </span>
-                      <Select
-                        value={selectedMailbox}
-                        onValueChange={setSelectedMailbox}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
+                      value={selectedMailbox}
+                      onValueChange={setSelectedMailbox}
+                    >
+                      <SelectTrigger
+                        aria-label="Select email reply mailbox"
+                        className="h-9 w-auto min-w-[10rem] shrink-0 rounded-full border-brand-100/15 bg-background/35 dark:bg-black/35 text-xs text-foreground dark:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                       >
-                        <SelectTrigger
-                          aria-label="Select email reply mailbox"
-                          className="h-9 min-w-0 flex-1 rounded-full border-brand-100/15 bg-background/35 dark:bg-black/35 text-xs text-foreground dark:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                        >
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="admin" className="text-xs">
-                            Admin Mailbox
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin" className="text-xs">
+                          Admin Mailbox
+                        </SelectItem>
+                        {mailboxes.map((mb) => (
+                          <SelectItem
+                            key={mb.id}
+                            value="personal"
+                            className="text-xs"
+                          >
+                            Personal — {mb.personal_mailbox}
                           </SelectItem>
-                          {mailboxes.map((mb) => (
-                            <SelectItem
-                              key={mb.id}
-                              value="personal"
-                              className="text-xs"
-                            >
-                              Personal — {mb.personal_mailbox}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <Input
                       placeholder="Email subject..."
                       aria-label="Email subject"
                       value={emailSubject}
                       onChange={(e) => setEmailSubject(e.target.value)}
-                      className="h-10 rounded-2xl border-brand-100/12 bg-background/35 dark:bg-black/35 text-sm text-foreground dark:text-foreground placeholder:text-muted-foreground dark:placeholder:text-muted-foreground focus-visible:border-brand-300/50 focus-visible:ring-brand-300/25"
+                      className="h-9 min-w-[12rem] flex-1 rounded-full border-brand-100/12 bg-background/35 dark:bg-black/35 text-sm text-foreground dark:text-foreground placeholder:text-muted-foreground dark:placeholder:text-muted-foreground focus-visible:border-brand-300/50 focus-visible:ring-brand-300/25"
                     />
-                  </>
+                  </div>
                 )}
 
                 <MessageComposer

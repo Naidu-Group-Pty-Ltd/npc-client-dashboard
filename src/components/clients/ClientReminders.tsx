@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -91,9 +92,11 @@ function FollowUpBanner({ clientId, followUpDate }: { clientId: string; followUp
       if (error) throw error;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
-      queryClient.invalidateQueries({ queryKey: ['client-tracker'] });
-      queryClient.invalidateQueries({ queryKey: ['client-detail', clientId] });
+      // The card an operator has open reads `secure-client-data`, which this
+      // list never named — so the write landed, the toast said so, and the
+      // banner kept reading "No follow-up date set" until the card was closed
+      // and reopened. One list now, in `lib/clients/invalidateClientQueries`.
+      invalidateClientQueries(queryClient, clientId);
       setCalOpen(false);
     },
     onError: (error: any) => {

@@ -373,6 +373,42 @@ function walkFunctions(dir, out = []) {
   return out;
 }
 
+// ── A CORS helper may not be RE-DEFINED, only imported ─────────────────────
+//
+// Every rule above that asks "does this function answer an exact origin?"
+// answers it by matching the NAME `createCorsHeaders(` in the source. A
+// function that declares its own `function createCorsHeaders(origin)` therefore
+// satisfies all of them while sharing nothing with `_shared/auth.ts` — not the
+// allowlist, not the request-header list, not the expose list.
+//
+// `manage-investment-reports` was in exactly that state and it was the only
+// one. Its private copy trusted five hostnames compiled into the source
+// (`command-centre.npcservices.com.au`, `*.npcservices.com.au`,
+// `*.lovable.app`, `*.lovableproject.com`, localhost) and never read
+// `ALLOWED_ORIGINS`, the variable each deployment is actually configured
+// through. A clone served from its own domain got the mismatched fallback, the
+// browser refused the response, and `fetch` rejected opaquely — which the
+// Reports page renders as "Network/CORS error calling
+// manage-investment-reports. Please check the function deployment and
+// auth/CORS configuration", sending the reader to a deployment that is fine.
+// The 19 Sep 2026 clone audit filed that twice, as two separate defects.
+//
+// The allowlist is deployment configuration. A function that compiles one in
+// works on exactly the deployments whose hostname someone happened to type.
+const SHARED_CORS_HELPERS = ['createCorsHeaders', 'createTokenAuthCorsHeaders'];
+for (const file of walkFunctions(FUNC_DIR)) {
+  if (file === AUTH_TS) continue;
+  const src = readFileSync(file, 'utf8');
+  const code = stripComments(src);
+  for (const helper of SHARED_CORS_HELPERS) {
+    const declares = new RegExp(
+      String.raw`(?:^|\n)\s*(?:export\s+)?(?:async\s+)?(?:function\s+${helper}\s*\(|const\s+${helper}\s*=)`,
+    ).test(code);
+    if (!declares) continue;
+    errors.push(`${file}: declares its own \`${helper}\`. Every CORS rule in this gate matches the helper by NAME, so a private copy passes all of them while sharing nothing with ${AUTH_TS} — not the origin allowlist, not the request-header list, not the expose list. A compiled-in allowlist also ignores \`ALLOWED_ORIGINS\`, so the function works only on the deployments whose hostname is written into it and answers every other one with a mismatched origin the browser refuses. Import it from ../_shared/auth.ts instead.`);
+  }
+}
+
 // ── createCorsHeaders() must not be overridden ─────────────────────────────
 // Spreading the shared helper and then restating Allow-/Expose-Headers pins the
 // function to a snapshot of the canonical lists taken on the day it was

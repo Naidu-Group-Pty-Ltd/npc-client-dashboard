@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -312,24 +313,11 @@ export function useManageClientData() {
   return useMutation({
     mutationFn: manageClientDataSecure,
     onSuccess: (_, variables) => {
-      // Invalidate relevant queries
-      if (variables.clientId) {
-        queryClient.invalidateQueries({ queryKey: ['secure-client-data', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['secure-client', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['secure-client-properties', variables.clientId] });
-        
-        // Also invalidate legacy query keys for backward compatibility
-        queryClient.invalidateQueries({ queryKey: ['client-details', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['client-properties', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['client-income', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['client-assets', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['client-liabilities', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['client-expenses', variables.clientId] });
-        queryClient.invalidateQueries({ queryKey: ['client-employment', variables.clientId] });
-      }
-      
-      // Invalidate clients list
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      // This list was correct and it was also the ONLY correct one: three other
+      // surfaces wrote their own and each omitted `secure-client-data`, which is
+      // what the open client card reads. It is one module now, so a surface can
+      // no longer hold a private, shorter copy.
+      invalidateClientQueries(queryClient, variables.clientId);
     },
   });
 }

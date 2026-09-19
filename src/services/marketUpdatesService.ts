@@ -1,5 +1,8 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction, isAuthFailureResponse, resolveAuthBearer } from '@/lib/secureInvoke';
+import {
+  classifyMarketFailure, marketFailureIsRetryable, resolveIssueMessage,
+} from '@/lib/marketUpdates/operationalIssue.pure';
 import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQADepth, MarketQAMessage, MarketQAStage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue, SetMarketNewsArchiveStateInput, SetMarketNewsArchiveStateResult } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
@@ -11,30 +14,52 @@ export class MarketUpdatesOperationalError extends Error {
   constructor(public readonly issue: MarketUpdatesOperationalIssue, options?: { cause?: unknown }) { super(issue.message); this.name = 'MarketUpdatesOperationalError'; if (options?.cause !== undefined) (this as any).cause = options.cause; }
 }
 
+/**
+ * Turn a transport failure into something an operator can act on.
+ *
+ * The classification and the "whose sentence wins" rule both live in
+ * `operationalIssue.pure.ts`, because the defect they exist for was that this
+ * function threw away a diagnosis the server had already written: a 422 fell
+ * through to `unknown`, and `unknown` replaces the server's own sentence with
+ * a generic one. See that module's header.
+ */
 function operationalError(stage: MarketUpdatesOperationalIssue['stage'], error: any, functionName?: string): MarketUpdatesOperationalError {
   if (error instanceof MarketUpdatesOperationalError) return error;
   const status = Number(error?.status || error?.statusCode) || undefined;
-  const raw = String(error?.message ?? error ?? '').toLowerCase();
-  const safeCode = typeof error?.code === 'string' ? error.code : null;
-  const code = safeCode ?? (error?.network ? 'network_error'
-    : status === 401 ? 'unauthorised'
-    : status === 403 || raw.includes('permission denied') || raw.includes('row-level security') ? 'rls_denied'
-    : status === 404 ? 'function_missing'
-    : raw.includes('does not exist') || raw.includes('schema cache') || raw.includes('pgrst205') || raw.includes('42p01') ? 'migration_missing'
-    : status && status >= 500 ? 'server_error' : 'unknown');
+  const serverMessage = typeof error?.message === 'string' ? error.message : null;
+  const code = classifyMarketFailure({
+    status,
+    message: serverMessage ?? String(error ?? ''),
+    code: typeof error?.code === 'string' ? error.code : null,
+    network: Boolean(error?.network),
+  });
   const messages: Record<string, string> = {
     network_error: 'The Market News Feed service could not be reached.', unauthorised: 'Your sign-in session is missing or expired.',
     rls_denied: 'Your account is not authorised to access this Market News Feed operation.', function_missing: `The ${functionName ?? 'required'} Edge Function is not deployed.`,
     migration_missing: 'The Market News Feed database migration has not been applied in this environment.', server_error: 'The Market News Feed service returned an internal error.', unknown: 'Market News Feed could not complete this operation.',
+    missing_session:'You are not signed in.',
+    forbidden:'Your account is not authorised to perform this Market News Feed operation.',
+    source_failed:'The Market News Feed ingestion run failed.',
+    ai_unavailable:'No Market News Feed AI route is available.',
+    registry_empty:'The Market News Feed source registry has not been seeded in this deployment, so there is nothing to ingest from.',
+    sources_disabled:'Every Market News Feed source in this deployment is disabled, so there is nothing to ingest from.',
+    ingestion_empty:'The Market News Feed ingestion found no sources to read.',
     session_expired:'Your sign-in session has expired.', provider_not_configured:'The assigned Market News Feed AI route is not configured.', provider_unauthorised:'The assigned AI provider rejected its credentials.', provider_payment_required:'The assigned AI provider requires billing attention.', provider_rate_limited:'The assigned AI provider is rate limited.', provider_timeout:'The assigned AI provider timed out.', source_fetch_failed:'A configured market source could not be fetched.', source_parse_failed:'A market source response could not be parsed.', source_validation_failed:'A market source response failed validation.', database_insert_failed:'A Market News Feed item could not be persisted.', digest_failed:'The Market News Feed digest failed.', cron_missing:'Market News Feed automation is not configured.', cron_stale:'Market News Feed automation is stale.',
   };
   const remediation: Record<string, string> = {
     network_error: 'Check connectivity and retry.', unauthorised: 'Sign in again, then retry.', rls_denied: 'Ask an administrator to verify your role and Market News Feed policies.',
     function_missing: 'Deploy the Market News Feed Edge Functions to the frontend project.', migration_missing: 'Apply the pending Market News Feed migrations and seed migration.',
     server_error: 'Review the function log and latest ingestion run, then retry.', unknown: 'Retry; if it persists, review the connected project and function logs.',
+    missing_session:'Sign in, then retry.',
+    forbidden:'Ask an administrator to grant your account the Market News Feed role.',
+    source_failed:'Open Sources to review source health, then retry.',
+    ai_unavailable:'Configure and test the Market News Feed agent in Model Hub.',
+    registry_empty:'Apply the Market News Feed source seed migration to this project, then run Ingest again.',
+    sources_disabled:'Open Sources and enable at least one canonical source, then run Ingest again.',
+    ingestion_empty:'Open Sources to review the registry, then run Ingest again.',
     session_expired:'Sign in again, then retry.', provider_not_configured:'Configure and test the Market News Feed agent in Model Hub.', provider_unauthorised:'An administrator must verify the provider credential.', provider_payment_required:'An administrator must review provider billing.', provider_rate_limited:'Wait briefly and retry; the configured fallback may be used.', provider_timeout:'Retry; if this persists, test the fallback chain.', source_fetch_failed:'Open Sources, test the affected source, and retry.', source_parse_failed:'Open Sources and review the adapter result.', source_validation_failed:'Review the source URL and adapter security validation.', database_insert_failed:'Review the ingestion run and database function logs.', digest_failed:'Retry digest generation and review the digest agent route.', cron_missing:'Apply the automation migration and verify scheduled jobs.', cron_stale:'Inspect cron history and the latest automation dispatch.',
   };
-  return new MarketUpdatesOperationalError({ stage:(error?.stage as MarketUpdatesOperationalIssue['stage']) ?? stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code] ?? messages.unknown, remediation: remediation[code] ?? remediation.unknown, httpStatus: status, functionName, correlationId:error?.correlationId, retryable:typeof error?.retryable === 'boolean' ? error.retryable : !['rls_denied','provider_unauthorised','provider_payment_required'].includes(code) }, { cause: error });
+  return new MarketUpdatesOperationalError({ stage:(error?.stage as MarketUpdatesOperationalIssue['stage']) ?? stage, code: code as MarketUpdatesOperationalIssue['code'], message: resolveIssueMessage(code, serverMessage, messages[code] ?? messages.unknown), remediation: remediation[code] ?? remediation.unknown, httpStatus: status, functionName, correlationId:error?.correlationId, retryable:typeof error?.retryable === 'boolean' ? error.retryable : marketFailureIsRetryable(code) }, { cause: error });
 }
 
 const mapUpdate = (r: any): MarketUpdate => ({

@@ -33,8 +33,11 @@ describe('Market News Feed archive service',()=>{
   });
 
   it('rejects malformed successful responses instead of pretending the mutation succeeded',async()=>{
+    // The sentence is the one the SERVICE wrote about its own state, not the
+    // classifier's generic "could not complete this operation" — which used to
+    // replace it and named nothing. See `operationalIssue.pure.ts`.
     invokeSecureFunction.mockResolvedValue({data:{ok:true},error:null});
-    await expect(setMarketNewsArchiveState({updateId,archived:true})).rejects.toThrow('Market News Feed could not complete this operation.');
+    await expect(setMarketNewsArchiveState({updateId,archived:true})).rejects.toThrow('Archive operation returned an invalid response.');
     expect(invokeSecureFunction).toHaveBeenCalledTimes(2);
   });
 });

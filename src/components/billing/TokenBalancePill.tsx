@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { describeTokenHold } from "@/lib/billing/tokenHold.pure";
 import {
   AURIXA_PRICING_URL,
   openMissionControlWithAttribution,
@@ -35,6 +36,10 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
   const available = balance?.available ?? 0;
   const allowance = balance?.allowance ?? 0;
   const used = balance?.used ?? 0;
+  // `available` already has any hold subtracted, which is exactly why a
+  // balance appears to drop for a report that never finished. See
+  // `tokenHold.pure.ts` — this is a sentence, not a second moving figure.
+  const holdNotice = describeTokenHold(balance?.reserved);
 
   const pct = allowance > 0 ? Math.max(0, Math.min(100, (available / allowance) * 100)) : 0;
   const critical = criticalBalance;
@@ -107,6 +112,9 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
                   ? `of ${allowance.toLocaleString('en-AU')} allowance${balance.planName ? ` · ${balance.planName}` : ""}`
                   : "Top-up credits · no plan allowance"}
               </p>
+              {holdNotice && (
+                <p className="text-xs text-muted-foreground">{holdNotice}</p>
+              )}
               {/* Credits lapse 30 days after they are issued, so a balance can
                   shrink without anyone spending anything. Say so before it does. */}
               {!!balance?.expiringSoon && balance.expiringSoon > 0 && (
@@ -149,8 +157,10 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
         </div>
 
         {/* Used only. A reservation is a transient hold the metering layer
-            takes and releases within one generation — surfacing it just made
-            the balance look like it moved twice for a single report. */}
+            takes and releases within one generation, and a second figure
+            moving beside the first made the balance look like it had moved
+            twice for one report — so an outstanding hold is stated ABOVE, in
+            words, and only while there is one. */}
         <div className="bg-border text-center text-xs">
           <div className="bg-popover px-3 py-2">
             <p className="text-muted-foreground">Used</p>

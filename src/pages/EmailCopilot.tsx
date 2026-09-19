@@ -1230,18 +1230,38 @@ export default function EmailCopilot() {
     return safeEmails.split(/[,;]/).map(e => e.trim()).filter(e => e.includes('@'));
   };
 
-  // Initialize reply fields when opening draft modal
+  /**
+   * Seed the reply's addressing from the email being replied to — ONCE.
+   *
+   * This used to re-seed on every call, and `AIReplyAssistant` calls it every
+   * time it produces a draft (`onInitialiseFields` after `onDraftChange`). So
+   * an operator who filled in Cc and Bcc and then asked the assistant for a
+   * draft had both fields silently overwritten with the original email's
+   * recipients — the 19 Sep audit's "the email addresses that I filled in
+   * earlier goes missing after the AI assisted draft is generated".
+   *
+   * Generating a draft writes the BODY; it has no opinion about who the
+   * message goes to. Seeding is therefore keyed on the email being replied to:
+   * the first call for a given email fills the fields, later calls for the same
+   * email leave whatever is in them alone, and closing the composer (which
+   * already clears Cc/Bcc) releases the key so the next reply seeds again.
+   */
+  const seededReplyForEmailId = useRef<string | null>(null);
+
   const initializeReplyFields = (isNewEmail: boolean = false) => {
     if (isNewEmail) {
       // For new compose (not a reply)
+      seededReplyForEmailId.current = null;
       setReplyTo('');
       setReplySubject('');
       setReplyCc('');
       setReplyBcc('');
       return;
     }
-    
+
     if (!selectedEmail) return;
+    if (seededReplyForEmailId.current === selectedEmail.id) return;
+    seededReplyForEmailId.current = selectedEmail.id;
     setReplyTo(extractEmailAddress(selectedEmail.sender));
     const subject = toSafeString(selectedEmail.subject).toLowerCase().startsWith('re:') 
       ? selectedEmail.subject 
@@ -1590,6 +1610,7 @@ export default function EmailCopilot() {
       setReplyContext('');
       setReplyCc('');
       setReplyBcc('');
+      seededReplyForEmailId.current = null;
       setReplyAttachments([]);
 
       // Log reply sent
@@ -3158,6 +3179,7 @@ export default function EmailCopilot() {
           setReplyContext('');
           setReplyCc('');
           setReplyBcc('');
+          seededReplyForEmailId.current = null;
         }
       }}>
         <DialogContent className="flex max-h-[92vh] w-[calc(100vw-1rem)] max-w-3xl flex-col gap-3 overflow-hidden rounded-[1.75rem] border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--background)/0.92)_58%,hsl(43_74%_49%/0.045))] p-3 shadow-[0_24px_80px_hsl(var(--background)/0.35)] sm:max-h-[90vh] sm:w-full sm:p-6 lg:max-w-4xl lg:p-7 xl:max-w-5xl">
@@ -3441,7 +3463,16 @@ export default function EmailCopilot() {
 
       {/* Send Confirmation Dialog */}
       <Dialog open={showSendConfirmModal} onOpenChange={setShowSendConfirmModal}>
-        <DialogContent className="max-w-md">
+        {/*
+          448px (`max-w-md`) for a dialog that lists From/To/CC/BCC/Subject,
+          the attachments and a preview of the message is what the 19 Sep audit
+          called "the window overall is too narrow"; the footer fell out of the
+          box below it because the shell was bounded at 85dvh and told not to
+          clip. The shell now scrolls (see `dialog.tsx`) and the preview has a
+          bound of its own — it was `line-clamp-4`, which silently hides the
+          rest of what is about to be sent irreversibly.
+        */}
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Send className="h-5 w-5 text-success" />
@@ -3500,7 +3531,9 @@ export default function EmailCopilot() {
             
             <div className="p-3 bg-muted/30 rounded-lg">
               <p className="text-xs text-muted-foreground mb-1">Message preview:</p>
-              <p className="text-sm line-clamp-4">{currentDraft}</p>
+              <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-sm">
+                {currentDraft}
+              </p>
             </div>
             
             <div className="flex items-center gap-2 p-2 bg-brand-500/10 border border-brand-500/20 rounded-lg">
@@ -3601,7 +3634,7 @@ export default function EmailCopilot() {
           setComposeEmail({ to: '', subject: '', body: '', cc: '', bcc: '' });
         }
       }}>
-        <DialogContent className="flex h-[92dvh] max-h-[92dvh] w-[calc(100vw-1rem)] max-w-2xl flex-col overflow-hidden rounded-[1.75rem] border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--background)/0.92)_58%,hsl(var(--primary)/0.045))] p-4 shadow-[0_24px_80px_hsl(var(--background)/0.35)] sm:h-[min(90dvh,900px)] sm:max-h-[min(90dvh,900px)] sm:overflow-hidden sm:p-6">
+        <DialogContent className="flex h-[92dvh] max-h-[92dvh] w-[calc(100vw-1rem)] max-w-2xl flex-col overflow-hidden rounded-[1.75rem] border-primary/20 bg-[linear-gradient(135deg,hsl(var(--card)/0.98),hsl(var(--background)/0.92)_58%,hsl(var(--primary)/0.045))] p-4 shadow-[0_24px_80px_hsl(var(--background)/0.35)] sm:h-[min(90dvh,900px)] sm:max-h-[min(90dvh,900px)] sm:overflow-hidden sm:p-6 lg:max-w-3xl">
           <DialogHeader className="border-b border-primary/10 pb-3">
             <DialogTitle className="flex items-center gap-2">
               <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
@@ -3619,8 +3652,8 @@ export default function EmailCopilot() {
 
               {/* Email Recipients Section */}
               <div className="space-y-3 rounded-2xl border border-border/60 bg-background/45 p-4 shadow-sm">
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
-                  <Label className="text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">To: *</Label>
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
+                  <Label className="whitespace-nowrap text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">To: *</Label>
                   <Input
                     value={composeEmail.to}
                     aria-label="Recipient email address"
@@ -3629,8 +3662,8 @@ export default function EmailCopilot() {
                     className="h-9 rounded-xl border-border/70 bg-background/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)]"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
-                  <Label className="text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">Subject:</Label>
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
+                  <Label className="whitespace-nowrap text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">Subject:</Label>
                   <Input
                     value={composeEmail.subject}
                     aria-label="Email subject"
@@ -3639,8 +3672,8 @@ export default function EmailCopilot() {
                     className="h-9 rounded-xl border-border/70 bg-background/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)]"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
-                  <Label className="text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">CC:</Label>
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
+                  <Label className="whitespace-nowrap text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">CC:</Label>
                   <Input
                     value={composeEmail.cc}
                     aria-label="CC recipients"
@@ -3649,8 +3682,8 @@ export default function EmailCopilot() {
                     className="h-9 rounded-xl border-border/70 bg-background/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:shadow-[0_0_0_3px_hsl(var(--primary)/0.10)]"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
-                  <Label className="text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">BCC:</Label>
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
+                  <Label className="whitespace-nowrap text-sm font-semibold uppercase tracking-[0.12em] text-muted-foreground">BCC:</Label>
                   <Input
                     value={composeEmail.bcc}
                     aria-label="BCC recipients"
@@ -3869,7 +3902,7 @@ export default function EmailCopilot() {
             <div className="space-y-4">
               {/* Recipient Fields */}
               <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">To:</Label>
                   <Input
                     value={replyTo}
@@ -3879,7 +3912,7 @@ export default function EmailCopilot() {
                     className="h-8"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">Subject:</Label>
                   <Input
                     value={replySubject}
@@ -3889,7 +3922,7 @@ export default function EmailCopilot() {
                     className="h-8"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">CC:</Label>
                   <Input
                     value={replyCc}
@@ -3899,7 +3932,7 @@ export default function EmailCopilot() {
                     className="h-8"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">BCC:</Label>
                   <Input
                     value={replyBcc}
@@ -3994,7 +4027,7 @@ export default function EmailCopilot() {
             <div className="space-y-4">
               {/* Recipients Section */}
               <div className="space-y-3 p-3 bg-muted/30 rounded-lg">
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">To: *</Label>
                   <Input
                     value={forwardTo}
@@ -4003,7 +4036,7 @@ export default function EmailCopilot() {
                     className="h-8"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">CC:</Label>
                   <Input
                     value={forwardCc}
@@ -4012,7 +4045,7 @@ export default function EmailCopilot() {
                     className="h-8"
                   />
                 </div>
-                <div className="grid grid-cols-[60px_1fr] gap-2 items-center">
+                <div className="grid grid-cols-[88px_1fr] items-center gap-2">
                   <Label className="text-sm text-muted-foreground">BCC:</Label>
                   <Input
                     value={forwardBcc}

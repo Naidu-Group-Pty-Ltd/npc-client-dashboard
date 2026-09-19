@@ -74,20 +74,38 @@ describe('cancellation notice — what a cancellation does', () => {
     // person per change and is the same fault under a different verb. The
     // guard therefore covers both, and this asserts the rule rather than the
     // sentence that expressed it.
+    //
+    // The guard is now per RECIPIENT rather than per batch, because a
+    // reschedule can carry both: people read back from the ledger, who must
+    // not be filed twice, and somebody the operator ADDED, who is genuinely
+    // newly invited and must be filed or the next cancellation misses them.
     const inserts = notifier.match(
-      /if \(!isCancellation && !recipientsWereResolved\) await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)/g,
+      /if \(!isCancellation && !\(recipient as \{ alreadyInvited\?: boolean \}\)\.alreadyInvited\) await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)/g,
     ) ?? [];
     expect(inserts).toHaveLength(2);
     // No unguarded write survives anywhere.
-    const unguarded = notifier.match(/(?<!&& !recipientsWereResolved\) )await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)\s*\n\s*\.insert/g) ?? [];
+    const unguarded = notifier.match(/(?<!alreadyInvited\) )await supabase\s*\n\s*\.from\('appointment_secondary_recipients'\)\s*\n\s*\.insert/g) ?? [];
     expect(unguarded).toHaveLength(0);
   });
 
   it('a notice about an existing booking reuses who was invited, whatever the verb', () => {
     // Reschedules used to make the operator re-add the additional contact and
-    // the finance partner by hand, and told nobody when they forgot.
-    expect(notifier).toMatch(/let recipientsWereResolved = false;/);
-    expect(notifier).toMatch(/if \(!effectiveRecipients \|\| effectiveRecipients\.length === 0\) \{\s*\n\s*recipientsWereResolved = true;/);
+    // the finance partner by hand, and told nobody when they forgot — and
+    // when they DID re-add one person, that person became the whole list.
+    expect(notifier).toMatch(/NOTICES_ABOUT_AN_EXISTING_BOOKING/);
+    expect(notifier).toMatch(/new Set\(\['cancelled', 'rescheduled'\]\)/);
+    expect(notifier).toMatch(/if \(aboutAnExistingBooking \|\| !effectiveRecipients \|\| effectiveRecipients\.length === 0\)/);
+  });
+
+  it('records a client and an additional contact, not just a finance partner', () => {
+    // `appointment_secondary_recipients.finance_contact_id` was UUID NOT NULL,
+    // and the planner minted `party-<role>-<email>` for anyone without a real
+    // one — so every insert for a client or an additional contact was refused
+    // and the ledger held finance partners alone. Three audit findings came
+    // out of that one column: the booking's detail window listed no additional
+    // contact, and neither a reschedule nor a cancellation reached them.
+    expect(notifier).toMatch(/finance_contact_id: recipient\.financeContactId \|\| null/);
+    expect(notifier).toMatch(/recipient_role: recipient\.role/);
   });
 
   it('takes the meeting type from the booking rather than from the caller', () => {

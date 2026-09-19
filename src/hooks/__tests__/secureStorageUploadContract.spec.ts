@@ -75,6 +75,21 @@ function exemptBuckets(source: string): string[] {
  * guard failed on a file that has nothing to guard — while a NEW upload added
  * anywhere else would not have been checked at all, which is the failure that
  * matters. The list is now the codebase.
+ *
+ * ## The HELPER was still listed, though
+ *
+ * The scan looked for `secureStorageUpload(` and nothing else, so it could see
+ * one of the modules that post `operation: 'upload'` to the function.
+ * `uploadSecureStorageFileWithProgress` in `lib/documentUpload.ts` is another,
+ * and the client card's Files tab called it naming no row at all — so every
+ * file an adviser dropped there was refused 403 with "This upload did not say
+ * which record it belongs to", while the guard written for exactly that
+ * failure passed. The 19 Sep 2026 clone audit reported it on both deployments.
+ *
+ * So the helper names are now found the same way the call sites are: an
+ * exported function in `src/` that posts `operation: 'upload'` to
+ * `secure-storage` IS an upload helper, and every call to one must name its
+ * row. A third helper written tomorrow is covered on the day it is written.
  */
 describe('every upload names its resource', () => {
   /** Every `.ts`/`.tsx` under `src/`, excluding this spec's own directory. */
@@ -92,8 +107,37 @@ describe('every upload names its resource', () => {
     return out;
   }
 
+  const files = sourceFiles(join(root, 'src'));
+
   /**
-   * A call to the helper, from `secureStorageUpload(` to its matching `)`.
+   * The exported helpers that actually perform the upload.
+   *
+   * Found by walking back from each `operation: 'upload'` to the exported
+   * declaration it sits inside, so the answer is "the function that posts the
+   * upload" rather than "a function whose name mentions uploading" — which
+   * would have swept in `calculateTotalUploadSize` and every other helper that
+   * merely lives beside one. Derived rather than listed, because listing them
+   * is how the second real helper escaped the guard.
+   */
+  const helperNames = (() => {
+    const names = new Set<string>();
+    const declaration = /export\s+(?:const|async\s+function|function)\s+([A-Za-z0-9_]+)/g;
+    for (const file of files) {
+      const src = readFileSync(file, 'utf8');
+      if (!src.includes("'secure-storage'")) continue;
+      const exports = [...src.matchAll(declaration)].map((m) => ({ at: m.index ?? 0, name: m[1] }));
+      if (exports.length === 0) continue;
+      for (const m of src.matchAll(/operation:\s*'upload'/g)) {
+        const at = m.index ?? 0;
+        const owner = [...exports].reverse().find((e) => e.at < at);
+        if (owner) names.add(owner.name);
+      }
+    }
+    return [...names].sort();
+  })();
+
+  /**
+   * A call to `name`, from its opening `(` to the matching `)`.
    *
    * Counted rather than matched with a bounded regex: the previous
    * `[\s\S]{0,400}?\)\s*;` needed the call to end within 400 characters AND
@@ -101,10 +145,16 @@ describe('every upload names its resource', () => {
    * result is `await`ed inside a larger expression, simply disappeared from the
    * guard rather than failing it.
    */
-  function uploadCalls(source: string): string[] {
+  function callsTo(source: string, name: string): string[] {
     const calls: string[] = [];
-    const needle = 'secureStorageUpload(';
+    const needle = `${name}(`;
     for (let at = source.indexOf(needle); at >= 0; at = source.indexOf(needle, at + 1)) {
+      // `fooUpload(` must not match when we are looking for `Upload(`.
+      const before = source[at - 1];
+      if (before && /[A-Za-z0-9_$.]/.test(before)) continue;
+      // The declaration of the helper is not a call to it.
+      const line = source.slice(source.lastIndexOf('\n', at) + 1, at);
+      if (/\b(function|const|let|var)\s*$/.test(line)) continue;
       let depth = 0;
       for (let i = at + needle.length - 1; i < source.length; i += 1) {
         const c = source[i];
@@ -125,18 +175,30 @@ describe('every upload names its resource', () => {
 
   /** The bucket a call names, when it names one literally. */
   const bucketOf = (call: string): string | null =>
-    /secureStorageUpload\(\s*'([^']+)'/.exec(call)?.[1] ?? null;
+    /bucket:\s*'([^']+)'/.exec(call)?.[1]
+    ?? /\(\s*'([^']+)'/.exec(call)?.[1]
+    ?? null;
 
-  const callers = sourceFiles(join(root, 'src'))
-    .map((file) => ({ file, calls: uploadCalls(readFileSync(file, 'utf8')) }))
+  const callers = files
+    .map((file) => {
+      const src = readFileSync(file, 'utf8');
+      return { file, calls: helperNames.flatMap((name) => callsTo(src, name)) };
+    })
     .filter((entry) => entry.calls.length > 0);
+
+  it('finds both upload helpers rather than trusting a list', () => {
+    // One of these is `secureStorageUpload`; the other is the progress-reporting
+    // helper the Files tab uses. If this drops to one, the scan has narrowed.
+    expect(helperNames).toContain('secureStorageUpload');
+    expect(helperNames).toContain('uploadSecureStorageFileWithProgress');
+  });
 
   it('finds the callers rather than trusting a list', () => {
     // If this ever reaches zero the scan has broken, not the codebase.
     expect(callers.length).toBeGreaterThan(0);
   });
 
-  it.each(callers.map((c) => c.file.slice(root.length + 1)))('%s passes a resourceId', (relative) => {
+  it.each(callers.map((c) => c.file.slice(root.length + 1)))('%s names the row it uploads for', (relative) => {
     const entry = callers.find((c) => c.file.endsWith(relative))!;
     for (const call of entry.calls) {
       // A bucket the server binds to a row must name that row; a call without
@@ -144,6 +206,11 @@ describe('every upload names its resource', () => {
       // told from the source is treated as binding, which is the safe side.
       const bucket = bucketOf(call);
       if (bucket && exempt.has(bucket)) continue;
+      // A call that forwards its own caller's options wholesale states nothing
+      // about a resource because it has none to state — the site that built
+      // the options is the one this rule is about, and it is checked on its
+      // own line. `useSecureStorage().upload` is the only such wrapper.
+      if (/,\s*options\s*\)$/.test(call)) continue;
       expect(call, `${relative} (${bucket ?? 'bucket not a literal'})`).toMatch(/resourceId:/);
     }
   });

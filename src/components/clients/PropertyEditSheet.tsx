@@ -47,6 +47,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { MonthlyRepaymentField, computeMonthlyRepayment, type RepaymentType } from '@/components/shared/MonthlyRepaymentField';
+import { OwnedOutrightToggle } from './OwnedOutrightToggle';
+import { CurrencyInput } from '@/components/ui/currency-input';
 
 type SourcedByType = 'npc' | 'self_sourced' | 'other_agency' | 'unknown';
 
@@ -194,9 +196,39 @@ export function PropertyEditSheet({ property, open, onOpenChange, onComplete }: 
     lender_name: '',
   });
 
+  /**
+   * Whether this property is owned outright.
+   *
+   * Local to the form and never persisted — `loan_remaining: 0` is already
+   * what "no loan" means to every reader (equity, LVR, serviceability). The
+   * toggle exists because the loan input renders `value={loan_remaining || ''}`,
+   * so a recorded zero and an unrecorded loan drew the same empty box and an
+   * owner-occupied home owned outright could not be SAID. A second stored
+   * column would be a second place that answers the same question.
+   *
+   * Seeded from the record: on a valued property, a zero loan IS owned
+   * outright; there is no other reading of it.
+   */
+  const [ownedOutright, setOwnedOutrightState] = useState(false);
+
+  const setOwnedOutright = (next: boolean) => {
+    setOwnedOutrightState(next);
+    if (!next) return;
+    setFormData(prev => ({
+      ...prev,
+      loan_remaining: 0,
+      interest_rate: 0,
+      monthly_interest_repayment: 0,
+      autoCalculateInterest: false,
+    }));
+  };
+
   // Populate form with existing property data when sheet opens
   useEffect(() => {
     if (open && property) {
+      setOwnedOutrightState(
+        Number(property.loan_remaining) === 0 && Number(property.value) > 0,
+      );
       setFormData({
         property_type: (property.property_type as 'owner_occupied' | 'investment' | 'smsf' | 'rental') || 'investment',
         address: property.address || '',
@@ -253,6 +285,10 @@ export function PropertyEditSheet({ property, open, onOpenChange, onComplete }: 
 
   const updateNumberField = (field: keyof PropertyFormData, value: string) => {
     const numValue = parseFloat(value) || 0;
+    // Typing a loan balance is itself an answer: the property is not owned
+    // outright. Leaving the toggle on while a figure is typed would let the
+    // two disagree.
+    if (field === 'loan_remaining' && numValue > 0) setOwnedOutrightState(false);
     updateField(field, numValue as any);
   };
 
@@ -491,10 +527,9 @@ export function PropertyEditSheet({ property, open, onOpenChange, onComplete }: 
         <div className="flex gap-2">
           <div className="relative flex-1">
             <DollarSign className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="number"
-              value={expense.value || ''}
-              onChange={(e) => updateExpenseField(field, 'value', parseFloat(e.target.value) || 0)}
+            <CurrencyInput
+              value={expense.value || null}
+              onValueChange={(v) => updateExpenseField(field, 'value', v ?? 0)}
               className="pl-7 h-9 text-sm"
               placeholder="0"
             />
@@ -786,10 +821,9 @@ export function PropertyEditSheet({ property, open, onOpenChange, onComplete }: 
                   <Label>Value</Label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="number"
-                      value={formData.value || ''}
-                      onChange={(e) => updateNumberField('value', e.target.value)}
+                    <CurrencyInput
+                      value={formData.value || null}
+                      onValueChange={(v) => updateNumberField('value', v === null ? '' : String(v))}
                       className="pl-9"
                       placeholder="0"
                     />
@@ -799,26 +833,27 @@ export function PropertyEditSheet({ property, open, onOpenChange, onComplete }: 
                   <Label>Loan Remaining ($)</Label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="number"
-                      value={formData.loan_remaining || ''}
-                      onChange={(e) => updateNumberField('loan_remaining', e.target.value)}
+                    <CurrencyInput
+                      value={formData.loan_remaining || null}
+                      onValueChange={(v) => updateNumberField('loan_remaining', v === null ? '' : String(v))}
                       className="pl-9"
-                      placeholder="0"
+                      placeholder={ownedOutright ? 'No loan' : '0'}
+                      disabled={ownedOutright}
                     />
                   </div>
                 </div>
               </div>
+
+              <OwnedOutrightToggle ownedOutright={ownedOutright} onChange={setOwnedOutright} />
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Purchase Price ($)</Label>
                   <div className="relative">
                     <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      type="number"
-                      value={formData.purchase_price || ''}
-                      onChange={(e) => updateNumberField('purchase_price', e.target.value)}
+                    <CurrencyInput
+                      value={formData.purchase_price || null}
+                      onValueChange={(v) => updateNumberField('purchase_price', v === null ? '' : String(v))}
                       className="pl-9"
                       placeholder="0"
                     />

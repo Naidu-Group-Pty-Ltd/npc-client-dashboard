@@ -10,6 +10,7 @@ import {
   type ServiceabilityBand,
 } from '@/utils/borrowingCapacityCalculations';
 import { toast } from 'sonner';
+import { invalidateClientQueries } from '@/lib/clients/invalidateClientQueries';
 
 interface BorrowingCapacityOverrides {
   grossAnnualIncome?: number;
@@ -135,7 +136,9 @@ export function useBorrowingCapacity({ clientId, autoFetch = true }: UseBorrowin
       queryClient.invalidateQueries({ queryKey: ['borrowing-capacity-client-data', clientId] });
       queryClient.invalidateQueries({ queryKey: ['client-data', clientId] });
       queryClient.invalidateQueries({ queryKey: ['get-client-data'] });
-      queryClient.invalidateQueries({ queryKey: ['clients'] });
+      // …and the keys the open client card is drawn from, which this list did
+      // not name — so the BC tab refreshed and the card beside it did not.
+      invalidateClientQueries(queryClient, clientId);
       // ── Phase 3: portfolio segment invalidation (commercial/industrial) ──
       queryClient.invalidateQueries({ queryKey: ['client-portfolio', 'residential', clientId] });
       queryClient.invalidateQueries({ queryKey: ['client-portfolio', 'commercial', clientId] });

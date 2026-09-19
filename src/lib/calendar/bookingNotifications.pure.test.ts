@@ -110,9 +110,21 @@ describe('the recipient list itself', () => {
 
   it('gives every recipient a stable key, so a cancellation notice is sent once', () => {
     const plan = planBookingNotifications({ parties: [client, additional], crm: withCrm });
-    const keys = plan.recipients.map((r) => r.financeContactId);
+    const keys = plan.recipients.map((r) => r.dedupeKey);
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys.every(Boolean)).toBe(true);
+  });
+
+  it('never invents a finance-contact id for somebody who has none', () => {
+    // The key that de-duplicates the plan is not a database identifier. It was
+    // written into a UUID column, which refused it — so the client and the
+    // additional contact were never recorded as invited, and the reschedule
+    // and cancellation notices that read that record reached neither of them.
+    const plan = planBookingNotifications({ parties: [client, additional, partner], crm: withCrm });
+    const byRole = Object.fromEntries(plan.recipients.map((r) => [r.role, r]));
+    expect(byRole.client.financeContactId).toBeNull();
+    expect(byRole.additional_contact.financeContactId).toBeNull();
+    expect(byRole.finance_partner.financeContactId).toBe(partner.financeContactId);
   });
 
   it('orders the client first', () => {

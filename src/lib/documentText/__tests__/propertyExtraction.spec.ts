@@ -213,8 +213,19 @@ describe('processToStructuredPayload', () => {
     expect(payload.propertyAddress).toContain('NSW 2155');
   });
 
-  it('reports a missing address explicitly', () => {
-    expect(processToStructuredPayload({}).propertyAddress).toBe('Address Not Found');
+  it('answers null for a missing address, never a sentence', () => {
+    // A worded absence in a value slot is truthy, so it survives every `||`
+    // fallback downstream and arrives as the property's recorded address.
+    expect(processToStructuredPayload({}).propertyAddress).toBeNull();
+  });
+
+  it('composes a locality-only address where no street line was read', () => {
+    // 30 listings genuinely carry only a suburb. That is an address, and it is
+    // not the same thing as nothing.
+    const payload = processToStructuredPayload({
+      suburb: 'Pokolbin', state: 'NSW', postcode: '2320',
+    } as ExtractedPropertyData);
+    expect(payload.propertyAddress).toBe('Pokolbin, NSW, 2320');
   });
 
   it('defaults isNewBuild to false', () => {

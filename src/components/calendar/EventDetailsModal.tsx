@@ -74,6 +74,19 @@ const DURATION_OPTIONS = [
   { value: 120, label: '2 hours' },
 ];
 
+/**
+ * How a recipient's role reads on screen.
+ *
+ * `recipient_role` is a database column and its values are database
+ * vocabulary; an operator reads "Additional contact", not
+ * `additional_contact`.
+ */
+const INVITED_ROLE_LABEL: Record<string, string> = {
+  client: 'Client',
+  additional_contact: 'Additional contact',
+  finance_partner: 'Finance partner',
+};
+
 export function EventDetailsModal({ 
   event, 
   open, 
@@ -118,13 +131,24 @@ export function EventDetailsModal({
    * included — and rescheduling made them add everyone again by hand. The
    * booking already records this; it was simply never read back.
    */
-  const [invitedRecipients, setInvitedRecipients] = useState<{ name: string; email: string }[]>([]);
+  const [invitedRecipients, setInvitedRecipients] = useState<
+    { name: string; email: string; role?: string | null }[]
+  >([]);
+  /**
+   * Whether the invitation ledger could be read at all.
+   *
+   * An empty list and a failed read drew the same thing — nothing — so an
+   * operator could not tell "nobody else was invited" from "this window could
+   * not find out". Both are real states and they lead to different actions.
+   */
+  const [invitedState, setInvitedState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [manualRecipientName, setManualRecipientName] = useState('');
   const [manualRecipientEmail, setManualRecipientEmail] = useState('');
 
   useEffect(() => {
     if (!open || !event?.id) {
       setInvitedRecipients([]);
+      setInvitedState('loading');
       return;
     }
     let cancelled = false;
@@ -134,16 +158,17 @@ export function EventDetailsModal({
           listMode: true,
           listOptions: {
             table: 'appointment_secondary_recipients',
-            select: 'contact_name, contact_email',
+            select: 'contact_name, contact_email, recipient_role',
             filters: { appointment_ghl_id: event.id },
           },
         });
         if (cancelled) return;
         const seen = new Set<string>();
         const rows = (data?.records || [])
-          .map((r: { contact_name?: string | null; contact_email?: string | null }) => ({
+          .map((r: { contact_name?: string | null; contact_email?: string | null; recipient_role?: string | null }) => ({
             name: (r.contact_name || '').trim(),
             email: (r.contact_email || '').trim(),
+            role: r.recipient_role ?? null,
           }))
           .filter((r: { email: string }) => {
             const key = r.email.toLowerCase();
@@ -152,10 +177,14 @@ export function EventDetailsModal({
             return true;
           });
         setInvitedRecipients(rows);
+        setInvitedState('ready');
       } catch {
         // A booking whose invitations cannot be read still opens: this is a
         // record of who was told, not a precondition for viewing the meeting.
-        if (!cancelled) setInvitedRecipients([]);
+        if (!cancelled) {
+          setInvitedRecipients([]);
+          setInvitedState('unavailable');
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -174,6 +203,30 @@ export function EventDetailsModal({
       setIsRescheduling(false);
     }
   }, [open, event?.contactId, fetchContact]);
+
+  /**
+   * Start a reschedule from who was actually invited.
+   *
+   * The form used to start empty and then guess, by looking the client up and
+   * pulling their secondary contact and additional contacts out of the CRM —
+   * which is a different question from "who was invited to THIS booking", and
+   * left the finance partner out entirely. The booking's own ledger answers
+   * the real question; the CRM pass below still runs, so somebody added to the
+   * client since the booking is still offered.
+   */
+  useEffect(() => {
+    if (!isRescheduling || invitedState !== 'ready' || invitedRecipients.length === 0) return;
+    setBookingRecipients((prev) => {
+      const have = new Set(prev.map((r) => r.email.toLowerCase()));
+      const added = invitedRecipients
+        .filter((r) => r.email && !have.has(r.email.toLowerCase()))
+        // The client is told by the booking's own confirmation; this list is
+        // the people the command centre invites alongside them.
+        .filter((r) => r.role !== 'client')
+        .map((r) => ({ name: r.name || r.email, email: r.email, source: 'auto' as const }));
+      return added.length > 0 ? [...prev, ...added] : prev;
+    });
+  }, [isRescheduling, invitedState, invitedRecipients]);
 
   // Auto-populate booking recipients from client DB when contact loads
   useEffect(() => {
@@ -800,24 +853,48 @@ export function EventDetailsModal({
             </div>
           )}
 
-          {invitedRecipients.length > 0 && (
+          {/*
+            Who else was invited, always drawn once the read has settled.
+            It used to be hidden when the list was empty, so a booking that had
+            recorded nobody was indistinguishable from one this window could
+            not read — and until the ledger's `finance_contact_id` stopped
+            being NOT NULL, it recorded nobody but the finance partner.
+          */}
+          {invitedState !== 'loading' && (
             <div className="space-y-3">
               <h4 className="font-medium flex items-center gap-2">
                 <Users className="h-4 w-4" />
-                Also invited ({invitedRecipients.length})
+                Also invited{invitedRecipients.length > 0 ? ` (${invitedRecipients.length})` : ''}
               </h4>
               <div className="pl-6 space-y-1.5 text-sm">
-                {invitedRecipients.map((r) => (
-                  <div key={r.email} className="flex min-w-0 flex-wrap items-center gap-x-2">
-                    {r.name && <span className="font-medium text-foreground">{r.name}</span>}
-                    <a href={`mailto:${r.email}`} className="min-w-0 truncate text-primary hover:underline">
-                      {r.email}
-                    </a>
-                  </div>
-                ))}
-                <p className="pt-1 text-xs text-muted-foreground">
-                  These people are notified automatically when this appointment is rescheduled or cancelled.
-                </p>
+                {invitedState === 'unavailable' ? (
+                  <p className="text-xs text-muted-foreground">
+                    The list of people invited to this booking could not be read just now.
+                  </p>
+                ) : invitedRecipients.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Nobody else was invited to this booking.
+                  </p>
+                ) : (
+                  <>
+                    {invitedRecipients.map((r) => (
+                      <div key={r.email} className="flex min-w-0 flex-wrap items-center gap-x-2">
+                        {r.name && <span className="font-medium text-foreground">{r.name}</span>}
+                        <a href={`mailto:${r.email}`} className="min-w-0 truncate text-primary hover:underline">
+                          {r.email}
+                        </a>
+                        {r.role && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {INVITED_ROLE_LABEL[r.role] ?? r.role}
+                          </Badge>
+                        )}
+                      </div>
+                    ))}
+                    <p className="pt-1 text-xs text-muted-foreground">
+                      These people are notified automatically when this appointment is rescheduled or cancelled.
+                    </p>
+                  </>
+                )}
               </div>
             </div>
           )}

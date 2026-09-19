@@ -28,8 +28,49 @@ import { ReportGenerationStatus } from '@/components/billing/ReportGenerationSta
 import { TokenCostEstimate } from '@/components/billing/TokenCostEstimate';
 import { estimateTokens } from '@/lib/missionControl';
 import { ENGINE_LABEL } from '@/lib/reports/generationEngine.pure';
-import { cleanListingTitle, composePropertyAddress } from '@/lib/reports/propertyAddress.pure';
+import {
+  addressPrecision, addressPrecisionNotice, cleanListingTitle, composePropertyAddress,
+  type AddressPrecision,
+} from '@/lib/reports/propertyAddress.pure';
+import { planExtractionFill } from '@/lib/reports/extractionFill.pure';
+import {
+  provenanceNotice, readScrapeProvenance, scrapeSummaryTitle,
+  type ScrapeProvenance,
+} from '@/lib/reports/scrapeProvenance.pure';
 
+
+/**
+ * The form fields an extraction governs.
+ *
+ * Named explicitly rather than derived from the payload's keys, because that
+ * is what keeps an unrelated field out of the CLEAR half: an extraction may
+ * only take back what an extraction put there.
+ */
+const EXTRACTION_FIELDS = [
+  'extractedPrice',
+  'extractedWeeklyRent',
+  'extractedBedrooms',
+  'extractedBathrooms',
+  'extractedCarSpaces',
+  'extractedLandSize',
+  'extractedBuildSize',
+  'extractedPropertyType',
+  'extractedIsNewBuild',
+  'extractedLandPrice',
+  'extractedBuildPrice',
+  'extractedCouncilRates',
+  'extractedWaterRates',
+  'extractedStrataFees',
+  'extractedInsurance',
+  'extractedPropertyManagementPercent',
+  'extractedYearBuilt',
+  // PDF-only: the parser asks the model for both, and until now published
+  // neither, so these two reads were always `undefined`.
+  'extractedStampDuty',
+  'extractedAgentFee',
+] as const;
+
+type ExtractionField = (typeof EXTRACTION_FIELDS)[number];
 
 export function InvestmentReportGenerator() {
   // Input mode: 'manual', 'url', or 'pdf'
@@ -84,6 +125,36 @@ export function InvestmentReportGenerator() {
   
   // Pre-generation overrides data
   const [preGenData, setPreGenData] = useState<PreGenerationData>({ buildType: 'existing_property' });
+
+  /**
+   * An extraction replaces what the last extraction said — it does not merge
+   * into it.
+   *
+   * Both extraction paths used to write every field as
+   * `if (extracted.x) setX(extracted.x)`, with `extracted.x || prev.x` in the
+   * `preGenData` patch beside it, so a field the NEW extraction did not answer
+   * kept the PREVIOUS property's figure. That is the 19 Sep 2026 clone audit's
+   * "wrong data returned for a second URL": a 13 Silky Oak Court scrape
+   * presenting $725,000 from the 10 Railway Avenue scrape before it, beside a
+   * correct address, with nothing saying so.
+   *
+   * `planExtractionFill` carries the rule: write what was answered, CLEAR what
+   * a previous extraction filled and this one did not answer, and leave alone
+   * anything the operator typed themselves — which is why ownership is carried
+   * in a ref rather than derived from whether a field looks empty.
+   */
+  const extractionOwned = useRef<Set<ExtractionField>>(new Set());
+  const [scrapeProvenance, setScrapeProvenance] = useState<ScrapeProvenance | null>(null);
+  /**
+   * How much of the address the last extraction actually read.
+   *
+   * "Pokolbin, NSW 2320" and "6 Acer Court, Bowral NSW 2576" are both correct
+   * compositions of what was extracted, and only the second identifies a
+   * property — so the confirmation line says which it got rather than
+   * presenting both as the property's address.
+   */
+  const [urlAddressPrecision, setUrlAddressPrecision] = useState<AddressPrecision>('none');
+  const [pdfAddressPrecision, setPdfAddressPrecision] = useState<AddressPrecision>('none');
 
   // The generation engine, fixed rather than chosen — see the Generation Engine
   // block below. A Compass-tier report always resolves to this engine
@@ -570,6 +641,84 @@ export function InvestmentReportGenerator() {
     }
   };
 
+  /**
+   * Apply an extraction to the form, clearing what it did not answer.
+   *
+   * Returns the keys it wrote, so the caller can say what was found without a
+   * second list of the same fields drifting away from this one.
+   */
+  const applyExtractionToForm = (extracted: Record<string, unknown>): Set<ExtractionField> => {
+    const plan = planExtractionFill<ExtractionField>(
+      extracted as Partial<Record<ExtractionField, unknown>>,
+      EXTRACTION_FIELDS,
+      extractionOwned.current,
+    );
+
+    // `undefined` = leave alone. A key present with `null` is a CLEAR.
+    const resolved = new Map<ExtractionField, unknown>();
+    for (const { key, value } of plan.set) resolved.set(key, value);
+    for (const key of plan.clear) resolved.set(key, null);
+
+    const text = (key: ExtractionField, set: (value: string) => void) => {
+      if (!resolved.has(key)) return;
+      const value = resolved.get(key);
+      set(value === null || value === undefined ? '' : String(value));
+    };
+
+    text('extractedPrice', setPropertyPrice);
+    text('extractedWeeklyRent', setWeeklyRent);
+    text('extractedBedrooms', setBeds);
+    text('extractedBathrooms', setBaths);
+    text('extractedCarSpaces', setCarSpaces);
+    text('extractedLandSize', setLandSize);
+    text('extractedBuildSize', setBuildSize);
+    text('extractedLandPrice', setLandPrice);
+    text('extractedBuildPrice', setBuildPrice);
+
+    if (resolved.has('extractedPropertyType')) {
+      const raw = resolved.get('extractedPropertyType');
+      const pType = typeof raw === 'string' ? raw.toLowerCase() : null;
+      // Only the three the selector offers; anything else leaves it at the
+      // default rather than setting a value the control cannot show.
+      setPropertyType(
+        pType === 'house' || pType === 'apartment' || pType === 'townhouse' ? pType : 'house',
+      );
+    }
+
+    const num = (key: ExtractionField): number | undefined => {
+      const value = resolved.get(key);
+      return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+    };
+    const patch: Partial<PreGenerationData> = {};
+    const carry = (key: ExtractionField, field: keyof PreGenerationData) => {
+      if (resolved.has(key)) (patch as Record<string, unknown>)[field] = num(key);
+    };
+    carry('extractedPrice', 'purchasePrice');
+    carry('extractedWeeklyRent', 'weeklyRent');
+    carry('extractedCarSpaces', 'carSpaces');
+    carry('extractedLandSize', 'landSizeSqm');
+    carry('extractedBuildSize', 'buildSizeSqm');
+    carry('extractedLandPrice', 'landPrice');
+    carry('extractedBuildPrice', 'buildPrice');
+    carry('extractedCouncilRates', 'councilRates');
+    carry('extractedWaterRates', 'waterRates');
+    carry('extractedStrataFees', 'bodyCorporateFees');
+    carry('extractedInsurance', 'buildingLandlordInsurance');
+    carry('extractedPropertyManagementPercent', 'propertyManagementFees');
+    carry('extractedYearBuilt', 'constructionYear');
+    carry('extractedStampDuty', 'stampDuty');
+    carry('extractedAgentFee', 'agentFee');
+    if (resolved.has('extractedIsNewBuild')) {
+      patch.buildType = resolved.get('extractedIsNewBuild') === true
+        ? 'new_build'
+        : 'existing_property';
+    }
+    setPreGenData((prev) => ({ ...prev, ...patch }));
+
+    extractionOwned.current = plan.owned;
+    return plan.owned;
+  };
+
   // Handle URL scraping ONLY - populates fields without generating report
   const handleScrapeUrlOnly = async () => {
     if (!propertyUrl.trim()) {
@@ -593,6 +742,7 @@ export function InvestmentReportGenerator() {
     setIsScraping(true);
     setScrapeError(null);
     setUrlScrapedData(null);
+    setScrapeProvenance(null);
 
     try {
       console.log('Scraping property URL:', propertyUrl);
@@ -657,12 +807,14 @@ export function InvestmentReportGenerator() {
       // street line came back on its own ("6 Acer Court") was filed under it
       // with no suburb — on the report, its title, the activity log and the
       // notification, not just on the confirmation line below.
-      let propertyAddress = composePropertyAddress({
+      const addressParts = {
         address: extracted.extractedAddress,
         suburb: extracted.extractedSuburb,
         state: extracted.extractedState,
         postcode: extracted.extractedPostcode,
-      });
+      };
+      let propertyAddress = composePropertyAddress(addressParts);
+      setUrlAddressPrecision(addressPrecision(addressParts));
       if (!propertyAddress) {
         const cleanedTitle = cleanListingTitle(scrapedResult.metadata?.title || '');
         propertyAddress = cleanedTitle || `Property from ${new URL(propertyUrl).hostname}`;
@@ -675,73 +827,41 @@ export function InvestmentReportGenerator() {
         sourceUrl: scrapedResult.sourceUrl || propertyUrl,
       });
 
-      // Populate form fields with scraped data (without triggering sync loops)
+      // Populate form fields with scraped data (without triggering sync loops).
+      // This REPLACES the last extraction rather than merging into it — see
+      // `applyExtractionToForm`.
       isSyncingFromPreGen.current = true;
-      
-      if (extracted.extractedPrice) {
-        setPropertyPrice(extracted.extractedPrice.toString());
-      }
-      if (extracted.extractedBedrooms) {
-        setBeds(extracted.extractedBedrooms.toString());
-      }
-      if (extracted.extractedBathrooms) {
-        setBaths(extracted.extractedBathrooms.toString());
-      }
-      if (extracted.extractedCarSpaces) {
-        setCarSpaces(extracted.extractedCarSpaces.toString());
-      }
-      if (extracted.extractedLandSize) {
-        setLandSize(extracted.extractedLandSize.toString());
-      }
-      if (extracted.extractedBuildSize) {
-        setBuildSize(extracted.extractedBuildSize.toString());
-      }
-      if (extracted.extractedPropertyType) {
-        const pType = extracted.extractedPropertyType.toLowerCase();
-        if (pType === 'house' || pType === 'apartment' || pType === 'townhouse') {
-          setPropertyType(pType);
-        }
-      }
-      if (extracted.extractedWeeklyRent) {
-        setWeeklyRent(extracted.extractedWeeklyRent.toString());
-      }
-
-      // Update preGenData with ALL scraped values (including extended fields)
-      setPreGenData(prev => ({
-        ...prev,
-        purchasePrice: extracted.extractedPrice || prev.purchasePrice,
-        weeklyRent: extracted.extractedWeeklyRent || prev.weeklyRent,
-        carSpaces: extracted.extractedCarSpaces || prev.carSpaces,
-        landSizeSqm: extracted.extractedLandSize || prev.landSizeSqm,
-        buildSizeSqm: extracted.extractedBuildSize || prev.buildSizeSqm,
-        // Extended fields from enhanced scraper
-        buildType: extracted.extractedIsNewBuild ? 'new_build' : prev.buildType,
-        landPrice: extracted.extractedLandPrice || prev.landPrice,
-        buildPrice: extracted.extractedBuildPrice || prev.buildPrice,
-        councilRates: extracted.extractedCouncilRates || prev.councilRates,
-        waterRates: extracted.extractedWaterRates || prev.waterRates,
-        bodyCorporateFees: extracted.extractedStrataFees || prev.bodyCorporateFees,
-        buildingLandlordInsurance: extracted.extractedInsurance || prev.buildingLandlordInsurance,
-        propertyManagementFees: extracted.extractedPropertyManagementPercent || prev.propertyManagementFees,
-        constructionYear: extracted.extractedYearBuilt || prev.constructionYear,
-      }));
-
+      applyExtractionToForm(extracted);
       requestAnimationFrame(() => { isSyncingFromPreGen.current = false; });
 
-      // Show what was extracted
+      // Show what was extracted, and what it rests on.
+      //
+      // The heading used to read "Scraping Successful" whether the listing
+      // page had been read or the model had gone looking for the listing by
+      // web search — a distinction the server records on every job
+      // (`metadata.scrapedFromPage`) and nothing had ever read. On a clone,
+      // which is provisioned with no Firecrawl credential, the page is NEVER
+      // read, so every scrape was the search fallback under that heading.
+      const provenance = readScrapeProvenance(scrapedResult.metadata);
+      setScrapeProvenance(provenance);
+
       const extractedInfo = [];
       if (extracted.extractedPrice) extractedInfo.push(`$${extracted.extractedPrice.toLocaleString('en-AU')}`);
       if (extracted.extractedBedrooms) extractedInfo.push(`${extracted.extractedBedrooms} beds`);
       if (extracted.extractedBathrooms) extractedInfo.push(`${extracted.extractedBathrooms} baths`);
       if (extracted.extractedLandSize) extractedInfo.push(`${extracted.extractedLandSize}m²`);
-      
-      const extractedSummary = extractedInfo.length > 0 
-        ? `Found: ${extractedInfo.join(', ')}` 
+
+      const extractedSummary = extractedInfo.length > 0
+        ? `Found: ${extractedInfo.join(', ')}`
         : 'Limited details extracted - review and add missing data';
+      const notice = provenanceNotice(provenance);
 
       toast({
-        title: "Scraping Successful",
-        description: extractedSummary + ". Review the fields below, add any overrides, then generate the report.",
+        title: scrapeSummaryTitle(provenance),
+        description: notice
+          ? `${extractedSummary}. ${notice.title} — check the address and the price against the listing.`
+          : extractedSummary + ". Review the fields below, add any overrides, then generate the report.",
+        variant: notice ? 'destructive' : undefined,
       });
 
     } catch (error) {
@@ -1081,12 +1201,14 @@ export function InvestmentReportGenerator() {
       
       // The same composition as the URL path — it was the same bug here, and
       // two copies of "what is this property called" is how they drift.
-      let propertyAddress = composePropertyAddress({
+      const addressParts = {
         address: extracted.extractedAddress,
         suburb: extracted.extractedSuburb,
         state: extracted.extractedState,
         postcode: extracted.extractedPostcode,
-      });
+      };
+      let propertyAddress = composePropertyAddress(addressParts);
+      setPdfAddressPrecision(addressPrecision(addressParts));
       if (!propertyAddress) {
         propertyAddress = `Property from ${pdfFile.name}`;
       }
@@ -1097,71 +1219,11 @@ export function InvestmentReportGenerator() {
         pdfContent: data.pdfContent,
       });
 
-      // Populate form fields with extracted data (without triggering sync loops)
+      // Populate form fields with extracted data (without triggering sync
+      // loops). One applier, shared with the URL path, so a document and a
+      // listing cannot fill the same form by two different rules.
       isSyncingFromPreGen.current = true;
-      
-      if (extracted.extractedPrice) {
-        setPropertyPrice(extracted.extractedPrice.toString());
-      }
-      if (extracted.extractedBedrooms) {
-        setBeds(extracted.extractedBedrooms.toString());
-      }
-      if (extracted.extractedBathrooms) {
-        setBaths(extracted.extractedBathrooms.toString());
-      }
-      if (extracted.extractedCarSpaces) {
-        setCarSpaces(extracted.extractedCarSpaces.toString());
-      }
-      if (extracted.extractedLandSize) {
-        setLandSize(extracted.extractedLandSize.toString());
-      }
-      if (extracted.extractedBuildSize) {
-        setBuildSize(extracted.extractedBuildSize.toString());
-      }
-      if (extracted.extractedPropertyType) {
-        const pType = extracted.extractedPropertyType.toLowerCase();
-        if (pType === 'house' || pType === 'apartment' || pType === 'townhouse') {
-          setPropertyType(pType);
-        }
-      }
-      if (extracted.extractedWeeklyRent) {
-        setWeeklyRent(extracted.extractedWeeklyRent.toString());
-      }
-
-      // If new build detected, update build type
-      if (extracted.extractedIsNewBuild) {
-        setPreGenData(prev => ({ ...prev, buildType: 'new_build' }));
-      }
-
-      // Populate land price and build price form fields if extracted
-      if (extracted.extractedLandPrice) {
-        setLandPrice(extracted.extractedLandPrice.toString());
-      }
-      if (extracted.extractedBuildPrice) {
-        setBuildPrice(extracted.extractedBuildPrice.toString());
-      }
-
-      // Update preGenData with ALL extracted values (including extended fields)
-      setPreGenData(prev => ({
-        ...prev,
-        purchasePrice: extracted.extractedPrice || prev.purchasePrice,
-        weeklyRent: extracted.extractedWeeklyRent || prev.weeklyRent,
-        carSpaces: extracted.extractedCarSpaces || prev.carSpaces,
-        landSizeSqm: extracted.extractedLandSize || prev.landSizeSqm,
-        buildSizeSqm: extracted.extractedBuildSize || prev.buildSizeSqm,
-        landPrice: extracted.extractedLandPrice || prev.landPrice,
-        buildPrice: extracted.extractedBuildPrice || prev.buildPrice,
-        // Extended fields from enhanced PDF parser
-        councilRates: extracted.extractedCouncilRates || prev.councilRates,
-        waterRates: extracted.extractedWaterRates || prev.waterRates,
-        bodyCorporateFees: extracted.extractedStrataFees || prev.bodyCorporateFees,
-        buildingLandlordInsurance: extracted.extractedInsurance || prev.buildingLandlordInsurance,
-        propertyManagementFees: extracted.extractedPropertyManagementPercent || prev.propertyManagementFees,
-        stampDuty: extracted.extractedStampDuty || prev.stampDuty,
-        agentFee: extracted.extractedAgentFee || prev.agentFee,
-        constructionYear: extracted.extractedYearBuilt || prev.constructionYear,
-      }));
-
+      applyExtractionToForm(extracted);
       requestAnimationFrame(() => { isSyncingFromPreGen.current = false; });
 
       // Show what was extracted
@@ -1914,17 +1976,51 @@ export function InvestmentReportGenerator() {
                     </div>
                   )}
 
-                  {/* Scraped data indicator - Moved to after scrape button */}
-                  {urlScrapedData && (
-                    <div className="reports-success-state">
-                      <p className="text-sm font-semibold text-success">
-                        ✓ Scraped: <strong>{urlScrapedData.propertyAddress}</strong>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Review the fields below, add any overrides, then click "Generate Report"
-                      </p>
-                    </div>
-                  )}
+                  {/*
+                    Scraped data indicator.
+
+                    It draws the caution state rather than the success state
+                    where the listing page could not be read, because the two
+                    used to look identical: "✓ Scraped: 10 Railway Avenue" over
+                    a 13 Silky Oak Court URL, with the flag that says which
+                    happened recorded on the job and read by nothing.
+                  */}
+                  {urlScrapedData && (() => {
+                    const notice = scrapeProvenance ? provenanceNotice(scrapeProvenance) : null;
+                    const precision = addressPrecisionNotice(urlAddressPrecision);
+                    const caution = notice || precision;
+                    return (
+                      <div
+                        className={caution
+                          ? 'reports-validation-state border-warning/25 bg-warning-light/60'
+                          : 'reports-success-state'}
+                      >
+                        <p className={caution
+                          ? 'text-sm font-semibold text-warning'
+                          : 'text-sm font-semibold text-success'}
+                        >
+                          {caution ? 'Scraped' : '✓ Scraped'}: <strong>{urlScrapedData.propertyAddress}</strong>
+                        </p>
+                        {caution ? (
+                          <div className="mt-1 space-y-1">
+                            {precision && (
+                              <p className="text-xs leading-5 text-muted-foreground">{precision}</p>
+                            )}
+                            {notice && (
+                              <>
+                                <p className="text-xs font-medium text-warning">{notice.title}</p>
+                                <p className="text-xs leading-5 text-muted-foreground">{notice.body}</p>
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Review the fields below, add any overrides, then click "Generate Report"
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   <Separator />
 
@@ -2148,16 +2244,31 @@ export function InvestmentReportGenerator() {
                   )}
 
                   {/* Parsed data indicator - Moved to after parse button */}
-                  {pdfParsedData && (
-                    <div className="reports-success-state">
-                      <p className="text-sm font-semibold text-success">
-                        ✓ Parsed: <strong>{pdfParsedData.propertyAddress}</strong>
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Review the fields below, add any overrides, then click "Generate Report"
-                      </p>
-                    </div>
-                  )}
+                  {pdfParsedData && (() => {
+                    // The parser used to put the literal "Address Not Found"
+                    // in this slot, which is a sentence presented as the
+                    // property's recorded address. It answers null now, so a
+                    // document that carried no address reads as one.
+                    const precision = addressPrecisionNotice(pdfAddressPrecision);
+                    return (
+                      <div
+                        className={precision
+                          ? 'reports-validation-state border-warning/25 bg-warning-light/60'
+                          : 'reports-success-state'}
+                      >
+                        <p className={precision
+                          ? 'text-sm font-semibold text-warning'
+                          : 'text-sm font-semibold text-success'}
+                        >
+                          {precision ? 'Parsed' : '✓ Parsed'}: <strong>{pdfParsedData.propertyAddress}</strong>
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {precision
+                            || 'Review the fields below, add any overrides, then click "Generate Report"'}
+                        </p>
+                      </div>
+                    );
+                  })()}
 
                   <Separator />
 

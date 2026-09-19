@@ -46,13 +46,60 @@ export function criticalDateCompletionsOf(deal: Pick<Deal, 'critical_date_comple
   return raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as CriticalDateCompletions) : {};
 }
 
-function DateWarningBadge({ dateStr, completedAt }: { dateStr: string; completedAt?: string }) {
+function DateWarningBadge({
+  dateStr,
+  completedAt,
+  onChangeCompletedAt,
+  label,
+}: {
+  dateStr: string;
+  completedAt?: string;
+  onChangeCompletedAt?: (value: string) => void;
+  label?: string;
+}) {
+  const [completionPickerOpen, setCompletionPickerOpen] = useState(false);
+
   if (completedAt) {
+    /*
+      The completion date is the day the thing happened, not the day somebody
+      remembered to record it. It was stamped `new Date()` and then read-only,
+      so an operator who ticked a finance clause off three days late had no way
+      to say so — the 19 Sep 2026 clone audit asked for this on the critical
+      dates and, in the same words, on a received commission.
+    */
+    if (!onChangeCompletedAt) {
+      return (
+        <Badge variant="outline" className="border-success/40 bg-success/10 text-[10px] text-success">
+          <Check className="mr-0.5 h-3 w-3" />
+          Done {format(new Date(completedAt), 'dd MMM')}
+        </Badge>
+      );
+    }
     return (
-      <Badge variant="outline" className="border-success/40 bg-success/10 text-[10px] text-success">
-        <Check className="mr-0.5 h-3 w-3" />
-        Done {format(new Date(completedAt), 'dd MMM')}
-      </Badge>
+      <Popover open={completionPickerOpen} onOpenChange={setCompletionPickerOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success transition-colors hover:bg-success/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-success/40"
+            title={label ? `Change the date ${label} was completed` : 'Change the completion date'}
+            aria-label={label ? `Change the date ${label} was completed` : 'Change the completion date'}
+          >
+            <Check className="mr-0.5 h-3 w-3" />
+            Done {format(new Date(completedAt), 'dd MMM')}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="end">
+          <Calendar
+            mode="single"
+            selected={new Date(completedAt)}
+            onSelect={(date) => {
+              if (date) onChangeCompletedAt(format(date, 'yyyy-MM-dd'));
+              setCompletionPickerOpen(false);
+            }}
+            className="p-3 pointer-events-auto"
+          />
+        </PopoverContent>
+      </Popover>
     );
   }
   const date = new Date(dateStr);
@@ -76,12 +123,14 @@ function DatePickerField({
   completedAt,
   onChange,
   onToggleComplete,
+  onChangeCompletedAt,
 }: {
   value: string | null;
   label: string;
   completedAt?: string;
   onChange: (v: string | null) => void;
   onToggleComplete: () => void;
+  onChangeCompletedAt: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -94,7 +143,16 @@ function DatePickerField({
         <span className="min-w-0 break-words text-xs font-medium leading-4 text-muted-foreground" title={label}>
           {label}
         </span>
-        {value && <span className="shrink-0"><DateWarningBadge dateStr={value} completedAt={completedAt} /></span>}
+        {value && (
+          <span className="shrink-0">
+            <DateWarningBadge
+              dateStr={value}
+              completedAt={completedAt}
+              onChangeCompletedAt={onChangeCompletedAt}
+              label={label}
+            />
+          </span>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <Popover open={open} onOpenChange={setOpen}>
@@ -163,6 +221,14 @@ export function DealCriticalDates({ deal, onUpdate }: DealCriticalDatesProps) {
     onUpdate({ critical_date_completions: next } as Partial<Deal>);
   };
 
+  /** Correct WHEN a milestone was completed, without reopening it. */
+  const setCompletedAt = (key: string, value: string) => {
+    if (!completions[key]) return;
+    onUpdate({
+      critical_date_completions: { ...completions, [key]: value },
+    } as Partial<Deal>);
+  };
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -189,6 +255,7 @@ export function DealCriticalDates({ deal, onUpdate }: DealCriticalDatesProps) {
                 completedAt={completions[field.key as string]}
                 onChange={(d) => onUpdate({ [field.key]: d } as Partial<Deal>)}
                 onToggleComplete={() => toggleComplete(field.key as string)}
+                onChangeCompletedAt={(v) => setCompletedAt(field.key as string, v)}
               />
             );
           })}

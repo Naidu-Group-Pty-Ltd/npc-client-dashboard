@@ -228,31 +228,56 @@ export default function Agreements() {
   };
 
   /**
-   * Prepare for Signing gets its PDF the way View and Download already do.
+   * The one way to reach an agreement's PDF, generating it on demand.
    *
-   * It used to call `supabase.storage.createSignedUrl` from the BROWSER, and
-   * this app's identity is a custom HttpOnly cookie, so that client is anon.
-   * `agency-agreements` is a private bucket and is not in `secure-storage`'s
-   * allow-list either, so the request was refused — and Supabase Storage
-   * answers a refusal with the same message as a genuine absence, by design,
-   * to avoid confirming that an object exists. The operator therefore saw
-   * "Failed to load PDF: Object not found" on a row the page had just
-   * labelled GENERATED · READY, while View Agreement on that same row worked,
-   * because View goes through `manage-agency-agreements` and the signed URL
-   * is minted server-side with the service role.
+   * Two separate defects put it here, and each of them made the same row offer
+   * two acts that disagreed about whether the document exists.
    *
-   * So there is one way to reach an agreement PDF now, not two.
+   * Prepare for Signing used to call `supabase.storage.createSignedUrl` from
+   * the BROWSER, and this app's identity is a custom HttpOnly cookie, so that
+   * client is anon. `agency-agreements` is a private bucket and is not in
+   * `secure-storage`'s allow-list either, so the request was refused — and
+   * Supabase Storage answers a refusal with the same message as a genuine
+   * absence, by design, to avoid confirming that an object exists. The
+   * operator therefore saw "Failed to load PDF: Object not found" on a row the
+   * page had just labelled GENERATED · READY, while View Agreement on that
+   * same row worked, because View goes through `manage-agency-agreements` and
+   * the signed URL is minted server-side with the service role.
+   *
+   * The second is the deferred generation: Gamma is asynchronous, so a row can
+   * be GENERATED · READY before a document exists, and `retry_pdf` exists for
+   * exactly that. Download called it and Prepare for Signing did not, so the
+   * 19 Sep 2026 clone audit reported "PDF not ready yet" on a row where
+   * Download and View both worked.
+   *
+   * The preview it fetched travels back with the answer, so a caller that
+   * needs the HTML as well pays for one round trip rather than two.
    */
-  const openPrepareForSigning = async (a: AgencyAgreement) => {
-    const { ok, pdf_url } = await fetchAgreementPreview(a.id);
+  const resolveAgreementPdf = async (
+    agreement: AgencyAgreement,
+  ): Promise<{ ok: boolean; html: string | null; pdfUrl: string | null }> => {
+    const { ok, html, pdf_url } = await fetchAgreementPreview(agreement.id);
     // A genuine failure has already been reported; say nothing further.
+    if (!ok) return { ok: false, html: null, pdfUrl: null };
+    if (pdf_url) return { ok: true, html, pdfUrl: pdf_url };
+    // A stored object the preview did not sign is still a document; the
+    // download path knows how to reach it and must not be sent round `retry`.
+    if (agreement.pdf_storage_path) return { ok: true, html, pdfUrl: null };
+    try {
+      const retried = await retryPdf.mutateAsync(agreement.id);
+      return { ok: true, html, pdfUrl: retried?.pdf_url || null };
+    } catch {
+      return { ok: true, html, pdfUrl: null };
+    }
+  };
+
+  const openPrepareForSigning = async (a: AgencyAgreement) => {
+    const { ok, pdfUrl: pdf_url } = await resolveAgreementPdf(a);
     if (!ok) return;
     if (!pdf_url) {
-      // The ordinary case: Gamma generation is asynchronous, so a freshly
-      // generated agreement has a row before it has a document.
       toast.error("PDF not ready yet", {
         description:
-          "The agreement document is still being generated. Try again in a moment.",
+          "The agreement document could not be produced. Try again in a moment.",
       });
       return;
     }
@@ -321,22 +346,9 @@ export default function Agreements() {
 
   const handleDownloadAgreement = async (agreement: AgencyAgreement) => {
     toast.loading("Preparing download...", { id: "download-agreement" });
-    let { html, pdf_url } = await fetchAgreementPreview(agreement.id);
-
-    // If no PDF, attempt a retry (deferred generation may have completed)
-    if (!pdf_url && !agreement.pdf_storage_path) {
-      toast.loading("PDF not ready yet, retrying...", {
-        id: "download-agreement",
-      });
-      try {
-        const retryResult = await retryPdf.mutateAsync(agreement.id);
-        if (retryResult?.pdf_url) {
-          pdf_url = retryResult.pdf_url;
-        }
-      } catch {
-        // Retry failed, will fall back to HTML
-      }
-    }
+    // The same resolution Prepare for Signing uses, so the two acts on one
+    // row can never disagree about whether the document exists.
+    const { html, pdfUrl: pdf_url } = await resolveAgreementPdf(agreement);
 
     if (pdf_url) {
       try {

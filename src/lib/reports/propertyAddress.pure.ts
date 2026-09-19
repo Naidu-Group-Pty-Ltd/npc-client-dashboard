@@ -101,6 +101,37 @@ export function composePropertyAddress(parts: ExtractedAddressParts): string {
 }
 
 /**
+ * How much of an address was actually extracted.
+ *
+ * `ADDRESS_COMPOSITION.md`'s vocabulary, because the question is the same one:
+ * 30 live listings genuinely carry only a suburb, and the composer must not be
+ * asked to invent a street number that was never in the source. What it can do
+ * is SAY which of the two happened — "Pokolbin, NSW 2320" and
+ * "6 Acer Court, Bowral NSW 2576" are both correct compositions and only one of
+ * them identifies a property, and the 19 Sep 2026 clone audit reported the
+ * first as an address shown partially.
+ */
+export type AddressPrecision = 'address' | 'locality' | 'none';
+
+export function addressPrecision(parts: ExtractedAddressParts): AddressPrecision {
+  if (clean(parts.address)) return 'address';
+  if (clean(parts.suburb) || clean(parts.state) || clean(parts.postcode)) return 'locality';
+  return 'none';
+}
+
+/** What to tell the reader about a composition that named no street. */
+export function addressPrecisionNotice(precision: AddressPrecision): string | null {
+  if (precision === 'locality') {
+    return 'No street address was extracted — this names the suburb only. '
+      + 'Add the street address before generating, or the report is filed against a locality.';
+  }
+  if (precision === 'none') {
+    return 'No address was extracted. The name below is a placeholder.';
+  }
+  return null;
+}
+
+/**
  * Strip a listing site's own furniture off a page title.
  *
  * Kept here beside the composer because it is the same decision — what to

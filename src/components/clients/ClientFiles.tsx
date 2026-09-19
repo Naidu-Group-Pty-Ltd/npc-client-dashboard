@@ -148,6 +148,20 @@ export function ClientFiles({ clientId, onSendEmail }: ClientFilesProps) {
           path: fileName,
           file: queueItem.file,
           contentType: queueItem.file.type,
+          // `secure-storage` derives the destination path, the owner and the
+          // client binding from a server-side authoritative row, so
+          // `resolveHumanUploadBinding` requires the row's id on every bucket
+          // but `branding-assets` and `report-templates`. This call never sent
+          // one, so every file an adviser dropped here was refused 403 with
+          // "This upload did not say which record it belongs to" — the 19 Sep
+          // audit's Files-tab defect, on both the prime and the clone.
+          //
+          // The contract was already pinned once, for `secureStorageUpload`.
+          // This is a second helper posting the same operation, so the guard
+          // could not see it; it scans both now.
+          resourceType: 'client',
+          resourceId: clientId,
+          clientId,
           onProgress: (progress) => {
             setUploadQueue((prev) => prev.map((item) => item.id === queueItem.id ? { ...item, progress } : item));
           },

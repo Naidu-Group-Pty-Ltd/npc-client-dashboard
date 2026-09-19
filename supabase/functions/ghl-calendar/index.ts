@@ -876,8 +876,59 @@ Deno.serve(async (req) => {
       }
 
       const createData = await createResponse.json();
-      const createdEvent = createData.appointment || createData;
+      let createdEvent = createData.appointment || createData;
       console.log('Appointment created successfully:', createData?.id || createData?.appointment?.id);
+
+      /**
+       * Read the appointment back, because the create response is not the
+       * appointment.
+       *
+       * For a Zoom calendar, GoHighLevel provisions the meeting and writes the
+       * join URL onto the appointment's `address` — AFTER it answers the
+       * create. So the response this function used to return carried no
+       * address at all, and the browser passed `result.event?.address` to
+       * `send-appointment-notification` as `undefined`.
+       *
+       * The consequence was reported in the 19 Sep 2026 clone audit as "only
+       * the client gets the zoom link": the client's confirmation comes from
+       * GHL's own sender, which knows the link because it sends later, while
+       * the additional contact and the finance partner got our Meeting
+       * Invitation with a Type row reading "Zoom Meeting" and no link on it —
+       * an invitation to a meeting they cannot join.
+       *
+       * The read is the fix at the cause: every caller of `create` gets a
+       * complete event without having to know how thin GHL's create response
+       * is. It NEVER fails the booking — the appointment exists either way,
+       * and a merge only ever adds fields the create response did not carry.
+       */
+      const createdId = createdEvent?.id;
+      if (createdId) {
+        try {
+          const readBack = await ghlFetch(
+            `${GHL_API_BASE}/calendars/events/appointments/${createdId}`,
+            { method: 'GET', headers },
+          );
+          if (readBack.ok) {
+            const readData = await readBack.json();
+            const readEvent = readData?.appointment || readData?.event || readData;
+            if (readEvent && typeof readEvent === 'object') {
+              // The read wins field by field, and only where it has something:
+              // an empty string from the read must not erase a title the
+              // create response did carry.
+              const merged: Record<string, unknown> = { ...createdEvent };
+              for (const [key, value] of Object.entries(readEvent)) {
+                if (value !== null && value !== undefined && value !== '') merged[key] = value;
+              }
+              createdEvent = merged;
+              console.log('[ghl-calendar] Appointment re-read; address present:', Boolean(merged.address));
+            }
+          } else {
+            console.warn('[ghl-calendar] Appointment re-read returned', readBack.status);
+          }
+        } catch (readError) {
+          console.warn('[ghl-calendar] Appointment re-read failed:', readError);
+        }
+      }
 
       // GHL accepts the field and does not keep it, so the note is filed here.
       // Never fails the booking.

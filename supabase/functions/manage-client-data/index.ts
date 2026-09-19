@@ -529,8 +529,27 @@ Deno.serve(async (req) => {
         ? rawData.map((row: Record<string, any>) => pickAllowed(row, writable!))
         : pickAllowed(rawData as Record<string, any>, writable!);
 
-    // Tables that don't require clientId
-    const STANDALONE_TABLES = ['clients', 'report_qa_messages', 'report_qa_conversations', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'portal_configuration', 'client_portal_report_requests', 'client_reminders'];
+    /**
+     * Tables a mutation names directly, rather than through a client.
+     *
+     * `ghl_conversation_messages` is keyed by `conversation_id` and has NO
+     * `client_id` column at all — so it was unwritable through this function
+     * from either direction: with no `clientId` the guard below answered 400
+     * "clientId is required for related tables", and with one the create branch
+     * would have added `client_id` to the payload and drawn 42703. The
+     * Conversations page catches that and warns "Email sent, but it could not
+     * be added to the conversation history", which is the 19 Sep 2026 clone
+     * audit's "the email doesn't appear in the history in the crm conversations
+     * page. However, it shows under the sent folder in email copilot".
+     *
+     * `ghl_conversations` has a nullable `client_id` and is discovered from
+     * GoHighLevel rather than created under a client, so it belongs here too.
+     *
+     * Being standalone skips the per-client ownership binding, which for these
+     * two is not a loosening: there is no client to bind to. The module
+     * permission check above still applies.
+     */
+    const STANDALONE_TABLES = ['clients', 'report_qa_messages', 'report_qa_conversations', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'portal_configuration', 'client_portal_report_requests', 'client_reminders', 'ghl_conversations', 'ghl_conversation_messages'];
     
     // Validate clientId for client-related tables only
     const isPortfolioReportDelete = table === 'portfolio_analysis_reports' && operation === 'delete';

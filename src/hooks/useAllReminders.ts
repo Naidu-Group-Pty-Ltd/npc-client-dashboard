@@ -50,7 +50,7 @@ export function useAllReminders() {
           listMode: true,
           listOptions: {
             table: 'client_deals',
-            select: 'id, client_id, deal_type, property_address, settlement_date, finance_clause_expiry, land_settlement_date, expected_build_start, estimated_completion, clawback_expiry_date, current_stage',
+            select: 'id, client_id, deal_type, property_address, settlement_date, finance_clause_expiry, land_settlement_date, expected_build_start, estimated_completion, clawback_expiry_date, current_stage, critical_date_completions, created_at',
             orderBy: 'settlement_date',
             orderAsc: true,
           },
@@ -83,10 +83,14 @@ export function useAllReminders() {
           priority: r.priority || 'medium',
           status: r.status === 'completed' ? 'completed' : 'pending',
           source: 'client_reminder',
-          source_label: 'Client Reminder',
+          // A reminder with no client is not a client reminder. The Email
+          // Copilot's "Remind me" writes one for a thread that has no customer
+          // behind it (`reminder_scope: 'personal'`), and calling it a client
+          // reminder about "Unknown" invents a customer who does not exist.
+          source_label: r.client_id ? 'Client Reminder' : 'Personal Reminder',
           reminder_type: r.reminder_type || 'general',
           client_id: r.client_id,
-          client_name: clientMap[r.client_id] || 'Unknown',
+          client_name: r.client_id ? (clientMap[r.client_id] || 'Unknown') : '',
           completed_at: r.completed_at,
           created_at: r.created_at,
           raw_source: 'client_reminders',
@@ -132,10 +136,30 @@ export function useAllReminders() {
       for (const deal of deals) {
         const clientName = clientMap[deal.client_id] || 'Unknown';
         const address = deal.property_address || deal.current_stage || '';
+        /**
+         * Which of this deal's critical dates have been marked done.
+         *
+         * A milestone is synthesised from a date COLUMN, so it has no row of
+         * its own and no status of its own — and `status` here was the literal
+         * `'pending'`. The client card's Critical Dates panel records
+         * completion in `client_deals.critical_date_completions`, keyed by the
+         * same column name, and this hook simply never read it: an operator
+         * ticked "Done" on the finance clause expiry and the reminder stayed
+         * on the Reminders page for ever. (19 Sep 2026 clone audit.)
+         *
+         * The shape is read defensively because it is JSONB: a row written
+         * before the panel existed holds null.
+         */
+        const completions: Record<string, unknown> =
+          deal.critical_date_completions && typeof deal.critical_date_completions === 'object'
+            && !Array.isArray(deal.critical_date_completions)
+            ? deal.critical_date_completions
+            : {};
 
         for (const m of milestoneFields) {
           const dateVal = deal[m.field];
           if (!dateVal) continue;
+          const completedAt = typeof completions[m.field] === 'string' ? (completions[m.field] as string) : null;
 
           unified.push({
             id: `dm-${deal.id}-${m.field}`,
@@ -143,14 +167,14 @@ export function useAllReminders() {
             description: address ? `Property: ${address}` : null,
             due_date: dateVal,
             priority: m.priority,
-            status: 'pending',
+            status: completedAt ? 'completed' : 'pending',
             source: 'deal_milestone',
             source_label: 'Deal Milestone',
             reminder_type: m.type,
             client_id: deal.client_id,
             client_name: clientName,
             deal_id: deal.id,
-            completed_at: null,
+            completed_at: completedAt,
             created_at: deal.created_at || dateVal,
             raw_source: 'client_deals',
             raw_id: deal.id,

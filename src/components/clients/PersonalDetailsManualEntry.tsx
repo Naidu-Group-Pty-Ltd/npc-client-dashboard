@@ -157,8 +157,36 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
   // against this so an untouched field is never written back.
   const baselineRef = useRef<Record<string, any> | null>(null);
 
+  /**
+   * The client this form was last seeded for.
+   *
+   * The seeding effect below depended on `clientData` — an object literal the
+   * parent rebuilds on EVERY render (`clientData={fullClient ? { … } : undefined}`
+   * in `ClientDetailsModal`), so its identity changes constantly: a tab
+   * switch, a toast, a settling query. Each change re-ran the effect and reset
+   * every field to the server's values, discarding whatever was being typed.
+   *
+   * That is the 19 Sep 2026 clone audit's "everything typed and selected in
+   * the fields under the address & ID goes missing after a few seconds after
+   * filling up" — the seconds are however long it took the next render to
+   * arrive.
+   *
+   * A form is seeded when it OPENS, for the client it is open on. It is not
+   * re-seeded while it stays open, because the operator's typing is then the
+   * newer truth. The ref is keyed on the client id so opening the sheet on a
+   * different client seeds again.
+   */
+  const seededForClientId = useRef<string | null>(null);
+
   useEffect(() => {
-    if (open && clientData) {
+    if (!open) {
+      seededForClientId.current = null;
+      return;
+    }
+    if (!clientData) return;
+    if (seededForClientId.current === clientId) return;
+    seededForClientId.current = clientId;
+    {
       setFormData({
 
         primary_first_name: clientData.primary_first_name || '',
@@ -229,7 +257,12 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
       setAdditionalContacts(initialAdditionalContacts.map(c => ({ ...c })));
       setDeletedContactIds([]);
     }
-  }, [open, clientData, initialAdditionalContacts]);
+    // `clientData` and `initialAdditionalContacts` are read here but are
+    // deliberately NOT dependencies: both are rebuilt by the parent on every
+    // render, and reacting to their identity is what wiped the form. The
+    // `seededForClientId` guard above is what decides when to read them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, clientId]);
 
   const updateField = useCallback((field: keyof FormData | string, value: string | number | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));

@@ -11,9 +11,30 @@ const tenantId = Deno.env.get('MICROSOFT_TENANT_ID');
 const mailboxEmail = Deno.env.get('MICROSOFT_MAILBOX_EMAIL');
 
 interface SecondaryRecipient {
-  financeContactId: string;
+  /**
+   * The finance partner this invitation is for, when it is one.
+   *
+   * Optional, because the client and an additional contact have no finance
+   * contact id — and `appointment_secondary_recipients.finance_contact_id`
+   * used to be NOT NULL, so every insert for one of them was refused and the
+   * invitation ledger held finance partners alone. That is why a booking's
+   * detail window listed no additional contact, and why a reschedule and a
+   * cancellation — both of which read this ledger to know whom to tell —
+   * reached nobody but the finance partner.
+   */
+  financeContactId?: string | null;
+  /** What this person is to the booking, recorded rather than inferred. */
+  role?: 'client' | 'additional_contact' | 'finance_partner';
   name: string;
   email: string;
+  /**
+   * Set only by the ledger resolution below. A person already recorded as
+   * invited must not be filed a second time, or the next cancellation finds
+   * them twice and emails them twice. It is per RECIPIENT rather than per
+   * batch because a reschedule can carry both: people read back from the
+   * ledger and somebody newly added, who does need filing.
+   */
+  alreadyInvited?: boolean;
 }
 
 /**
@@ -28,7 +49,23 @@ interface SecondaryRecipient {
  * Optional, and absent means `booked`. Every existing caller omits it and is
  * byte-for-byte unaffected.
  */
-type NotificationKind = 'booked' | 'cancelled';
+type NotificationKind = 'booked' | 'cancelled' | 'rescheduled';
+
+/**
+ * A notice about an EXISTING booking goes to everyone who was invited to it.
+ *
+ * `booked` is the invitation: the caller's list is the list, and it is written
+ * to the ledger. `cancelled` and `rescheduled` are notices about a booking
+ * that already has one, so the ledger is the authority and anything the caller
+ * passes is ADDED to it rather than replacing it.
+ *
+ * Replacing it is what a reschedule used to do, and only when the operator
+ * happened to re-type somebody: the page skipped the call entirely when the
+ * form was empty, so the additional contact and the finance partner from the
+ * original booking heard nothing at all.
+ */
+const NOTICES_ABOUT_AN_EXISTING_BOOKING: ReadonlySet<NotificationKind> =
+  new Set(['cancelled', 'rescheduled']);
 
 interface NotificationRequest {
   kind?: NotificationKind;
@@ -299,19 +336,22 @@ Deno.serve(async (req) => {
     let effectiveType = appointmentType;
     let effectiveRecipients = recipients;
     // Whoever was invited is already recorded against the booking, so a notice
-    // about a change to it need not be told again. This applied to
-    // cancellations only, which is why a reschedule made the operator re-add
-    // the additional contact and the finance partner by hand every time —
-    // and quietly told nobody when they forgot.
+    // about a change to it need not be told again. That applied to
+    // cancellations only, and only when the caller passed an empty list —
+    // which is why a reschedule made the operator re-add the additional
+    // contact and the finance partner by hand every time, and quietly told
+    // nobody when they forgot. A notice about an EXISTING booking now always
+    // starts from the ledger, whatever the caller passes.
     //
-    // `recipientsWereResolved` then keeps the ledger honest: it records who was
-    // INVITED, so a reschedule must not add a second row per person per change.
-    let recipientsWereResolved = false;
-    if (!effectiveRecipients || effectiveRecipients.length === 0) {
-      recipientsWereResolved = true;
+    // Each resolved recipient is stamped `alreadyInvited`, which keeps the
+    // ledger honest: a reschedule must not file a second row per person per
+    // change, while somebody the operator ADDS to it is genuinely newly
+    // invited and is filed like any other invitation.
+    const aboutAnExistingBooking = NOTICES_ABOUT_AN_EXISTING_BOOKING.has(kind);
+    if (aboutAnExistingBooking || !effectiveRecipients || effectiveRecipients.length === 0) {
       const { data: invited, error: lookupError } = await supabase
         .from('appointment_secondary_recipients')
-        .select('finance_contact_id, contact_name, contact_email, appointment_type')
+        .select('finance_contact_id, recipient_role, contact_name, contact_email, appointment_type')
         .eq('appointment_ghl_id', appointmentGhlId);
       if (lookupError) {
         console.error('[Appointment Notification] Could not read invited recipients:', lookupError.message);
@@ -332,11 +372,27 @@ Deno.serve(async (req) => {
           return true;
         })
         .map((r: any) => ({
-          financeContactId: r.finance_contact_id,
+          financeContactId: r.finance_contact_id ?? null,
+          role: r.recipient_role ?? undefined,
           name: r.contact_name,
           email: r.contact_email,
+          // Already on the ledger, so this notice must not file them again.
+          alreadyInvited: true,
         }));
-      console.log(`[Appointment Notification] Resolved ${effectiveRecipients.length} previously-invited recipient(s) from the booking`);
+
+      // Anyone the caller named who is not already on the ledger. Adding a
+      // person to a reschedule must not remove everybody else from it — and
+      // they ARE newly invited, so they are filed like any other invitation
+      // and a later cancellation will reach them.
+      if (aboutAnExistingBooking && recipients && recipients.length > 0) {
+        for (const extra of recipients) {
+          const email = String(extra?.email ?? '').trim().toLowerCase();
+          if (!email || seen.has(email)) continue;
+          seen.add(email);
+          effectiveRecipients.push(extra);
+        }
+      }
+      console.log(`[Appointment Notification] Resolved ${effectiveRecipients.length} recipient(s) for this ${kind} notice`);
     }
 
     if (!effectiveRecipients || effectiveRecipients.length === 0) {
@@ -391,9 +447,14 @@ Deno.serve(async (req) => {
         // Send via Microsoft Graph (always admin mailbox)
         const message = {
           message: {
+            // A reschedule is not a new invitation. Sending one under
+            // "Meeting Invitation" is how a reader takes an unchanged-looking
+            // note for a duplicate and ignores the new time in it.
             subject: isCancellation
               ? `Meeting Cancelled: ${appointmentTitle}`
-              : `Meeting Invitation: ${appointmentTitle}`,
+              : kind === 'rescheduled'
+                ? `Meeting Rescheduled: ${appointmentTitle}`
+                : `Meeting Invitation: ${appointmentTitle}`,
             body: { contentType: 'HTML', content: emailBody },
             toRecipients: [{ emailAddress: { address: recipient.email } }],
             attachments: [{
@@ -425,11 +486,13 @@ Deno.serve(async (req) => {
         // of who was INVITED, and it is what a cancellation reads back to know
         // whom to tell. Writing a row here would make the next cancellation
         // find the same person twice.
-        if (!isCancellation && !recipientsWereResolved) await supabase
+        if (!isCancellation && !(recipient as { alreadyInvited?: boolean }).alreadyInvited) await supabase
           .from('appointment_secondary_recipients')
           .insert({
             appointment_ghl_id: appointmentGhlId,
-            finance_contact_id: recipient.financeContactId,
+            finance_contact_id: recipient.financeContactId || null,
+            recipient_role: recipient.role
+              || (recipient.financeContactId ? 'finance_partner' : 'additional_contact'),
             contact_name: recipient.name,
             contact_email: recipient.email,
             notification_sent: true,
@@ -449,11 +512,13 @@ Deno.serve(async (req) => {
         console.error(`[Appointment Notification] ✗ Failed for ${recipient.email}:`, err.message);
         
         // Record failure in DB — same reasoning as the success path above.
-        if (!isCancellation && !recipientsWereResolved) await supabase
+        if (!isCancellation && !(recipient as { alreadyInvited?: boolean }).alreadyInvited) await supabase
           .from('appointment_secondary_recipients')
           .insert({
             appointment_ghl_id: appointmentGhlId,
-            finance_contact_id: recipient.financeContactId,
+            finance_contact_id: recipient.financeContactId || null,
+            recipient_role: recipient.role
+              || (recipient.financeContactId ? 'finance_partner' : 'additional_contact'),
             contact_name: recipient.name,
             contact_email: recipient.email,
             notification_sent: false,

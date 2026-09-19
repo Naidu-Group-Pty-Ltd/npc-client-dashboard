@@ -18,6 +18,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 import { useListingGallery } from '@/hooks/useListingGallery';
+import { openListingUrl, resolveListingUrl } from '@/lib/listings/listingLinks.pure';
 
 interface ListingDetailsModalProps {
   listing: PropertyListing | null;
@@ -99,17 +100,19 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
     }
   };
 
-  const openSourceUrl = () => {
-    if (listing.url) {
-      window.open(listing.url, '_blank', 'noopener,noreferrer');
-    }
-  };
+  /**
+   * The links this listing actually carries.
+   *
+   * These used to be drawn on truthiness and opened raw, so a stored value
+   * like `gattonrealestate.com.au/listings/…` — no scheme — was resolved
+   * against this app's own origin and the reader got a tab with nothing in
+   * it. A control is drawn only where a link resolves.
+   */
+  const webLinkUrl = resolveListingUrl(listing.webLinks);
+  const sourceUrl = resolveListingUrl(listing.url);
 
-  const openWebLink = () => {
-    if (listing.webLinks) {
-      window.open(listing.webLinks, '_blank', 'noopener,noreferrer');
-    }
-  };
+  const openSourceUrl = () => { openListingUrl(listing.url); };
+  const openWebLink = () => { openListingUrl(listing.webLinks); };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -181,12 +184,12 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
                     <Maximize2 className="h-4 w-4 mr-2" /> Full page
                   </Link>
                 </Button>
-                {listing.webLinks && (
+                {webLinkUrl && (
                   <Button variant="outline" onClick={openWebLink}>
                     <ExternalLink className="h-4 w-4 mr-2" /> View Listing
                   </Button>
                 )}
-                {listing.url && (
+                {sourceUrl && (
                   <Button variant="outline" onClick={openSourceUrl}>
                     <ExternalLink className="h-4 w-4 mr-2" /> View Source
                   </Button>
@@ -196,8 +199,8 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
                     <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy Address
                   </Button>
                 )}
-                {listing.url && (
-                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(listing.url!, "URL")}>
+                {sourceUrl && (
+                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(sourceUrl, "URL")}>
                     <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy URL
                   </Button>
                 )}

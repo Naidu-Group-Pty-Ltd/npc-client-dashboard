@@ -174,6 +174,22 @@ export const ContactAddressFields = memo(function ContactAddressFields({
               </Select>
             </div>
           </div>
+          {/*
+            Where "since when" is recorded.
+
+            This card holds the address the client is at NOW, and has no date
+            on it — the 19 Sep 2026 clone audit asked for one here. It is not
+            added here, because Address History on this same tab already
+            records a start and end date per address, and that is the record a
+            lender's serviceability questions are answered from. A second place
+            to type the same fact is how two places come to disagree; what was
+            missing is that nothing said where the first one was.
+          */}
+          <p className="text-[11px] leading-4 text-muted-foreground">
+            Recording when they moved in, or a previous address? Use{' '}
+            <span className="font-medium text-foreground">Address History</span> further down this
+            tab — it keeps a start and end date for each address.
+          </p>
         </CardContent>
       </Card>
 

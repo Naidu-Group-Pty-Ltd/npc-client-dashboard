@@ -55,7 +55,30 @@ export interface PlannedRecipient {
   role: PartyRole;
   name: string;
   email: string;
-  financeContactId: string;
+  /**
+   * The finance-contact row this recipient came from, or null.
+   *
+   * This used to be a required string, and where a party had no real id the
+   * planner minted `party-<role>-<email>` to key the de-duplication map. That
+   * synthetic key was then written straight into
+   * `appointment_secondary_recipients.finance_contact_id`, a UUID column —
+   * so every insert for a client or an additional contact was rejected, and
+   * the ledger of who was invited held finance partners and nobody else.
+   *
+   * Three audit findings followed from that one column: a booking's detail
+   * window listed no additional contact, a reschedule reached nobody but the
+   * finance partner, and a cancellation did not either — because all three
+   * read this ledger.
+   *
+   * De-duplication is a property of the PLAN and now has a key of its own
+   * (`dedupeKey`). What goes in the column is a real id or nothing.
+   */
+  financeContactId: string | null;
+  /**
+   * Stable per-address key for "have we already planned to tell this person".
+   * Never written to the database.
+   */
+  dedupeKey: string;
 }
 
 export interface BookingNotificationPlan {
@@ -127,9 +150,13 @@ export function planBookingNotifications({ parties, crm }: PlanInput): BookingNo
       role: party.role,
       name: displayName(party, email),
       email,
+      // Only a real finance-contact row. A stand-in here is a value the
+      // database refuses, which is how three surfaces came to be told nothing.
+      financeContactId: party.financeContactId?.trim() || null,
       // A stable key per address: the ledger of who was invited is read back
-      // on cancellation, and two rows for one person send two notices.
-      financeContactId: party.financeContactId?.trim() || `party-${party.role}-${email}`,
+      // on reschedule and cancellation, and two rows for one person send two
+      // notices.
+      dedupeKey: party.financeContactId?.trim() || `party-${party.role}-${email}`,
     };
     const existing = byEmail.get(email);
     if (!existing) {
@@ -137,7 +164,13 @@ export function planBookingNotifications({ parties, crm }: PlanInput): BookingNo
       continue;
     }
     if (ROLE_RANK[candidate.role] > ROLE_RANK[existing.role]) {
-      byEmail.set(email, { ...candidate, financeContactId: existing.financeContactId });
+      // The more specific role wins, but the key that already identified this
+      // address stays — it is what a second pass would match on.
+      byEmail.set(email, {
+        ...candidate,
+        financeContactId: candidate.financeContactId ?? existing.financeContactId,
+        dedupeKey: existing.dedupeKey,
+      });
     }
   }
 

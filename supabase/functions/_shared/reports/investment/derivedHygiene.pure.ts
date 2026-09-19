@@ -22,6 +22,7 @@
 import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
 import { alignChartScales } from './chartScale.pure.ts';
 import { dedupeChartDirectives } from './blockHygiene.pure.ts';
+import { foldStraySections } from './sectionFolding.pure.ts';
 
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
@@ -505,6 +506,24 @@ export function presentStoredMarkdown(
   const pointed = rewriteScaffoldingPointers(clean);
   const sourced = pointed.rewritten ? pointed.markdown : clean;
   /*
+   * The same section, written twice.
+   *
+   * On the regenerated 262 Pallas Street Compass the Due Diligence Checklist
+   * ran on pages 24–25 and again on 25–26, and the Final Recommendation on
+   * page 25 and again on page 26 — the model wrote both inside the Risk
+   * Dashboard's own chunk and then again as their own sections. See
+   * `foldStraySections`, which carries the nested copy forward rather than
+   * dropping it, because the nested copy was the complete one.
+   *
+   * READ path only, and deliberately. `report_content` is the source of truth
+   * and `SECTION_STORAGE.md`'s rule is that a repeat is an occurrence to be
+   * walked in order — folding it into storage would make the record disagree
+   * with what the model actually produced and would re-key the section index.
+   * What a reader is shown is this module's business; what is kept is not.
+   */
+  const one = foldStraySections(sourced);
+  const onceEach = one.folded.length ? one.markdown : sourced;
+  /*
    * The same chart, drawn five times.
    *
    * `dedupeChartDirectives` has existed since Stage 4 and ran on the WRITE
@@ -518,8 +537,8 @@ export function presentStoredMarkdown(
    * no-op on a document that carries each drawing once — which is what makes
    * adopting it on the read path safe for everything already correct.
    */
-  const deduped = dedupeChartDirectives(sourced);
-  const single = deduped.removed ? deduped.markdown : sourced;
+  const deduped = dedupeChartDirectives(onceEach);
+  const single = deduped.removed ? deduped.markdown : onceEach;
   // One scale per quantity across the whole document. Unconditional, because
   // it needs no record to know that two charts of kilometres must agree, and
   // it is a no-op on a document with one chart per unit.

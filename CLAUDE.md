@@ -2223,6 +2223,40 @@ the identical three-bar price chart was drawn five times on one report; it is a
 no-op on a document that already draws each chart once. Shipped as seed **v16**
 plus the active-master refresh.
 
+**The same fixture defect had a second half, one field along** (§6). The two
+blocks above bind a BODY as well as a heading — `verdict()` sets
+`{{recommendation.gradedLine}}` and `recommendation()` sets
+`{{recommendation.gradedDetailLine}}` — and the fixture carried neither, while
+the product publishes 115 and 193 characters. `renderTextBlockHtml` draws
+nothing for a bound part that resolved to nothing, so all 510 renders measured
+a two-element block where a client's page carries three; the gate could not
+have seen a body overrun however badly one set. Both bounds are now DERIVED by
+`gradedSlotBound.spec.ts` over the grade × coverage space rather than typed, and
+the honest outcome is stated rather than dressed up: with the fixture corrected
+every master still fits, so this is a closed blind spot rather than a repaired
+document.
+
+**And the same section was being written twice** (§7). The Due Diligence
+Checklist ran on pages 24–25 and again on 25–26 and the Final Recommendation on
+pages 25 and 26, because the model wrote both inside the Risk Dashboard's own
+chunk as sub-headings and again as their own sections — the registry's three
+entries share no headings and were never the cause. `foldStraySections` applies
+one rule: **a heading nested inside a section that names a section the document
+ALSO writes at its own level is that section starting early**, carried forward
+rather than dropped, because the nested copy was the COMPLETE one and the
+standalone copy is where the truncated item was. Three things carry it. **A
+checklist is one block, so the comparison is per list ITEM** — the first version
+compared blocks, the two copies differed only in their third item, and nothing
+collapsed. **A cut-off item is not a fourth obligation**: a unit that is the
+beginning of one already kept is dropped, and one that a kept unit is the
+beginning OF replaces it, so which copy came first stops mattering. And **it
+acts only where the section is named properly somewhere else** — a section
+merely buried as a sub-heading is a different defect — so it is a byte-for-byte
+no-op on a document that repeats nothing. Read path only, in
+`presentStoredMarkdown`: `report_content` stays the source of truth and a repeat
+stays an occurrence there, because what a reader is shown is this module's
+business and what is kept is not.
+
 **And the report body was being read like a chat message** (§5 of the same
 doc). `renderMarkdown` is the one Markdown implementation here and it draws the
 Compass body — the WHOLE source, on both paths — while cutting it at

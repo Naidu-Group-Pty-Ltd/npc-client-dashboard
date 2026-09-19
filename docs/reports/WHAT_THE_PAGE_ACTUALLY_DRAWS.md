@@ -335,10 +335,112 @@ day. They are **not** measured against the stored corpus: 91,340 characters is
 one observation, and one observation is not a distribution. That measurement is
 the follow-up.
 
+## 6. The body slot the gate had never measured
+
+§3 closed the heading half of the fixture defect. The same blocks bind a body,
+and executing the measurement rather than reasoning about it showed the fixture
+carried neither field:
+
+| slot | bound by | production maximum | fixture carried |
+|---|---|---|---|
+| `recommendation.gradedLine` | `verdict()` | 115 chars | *(absent)* |
+| `recommendation.gradedDetailLine` | `recommendation()` | 193 chars | *(absent)* |
+
+`renderTextBlockHtml` draws nothing at all for a bound part that resolved to
+nothing, so every one of the 510 renders measured a two-element block where a
+client's page carries three. The measurement was not wrong about what it looked
+at; it was looking at a shorter document than the one the product makes.
+
+Both maxima are the A+ / 100 / four-of-five form, and it is worth saying why
+that is not the five-of-five form: `assessedOfTotal` returns null once every
+dimension is scored, so the coverage qualifier and the longest weighting clause
+are longest *together* one dimension short of complete.
+
+`gradedSlotBound.spec.ts` walks the grade × total × measured-subset × coverage
+space `gradedLine` can be called with (1,984 combinations) and asserts the
+fixture states the longest string that walk produces — derived, never typed,
+for the reason the heading's own bound went stale at 89.
+
+**The outcome is that today's masters survive it.** With both slots at their
+true maxima, all 510 renders are clean: no block overflows its page and none
+prints over another. That is the honest result and it is worth stating plainly
+— the finding is a closed blind spot rather than a repaired document. A
+correction to record with it: an earlier reading of the seeded catalogue
+counted five `Recommendation` blocks as setting past *two* lines, borrowing
+`verdict()`'s two-line allowance. That block declares 96pt and holds three
+heading lines plus its body; the two-line rule was never its.
+
+## 7. The same section, written twice
+
+`PLANNING_CONTROLS_IN_THE_REPORT.md` §7 recorded this as a named residual
+against the regenerated 262 Pallas Street Compass: the **Due Diligence
+Checklist** on pages 24–25 and again on 25–26, the **Final Recommendation** on
+page 25 and again on page 26, and one checklist item cut mid-sentence in the
+second copy.
+
+The registry is not the cause — `compass.riskDashboard` (9),
+`compass.dueDiligenceChecklist` (10) and `compass.finalRecommendation` (11) are
+three distinct entries sharing no `sourceHeadings`. The model wrote the latter
+two inside the Risk Dashboard's own chunk as sub-headings and then wrote them
+again as their own sections. `partitionByRegistry` is right to keep an
+unrecognised sub-heading with the section above it; what it cannot know on its
+own is that this particular sub-heading is a section the document goes on to
+write properly further down.
+
+The rule `foldStraySections` applies: **a heading nested inside one section's
+body that names a section the document ALSO writes at its own level is that
+section starting early**, and it is carried forward rather than dropped. Four
+things decide the shape.
+
+**It merges rather than choosing.** On the document that prompted this the
+NESTED copy was the complete one — the standalone copy is where the truncated
+item was — so a rule that kept the structurally-correct copy would have deleted
+the better text. Where one copy says everything the other does the merge is
+exactly the fuller copy; where they genuinely diverge, neither half is lost.
+Same answer `captureObjectsFor` gives to the same question.
+
+**A checklist is ONE block, which is why the comparison is not blocks.**
+Executing the first version showed it immediately: the nested copy is `1.` /
+`2.` / `3.` with no blank line between them and the standalone is `-` / `-` /
+`-`, so each is a single block, the two differ in their third item, and nothing
+collapsed. A reader still met every obligation twice. A list is compared ITEM by
+item, and an item carries its own continuation lines because a wrapped item is
+one obligation rather than two.
+
+**A cut-off item is not a fourth obligation.** `- Ask a local property manager`
+is `3. Ask a local property manager to confirm the achievable weekly rent`
+with its second half missing, and printing both puts a sentence fragment in a
+client's checklist. A unit that is the beginning of one already kept, at a word
+boundary, is dropped; and a unit that something already kept is the beginning
+OF replaces it, so which copy came first stops mattering.
+
+**It acts only where the document names the section properly somewhere else.**
+A nested heading with no section-level counterpart is a section buried as a
+sub-heading — a different defect, whose fix would re-level a heading, move it
+in the contents and change documents carrying no duplication at all. This is a
+de-duplication and nothing else, so on a document that repeats nothing it is a
+byte-for-byte no-op.
+
+It runs in `presentStoredMarkdown` — the one scrub all four renderers apply —
+and **on the read path only**. `report_content` is the source of truth and
+`SECTION_STORAGE.md`'s rule is that a repeat is an occurrence to be walked in
+order; folding it into storage would make the record disagree with what the
+model produced and would re-key the section index. What a reader is shown is
+this module's business; what is kept is not.
+
 ## What is still outstanding
 
 One item from the same report is **not** closed here, because closing it from a
 description rather than from the document would be guessing: **the repeated
 planning table and growth figures across different sections**, beyond the
-identical-directive repeats §4 closes. It needs measuring against a regenerated
-document rather than against a recollection of the one that was reviewed.
+identical-directive repeats §4 closes and the whole-section repeats §7 closes.
+It needs measuring against a regenerated document rather than against a
+recollection of the one that was reviewed.
+
+Two of the four residuals `PLANNING_CONTROLS_IN_THE_REPORT.md` §7 named are
+also still open and are named there rather than guessed at here: **labels
+clipped in three primitives** and **the timeline drawing horizons no item
+reaches**. Both are geometry inside a drawing rather than between blocks, which
+is the one class the 510-render collision measure cannot see — it compares a
+block's ink against its neighbours', and a label clipped inside its own chart
+overlaps nothing.

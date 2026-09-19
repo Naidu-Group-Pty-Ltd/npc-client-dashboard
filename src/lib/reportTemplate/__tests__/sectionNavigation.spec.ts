@@ -187,6 +187,49 @@ describe('the PDF outline', () => {
     expect(html).toContain('bookmark-level:none');
   });
 
+  /*
+   * The half of the promise that was not kept.
+   *
+   * `narrativeIndex.ts` says the two surfaces "cannot describe the document
+   * differently", and the page's entry standing down on a narrative sheet is
+   * the mechanism. Nothing replaced it, so the outline LOST the row rather
+   * than gaining the section: measured 19 September 2026 on a Chancery
+   * Compass carrying a real narrative, the contents listed nine rows
+   * including "Location Overview" and "Zoning, Planning and Development
+   * Considerations" while the outline held seven, every one of them
+   * furniture. This file's own header already described the outline as
+   * carrying the sections; it does now.
+   */
+  const sectioned = [
+    page('p0', 'Cover', [label('c', 'Prepared for a client')]),
+    page('p1', 'Contents', [toc()]),
+    ...[0, 1, 2, 3].map((i) => page(`p${i + 2}`, i ? `The report (${i + 1})` : 'The report',
+      [narrative(i)], i ? { tocContinues: true } : {})),
+    page('p6', 'Important information', [label('i', 'General in nature')]),
+  ];
+
+  it('names the report’s own sections, not only its furniture', () => {
+    const { html } = render(sectioned);
+    // The page names that survive are the furniture ones; the narrative
+    // sheets stand down, and their sections speak instead.
+    expect(html).toContain('bookmark-label:&#39;Cover&#39;');
+    expect(html).not.toContain('bookmark-label:&#39;The report');
+    for (const section of ['Alpha', 'Beta', 'Gamma']) {
+      expect(html, section).toMatch(
+        new RegExp(`<h2[^>]*bookmark-level:2;[^>]*>${section}</h2>`),
+      );
+    }
+  });
+
+  it('puts the outline on the tier the contents lists, never a shallower one', () => {
+    // `Alpha detail` is the h3 subsection. A contents page that lists the
+    // sections must not have an outline that also lists their subsections,
+    // or the two surfaces disagree about what a part of the document is.
+    const { html } = render(sectioned);
+    expect(html).toMatch(/<h3[^>]*>Alpha detail<\/h3>/);
+    expect(html).not.toMatch(/<h3[^>]*bookmark-level:2;/);
+  });
+
   it('emits no outline property at all when bookmarks are turned off', () => {
     const { html } = render(pages, data, { includeBookmarks: false });
     expect(html).not.toContain('bookmark-label');

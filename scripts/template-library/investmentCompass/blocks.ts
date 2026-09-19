@@ -1132,6 +1132,60 @@ export function verdict(opts: { eyebrow: string; heading: string; body: string }
   };
 }
 
+/**
+ * The companion note — where the rest of the analysis is.
+ *
+ * ## What it is
+ *
+ * `TIER_CONTENT.companionNote` is the sentence each tier uses to send a reader
+ * to its companion document: "Purchase costs, yield, loan structure, cash flow
+ * and the ten-year projection are set out in the Financial Analysis Report for
+ * this property" on the Compass, and its mirror on the Financial Analysis.
+ * `reportBindingProjection` has published it as `report.companionNote` since
+ * the tier split and `render-investment-report-pdf` draws it — but the
+ * delivered document comes through the TEMPLATE route, and no master bound it:
+ * zero occurrences across `scripts/template-library/`, zero in the seeded
+ * catalogue. The tier that is told to point elsewhere never did, on any page of
+ * any document a client opened.
+ *
+ * ## Why it is not the section heading's standfirst
+ *
+ * That was the first attempt, and building the fifty masters counted it: 32 of
+ * 50 Contents pages carried the binding and 18 did not. `sectionHeading` says
+ * why, in the module itself — "only the `standfirst` kind draws one; `bare`,
+ * `decimal` and `eyebrow` drop it". That is right for a section opener's
+ * subtitle, which is styling. It is wrong here. `hasContents` records the same
+ * rule one level up, from the same cause: a family's `toc_style: none` was a
+ * statement about the decorative index it draws and it silenced the contents
+ * page outright, so ten masters shipped client documents with no way to
+ * navigate them. **A family's styling decides how a thing is drawn, never
+ * whether the document carries it.**
+ *
+ * So the note is its own block, drawn by every master, in exactly the treatment
+ * the `standfirst` kind would have given it — italic, muted, at body size and
+ * 1.5 leading — and its height is `standfirstDepth`'s own arithmetic rather
+ * than a second opinion about the same sentence.
+ *
+ * `chars` is the longest note any tier publishes, measured over `TIER_CONTENT`
+ * rather than estimated: a block that under-declares does not overflow the
+ * page, it prints over whatever `flow()` puts next.
+ */
+export function companionNote(binding: string, chars: number): FlowItem {
+  const c = ctx();
+  return {
+    height: textHeight(chars, { size: c.scale.body, lineHeight: 1.5 }),
+    block: (y) => block('text-block', {
+      body: binding,
+      bodySize: c.scale.body,
+      bodyFont: 'token:body',
+      bodyStyle: 'italic',
+      bodyLineHeight: 1.5,
+      color: 'token:mutedInk',
+      x: c.contentLeft, y, width: c.contentWidth,
+    }),
+  };
+}
+
 export function prose(body: string, height?: number): FlowItem {
   const c = ctx();
   return {

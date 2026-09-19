@@ -22,6 +22,13 @@ import {
   infrastructureRules,
   renderInfrastructureOutlook,
 } from '../_shared/planning/infrastructureEvidence.pure.ts';
+import {
+  projectsNear,
+  publishedProjectRules,
+  renderPublishedProjects,
+  type RegisterSearch,
+  PUBLISHED_PROJECT_COVERAGE,
+} from '../_shared/planning/publishedProjectRegister.pure.ts';
 import { withPlanningEvidence } from '../_shared/reports/location/planningEvidenceRecord.pure.ts';
 import { crimeStatBlocks } from '../_shared/reports/crimePromptBlocks.pure.ts';
 import { climateStatBlocks } from '../_shared/reports/climatePromptBlocks.pure.ts';
@@ -33,6 +40,27 @@ import {
   nextAcquisitionAttempt,
   recordAcquisitionAttempt,
 } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
+import { AcquisitionRecorder } from '../_shared/reports/acquisitionLedger.pure.ts';
+import {
+  classifyProgress,
+  describeHandoff,
+  mayTouchRow,
+} from '../_shared/reports/investment/runProgress.pure.ts';
+import {
+  CALL_CEILING_MS,
+  acquisitionWindowMs,
+  type AcquisitionBudgetInput,
+  type CallClass,
+} from '../_shared/reports/investment/acquisitionBudget.pure.ts';
+import {
+  coordinateProvenance,
+  enrichmentCoordinate,
+  ledgerOutcomeFor,
+  recoveredCoordinate,
+  type SubjectCoordinate,
+} from '../_shared/reports/location/planningCoordinate.pure.ts';
+import { geocodeAddress } from '../_shared/geocode/geocoder.ts';
+import { claimSupportRules } from '../_shared/reports/investment/chartEvidence.pure.ts';
 import {
   resolveCrimePostcodeAuthority,
   CRIME_EVIDENCE_WITHHELD_NOTE,
@@ -147,6 +175,15 @@ const SECTION_SECOND_ATTEMPT_RESERVE_MS = 30_000;
 const SECTION_MIN_CALL_WINDOW_MS = 20_000;
 /** From the run's start: the last moment a model call may still be in flight. */
 const SECTION_CALL_HARD_STOP_MS = 125_000;
+/**
+ * Held back from acquisition so the research that DID land can be persisted.
+ *
+ * Research nobody banked is research the next invocation buys again, which is
+ * how one report came to re-purchase eighty Google calls across eleven resumes.
+ */
+const ACQUISITION_CHECKPOINT_RESERVE_MS = 5_000;
+/** Below this an acquisition call is not worth starting. */
+const ACQUISITION_MIN_CALL_MS = 1_500;
 /** The error a section returns when it made no call for want of a window. */
 const SECTION_BUDGET_DEFERRED = 'SECTION_BUDGET_DEFERRED';
 
@@ -2131,6 +2168,125 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
   // browser pump). See docs/reports/INVESTMENT_REPORT_RESUME.md.
   const runStartedAt = Date.now();
 
+  /**
+   * True once the acquisition phase gave up its remaining work to protect the
+   * section loop. Distinguishes "research ran long" from "a model call failed"
+   * in the hand-off, which are different problems with different remedies.
+   */
+  let acquisitionExhaustedThisRun = false;
+
+  /**
+   * The run clock, as the acquisition calls see it.
+   *
+   * `perCallCeilingMs` is supplied per dependency by `acquisitionBudgetFor`.
+   * The reserves are what stop a slow provider consuming the invocation: the
+   * section loop keeps enough to start one model call, and the checkpoint keeps
+   * enough to persist what research DID land — research that is not persisted
+   * is research the next invocation has to buy again.
+   */
+  const acquisitionBudgetBase = (): Omit<AcquisitionBudgetInput, 'perCallCeilingMs'> => ({
+    runStartedAt,
+    now: Date.now(),
+    hardStopMs: SECTION_CALL_HARD_STOP_MS,
+    sectionReserveMs: SECTION_MIN_CALL_WINDOW_MS,
+    checkpointReserveMs: ACQUISITION_CHECKPOINT_RESERVE_MS,
+    minCallMs: ACQUISITION_MIN_CALL_MS,
+  });
+
+  /**
+   * A call's own ceiling, before the run's clock is applied.
+   *
+   * A dependency class picks a default; a number is the site's own declared
+   * budget, kept verbatim. Both are CEILINGS — `acquisitionWindowMs` takes the
+   * smaller of this and what the invocation can actually spare, so declaring 45s
+   * for a planning register that needs it cannot overrun the run, and clamping
+   * it to a class default would quietly buy speed with evidence.
+   */
+  const acquisitionBudgetFor = (ceiling: CallClass | number): AcquisitionBudgetInput => ({
+    ...acquisitionBudgetBase(),
+    perCallCeilingMs: typeof ceiling === 'number' ? ceiling : CALL_CEILING_MS[ceiling],
+  });
+
+  /**
+   * An acquisition call, bounded by the run's own clock.
+   *
+   * Delegates to `fetchWithTimeout` so the circuit breaker still applies — one
+   * fetch wrapper, not two. What this adds is the window: `fetchWithTimeout`
+   * defaults to 90s, which is most of an invocation that must also write
+   * fifteen sections, so leaving a call site to its default is how the section
+   * loop ends up with nothing.
+   *
+   * When no window remains the call is NOT made and a synthetic 598 is
+   * returned, which every call site's existing `!response.ok` branch records as
+   * a FAILURE rather than as an empty answer. That is the conservative side and
+   * the correct one: we did not ask, so we know nothing, and the dependency
+   * stays outstanding for the next invocation instead of being written into the
+   * record as an absence. See `acquisitionBudget.pure.ts`.
+   */
+  const NO_WINDOW_STATUS = 598;
+  const acquisitionFetch = async (
+    url: string,
+    options: RequestInit,
+    ceiling: CallClass | number,
+    serviceName: string,
+  ): Promise<Response> => {
+    const windowMs = acquisitionWindowMs(acquisitionBudgetFor(ceiling));
+    if (windowMs === null) {
+      acquisitionExhaustedThisRun = true;
+      console.log(
+        `⏳ ${serviceName}: no window left in this invocation (${Math.round((Date.now() - runStartedAt) / 1000)}s elapsed) — ` +
+        `deferred to the next one. NOT recorded as an absence.`
+      );
+      return new Response(null, { status: NO_WINDOW_STATUS });
+    }
+    return await fetchWithTimeout(url, options, windowMs, serviceName);
+  };
+
+  /**
+   * Start an acquisition call now, and read it where its answer is handled.
+   *
+   * A promise that rejects before anything awaits it is an unhandled
+   * rejection, which Deno treats as fatal. The no-op `catch` marks it handled
+   * and swallows nothing: the call site awaits the ORIGINAL promise, so the
+   * same error still surfaces inside the same `try` it always did.
+   */
+  const startAcquisition = (
+    url: string,
+    options: RequestInit,
+    ceiling: CallClass | number,
+    serviceName: string,
+  ): Promise<Response> => {
+    const pending = acquisitionFetch(url, options, ceiling, serviceName);
+    pending.catch(() => {});
+    return pending;
+  };
+
+  /**
+   * A non-ok answer is never "the provider holds nothing".
+   *
+   * The phase-1 wrappers read `if (response.ok) { … } return null`, and a null
+   * there reaches `fetchServiceWithFallback` as the string "No data returned",
+   * which `acquisitionLedger.fromServiceResult` maps to
+   * `unavailable_in_coverage` — *the provider answered and holds nothing for
+   * this subject*. That is a statement about the property, and an HTTP 500 or a
+   * call we never made is not entitled to make it.
+   *
+   * Throwing instead lands in the same wrapper's catch, which records
+   * `requested_failed` and leaves the dependency outstanding. `return null`
+   * still means what it always meant: the service answered 200 and said it
+   * holds nothing here, which is real and worth printing.
+   */
+  const assertAcquisitionAnswered = (response: Response, serviceName: string): void => {
+    if (response.status === NO_WINDOW_STATUS) {
+      throw new Error(
+        `${serviceName} was not attempted: no window left in this invocation. Not an absence.`,
+      );
+    }
+    if (!response.ok) {
+      throw new Error(`${serviceName} answered HTTP ${response.status}`);
+    }
+  };
+
   console.log('Investment report function invoked with method:', req.method);
   
   if (req.method === 'OPTIONS') {
@@ -2310,7 +2466,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       economics?: any;
       locationIntelligence?: any;
     } = {};
-    
+
+    /**
+     * The section plan already on the row, if any.
+     *
+     * Learning it for the first time is durable progress — the widget cannot
+     * draw "of 15" without it — while re-writing the same number is not. The
+     * hand-off needs the distinction; see `runProgress.pure.ts`.
+     */
+    let existingTotalSections: number | null = null;
+
     // Get pre-generation overrides from request (passed from frontend)
     const frontendManualOverrides = propertyDetails?.manualOverrides || null;
     if (frontendManualOverrides && Object.keys(frontendManualOverrides).length > 0) {
@@ -2394,6 +2559,8 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             economics: (existingReport as any).economic_data,
             locationIntelligence: (existingReport as any).location_intelligence,
           };
+          const storedTotal = Number((existingReport as any).total_sections);
+          existingTotalSections = Number.isFinite(storedTotal) && storedTotal > 0 ? storedTotal : null;
         }
         
         // If continuing, use the stored last_completed_section index for reliable resume
@@ -2716,6 +2883,26 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     
     let enhancedData: EnhancedData = {};
 
+    /*
+     * The coordinate the planning registers and the published-project register
+     * are asked at, resolved once and qualified once. Declared here beside
+     * `enhancedData` because both producers read it and they sit in different
+     * blocks — see the resolution below for what it closes and why only a
+     * parcel-grade match is usable.
+     */
+    let subjectCoordinate: SubjectCoordinate | null = null;
+    let coordinateRefusal: { refusal: string; detail: string; tried: string[] } | null = null;
+
+    /**
+     * What happened when this run asked for each piece of evidence.
+     *
+     * Declared here rather than inside the enrichment try block because the
+     * ledger has to survive a throw: a run that died halfway through its
+     * producers is exactly the run whose reader most needs to know which
+     * ones were reached.
+     */
+    const acquisition = new AcquisitionRecorder();
+
     /**
      * RF-7.2B.1 §2 — the subject's TRUSTED geography, resolved from the
      * verified coordinate during this run rather than read back from a sweep
@@ -2814,11 +3001,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 2. ABS demographic data
         postcode ? fetchServiceWithFallback('abs-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-data-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-data-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ postcode, state })
           }, 30000, 'abs-data-service');
+          assertAcquisitionAnswered(response, 'abs-data-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -2828,10 +3016,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 3. RBA economic data
         fetchServiceWithFallback('rba-data-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/rba-data-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/rba-data-service`, {
             method: 'POST',
             headers
           }, 20000, 'rba-data-service');
+          assertAcquisitionAnswered(response, 'rba-data-service');
           if (response.ok) {
             const data = await response.json();
             return data.data || null;
@@ -2841,11 +3030,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 4. SEIFA socioeconomic data
         postcode ? fetchServiceWithFallback('abs-seifa-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-seifa-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-seifa-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ postcode, state })
           }, 25000, 'abs-seifa-service');
+          assertAcquisitionAnswered(response, 'abs-seifa-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -2871,11 +3061,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // all, and the re-key below picks it up once the coordinate lands.
         (suburb && state && crimePostcodeAtIntake.trusted)
           ? fetchServiceWithFallback('crime-statistics-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ suburb, state, postcode: crimePostcodeAtIntake.postcode })
           }, 30000, 'crime-statistics-service');
+          assertAcquisitionAnswered(response, 'crime-statistics-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -2889,11 +3080,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
         // 6. Employment data
         state ? fetchServiceWithFallback('abs-employment-service', async () => {
-          const response = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-employment-service`, {
+          const response = await acquisitionFetch(`${supabaseUrl}/functions/v1/abs-employment-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ suburb, state, postcode })
           }, 25000, 'abs-employment-service');
+          assertAcquisitionAnswered(response, 'abs-employment-service');
           if (response.ok) {
             const data = await response.json();
             return data.success ? data.data : null;
@@ -2926,9 +3118,22 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         const fulfilled = result.status === 'fulfilled'
           ? (result.value as ServiceResult<any>)
           : null;
+        // The producer name `data_sources` and the acquisition ledger use,
+        // which is not always the name of the service that answered.
+        const producerNames: Record<string, string> = {
+          domain: 'marketData',
+          demographics: 'demographics',
+          economics: 'economics',
+          seifaData: 'seifa',
+          crimeStatistics: 'crimeStatistics',
+          employmentData: 'employment',
+          climateData: 'climate',
+        };
+        const producer = producerNames[serviceName] ?? serviceName;
         if (fulfilled && fulfilled.success && fulfilled.data) {
           enhancedData = { ...enhancedData, [serviceName === 'domain' ? 'domainData' : serviceName]: fulfilled.data };
           successCount++;
+          acquisition.fromServiceResult(producer, fulfilled, { service: fulfilled.serviceName });
         } else {
           failCount++;
           const reason = result.status === 'rejected' 
@@ -2936,6 +3141,22 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             : (result.value as ServiceResult<any>).error;
           if (reason && !reason.includes('Missing')) {
             console.log(`  ⚠️ ${serviceName}: ${reason}`);
+          }
+          // A rejected promise, a `Missing …` precondition and a provider that
+          // answered nothing are three different things and were all one null.
+          // The two coordinate-keyed slots are re-recorded in phase 2 where
+          // they are genuinely fetched; last write wins, so a skip recorded
+          // here never survives a real attempt later in the same run.
+          if (result.status === 'rejected') {
+            acquisition.failed(producer, String(result.reason?.message ?? 'The fetch threw and reported no message'), `${serviceName}-service`);
+          } else if (typeof reason === 'string' && /^missing\b/i.test(reason.trim())) {
+            acquisition.skipped(producer, reason, `${serviceName}-service`);
+          } else if (typeof reason === 'string' && reason.trim() && !fulfilled?.success) {
+            acquisition.fromServiceResult(producer, fulfilled ?? { success: false, error: reason }, {
+              service: (fulfilled as ServiceResult<any> | null)?.serviceName ?? `${serviceName}-service`,
+            });
+          } else {
+            acquisition.fromServiceResult(producer, fulfilled, { service: `${serviceName}-service` });
           }
         }
       });
@@ -2951,7 +3172,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // Fetch risk assessment data (can use coordinates from location intelligence)
       if (postcode && state) {
         try {
-          const riskResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/risk-assessment-service`, {
+          const riskResponse = await acquisitionFetch(`${supabaseUrl}/functions/v1/risk-assessment-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ 
@@ -2966,11 +3187,19 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             if (riskData.success && riskData.data) {
               enhancedData = { ...enhancedData, riskAssessment: riskData.data };
               console.log('✓ Risk assessment data fetched');
+              acquisition.answered('riskAssessment', 'Retrieved and used', 'risk-assessment-service');
+            } else {
+              acquisition.empty('riskAssessment', 'The risk service answered and holds nothing for this location', 'risk-assessment-service');
             }
+          } else {
+            acquisition.failed('riskAssessment', `risk-assessment-service answered HTTP ${riskResponse.status}`, 'risk-assessment-service');
           }
         } catch (error: any) {
           console.log('⚠️ Risk assessment skipped:', error?.message?.substring(0, 50));
+          acquisition.failed('riskAssessment', String(error?.message ?? 'The risk request threw and reported no message'), 'risk-assessment-service');
         }
+      } else {
+        acquisition.skipped('riskAssessment', 'No postcode and state were resolved, and the risk register is keyed on both', 'risk-assessment-service');
       }
 
       // NOTE: ABS demographics and RBA economics are now fetched in Phase 1 parallel block above
@@ -2982,7 +3211,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       if (!weeklyRent && suburb && state) {
         try {
           console.log('📊 Weekly rent not provided, fetching from SQM Research cache...');
-          const rentResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/sqm-rent-service`, {
+          const rentResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/sqm-rent-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3003,7 +3232,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               propertyType: propertyDetails?.propertyType?.toLowerCase() || 'house',
               bedrooms: modelledBeds
             })
-          });
+          }, 'register', 'sqm-rent-service');
           
           if (rentResponse.ok) {
             const rentData = await rentResponse.json();
@@ -3036,7 +3265,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           console.log(`  First Home Buyer: ${effectiveIsFirstHomeBuyer}`);
           console.log(`  New Build: ${effectiveIsNewBuild}`);
           
-          const financialResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-calculator-service`, {
+          const financialResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-calculator-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3093,7 +3322,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               ...(toFiniteNumber(mergedOverrides.occupancyRate) !== undefined
                 ? { occupancyWeeks: toFiniteNumber(mergedOverrides.occupancyRate) } : {}),
             })
-          });
+          }, 'local', 'financial-calculator-service');
           
           if (financialResponse.ok) {
             const financialData = await financialResponse.json();
@@ -3116,10 +3345,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             }
             
             console.log('Financial calculations completed successfully');
+            acquisition.answered('financials', 'Computed by the financial engine from the recorded inputs', 'financial-calculation-service');
             
             // Run validation on financial calculations - USE EFFECTIVE VALUES
             try {
-              const validationResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-validation-service`, {
+              const validationResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/financial-validation-service`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -3137,7 +3367,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                   state: state,
                   propertyType: effectivePropertyType
                 })
-              });
+              }, 'local', 'financial-validation-service');
               
               if (validationResponse.ok) {
                 const validationData = await validationResponse.json();
@@ -3196,11 +3426,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           locationIntelligence: existingEnhancedFields.locationIntelligence,
         };
         console.log(`♻️ ${reuse.note}`);
+        acquisition.answered(
+          'locationIntelligence',
+          `Reused the enrichment this report already holds: ${reuse.note}`,
+          'location-intelligence-service',
+        );
       } else {
       // Fetch location intelligence data
       try {
         console.log(`Fetching location intelligence for: ${formattedInput} (${reuse.verdict})`);
-        const locationResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
+        const locationResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/location-intelligence-service`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -3212,7 +3447,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             postcode: postcode,
             state: state
           })
-        });
+        }, 'vendor', 'location-intelligence-service');
         
         if (locationResponse.ok) {
           const locationData = await locationResponse.json();
@@ -3233,19 +3468,38 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               ),
             };
             console.log('✓ Location intelligence data fetched successfully');
+            acquisition.answered('locationIntelligence', 'Retrieved and used', 'location-intelligence-service');
             
             if (locationData.usingMockData) {
               console.warn('⚠️ Using mock location data:', locationData.message);
             }
           } else {
             console.warn('⚠️ Location intelligence returned no data');
+            acquisition.empty(
+              'locationIntelligence',
+              'The location service answered and returned nothing for this address',
+              'location-intelligence-service',
+            );
           }
         } else {
           const errorText = await locationResponse.text();
           console.error('❌ Location intelligence API error:', locationResponse.status, errorText);
+          // The body is the provider's own words and is what an operator needs
+          // to tell a geocoder refusal from a boot failure; it is bounded here
+          // because a ledger entry is read by a person, not parsed.
+          acquisition.failed(
+            'locationIntelligence',
+            `location-intelligence-service answered HTTP ${locationResponse.status}: ${String(errorText).slice(0, 200)}`,
+            'location-intelligence-service',
+          );
         }
       } catch (error: any) {
         console.error('❌ Location intelligence fetch failed:', error?.message || 'Unknown error');
+        acquisition.failed(
+          'locationIntelligence',
+          String(error?.message ?? 'The location request threw and reported no message'),
+          'location-intelligence-service',
+        );
       }
       }
 
@@ -3344,7 +3598,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         );
         const requery = async (fn: string, payload: Record<string, unknown>) => {
           try {
-            const res = await fetchWithTimeout(`${supabaseUrl}/functions/v1/${fn}`, {
+            const res = await acquisitionFetch(`${supabaseUrl}/functions/v1/${fn}`, {
               method: 'POST',
               headers,
               body: JSON.stringify(payload),
@@ -3433,7 +3687,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         // with the structured field. Counts only — the rate, if it is owed, is
         // added by the admitted-population call below.
         try {
-          const recount = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const recount = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3462,7 +3716,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
 
       if (crimePoa && admittedPopValue && (state === 'NSW' || state === 'SA')) {
         try {
-          const crimeAgain = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const crimeAgain = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3509,37 +3763,151 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       // planning services. It keys on the verified coordinate the location
       // step just resolved, so a report with no trustworthy coordinate gets
       // an honest absence rather than another jurisdiction's zone.
-      const planningCoords = enhancedData.locationIntelligence?.coordinates;
-      if (planningCoords?.lat && planningCoords?.lng) {
-        try {
-          const planningResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/planning-data-service`, {
+      //
+      // This guard is why the Cowra report printed planning content with no
+      // planning source: the location enrichment produced nothing, so there was
+      // no coordinate, so the call was never made — silently, with no error, no
+      // log line and no key in `data_sources` at all. The report then filled the
+      // gap from the prompt template. Every branch below now records what
+      // happened, because "we did not ask" and "the register holds nothing
+      // here" are opposite statements about a property.
+      /*
+       * The coordinate that may ask a register about THIS property.
+       *
+       * This used to be `enhancedData.locationIntelligence?.coordinates` and
+       * nothing else, which is an in-memory working object belonging to the
+       * run that is executing. Measured over the 105 stored reports in the
+       * verification corpus: 5 carry a coordinate, and **0 carry a planning
+       * key in `data_sources`** — including all five that have one.
+       * `23 MACKAY Street, Moranbah QLD 4744`, generated 2026-09-08 (two days
+       * after `planning-data-service` went live), holds
+       * `{lat: -22.006014, lng: 148.0590271}` on its `location_intelligence`
+       * column and `{}` in `enhanced_data`. The coordinate the report already
+       * owned sat one column away from a guard that read `undefined`.
+       *
+       * That is `rawPropertyType`'s defect on the coordinate: every Compass is
+       * finished by the resume worker, `enhancedData` starts empty on that
+       * run, `assessEnrichmentReuse` rightly refuses an unstamped stored
+       * enrichment, and when the live enrichment then fails — Google refused
+       * every geocode from 12 Sep 2026 — four producers go quiet at once with
+       * nothing but a skip line to show for it.
+       *
+       * So where this run's own enrichment produced no coordinate, the address
+       * is geocoded through the shared chain (cache first, then Nominatim,
+       * then the ABS locality centroid, then Google only where an operator
+       * lists it). `planningCoordinate.pure.ts` then QUALIFIES the answer:
+       * only a match at the address may select a planning control, because a
+       * control is an attribute of the parcel and a street or suburb point may
+       * sit on the road reserve or on the neighbour's lot. A coarser match is
+       * a named refusal, never a stand-in — `crimePostcodeAuthority`'s rule in
+       * another register.
+       *
+       * Climate and the regional read deliberately keep their own guard below:
+       * they answer different questions with different evidence rules, and
+       * widening this beyond the two producers that were asked about is not
+       * this change's to make.
+       */
+      const resolvedAt = new Date().toISOString();
+      subjectCoordinate = enrichmentCoordinate(enhancedData.locationIntelligence, resolvedAt);
+      if (!subjectCoordinate) {
+        if (!formattedInput || !String(formattedInput).trim()) {
+          coordinateRefusal = {
+            refusal: 'no_address',
+            detail: 'This run was given no address to resolve',
+            tried: [],
+          };
+        } else if (!supabaseClient) {
+          coordinateRefusal = {
+            refusal: 'provider_unavailable',
+            detail: 'No database client was available to read the geocode cache',
+            tried: [],
+          };
+        } else {
+          try {
+            const recovery = await geocodeAddress(
+              supabaseClient,
+              { address: String(formattedInput), suburb: null, state, postcode },
+              { feature: 'planning-coordinate-recovery' },
+            );
+            const judged = recoveredCoordinate(recovery, resolvedAt);
+            if (judged.usable) {
+              subjectCoordinate = judged.coordinate;
+              console.log('📍 Coordinate recovered for the registers:', coordinateProvenance(judged.coordinate));
+            } else {
+              coordinateRefusal = { refusal: judged.refusal, detail: judged.detail, tried: judged.tried };
+            }
+          } catch (error: any) {
+            coordinateRefusal = {
+              refusal: 'provider_unavailable',
+              detail: String(error?.message ?? 'The recovery geocode threw and reported no message'),
+              tried: [],
+            };
+          }
+        }
+        if (coordinateRefusal) {
+          console.log('📍 No parcel-grade coordinate:', coordinateRefusal.refusal, '—', coordinateRefusal.detail);
+        }
+      }
+      if (subjectCoordinate) {
+        const provenance = coordinateProvenance(subjectCoordinate);
+        acquisition.record({
+          producer: 'subjectCoordinate',
+          outcome: 'answered',
+          detail: provenance
+            ?? 'The coordinate this run\'s own location enrichment resolved for this address',
+          service: subjectCoordinate.source === 'geocode_recovery' ? 'geocode-chain' : 'location-intelligence-service',
+        });
+      } else if (coordinateRefusal) {
+        acquisition.record({
+          producer: 'subjectCoordinate',
+          outcome: ledgerOutcomeFor(coordinateRefusal.refusal as any),
+          detail: coordinateRefusal.detail,
+          service: 'geocode-chain',
+        });
+      }
+
+      // ──────────────────────────────────────────────────────────────────
+      // ONE WAVE, NOT FOUR QUEUES
+      //
+      // Planning, climate, regional trends and Domain depend on the geography
+      // that has just resolved and on nothing else, and were awaited one after
+      // another — so the invocation paid 45 + 40 + 30 + 30 seconds of ceiling
+      // IN SERIES inside a run whose whole hard stop is 125s. Started together
+      // they cost the slowest of them instead of the sum.
+      //
+      // Only the REQUEST moves. Every answer is still read, recorded and bound
+      // exactly where it was and in the same order, by the same code — so the
+      // acquisition ledger and `enhancedData` are written in one sequence
+      // whatever order the network answers in, and a wave is not a second way
+      // to assemble the record.
+      //
+      // The QLD crime re-key deliberately stays behind planning: it is keyed on
+      // the cadastre's LGA, which is planning's own answer. A dependency is not
+      // made concurrent by wishing.
+      // ──────────────────────────────────────────────────────────────────
+      const planningCoords = subjectCoordinate;
+      const climateCoords = enhancedData.locationIntelligence?.coordinates;
+      const regionalCoords = enhancedData.locationIntelligence?.coordinates;
+      const marketPostcode = subjectPostcodeOf(subjectGeography);
+      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
+        ? subjectGeography.suburb.trim() : null;
+      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
+        ?? abbreviateState(state);
+
+      const planningRequest = (planningCoords?.lat && planningCoords?.lng)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/planning-data-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
               latitude: planningCoords.lat,
               longitude: planningCoords.lng,
               state: state,
-              postcode: postcode
-            })
-          }, 45000, 'planning-data-service');
-          if (planningResponse.ok) {
-            const planningBody = await planningResponse.json();
-            if (planningBody.success && planningBody.data) {
-              enhancedData = { ...enhancedData, planningData: planningBody.data };
-              console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
-            }
-          }
-        } catch (error: any) {
-          console.log('⚠️ Planning data skipped:', error?.message?.substring(0, 80));
-        }
-      }
-
-      // Climate is read from SILO at the verified coordinate, which exists
-      // only now — the phase-1 slot above deliberately skipped.
-      const climateCoords = enhancedData.locationIntelligence?.coordinates;
-      if (climateCoords?.lat && climateCoords?.lng) {
-        try {
-          const climateResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/climate-data-service`, {
+              postcode: postcode,
+            }),
+          }, 45000, 'planning-data-service')
+        : null;
+      const climateRequest = (climateCoords?.lat && climateCoords?.lng)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/climate-data-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3547,28 +3915,12 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               longitude: climateCoords.lng,
               state: state,
               suburb: suburb,
-              postcode: postcode
-            })
-          }, 40000, 'climate-data-service');
-          if (climateResponse.ok) {
-            const climateBody = await climateResponse.json();
-            if (climateBody.success && climateBody.data) {
-              enhancedData = { ...enhancedData, climateData: climateBody.data };
-              console.log('✓ Climate reading fetched (SILO grid cell)');
-            }
-          }
-        } catch (error: any) {
-          console.log('⚠️ Climate reading skipped:', error?.message?.substring(0, 80));
-        }
-      }
-
-      // Regional trends (the SA2's measured population series and growth)
-      // are likewise coordinate-keyed: the service resolves the containing
-      // SA2 and serves its own ERP series.
-      const regionalCoords = enhancedData.locationIntelligence?.coordinates;
-      if (regionalCoords?.lat && regionalCoords?.lng) {
-        try {
-          const regionalResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/abs-regional-service`, {
+              postcode: postcode,
+            }),
+          }, 40000, 'climate-data-service')
+        : null;
+      const regionalRequest = (regionalCoords?.lat && regionalCoords?.lng)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/abs-regional-service`, {
             method: 'POST',
             headers,
             body: JSON.stringify({
@@ -3576,9 +3928,103 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               longitude: regionalCoords.lng,
               state: state,
               suburb: suburb,
-              postcode: postcode
-            })
-          }, 30000, 'abs-regional-service');
+              postcode: postcode,
+            }),
+          }, 30000, 'abs-regional-service')
+        : null;
+      const domainRequest = (!isAreaReport && marketPostcode && marketSuburb && marketState)
+        ? startAcquisition(`${supabaseUrl}/functions/v1/domain-data-service`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              suburb: marketSuburb,
+              state: marketState,
+              postcode: marketPostcode,
+              propertyCategory: domainCategoryFor(effectivePropertyType),
+              propertyType: effectivePropertyType,
+            }),
+          }, 30000, 'domain-data-service')
+        : null;
+
+      if (planningRequest) {
+        const planningStart = Date.now();
+        try {
+          const planningResponse = await planningRequest;
+          if (planningResponse.ok) {
+            const planningBody = await planningResponse.json();
+            if (planningBody.success && planningBody.data) {
+              enhancedData = { ...enhancedData, planningData: planningBody.data };
+              console.log('✓ Planning data fetched:', { jurisdiction: planningBody.data.jurisdiction });
+              acquisition.record({
+                producer: 'planning',
+                outcome: 'answered',
+                detail: `Retrieved from the ${planningBody.data.jurisdiction ?? 'jurisdiction'} planning layers`,
+                service: 'planning-data-service',
+                ms: Date.now() - planningStart,
+              });
+            } else {
+              acquisition.empty(
+                'planning',
+                'The planning service answered and returned no controls for this coordinate',
+                'planning-data-service',
+              );
+            }
+          } else {
+            acquisition.failed(
+              'planning',
+              `planning-data-service answered HTTP ${planningResponse.status}`,
+              'planning-data-service',
+            );
+          }
+        } catch (error: any) {
+          console.log('⚠️ Planning data skipped:', error?.message?.substring(0, 80));
+          acquisition.failed('planning', String(error?.message ?? 'The planning request threw and reported no message'), 'planning-data-service');
+        }
+      } else {
+        // Four different sentences, and the ledger must not collapse them: a
+        // register asked at the parcel and holding nothing there is a fact
+        // about the property, and none of these is that.
+        acquisition.record({
+          producer: 'planning',
+          outcome: ledgerOutcomeFor((coordinateRefusal?.refusal ?? 'no_address') as any),
+          detail: coordinateRefusal
+            ? `The planning registers are queried by coordinate, and none was usable: ${coordinateRefusal.detail}`
+            : 'The planning registers are queried by coordinate, and none was resolved for this property',
+          service: 'planning-data-service',
+        });
+      }
+
+      // Climate is read from SILO at the verified coordinate, which exists
+      // only now — the phase-1 slot above deliberately skipped.
+      if (climateRequest) {
+        try {
+          const climateResponse = await climateRequest;
+          if (climateResponse.ok) {
+            const climateBody = await climateResponse.json();
+            if (climateBody.success && climateBody.data) {
+              enhancedData = { ...enhancedData, climateData: climateBody.data };
+              console.log('✓ Climate reading fetched (SILO grid cell)');
+              acquisition.answered('climate', 'Retrieved from the SILO grid cell at the verified coordinate', 'climate-data-service');
+            } else {
+              acquisition.empty('climate', 'The climate service answered and holds no reading for this grid cell', 'climate-data-service');
+            }
+          } else {
+            acquisition.failed('climate', `climate-data-service answered HTTP ${climateResponse.status}`, 'climate-data-service');
+          }
+        } catch (error: any) {
+          console.log('⚠️ Climate reading skipped:', error?.message?.substring(0, 80));
+          acquisition.failed('climate', String(error?.message ?? 'The climate request threw and reported no message'), 'climate-data-service');
+        }
+      } else {
+        acquisition.skipped('climate', 'No verified coordinate was resolved, and SILO is read by grid cell', 'climate-data-service');
+      }
+
+      // Regional trends (the SA2's measured population series and growth)
+      // are likewise coordinate-keyed: the service resolves the containing
+      // SA2 and serves its own ERP series.
+      if (regionalRequest) {
+        try {
+          const regionalResponse = await regionalRequest;
           if (regionalResponse.ok) {
             const regionalBody = await regionalResponse.json();
             if (regionalBody.success && regionalBody.data) {
@@ -3600,7 +4046,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         : null;
       if (!enhancedData.crimeStatistics && state === 'QLD' && qldLga) {
         try {
-          const crimeResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
+          const crimeResponse = await acquisitionFetch(`${supabaseUrl}/functions/v1/crime-statistics-service`, {
             method: 'POST',
             headers,
             // RF-7.2B.1B1 — the LGA is QLD's own published grain and comes from
@@ -3639,26 +4085,11 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
       const providersConsulted: string[] = [];
       const providersUnavailable: Array<{ provider: string; reason: string }> = [];
       let evidenceWithheldReason: string | null = null;
-      const marketPostcode = subjectPostcodeOf(subjectGeography);
-      const marketSuburb = typeof subjectGeography?.suburb === 'string' && subjectGeography.suburb.trim()
-        ? subjectGeography.suburb.trim() : null;
-      const marketState = abbreviateState(typeof subjectGeography?.state === 'string' ? subjectGeography.state : null)
-        ?? abbreviateState(state);
       if (!isAreaReport) {
-        if (marketPostcode && marketSuburb && marketState) {
+        if (domainRequest) {
           providersConsulted.push('domain');
           try {
-            const domainResponse = await fetchWithTimeout(`${supabaseUrl}/functions/v1/domain-data-service`, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                suburb: marketSuburb,
-                state: marketState,
-                postcode: marketPostcode,
-                propertyCategory: domainCategoryFor(effectivePropertyType),
-                propertyType: effectivePropertyType,
-              }),
-            }, 30000, 'domain-data-service');
+            const domainResponse = await domainRequest;
             const domainBody = domainResponse.ok ? await domainResponse.json() : null;
             if (domainBody?.success && domainBody.data) {
               enhancedData = { ...enhancedData, domainData: domainBody.data };
@@ -3820,7 +4251,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           console.log(`  Price: $${effectivePurchasePrice.toLocaleString()}`);
           console.log(`  Weekly Rent: $${effectiveWeeklyRent}`);
           
-          const scoreResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
+          const scoreResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3865,7 +4296,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               // verification itself; nothing here asserts trust.
               locationSubject: enrichmentSubject,
             })
-          });
+          }, 'local', 'investment-scoring-service');
           
           if (scoreResponse.ok) {
             const scoreData = await scoreResponse.json();
@@ -3875,16 +4306,26 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               if (Array.isArray(scoreData.data?.gradeGaps) && scoreData.data.gradeGaps.length) {
                 console.log('  Grade gaps:', scoreData.data.gradeGaps.map((g: any) => `${g.dimension}: ${g.detail}`).join(' | '));
               }
+              // A WITHHELD grade is an answer, not a failure: the engine ran,
+              // measured what it could and declined to publish a letter. The
+              // ledger records the attempt; the withholding is the scoring
+              // policy's own reading and is published separately.
+              acquisition.answered('investmentScore', 'Scored by the investment scoring service', 'investment-scoring-service');
             } else if (scoreData) {
               enhancedData = { ...enhancedData, investmentScore: scoreData };
               console.log('✓ Investment score (direct):', scoreData?.grade, scoreData?.totalScore);
+              acquisition.answered('investmentScore', 'Scored by the investment scoring service', 'investment-scoring-service');
+            } else {
+              acquisition.empty('investmentScore', 'The scoring service answered with no body', 'investment-scoring-service');
             }
           } else {
             const errorText = await scoreResponse.text();
             console.error('❌ Investment scoring service error:', scoreResponse.status, errorText);
+            acquisition.failed('investmentScore', `investment-scoring-service answered HTTP ${scoreResponse.status}: ${String(errorText).slice(0, 200)}`, 'investment-scoring-service');
           }
         } catch (error: any) {
           console.error('❌ Investment score calculation failed:', error?.message || 'Unknown error');
+          acquisition.failed('investmentScore', String(error?.message ?? 'The scoring request threw and reported no message'), 'investment-scoring-service');
         }
       } else if (isAreaReport) {
         // Area-level scoring (suburb/postcode/statewide)
@@ -3897,7 +4338,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         
         // Try service call first
         try {
-          const scoreResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
+          const scoreResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/investment-scoring-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -3910,7 +4351,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               locationIntelligence: enhancedData.locationIntelligence || {},
               state: state || undefined
             })
-          });
+          }, 'local', 'investment-scoring-service');
           
           console.log(`📊 Area scoring service response status: ${scoreResponse.status}`);
           
@@ -3921,13 +4362,16 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               enhancedData = { ...enhancedData, investmentScore: scoreData.data };
               areaScoreCalculated = true;
               console.log('✓ Area score calculated via service:', scoreData.data?.grade, scoreData.data?.totalScore);
+              acquisition.answered('investmentScore', 'Scored by the investment scoring service', 'investment-scoring-service');
             }
           } else {
             const errorText = await scoreResponse.text();
             console.error('❌ Area scoring service error:', scoreResponse.status, errorText);
+            acquisition.failed('investmentScore', `investment-scoring-service answered HTTP ${scoreResponse.status}: ${String(errorText).slice(0, 200)}`, 'investment-scoring-service');
           }
         } catch (error: any) {
           console.error('❌ Area scoring service call failed:', error?.message || 'Unknown error');
+          acquisition.failed('investmentScore', String(error?.message ?? 'The scoring request threw and reported no message'), 'investment-scoring-service');
         }
         
         // FALLBACK: Calculate area score inline if service call failed
@@ -4024,7 +4468,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           const latitude = enhancedData.locationIntelligence?.coordinates?.lat;
           const longitude = enhancedData.locationIntelligence?.coordinates?.lng;
           
-          const schoolResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/school-data-service`, {
+          const schoolResponse = await acquisitionFetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/school-data-service`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -4038,7 +4482,7 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
               latitude: latitude || undefined,
               longitude: longitude || undefined
             })
-          });
+          }, 'register', 'school-data-service');
           
           if (schoolResponse.ok) {
             const schoolData = await schoolResponse.json();
@@ -4057,6 +4501,28 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
     } catch (error: any) {
       console.log('Enhanced data fetch failed, proceeding with basic analysis:', error?.message || 'Unknown error');
     }
+
+    // ── The measurement this incident needed and did not have ──────────────
+    //
+    // `traceStartRun` is called AFTER this block, so `report_generation_runs`
+    // has never once included the acquisition phase in its own clock. That is
+    // why "21 minutes at 0 of 15" could not be attributed to anything from the
+    // record: the only phase that could have consumed the invocation was the
+    // one phase nothing timed.
+    //
+    // One structured line, greppable in the edge logs, costing nothing. It is
+    // deliberately a log and not a column: the run trace's schema is a contract
+    // with its own readers, and a number nobody has asked to store does not
+    // earn a migration.
+    const acquisitionMs = Date.now() - runStartedAt;
+    console.log(
+      `⏱️ acquisition finished at +${(acquisitionMs / 1000).toFixed(1)}s of the run's `
+      + `${Math.round(SECTION_CALL_HARD_STOP_MS / 1000)}s budget · `
+      + `${isContinuation ? 'continuation' : 'first invocation'}`
+      + (acquisitionExhaustedThisRun
+        ? ' · SOME CALLS DEFERRED for want of a window — not recorded as absences'
+        : '')
+    );
 
     // ========================================================================
     // RF-7.2B.1 — CLIENT-SAFE GATE ACTIVATION
@@ -4831,6 +5297,64 @@ Produce a comprehensive statewide investment analysis following the structure ab
     const infrastructureSectionRules = infrastructureRules(infrastructure);
 
     /*
+     * And the major public projects no machine-readable register carries.
+     *
+     * `PROGRAMME_PUBLISHERS` records that seven of the eight jurisdictions
+     * publish their forward programme as budget papers and agency pages rather
+     * than a feed, and marks them `ingested: false`. Honest, and on its own it
+     * means a New South Wales report names no infrastructure project at all —
+     * on 48 Redfern Street, Cowra, a $110.2m hospital 1.09 km away that opened
+     * while the report was being written.
+     *
+     * A row in this register is RECORDED from the responsible authority's own
+     * dated pages, never retrieved from a feed, and it says so on the page.
+     * Keyed on the verified coordinate, so a report with no trustworthy
+     * coordinate names no project rather than one near a guess.
+     */
+    // The same qualified coordinate the planning registers were asked at, for
+    // the same reason: "keyed on the verified coordinate" was keyed on an
+    // in-memory object the resume run does not have, so this register named no
+    // project on 105 of 105 stored reports. A recovered coordinate is accepted
+    // only at parcel grade, so a project is still never named near a guess.
+    const publishedProjectCoords = subjectCoordinate;
+    const nearbyPublishedProjects = publishedProjectCoords?.lat && publishedProjectCoords?.lng
+      ? projectsNear(publishedProjectCoords.lat, publishedProjectCoords.lng, 15)
+      : [];
+    // Searched, or not searched — and the register now says which on the page.
+    // An empty result used to render the empty string and tell the model "no
+    // major public project ... is recorded", which asserts a search happened;
+    // it was returned identically on the 105 stored reports where no
+    // coordinate existed and no search was possible.
+    const publishedProjectSearch: RegisterSearch = publishedProjectCoords
+      ? { searched: true, radiusKm: 15, coordinateSource: publishedProjectCoords.source }
+      : {
+          searched: false,
+          reason: coordinateRefusal
+            ? `the register is swept by coordinate and none was usable — ${coordinateRefusal.detail}.`
+            : 'the register is swept by coordinate and none was resolved for this property.',
+        };
+    const publishedProjectBlock = renderPublishedProjects(nearbyPublishedProjects, publishedProjectSearch);
+    const publishedProjectSectionRules = publishedProjectRules(nearbyPublishedProjects, publishedProjectSearch);
+    acquisition.record({
+      producer: 'publishedProjects',
+      outcome: publishedProjectSearch.searched
+        ? (nearbyPublishedProjects.length ? 'answered' : 'unavailable_in_coverage')
+        : ledgerOutcomeFor((coordinateRefusal?.refusal ?? 'no_address') as any),
+      detail: publishedProjectSearch.searched
+        ? (nearbyPublishedProjects.length
+          ? `Recorded within 15 km: ${nearbyPublishedProjects.map((n) => n.project.name).join('; ')}`
+          : 'The register was swept within 15 km of the verified coordinate and holds nothing there')
+        : publishedProjectSearch.reason,
+      service: 'published-project-register',
+    });
+    console.log(
+      `🏗️ Published projects within 15 km: ${nearbyPublishedProjects.length}`
+      + (nearbyPublishedProjects.length
+        ? ` (${nearbyPublishedProjects.map((n) => `${n.project.name} ${n.distanceKm.toFixed(1)}km`).join('; ')})`
+        : ''),
+    );
+
+    /*
      * And the market evidence, which reached the SCORING SERVICE and nothing
      * else.
      *
@@ -5018,6 +5542,15 @@ Produce a comprehensive statewide investment analysis following the structure ab
       '# Infrastructure & Development Outlook — what the registers answered',
       infrastructureTable,
       infrastructureSectionRules,
+      // Recorded from official publications rather than retrieved from a
+      // register, and pinned for the same reason everything else here is:
+      // it is the AUTHORITY for a set of figures and dates, and a rule that
+      // survives while its evidence is trimmed is the §6 defect.
+      ...(publishedProjectBlock
+        ? ['# Major public projects near this property — recorded from their publisher\'s own pages',
+          publishedProjectBlock]
+        : []),
+      publishedProjectSectionRules,
       // The market evidence rides the same pin, for the same reason: the base
       // prompt measured 92,129 bytes on 262 Pallas Street and every section
       // trimmed it to ~52,830, so anything that is the AUTHORITY for a figure
@@ -5042,6 +5575,42 @@ Produce a comprehensive statewide investment analysis following the structure ab
        */
       strategyRules,
       planningCitationRule,
+      /*
+       * And the PROSE half of the chart evidence contract.
+       *
+       * `enforceChartEvidence` removes an unsupported directive on every read
+       * path, which is right for a structure and impossible for a sentence:
+       * this programme's rule is that prose is never regex-scrubbed, because a
+       * regex deletes the qualification with the claim and a half-deleted
+       * sentence is worse than the claim was.
+       *
+       * So the sentence is governed at the prompt instead, from the SAME
+       * inventory the drawings are judged against. One inventory, two
+       * consumers — otherwise the page and the sentence beside it disagree
+       * about what the record holds, which is exactly what happened when the
+       * occupier donut was withdrawn and "roughly 45% of tenants are families"
+       * stayed in the paragraph above it.
+       *
+       * Built from what this RUN holds rather than from a stored row, because
+       * the row does not exist yet; the shape is the one
+       * `readEvidenceInventory` produces so the two cannot drift.
+       */
+      claimSupportRules({
+        recordedScores: Array.isArray(enhancedData.investmentScore?.breakdown)
+          ? enhancedData.investmentScore.breakdown
+            .map((b: { score?: unknown }) => Number(b?.score))
+            .filter((n: number) => Number.isFinite(n))
+          : [],
+        demographics: !!enhancedData.demographics,
+        marketData: !!enhancedData.domainData,
+        location: !!enhancedData.locationIntelligence,
+        // What the Client-Safe Gate withheld for this report, from the same
+        // `marketFacts` the market table renders — so the prose rule and the
+        // page name the same withheld facts.
+        withheldFacts: (marketFacts.withheld ?? [])
+          .map((w: { label?: unknown; name?: unknown }) => String(w?.label ?? w?.name ?? ''))
+          .filter(Boolean),
+      }),
     ].join('\n\n');
     console.log(`📌 Pinned planning/infrastructure/market context: ${pinnedPlanningContext.length} chars`);
 
@@ -5381,15 +5950,41 @@ table carries no row for an attribute, the attribute is NOT RECORDED: say so
 if it matters, and never supply it from here. A listing's own figures are the
 agent's marketing copy, and this report does not repeat them as facts about
 the asset.`;
+      /**
+       * A description is evidence of what was ADVERTISED, never of the asset.
+       *
+       * The list below used to say "Include all relevant property features,
+       * upgrades, and selling points" and "Note any specific renovations,
+       * improvements, or unique characteristics" — with no instruction to say
+       * where any of it came from, three lines under a rule declaring
+       * CONDITION to be governed by the record. The record holds no condition
+       * field at all, so that rule resolves to "not recorded" on every
+       * property in the corpus, and the two statements contradict each other
+       * in one numbered list.
+       *
+       * Measured on the Cowra Compass (11 Sep 2026): the document asserts
+       * "Well-presented renovated home", "a detached, renovated 3-bedroom
+       * residential home" and "given the renovated interiors" — three
+       * unattributed claims about the condition of somebody's house, sourced
+       * to nothing, in a document a client acts on. §2 of the acceptance
+       * standard names `Renovated` as a factual claim precisely because it
+       * carries no digit and reads as description.
+       *
+       * So the listing keeps everything only it can supply, and every one of
+       * those things arrives ATTRIBUTED: the sentence says the listing says
+       * it. That is a true sentence about evidence the report actually holds,
+       * and it is the same rule `claimSupportRules` states for the prose —
+       * one rule, in the two places the model reads.
+       */
       const sourceLabel = fromPdfUpload ? 'PDF-UPLOADED LISTING' : 'URL-SCRAPED LISTING';
       const sourceNoun = fromPdfUpload ? 'document' : 'listing';
       const sourceSpecificInstructions = `**CRITICAL INSTRUCTIONS FOR THIS ${sourceLabel}:**
 1. The above content came from the property ${sourceNoun}, and is the primary source for its DESCRIPTION, features and selling points
 2. ${RECORD_GOVERNS_PHYSICAL_ATTRIBUTES}
 3. Use the property address exactly as shown in the ${sourceNoun}
-4. Include all relevant property features, upgrades, and selling points mentioned in the ${sourceNoun}
+4. A ${sourceNoun} is an ADVERTISEMENT. Its features, upgrades and selling points are evidence of what the seller states, not of the property's condition — so carry them ATTRIBUTED, in the sentence that uses them ("the ${sourceNoun} describes …", "the ${sourceNoun} states …"), and never as an assertion of your own. Write "renovated", "updated", "well presented", "as new" or any other characterisation of condition ONLY in that attributed form
 5. If a price is mentioned (guide, asking, or range), use it for financial calculations
-6. Note any specific renovations, improvements, or unique characteristics
+6. Renovations, improvements and unique characteristics the ${sourceNoun} names are carried the same way, under the same attribution, and a reader is told the property has not been inspected for this report
 7. Consider the property description when assessing investment potential
 8. Verify the suburb/postcode from the ${sourceNoun} for accurate location analysis${fromPdfUpload ? `
 9. For new builds: Use the land + build package price for total property value` : ''}`;
@@ -5970,6 +6565,14 @@ YOUR DEDICATED PROPERTY PARTNER
     // Track section quality for final validation
     const sectionResults: Array<{ id: string; name: string; content: string; valid: boolean; score: number; attempts: number }> = [];
 
+    // Durable progress this invocation banked, for the hand-off. See
+    // `_shared/reports/investment/runProgress.pure.ts`: a write that carries
+    // nothing new still stamps `updated_at` through the table's trigger and
+    // blinds every stall detector watching the row, so the hand-off has to know
+    // what it actually achieved before it decides whether to write at all.
+    let acquisitionFieldsBankedThisRun = 0;
+    const sectionPlanNewlyKnown = existingTotalSections === null;
+
     // ============================================================================
     // EARLY ENHANCED DATA PERSISTENCE
     // Persist scoring + calculations before section generation so chunked/resume calls
@@ -6011,6 +6614,11 @@ YOUR DEDICATED PROPERTY PARTNER
         // had already put in front of a reader.
         earlyUpdate.market_fact_snapshot = safeGeneration.snapshot;
 
+        // Counted BEFORE the write so a zero-progress hand-off can tell the
+        // truth about what this invocation banked. `updated_at` is always in
+        // the payload, so it never counts as a field.
+        acquisitionFieldsBankedThisRun = Object.keys(earlyUpdate)
+          .filter((k) => k !== 'updated_at').length;
         const hasAnyEnhancedField = Object.keys(earlyUpdate).length > 1;
         const alreadyHasAnyEnhancedField = !!(
           existingEnhancedFields.investmentScore ||
@@ -6479,20 +7087,44 @@ YOUR DEDICATED PROPERTY PARTNER
     // old silent kill, where the caller learned nothing at all.
     if (budgetExhausted) {
       const remaining = filteredSections.length - lastCompletedSectionIndex;
+
+      // What this invocation actually banked, decided before anything is
+      // written. `sectionDurationsMs` counts sections completed by THIS run —
+      // `lastCompletedSectionIndex` is the absolute position and is already
+      // non-zero on a continuation that banks nothing.
+      const progress = classifyProgress({
+        sectionsWrittenThisRun: sectionDurationsMs.length,
+        acquisitionFieldsBanked: acquisitionFieldsBankedThisRun,
+        sectionPlanNewlyKnown,
+      });
+      const handoff = describeHandoff(progress, false, sectionDurationsMs.length === 0
+        ? (acquisitionExhaustedThisRun ? 'acquisition_exhausted_invocation' : 'no_section_window')
+        : 'no_section_window');
+
       console.log(
         `🔁 Handing off after ${lastCompletedSectionIndex}/${filteredSections.length} sections ` +
-        `(${remaining} remaining, ${combinedContent.length} chars banked)`
+        `(${remaining} remaining, ${combinedContent.length} chars banked; ` +
+        `this run: ${progress.kind}${progress.made ? '' : ' — NOTHING BANKED'})`
       );
       await traceFinishRun(_traceSb, _traceRunId, {
         status: 'paused',
         error: `Wall-clock budget reached at section ${lastCompletedSectionIndex}/${filteredSections.length}`,
       });
 
-      // Persist the true section count (the progress widget and the watchdog
-      // both read it) and clear any error left by an earlier failed attempt —
-      // this run succeeded, it just is not finished. updated_at is stamped so
-      // the watchdog's staleness window runs from real progress.
-      if (reportId && supabaseClient) {
+      // ONLY write the row when this invocation advanced the record.
+      //
+      // `investment_reports` carries a BEFORE UPDATE trigger
+      // (`update_investment_reports_updated_at`) that stamps `updated_at` on
+      // ANY write, so a status write with nothing new in it refreshes the
+      // staleness clock that both stall detectors read — the watchdog's
+      // `updated_at < now() - interval '2 minutes'` and the widget's
+      // three-minute no-progress window. That is what let the 18 Annabelle
+      // Crescent run sit at 0 of 15 for 21 minutes while every surface
+      // reported it healthy. Omitting the column from the payload would not
+      // help; the trigger does not read the payload. Not writing is the only
+      // way to let the clock age, and letting it age is what hands the run to
+      // the watchdog — whose own `resume_attempts < 8` then bounds it.
+      if (reportId && supabaseClient && mayTouchRow(progress)) {
         await supabaseClient
           .from('investment_reports')
           .update({
@@ -6501,17 +7133,43 @@ YOUR DEDICATED PROPERTY PARTNER
             total_sections: filteredSections.length,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', reportId);
+          .eq('id', reportId)
+          // A run already in flight when the operator pressed Stop still
+          // finishes its section and lands this write afterwards. Without this
+          // predicate it re-wrote `processing` over the cancellation — the row
+          // went back to looking live, and the watchdog, which claims exactly
+          // `status = 'processing'`, would then resurrect work a person had
+          // explicitly stopped. Matching only the states a live run can be in
+          // makes the write a no-op against a cancelled, failed or completed
+          // row, atomically and with no read to race against.
+          .in('status', ['pending', 'processing']);
+      } else if (reportId) {
+        console.log(
+          '⏸️ No durable progress this invocation — leaving the row untouched so ' +
+          'the staleness clock can age and the watchdog can claim it.'
+        );
       }
 
       return new Response(JSON.stringify({
+        // `success` still describes the INVOCATION (it did not crash). What a
+        // caller must key on to advance a section is `sectionCompleted` and
+        // `durableProgress`, never this flag — see `sectionWasWritten`.
         success: true,
-        message: `Generated ${lastCompletedSectionIndex}/${filteredSections.length} sections; resume required`,
+        message: progress.made
+          ? `Generated ${lastCompletedSectionIndex}/${filteredSections.length} sections; resume required`
+          : `No section could be written in this invocation (${handoff.state === 'no_progress' ? handoff.reason : 'unknown'}); resume required`,
         sectionCompleted: lastCompletedSectionIndex,
         totalSections: filteredSections.length,
         isComplete: false,
         resumeRequired: true,
+        state: handoff.state,
+        durableProgress: handoff.durableProgress,
+        ...(handoff.state === 'no_progress' ? { noProgressReason: handoff.reason } : {}),
         contentLength: combinedContent.length,
+        // What the research phase cost this invocation, so speed can be
+        // measured from the network tab rather than from edge-log access.
+        acquisitionMs,
+        sectionMsThisRun: sectionDurationsMs,
       }), {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -6846,8 +7504,17 @@ YOUR DEDICATED PROPERTY PARTNER
       reportContent += `\n\n---\n\n## Planning controls and development registers\n\n`
         + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
         + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
+      // Appended verbatim for the reason the two tables above are: asking a
+      // model to reproduce a table is how a table comes back paraphrased, and
+      // every date and figure here is one an authority published.
+      if (publishedProjectBlock) {
+        reportContent += `\n### Major public projects near this property\n\n`
+          + `${publishedProjectBlock}\n`
+          + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
+      }
       console.log(
-        `📋 Appended retrieved planning + infrastructure evidence (${planningControlsTable.length + infrastructureTable.length} chars)`,
+        `📋 Appended retrieved planning + infrastructure evidence `
+        + `(${planningControlsTable.length + infrastructureTable.length + publishedProjectBlock.length} chars)`,
       );
     }
 
@@ -6992,10 +7659,19 @@ YOUR DEDICATED PROPERTY PARTNER
       });
       
       // Prepare data sources tracking. Every source the generation ATTEMPTED
-      // is recorded — present with its provenance, or null — so the viewer's
-      // coverage disclosure can say "9 of 11 sources" instead of the four
-      // this block used to name. A null is a fact ("we asked and got
-      // nothing"), never an error.
+      // is recorded — present with its provenance, or null.
+      //
+      // That null used to be the whole answer, under a comment reading "a null
+      // is a fact ('we asked and got nothing'), never an error". It could not
+      // be: the composition reads `enhancedData.X`, which is the RESULT, and a
+      // result says nothing about the attempt. Five different things arrived
+      // here as one null — never asked, asked and failed, answered and lost,
+      // answered and empty, answered and used — and on the Cowra report six
+      // producers were null beside `errorsEncountered: 0`.
+      //
+      // `_acquisition` is the ledger that tells them apart. The nulls below are
+      // unchanged, so nothing downstream moves; what is added is the record
+      // that lets a reader and an operator know which of the five they have.
       const sourceStamp = (source: string, confidence: number) => ({
         source,
         confidence,
@@ -7037,6 +7713,30 @@ YOUR DEDICATED PROPERTY PARTNER
           verificationUrl: planningFacts.zoning.sourceUrl,
         } : null
       };
+
+      /**
+       * The acquisition ledger for this run.
+       *
+       * Built last so a producer fetched late — climate and planning are keyed
+       * on a coordinate that does not exist in phase 1 — is recorded at its
+       * real outcome rather than at the skip that was true earlier.
+       *
+       * `unaccounted` is the part that earns its keep over time: a producer
+       * added to the pipeline and not recorded here appears in that list rather
+       * than silently becoming another unexplained null.
+       */
+      const acquisitionLedger = acquisition.build();
+      (dataSources as Record<string, unknown>)._acquisition = acquisitionLedger;
+      console.log(
+        `📒 Acquisition: ${acquisitionLedger.tally.answered} answered, `
+        + `${acquisitionLedger.tally.never_requested} never requested, `
+        + `${acquisitionLedger.tally.requested_failed} failed, `
+        + `${acquisitionLedger.tally.unavailable_in_coverage} empty, `
+        + `${acquisitionLedger.tally.retrieved_not_bound} lost`
+        + (acquisitionLedger.unaccounted.length
+          ? ` — UNACCOUNTED: ${acquisitionLedger.unaccounted.join(', ')}`
+          : ''),
+      );
 
       // Fact reconciliation: does the written analysis agree with the record
       // it rides on? Findings DISCLOSE (validation_flags → the viewer's

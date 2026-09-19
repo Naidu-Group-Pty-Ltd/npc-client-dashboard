@@ -647,3 +647,54 @@ describe('reconcileStoredFinancials heals the identity on every read path', () =
     expect(out.fin.initialCosts.loanAmount).toBe(537_600);
   });
 });
+
+/**
+ * The loan structure sentence, healed on READ like the finance identity beside
+ * it: no migration, no stored byte overwritten, and every reader that already
+ * calls `reconcileStoredFinancials` gets it — which includes the fork that
+ * composes the Financial Analysis's loan chapter.
+ */
+describe('reconcileStoredFinancials — the loan structure sentence', () => {
+  const loanDetails = {
+    loanAmount: 444_000,
+    interestRate: 6.5,
+    loanTerm: 30,
+    loanType: 'interest_only',
+    interestOnlyPeriod: 2,
+    monthlyPayment: 2_806.382024308766,
+    weeklyPayment: 647.6266209943307,
+    totalInterest: 566_297.5287511558,
+    lvr: 80,
+  };
+
+  it('derives the sentence for a row that carries none, and touches nothing stored', async () => {
+    const { reconcileStoredFinancials } = await import('@/lib/reports/investment/financialEngine.pure');
+    const raw = { loanDetails: { ...loanDetails } };
+    const before = JSON.stringify(raw);
+    const rec = reconcileStoredFinancials(raw);
+
+    expect(rec.loanStructureDerived).toBe('figures_contradict_label');
+    expect(rec.fin.loanDetails.structure).toContain('Principal and interest over 30 years');
+    expect(rec.fin.loanDetails.structure).toContain('interest only for 2 years');
+    // Every other figure is exactly as stored — a disclosure, never a repair.
+    expect(rec.fin.loanDetails.monthlyPayment).toBe(loanDetails.monthlyPayment);
+    expect(rec.fin.loanDetails.loanType).toBe('interest_only');
+    expect(rec.fin.loanDetails.interestOnlyPeriod).toBe(2);
+    expect(JSON.stringify(raw)).toBe(before);
+  });
+
+  it('never writes over a structure the record already carries', async () => {
+    const { reconcileStoredFinancials } = await import('@/lib/reports/investment/financialEngine.pure');
+    const stated = 'Interest only for 2 years, then principal and interest over the remaining 28 years (30-year term)';
+    const rec = reconcileStoredFinancials({ loanDetails: { ...loanDetails, structure: stated } });
+    expect(rec.loanStructureDerived).toBeNull();
+    expect(rec.fin.loanDetails.structure).toBe(stated);
+  });
+
+  it('leaves a row it cannot read alone', async () => {
+    const { reconcileStoredFinancials } = await import('@/lib/reports/investment/financialEngine.pure');
+    expect(reconcileStoredFinancials({ loanDetails: { loanType: 'interest_only' } }).loanStructureDerived).toBeNull();
+    expect(reconcileStoredFinancials({}).loanStructureDerived).toBeNull();
+    expect(reconcileStoredFinancials(null).loanStructureDerived).toBeNull();
+  });
+});

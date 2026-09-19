@@ -2306,11 +2306,28 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
   const __csrf = enforceCsrf(req);
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
+  /*
+   * Declared OUTSIDE the `try` below, because the CATCH reads it.
+   *
+   * `let requestBody` used to sit inside that try block, and a `catch` is a
+   * SIBLING of the block it guards, not a child of it — so
+   * `if (requestBody?.reportId)`, the first statement of the error path,
+   * threw `ReferenceError: requestBody is not defined` before the handler
+   * could return its own 500.
+   *
+   * That is why every server error reached the browser as a CORS / network
+   * failure. The response this handler builds carries `corsHeaders`; the
+   * bare 500 the platform serves when a handler throws does not, so the
+   * browser discarded it and `fetch` rejected with "Failed to fetch". The
+   * real message — and the "status = failed" write beside it — never
+   * happened. Measured 2026-09-19: 23 of 23 POSTs, 100%.
+   */
+  let requestBody: any;
+
   try {
     console.log('Starting investment report generation...');
     
     // Parse request body
-    let requestBody;
     try {
       requestBody = await req.json();
       console.log('Request body parsed successfully');
@@ -4438,8 +4455,13 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
         }
       } else if (isAreaReport) {
         // Area-level scoring (suburb/postcode/statewide)
-        const areaScope = queryType === 'suburb' ? 'suburb' : queryType === 'zipcode' ? 'zipcode' : 'state';
-        console.log(`📊 Area scoring for scope: ${areaScope} (isAreaReport: ${isAreaReport}, queryType: ${queryType})`);
+        // `reportScope` IS the request's `queryType` — L2344 reads
+        // `propertyDetails?.queryType` into it, and `isAreaReport` is derived
+        // from it one line later. `queryType` is not a binding in this
+        // function, so this branch threw a ReferenceError on every suburb,
+        // postcode and statewide report.
+        const areaScope = reportScope === 'suburb' ? 'suburb' : reportScope === 'zipcode' ? 'zipcode' : 'state';
+        console.log(`📊 Area scoring for scope: ${areaScope} (isAreaReport: ${isAreaReport}, reportScope: ${reportScope})`);
         console.log(`📊 Area scoring input data - demographics keys: ${Object.keys(enhancedData.demographics || {}).join(', ') || 'NONE'}`);
         console.log(`📊 Area scoring input data - locationIntelligence keys: ${Object.keys(enhancedData.locationIntelligence || {}).join(', ') || 'NONE'}`);
         
@@ -5534,6 +5556,120 @@ Produce a comprehensive statewide investment analysis following the structure ab
       unavailable: marketFacts.unavailable.length,
       evidenceMissing: marketFacts.evidenceMissing,
     });
+    /*
+     * `propertySpecs` and `dataSources` are composed HERE, not at the row
+     * write two thousand lines below, because the strategy record beneath
+     * them reads both — `StrategyRowInput` names them as
+     * `investment_reports.property_specs` and `.data_sources`.
+     *
+     * They used to be declared inside the `if (reportId && supabaseClient)`
+     * block that writes the row, which is a CHILD of this one, so the two
+     * shorthand properties below resolved to nothing and the handler threw
+     * `ReferenceError: propertySpecs is not defined` the moment acquisition
+     * finished — before section 1 was ever attempted. Every POST to this
+     * function answered 500 from 2026-09-19 12:00 until this was fixed.
+     *
+     * Hoisting stores the same values: every input is a `const` settled by
+     * L5397, and `enhancedData`'s last assignment is L4716 — so the objects
+     * built here are the objects that block used to build. Only the
+     * `sourceStamp` timestamps move, from the end of the run to here.
+     */
+    // Prepare property specs from property details
+    // The normalised spellings (see the fact normalisation above): this used
+    // to read `.landSize` / `.buildingSize` / `.parking` while every caller
+    // sent `landSizeSqm` / `buildSizeSqm` / `carSpaces`, so three of the
+    // nine specs were null on every row whatever the caller knew.
+    // The MERGED facts, not the listing's alone. Every value below was
+    // already resolved above by merging `manual_overrides` over
+    // `propertyDetails` — and this block used to persist the un-merged half,
+    // so the answer was computed, used to build the prompt and the duty
+    // assessment, and then discarded at the moment of writing it down: 127
+    // land sizes, 122 build sizes and 144 car-space counts an operator had
+    // supplied were stored as null, and `property_type` was the literal
+    // `'Residential Property'` on 84. See
+    // `_shared/reports/investment/propertyRecord.pure.ts`.
+    const propertySpecs = composePropertySpecs({
+      propertyType: effectivePropertyType ?? resolvedPropertyType,
+      landSizeSqm: effectiveLandSizeSqm,
+      buildSizeSqm: effectiveBuildSizeSqm,
+      beds: effectiveBeds,
+      baths: effectiveBaths,
+      carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
+      // Both rungs of the old chain were keys nothing writes: the override
+      // registry spells it `constructionYear` and the generator sends
+      // `propertyDetails.constructionYear`, so `property_specs.year_built`
+      // was null on all 1,230 stored reports while 32 of them held the
+      // value one object away.
+      yearBuilt: mergedOverrides.constructionYear
+        ?? mergedOverrides.yearBuilt
+        ?? propertyDetails?.constructionYear
+        ?? propertyDetails?.yearBuilt,
+      // An operator's own record first, then what the jurisdiction's layer
+      // answered, then whatever the listing carried. `spec_zoning` and
+      // `spec_council` were null on every report ever generated because
+      // only the first of those three was ever consulted.
+      zoning: mergedOverrides.zoningCode
+        ?? (planningFacts.zoning.status === 'stated' ? planningFacts.zoning.value : null)
+        ?? propertyDetails?.zoning,
+      councilArea: mergedOverrides.councilArea ?? planningFacts.council ?? propertyDetails?.councilArea,
+    });
+    
+    // Prepare data sources tracking. Every source the generation ATTEMPTED
+    // is recorded — present with its provenance, or null.
+    //
+    // That null used to be the whole answer, under a comment reading "a null
+    // is a fact ('we asked and got nothing'), never an error". It could not
+    // be: the composition reads `enhancedData.X`, which is the RESULT, and a
+    // result says nothing about the attempt. Five different things arrived
+    // here as one null — never asked, asked and failed, answered and lost,
+    // answered and empty, answered and used — and on the Cowra report six
+    // producers were null beside `errorsEncountered: 0`.
+    //
+    // `_acquisition` is the ledger that tells them apart. The nulls below are
+    // unchanged, so nothing downstream moves; what is added is the record
+    // that lets a reader and an operator know which of the five they have.
+    const sourceStamp = (source: string, confidence: number) => ({
+      source,
+      confidence,
+      timestamp: new Date().toISOString()
+    });
+    const dataSources = {
+      demographics: enhancedData.demographics ? {
+        source: 'abs',
+        confidence: enhancedData.demographics.data_quality === 'live' ? 1.0 : 0.6,
+        timestamp: new Date().toISOString()
+      } : null,
+      financials: enhancedData.financials ? sourceStamp('calculated', 1.0) : null,
+      marketData: enhancedData.domainData ? sourceStamp('domain', 0.9) : null,
+      locationIntelligence: enhancedData.locationIntelligence ? sourceStamp('google_maps', 0.95) : null,
+      economics: enhancedData.economics ? sourceStamp('rba', 0.9) : null,
+      seifa: enhancedData.seifaData ? sourceStamp('abs_seifa', 0.9) : null,
+      crimeStatistics: enhancedData.crimeStatistics ? sourceStamp('state_crime_data', 0.8) : null,
+      employment: enhancedData.employmentData ? sourceStamp('abs_employment', 0.9) : null,
+      climate: enhancedData.climateData ? sourceStamp('climate_service', 0.8) : null,
+      riskAssessment: enhancedData.riskAssessment ? sourceStamp('risk_assessment', 0.85) : null,
+      investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null,
+      // Planning was fetched on every report and named in none of them, so
+      // the coverage disclosure counted a source the run had spent. It
+      // carries its own provenance rather than a bare confidence: which
+      // jurisdiction answered, which council, whether a zone was retrieved,
+      // and the retrieval stamp the readings were taken under.
+      planning: enhancedData.planningData ? {
+        source: 'jurisdiction_planning_layers',
+        confidence: planningFacts.zoning.status === 'stated' ? 0.9 : 0.5,
+        timestamp: planningFacts.retrievedAt ?? new Date().toISOString(),
+        jurisdiction: planningFacts.jurisdiction,
+        council: planningFacts.council,
+        zoneStatus: planningFacts.zoning.status,
+        zone: planningFacts.zoning.value,
+        zoneSource: planningFacts.zoning.source,
+        zoneLicence: planningFacts.zoning.licence,
+        zoneEffectiveDate: planningFacts.zoning.effectiveDate,
+        verification: planningFacts.verification,
+        verificationUrl: planningFacts.zoning.sourceUrl,
+      } : null
+    };
+
     /*
      * The three strategy sections this document owns, composed rather than
      * asked for.
@@ -7758,101 +7894,9 @@ YOUR DEDICATED PROPERTY PARTNER
     if (reportId && supabaseClient) {
       console.log('Updating report in database with ID:', reportId);
       
-      // Prepare property specs from property details
-      // The normalised spellings (see the fact normalisation above): this used
-      // to read `.landSize` / `.buildingSize` / `.parking` while every caller
-      // sent `landSizeSqm` / `buildSizeSqm` / `carSpaces`, so three of the
-      // nine specs were null on every row whatever the caller knew.
-      // The MERGED facts, not the listing's alone. Every value below was
-      // already resolved above by merging `manual_overrides` over
-      // `propertyDetails` — and this block used to persist the un-merged half,
-      // so the answer was computed, used to build the prompt and the duty
-      // assessment, and then discarded at the moment of writing it down: 127
-      // land sizes, 122 build sizes and 144 car-space counts an operator had
-      // supplied were stored as null, and `property_type` was the literal
-      // `'Residential Property'` on 84. See
-      // `_shared/reports/investment/propertyRecord.pure.ts`.
-      const propertySpecs = composePropertySpecs({
-        propertyType: effectivePropertyType ?? resolvedPropertyType,
-        landSizeSqm: effectiveLandSizeSqm,
-        buildSizeSqm: effectiveBuildSizeSqm,
-        beds: effectiveBeds,
-        baths: effectiveBaths,
-        carSpaces: mergedOverrides.carSpaces ?? propertyDetails?.carSpaces,
-        // Both rungs of the old chain were keys nothing writes: the override
-        // registry spells it `constructionYear` and the generator sends
-        // `propertyDetails.constructionYear`, so `property_specs.year_built`
-        // was null on all 1,230 stored reports while 32 of them held the
-        // value one object away.
-        yearBuilt: mergedOverrides.constructionYear
-          ?? mergedOverrides.yearBuilt
-          ?? propertyDetails?.constructionYear
-          ?? propertyDetails?.yearBuilt,
-        // An operator's own record first, then what the jurisdiction's layer
-        // answered, then whatever the listing carried. `spec_zoning` and
-        // `spec_council` were null on every report ever generated because
-        // only the first of those three was ever consulted.
-        zoning: mergedOverrides.zoningCode
-          ?? (planningFacts.zoning.status === 'stated' ? planningFacts.zoning.value : null)
-          ?? propertyDetails?.zoning,
-        councilArea: mergedOverrides.councilArea ?? planningFacts.council ?? propertyDetails?.councilArea,
-      });
-      
-      // Prepare data sources tracking. Every source the generation ATTEMPTED
-      // is recorded — present with its provenance, or null.
-      //
-      // That null used to be the whole answer, under a comment reading "a null
-      // is a fact ('we asked and got nothing'), never an error". It could not
-      // be: the composition reads `enhancedData.X`, which is the RESULT, and a
-      // result says nothing about the attempt. Five different things arrived
-      // here as one null — never asked, asked and failed, answered and lost,
-      // answered and empty, answered and used — and on the Cowra report six
-      // producers were null beside `errorsEncountered: 0`.
-      //
-      // `_acquisition` is the ledger that tells them apart. The nulls below are
-      // unchanged, so nothing downstream moves; what is added is the record
-      // that lets a reader and an operator know which of the five they have.
-      const sourceStamp = (source: string, confidence: number) => ({
-        source,
-        confidence,
-        timestamp: new Date().toISOString()
-      });
-      const dataSources = {
-        demographics: enhancedData.demographics ? {
-          source: 'abs',
-          confidence: enhancedData.demographics.data_quality === 'live' ? 1.0 : 0.6,
-          timestamp: new Date().toISOString()
-        } : null,
-        financials: enhancedData.financials ? sourceStamp('calculated', 1.0) : null,
-        marketData: enhancedData.domainData ? sourceStamp('domain', 0.9) : null,
-        locationIntelligence: enhancedData.locationIntelligence ? sourceStamp('google_maps', 0.95) : null,
-        economics: enhancedData.economics ? sourceStamp('rba', 0.9) : null,
-        seifa: enhancedData.seifaData ? sourceStamp('abs_seifa', 0.9) : null,
-        crimeStatistics: enhancedData.crimeStatistics ? sourceStamp('state_crime_data', 0.8) : null,
-        employment: enhancedData.employmentData ? sourceStamp('abs_employment', 0.9) : null,
-        climate: enhancedData.climateData ? sourceStamp('climate_service', 0.8) : null,
-        riskAssessment: enhancedData.riskAssessment ? sourceStamp('risk_assessment', 0.85) : null,
-        investmentScore: enhancedData.investmentScore ? sourceStamp('scoring_engine', 1.0) : null,
-        // Planning was fetched on every report and named in none of them, so
-        // the coverage disclosure counted a source the run had spent. It
-        // carries its own provenance rather than a bare confidence: which
-        // jurisdiction answered, which council, whether a zone was retrieved,
-        // and the retrieval stamp the readings were taken under.
-        planning: enhancedData.planningData ? {
-          source: 'jurisdiction_planning_layers',
-          confidence: planningFacts.zoning.status === 'stated' ? 0.9 : 0.5,
-          timestamp: planningFacts.retrievedAt ?? new Date().toISOString(),
-          jurisdiction: planningFacts.jurisdiction,
-          council: planningFacts.council,
-          zoneStatus: planningFacts.zoning.status,
-          zone: planningFacts.zoning.value,
-          zoneSource: planningFacts.zoning.source,
-          zoneLicence: planningFacts.zoning.licence,
-          zoneEffectiveDate: planningFacts.zoning.effectiveDate,
-          verification: planningFacts.verification,
-          verificationUrl: planningFacts.zoning.sourceUrl,
-        } : null
-      };
+      // `propertySpecs` and `dataSources` are composed ABOVE, before the
+      // strategy record that reads them. One binding, so the row that is
+      // written and the record the prose is composed from cannot disagree.
 
       /**
        * The acquisition ledger for this run.
@@ -8246,38 +8290,55 @@ YOUR DEDICATED PROPERTY PARTNER
     console.error('Error in generate-investment-report function:', error);
     console.error('Error stack:', error?.stack);
     
-    // Update report status to failed if reportId provided
-    if (requestBody?.reportId) {
-      try {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL');
-        const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-        if (supabaseUrl && supabaseKey) {
-          const supabaseClient = createClient(supabaseUrl, supabaseKey);
-          await supabaseClient
-            .from('investment_reports')
-            .update({ 
-              status: 'failed',
-              error_message: error?.message || 'An unexpected error occurred'
-            })
-            .eq('id', requestBody.reportId);
+    /*
+     * Best-effort bookkeeping, wrapped because AN ERROR HANDLER THAT CAN
+     * THROW TURNS EVERY SERVER ERROR INTO A CORS ERROR.
+     *
+     * When a handler throws, the platform serves a bare 500 carrying none
+     * of this function’s CORS headers, so a browser sending
+     * `credentials: 'include'` discards the response and `fetch` rejects
+     * with "Failed to fetch" — sending the operator to look at CORS and the
+     * network while the real fault is in the code. Everything in here is
+     * therefore optional. The `return` below is not.
+     */
+    try {
+      // Update report status to failed if reportId provided
+      if (requestBody?.reportId) {
+        try {
+          const supabaseUrl = Deno.env.get('SUPABASE_URL');
+          const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+          if (supabaseUrl && supabaseKey) {
+            const supabaseClient = createClient(supabaseUrl, supabaseKey);
+            await supabaseClient
+              .from('investment_reports')
+              .update({ 
+                status: 'failed',
+                error_message: error?.message || 'An unexpected error occurred'
+              })
+              .eq('id', requestBody.reportId);
           
-          // Add failure notification
-          await insertTargetedNotification(supabaseClient, {
-            moduleKey: 'reports',
-            notification: {
-              type: 'report_generation_failed',
-              title: 'Report Generation Failed',
-              message: `Failed to generate report: ${error?.message || 'Unknown error'}`,
-              report_id: requestBody.reportId,
-              entity_id: requestBody.reportId,
-            },
-          });
+            // Add failure notification
+            await insertTargetedNotification(supabaseClient, {
+              moduleKey: 'reports',
+              notification: {
+                type: 'report_generation_failed',
+                title: 'Report Generation Failed',
+                message: `Failed to generate report: ${error?.message || 'Unknown error'}`,
+                report_id: requestBody.reportId,
+                entity_id: requestBody.reportId,
+              },
+            });
           
-          console.log('Updated report status to failed');
+            console.log('Updated report status to failed');
+          }
+        } catch (updateError) {
+          console.error('Error updating report status to failed:', updateError);
         }
-      } catch (updateError) {
-        console.error('Error updating report status to failed:', updateError);
       }
+    } catch (handlerFault) {
+      // Deliberately not rethrown: the 500 below is what the caller must
+      // receive, and it is the only thing here that carries CORS headers.
+      console.error('The failure handler itself failed:', handlerFault);
     }
     
     const errorResponse = { 

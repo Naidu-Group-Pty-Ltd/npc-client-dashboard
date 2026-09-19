@@ -2272,8 +2272,35 @@ every run and 43 invocations were killed with nothing written; every call now
 answers to the run's own deadline, and a section with no window left is
 deferred as a hand-off rather than written up as a failed section.
 
+**And all of the budget work below was standing in front of an outage.** Read
+§7 of the same doc before concluding a slow report is a slow report. On
+19 Sep 2026 every POST to `generate-investment-report` answered **500** from
+12:00 onward — 23 of 23 in `function_edge_logs`, at 18–52 s against a 125 s
+budget, where 18 Sep's seven POSTs were all 200 at 77–86 s. The Compass
+strategy record read `{ propertySpecs, … dataSources }`, two `const`s declared
+2,222 lines below inside the `if (reportId && supabaseClient)` block that
+writes the row — a CHILD of the block doing the reading — so the handler threw
+eighteen milliseconds after acquisition finished and **no section was ever
+attempted**. Three reported symptoms, one defect: "it never reaches section 2",
+"it keeps stalling", and a CORS error. That third one is its own lesson.
+**An error handler that can throw turns every server error into a CORS
+error** — `let requestBody` was declared inside the `try` and a `catch` is a
+SIBLING of the block it guards, so the error path threw on its own first
+statement, the platform served a bare 500 carrying none of this function's
+headers, and the browser discarded it as *"Failed to fetch"*. The handler's own
+correct, CORS-bearing 500 had never once been delivered. The gate that exists
+for exactly this class saw neither: `TS18004` — the SHORTHAND spelling of "this
+name does not exist", which is how this repository passes almost everything
+around — was not in the fatal set and was banked as count debt, while
+`requestBody` was TS2304, *was* seen, and was **frozen** under a header reading
+"EVERY LINE BELOW IS A LIVE DEFECT". Both closed; `generatorNameScope.spec.ts`
+checks the property from the ordinary suite because `deno check` needs Deno and
+cannot run locally. The rule the whole episode turns on: **read the production
+logs before modelling the production behaviour** — thirty seconds of
+`function_edge_logs` would have shown 23 consecutive 500s.
+
 **That rule stopped at the section loop, and the research in front of it ran
-unbounded.** Read
+unbounded.** Read the same doc
 [`GENERATION_STALL_AND_ACQUISITION_BUDGET.md`](./docs/reports/GENERATION_STALL_AND_ACQUISITION_BUDGET.md)
 before touching the acquisition block, `acquisitionFetch`, the budget hand-off
 or `useChunkedRegeneration`. One run read `Section 1 of 15 · 0/15 · 21m 2s

@@ -557,9 +557,40 @@ export function renderWaterfall(
 ): string {
   if (!items.length || items.length > MAX_WATERFALL_ITEMS) return '';
   const mode = opts.mode ?? 'money';
-  const w = CHART_WIDTH.wide, h = 360;
+  const w = CHART_WIDTH.wide;
   const padL = 70, padR = 24, padT = 30, padB = 70;
-  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const plotW = w - padL - padR;
+  /*
+   * A category label is WRAPPED into its bar's slot, and the drawing grows for
+   * the second line.
+   *
+   * This was `b.label.length > 16 ? b.label.slice(0, 14) + '…'` — a hard cut
+   * that never wrapped and never once asked how wide the slot actually is.
+   * Measured 19 Sep 2026 on the five-step shape a Compass draws: the slot is
+   * 133 units and holds **19 characters a line**, so "Stamp duty and
+   * transfer", "Legal and conveyancing", "Building and pest inspection" and
+   * "Total acquisition cost" all set whole in two lines while the renderer
+   * printed `Stamp duty and…`, `Legal and conv…`, `Building and p…` and
+   * `Total acquisit…`.
+   *
+   * The clearest evidence is the directive's own documentation: the worked
+   * example in `vizDirectives.pure.ts` is
+   * `{{waterfall: Gross rent +$50,000, Non-mortgage outgoings -$13,101, …}}`,
+   * and this renderer drew that example's own label as `Non-mortgage o…`.
+   *
+   * §4's rule is the one `fitLines` was written for and the timeline already
+   * answers to: increase the component's space before shrinking its text. The
+   * plot keeps its 260 units and the GROUND grows, so a second line is never
+   * set past the bottom of the drawing, and a label that still cannot fit two
+   * lines ends with `fitLines`' ellipsis — the rare exception rather than the
+   * ordinary outcome for every label over sixteen characters.
+   */
+  const BASE_H = 360, LABEL_LINE = 13;
+  const plotH = BASE_H - padT - padB;
+  const groupW = plotW / items.length;
+  const labelRows = items.map((it) => fitLines(it.label, groupW - 8, unitsPerChar(ctx, w, 'micro'), 2));
+  const deepest = Math.max(1, ...labelRows.map((r) => r.length));
+  const h = BASE_H + (deepest - 1) * LABEL_LINE;
 
   let running = 0;
   const bars = items.map((it) => {
@@ -573,7 +604,6 @@ export function renderWaterfall(
   const yMin = Math.min(...allY), yMax = Math.max(...allY);
   const span = (yMax - yMin) || 1;
   const yOf = (v: number) => padT + plotH - ((v - yMin) / span) * plotH;
-  const groupW = plotW / bars.length;
   const barW = Math.max(18, Math.min(58, groupW * 0.62));
 
   const grid = Array.from({ length: 5 }, (_, i) => {
@@ -602,8 +632,9 @@ export function renderWaterfall(
       + `height="${Math.max(2, yBot - yTop).toFixed(1)}" fill="${color}" fill-opacity="0.92" rx="2"/>`
       + text(ctx, w, { x: cx, y: yTop - 8, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: 600, tabular: true },
         svgEscape(formatAxisValue(b.end - b.start, mode)))
-      + text(ctx, w, { x: cx, y: h - padB + 18, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' },
-        svgEscape(b.label.length > 16 ? `${b.label.slice(0, 14)}…` : b.label));
+      + labelRows[i].map((line, k) => text(ctx, w,
+        { x: cx, y: BASE_H - padB + 18 + k * LABEL_LINE, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' },
+        svgEscape(line))).join('');
   }).join('');
 
   return `${svgOpen(w, h)}

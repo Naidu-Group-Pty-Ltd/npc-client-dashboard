@@ -367,8 +367,19 @@ absent rather than printed as zeros.
 - **Labels are clipped in three primitives.** A tile title on page 19
   (`OUTER MARYBOROUGH POCKETS…`), the timeline's only labelled stop on page 13
   (`Manufacturing Centre of Excellence – Maryborough…`), and a gauge caption on
-  page 18. `fitLines` wraps a label into the units a drawing may use; these
-  three call sites truncate instead.
+  page 18. `fitLines` wraps a label into the units a drawing may use.
+
+  **Two corrections to this entry, 19 Sep 2026, from reading the code.** "These
+  three call sites truncate instead" is not true of the TIMELINE:
+  `renderTimeline` calls `fitLines`, gives a lone milestone four lines and
+  grows the drawing for them, and its own comment names the ellipsis as the
+  rare case where four still is not enough — so whether the page 13 stop is
+  that documented case or a different fault needs the document. And a FOURTH
+  instance of the class was found while looking for these three and is closed:
+  `renderWaterfall` cut every category label at fourteen characters with no
+  wrapping at all, in a slot measured at 133 units and 19 characters a line —
+  including the label in the `{{waterfall:}}` directive's own documented
+  example. See `WHAT_THE_PAGE_ACTUALLY_DRAWS.md` §8.
 - **The timeline draws empty horizons.** Page 13 has stops at `3-5Y` and `5Y+`
   with nothing at them, which reads as a pipeline at those horizons. A horizon
   no item reaches should not be drawn.

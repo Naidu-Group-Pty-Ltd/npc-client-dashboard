@@ -285,30 +285,75 @@ separate invocations.
 
 ---
 
-## What is deliberately not done yet
+## 6 · Research is bought once
 
-`acquisitionReuse.pure.ts` is written and tested but **not wired**. It decides
-reuse per dependency and refuses an unstamped legacy object, a different subject
-(including a postcode or state change), a changed accepted-input revision for
-anything financial, an expired shelf life, and — importantly — a previously
-**failed** attempt, so a transient failure is never frozen as a permanent
-absence. Geography-sensitive dependencies survive an input change; derived ones
-do not.
+`acquisitionReuse.pure.ts` is wired. It was written and left unwired because it
+seemed to need somewhere to persist a provenance stamp, and that seemed to need
+a column. It did not.
 
-It is unwired because it needs somewhere to persist a provenance stamp, and
-choosing that place safely is its own change. Note what already exists and what
-does not: early persistence **does** bank five fields
-(`investment_score`, `financial_calculations`, `demographics_data`,
-`economic_data`, `location_intelligence`) before the section loop — but the
-guard is on the **write**, not the **fetch**, so only `locationIntelligence`
-(via `assessEnrichmentReuse`) is genuinely reused. The other four are
-re-acquired every continuation, and roughly ten more datasets (planning, crime,
-climate, regional trends, Domain, risk, schools, transport) are never persisted
-at all.
+**`report_generation_runs.data_packet` has been storing the whole acquired
+`enhancedData` object on every run since the trace was built** — written by
+`traceStartRun`, which is called *after* the acquisition block, so the research
+a run buys is already durable. The table holds 1,733 rows against 1,232
+reports. What was missing was never the storage; it was a statement of **what
+the object describes**, and that rides inside the object the generator composes
+itself, under `__acquisition`.
 
-**A blanket "skip acquisition on continuation" gate must never be added.** It
-would reuse a result acquired for a different subject or under different inputs,
-and it would freeze failures as permanent absences.
+### Why it matters more than the budget did
+
+The bound and the wave stop acquisition consuming an invocation. They do not
+stop it being **bought again on the next one** — and because sections are what
+is left after acquisition, re-buying it is what decides how many sections fit.
+
+Modelled on `SECTION_LOOP_BUDGET_MS` (110 s), a ~25 s mean section and the
+widget's 15 s continuation delay:
+
+| acquisition per invocation | sections per invocation | invocations for 15 | end to end |
+| --- | --- | --- | --- |
+| ~40 s | 2 | 8 | ~16 min |
+| ~5 s | 4 | 4 | ~8 min |
+
+Modelled, not measured. `acquisitionMs` and `sectionMsThisRun` (§5) are what
+replace both columns with real figures.
+
+### The rules
+
+**Refusal is the default and every refusal is named.** `planReuse` returns a
+decision per dependency — `no_stamp`, `no_stored_value`, `subject_changed`,
+`inputs_changed`, `schema_changed`, `expired`, `previous_attempt_failed` — and
+adopts a value only on `valid`. Every packet recorded before this is unstamped,
+so **every existing report acquires exactly as it did**.
+
+**Only geography-sensitive registers are reusable.** A flood overlay does not
+move because the operator revised the interest rate. Anything derived from the
+accepted inputs is deliberately absent: `financials` is a local calculator and
+costs nothing, and `investmentScore` must re-run because it grades the evidence
+*this* run assembled, reused or not. `locationIntelligence` is absent too — it
+already has `assessEnrichmentReuse`, and two modules deciding one question is
+how they come to disagree.
+
+**A failure is never frozen as an absence.** A dependency that failed leaves no
+value in the packet, because the call sites only assign on success — so absence
+re-fetches. A stamp whose `outcome` is `failed` reuses nothing at all.
+
+**The provenance is written last.** `AcquisitionRecorder` is last-write-wins and
+a reused dependency still passes its own call site, which records a skip — so
+the reuse entries are recorded at the END of the block, after every call site
+has had its say. Otherwise the ledger would say a register was skipped when the
+report in fact holds its answer.
+
+**And reuse can never fail a report.** The read is wrapped; a failure logs and
+costs the calls again. An optimisation that can stop a document being produced
+is not an optimisation.
+
+### What this is not
+
+It is **not** "skip acquisition on continuation". That gate would reuse a result
+acquired for somewhere else and freeze a four-second silence as a permanent
+absence. Eleven dependencies are judged separately, against this subject, under
+this run's inputs, inside a shelf life priced by class: cadastral and
+statistical answers keep for 30 days, registers for 7, anything with a market
+price in it for 1.
 
 ---
 

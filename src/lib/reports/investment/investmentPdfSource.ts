@@ -79,7 +79,7 @@ export function projectRowForPdf(row: StoredInvestmentReportRow): ProjectedInves
       // renderer applies — see `presentStoredMarkdown`. A derived report
       // stored before the write-path hygiene carries its "N/A" cells verbatim,
       // and this projection is where both presentations read the prose.
-      content: presentStoredMarkdown(row.report_content, readEvidenceInventory(row as Record<string, unknown>)),
+      content: presentStoredMarkdown(row.report_content, readEvidenceInventory(row as unknown as Record<string, unknown>)),
       created_at: row.created_at || new Date().toISOString(),
       pdf_url: row.pdf_url,
       enhanced_data: {

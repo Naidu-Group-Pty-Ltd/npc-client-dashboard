@@ -318,7 +318,7 @@ export function renderPublishedProjects(
       return [
         '**Not searched.** This platform holds a register of major public projects recorded from the '
         + `responsible authority's own published pages. It could not be consulted for this property: `
-        + `${search.reason}`,
+        + `${(search as Extract<RegisterSearch, { searched: false }>).reason}`,
         '',
         'Nothing follows from that about what is or is not planned near this property.',
         '',
@@ -401,7 +401,7 @@ export function publishedProjectRules(
 ): string {
   if (!near.length && !search.searched) {
     return 'PUBLISHED PROJECT RULES — this register was NOT consulted for this property, because '
-      + `${search.reason} `
+      + `${(search as Extract<RegisterSearch, { searched: false }>).reason} `
       + 'You therefore know nothing about major public projects near it. Do not write that there are '
       + 'none, do not write that the register holds none, do not rate the area’s infrastructure '
       + 'outlook, and do not fill the gap from a live web search, a news article or a listing portal. '

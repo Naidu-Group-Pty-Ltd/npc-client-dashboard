@@ -126,10 +126,11 @@ export interface BuilderStockImage {
  * because an unranked property is a real, ordinary state rather than a fault.
  */
 export interface BuilderStockRank {
-  rank_item_score?: number | null;
-  rank_item_confidence?: number | null;
-  rank_builder_score?: number | null;
-  rank_builder_confidence?: number | null;
+  // Postgres numerics arrive over PostgREST as either numbers or strings.
+  rank_item_score?: number | string | null;
+  rank_item_confidence?: number | string | null;
+  rank_builder_score?: number | string | null;
+  rank_builder_confidence?: number | string | null;
   rank_builder_band?: number | null;
   rank_placement_kind?: 'organic' | 'promoted' | 'pinned' | 'suppressed' | null;
   rank_placement_position?: number | null;

@@ -2315,7 +2315,24 @@ have stepped over a section that was never written; it reads the server's
 `sectionCompleted` now. A blanket "skip acquisition on continuation" gate must
 never be added: `acquisitionReuse.pure.ts` decides per dependency and refuses
 an unstamped object, a changed subject or input revision, an expired shelf life
-and a previously failed attempt.
+and a previously failed attempt. **It is wired now, and it needed no column** —
+`report_generation_runs.data_packet` has stored the whole acquired
+`enhancedData` on every run since the trace was built, written AFTER the
+acquisition block, so the research was already durable and what was missing was
+a statement of what it describes; the stamp rides inside the object under
+`__acquisition`. That matters more than the budget did, because sections are
+what is left after acquisition: re-buying it is what decides how many fit. Four
+rules. **Refusal is the default and every refusal is named**, so every packet
+recorded before this is unstamped and every existing report acquires exactly as
+it did. **Only geography-sensitive registers are reusable** — a flood overlay
+does not move because the operator revised the interest rate, while `financials`
+is a local calculator and `investmentScore` must re-run because it grades the
+evidence THIS run assembled; `locationIntelligence` is left to
+`assessEnrichmentReuse`, because two modules deciding one question is how they
+come to disagree. **The provenance is written LAST**, because the acquisition
+ledger is last-write-wins and a reused dependency still passes its own call
+site, which records a skip. And **reuse can never fail a report**: the read is
+wrapped and a failure just costs the calls again.
 
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),

@@ -588,6 +588,15 @@ jobs:
       - name: Edge Functions name columns their tables have
         run: node scripts/security/check-edge-column-names.mjs
 
+      # The shipped Market News Feed source catalogue still matches the
+      # migrations that define it. A deployment whose `market_sources` is empty
+      # seeds itself from that generated file — measured 19 Sep 2026, all three
+      # clones were in exactly that state — so drift between the two would give
+      # a clone a different marketplace from the prime, with nothing else in
+      # the system in a position to notice.
+      - name: The market source catalogue matches its migrations
+        run: npm run market:registry:check
+
       # A scheduled job and the function it calls must agree on WHO IS CALLING.
       # `cron_invoke_signed_function` folds the caller name into the HMAC and
       # sends it as `X-Internal-Caller`; the receiver holds an allow-list. The

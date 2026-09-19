@@ -135,3 +135,32 @@ export function readStockEmptyState(args: {
     actionable: false,
   };
 }
+
+/**
+ * Is this the ranking machinery being absent, rather than a real failure?
+ *
+ * `builder_network_stock_ranked` and the `rank_*` columns arrive with
+ * migration 20261202090000. Measured 19 Sep 2026, none of the three clones has
+ * it — the whole fleet's migration ledger stops at 20261123000000 — so the
+ * ranked read answers PostgREST **42P01** (undefined_table) or **42703**
+ * (undefined_column) and the marketplace 500s over a mirror that may be full.
+ *
+ * Narrow on purpose. This decides whether to serve a DIFFERENT query, so it
+ * must not swallow a real fault: a permission error, a timeout, a broken
+ * connection and a malformed filter are all failures that should still be
+ * reported as failures. Only the two codes that mean "this deployment does not
+ * have the ranking yet" qualify, and the message must also name the ranking —
+ * a 42P01 about some other relation is somebody else's bug, not this fallback's
+ * business.
+ */
+export function isMissingRankingRelation(error: unknown): boolean {
+  const e = (error ?? {}) as { code?: unknown; message?: unknown };
+  const code = typeof e.code === 'string' ? e.code : '';
+  if (code !== '42P01' && code !== '42703') return false;
+  const message = typeof e.message === 'string' ? e.message.toLowerCase() : '';
+  return message.includes('builder_network_stock_ranked')
+    || message.includes('rank_placement')
+    || message.includes('rank_item_score')
+    || message.includes('ranked_placement_order')
+    || message.includes('interleave_bucket');
+}

@@ -174,7 +174,9 @@
     "security:fabricated-data": "node scripts/security/check-fabricated-data.mjs",
     "verify:journey": "node scripts/verify/report-journey/run.mjs",
     "verify:pdf": "node scripts/verify/report-pdf/measure.mjs",
-    "check:migration-order": "node --max-old-space-size=4096 scripts/security/check-migration-dependency-order.mjs"
+    "check:migration-order": "node --max-old-space-size=4096 scripts/security/check-migration-dependency-order.mjs",
+    "market:registry:generate": "node scripts/market-sources/extract-registry.mjs",
+    "market:registry:check": "node scripts/market-sources/check-registry.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isMissingRankingRelation,
   readStockEmptyState,
   type MirrorSource,
 } from '../../../supabase/functions/_shared/builderStock/mirrorAvailability.pure';
@@ -96,6 +97,43 @@ describe('readStockEmptyState', () => {
     for (const reading of readings) {
       expect(reading.title.length).toBeGreaterThan(0);
       expect(reading.detail.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('isMissingRankingRelation', () => {
+  it('recognises the ranking view being absent', () => {
+    // Measured 19 Sep 2026: none of the three clones has migration
+    // 20261202090000, so the ranked read answers 42P01 and the marketplace
+    // 500s over a mirror that may be perfectly full.
+    expect(isMissingRankingRelation({
+      code: '42P01',
+      message: 'relation "public.builder_network_stock_ranked" does not exist',
+    })).toBe(true);
+  });
+
+  it('recognises a rank column being absent', () => {
+    expect(isMissingRankingRelation({
+      code: '42703',
+      message: 'column "rank_placement_kind" does not exist',
+    })).toBe(true);
+  });
+
+  it('never swallows a real failure', () => {
+    // This decides whether to run a DIFFERENT query, so anything that is not
+    // "the ranking has not reached this deployment" must still be reported.
+    for (const error of [
+      { code: '42501', message: 'permission denied for view builder_network_stock_ranked' },
+      { code: '57014', message: 'canceling statement due to statement timeout' },
+      { code: 'PGRST116', message: 'no rows' },
+      { code: '42P01', message: 'relation "public.some_other_table" does not exist' },
+      { code: '42703', message: 'column "typo_column" does not exist' },
+      { message: 'network error' },
+      null,
+      undefined,
+      'a string',
+    ]) {
+      expect(isMissingRankingRelation(error), JSON.stringify(error)).toBe(false);
     }
   });
 });

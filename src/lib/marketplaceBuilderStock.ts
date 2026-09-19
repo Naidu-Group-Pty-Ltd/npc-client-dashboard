@@ -44,6 +44,15 @@ export interface Paginated<T> {
   source?: MirrorSource;
   /** Organisations holding a disclosed commercial placement on this result set. */
   promoted_organisations?: string[];
+  /**
+   * Whether this page is ordered by merit.
+   *
+   * `false` means the ranking migration has not reached this deployment, so
+   * the list is real and its ORDER carries no information. Absent means a
+   * deployment running ahead of the function, which the surface reads as
+   * "say nothing" rather than as unranked.
+   */
+  ranked?: boolean;
 }
 
 export interface MarketplaceBuilder {

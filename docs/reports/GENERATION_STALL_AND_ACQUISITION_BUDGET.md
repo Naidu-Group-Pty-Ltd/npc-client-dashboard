@@ -374,3 +374,150 @@ agrees with the code while only the server disagrees.
 `boundedServiceCall.ts` was **deleted** rather than left exporting an unused
 helper, for the same reason `bd-chip` and `DimensionRail` were: a module nothing
 imports is not shipped, it is dead.
+
+---
+
+## 7 · The outage all of the above was standing in front of
+
+Everything from §1 to §6 is a budget. On **19 September 2026** none of it
+mattered, because the function was not running out of time — it was throwing.
+
+Measured from `function_edge_logs` on the production project, POSTs to
+`generate-investment-report`:
+
+| window | POSTs | status | mean duration |
+| --- | --- | --- | --- |
+| 18 Sep 16:00–18:00 | 7 | **200** | 77–86 s |
+| 19 Sep 12:00–16:00 | **23** | **500** | 18–52 s |
+
+Not one 200 all day. And the durations are the tell: a run that had exhausted
+its budget would end at ~125 s, not at 30.
+
+`function_logs` for the 15:52:03 invocation carries the whole story in
+fourteen hundred milliseconds:
+
+```
+15:52:36.368  ⏱️ acquisition finished at +33.4s of the run's 125s budget · continuation
+15:52:36.386  Error in generate-investment-report function:
+              ReferenceError: propertySpecs is not defined   (index.ts:5565)
+15:52:37.617  ReferenceError: requestBody is not defined     (index.ts:8005)
+```
+
+Acquisition worked. It finished in 33.4 s — inside budget, with the
+instrumentation §1b added reporting it for the first time. Eighteen
+milliseconds later the handler threw, and no section was ever attempted.
+
+### Three symptoms, one defect, plus its twin in the error handler
+
+The operator reported three things. They are two faults.
+
+**"It takes forever and never reaches section 2."** It never reached section
+*one*. `readStrategyRecord({ propertyAddress, propertySpecs, …, dataSources })`
+read two `const`s declared 2,222 lines further down, inside the
+`if (reportId && supabaseClient)` block that writes the row. That block is a
+**child** of the block doing the reading, so neither name was in scope. The
+throw lands immediately after the acquisition block, every time, on every
+property.
+
+**"It keeps stalling."** Same thing seen from the client: the run 500s, the
+continuation loop retries, the next invocation 500s at the same point.
+
+**"A CORS / network error that comes and goes."** This is the second fault, and
+it is the more interesting one. The handler's `catch` **does** build a correct
+500 carrying `corsHeaders` — it had simply never reached it. `let requestBody`
+was declared inside the `try`, and **a `catch` is a sibling of the block it
+guards, not a child of it**, so `if (requestBody?.reportId)` — the first
+statement of the error path — threw `ReferenceError: requestBody is not
+defined`. The error escaped the handler, the platform served a bare 500 with
+none of this function's headers, and a browser sending `credentials: 'include'`
+discarded it. `fetch` rejected with *"Failed to fetch"*.
+
+> **An error handler that can throw turns every server error into a CORS
+> error.** The operator is then sent to look at CORS and the network, where
+> there is nothing wrong, while the real fault is a hundred lines away in the
+> code. This is the second time this deployment has learned it — the first was
+> `_shared/stepUp.ts` building a 401 from a wildcard `Access-Control-Allow-
+> Origin`, which the browser also discarded. Different mechanism, identical
+> symptom, identical wasted search.
+
+The catch's bookkeeping is now wrapped in a guard of its own, so the
+CORS-bearing 500 is unconditional. `generatorNameScope.spec.ts` asserts it by
+walking the AST: everything before that `return` must be logging, a local, or
+inside a `try`.
+
+### Why the gate did not catch it
+
+`check-edge-functions.mjs` was promoted to treat "this name does not exist" as
+**fatal and never baselineable** — for exactly this reason, after
+`defer_pep_determination` called `appendCaseEvent`. It named the two codes
+TypeScript emits for a bare identifier: `TS2304` and `TS2552`.
+
+A **shorthand property** is neither. `{ propertySpecs }` where nothing named
+`propertySpecs` is in scope is **TS18004** — *"No value exists in scope for the
+shorthand property"* — which was not in the fatal list, so it fell through to
+the **count** baseline and was banked as ordinary type debt. Shorthand is how
+this repository passes almost everything around, so of the two ways to spell
+the same runtime fault, the one that was not fatal was the commoner one.
+
+`requestBody` is the other half of the lesson. It *was* TS2304, the gate *did*
+see it, and it was **frozen** in `edge-missing-names.txt` — under a header
+reading "EVERY LINE BELOW IS A LIVE DEFECT". It was. It was the CORS error.
+
+Both closed:
+
+- `TS18004` joins the fatal set, with `TS2448` / `TS2454` (the temporal-dead-
+  zone spellings) beside it. Measured across all 425 entry points when added:
+  **two** occurrences, both this outage, both fixed here. Nothing was frozen.
+- The identifier extraction reads all four message shapes, because the freeze
+  key is the identifier and a message the gate cannot parse yields no key.
+- `requestBody` and `queryType` are **removed** from the freeze rather than
+  re-frozen. Eighteen live defects remain named there.
+
+`queryType` was the third instance and is fixed in the same change: area
+scoring read it where the binding is `reportScope`, so every suburb, postcode
+and statewide report threw at the same class of fault. It had never been
+exercised because address reports are the volume.
+
+### The rules
+
+**A count baseline can absorb a guaranteed 500.** That was already known — it
+is why this class was made fatal. What was missing is that *the class has more
+than one spelling*, and enumerating compiler codes from memory is how you get
+three of four.
+
+**Deno is not available locally, so the gate is not either.** The CI gate is
+the authority, but it runs after a push. `generatorNameScope.spec.ts` checks
+the same property from the ordinary suite, using the TypeScript parser already
+in `devDependencies` — it walks scopes and asserts every read of the four names
+is covered by a declaration that precedes it and encloses it. Seven mutations,
+seven failures; the first version of the gate assertion passed against a
+**commented-out** fatal code, which is the same mistake in miniature and is why
+it now reads live lines only.
+
+**Three weeks of budget work sat in front of a function that was throwing.**
+PRs #2710, #2711 and #2712 are all correct and all still needed — but they were
+measured against an outage, not against a slow pipeline, and the modelled
+"~16 min → ~8 min" in #2712's body was arithmetic over a run that could not
+complete. The lesson is the one this repository keeps paying for: **read the
+production logs before modelling the production behaviour.** Thirty seconds of
+`function_edge_logs` would have shown 23 consecutive 500s.
+
+### What the hoist does and does not change
+
+`propertySpecs` and `dataSources` are now composed immediately above the
+strategy record that reads them, and the row write two thousand lines below
+uses those same bindings. **One binding, so the stored row and the prose cannot
+disagree.**
+
+Nothing stored moves. Every input to `composePropertySpecs` is a `const`
+settled by L5397, and `enhancedData`'s last assignment is L4716 — both before
+the new position — so the objects built are the objects that block used to
+build. The single exception, stated because it is a real difference: the
+`sourceStamp` timestamps inside `data_sources` are taken where the object is
+now composed rather than at the end of the run, a shift of a minute or two
+within the same invocation. No figure a reader sees is derived from them.
+
+One content consequence is worth naming: the three strategy sections that block
+composes — **Resale Liquidity & Exit Outlook, SWOT Analysis, Monitoring &
+Review Plan** — have never appeared in any report, because the code that
+composes them has thrown on every run since it was introduced.

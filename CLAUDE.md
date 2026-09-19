@@ -2223,6 +2223,30 @@ the identical three-bar price chart was drawn five times on one report; it is a
 no-op on a document that already draws each chart once. Shipped as seed **v16**
 plus the active-master refresh.
 
+**And the report body was being read like a chat message** (§5 of the same
+doc). `renderMarkdown` is the one Markdown implementation here and it draws the
+Compass body — the WHOLE source, on both paths — while cutting it at
+`MAX_MARKDOWN_CHARS`, whose own header says the number is "twice the largest
+single ANSWER: 33,377". `compassSectionRegistry` declares the Compass at 8,410
+words across 35 pages before ~107 chart directives and the appended registers,
+so the declared size of the document is past the renderer's bound BY
+CONSTRUCTION: 65,536 + 25,804 = **91,340 characters written, 28% never drawn**,
+and the client was told "a further 25,804 characters of this **answer** are not
+shown. The complete text is in the **Markdown export**" — another product's
+vocabulary, on a format that has neither. `truncationLabel` already existed for
+exactly that and had zero call sites. Three rules. **Raising one bound is not
+enough**: `MAX_BLOCKS = 400` carries the same "a p90 ANSWER is 60–120 blocks"
+comment one line down, so freeing the source loses the document at the next
+ceiling instead — measured, 401 blocks with `maxChars` raised alone against 892
+with all three — which is why they are ONE `REPORT_BODY_LIMITS` object.
+**Both sides that count pages read the same limits** (the block draws the body,
+the projection estimates its pages, and a test asserts it at the source because
+neither imports the other). And **a guard is not a budget**: the new numbers
+keep the ratio the originals were chosen on — roughly three times the largest
+legitimate input — and are DERIVED from the declared budget, not measured
+against the corpus, because one 91,340-character observation is not a
+distribution.
+
 ## Generated reports / PDFs
 **Read [`docs/reports/COVERAGE.md`](./docs/reports/COVERAGE.md) before anything
 else here.** The design system renders **0.14%** of the documents this product

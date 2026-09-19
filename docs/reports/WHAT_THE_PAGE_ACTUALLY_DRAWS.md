@@ -254,15 +254,91 @@ Shipped as seed **v16** (`20261207000000`) plus the active-master refresh
 replaced only where it is proven an unedited copy of what the library last
 published, everything else is snapshotted and recorded as deferred.
 
+---
+
+## 5. A report body read like a chat message
+
+The clipped tail was deferred above as needing the document to diagnose. It did
+not: the constant and its own comment were enough, and they should have been
+read before deferring it.
+
+### What the reader was told
+
+Page 34:
+
+> **Not shown** — A further 25,804 characters of this answer are not shown.
+> The complete text is in the Markdown export.
+
+### What was actually happening
+
+`renderMarkdown` is the one Markdown implementation in this programme, and it
+draws the Investment Compass body — `markdownBlockContent` hands it the WHOLE
+source, on both the geometry path and the flat one. It cuts that source at
+`MAX_MARKDOWN_CHARS`, whose own header says exactly what the number is for:
+
+> The unit of work is one message, not one conversation … the number this has
+> to survive is the largest single answer: 33,377. This is twice that.
+
+That is Report Q&A's bound. `compassSectionRegistry` declares the Compass at
+**8,410 words across 35 pages**, before ~107 chart directives a report and the
+planning and infrastructure registers appended to it verbatim — so the declared
+size of the document is past the renderer's bound *by construction*.
+
+`65,536 + 25,804 = 91,340`. The body was written; 28% of it was never drawn.
+
+### Raising one bound is not enough, and that is the part worth keeping
+
+The first version of this fix raised `maxChars` alone. Measured on a
+90,000-character body:
+
+| | blocks drawn | source cut | blocks cut |
+| --- | ---: | --- | --- |
+| today's defaults | 401 | 24,553 chars | yes |
+| `maxChars` raised, nothing else | 401 | none | **yes** |
+| all three guards raised | **892** | none | no |
+
+`MAX_BLOCKS = 400` carries the same comment one line down — *"A p90 answer is
+60–120 blocks. This is a runaway guard, not a budget."* Another answer's guard
+on a report's body. Freeing the source and then losing the document at the next
+ceiling is the same loss wearing a different notice, and it is the reason the
+three guards are now **one `REPORT_BODY_LIMITS` object** rather than three
+call-site numbers.
+
+### The notice spoke another product's language
+
+A Compass is not an "answer" and has no "Markdown export". `truncationLabel`
+already existed as an option for precisely this and had **zero call sites**, so
+every format received Q&A's words.
+
+`maxChars`, `maxBlocks`, `maxHeadings`, `truncationSubject` and
+`truncationDestination` are the caller's now, each defaulted to today's value —
+so every existing caller is byte-identical and Report Q&A keeps its own words
+on its own path. A report says "report", and names **no destination at all**:
+with the larger guards this notice should never draw, so it is a fault signal
+rather than routine copy, and a client document must not send a reader to a
+dashboard or an export they may not have.
+
+### Both sides that count pages read the same limits
+
+`markdownBlockContent` draws the body and `reportBindingProjection` estimates
+how many pages it makes. They must agree or the master's page conditionals and
+the block's own count drift — the defect that module's header already forbids.
+Both spread `REPORT_BODY_LIMITS`, and a test asserts it at the source, because
+the two live in different trees and neither imports the other.
+
+### What these numbers are, and are not
+
+Derived from the registry's declared budget with the ratio each original
+constant was chosen on — a guard at roughly three times the largest legitimate
+input, so that reaching one is a fault to investigate rather than an ordinary
+day. They are **not** measured against the stored corpus: 91,340 characters is
+one observation, and one observation is not a distribution. That measurement is
+the follow-up.
+
 ## What is still outstanding
 
-Two items from the same report are **not** closed here, because closing them
-from a description rather than from the document would be guessing:
-
-- **the clipped tail** — a note reading that a further ~25,800 characters are
-  not shown; and
-- **the repeated planning table and growth figures across sections**, beyond
-  the identical-directive repeats §4 closes.
-
-Both need measuring against a regenerated document rather than against a
-recollection of the one that was reviewed. They are the next pass.
+One item from the same report is **not** closed here, because closing it from a
+description rather than from the document would be guessing: **the repeated
+planning table and growth figures across different sections**, beyond the
+identical-directive repeats §4 closes. It needs measuring against a regenerated
+document rather than against a recollection of the one that was reviewed.

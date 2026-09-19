@@ -113,7 +113,7 @@
  * table cannot drift.
  */
 import { assessmentReadings } from './reports/investment/assessmentReadings.pure.ts';
-import { renderMarkdown } from './reports/markdown.pure.ts';
+import { REPORT_BODY_LIMITS, renderMarkdown } from './reports/markdown.pure.ts';
 import {
   DEFAULT_LINES_PER_PAGE,
   packMarkdownPages,
@@ -446,6 +446,11 @@ export function projectReportNarrative(
   // with. Without this the count ignored every figure while the block drew
   // them, which is exactly the one-line drift this module's header forbids.
   const blocks = renderMarkdown(source, {
+    // The SAME limits the block reads. `markdown.pure.ts` defaults all three
+    // to bounds sized for one chat answer, and this side estimating pages from
+    // a 65,536-character, 400-block prefix while the block draws 131,072 and
+    // 1,600 is exactly the one-line drift this module's header forbids.
+    ...REPORT_BODY_LIMITS,
     charging: profile?.charging,
     renderDirective: vizDirectiveRenderer(planningChartContext()),
   }).blocks;

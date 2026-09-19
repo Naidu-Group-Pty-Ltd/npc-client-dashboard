@@ -338,9 +338,18 @@ describe('the service publishes it, and a stale cache cannot serve it', () => {
   });
 
   it('the answer version was bumped, so a c2 row is never served for this shape', () => {
+    // Pins the RULE, not the string. `c3` was the version that added the
+    // programme and it has since moved on for other widenings; what must hold
+    // is that the key is declared and that the version is past the one whose
+    // rows carry no programme at all.
     const src = read('supabase/functions/_shared/planning/planningAnswerVersion.pure.ts');
-    expect(src).toContain("PLANNING_ANSWER_VERSION = 'c3'");
     expect(src).toContain("'investmentProgramme',");
+    const version = /PLANNING_ANSWER_VERSION = '(c\d+)'/.exec(src)?.[1];
+    expect(version).toBeDefined();
+    expect(Number(version!.slice(1))).toBeGreaterThanOrEqual(3);
+    // And the row that documents it, so a bump is a decision rather than a
+    // side effect — the module's own header says exactly that.
+    expect(src).toMatch(/\|\s*`c3`\s*\|[^|]*investmentProgramme/);
   });
 
   it('needs no table and no migration — it is a live read like every other register', () => {

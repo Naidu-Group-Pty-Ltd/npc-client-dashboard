@@ -50,8 +50,10 @@ import {
   COMPACT_FIGURE_FRACTION,
   type ChartContext,
 } from '../reportDesign/charts.pure.ts';
-import { escapeHtml, renderCallout, renderSidenote } from '../reportDesign/primitives.pure.ts';
-import type { VizDirective } from './vizDirectives.pure.ts';
+import {
+  escapeHtml, renderCallout, renderDataTable, renderSidenote,
+} from '../reportDesign/primitives.pure.ts';
+import { splitRefusedItem, type VizDirective } from './vizDirectives.pure.ts';
 import {
   calloutCharge, figureCharge, sidenoteCharge, type NarrativeGeometry,
 } from './narrativeGeometry.pure.ts';
@@ -182,8 +184,50 @@ export function renderVizDirective(
     return { html, lines };
   };
 
+  /*
+   * A chart that cannot plot everything it was handed is not a chart.
+   *
+   * `labelledValues` refuses a range (`~0.5–1.6 km`) and an item with no
+   * figure at all, and both refusals are correct — the low end of a range is
+   * not the figure and the midpoint is not in the source. What was wrong is
+   * that the survivors were then drawn as though they were the whole series.
+   * The Cowra Compass printed ONE bar under "Indicative reach from 48 Redfern
+   * Street" where the model had named five amenities, and a second directive
+   * disappeared outright because none of its three items carried a number.
+   * Nine of fifteen items and one whole chart left that document with nothing
+   * on the page to show for it.
+   *
+   * So the figure declines and the same data is set as a table: every label
+   * the reader was promised, every value verbatim, nothing computed and
+   * nothing invented. It is `vizDirectiveTables`' own rule — a promise of a
+   * figure is a figure — applied on the path that draws rather than the path
+   * that tabulates, which is what makes it reach all five formats.
+   */
+  const asTable = (
+    rows: { label: string; value: string }[],
+    valueHeading: string,
+  ): VizFigure | null => {
+    if (!rows.length) return null;
+    const html = renderDataTable(
+      [{ key: 'label', label: 'Item' }, { key: 'value', label: valueHeading, align: 'right' }],
+      rows.map((r) => ({ label: r.label, value: r.value })),
+      { caption: d.kind === 'bars' || d.kind === 'donut' ? d.title : undefined },
+    );
+    if (!html) return null;
+    // A table row is one body line plus the head and the caption.
+    return { html, lines: rows.length + (('title' in d && d.title) ? 2 : 1) };
+  };
+
   switch (d.kind) {
     case 'bars':
+      if (d.refused?.length) {
+        return asTable(
+          d.sources?.length
+            ? d.sources.map(splitRefusedItem)
+            : d.items.map((i) => ({ label: i.label, value: i.display ?? String(i.value) })),
+          d.unit ? `Value (${d.unit})` : 'Value',
+        );
+      }
       return wrap(renderBars(
         ctx,
         d.items.map((i) => ({ label: i.label, value: i.value, display: i.display })),
@@ -191,6 +235,9 @@ export function renderVizDirective(
       ));
 
     case 'donut':
+      if (d.refused?.length) {
+        return asTable((d.sources ?? []).map(splitRefusedItem), 'Share');
+      }
       return wrap(renderDonut(
         drawCtx,
         d.segments.map((s) => ({ label: s.label, value: s.value })),
@@ -221,6 +268,7 @@ export function renderVizDirective(
     case 'margin': {
       // A sidenote, not a chart: the directive's whole purpose is to push
       // secondary context out of the main column. The spark rides inside it.
+      //
       const spark = d.spark.length >= 2 ? renderMarginSpark(ctx, d.spark) : '';
       const body = (d.heading ? `<p><strong>${escapeHtml(d.heading)}</strong></p>` : '')
         + (d.note ? `<p>${escapeHtml(d.note)}</p>` : '')
@@ -253,7 +301,18 @@ export function renderVizDirective(
       ));
 
     case 'timeline':
-      return wrap(renderTimelineRibbon(ctx, d.items, { title: d.title }));
+      /*
+       * The ribbon has four fixed stops, so it can only draw a phase it
+       * recognises and at most two items per stop. It refuses otherwise, and
+       * a refusal must not delete the milestones — placing an unreadable
+       * phase at the far end of the axis is inventing a horizon, which is
+       * what §3 forbids, and the Cowra Compass printed the model's NEXT TWO
+       * YEARS under "5Y+" for exactly that reason.
+       *
+       * Tabulated, the reader gets the model's own phase words verbatim.
+       */
+      return wrap(renderTimelineRibbon(ctx, d.items, { title: d.title }))
+        ?? asTable(d.items.map((i) => ({ label: i.phase, value: i.label })), 'Milestone');
 
     case 'waterfall':
       return wrap(renderWaterfall(ctx, d.items, { mode: 'money' }));

@@ -388,16 +388,46 @@ function text(
  * 14 Sep 2026), and a legend label printed into its own value is what
  * "Professionals & small households" did to "20%".
  */
+/**
+ * Break a label into the pieces a line may end on.
+ *
+ * Whitespace is the obvious one and used to be the only one, and that is why
+ * page 9 of the Cowra Compass printed `Agriculture-dominat…` in a tile: a
+ * hyphenated compound is ONE whitespace token, so it never wrapped and the
+ * truncation at the end of this function cut it mid-word.
+ *
+ * A hyphen between two letters is a break point every typesetter uses, and
+ * the hyphen stays on the first line where it is already written. A hyphen
+ * with a digit on either side is not: breaking `2025-26` or `3-5y` across
+ * two lines turns one range into two numbers, and a reader has no way to see
+ * that it was ever one.
+ *
+ * The slash in `Land/Building` is the same case and breaks the same way.
+ */
+export function breakPoints(label: string): string[] {
+  const out: string[] = [];
+  for (const word of String(label ?? '').trim().split(/\s+/).filter(Boolean)) {
+    // Split AFTER a hyphen or slash that sits between two letters, keeping the
+    // mark with the piece before it.
+    const pieces = word.split(/(?<=[A-Za-z][-/])(?=[A-Za-z])/);
+    for (const piece of pieces) if (piece) out.push(piece);
+  }
+  return out;
+}
+
 export function fitLines(label: string, maxUnits: number, unitsPerChar: number, maxLines = 2): string[] {
   const perLine = Math.max(4, Math.floor(maxUnits / Math.max(0.1, unitsPerChar)));
-  const words = String(label ?? '').trim().split(/\s+/).filter(Boolean);
+  const words = breakPoints(label);
   if (!words.length) return [];
   const lines: string[] = [];
   let line = '';
   let i = 0;
   for (; i < words.length; i++) {
     const word = words[i];
-    const candidate = line ? `${line} ${word}` : word;
+    // A piece that follows a hyphen or a slash joins the one before it with no
+    // space — `Agriculture-` + `dominated` is one word broken, not two words.
+    const joiner = /[-/]$/.test(line) ? '' : ' ';
+    const candidate = line ? `${line}${joiner}${word}` : word;
     if (candidate.length <= perLine || !line) {
       line = candidate;
       continue;
@@ -927,15 +957,31 @@ export function renderBars(
   const h = padT + items.length * rowH + padB;
   const max = (opts.max ?? Math.max(...items.map((i) => Math.abs(i.value)))) || 1;
 
-  const toneColour = (tone: BarItem['tone'], pct: number) => {
+  /*
+   * Colour is chosen, never derived from size.
+   *
+   * This used to read `pct >= 0.66 ? positive : pct >= 0.4 ? accent : pct >=
+   * 0.2 ? caution : negative` under the comment "magnitude reads as strength",
+   * and on a distance chart that is exactly inverted. Measured on page 12 of
+   * the Cowra Compass (`max=3`, kilometres): the primary school at 0.7 km —
+   * the NEAREST amenity — was drawn amber as a warning, and the hospital at
+   * 2.0 km, the furthest, was drawn green as a success. The same default
+   * painted the risk wheel, where 75 ("Transport reliance", the worst of six)
+   * read as the good news.
+   *
+   * There is no reading of a bar's length that tells a renderer whether long
+   * is good. A caller that knows says so with `tone`; a caller that does not
+   * gets one accent for every bar, which is what a comparison of like things
+   * should look like anyway — the differing lengths already carry the
+   * comparison, and spending four hues on it adds a meaning the data has not
+   * got. Colour then stops being the only channel, which is the other half of
+   * the same rule.
+   */
+  const toneColour = (tone: BarItem['tone']) => {
     if (tone === 'positive') return ctx.palette.positive;
     if (tone === 'caution') return ctx.palette.caution;
     if (tone === 'negative') return ctx.palette.negative;
-    if (tone === 'accent') return ctx.palette.accent;
-    // Unspecified: magnitude reads as strength, which is the original behaviour.
-    return pct >= 0.66 ? ctx.palette.positive
-      : pct >= 0.4 ? ctx.palette.accent
-        : pct >= 0.2 ? ctx.palette.caution : ctx.palette.negative;
+    return ctx.palette.accent;
   };
 
   const rows = items.map((it, i) => {
@@ -946,7 +992,7 @@ export function renderBars(
       ?? `${Number.isInteger(it.value) ? String(it.value) : it.value.toFixed(1)}${opts.unit ?? ''}`;
     return text(ctx, w, { x: labelW, y: y + 17, pt: 'micro', fill: ctx.palette.ink, anchor: 'end' }, svgEscape(it.label))
       + `<rect x="${barX}" y="${y + 8}" width="${barW}" height="12" fill="${ctx.palette.groundAlt}" rx="2"/>`
-      + `<rect x="${barX}" y="${y + 8}" width="${bw.toFixed(1)}" height="12" fill="${toneColour(it.tone, pct)}" rx="2"/>`
+      + `<rect x="${barX}" y="${y + 8}" width="${bw.toFixed(1)}" height="12" fill="${toneColour(it.tone)}" rx="2"/>`
       + text(ctx, w, { x: barX + barW + 10, y: y + 17, pt: 'micro', fill: ctx.palette.ink, weight: 700, tabular: true }, svgEscape(display));
   }).join('');
 
@@ -1247,12 +1293,27 @@ export function renderDonut(
   // The sub-label only fits inside the hole at full size; in the stacked
   // layout the ring is smaller and it would overlap the figure. It is fitted
   // to the hole's width, on up to two lines, rather than drawn through the ring.
-  const subLines = stacked ? [] : fitLines(
+  /*
+   * The hole's label is drawn WHOLE or not at all.
+   *
+   * `fitLines` ends an overlong run with an ellipsis, which inside a ring is
+   * the worst place for one: the Cowra Compass printed "FAMILY HOUSEHOL…" on
+   * page 19 and "OFFICIAL STATISTI…" on page 30, each directly beside a
+   * legend row carrying the same words in full. §7 asks for truncated labels
+   * to be eliminated, and here the elimination costs nothing — the reader
+   * loses a restatement, not a fact.
+   *
+   * A wider ring is not the answer either: the hole is sized by the drawing,
+   * and growing it to fit an arbitrary label shrinks the ring the segments
+   * are read from.
+   */
+  const fitted = stacked ? [] : fitLines(
     (opts.centerSub ?? segments[0]?.label ?? '').toUpperCase(),
     2 * r - 12,
     unitsPerChar(ctx, w, 'micro', true) + ptToUnits(1, w, ctx.widthMm),
     2,
   );
+  const subLines = fitted.some((l) => l.endsWith('…')) ? [] : fitted;
   const centerSub = subLines.map((line, i) => text(ctx, w,
     { x: cx, y: cy + 20 + i * 13, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1 },
     svgEscape(line))).join('');
@@ -1473,15 +1534,43 @@ export function renderTimelineRibbon(
   const labelUnits = step - gap * 2;
   const labelChar = unitsPerChar(ctx, w, 'micro');
 
-  const phaseOf = (p: string) => {
-    const s = p.toLowerCase();
-    if (/existing|now|current/.test(s)) return 'Existing';
-    if (/0\s*-?\s*2|short/.test(s)) return '0-2y';
-    if (/3\s*-?\s*5|medium/.test(s)) return '3-5y';
-    return '5y+';
+  /*
+   * Which stop an item belongs to — or none, which is not the same as 5y+.
+   *
+   * Two faults, both measured on the Cowra Compass's second timeline. The
+   * range separators were `-?`, a plain hyphen, so `0–2y` and `3–5y` written
+   * with EN-DASHES matched neither branch; and the function ended
+   * `return '5y+'`, so both fell through to it. The rendered page put
+   * "Ongoing park & sportsfield maintenance" — the model's NEXT TWO YEARS —
+   * under "5Y+", and stacked a second item on top of it.
+   *
+   * Placing an unrecognised phase at the far end of an axis is inventing a
+   * horizon, which is exactly what §3 forbids: unknown timing stays unknown.
+   * So the separator now admits every dash a model writes, and anything still
+   * unrecognised returns null and the ribbon refuses — the caller tabulates
+   * the model's own phase words instead, which is the only honest reading.
+   */
+  const DASH = '[-–—]';
+  const phaseOf = (p: string): string | null => {
+    const t = p.toLowerCase().trim();
+    if (/existing|now|current|today|in\s+place/.test(t)) return 'Existing';
+    if (new RegExp(`0\\s*(?:${DASH}|to)?\\s*2|short(?:[-\\s]?term)?`).test(t)) return '0-2y';
+    if (new RegExp(`3\\s*(?:${DASH}|to)?\\s*5|medium(?:[-\\s]?term)?`).test(t)) return '3-5y';
+    if (/\b5\s*(?:y|yr|year)?s?\s*\+|beyond|long(?:[-\s]?term)?/.test(t)) return '5y+';
+    return null;
   };
   const grouped = new Map<string, TimelineItem[]>(phases.map((p) => [p, []]));
-  for (const it of items) grouped.get(phaseOf(it.phase))?.push(it);
+  for (const it of items) {
+    const phase = phaseOf(it.phase);
+    // One unreadable phase and the whole ribbon declines: drawing the rest
+    // would print a pipeline missing a stage with nothing to say so.
+    if (phase === null) return '';
+    grouped.get(phase)?.push(it);
+  }
+  // A stop draws two items. A third would be dropped silently, and a dropped
+  // milestone leaves no mark on the page — the defect this whole pass is
+  // about.
+  for (const list of grouped.values()) if (list.length > 2) return '';
 
   const markers = phases.map((phase, i) => {
     const x = padX + i * step;
@@ -1497,9 +1586,26 @@ export function renderTimelineRibbon(
     const last = phases.length - 1;
     const anchor = i === 0 ? 'start' : i === last ? 'end' : 'middle';
     const labelX = i === 0 ? edge : i === last ? w - edge : x;
-    // Each item wraps to at most two lines of the marker's measure; what does
-    // not fit is cut with an ellipsis by `fitLines` rather than allowed to run.
-    const rows = list.flatMap((it, j) => fitLines(it.label, labelUnits, labelChar, 2).map((line) => ({ line, weight: j === 0 ? 700 : 500 })));
+    /*
+     * A milestone gets the lines it needs, and the drawing grows for them.
+     *
+     * Two lines cut five labels on the Cowra Compass — "Redfern St,
+     * hospital,…", "sportsfield maintenance,…", "community facility…",
+     * "community and civic…", "transport improvements…" — so the reader was
+     * told a pipeline stage exists and not what it is. §4's rule is to
+     * increase the component's space before shrinking its text, and the space
+     * is already elastic: `deepest` below sizes the drawing to the tallest
+     * stack, so more lines cost height rather than legibility.
+     *
+     * Four, not unbounded. A marker whose measure is a quarter of the width
+     * cannot absorb a sentence, and a stop that needed more than four lines
+     * would push the ribbon past a page on its own; `fitLines` still ends the
+     * last line with an ellipsis in that case, which is now the rare
+     * exception rather than the ordinary outcome. Where BOTH items at a stop
+     * are long the pair shares the budget, so two of four each.
+     */
+    const linesPerItem = list.length > 1 ? 2 : 4;
+    const rows = list.flatMap((it, j) => fitLines(it.label, labelUnits, labelChar, linesPerItem).map((line) => ({ line, weight: j === 0 ? 700 : 500 })));
     const labels = rows.map((row, k) => text(ctx, w,
       { x: labelX, y: axisY + 36 + k * lineStep, pt: 'micro', fill: ctx.palette.ink, anchor, weight: row.weight },
       svgEscape(row.line))).join('');

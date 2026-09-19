@@ -88,7 +88,21 @@ const countRows = async (when) => {
 
 // ---------------------------------------------------------------- parse
 const valuesAt = lines.findIndex((l) => l === 'VALUES');
-const conflictAt = lines.findIndex((l) => l.startsWith('ON CONFLICT '));
+// The ON CONFLICT that TERMINATES the seeded INSERT, which is the first one at
+// or after its `VALUES` — not the first one in the file.
+//
+// v15 was the first release to put a statement of its own above the catalogue
+// insert: the seed captures each entry's pre-upsert schema digest with
+// `INSERT INTO … template_library_release_baselines … ON CONFLICT (entry_id,
+// release) DO NOTHING;`, because the upsert overwrites `schema` in place and
+// nothing else retains what it held. Searching the whole file found THAT line
+// (66) before `VALUES` (78), so `conflictAt > valuesAt` was false, the file was
+// not recognised as the seed shape, and 39.77 MB went as one request — HTTP 413
+// with nothing applied (run #66, 19 Sep 2026).
+const conflictOffset = valuesAt === -1
+  ? -1
+  : lines.slice(valuesAt).findIndex((l) => l.startsWith('ON CONFLICT '));
+const conflictAt = conflictOffset === -1 ? -1 : valuesAt + conflictOffset;
 const isSeedShape = valuesAt !== -1 && conflictAt > valuesAt;
 // Overridable so the chunker and its guards can be exercised against a small
 // fixture. Files under the threshold are sent whole and never parsed.

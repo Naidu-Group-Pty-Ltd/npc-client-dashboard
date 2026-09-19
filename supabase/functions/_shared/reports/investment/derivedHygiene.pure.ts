@@ -19,6 +19,9 @@
  *    declares; anything else the model volunteered is dropped and named.
  */
 
+import { enforceChartEvidence, type EvidenceInventory } from './chartEvidence.pure.ts';
+import { alignChartScales } from './chartScale.pure.ts';
+
 const PLACEHOLDER_CELL = /^(?:n\/?a|tbd|to be determined|not available|not provided|unknown|—|-|–)\.?$/i;
 
 const isSeparatorRow = (cells: string[]): boolean =>
@@ -387,7 +390,26 @@ export function stripEmptyCitations(markdown: string): { markdown: string; remov
   return { markdown: out, removed };
 }
 
-export function presentStoredMarkdown(markdown: string | null | undefined): string {
+export function presentStoredMarkdown(
+  markdown: string | null | undefined,
+  /*
+   * The record the markdown was stored against, where the caller has it.
+   *
+   * Optional, and omitting it is byte-identical to the behaviour before the
+   * chart-evidence contract existed — which is what lets the four readers
+   * adopt it one at a time and what keeps every other caller untouched. With
+   * it, a quantitative visual the record contradicts is withheld from the
+   * DRAWING and set as a table of its own labels and values instead.
+   *
+   * This is the read path on purpose. The three guards that already judged
+   * figures all ran in `generate-investment-report` and nowhere else, so a
+   * stored document kept its unsupported graphics for ever and so did every
+   * child forked from it; `presentStoredMarkdown` is the one scrub all four
+   * renderers already apply, which is the same reason the placeholder scrub
+   * moved here.
+   */
+  evidence?: EvidenceInventory | null,
+): string {
   if (!markdown) return '';
   const r = stripPlaceholderRows(markdown);
   const scrubbed = r.removedRows + r.removedTables + r.removedLines + r.blankedCells === 0 ? markdown : r.markdown;
@@ -402,7 +424,15 @@ export function presentStoredMarkdown(markdown: string | null | undefined): stri
   const cited = stripEmptyCitations(columns.removed.length ? columns.markdown : glance.markdown);
   const tidied = cited.removed ? cited.markdown : (columns.removed.length ? columns.markdown : glance.markdown);
   const sections = dropEmptySections(tidied);
-  return sections.dropped.length === 0 ? tidied : sections.markdown;
+  const clean = sections.dropped.length === 0 ? tidied : sections.markdown;
+  // One scale per quantity across the whole document. Unconditional, because
+  // it needs no record to know that two charts of kilometres must agree, and
+  // it is a no-op on a document with one chart per unit.
+  const scaled = alignChartScales(clean);
+  const levelled = scaled.aligned.length ? scaled.markdown : clean;
+  if (!evidence) return levelled;
+  const judged = enforceChartEvidence(levelled, evidence);
+  return judged.findings.length ? judged.markdown : levelled;
 }
 
 const normalizeHeading = (h: string): string =>

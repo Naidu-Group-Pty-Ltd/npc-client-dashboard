@@ -221,12 +221,53 @@ const REPO = resolve(__dirname, '../..');
  * WITHHOLDS the modelling bindings on those tiers, which is what makes the
  * drop clean: a page kept with nothing to bind prints labelled empty rows.
  *
+ * ## v15 — the running head names the chapter, and a column fits what it carries
+ *
+ * `20261203000000` **is recorded** — checked 19 Sep 2026 against the project's
+ * applied migration list (980 of them), which is the one-query check this
+ * header has always asked for. So v14 has run, editing it would be inert, and
+ * this is v15.
+ *
+ * Two master changes:
+ *
+ * The running head read `Part 03 · Report` on every page of every document,
+ * and a page carried a heading reading `The report`. The head now names the
+ * chapter a page is in, derived from the same packing that decides the page
+ * breaks — estimated by the projection and overwritten by the renderer's
+ * pre-pass, so the two cannot disagree — and the `The report` heading is
+ * deleted.
+ *
+ * And the Commercial Capacity constraints table printed over the explanation
+ * beneath it on 4 of 50 masters: the four value columns took a fixed 330 pt,
+ * leaving the test name 87-117 pt on the families with the deepest margins,
+ * while three of the ten `CONSTRAINT_LABELS` run 24 to 31 characters. Measured
+ * in Chromium at A4 across all fifty, for the longest string each column can
+ * carry and for the column heads: Test 147.8, Permits 66.6, Policy 42.0,
+ * This deal 53.8, Status 73.9. The value columns are 75/48/60/82 now and the
+ * name takes the rest, at least 152 pt everywhere. Re-measured: 0 of 50
+ * overlap, 0 of 400 rows wrap.
+ *
+ * The version is `20261204020000`, not `...000000`: two other migrations
+ * already hold `20261204000000` and `20261204010000`, and
+ * `check-migration-version-collisions.mjs` is right that one version records
+ * one ledger row, so a second file at that version can never be told apart
+ * from applied. And a seed alone is not the change — `20261204030000`
+ * re-copies the ACTIVE masters from it, because an adopted master is a COPY
+ * and nothing else updates a copy after adoption.
+ *
  * Run the same one-query check before editing this file: if
- * `20261203000000` is already recorded, the next change needs a v15.
+ * `20261204020000` is already recorded, the next change needs a v16.
  */
+/**
+ * The identifier this release records against a baseline and against a
+ * refreshed master. It is the seed migration's own basename, so a row that
+ * says it carries this release names the artefact that put it there.
+ */
+const RELEASE_ID = '20261204020000_seed_template_library_v15_running_head_and_columns';
+
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261203000000_seed_template_library_v14_tier_separation.sql',
+  'supabase/migrations/20261204020000_seed_template_library_v15_running_head_and_columns.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
@@ -539,6 +580,44 @@ function main(): void {
 -- and never duplicates them. Rows an operator promoted themselves are matched
 -- by neither slug nor version and are therefore never touched.
 -- =====================================================================
+
+-- ── The baseline this release is judged against ───────────────────────────
+--
+-- Captured BEFORE the upsert below, because the upsert overwrites \`schema\` in
+-- place: \`ON CONFLICT (slug, version)\` with \`version\` = 1 for every entry, so
+-- there is exactly one row per slug and the previous release's schema is gone
+-- the moment this statement runs. Nothing else in the database retains it.
+--
+-- What it is for: the refresh that follows this seed must not replace a master
+-- a tenant has edited. It can only know that by comparing the tenant's copy
+-- against what the library held when they took it — which is this digest.
+--
+-- \`tokens.colors\` is removed before hashing, and ONLY that path, because
+-- \`applyColourwayToSchema\` spreads \`...tokens\` and replaces \`colors\` alone.
+-- So a supported colourway difference is accounted for exactly, and a tenant's
+-- typeface (\`tokens.fonts\`), page, block, section, binding or branding is
+-- fully visible to the comparison rather than hidden by a loose exclusion.
+--
+-- jsonb's text form is canonical — keys sorted, whitespace normalised — so the
+-- digest is stable across writes and comparable between rows.
+CREATE TABLE IF NOT EXISTS public.template_library_release_baselines (
+  entry_id uuid NOT NULL,
+  release text NOT NULL,
+  schema_digest text NOT NULL,
+  captured_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (entry_id, release)
+);
+
+COMMENT ON TABLE public.template_library_release_baselines IS
+  'Digest of each library entry schema as it stood immediately BEFORE a seed release overwrote it, so a later refresh can prove whether an adopted copy is unedited. Service role only.';
+
+ALTER TABLE public.template_library_release_baselines ENABLE ROW LEVEL SECURITY;
+
+INSERT INTO public.template_library_release_baselines (entry_id, release, schema_digest)
+SELECT e.id, '${RELEASE_ID}', md5((e.schema #- '{tokens,colors}')::text)
+FROM public.template_library_entries e
+WHERE e.schema IS NOT NULL
+ON CONFLICT (entry_id, release) DO NOTHING;
 
 INSERT INTO public.template_library_entries (
   slug, version, name, description,

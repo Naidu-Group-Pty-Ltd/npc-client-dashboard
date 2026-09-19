@@ -316,10 +316,23 @@ key SAY so rather than fall silently through to a model search, and as the one
 home of the eight-host allow-list, because a broker must enforce it rather
 than trust its caller. And **a feature the migrations have
 not reached degrades rather than failing**: `builder_network_stock_ranked`
-exists on no clone, so the marketplace falls back to the base table and says
-`ranked: false` instead of answering 42P01 into a 500 — with its own
-pre-ranking ORDER, because `ordered` leads with four ranking-only columns and
-would have failed the same way.
+exists on no clone — nor on the PRIME — so the marketplace falls back to the
+base table and says `ranked: false` instead of answering into a 500, with its
+own pre-ranking ORDER, because `ordered` leads with four ranking-only columns
+and would have failed the same way. **That fallback did not work for the first
+week it existed**, and the reason is worth more than the fix:
+`isMissingRankingRelation` accepted the POSTGRES codes `42P01`/`42703`, and a
+supabase-js caller never sees them here. PostgREST resolves a relation against
+its own schema cache and refuses before the statement is planned, so the wire
+answer is **`PGRST205`** (probed 19 Sep 2026: HTTP 404, *"Could not find the
+table 'public.builder_network_stock_ranked' in the schema cache"*) and
+`PGRST204` for a column. Neither was accepted, so the Builder Stock tab
+answered *"Builder stock could not be loaded."* over 46 correctly mirrored
+properties. Both spellings are accepted now. The rule: **an error code is
+observed on the wire, never assumed from the database that raises it** — and
+the two tests that vouched for this both invented their error, so code and
+test agreed while only the server disagreed, exactly as the AML `.or()` double
+did.
 
 **And a gap that reads like a clone's is sometimes nobody's.**
 `builder_network_connections` is empty on the PRIME as well as every clone,
@@ -2259,6 +2272,51 @@ every run and 43 invocations were killed with nothing written; every call now
 answers to the run's own deadline, and a section with no window left is
 deferred as a hand-off rather than written up as a failed section.
 
+**That rule stopped at the section loop, and the research in front of it ran
+unbounded.** Read
+[`GENERATION_STALL_AND_ACQUISITION_BUDGET.md`](./docs/reports/GENERATION_STALL_AND_ACQUISITION_BUDGET.md)
+before touching the acquisition block, `acquisitionFetch`, the budget hand-off
+or `useChunkedRegeneration`. One run read `Section 1 of 15 · 0/15 · 21m 2s
+elapsed` having banked nothing, and three things were true at once. **The
+acquisition block's twenty-one service calls carried 290 seconds of timeout
+allowance inside a 125-second invocation** — a plain `fetch` with no
+`AbortSignal`, a 90s default, and nine sequential awaits declaring 20 to 45
+seconds each — so one slow provider spent the whole run and the first section
+was never attempted. Every acquisition call now answers to the same run clock
+through `acquisitionFetch`, which delegates to the generator's own
+`fetchWithTimeout` so the circuit breaker still applies; **a site keeps its own
+declared ceiling** and the clock takes the smaller of the two, because
+shortening a register's patience buys speed with evidence. A call with no window
+is NOT made and records a **failure**, never an empty answer: **a timeout is not
+evidence of absence**, and the conservative side keeps the dependency
+outstanding rather than writing "no overlay applies" from a four-second silence.
+The first fix bound only seven of the twenty-one and its spec named six services
+by hand — **a hand-list cannot see the call it does not mention**, so the guard
+now reads every `functions/v1/` call out of the source. Converting the rest
+exposed an older fault of the same kind: a null from a phase-1 wrapper reaches
+the ledger as `unavailable_in_coverage`, *"the provider answered and holds
+nothing"*, so an HTTP 500 was already being recorded as a statement about the
+property; `assertAcquisitionAnswered` makes it a failure instead. And **the four
+registers that depend only on the resolved geography are one wave** — planning,
+climate, regional and Domain were awaited in series for 145 seconds of ceiling
+and now cost the slowest of them; only the REQUEST moves, every answer is read
+and bound exactly where it was, and the QLD crime re-key stays behind planning
+because it reads planning's own LGA. **The hand-off then wrote the row at zero
+sections**, and `investment_reports` carries a `BEFORE UPDATE` trigger that
+stamps `updated_at` on any write — so it refreshed the very clock the watchdog
+(`updated_at < now() - interval '2 minutes'`) and the widget both read, and
+nothing reported the stall. Omitting the column would change nothing because
+the trigger does not read the payload; **not writing is the only remedy**, and
+it restores the watchdog's own `resume_attempts < 8` bound. **Activity is not
+progress** — a saved acquisition checkpoint is real progress before any prose
+exists, re-running the same research is not. And **the continuation loop
+advanced on `success: true`**, which a budget hand-off returns, so it would
+have stepped over a section that was never written; it reads the server's
+`sectionCompleted` now. A blanket "skip acquisition on continuation" gate must
+never be added: `acquisitionReuse.pure.ts` decides per dependency and refuses
+an unstamped object, a changed subject or input revision, an expired shelf life
+and a previously failed attempt.
+
 Ten formats have been migrated onto it, and each carries its own contract:
 [`INVESTMENT.md`](./docs/reports/INVESTMENT.md),
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
@@ -2958,6 +3016,59 @@ clone** — the payload composer reads `manual_stats->'bedrooms'` where the
 column's own constraint puts them under `manual_stats->'values'`, so every
 lookup is NULL and it looks exactly like a builder who stated nothing. That one
 is named and deliberately not fixed in a capture migration.
+
+## A linked stock list, and the delete that was never a delete
+Read [`docs/builder-portal/49-re-importing-a-linked-stock-list.md`](./docs/builder-portal/49-re-importing-a-linked-stock-list.md)
+before touching `_shared/builderStock/linkedSource.ts`, `sourceReread.pure.ts`,
+the `reprocess_upload` / `import_url` operations or
+`scripts/ops/stock-source-restore.ts` — all on **aurixa-builders**. A builder's
+own Stock List read `Properties listed 0 · Stock lists uploaded 0` while this
+Command Centre published 46 of their properties, and **both screens were
+correct**: the session was acting as the right organisation, `inventory:view`
+resolved, and the organisation genuinely held 0 active items behind 47 archived
+rows and 6 deleted sources.
+
+A linked source is snapshotted when it is imported, and "Read again" re-ran the
+parsers over that snapshot — right for an uploaded FILE, whose bytes are the
+builder's own and have not changed, and the opposite of what a LINK is for. A
+builder links their sheet BECAUSE they keep editing it, so re-reading the
+day-old copy reported "47 updated" having imported none of their edits, and the
+only route that worked was to DELETE the source and add it back — which
+archives every property it supplies. The log shows the loop three times:
+`archived: 47` at 18 Sep 09:41:29, 19 Sep 08:39:36 and 19 Sep 09:23:44, the
+first two followed within 25 seconds by the same docs.google.com address being
+added again. **Delete-then-re-add-the-same-address is nobody removing stock; it
+is a builder re-importing.** The third was not followed by an add and left the
+marketplace empty. `reprocess_upload`'s own header had already condemned exactly
+this and closed it for files; a link is the case where the source genuinely
+changes, and it was the half left open.
+
+Five rules bite. **A fetch that failed is never laundered into a re-read of the
+stale copy** — a sheet that has been unshared says so and leaves the live rows
+standing, and it is prepared BEFORE anything is marked so a healthy list is not
+parked in "being read" by a fetch that returned nothing. **A re-fetch is never
+more permissive than the first import**, because the rows it writes replace ones
+that are live — which is why reaching a link (normalisation, five refusals, MIME
+detection, classification, the Notion recovery with its access-gate and
+missing-view findings) moved to ONE module both callers use. **Link discovery is
+read from THIS fetch**, so a sheet whose export permissions were since fixed
+stops being stamped "we could not see the links" for ever. **A control that does
+two different things has to say which** — `rereadNaming` is one rule the label,
+the accessible name and the confirmation all read, and an unreadable
+`source_type` names the FILE act, the one that cannot reach the network. And
+**a read that FAILED is not a builder who has added nothing**: the same page
+drew `Stock lists uploaded 0` off `uploads.length`, which is `[]` in flight and
+`[]` on error, so a lost signal made a headline statement about a builder with
+six of them.
+
+The repair is the **exact inverse of one logged delete** and nothing more, and
+**the photograph rule is not relaxed to restore a row**: a property returns to
+`active` only where `builder_stock_photo_is_source_ready` says so and everything
+else returns to `staged` — 46 and 1 on the repair, Lot 1037 holding its place in
+Action Required exactly as it should. It refuses unless the count matches what
+that delete recorded, refuses to join a newer live generation, and un-stamps the
+upload FIRST so there is no moment where properties are listed under no stock
+list at all.
 
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.

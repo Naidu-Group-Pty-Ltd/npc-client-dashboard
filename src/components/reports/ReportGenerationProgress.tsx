@@ -174,6 +174,16 @@ function ReportGenerationProgressInner() {
   /* Track section completion timestamps per report (for ETA + sparkline) */
   const sectionTimelineRef = useRef<Map<string, number[]>>(new Map());
   const lastSectionsRef = useRef<Map<string, number>>(new Map());
+  /**
+   * Whether the server had stated this report's section count on the last poll.
+   *
+   * Learning the plan is durable progress — `runProgress.pure.ts` counts it, and
+   * the widget cannot draw "of 15" without it — so a first invocation that
+   * banked its research and published the plan has advanced the record even
+   * though no prose exists yet. Without this, that invocation spent one of the
+   * three auto-continues and the counter never reset.
+   */
+  const lastPlanSettledRef = useRef<Map<string, boolean>>(new Map());
   const previousReportIdsRef = useRef<Set<string>>(new Set());
   const prevReportsRef = useRef<ReportProgress[]>([]);
   /* IDs cancelled by the user. Two jobs: skip finalizeJob so the 'cancelled'
@@ -645,7 +655,10 @@ function ReportGenerationProgressInner() {
       // the maxRetries cap to bite when a report is genuinely stuck, not
       // when a long generation is steadily completing sections.
       const prevSections = lastSectionsRef.current.get(report.id) ?? -1;
-      if (prevSections >= 0 && report.sectionsCompleted > prevSections) {
+      const prevPlanSettled = lastPlanSettledRef.current.get(report.id);
+      const planJustSettled =
+        prevPlanSettled === false && report.sectionPlanSettled === true;
+      if ((prevSections >= 0 && report.sectionsCompleted > prevSections) || planJustSettled) {
         const rs = retryStateRef.current[report.id];
         if (rs && rs.attempts > 0) {
           rs.attempts = 0;
@@ -662,6 +675,7 @@ function ReportGenerationProgressInner() {
       }
 
       lastSectionsRef.current.set(report.id, report.sectionsCompleted);
+      lastPlanSettledRef.current.set(report.id, report.sectionPlanSettled === true);
     });
   }, [cleanupRetryState, saveRetryState, scheduleAutoRetry]);
 
@@ -730,6 +744,7 @@ function ReportGenerationProgressInner() {
       } finally {
         sectionTimelineRef.current.delete(prev.id);
         lastSectionsRef.current.delete(prev.id);
+        lastPlanSettledRef.current.delete(prev.id);
       }
     },
     [addHistory]

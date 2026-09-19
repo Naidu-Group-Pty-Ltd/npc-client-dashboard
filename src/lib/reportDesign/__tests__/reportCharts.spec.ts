@@ -436,12 +436,16 @@ describe('a label never runs past the drawing it belongs to', () => {
     const svg = renderTimelineRibbon(ctx, items, { title: 'Infrastructure pipeline' });
     const texts = textsOf(svg).filter((t) => t !== 'Infrastructure pipeline' && !/^(EXISTING|0-2Y|3-5Y|5Y\+)$/.test(t));
     // The old renderer cut every label at 26 characters and set it on one line;
-    // a 46-character label now wraps whole, and only the one that cannot be
-    // held on two lines of the measure is cut, with the cut shown.
+    // a 46-character label now wraps whole.
     expect(texts).toContain('Further road and transport');
     expect(texts).toContain('corridor investment');
     expect(texts).toContain('Ongoing renewal of');
-    expect(texts.filter((t) => t.endsWith('…'))).toHaveLength(1);
+    // And NOTHING is cut here. A stop carrying one item is given four lines
+    // and a stop carrying two is given two each, so the 51-character label
+    // alone at `5y+` sets whole where it used to lose its last three words.
+    // A cut is a last resort, not the normal state of a long label.
+    expect(texts.filter((t) => t.endsWith('…'))).toHaveLength(0);
+    expect(texts.join(' ')).toContain('facilities and services');
     // Each stop's measure is 172 units; at micro size that is about 27 characters.
     for (const t of texts) expect(t.length).toBeLessThanOrEqual(28);
     // The end labels are anchored to the edges and the interior ones centred

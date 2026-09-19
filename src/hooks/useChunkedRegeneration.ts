@@ -14,6 +14,7 @@ import {
   REPORT_GENERATION_STARTED_EVENT,
 } from '@/lib/reports/generationSignals.pure';
 import { resolveGenerationEngine, type GenerationEngine } from '@/lib/reports/generationEngine.pure';
+import { sectionWasWritten } from '@/lib/reports/investment/runProgress.pure';
 
 export type RegenerationPhase = 'idle' | 'generate' | 'condense' | 'qa' | 'done';
 
@@ -247,13 +248,32 @@ export function useChunkedRegeneration() {
             continue;
           }
 
-          if (data?.success) {
+          if (data?.isComplete) {
+            console.log('[ChunkedRegeneration] All sections complete');
             sectionSuccess = true;
-            if (data.isComplete) {
-              console.log('[ChunkedRegeneration] All sections complete');
-              allSectionsComplete = true;
-              break;
-            }
+            allSectionsComplete = true;
+            break;
+          }
+
+          // Advance on the SERVER'S section counter, never on `success` alone.
+          //
+          // A budget hand-off returns HTTP 200 `success: true` while having
+          // written nothing — that is how it tells the caller "resume me", not
+          // "the section is done". Treating it as done stepped the loop past a
+          // section that was never generated, and the report would have shipped
+          // with that section silently missing. `sectionWasWritten` is the one
+          // place that judgement is made; see `runProgress.pure.ts`.
+          if (sectionWasWritten(data ?? {}, section)) {
+            sectionSuccess = true;
+          } else if (data?.success) {
+            // A healthy hand-off that banked nothing. Not a failure, and not
+            // progress either: retry this SAME section rather than moving on.
+            lastError = data?.noProgressReason
+              ? `no durable progress (${data.noProgressReason})`
+              : 'the invocation returned without writing this section';
+            console.warn(
+              `[ChunkedRegeneration] Section ${section + 1}: ${lastError} — retrying the same section`,
+            );
           } else {
             lastError = data?.error || 'Section generation failed';
           }

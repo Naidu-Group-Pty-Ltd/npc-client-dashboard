@@ -428,6 +428,49 @@ order; folding it into storage would make the record disagree with what the
 model produced and would re-key the section index. What a reader is shown is
 this module's business; what is kept is not.
 
+## 8. A label guillotined at fourteen characters
+
+Found while looking for the three clipped labels §7's residual list names, and
+it is a **fourth** rather than one of them. `renderWaterfall` drew its category
+labels through
+
+```ts
+b.label.length > 16 ? `${b.label.slice(0, 14)}…` : b.label
+```
+
+— a hard cut that never wrapped and never once asked how wide the bar's slot
+is. Measured 19 September 2026 on the five-step shape a Compass acquisition
+build-up draws: the slot is **133 units and holds 19 characters a line**, and
+`fitLines` sets all four of the long labels whole in two lines, while the
+renderer printed
+
+| the record says | the page drew |
+|---|---|
+| Stamp duty and transfer | `Stamp duty and…` |
+| Legal and conveyancing | `Legal and conv…` |
+| Building and pest inspection | `Building and p…` |
+| Total acquisition cost | `Total acquisit…` |
+
+The case that settles it needs no production document at all. `{{waterfall:}}`
+is one of the twelve chart directives the generator's prompt asks the model to
+write, and its own worked example in `vizDirectives.pure.ts` is
+`{{waterfall: Gross rent +$50,000, Non-mortgage outgoings -$13,101, Room
+=+$36,899}}`. Rendered through the real renderer, that example's own label came
+out as **`Non-mortgage o…`** — the documentation cut by the module it
+documents.
+
+The fix is the rule `fitLines` exists for and the timeline already answers to:
+**increase the component's space before shrinking its text**. The plot keeps
+its 260 units and the GROUND grows one line-step per extra line, so a second
+line is never set past the bottom of the drawing. Three things follow. A chart
+whose labels already fit is **byte-identical** — the documented three-item
+example and a short-label chart both stay at 360, and only the five-step
+build-up grows to 373. The ellipsis is **demoted, not removed**: a label no two
+lines of the slot can hold still says it was cut, because silently dropping the
+tail is worse than the truncation this replaces. And the regression guard is
+stated as the defect rather than as the fix — no drawn label may be an ellipsis
+at exactly the length the old cut produced.
+
 ## What is still outstanding
 
 One item from the same report is **not** closed here, because closing it from a
@@ -438,9 +481,17 @@ It needs measuring against a regenerated document rather than against a
 recollection of the one that was reviewed.
 
 Two of the four residuals `PLANNING_CONTROLS_IN_THE_REPORT.md` §7 named are
-also still open and are named there rather than guessed at here: **labels
-clipped in three primitives** and **the timeline drawing horizons no item
-reaches**. Both are geometry inside a drawing rather than between blocks, which
-is the one class the 510-render collision measure cannot see — it compares a
-block's ink against its neighbours', and a label clipped inside its own chart
-overlaps nothing.
+also still open: **labels clipped in three primitives** and **the timeline
+drawing horizons no item reaches**. Both are geometry inside a drawing rather
+than between blocks, which is the one class the 510-render collision measure
+cannot see — it compares a block's ink against its neighbours', and a label
+clipped inside its own chart overlaps nothing.
+
+A correction to that residual's wording, from reading the code rather than
+recalling the document: it says the three "truncate instead" of wrapping, and
+that is **not** true of the timeline. `renderTimeline` calls `fitLines`, gives
+a lone milestone four lines, and grows the drawing for them; its own comment
+names the ellipsis as the rare case where four still is not enough. Whether the
+clipped stop on page 13 is that documented case or something else needs the
+document. §8 above is a fourth instance of the class, found by reading the
+primitives while looking for the three, and it is closed.

@@ -2257,6 +2257,28 @@ no-op on a document that repeats nothing. Read path only, in
 stays an occurrence there, because what a reader is shown is this module's
 business and what is kept is not.
 
+**And a fourth clipped label, found while looking for the three** (§8).
+`renderWaterfall` drew its category labels through
+`b.label.length > 16 ? b.label.slice(0, 14) + '…'` — a hard cut that never
+wrapped and never asked how wide the bar's slot is. Measured: the slot is 133
+units and holds **19 characters a line**, and `fitLines` sets "Stamp duty and
+transfer", "Legal and conveyancing", "Building and pest inspection" and "Total
+acquisition cost" whole in two lines while the page drew `Stamp duty and…`,
+`Legal and conv…`, `Building and p…` and `Total acquisit…`. The case that
+settles it needs no production document: the `{{waterfall:}}` directive's own
+documented example carries "Non-mortgage outgoings", and this renderer drew
+that example's own label as `Non-mortgage o…`. The rule is the one `fitLines`
+exists for — **increase the component's space before shrinking its text** — so
+the plot keeps its 260 units and the GROUND grows one line-step per extra line.
+Three things follow: **a chart whose labels already fit is byte-identical**
+(360 stays 360; only the five-step build-up grows to 373), **the ellipsis is
+demoted rather than removed** (a label no two lines can hold still says it was
+cut, because dropping the tail silently is worse), and the guard is stated as
+the DEFECT — no drawn label may be an ellipsis at exactly the length the old
+cut produced. A correction recorded with it: the residual that named "three
+call sites that truncate instead" is wrong about the TIMELINE, which already
+wraps and grows; that one still needs the document.
+
 **And the report body was being read like a chat message** (§5 of the same
 doc). `renderMarkdown` is the one Markdown implementation here and it draws the
 Compass body — the WHOLE source, on both paths — while cutting it at

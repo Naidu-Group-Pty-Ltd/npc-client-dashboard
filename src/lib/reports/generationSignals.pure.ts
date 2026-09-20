@@ -25,8 +25,32 @@
  * each end is how two ends drift.
  */
 
-/** A report in THIS tab just went in flight server-side. Carries no detail. */
+/**
+ * A report in THIS tab just went in flight server-side.
+ *
+ * Carries `ReportGenerationStartedDetail` — the id, and the instant the RUN
+ * began. The instant is the load-bearing half. The progress widget used to
+ * time a run from `investment_reports.created_at`, which is the report's
+ * birthday rather than the run's start: on a regeneration the row is reused,
+ * so a run two minutes old announced `3h 30m elapsed` (measured, 97 Poole
+ * Road, 20 Sep 2026). Nothing was frozen — the widget ticks every second and
+ * always did — the origin was simply the wrong event.
+ *
+ * Deliberately not a new column. `report_generation_runs.started_at` already
+ * records this server-side; what the widget lacked was a cheap way to know it
+ * without a per-poll join, and the run it is watching is usually the run this
+ * tab just started. Where a tab did NOT start the run — a cron resume, a bulk
+ * job, a reload mid-flight — the start is genuinely unknown and the widget
+ * prints no elapsed at all, because the report's age is not the run's duration
+ * and a wrong number is worse than none.
+ */
 export const REPORT_GENERATION_STARTED_EVENT = 'report-generation-started';
+
+export interface ReportGenerationStartedDetail {
+  reportId: string;
+  /** `Date.now()` at the moment the row went `processing` for THIS run. */
+  startedAt: number;
+}
 
 /** The operator stopped a report. Carries the report id and reason in `detail`. */
 export const REPORT_GENERATION_CANCELLED_EVENT = 'report-generation-cancelled';

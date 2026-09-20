@@ -163,3 +163,94 @@ This is not hypothetical. When the watchdog was written, one row had all 17
 sections and 126k characters of finished content and had died during
 post-processing 40 days earlier. A naive 30-day sweep would have marked a
 complete report `failed` and thrown the whole thing away.
+
+---
+
+## §8 A complete run that reported itself failed
+
+Reported 20 Sep 2026: the 97 Poole Road regeneration "went through the entire
+process, however at the end it indicated it failed". Two screenshots carried
+the whole diagnosis between them.
+
+**One screen, two answers.** Mid-run the report card read `12/15` while the
+progress widget beside it read `Section 12 of 14`. At the end the widget read
+`14/14 sections · 100%` and the run was recorded **Failed**.
+
+### One off-by-one
+
+`sectionCountForTier` returned `COMPASS_40_SECTIONS.length` — the **raw**
+array — while the generator loops `compassSections()`, the same array
+**filtered** on `includeInCompass`. The two agreed until `compass.cover` was
+excluded in 2026-09 (a model-written cover was printing as a *second* cover
+inside the body, masthead and "Prepared for:" and all). From that day the
+client's fallback said 15 where the server wrote 14.
+
+```
+COMPASS_40_SECTIONS.length      = 15   <- what the fallback returned
+compassSections().length        = 14   <- what the generator loops
+FINANCIAL_ANALYSIS_SECTIONS.len = 11
+financialSections().length      = 11   <- financial agrees, which is why nobody saw it
+```
+
+Three symptoms, one cause:
+
+* **the card said 15** — `useChunkedRegeneration` resolves its total **once**
+  at kickoff and falls back to the registry, because the row has no
+  `total_sections` until the generator's first progressive save. The widget
+  re-reads the row every poll and picked up the server's 14 as soon as it
+  existed;
+* **the loop ran a fifteenth iteration** against a server that has fourteen;
+* **the verdict inverted** — `last_completed_section >= totalSections` was
+  `14 >= 15`, so a run that had written every section it was asked for threw
+  `Report regeneration incomplete`, and the catch stamped the row `failed`.
+
+**The document was complete throughout.** Only the verdict was wrong. That is
+worth stating plainly, because the operator's reasonable reading — "it failed,
+so the output is suspect" — was the opposite of the truth.
+
+### What changed
+
+**The count is derived, never restated.** `sectionCountForTier` now measures
+`compassSections()` / `financialSections()` — the lists that are actually
+generated. `theCountThatDecidesCompletion.spec.ts` pins the equality per tier,
+so excluding another section can never again make the client and the server
+disagree.
+
+**Completion is the server's arithmetic.** Even with the count corrected, a
+client holding a stale total could still condemn a good run, so the final check
+reads the row's own `total_sections` and prefers it — the same ordering
+`progress/selectors.pure.ts` already applied for display. The client's number
+is for drawing a progress bar; it is not a verdict. The thrown message also
+names both figures now, because "incomplete" with no numbers is what made this
+take a screenshot to diagnose.
+
+**15 was never the right number to show.** The Compass generates 14 sections
+and should say 14. The user's "it used to be fifteen" is the old count that
+included the duplicate cover — the drop is the 2026-09 improvement landing in
+the counter at last, not a regression.
+
+### §8a The clock was timing the wrong thing
+
+The same run displayed `3h 30m elapsed` a few minutes in.
+
+`timeSinceCreation = now - report.createdAt`, where `createdAt` is
+`investment_reports.created_at`. **A regeneration reuses the row**, so that is
+the report's birthday, not the run's start. On a first generation the two
+coincide, which is why it survived; on every regeneration after it the number
+is meaningless and grows without bound.
+
+Nothing was frozen — the widget takes `now` from a 1s tick and has since that
+was deliberately fixed. The origin was simply the wrong event.
+
+**The instant travels with the start signal.**
+`REPORT_GENERATION_STARTED_EVENT` already existed and already woke the widget;
+it now carries `{ reportId, startedAt }`, and the widget keeps a per-report map.
+No column, no migration, no per-poll join — `report_generation_runs.started_at`
+records this server-side, and the run the widget is watching is usually the run
+this tab just started.
+
+And where it was not: **a run this tab did not start has no knowable origin**
+(a cron resume, a bulk job, a reload mid-flight), so the row prints **no
+elapsed at all** rather than the report's age. The completed line degrades the
+same way — "Finished" rather than "Finished in 3h 30m". The rule this codebase
+has already paid for twice: *absent is never a wrong number.*

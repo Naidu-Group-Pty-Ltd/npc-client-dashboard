@@ -2568,6 +2568,32 @@ cannot run locally. The rule the whole episode turns on: **read the production
 logs before modelling the production behaviour** — thirty seconds of
 `function_edge_logs` would have shown 23 consecutive 500s.
 
+**A complete run reported itself failed, because two counters counted
+different things.** Read §8 of the same doc before touching
+`sectionCountForTier`, the completion check in `useChunkedRegeneration` or the
+elapsed readout in `progress/parts.tsx`. `sectionCountForTier` returned
+`COMPASS_40_SECTIONS.length` — the RAW array — while the generator loops
+`compassSections()`, the array FILTERED on `includeInCompass`; they agreed
+until `compass.cover` was excluded in 2026-09, and from that day the client
+said 15 where the server wrote 14. One off-by-one, three symptoms on one
+screen: the card read `12/15` beside a widget reading `Section 12 of 14` (the
+hook resolves its total ONCE at kickoff and falls back to the registry, the
+widget re-reads the row), the loop ran a fifteenth iteration, and
+`14 >= 15` was false so a run that had written every section it was asked for
+threw "incomplete" and stamped the row `failed`. **The document was complete
+throughout; only the verdict was wrong.** Two rules. **A count is DERIVED from
+the list that is generated, never restated** — a spec pins the equality per
+tier, and financial (11 = 11) is exactly why this went unseen for a fortnight.
+And **completion is the SERVER'S arithmetic**: the row's own `total_sections`
+wins wherever it is stated, the same ordering `progress/selectors.pure.ts`
+already applied for display, so the next section-list change cannot condemn a
+good run. **The clock was timing the wrong thing too** — elapsed came from
+`investment_reports.created_at`, which a regeneration REUSES, so a two-minute
+run printed `3h 30m elapsed`; the widget always ticked, the origin was wrong.
+The instant now rides `REPORT_GENERATION_STARTED_EVENT` (no column, no
+migration), and a run this tab did not start — a cron resume, a bulk job, a
+reload mid-flight — prints NO elapsed rather than the report's age.
+
 **That rule stopped at the section loop, and the research in front of it ran
 unbounded.** Read the same doc
 [`GENERATION_STALL_AND_ACQUISITION_BUDGET.md`](./docs/reports/GENERATION_STALL_AND_ACQUISITION_BUDGET.md)

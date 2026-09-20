@@ -5,6 +5,7 @@ import { nextPollDelayMs } from '@/lib/reports/progressPollCadence.pure';
 import {
   REPORT_GENERATION_CANCELLED_EVENT,
   REPORT_GENERATION_STARTED_EVENT,
+  type ReportGenerationStartedDetail,
   type ReportGenerationCancelledDetail,
 } from '@/lib/reports/generationSignals.pure';
 import { useAuth } from '@/hooks/useAuth';
@@ -172,6 +173,14 @@ function ReportGenerationProgressInner() {
   }, [autoContinueSettings]);
 
   /* Track section completion timestamps per report (for ETA + sparkline) */
+  /* When THIS run began, per report.
+   *
+   * Only a run this tab started can be timed: the row is reused across
+   * regenerations, so `created_at` is the report's birthday and timing from it
+   * printed `3h 30m elapsed` on a two-minute run. A report absent from this map
+   * — a cron resume, a bulk job, a reload mid-flight — has an unknown run start
+   * and is shown no elapsed at all. */
+  const runStartedAtRef = useRef<Map<string, number>>(new Map());
   const sectionTimelineRef = useRef<Map<string, number[]>>(new Map());
   const lastSectionsRef = useRef<Map<string, number>>(new Map());
   /**
@@ -769,7 +778,14 @@ function ReportGenerationProgressInner() {
      component stays mounted while rendering null, so the listener is live even
      when nothing is on screen. */
   useEffect(() => {
-    const onStarted = () => {
+    const onStarted = (event: Event) => {
+      const detail = (event as CustomEvent<ReportGenerationStartedDetail>).detail;
+      if (detail?.reportId) {
+        runStartedAtRef.current.set(
+          detail.reportId,
+          Number(detail.startedAt) || Date.now(),
+        );
+      }
       emptyPollsRef.current = 0;
       nextDueAtRef.current = 0;
       fetchActiveReports();
@@ -1015,6 +1031,7 @@ function ReportGenerationProgressInner() {
       retryState={retryStateRef.current[report.id]}
       autoContinueSettings={autoContinueSettings}
       sectionTimeline={sectionTimelineRef.current.get(report.id) ?? []}
+      runStartedAt={runStartedAtRef.current.get(report.id) ?? null}
       now={nowTick}
       paused={paused}
       onContinue={() => handleManualContinue(report.id)}

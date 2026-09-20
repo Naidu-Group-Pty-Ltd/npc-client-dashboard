@@ -434,6 +434,17 @@ interface ItemProps {
   retryState?: { attempts: number; lastAttempt: number; retryAt?: number };
   autoContinueSettings: AutoContinueSettings;
   sectionTimeline: number[]; // epoch ms of each section completion
+  /**
+   * When THIS run began, or null when nothing can say.
+   *
+   * Never `report.createdAt`: the row is reused across regenerations, so its
+   * creation is the report's birthday, not the run's start — which is how a
+   * two-minute run came to print `3h 30m elapsed`. A run this tab did not
+   * start (cron resume, bulk job, reload mid-flight) has no knowable origin and
+   * gets no elapsed readout, because the report's age is not an answer to the
+   * question the line asks.
+   */
+  runStartedAt: number | null;
   /** Clock from the container's tick, so elapsed readouts advance predictably. */
   now: number;
   /** Whether polling/auto-continue is paused, so the row can tell the truth. */
@@ -450,6 +461,7 @@ export function GenerationProgressItem({
   retryState,
   autoContinueSettings,
   sectionTimeline,
+  runStartedAt,
   now,
   paused,
   onContinue,
@@ -468,7 +480,9 @@ export function GenerationProgressItem({
   // here made the render impure and — worse — froze every elapsed readout
   // whenever polling stopped, because nothing re-rendered to advance it.
   const timeSinceUpdate = now - report.lastUpdated.getTime();
-  const timeSinceCreation = now - report.createdAt.getTime();
+  // Null where the run's start is unknown — see `runStartedAt`. Stall detection
+  // below still uses `lastUpdated`, which is a fact about the row either way.
+  const runElapsedMs = runStartedAt === null ? null : Math.max(0, now - runStartedAt);
 
   // One shared definition of state, so the row can never say "Processing" while
   // the header chip above it says "Stalled".
@@ -547,9 +561,11 @@ export function GenerationProgressItem({
                       ? 'Assembling the document'
                       : `Section ${currentSection} of ${report.totalSections}`}
                 </span>
-                <span className="text-xs text-muted-foreground">
-                  • {formatElapsed(timeSinceCreation)} elapsed
-                </span>
+                {runElapsedMs !== null && (
+                  <span className="text-xs text-muted-foreground">
+                    • {formatElapsed(runElapsedMs)} elapsed
+                  </span>
+                )}
                 {etaMs !== null && (
                   <span className="text-xs text-muted-foreground">• ~{formatEta(etaMs)} left</span>
                 )}
@@ -559,7 +575,7 @@ export function GenerationProgressItem({
               <>
                 <CheckCircle2 className="h-3 w-3 text-success" aria-hidden="true" />
                 <span className="text-xs font-medium text-foreground">
-                  Finished in {formatElapsed(timeSinceCreation)}
+                  {runElapsedMs === null ? 'Finished' : `Finished in ${formatElapsed(runElapsedMs)}`}
                 </span>
               </>
             )}

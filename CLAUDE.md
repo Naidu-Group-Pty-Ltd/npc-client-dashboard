@@ -2594,6 +2594,45 @@ The instant now rides `REPORT_GENERATION_STARTED_EVENT` (no column, no
 migration), and a run this tab did not start — a cron resume, a bulk job, a
 reload mid-flight — prints NO elapsed rather than the report's age.
 
+**And that was only half of it: two pumps were driving one report.** Read §9 of
+the same doc before touching
+[`generationDriver.ts`](./src/lib/reports/generationDriver.ts),
+`handleContinueGeneration`, `scheduleAutoRetry` or the failure stamp in
+`useChunkedRegeneration`. The next regeneration of 97 Poole Road read
+`14/14 sections · 100%` and **still reported Failed** — same symptom, unrelated
+cause. `useChunkedRegeneration` drives the section loop from the Regenerate
+button and `ReportGenerationProgress` drives its OWN loop of up to sixty calls
+whenever `isResumable` says a report needs a nudge — which is any report that
+has not written for 90s **or that reads `failed`**, auto-continue being on by
+default. Neither knew about the other. Measured in `function_logs`:
+`section 7/14, 77,840 chars` at 03:39:42, `section 14/14, 134,392 chars,
+"All sections complete"` at 03:39:49, then `section 8/14, 84,316 chars` at
+03:40:06, finishing at 120,145 — `last_completed_section` cannot go 14 → 8 in
+one linear run and the document **shrank by 14,247 characters**. Whichever pump
+read the row after the other had rewound it threw "incomplete" and stamped
+`failed` over a complete document. Four rules. **Exclusion is per driver
+INSTANCE, never per driver kind** — the first cut keyed the claim on
+`'regenerate' | 'auto-continue'`, so two TABS both regenerating would both have
+succeeded, the exact case the module exists for admitted by its own key. **The
+claim lives in `localStorage`** because a second tab is one of the pumps, and a
+successful read saying "absent" IS the answer (an in-memory mirror consulted
+there brought a released claim back from the dead; the mirror is a fallback for
+storage that cannot be read, never a second opinion about storage that can).
+**It is a lease, never a lock** — 150s, which a spec pins as longer than
+`STALLED_AFTER_MS` and than the longest measured section (the closing one,
+40–110s), heartbeat written once per section so it measures progress rather
+than a timer. And **a failure is a statement about the ROW**:
+`shouldMarkRunFailed` refuses to stamp a report the server calls `completed` or
+whose banked sections meet the server's own stated total, while an unreadable
+row still records the failure, because a run that threw with its state unknown
+must not be left looking healthy. The cron watchdog was measured NOT to be a
+party to this (three ticks at 314/286/336 ms, the shape of "claimed 0"), and
+"Unable to calculate" on the card is `InvestmentGradeSummary.tsx:26` reading
+`status === 'failed'` — a symptom of the stamp, not a scoring fault. The rule
+the episode turns on is §7's, paid again: **read the production logs before
+modelling the production behaviour**; no amount of reading the client could
+have shown two pumps, because each is correct on its own.
+
 **That rule stopped at the section loop, and the research in front of it ran
 unbounded.** Read the same doc
 [`GENERATION_STALL_AND_ACQUISITION_BUDGET.md`](./docs/reports/GENERATION_STALL_AND_ACQUISITION_BUDGET.md)

@@ -254,3 +254,105 @@ And where it was not: **a run this tab did not start has no knowable origin**
 elapsed at all** rather than the report's age. The completed line degrades the
 same way — "Finished" rather than "Finished in 3h 30m". The rule this codebase
 has already paid for twice: *absent is never a wrong number.*
+
+## §9 Two pumps drove one report
+
+The section-count fix in §8 was correct and it was not the whole fault. The
+next regeneration of 97 Poole Road read `14/14 sections · 100%` and **still
+reported Failed** — the same symptom, a different cause, and this one had been
+there all along.
+
+**Two browser-side pumps can drive one generation, and nothing serialised
+them.**
+
+| pump | where | when it starts |
+| --- | --- | --- |
+| `useChunkedRegeneration` | the Regenerate button | the operator clicks |
+| `ReportGenerationProgress.handleContinueGeneration` | the floating progress panel | `isResumable(report, now)` — no write for `STALLED_AFTER_MS` (90s), **or the row reads `failed`** — with auto-continue on by default and `delaySeconds: 15` |
+
+The panel is not a one-shot nudge. Its own comment says so: *"Drive sections in
+a continuous loop instead of one-shot … keep firing until complete"*, bounded
+at `MAX_SECTION_CALLS = 60`. It is a complete second generator.
+
+### The measurement
+
+From `function_logs`, project `dduzbchuswwbefdunfct`, 20 Sep 2026:
+
+```
+03:39:42  section  7/14    77,840 chars
+03:39:49  section 14/14   134,392 chars   "All sections complete"
+03:40:06  section  8/14    84,316 chars
+03:41:28  section 11/14    99,443 chars
+03:43:00  section 14/14   120,145 chars   "All sections complete"
+```
+
+`last_completed_section` cannot go 14 → 8 in one linear run, and the finished
+document **shrank by 14,247 characters**. Two pumps were writing the same row,
+each rewinding the other. Whichever read the row after the other had rewound it
+threw "incomplete" and stamped `failed` over a document that was complete.
+
+Three things this rules out, so the next reader does not re-open them:
+
+* **The cron watchdog was not a party to it.** `resume-investment-reports`
+  ticked at 04:30:01, 04:32:01 and 04:34:00 and returned in 314 ms, 286 ms and
+  336 ms — the shape of "claimed 0" — while a browser pump was mid-run. Its
+  `claim_stalled_investment_reports` lease works. §4 stands.
+* **The document was never damaged in the way the status implied.** The clean
+  run that followed (04:29:25 → 04:38:25, a single linear 1 → 14) finished at
+  128,126 characters with header de-duplication and post-processing
+  sanitisation complete.
+* **"Unable to calculate" on the report card is not a scoring failure.**
+  `InvestmentGradeSummary.tsx:26` maps it from `status === 'failed'`. It is a
+  symptom of the stamp, not a second defect.
+
+### The fix
+
+**One driver per report** — `src/lib/reports/generationDriver.ts`. Both pumps
+take a claim before they write anything and release it when they stop; the
+panel's `scheduleAutoRetry` stands down from any report somebody already
+holds.
+
+Four rules carry it.
+
+**Exclusion is per driver INSTANCE, never per driver kind.** The first cut of
+the module keyed the claim on `'regenerate' | 'auto-continue'`, and two TABS
+both claiming as `'regenerate'` would both have succeeded — the exact case the
+module exists for, admitted by its own key. The kind is carried only so a
+refusal can say where the work already is.
+
+**The claim lives in `localStorage`**, because a second tab is one of the pumps
+this has to separate and a module variable cannot see one. A successful read
+that says "absent" is the answer: an earlier draft consulted an in-memory
+mirror there, and a released claim came back from the dead. The mirror is a
+fallback for storage that cannot be READ, never a second opinion about storage
+that can.
+
+**It is a lease, never a lock.** A tab closed mid-run leaves its claim behind.
+`GENERATION_DRIVER_LEASE_MS` (150s) exceeds `STALLED_AFTER_MS` (90s) and the
+longest section this pipeline has been measured at (the closing section,
+40–110s), so a live driver is never displaced part-way through a section it is
+going to finish — and `oneDriverPerReport.spec.ts` pins that ordering rather
+than trusting it. The heartbeat is written once per section rather than on a
+timer, so it measures real progress: a pump wedged inside one call lets its
+lease lapse and the report becomes recoverable.
+
+**And a failure is a statement about the ROW, not about this caller's run.**
+`shouldMarkRunFailed` is asked before the stamp: a report the server calls
+`completed`, or one whose banked sections meet the total the server itself
+stated, is not failed however badly this particular client ended. It fails
+VISIBLE, not closed — a row that could not be read at all still records the
+failure, because a run that threw with its state unknown must not be left
+looking healthy.
+
+That last rule is the guarantee and the claim is the cause removed. Both were
+needed: the claim stops the race, and the guard means that if anything else
+ever reaches this line on a complete document, it cannot present it as a
+failure. **A complete run had now reported itself failed twice in two days for
+two unrelated reasons; the third time it will not be able to.**
+
+### The rule the whole episode turns on
+
+**Read the production logs before modelling the production behaviour** — §7's
+lesson, paid again. Thirty seconds of `function_logs` showed the 14 → 8 rewind
+and the shrinking character count. No amount of reading the client could have
+proved two pumps were running, because each one is correct on its own.

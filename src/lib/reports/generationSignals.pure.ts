@@ -91,3 +91,42 @@ export function cancellationReason(detail: unknown): string {
     ? reason.trim()
     : DEFAULT_CANCELLATION_REASON;
 }
+
+/**
+ * Whether a client that has just thrown may record the row as failed.
+ *
+ * The regeneration hook's catch writes `status: 'failed'` unconditionally, and
+ * that is how a finished document came to be presented as a failure twice in
+ * two days. The first time the client's own section count was wrong (fixed at
+ * source in `sectionCountForTier`). The second time two pumps drove one report
+ * and the loser threw on a row the winner had already carried to 14 of 14 —
+ * measured on 97 Poole Road, 20 Sep 2026, where the run reported `Failed` at
+ * `14/14 sections · 100%` beside a `report_content` of 128,126 characters.
+ *
+ * So the stamp is now a statement about the ROW rather than about this
+ * client's own run: a report the server calls `completed`, or one whose banked
+ * sections meet the total the server itself stated, is not failed however
+ * badly this particular caller ended.
+ *
+ * It fails VISIBLE, not closed. A row that could not be read at all still
+ * records the failure, because a run that threw with its state unknown must
+ * not be left looking healthy — an unreadable row is the one case where the
+ * old unconditional behaviour is still the right one.
+ */
+export function shouldMarkRunFailed(
+  row:
+    | {
+        status?: string | null;
+        last_completed_section?: number | null;
+        total_sections?: number | null;
+      }
+    | null
+    | undefined,
+): boolean {
+  if (!row) return true;
+  if (String(row.status ?? '').toLowerCase() === 'completed') return false;
+  const total = Number(row.total_sections) || 0;
+  const done = Number(row.last_completed_section) || 0;
+  if (total > 0 && done >= total) return false;
+  return true;
+}

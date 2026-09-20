@@ -746,9 +746,34 @@ export function normaliseReportTier(raw: unknown): NormalisedTier {
  * a 17-section registry keeps converging against 17 even after this returns 12,
  * which is what stops an in-flight report becoming a chimera of two section
  * lists. See `progress/selectors.pure.ts` and `useChunkedRegeneration.ts`.
+ *
+ * ## It counts what is GENERATED, never what is declared
+ *
+ * This read `COMPASS_40_SECTIONS.length` — the RAW array — while the generator
+ * loops `compassSections()`, the array FILTERED on `includeInCompass`. The two
+ * agreed until `compass.cover` was excluded in 2026-09 (a model-written cover
+ * was printing as a second cover inside the body), and from that day the
+ * fallback said 15 where the server wrote 14.
+ *
+ * One off-by-one, three symptoms on one screen, measured on the 97 Poole Road
+ * regeneration of 20 Sep 2026:
+ *
+ *   * the card read `12/15` while the widget beside it read `Section 12 of 14`
+ *     — the hook resolves the total ONCE at kickoff and falls back to this,
+ *     the widget re-reads the row every poll and gets the server's 14;
+ *   * the loop ran a fifteenth iteration against a server that has fourteen;
+ *   * and `last_completed_section >= totalSections` was `14 >= 15`, so a run
+ *     that had written every section it was asked for threw
+ *     "Report regeneration incomplete" and stamped the row `failed`.
+ *
+ * The document was complete throughout. Only the verdict was wrong.
+ *
+ * Financial is untouched by this — 11 declared, 11 generated — which is exactly
+ * why it went unseen: the defect can only appear on a tier that excludes a
+ * section, and only the Compass does.
  */
 export function sectionCountForTier(raw: unknown): number {
   return normaliseReportTier(raw) === 'financial-analysis'
-    ? FINANCIAL_ANALYSIS_SECTIONS.length
-    : COMPASS_40_SECTIONS.length;
+    ? financialSections().length
+    : compassSections().length;
 }

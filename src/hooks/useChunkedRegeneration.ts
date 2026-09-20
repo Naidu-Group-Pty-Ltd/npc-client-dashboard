@@ -12,6 +12,7 @@ import {
   DEFAULT_CANCELLATION_REASON,
   REPORT_GENERATION_CANCELLED_EVENT,
   REPORT_GENERATION_STARTED_EVENT,
+  type ReportGenerationStartedDetail,
 } from '@/lib/reports/generationSignals.pure';
 import { resolveGenerationEngine, type GenerationEngine } from '@/lib/reports/generationEngine.pure';
 import { sectionWasWritten } from '@/lib/reports/investment/runProgress.pure';
@@ -188,7 +189,14 @@ export function useChunkedRegeneration() {
       // widget so the interactive surface — per-report progress, Stop, Pause,
       // auto-continue, ETA, history — is on screen for the whole run rather
       // than this hook's toast being the only feedback.
-      window.dispatchEvent(new Event(REPORT_GENERATION_STARTED_EVENT));
+      // The instant travels with the signal: this is the only moment anything
+      // knows when THIS run began, and the row cannot say (it is reused across
+      // regenerations, so its `created_at` is the report's birthday).
+      window.dispatchEvent(
+        new CustomEvent<ReportGenerationStartedDetail>(REPORT_GENERATION_STARTED_EVENT, {
+          detail: { reportId, startedAt: Date.now() },
+        }),
+      );
 
       const effectivePropertyAddress = propertyAddress || report?.property_address || '';
       const startSection = shouldResumeGeneration || shouldResumePostProcessing ? existingCompletedSection : 0;
@@ -355,12 +363,34 @@ export function useChunkedRegeneration() {
       // Final status check
       const { data: finalData } = await invokeSecureFunction('get-investment-reports', {
         reportId,
-        listOptions: { select: 'status, current_version, last_completed_section' }
+        listOptions: { select: 'status, current_version, last_completed_section, total_sections' }
       });
 
       const finalReport = finalData?.report;
 
-      if (finalReport?.last_completed_section >= totalSections) {
+      /* Completion is the SERVER'S arithmetic, never this client's.
+       *
+       * `totalSections` above is resolved once at kickoff and falls back to the
+       * registry when the row has not stated a total yet — which is every
+       * regeneration, because the row is reused and the generator only stamps
+       * `total_sections` on its first progressive save. So a client holding a
+       * stale or merely different section count would declare a complete run
+       * incomplete, throw, and stamp the row `failed`.
+       *
+       * That is not hypothetical: on 20 Sep 2026 the fallback said 15 (the raw
+       * `COMPASS_40_SECTIONS` length) where the generator wrote 14 (the list
+       * filtered on `includeInCompass`), and the 97 Poole Road regeneration
+       * finished all fourteen sections, reached 100% in the progress widget,
+       * and was recorded as a failure. `sectionCountForTier` is corrected at
+       * the source; this is the guard that stops the NEXT section-list change
+       * doing the same thing.
+       *
+       * The row's own `total_sections` wins wherever it is stated — the same
+       * ordering `progress/selectors.pure.ts` already applies for display. */
+      const serverStatedTotal = Number(finalReport?.total_sections) || 0;
+      const requiredSections = serverStatedTotal > 0 ? serverStatedTotal : totalSections;
+
+      if (Number(finalReport?.last_completed_section) >= requiredSections) {
         settleProgressToast(
           toastId,
           'success',
@@ -371,12 +401,15 @@ export function useChunkedRegeneration() {
         setState(prev => ({
           ...prev,
           isRegenerating: false,
-          currentSection: totalSections,
+          currentSection: requiredSections,
+          totalSections: requiredSections,
           phase: 'done',
         }));
         onComplete?.();
       } else {
-        throw new Error('Report regeneration incomplete');
+        throw new Error(
+          `Report regeneration incomplete — the record holds ${Number(finalReport?.last_completed_section) || 0} of ${requiredSections} sections.`,
+        );
       }
 
     } catch (error: any) {

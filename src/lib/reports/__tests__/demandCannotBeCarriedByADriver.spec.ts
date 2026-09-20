@@ -51,7 +51,7 @@ const point = <T>(value: T, areaName: string): EvidencePoint<T> => ({
   areaName,
   dwellingType: 'house',
   dwellingTypeMatched: true,
-  provider: 'nsw_dcj',
+  provider: 'nsw_dcj_rent_sales',
   asOf: '2026-03-31',
   sampleSize: 162,
   periodsAvailable: 4,

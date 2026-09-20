@@ -296,19 +296,49 @@ const REPO = resolve(__dirname, '../..');
  * applied. `20261207010000` re-copies the ACTIVE masters from it, because an
  * adopted master is a COPY and nothing else updates a copy after adoption.
  *
+ * ## v17 — the running head stops repeating the part
+ *
+ * One master change, on the 39 running-head masters, and nothing else in the
+ * catalogue moves.
+ *
+ * v16 fixed the half of the running head that was DISCARDED and left the half
+ * that was REPEATED. It passed `Part NN · {{narrative.chapters.i}}`, so the
+ * Investment Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026
+ * carried `Part 07 · <chapter>` on **twenty-six consecutive pages** — true,
+ * because the body is one part, and saying nothing twenty-six times over.
+ *
+ * A running head exists to say where the reader is. Across a single part the
+ * part number does not; the chapter does. The part structure is on the
+ * contents page, which is where it varies. The marker is the chapter alone.
+ *
+ * The ten characters that frees are not a line — the marker sits in 34% of the
+ * measure, about 43 characters, against `CHAPTER_MAX_CHARS` of 64 — so the
+ * worst case still takes both lines the rule reserves. Measured on the twelve
+ * chapters that report actually produced: three wrapped to a second ragged
+ * right-aligned line with the prefix, one wraps without it.
+ *
+ * A binding change inside one text block, on 39 masters. The railed eleven
+ * draw the part as an eyebrow ABOVE the chapter rather than a prefix beside
+ * it, so the repetition is subordinate by construction and they are untouched;
+ * the other nine formats' 450 masters pass no `headMarker` and are
+ * byte-identical.
+ *
+ * The version is `20261208000000`. `20261208010000` re-copies the ACTIVE
+ * masters from it, for the reason above.
+ *
  * Run the same one-query check before editing this file: if
- * `20261207000000` is already recorded, the next change needs a v17.
+ * `20261208000000` is already recorded, the next change needs a v18.
  */
 /**
  * The identifier this release records against a baseline and against a
  * refreshed master. It is the seed migration's own basename, so a row that
  * says it carries this release names the artefact that put it there.
  */
-const RELEASE_ID = '20261207000000_seed_template_library_v16_verdict_and_running_head';
+const RELEASE_ID = '20261208000000_seed_template_library_v17_running_head_chapter_only';
 
 const MIGRATION = resolve(
   REPO,
-  'supabase/migrations/20261207000000_seed_template_library_v16_verdict_and_running_head.sql',
+  'supabase/migrations/20261208000000_seed_template_library_v17_running_head_chapter_only.sql',
 );
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */

@@ -116,9 +116,18 @@ describe('the master binds it, and drops the heading that said nothing', () => {
     expect(src).toContain("furniture(DOCUMENT_LABEL, reportPart, '{{narrative.chapters.0}}', reportChapter(0))");
     expect(src).toContain('furniture(DOCUMENT_LABEL, reportPart, `{{narrative.chapters.${i}}}`, reportChapter(i))');
     expect(src).not.toContain("furniture(DOCUMENT_LABEL, reportPart, 'The report')");
-    // The running-head half: the part NUMBER plus the chapter, never the
-    // part's label, which is what made 29 pages read alike.
-    expect(src).toContain("`${reportPart.split(' · ')[0]} · {{narrative.chapters.${i}}}`");
+    /*
+     * The running-head half is the chapter ALONE.
+     *
+     * The first version of this passed the part number as a prefix, which
+     * fixed the 29 pages reading `Part 05 · Report` and produced 26 pages
+     * reading `Part 07 · <chapter>` instead. The body is one part, so across
+     * it the part number says where you are twenty-six times and says nothing;
+     * the chapter says it once per chapter. The part structure is on the
+     * contents page, which is where it varies.
+     */
+    expect(src).toContain('const reportChapter = (i: number): string => `{{narrative.chapters.${i}}}`;');
+    expect(src).not.toContain("`${reportPart.split(' · ')[0]} · {{narrative.chapters.${i}}}`");
   });
 
   it('the body no longer opens on a heading naming the document', () => {

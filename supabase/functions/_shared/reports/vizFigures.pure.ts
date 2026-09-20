@@ -19,10 +19,13 @@
  *
  * `glance` is the twelfth and the exception: it is a strip of symbol-prefixed
  * assertions (`✓ Strong regional rental demand | ⚠ Resources-linked economy`),
- * not a plot. It becomes a neutral callout carrying a list, because every part
- * of that is a construct the stylesheet already dresses. A new `.glance-strip`
- * rule would be a new thing to style, test and keep in print contrast for no
- * gain over a callout.
+ * not a plot. It was drawn as a neutral callout carrying a list, on the
+ * grounds that *"a new `.glance-strip` rule would be a new thing to style,
+ * test and keep in print contrast for no gain over a callout"* — a reasonable
+ * call about implementation cost and a wrong one about the page. Twelve washed,
+ * left-ruled boxes of raw dingbats reached one Compass, three of them on one
+ * page. It is a ruled key now; `glanceStrip.pure.ts` carries what was wrong
+ * with the box and what replaced it.
  *
  * ## Height is measured, not guessed
  *
@@ -32,6 +35,7 @@
  * that goes stale the first time a chart's padding changes. A caption adds one
  * line; a chart that refused to draw costs nothing.
  */
+import { glanceRows, renderGlanceStrip } from './glanceStrip.pure.ts';
 import {
   chartFigure,
   renderBars,
@@ -51,7 +55,7 @@ import {
   type ChartContext,
 } from '../reportDesign/charts.pure.ts';
 import {
-  escapeHtml, renderCallout, renderDataTable, renderSidenote,
+  escapeHtml, renderDataTable, renderSidenote,
 } from '../reportDesign/primitives.pure.ts';
 import { splitRefusedItem, type VizDirective } from './vizDirectives.pure.ts';
 import {
@@ -103,10 +107,6 @@ export function viewBoxRatio(svg: string): number | null {
   const h = Number(m[2]) || 0;
   return w > 0 && h > 0 ? h / w : null;
 }
-
-/** Characters of each item, for a callout charge. */
-const itemChars = (items: readonly { text: string; symbol?: string }[]): number[] =>
-  items.map((i) => `${i.symbol ?? ''} ${i.text}`.length);
 
 /** A short, bounded description for the `alt` a tagged PDF needs. */
 function describe(d: VizDirective): string {
@@ -250,14 +250,23 @@ export function renderVizDirective(
       return wrap(renderGauge(drawCtx, d.value, { max: d.max, label: d.label, caption: d.caption }));
 
     case 'glance': {
-      // Not a plot. See the module header.
-      const items = d.items
-        .map((i) => `<li>${escapeHtml(i.symbol)} ${escapeHtml(i.text)}</li>`)
-        .join('');
-      if (!items) return null;
-      // `marked`: each item already leads with its own glyph. See the rule.
-      const html = renderCallout('neutral', 'At a glance', `<ul class="marked">${items}</ul>`);
-      return { html, lines: geometry ? calloutCharge(geometry, itemChars(d.items)) : d.items.length + 2 };
+      // Not a plot — a section's findings, set as a ruled key. The glyph is an
+      // INPUT vocabulary: `glanceTone` reads its meaning and the page prints
+      // the word, so a model writing `▲` and one writing `⚠` produce the same
+      // key and neither reaches the paper. See `glanceStrip.pure.ts` for what
+      // the washed, dingbat-stacked callout this replaces got wrong.
+      const rows = glanceRows(d.items);
+      if (!rows.length) return null;
+      const html = renderGlanceStrip(d.items, escapeHtml);
+      if (!html) return null;
+      // Charged on what it will DRAW, not on what was parsed: a repeated or
+      // empty finding is dropped, so the rows are the rows.
+      return {
+        html,
+        lines: geometry
+          ? calloutCharge(geometry, rows.map((r) => `${r.tag}  ${r.text}`.length))
+          : rows.length + 2,
+      };
     }
 
     case 'heatmap':

@@ -2161,6 +2161,133 @@ property's grade — the child restates the parent's decision, a variant score
 never stands for the property while a composite exists, and the literal `N/A`
 the scoring service stores is a placeholder no surface draws.
 
+## A premium document, and the eighteen per cent that was bold
+
+Read [`A_PREMIUM_DOCUMENT.md`](./docs/reports/A_PREMIUM_DOCUMENT.md) before
+touching `emphasisDensity.pure.ts`, `glanceStrip.pure.ts`,
+`chartUnits.pure.ts`, `directiveKey`, `foldConstantTableColumns` or
+`demandScoring.pure.ts`. Everything in it was measured on ONE delivered PDF —
+the Compass issued for 97 Poole Road, Kellyville on 20 Sep 2026 — by reading
+the FILE rather than the source that made it, which is what turned "too much
+bold" into a number and what proved one reported defect had already been fixed
+and the document simply predated the deploy.
+
+**One character in five of the body copy was bold** — 9,570 of 51,343, at 7.2
+emphasised spans a page, the five longest running 160-246 characters each,
+which is a complete sentence apiece inside a paragraph of the same words. Four
+structural rules take it to 4.1%: a span carrying its own clause punctuation or
+running past **eight words** is a clause; a figure carries its own contrast and
+needs none; a paragraph gets ONE; a table cell gets none. The eight-word
+ceiling is DERIVED — with the punctuation rule alone the survivors split into
+two populations with a clean gap, 80% at eight words or fewer and **not one at
+nine**. A run-in label is kept and does not spend the paragraph's budget. This
+is not the prose scrub §8 forbids: `**` is markup, strip it from both sides and
+they are byte-identical, and a test asserts that rather than promising it.
+
+Three more presentation rules, each from a page of that document. **A dingbat
+is not a category** — `{{glance:}}` drew twelve washed boxes of raw `✓ ⚠ ◆ ★`,
+three to a page, whose whole meaning survived neither greyscale nor a screen
+reader; the glyph is an INPUT vocabulary now and the page prints the word.
+**The data is the chart, not the caption** — `directiveKey` normalised the
+whole directive, so eight drawings of two datasets survived the de-duplicator
+under eight different titles. And **a shared axis is a claim that the
+quantities on it are comparable**: `99.1% | 100% | ~2.1 km` on one track drew
+the kilometres as a 2% sliver, so a chart of more than one unit is set as the
+table its data already is rather than drawn. A ninth-column register that ran
+off the page edge turned out to carry two columns holding ONE value on every
+row — **a column whose every cell is identical is a footnote**, stated once
+below the table.
+
+**A register is printed once, where the register is.** The same document drew
+the planning-controls table on pages 15, 26-27 and 32, the residential
+land-use table on 16, 27 and 33, and the overlay register on 17 and 33 — and
+page 15 headed the first copy *"Planning controls table (reproduced
+exactly)"*. The generator composes each once, pins it into every section call's
+context and appends it verbatim, and the model reproduces what it is handed:
+`dedupeChartDirectives`' header had recorded "the planning controls table on
+four" since Stage 4, because that pass de-duplicates DIRECTIVES and a register
+is a table. **The register's copy is the one that stands** — it is the
+retrieval, every other copy is a reproduction, and the copies DISAGREED (five
+rows in the register, thirteen on page 27), so keeping the longest would keep a
+model's expansion. Three bounds: the headers are a CLOSED SET `planningFacts`
+composes, a dropped table leaves a pointer naming the section that carries it,
+and with no register section appended the FIRST copy stands. **Whether the
+register should have emitted thirteen rows is a separate, open question** —
+`readResidentialStanding` says it should, the page says five, and the scrub,
+the renderer and the packer were each excluded by execution; §9 of the same
+doc records the evidence rather than a guess.
+
+**And a footnote marker with nothing it can refer to.** Five sentences
+ended in a bare digit glued to the full stop (`…do not capture.12 Median house
+prices…`). Every other form a citation could take was driven through the real
+write-path stripper and `renderMarkdown` and each survives VISIBLY different —
+`[12]` strips to nothing, `[^12]`, `¹²`, `(12)` and `\[12\]` all survive as
+written — so the model wrote them with no markup at all and neither the
+stripper nor the renderer could have seen them. **The first fix was a no-op on
+the document it names**, and that is the part worth keeping: the guard asked
+whether the body had an apparatus, page 36 carries a `Notes` list of four, and
+a spec asserting otherwise was asserting a property of a fixture shorter than
+the product — §5's lesson, committed again. The two kinds are not alike, so
+`footnoteApparatusOf` tells them apart: a **`rendered`** apparatus (`[^id]:`)
+sets its own superscript markers, so a bare digit in body copy is debris beside
+it — measured, of the five, two point at the right note, two at the wrong one
+and one at a note that does not exist, which makes a stray digit beside real
+notes WORSE than one beside none. A **`literal`** list (`**Notes**`, or
+`[1] text`) has no markup of its own, so the bare digits may be all that points
+at it and the document is left byte-identical; a body carrying both is read as
+literal. This is not the prose scrub §8
+forbids, for two reasons that are checkable: it is **conditional on the
+document** (a body carrying a Notes list or an `[^id]:` definition keeps every
+marker it has), and **a digit between two sentences is in neither of them**, so
+removing it cannot change a claim. Four bounds — three lowercase letters before
+the stop, a closed abbreviation list, one or two digits, then a capital or the
+end of the block — measured at 5 matches, 5 markers, 0 false positives over all
+38 pages.
+
+**Two more from the same document, and each was pinned by a test.** Page 32
+printed *"as read on 2026-09-20"* in prose while every table around it said
+`7 Aug 2026`: `instrumentAnchor` built its date with `retrievedAt.slice(0, 10)`
+while `planningFacts` and `infrastructureEvidence` each carried a private,
+byte-identical `auDate` their tables went through — two copies of one rule, and
+the one place that reached prose had neither. `auDate.pure.ts` is that rule now,
+named once; it is a pure string transform rather than `toLocaleDateString`
+because the AML defect `AU_LOCALE` came from was a formatter taking the READER'S
+machine, and an edge function has none. And page 2's contents opened `1. Cover /
+2. Contents` — the sheet before this one and the sheet the reader is holding,
+with the second linking to `tpl-page-1` from the block drawn on page 1. **The
+front matter of a list is not an entry in it**; `scopeContentsEntries` drops
+them by the list's own `ctx.pageIndex` and by page 0 rather than by name, never
+drops a page that OPENS A SECTION, and never empties the list. Six contract
+tests across three files were renegotiated and every one was pinning the defect
+it asserted.
+
+**And the running head said `Part 07` twenty-six times.** v16 fixed the half
+that was DISCARDED and left the half that was REPEATED: the body is one part,
+so prefixing the chapter with it says where the reader is twenty-six times and
+says nothing. The marker is the chapter alone; the part structure is on the
+contents page, which is where it varies. Seed **v17** plus the active-master
+refresh — and the ten characters that frees is not a line (the marker holds ~43
+against a 64-character ceiling), it is three wrapped chapters becoming one.
+
+**The grade was 48 because a driver carried a dimension.** Demand scored 13
+from `interpolate(-0.368, POPULATION_ANCHORS)` on one ABS resident-population
+reading, and NOTHING else reached the scorer — renormalisation turned
+`populationDriver`'s 0.15 into 1.00, which `demandScoring.pure.ts`'s own header
+had forbidden in words since it was written. **A dimension is scored only where
+something measured it directly**: `DEMAND_PRIMARY` names the four that may
+carry it, the driver keeps its weight wherever a primary measure is present,
+and nothing but drivers is `null`. The primary measure this platform already
+held is `salesVolumeSeries` — the transaction count the open sales register
+prints beside every median, read until now only as a confidence sample size —
+scored by `scoreTransactionVolume` against the market's OWN trailing mean,
+because 162 sales means nothing without knowing whether this postcode usually
+does 90 or 300. Two things it is not: **Yield's 32 is correct** (3.467% gross
+against a corpus median of 4.36%) and re-anchoring it would raise every yield
+in the book, and **Risk still cannot score** for the reason recorded below. And
+the honest tail — withholding Demand redistributes its weight across three
+dimensions whose weighted mean is 54, so this is a correction rather than a
+lift: what it buys is a number that means something.
+
 ## What the page actually draws
 
 Read [`WHAT_THE_PAGE_ACTUALLY_DRAWS.md`](./docs/reports/WHAT_THE_PAGE_ACTUALLY_DRAWS.md)

@@ -15,22 +15,32 @@
  * and renumbering it would be wrong — but a reader thirty pages in has no way
  * to tell the zoning chapter from the transport one.
  *
- * ## What changed, and what deliberately did not
+ * ## And then twenty-six pages that said the same thing
  *
- * `furniture()` takes an optional `headMarker`, which only the running-head
- * branch reads. The Compass passes `Part NN · {{narrative.chapters.i}}` on its
- * report pages. Everything else — the railed branch, the other nine formats,
- * the Compass's own non-report pages — passes nothing and is byte-identical,
- * which is what keeps a 450-master blast radius off a 50-master fix.
+ * v16 fixed the discarded half and left the repeated one. It passed
+ * `Part NN · {{narrative.chapters.i}}`, so the 97 Poole Road Compass of
+ * 20 Sep 2026 carried `Part 07 · <chapter>` on twenty-six consecutive pages:
+ * true — the body is one part — and saying nothing twenty-six times over.
  *
- * ## What this pins
+ * A running head exists to say where the reader is. Across a single part the
+ * part number does not; the chapter does. The part structure is on the
+ * contents page, which is where it varies. So the marker is the chapter alone.
  *
- * That the marker is drawn where it was being discarded, and that the longest
- * one the product can compose still fits the two lines `runningHead` reserves
- * for it. `CHAPTER_MAX_CHARS` is 64 and `runningChapters` leaves anything
- * longer to the document-name fallback, so the worst case is exactly
- * `'Part NN · '.length + 64` — measured, not assumed, because the marker sits
- * in 34% of the measure and the rule beneath it does not move.
+ * The ten characters that buys are not a line — the marker sits in 34% of the
+ * measure, about 43 characters, against `CHAPTER_MAX_CHARS` of 64, so the
+ * worst case still takes both lines the rule reserves. What they buy is
+ * measured below on the twelve chapters that report actually produced: three
+ * wrapped with the prefix, one wraps without it.
+ *
+ * ## What deliberately did not change
+ *
+ * `furniture()`'s optional `headMarker` is read by the running-head branch
+ * alone. The RAILED branch is untouched and stays right: there the part is an
+ * eyebrow ABOVE the chapter rather than a prefix beside it, so the repetition
+ * is subordinate by construction and carries the orientation for free. The
+ * other nine formats and the Compass's own non-report pages pass nothing and
+ * are byte-identical, which is what keeps a 450-master blast radius off a
+ * 50-master fix.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -89,20 +99,59 @@ describe('every master tells the reader which chapter they are in', () => {
     ).toEqual([]);
   });
 
-  it('keeps the part number, which is what orients the reader', () => {
-    const unnumbered = markers.filter((m) => !/^Part \d\d · /.test(m.body));
-    expect(unnumbered.map((m) => `${m.template}: ${m.body}`)).toEqual([]);
+  /*
+   * v16 fixed the discarded half of this and left the repeated one. The
+   * Compass body is ONE part, so prefixing the chapter with it printed
+   * `Part 07 · <chapter>` on twenty-six consecutive pages of the 97 Poole
+   * Road report — true, and saying nothing twenty-six times.
+   *
+   * A running head exists to say where the reader is. The part structure is
+   * on the contents page, where it is what varies.
+   */
+  it('names the chapter and does not repeat the part beside it', () => {
+    const prefixed = markers.filter((m) => /Part \d\d · /.test(m.body));
+    expect(
+      prefixed.map((m) => `${m.template}: ${m.body}`),
+      'report-page markers still carrying the part the whole body shares',
+    ).toEqual([]);
   });
 
   it('fits the longest chapter into the two lines the rule reserves', () => {
-    // `Part NN · ` plus the longest heading `runningChapters` will pass
-    // through. Anything longer is already the document-name fallback, which is
-    // shorter than this.
-    const worst = 'Part 05 · '.length + CHAPTER_MAX_CHARS;
-    expect(worst).toBe(74);
+    // The longest heading `runningChapters` will pass through; anything longer
+    // is already the document-name fallback, which is shorter.
+    //
+    // Two lines remains the allowance and the worst case still needs both:
+    // the marker sits in 34% of the measure, which is about 43 characters a
+    // line, and CHAPTER_MAX_CHARS is 64. Dropping the prefix buys ten
+    // characters, not a line — see the header for what those ten bought on
+    // the document that prompted it.
+    const worst = CHAPTER_MAX_CHARS;
+    expect(worst).toBe(64);
     const over = markers
       .filter((m) => markerLines(worst, m) > 2)
       .map((m) => `${m.template}: ${markerLines(worst, m)} lines at ${m.size}pt in ${m.width}pt`);
     expect(over, 'markers that would strike the rule beneath them').toEqual([]);
+  });
+
+  /*
+   * What the ten characters bought, measured on the chapters the 97 Poole Road
+   * Compass actually produced rather than on the theoretical worst case.
+   */
+  it('halves the chapters that wrap, on the twelve that report produced', () => {
+    const chapters = [
+      'Demand Drivers', 'Amenity & Access', 'Transport & Connectivity',
+      'Zoning, Planning and Development Considerations',
+      'Environment, Climate & Safety', 'Market Positioning',
+      'Property Fit Within the Suburb', 'Risk Dashboard',
+      'Due Diligence Checklist', 'Final Recommendation',
+      'Appendix · Source Notes & Disclaimer',
+      'Planning controls and development registers',
+    ];
+    // The narrowest master is the binding case: if it fits there it fits.
+    const narrowest = markers.reduce((a, b) => (
+      markerLines(64, a) >= markerLines(64, b) ? a : b));
+    const wraps = (n: number) => chapters.filter((c) => markerLines(n(c.length), narrowest) > 1).length;
+    expect(wraps((n) => n + 'Part 07 · '.length), 'wrapped with the part prefix').toBe(3);
+    expect(wraps((n) => n), 'wrap without it').toBe(1);
   });
 });

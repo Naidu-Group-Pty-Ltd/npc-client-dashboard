@@ -62,6 +62,8 @@
  * Deno-compatible: siblings and `_shared` only, explicit `.ts` extensions.
  */
 
+import { auDate } from './auDate.pure.ts';
+
 export type PermissibilityStatus =
   /** The table was retrieved and read. */
   | 'retrieved'
@@ -400,7 +402,8 @@ export function instrumentAnchor(table: LandUseTable | null | undefined): string
   // instrument named is weaker than it should be, and a crash in the middle of
   // composing a planning chapter loses the whole chapter.
   const instrument = table?.instrument?.trim();
-  const at = table?.retrievedAt?.slice(0, 10);
+  // The date a reader SEES, never the ISO prefix that is right to store.
+  const at = auDate(table?.retrievedAt);
   if (instrument && at) return `Under ${instrument}, as read on ${at},`;
   if (instrument) return `Under ${instrument},`;
   if (at) return `Under the instrument in force for this land, as read on ${at},`;

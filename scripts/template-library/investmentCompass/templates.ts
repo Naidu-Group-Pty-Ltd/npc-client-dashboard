@@ -875,23 +875,32 @@ function buildTemplate(family: DesignFamily, variant: VariantDefinition): Compas
   // never a visible `{{…}}`.
   const reportPart = nextPart('Report');
   /**
-   * What a running-head family puts on the right of these pages.
+   * What a running-head family puts on the right of these pages: the chapter,
+   * and NOT the part.
    *
-   * The body is ONE part, correctly — so `reportPart` is the same string on
-   * every one of its pages, and a running-head family (which draws the part
-   * and discards the section, unlike a rail) printed `Part 05 · Report` on 29
-   * of the 36 pages of the 42 Patya Circuit report. The part NUMBER still
-   * orients the reader; the chapter is what tells them where they are, and it
-   * is already measured per page by the same pre-pass that decides the page
-   * breaks.
+   * The body is one part, correctly — so `reportPart` is the same string on
+   * every page of it, and a running-head family (which draws the part and
+   * discards the section, unlike a rail) printed `Part 05 · Report` on 29 of
+   * the 36 pages of the 42 Patya Circuit report. v16 fixed the discarded half
+   * and left the repeated one, so the 97 Poole Road Compass of 20 Sep 2026
+   * carried `Part 07 · <chapter>` on TWENTY-SIX consecutive pages.
    *
-   * `runningChapters` leaves a heading longer than `CHAPTER_MAX_CHARS` (64) to
-   * the fallback, so the longest marker this can compose is `Part NN · ` plus
-   * 64 — which `runningHeadFitsTheChapter.spec.ts` measures against the two
-   * lines `runningHead` reserves, on every master.
+   * A running head exists to say where the reader is. Across a single part
+   * the part number says it twenty-six times and says nothing; the chapter
+   * says it once per chapter, and it is already measured per page by the same
+   * pre-pass that decides the page breaks. The part structure is on the
+   * contents page, where it is what varies.
+   *
+   * Dropping the prefix also takes the worst case this can compose from
+   * `'Part NN · '.length + CHAPTER_MAX_CHARS` (74) down to 64, so a long
+   * chapter — `Zoning, Planning and Development Considerations` set over two
+   * ragged right-aligned lines on six pages of that report — sets on one.
+   *
+   * A RAILED family is untouched and stays right: there the part is an eyebrow
+   * ABOVE the chapter rather than a prefix beside it, so the repetition is
+   * subordinate by construction and carries the orientation for free.
    */
-  const reportChapter = (i: number): string =>
-    `${reportPart.split(' · ')[0]} · {{narrative.chapters.${i}}}`;
+  const reportChapter = (i: number): string => `{{narrative.chapters.${i}}}`;
   pages.push({
     ...withFurniture(page('The report', [
       ...furniture(DOCUMENT_LABEL, reportPart, '{{narrative.chapters.0}}', reportChapter(0)),

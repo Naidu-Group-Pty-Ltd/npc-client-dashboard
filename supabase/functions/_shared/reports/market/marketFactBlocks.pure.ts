@@ -86,6 +86,7 @@ const MEASURE: Readonly<Record<EvidenceKey, { label: string; unit: 'money' | 'pe
   growth5YearCagr: { label: 'Price growth, 5 years (compound annual)', unit: 'percent' },
   growth10YearCagr: { label: 'Price growth, 10 years (compound annual)', unit: 'percent' },
   priceSeries: { label: 'Median price series', unit: 'series' },
+  salesVolumeSeries: { label: 'Sales volume series', unit: 'series' },
   salesCount: { label: 'Sales in the period', unit: 'count' },
   daysOnMarket: { label: 'Median days on market', unit: 'days' },
   vacancyRate: { label: 'Rental vacancy rate', unit: 'percent' },
@@ -241,7 +242,11 @@ const NOT_HELD_LABELS = (facts: MarketFacts): string[] => {
   const have = new Set(facts.rows.map((r) => r.key));
   const withheldLabels = new Set(facts.withheld.map((w) => w.label));
   return EVIDENCE_KEYS
-    .filter((k) => !have.has(k) && !IS_BENCHMARK(k) && k !== 'priceSeries' && k !== 'populationGrowth')
+    // A SERIES is not a figure a client reads off a table — it is what the
+    // figures above were computed from — so neither series is listed as a
+    // measure nothing published.
+    .filter((k) => !have.has(k) && !IS_BENCHMARK(k)
+      && k !== 'priceSeries' && k !== 'salesVolumeSeries' && k !== 'populationGrowth')
     .map((k) => MEASURE[k].label)
     .filter((l) => !withheldLabels.has(l));
 };

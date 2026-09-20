@@ -19,6 +19,7 @@
  *
  * Deno-compatible: imports a sibling only.
  */
+import { glanceRows } from './glanceStrip.pure.ts';
 import {
   parseVizDirective,
   VIZ_DIRECTIVE_KINDS,
@@ -67,7 +68,11 @@ export function directiveAsMarkdown(d: VizDirective): string | null {
       lines = [`**${cell(d.label ?? 'Reading')}:** ${fmt(d.value)} / ${fmt(d.max)}${d.caption ? ` — ${cell(d.caption)}` : ''}`];
       break;
     case 'glance':
-      lines = d.items.map((i) => `- ${cell(i.symbol)} ${cell(i.text)}`.trim());
+      // The glyph is an INPUT vocabulary. This presentation used to print it
+      // raw, so the same finding read `- ✓ Metro access` here and
+      // `Strength  Metro access` in the design-system render. One mapping,
+      // imported rather than repeated.
+      lines = glanceRows(d.items).map((r) => `- ${cell(r.tag)} — ${cell(r.text)}`);
       break;
     case 'heatmap': {
       const cols = d.colLabels.length ? d.colLabels : d.grid[0]?.map((_, i) => `Column ${i + 1}`) ?? [];

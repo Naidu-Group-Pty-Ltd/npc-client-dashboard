@@ -185,8 +185,26 @@ describe('the sentence the reading supports, and not one word further', () => {
    * exclude them.
    */
   it('anchors itself in the instrument and the day it was read', () => {
-    expect(said).toMatch(/^Under .+, as read on \d{4}-\d{2}-\d{2},/);
-    expect(said).toContain(AT.slice(0, 10));
+    expect(said).toMatch(/^Under .+, as read on \d{1,2} [A-Z][a-z]{2} \d{4},/);
+    expect(said).toContain('19 Sep 2026');
+  });
+
+  /*
+   * Renegotiated a second time, and this one was pinning a DEFECT.
+   *
+   * The assertion above read `\d{4}-\d{2}-\d{2}` and `AT.slice(0, 10)`,
+   * which is the ISO prefix — so it required the very thing page 32 of the
+   * 97 Poole Road Compass shipped: "Under The Hills Local Environmental Plan
+   * 2019, as read on 2026-09-20, a dwelling house is permitted…", while every
+   * table on that page and the two either side said `7 Aug 2026`.
+   *
+   * The test's INTENT was right and is kept whole — the sentence must name
+   * its instrument and the day it was read, because without both it reads as
+   * a permanent property of the land. What changed is the form it demands: an
+   * ISO date is the right thing to STORE and never the right thing to print.
+   */
+  it('never prints an ISO date in a sentence a client reads', () => {
+    expect(said).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
   it('never states the prohibition as permanent', () => {

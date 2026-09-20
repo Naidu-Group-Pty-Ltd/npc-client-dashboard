@@ -104,10 +104,31 @@ describe('the contents page', () => {
     expect(contents).toContain('Beta');
     expect(contents).toContain('Gamma');
     // The archetype pages keep the names their designer gave them…
-    expect(contents).toContain('Cover');
     expect(contents).toContain('Important information');
     // …and a narrative sheet contributes none of its own.
     expect(contents).not.toContain('The report');
+  });
+
+  /*
+   * Renegotiated, and it was pinning a DEFECT.
+   *
+   * These four assertions REQUIRED `1. Cover` and `2. Contents` as the first
+   * two rows — which is what page 2 of the 97 Poole Road Compass shipped: the
+   * first row pointing at the sheet before this one, the second at the sheet
+   * the reader is holding. The front matter of a list is not an entry in it.
+   *
+   * The intent of each is kept whole: the list names the report's sections
+   * rather than the page archetypes carrying them, a section row links to its
+   * own heading, and a document with no narrative still lists its pages. What
+   * changed is that two rows nobody could turn to are gone. See
+   * `scopeContentsEntries` and `contentsDoesNotListItself.spec.ts`.
+   */
+  it('lists neither the cover nor itself', () => {
+    const contents = pageSection(render(pages).html, 1);
+    expect(contents).not.toContain('Cover');
+    expect(contents).not.toContain('>1. Contents<');
+    // And it cannot link to the sheet it is printed on.
+    expect(contents).not.toContain('href="#tpl-page-1"');
   });
 
   it('prints the folio of the page the section actually landed on', () => {
@@ -115,19 +136,19 @@ describe('the contents page', () => {
     const rows = [...contents.matchAll(/>(\d+\. [^<]+)<\/[as]><span[^>]*>(\d*)</g)]
       .map((m) => `${m[1]} @ ${m[2]}`);
     expect(rows).toEqual([
-      '1. Cover @ 1',
-      '2. Contents @ 2',
-      '3. Alpha @ 3',
-      '4. Beta @ 5',
-      '5. Gamma @ 6',
-      '6. Important information @ 7',
+      '1. Alpha @ 3',
+      '2. Beta @ 5',
+      '3. Gamma @ 6',
+      '4. Important information @ 7',
     ]);
   });
 
   it('links a section row to the heading itself, not to the top of the sheet', () => {
     const { html } = render(pages);
     const hrefs = [...pageSection(html, 1).matchAll(/href="#([^"]+)"/g)].map((m) => m[1]);
-    expect(hrefs.filter((h) => h.startsWith('tpl-page-'))).toEqual(['tpl-page-0', 'tpl-page-1', 'tpl-page-6']);
+    // `tpl-page-0` and `tpl-page-1` are the cover and this page; neither is
+    // somewhere to turn, so neither is a row and neither is a destination.
+    expect(hrefs.filter((h) => h.startsWith('tpl-page-'))).toEqual(['tpl-page-6']);
     const sectionHrefs = hrefs.filter((h) => !h.startsWith('tpl-page-'));
     expect(sectionHrefs).toHaveLength(3);
     // Every destination is an id the document actually carries.
@@ -143,16 +164,19 @@ describe('the contents page', () => {
     expect(pageSection(render(deep).html, 1)).toContain('Alpha detail');
   });
 
-  it('behaves exactly as before on a document with no narrative in it', () => {
+  it('still lists a document with no narrative by its pages', () => {
+    // The `tocContinues` fold is what this test is really about, and it is
+    // untouched. The two front-matter rows it also asserted are gone for the
+    // reason above: a contents list names what a reader would turn TO.
     const contents = pageSection(render([
       page('p0', 'Cover', [label('c', 'Prepared for a client')]),
       page('p1', 'Contents', [toc()]),
       page('p2', 'Findings', [label('f', 'What we found')]),
       page('p3', 'Findings (2)', [label('f2', 'What we found, continued')], { tocContinues: true }),
     ], { narrative: { source: '' } }).html, 1);
-    expect(contents).toContain('1. Cover');
-    expect(contents).toContain('3. Findings');
+    expect(contents).toContain('1. Findings');
     expect(contents).not.toContain('Findings (2)');
+    expect(contents).not.toContain('Cover');
   });
 });
 

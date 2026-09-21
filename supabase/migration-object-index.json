@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1009,
+  "migration_files": 1010,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -67,6 +67,8 @@
     "function:public.builder_network_apply_inbound_events",
     "function:public.builder_network_apply_stock_ranks",
     "function:public.builder_network_claim_outbox",
+    "function:public.builder_network_clear_settled_mismatches",
+    "function:public.builder_network_halt_identity_mismatch",
     "function:public.builder_network_mark_inbound_refused",
     "function:public.builder_network_transaction_connection_set_once",
     "function:public.builder_stock_touch_updated_at",
@@ -412,6 +414,7 @@
     "index:brand_design_systems_active_idx",
     "index:brand_design_systems_source_idx",
     "index:builder_network_connections_org_idx",
+    "index:builder_network_connections_org_live_key",
     "index:builder_network_inbound_events_rank_pending_idx",
     "index:builder_network_inbound_events_unprocessed_idx",
     "index:builder_network_outbox_claim_idx",
@@ -2714,6 +2717,7 @@
     "type:report_tier_enum",
     "type:template_type",
     "view:public.activity_logs_with_user",
+    "view:public.builder_network_receive_state",
     "view:public.builder_network_stock_ranked",
     "view:public.client_portfolio_properties",
     "view:public.cross_portal_rollout_reconciliation",

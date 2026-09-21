@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "source": "repository-static-analysis",
-  "edge_function_count": 413,
-  "config_declared_function_count": 413,
-  "registry_function_count": 413,
+  "edge_function_count": 414,
+  "config_declared_function_count": 414,
+  "registry_function_count": 414,
   "verify_jwt_false_count": 322,
   "exposure_class_counts": {
     "authenticated-or-service": 1,
     "authenticated-staff": 6,
     "cron-worker": 42,
     "human-authenticated": 209,
-    "internal-service": 26,
+    "internal-service": 27,
     "module-gated": 22,
     "portal-authenticated": 59,
     "public": 10,
@@ -387,6 +387,7 @@
       "update-ghl-opportunity-stage/index.ts",
       "update-integration-secret/index.ts",
       "update-stamp-duty-rates/index.ts",
+      "urban-centre-register-ingest/index.ts",
       "user-guide-assistant/index.ts",
       "vapi-call-webhook/index.ts",
       "voice-to-text/index.ts"

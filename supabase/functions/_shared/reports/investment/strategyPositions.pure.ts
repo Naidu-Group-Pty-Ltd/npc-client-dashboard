@@ -83,6 +83,7 @@ import type { MarketFacts, MarketFactRow } from '../market/marketFactBlocks.pure
 import type { EvidenceKey } from '../market/marketEvidence.pure.ts';
 import {
   readScoreAssessment,
+  assessmentPrecisionNote,
   type ScoreAssessmentReading,
 } from '../market/scoreAssessmentReading.pure.ts';
 import type { SubjectPrice } from './subjectPrice.pure.ts';
@@ -785,17 +786,29 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
         + 'figure — the **points delivered** at the ORIGINAL weights — as a ceiling the letter could not exceed. '
         + 'That rule has since been superseded; it is stated here because it is what produced this grade.'
       : unknownMethod
-      ? 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
-        + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
-        + 'built from. This record does not state which scoring methodology issued its grade, so the composite is '
-        + 'reconstructed from what it holds and the grade is reported as it was issued, without a rule being '
-        + 'attributed to it.'
+      ? 'Five dimensions carry the method. Each has an **original weight**, and the **adjusted weight** is the '
+        + 'share of the composite the dimension actually carried. '
+        + (a.weightBasis === 'recorded'
+          ? 'The adjusted weights below are the ones the record holds, so they are the weights this grade was '
+            + 'built from. '
+          : 'This record does not hold them, so they are reconstructed from the original weights of the '
+            + 'dimensions that were measured. ')
+        + 'The record does not state which scoring methodology issued its grade, so the grade is reported as it '
+        + 'was issued, without a rule being attributed to it.'
+      : a.weightBasis === 'recorded'
+      ? 'Five dimensions carry the method. Each has an **original weight**; the scoring service re-spreads those '
+        + 'weights across the dimensions the evidence could measure — discounted by how much of each '
+        + "dimension's own method actually ran — giving the **adjusted weight** the composite is built from. "
+        + 'That is why a dimension scored on part of its inputs can carry less than its original weight. The '
+        + 'adjusted weights below are the ones the record holds, so they are the weights this grade was '
+        + 'actually built from. A dimension that could not be assessed is disclosed rather than deducted: it '
+        + 'lowers no score and caps no grade, and the scope of the assessment is stated with the result instead.'
       : 'Five dimensions carry the method. Each has an **original weight**; where a dimension could not be scored '
         + 'its weight is redistributed across the ones that could, giving the **adjusted weight** the composite is '
-        + 'built from. The composite answers *how strong is what we measured*, over the original weights of the '
-        + 'dimensions that were measured. A dimension that could not be assessed is disclosed rather than '
-        + 'deducted: it lowers no score and caps no grade, and the scope of the assessment is stated with the '
-        + 'result instead.',
+        + 'built from. This record does not hold the adjusted weights the service used, so they are reconstructed '
+        + 'here from the original weights of the dimensions that were measured. A dimension that could not be '
+        + 'assessed is disclosed rather than deducted: it lowers no score and caps no grade, and the scope of the '
+        + 'assessment is stated with the result instead.',
     '',
     legacyCeiling
       ? '| Dimension | Score | Original weight | Adjusted weight | Contribution | Points delivered |'
@@ -839,13 +852,24 @@ export function composeScoreDimensionTable(rec: StrategyRecord): string | null {
 
   // The arithmetic, stated as arithmetic, at the precision the engine used.
   const steps: string[] = [];
-  if (a.compositeExact !== null && a.compositeScore !== null) {
-    steps.push(
-      `**Composite score ${a.compositeScore}.** The contributions come to ${a.compositeExact.toFixed(2)}, and the `
-      + 'engine rounds once, on that sum. Rounding each contribution first and adding them gives a different '
-      + 'answer, and the adjusted weights the table prints as whole percentages are themselves rounded — the '
-      + 'arithmetic uses the exact fractions.',
-    );
+  if (a.compositeScore !== null) {
+    /*
+     * The composite is the RECORD'S, and the sentence says so.
+     *
+     * It used to read "**Composite score N.** The contributions come to X, and
+     * the engine rounds once, on that sum" over a number this module had
+     * computed itself. On the 97 Poole Road Compass of 20 Sep 2026 that
+     * printed 51 on page 38 while the cover, the verdict, the risk page and
+     * the assessment table printed 54 — directly above the line "No figure in
+     * this table is re-derived by this report; the arithmetic above restates
+     * the engine's own."
+     *
+     * The explanation of the arithmetic is `assessmentPrecisionNote`, which
+     * already existed for exactly this and had ZERO production call sites
+     * because this function wrote its own copy. One sentence, one place.
+     */
+    const precision = assessmentPrecisionNote(a);
+    steps.push(`**Composite score ${a.compositeScore}.**${precision ? ` ${precision}` : ''}`);
   }
   if (a.uncappedGrade) {
     steps.push(`**Grade the composite alone gives: ${a.uncappedGrade}.**`);
@@ -1432,20 +1456,72 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
 
 // ─── The rules the prose beside these sections must obey ────────────────────
 
-export function strategySectionRules(rec: StrategyRecord): string {
-  const head = 'STRATEGY SECTION RULES — they apply to the SWOT, the suitability profile, the holding strategy, the '
-    + 'exit outlook and the monitoring plan, and they override any example elsewhere in this prompt.';
+/**
+ * The rules named FIVE sections, and a Compass composes three.
+ *
+ * The head of this block used to read "they apply to the SWOT, the suitability
+ * profile, the holding strategy, the exit outlook and the monitoring plan",
+ * and rule 1 told the model all five were "COMPOSED from the record and
+ * supplied to you complete". The Compass's call site composes
+ * `exitStrategy`, `swot` and `monitoring` — `suitability` and
+ * `holdingStrategy` are `financial:required` in `sectionRegistry.pure.ts` and
+ * are declared for no other tier.
+ *
+ * So a model writing a Compass was told two sections exist, was shown
+ * neither, and filled the gap — which is the defect §6 of
+ * `DA_REGISTER_RECONCILIATION.md` already records in the other direction:
+ * a rule can reach the model and its evidence not, and the model then supplies
+ * the evidence. Measured on the 97 Poole Road Compass of 20 Sep 2026: it wrote
+ * `Suitability Profile` and `Holding Strategy` as sections of its own on pages
+ * 19-20, and `Exit Outlook` and `Monitoring Plan` beside them — the last two
+ * fourteen and eighteen pages before the composed sections carrying the same
+ * subjects, and contradicting them. The composed Resale Liquidity opens
+ * "Neither answers how easily this sells … no figure below should be read as
+ * standing in for them"; the model's Exit Outlook says "the cleanest exit path
+ * is to sell into the owner-occupier market".
+ *
+ * The composed set is now a PARAMETER, named by its real headings, so the
+ * rules and the composer cannot state two different documents. A caller that
+ * passes none gets the general rules and no claim about what is supplied,
+ * which is the honest reading of "this document composes nothing".
+ */
+export function strategySectionRules(
+  rec: StrategyRecord,
+  composed: ReadonlyArray<{ id: StrategySection['id']; heading: string }> = [],
+): string {
+  const headings = composed.map((c) => `"${c.heading}"`);
+  const supplied = headings.length === 1
+    ? `the section ${headings[0]}`
+    : `the sections ${headings.slice(0, -1).join(', ')} and ${headings[headings.length - 1]}`;
+  const head = headings.length
+    ? `STRATEGY SECTION RULES — they apply to ${supplied}, and they override any example elsewhere `
+      + 'in this prompt.'
+    : 'STRATEGY SECTION RULES — they override any example elsewhere in this prompt.';
   const lines = [
     head,
-    '1. These five sections are COMPOSED from the record and are supplied to you complete. Do not rewrite them, do '
-    + 'not restate their entries in prose elsewhere, and do not add an entry of your own to any quadrant or table.',
+    headings.length
+      ? `1. Those ${headings.length === 1 ? 'section is' : `${headings.length} sections are`} COMPOSED from the `
+        + 'record and appear in the finished document under exactly those headings. Do not write them, do not '
+        + 'write a section of your own on any of those subjects under any other name, and do not restate their '
+        + 'entries in prose elsewhere or add an entry of your own to any quadrant or table. EVERY OTHER section '
+        + 'of this report is one you write: there is no other composed section, so do not leave a gap for one.'
+      : '1. Do not restate a composed entry in prose elsewhere, and do not add an entry of your own to any '
+        + 'quadrant or table.',
     '2. Every entry names the fact it rests on. If you refer to one of them in another section, carry that fact and '
     + 'its publisher with it.',
     '3. An absence is never a strength, a weakness, an opportunity or a threat. A register that was not read, and a '
     + 'measure nobody published, are recorded under "What this rests on" and must not be turned into a finding, a '
     + 'rating or a reassurance anywhere in the report.',
-    '4. The suitability profile describes what the ASSET requires. It is not a statement about any person, and no '
-    + 'section may convert it into one — no "this suits you", no "ideal for first-time investors", no personal '
+    // Rule 4 used to open "The suitability profile describes what the ASSET
+    // requires", on a document that has no suitability profile — which is the
+    // gap this function's header records. The prohibition is general and
+    // stays; the sentence that names the section is written only where the
+    // section is one of the composed ones.
+    (composed.some((c) => c.id === 'suitability')
+      ? '4. The suitability profile describes what the ASSET requires, and no section may convert it into a '
+        + 'statement about a person'
+      : '4. Nothing in this report is a statement about a person')
+    + ' — no "this suits you", no "ideal for first-time investors", no personal '
     + 'advice, credit assessment or tax opinion.',
     '5. A modelled figure is never written as a measured one. The year-five and year-ten values are the projection\'s '
     + 'output under a recorded growth rate; say so wherever you use them, and never call one a valuation, an '
@@ -1677,8 +1753,24 @@ export function readStrategyRecord(row: StrategyRowInput, opts: StrategyRowOptio
 }
 
 /** One composed section: the heading a tier gives it and the markdown under it. */
+/**
+ * The five sections this module composes WHOLE from the record.
+ *
+ * Named once and exported, because two readers now need the set:
+ * `composeStrategySections` builds them, and
+ * `dropComposedSectionReproductions` uses it as the bound on which sections a
+ * second copy may be dropped for. It is deliberately narrower than "every
+ * `computed` section in the registry" — `tenYear` is computed too, and its
+ * alias list carries sub-heading names (`Property Value Projections`,
+ * `Cumulative Cashflow Projections`) that a Financial report legitimately
+ * writes as sections of their own beside the canonical one.
+ */
+export const STRATEGY_SECTION_IDS = [
+  'swot', 'suitability', 'holdingStrategy', 'exitStrategy', 'monitoring',
+] as const;
+
 export interface StrategySection {
-  id: 'swot' | 'suitability' | 'holdingStrategy' | 'exitStrategy' | 'monitoring';
+  id: (typeof STRATEGY_SECTION_IDS)[number];
   heading: string;
   markdown: string;
 }

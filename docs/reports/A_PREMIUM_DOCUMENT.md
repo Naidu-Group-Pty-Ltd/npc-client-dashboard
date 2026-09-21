@@ -614,3 +614,858 @@ test's own subject is kept whole (the list names the report's sections rather
 than the archetypes carrying them, a section row links to its own heading, a
 `tocContinues` sheet folds, a document with no narrative still lists its pages)
 and each now also asserts the front matter is absent.
+
+## 13. An absence may not be rated — on a chart either
+
+Measured 20 Sep 2026 on three regenerated Compass reports read as delivered
+PDFs (9 Hollow Street Golden Square, 1 Crestview Avenue Kellyville, 97 Poole
+Road Kellyville). Page 23 of the Hollow document, under *Summary Risk
+Register*:
+
+```
+Risk exposure index (1=Low, 5=High, Not assessed shown as 5)
+
+                   Exposure level
+Crime                  3   3   3   4   4   4   5
+
+Risk | Exposure level | Evidence chip | Due-diligence focus
+Crime | Not assessed | Unverified | State crime register and local police data
+```
+
+The register three lines below the drawing is correct: crime exposure was
+**not assessed**. The drawing above it puts that same risk on the measured
+risks' own 1–5 scale, and the title states the convention that let it happen.
+
+`PLANNING_CONTROLS_IN_THE_REPORT.md` §9 already paid for this rule in full,
+and paid for it as a **statement**: `Infrastructure timing and pipeline |
+**Low** | The absence of a named infrastructure pipeline in the registers
+searched …`. The word was closed and the picture was not. A number on a scale
+is read as a measurement however it got there — so an absence drawn at 5 of 5
+tells a reader this is the property's highest risk, with no sentence anywhere
+for a rule about sentences to catch.
+
+### The chart was wrong twice, and each fault explains the page on its own
+
+**It declared the convention.** The title says *Not assessed shown as 5*.
+
+**Its labels covered one cell of seven.** Seven values, one row label, one
+column label, and a register beneath it carrying a single row. The model wrote
+seven risks separated by commas where `{{heatmap: …}}` separates rows with `/`,
+so the grid transposed: seven risks × one exposure became one risk × seven
+exposures, and six of the seven figures described something no reader could
+name. `renderHeatmap` already refused the converse — *a label beyond the grid
+is a promise with no figure under it* — and had nothing to say about a figure
+with no label over it, which is the worse of the two, because a chart carrying
+one label reads as complete.
+
+### The whole series goes, not the cells at the rated value
+
+Once 5 means both *high* and *we did not look*, every cell at 5 is ambiguous —
+including the genuine highs. Removing only the 5s leaves a risk chart that
+reads as a property with no high risks, which is the more dangerous of the two
+documents. There is no repair available, because the convention destroyed the
+distinction any repair would need. `withholdRatedAbsenceCharts` therefore
+withholds the drawing whole.
+
+Nothing is lost on the document that found it: the summary register three lines
+below carries every risk with its exposure and its evidence reading, which is
+the statement the chart was a decoration of.
+
+### Three bounds
+
+* **It fires on a CONFESSION, never on a guess.** The directive's own text has
+  to state the mapping — an absence word, a connective meaning *is drawn as*,
+  and a number. A chart that rates an absence silently is invisible to this and
+  belongs to the generator's instruction, which now says so; an instruction is
+  a request and this is the guarantee, so the two are not alternatives.
+* **A count of absences is not a convention.** `Risks not assessed: 3` is a
+  fact about the register, so a bare number after the phrase is not enough.
+* **Nothing is worded in its place.** §8 of `RUNTIME_CONSOLIDATION.md` — an
+  absence is omitted rather than explained — so a withheld chart leaves no
+  note, no caption and no placeholder.
+
+### Where each half lives, and why they are not in the same place
+
+The convention is a property of the **document**, so it is scrubbed on the READ
+path in `presentStoredMarkdown`, beside `dedupeChartDirectives` and
+`limitEmphasis` and for their reason: every Compass already stored was written
+under the old habit, and a write-path rule reaches none of them. It runs before
+`tabulateMixedUnitCharts`, which would otherwise set the same rating as a table
+and carry it to the page in a different shape.
+
+The partial label set is a property of the **drawing**, so it is refused in
+`renderHeatmap`, which is where the existing rule about labels already lives.
+It is asked of a partial set alone: a grid that names nothing on an axis is one
+whose caption carries it, and both shapes are in production — the Hollow
+planning check names all four of its columns, the Crestview growth grid names
+none of its rows.
+
+### Measured
+
+**1 directive withheld and 1 drawing refused, across all three documents**, both
+on the one page that carried them; every other chart in all three byte-identical.
+Each fix was proved by reverting it and watching the test fail.
+
+## 14. The Risk Dashboard had no shape
+
+Measured 20 Sep 2026 on the same three delivered Compass PDFs. The Risk
+Dashboard is the section a reader most needs to scan, and its registry entry
+declares a precise shape — *"A SUMMARY REGISTER a reader can scan — Risk |
+Exposure | Evidence — followed by a DETAIL BLOCK for each MATERIAL risk"*.
+What the three documents delivered:
+
+| | 9 Hollow Street | 1 Crestview Avenue | 97 Poole Road |
+|---|---|---|---|
+| Summary register | one row, as **prose with pipes** | **none** | **none** |
+| Exposure level per risk | in that one row | **nowhere in the section** | **nowhere in the section** |
+| Evidence reading per risk | in that one row | **nowhere in the section** | **nowhere in the section** |
+| Detail blocks | 4, with `Finding / Evidence / Implication / Next check` | 3 prose sub-sections, unlabelled | 4 prose sub-sections, unlabelled |
+
+Nought of three produced the contract. Two of three carry no statement anywhere
+of what was retrieved and what is still outstanding, so their risk sections read
+as confident assessments of the area — which is the accuracy half of the same
+defect §13 closed for a chart.
+
+### The QA validator could not see it
+
+`runQAValidation` filed **nine warnings on each of those two runs** and said
+nothing about the register, because its only register rule —
+`findOverlongRegisterCells` — measures how long a CELL is. That is a rule about
+a register that exists. Every other rule in the validator measures a section's
+length, its heading density or the words it contains; **none asks whether a
+section is the thing its registry entry declares.**
+
+Two findings now, deliberately not one: `risk-register-not-marked-up` (a
+warning — the words were written, the markup was not, and the read path repairs
+it) and `risk-register-missing` (an error — nothing was written, and composing a
+register would mean inventing an exposure and an evidence reading for every
+row). Reporting both as "missing" sends an operator to the wrong remedy, which
+is the mistake `screeningConsumer` already paid for over a simulator reported as
+no provider.
+
+### The instruction was written three times and one copy was dead
+
+`riskRegisterInstruction()`, whose own header calls itself *"One declaration:
+the section registry's purpose reads it"*, had **zero production call sites**.
+`compassSectionRegistry`'s `compass.riskDashboard` purpose carried a verbatim
+copy of its output as a string literal, and the frontend mirror carried a copy
+of that. The words the model actually receives came from the registry; the
+function was ornamental; and the copies had already diverged by four paragraphs
+(coverage and the evidence chip existed only in the registry).
+
+The immediate cost: §13's new sentence, added to the function the day before,
+would have reached nothing. Both registries compose the function now, and a
+spec asserts the composition and that neither file carries a second copy of the
+words.
+
+### Why the register did not appear, and the one-line reason
+
+The instruction asked for *"a SUMMARY REGISTER a reader can scan — Risk |
+Exposure | Evidence"*. That is a description of columns written with pipe
+characters. It never said the word **table** and never showed the markup — and
+the one document that tried reproduced exactly that line:
+
+```
+Risk | Exposure level | Evidence chip | Due-diligence focus
+•Crime | Not assessed | Unverified | State crime register and local police data
+```
+
+body face, body size, a list bullet in front of the only row. **A prohibition
+with no demonstration of the permitted form is one a model routes around** —
+the rule `compassDocumentContract` already paid for, and the `{{bars}}`
+scorecard paid for again. The instruction now says "MARKDOWN TABLE", prints the
+header row, the rule row and a worked row, and shows a worked detail block.
+
+`promotePipedPseudoTables` is the guarantee behind it, on the read path, first
+in the chain — before `stripPlaceholderRows`, `dropEmptyTableColumns`,
+`foldConstantTableColumns` and `dedupeRegisterTables`, because promoting text
+into a table is only worth doing if the four passes that understand tables then
+see it.
+
+The danger there is prose, so every bound refuses rather than guesses: three
+columns and never two; every line in the run carrying the same number of cells;
+a first line that is a header and looks like one (not a list item, every cell a
+short label with no sentence punctuation); no empty cell and no cell carrying a
+paragraph; nothing already marked up and nothing inside a fence. **Measured over
+the rendered text of all three PDFs: two lines promoted, in one place, nothing
+else matched.** Reading the RENDERED text is what makes that the right
+measurement — a table that was marked up correctly draws no pipes at all, so
+every pipe on a page is by definition a table that failed.
+
+## 15. Three units on one track, with the units in the labels
+
+Page 22 of the 1 Crestview Avenue Compass, read off the PDF's own geometry —
+three labels right-aligned at x=210, three values right-aligned at x=486, which
+is `renderBars`' layout and not a table:
+
+```
+R3 Medium Density Residential zone       1
+Minimum lot size 450 m²                450
+Maximum building height 10 m            10
+```
+
+A zone code, a land area and a height on one axis with a maximum of 450. The
+height drew as a 2% sliver and the zone as a hairline — §5's defect exactly,
+and §5's module walked straight past it, because `unitOf` reads the DISPLAY and
+all three displays were bare integers. **The model had put the units in the
+labels.**
+
+The bound that makes reading a label safe is that **the label must restate the
+item's own value**: `Minimum lot size 450 m²` carries the number 450, which IS
+this item's value, so the `m²` beside it is this value's unit and nothing is
+inferred. A label that merely ends in a word — `Schools`, `Subject house` —
+states no value and contributes nothing; and a label whose trailing number is a
+DIFFERENT number — `Growth 5 yr` beside a value of 6.2 — is a period, not a
+unit, and the equality test refuses it.
+
+That equality also settles `m`. `unitOf` reads a lone k/m/b after digits as a
+magnitude, which is right for a display (`$1.2M`, `45k`) and wrong here: `10 m`
+beside a value of 10 cannot be ten million, or the value would be 10,000,000.
+
+**The unit moves into the value cell**, where a reader looks for it — nothing is
+composed, both halves are the model's own characters, moved:
+
+```
+| Item                               | Value  |
+| R3 Medium Density Residential zone | 1      |
+| Minimum lot size                   | 450 m² |
+| Maximum building height            | 10 m   |
+```
+
+Measured across all three PDFs: **one chart tabulated by this rule, no other
+chart in the three affected.**
+
+### The residual, named rather than guessed at
+
+`R3 Medium Density Residential zone | 1` is still a number the model assigned to
+a category — a zone code is not a quantity of anything. The false axis is gone,
+so the `1` no longer reads as "small compared with 450", but the cell is still
+meaningless. That is the prompt's own rule (*a rating you invented may not be
+drawn, in any primitive*) and it has no deterministic guarantee behind it:
+telling an assigned 1 from a measured 1 is not something the directive's text
+supports. It is recorded here rather than papered over.
+
+## 16. Four sections the Compass should not have had
+
+Measured on the 97 Poole Road Compass of 20 Sep 2026, read as a delivered PDF.
+Between *Market Positioning* (p18) and *Property Fit Within the Suburb* (p21)
+the document carries four H2 sections nobody asked for:
+
+```
+p19  ## Suitability Profile
+p19  ## Holding Strategy
+p20  ## Exit Outlook            …and p34  ## Resale Liquidity & Exit Outlook
+p20  ## Monitoring Plan         …and p38  ## Monitoring & Review Plan
+```
+
+The last two are **the same subject twice, fourteen and eighteen pages apart**
+— and the copies contradict each other. The composed *Resale Liquidity & Exit
+Outlook* opens:
+
+> Neither answers *how easily this sells*. Days on market, time to sell and
+> buyer depth are not measured anywhere in this report, and no figure below
+> should be read as standing in for them.
+
+The model's *Exit Outlook*, fourteen pages earlier, says "the cleanest exit
+path is to sell into the owner-occupier market … the strongest exit result
+usually comes from a well-presented, well-timed launch into a buyer pool that
+already understands the locality." That is the claim the composed section
+exists to refuse.
+
+They also rename the running head: `runningChapters` takes the current H2, so
+pages 19–20 are headed *Market Positioning*, *Holding Strategy* — chapters the
+document's structure does not have.
+
+### The cause: rules for five sections, a document with three
+
+`strategySectionRules()` opened *"they apply to the SWOT, the suitability
+profile, the holding strategy, the exit outlook and the monitoring plan"*, and
+rule 1 told the model all five were **"COMPOSED from the record and supplied to
+you complete"**. The Compass's call site composes three — `exitStrategy`,
+`swot`, `monitoring`. `suitability` and `holdingStrategy` are
+`financial:required` in `sectionRegistry.pure.ts` and declared for **no other
+tier**.
+
+So a model writing a Compass was told two sections existed, was shown neither,
+and filled the gap. It is §6 of `DA_REGISTER_RECONCILIATION.md` in the other
+direction: *a rule can reach the model and its evidence not* — and the model
+then supplies the evidence. The composed set is a parameter now, named by its
+real headings, so the rules and the composer cannot describe two different
+documents.
+
+### Why nothing could see the duplication
+
+`sectionIdForHeading('Exit Outlook')` returned **null**. So did
+`'Monitoring Plan'` and `'Suitability Profile'`. Neither was an alias, so the
+document held one section the registry knew and one it did not, and no rule
+anywhere could see they were the same subject. That also meant
+`fork-investment-report` dropped those headings from both children without
+saying so.
+
+Three aliases were added, which is what an alias list is for. Re-checking the
+registry's own rule — *a heading belongs to exactly ONE section* — then found a
+**pre-existing** collision that had nothing to do with this work:
+`Projection Assumptions` was an alias of both `assumptions` and `tenYear`. The
+`assumptions` entry comes first, so it has always won and `tenYear` silently
+lost it; removing the duplicate changes no resolution, asserted over all 251
+aliases.
+
+### The rule
+
+**Where a document carries two sections that resolve to one section the
+platform composes WHOLE, the copy under the canonical label is the composed one
+and the other is a reproduction.** The reproduction goes.
+
+It is `dedupeRegisterTables`' rule for a table — *the register's copy is the
+one that stands; it is the retrieval, every other copy is a reproduction* —
+applied to a section, and stated the same way for the same reason: the two
+disagreed, so keeping the longer or the first would keep a model's expansion
+over the record.
+
+Four bounds:
+
+* **Only the five sections `composeStrategySections` builds whole**, read from
+  `STRATEGY_SECTION_IDS` rather than restated. "Every `computed` section in the
+  registry" would be too wide — `tenYear` is computed too, and its aliases
+  carry sub-heading names (`Property Value Projections`, `Cumulative Cashflow
+  Projections`) a Financial report legitimately writes as sections of their own
+  beside the canonical one, so a wider rule would delete real content.
+* **Exactly one copy must carry the canonical label.** Neither or both, and
+  nothing here can say which is the retrieval.
+* **The canonical copy is kept wherever it sits.** Position is what
+  `dedupeChartDirectives` keys on and it is the wrong key here: the composed
+  section is appended *after* the model's prose, so "keep the first" would keep
+  the reproduction every time.
+* **A no-op on a document carrying each section once**, byte for byte.
+
+It sits directly after `foldStraySections` on the read path, and answers the
+neighbouring question with the opposite rule: that one MERGES because it cannot
+say which copy is sound; this one can, because one of the two is the record's
+own.
+
+### The other two, and where they are reported
+
+`Suitability Profile` and `Holding Strategy` are not duplicates — the Compass
+has no composed counterpart — so the fold correctly leaves them. They are
+`TIER_FRAMEWORK.md`'s defect instead: each report answering the other's
+question. QA knows the tier, so QA is where it is said —
+`section-belongs-to-another-report`, an error, naming the report the section
+belongs to.
+
+It had to be placed **above** `if (!def) continue;`. Every per-section rule in
+the validator sits below that guard, and a section the tier's registry does not
+declare has no `def` — so an undeclared section is invisible to the word cap,
+the heading density and everything else. That is why 608-word caps were
+reported on the Risk Dashboard while a page and a half of foreign prose went
+unmentioned.
+
+### The residual
+
+The two foreign sections survive in documents already stored. The cause is
+closed, so a regeneration will not carry them; deleting a page and a half of a
+client's prose on the read path is a larger call than this evidence supports,
+and it is recorded here rather than taken quietly.
+
+## 17. The Method page printed a different grade from the cover
+
+Measured on the three delivered Compass PDFs of 20 Sep 2026. The 97 Poole Road
+document states its composite **four times** — cover, verdict page, risk page
+and the page-4 assessment table — and each says **54**. Page 38 says:
+
+> **Composite score 51.** The contributions come to 50.95, and the engine
+> rounds once, on that sum.
+
+directly above the line:
+
+> Calculated by this platform's investment scoring service. **No figure in this
+> table is re-derived by this report; the arithmetic above restates the
+> engine's own.**
+
+It was re-derived, and the sentence that says otherwise is the one the whole
+section rests on.
+
+### Two weightings, not one quantity at two precisions
+
+`scoreAssessmentReading` computed `adjustedWeight` as `nominalWeight ÷ Σ
+nominal(measured)` under a comment describing the row's stored figure as "this
+rounded to a whole percent". That premise is wrong:
+
+| | growth | location | yield | demand |
+|---|---|---|---|---|
+| nominal (`COMPOSITE_WEIGHTS`) | 40% | 25% | 15% | 15% |
+| reconstruction (÷ .95) | 42% | 26% | 16% | 16% |
+| **what the record holds** | **47%** | **30%** | **18%** | **5%** |
+
+The engine renormalises the **evidence** weights —
+`proportionalWeighting.effectiveWeights`, nominal scaled by how much of each
+dimension's own method actually ran — and writes `Math.round(effectiveWeight ×
+100)`. Demand scored on a fraction of its method, so it carried 5% of the grade
+against a 15% nominal. The reconstruction is coverage-blind and describes a
+grade nobody issued.
+
+Both tables were internally consistent, which is why neither looked wrong on
+its own: 56×.47 + 74×.30 + 23×.18 + 27×.05 = 54.01, and 56×.42 + 74×.26 +
+23×.16 + 27×.16 = 50.95.
+
+### `storedTotal` was computed here and read by nothing
+
+The field that would have caught it — `totalScore` off the row, beside the
+recomputation — was on the interface, assigned in the return, and had **zero
+consumers**. So did `assessmentPrecisionNote`, the exported sentence explaining
+the arithmetic: `composeScorecard` wrote its own copy, so the one place this
+was stated was not the one a reader saw. Both are live now.
+
+### The rule, and why it is not simply "read the record"
+
+**The composite is the record's own figure.** The reconstruction survives only
+for a row that holds no total — and never overrides the publication policy, so
+a row the policy withholds an overall for still gets none whatever `totalScore`
+holds.
+
+**The weights are whichever of the two describes this grade.** The record
+stores whole percentages and the engine's exact fractions are not persisted, so
+reading the record always costs precision. Where the stored percentages *round
+to* the reconstruction, the two are one weighting and the reconstruction
+expresses it better — 18 Annabelle Crescent stores 57/21/21 against
+57.14/21.43/21.43, and the exact fractions reproduce the stored total to the
+decimal (39.71 → 40) where the rounded ones do not (39.48 → 39). Where they do
+**not** round to it, the engine discounted for coverage and the record's own
+figures stand.
+
+Measured over three real records, the printed column now reaches the printed
+total in every case: Annabelle 39.71 → 40, Pallas 62.86 → 63, Poole 54.01 → 54.
+
+**And a rounding is never asserted where it does not happen.** `contributionsFoot`
+is a property of the reading, and where the record's whole percentages cannot
+reproduce its total the sentence says to read the column as the shape of the
+result rather than as its arithmetic. A document that prints "the contributions
+come to X" beside a different Y is asking a reader to distrust both.
+
+## 18. "Five dimensions, weighted", over three
+
+The same page-4 table, two smaller defects, both in the master.
+
+**The heading promised five.** It drew **three** rows on 9 Hollow Street and
+**four** on 1 Crestview Avenue and 97 Poole Road. `reportBindingProjection`
+publishes nothing bindable for a dimension the engine did not score — an
+absence is omitted, never worded (§8 of `RUNTIME_CONSOLIDATION.md`) — so the row
+count is the count of what was measured, and a heading promising five
+contradicts the table under it on every report that could not score one. It
+reads **"Weighted across what was measured"**, which is true at three, four or
+five.
+
+**The weight column was unlabelled.** Its header was `Weight` and its figure is
+the ADJUSTED weight, so Poole printed `Demand 27 · 5%` where the published
+method weights demand at 15%, with nothing on the page to tell the two apart —
+and the four-column table that does explain it is thirty pages further on. The
+header is **`Share of grade`** and the standfirst says what the share is.
+
+### What the geometry gate cost, and why that is the gate working
+
+The standfirst wanted three sentences and the page had room for two. At the
+full wording the seed refused three masters (18pt, 14pt and 1pt past the
+footer); one sentence shorter it refused `le-03` by 7pt; the wording shipped is
+the longest that clears all fifty. Isolating it took reverting the heading and
+the column header in turn and watching the overrun stay at exactly 7pt — the
+standfirst was the only lever, and a baseline run on the unmodified source
+proved the overrun was mine rather than pre-existing.
+
+The full explanation of *why* a dimension can carry less than its original
+weight lives where there is room for it: the Method section's four-column
+table, which since §17 prints the same weights this page does.
+
+Shipped as seed **v18** plus the active-master refresh
+(`20261209000000` / `20261209010000`), after checking that `20261208000000` was
+already in the applied migration list — 990 of them — which is the one-query
+check `buildSeedCatalogue.ts` asks for before it is edited.
+
+## 19. Why only three dimensions scored, and what a fifth would be worth
+
+The question behind this section is the owner's: *can we do better and reach a
+higher score?* The measured answer is that two of the three reasons a dimension
+went unscored were defects of ours, one was not, and **completing the
+dimensions is as likely to lower a grade as to raise it.**
+
+| | 9 Hollow Street | 1 Crestview Avenue | 97 Poole Road |
+|---|---|---|---|
+| scored | 3 of 5 | 4 of 5 | 4 of 5 |
+| missing | Demand, Risk | Risk | Risk |
+
+### Demand — ours, and fixed at the cause
+
+Hollow's remedy read *"Domain days-on-market, sales and listing counts for the
+suburb, **or the ABS population series for the property's SA2**."* The same
+document cites that series **three times** — Kangaroo Flat – Golden Square,
+20,938 to 21,369 between 2020 and 2025, on pages 7, 8 and 10. It was held, and
+acquiring it again would have restored nothing: `populationDriver` carries 0.15
+and `DEMAND_PRIMARY` exists precisely so a driver cannot carry a dimension
+alone. A remedy may never name as missing something the platform already reads
+— `riskRemedyFor`'s rule, applied here.
+
+The real reason is narrower and it is a loader defect. `scoreTransactionVolume`
+needs **four periods carrying a sales count** to measure a quarter against this
+market's own trailing rate. NSW and QLD publish a count on every row of their
+sheets; **Victoria and South Australia publish one** — the latest quarter's —
+so their parsers emit `salesCount: null` on every other row. The upsert sent
+`sales_count` for every record, and PostgREST writes `ON CONFLICT DO UPDATE SET`
+for each column a payload names, so **every daily run rewrote every historical
+Victorian and South Australian count back to null.**
+
+Those two states could therefore hold at most ONE count at any moment, and
+transaction volume — the only primary demand measure this deployment is
+entitled to, the other three being vendor feeds — was **structurally
+unmeasurable for every property in Victoria and South Australia.** That is not
+a fact about Bendigo. A record carrying no count is now written without the
+column, which leaves what is stored standing; the two shapes cannot share a
+batch, so they are partitioned.
+
+It accumulates one quarter per quarter, so Victoria reaches four some months
+out. The route to it sooner is named rather than built: the Wayback captures
+`waybackMirror.pure.ts` already ranks are each a workbook printing ITS OWN
+latest quarter's count, so walking back four captures reconstructs the series
+today — at one heavy workbook per invocation, which is the bound five DCJ
+workbooks in one call already found.
+
+### Risk — not ours, and worth ±1 point
+
+`propertyRiskSchema.pure.ts` records this at length and its own header warns
+against exactly the thing the question invites: *"Do not manufacture Risk
+merely because its nominal composite weight is 5%."*
+
+An established house's schema offers `site_hazard_exposure` and
+`planning_constraints` — which are retrieved, and are ONE category (`site`),
+because both describe the same site — and `condition_and_maintenance`, which
+this deployment does not hold at all. `MINIMUM_INDEPENDENT_CATEGORIES` is 2.
+Every route to a fifth scored dimension therefore runs through a condition
+record.
+
+And the arithmetic is worth stating, because it is the answer to *would it
+help*: Risk's nominal weight is **5%**. On Hollow's composite of 65, a Risk
+score of 50 gives 64 and a score of 80 gives 66. **±1 point.**
+
+### What completing Demand would actually do
+
+On Hollow, with Demand scored at the 27 its two New South Wales siblings
+recorded, the renormalised composite is **59** against today's 65 — six points
+and a grade band **down**. Demand would have to score about 65 to hold the
+grade. A dimension is not worth points; it is worth meaning. Completing them
+makes the grade describe more of the property, and which way the number moves
+is the evidence's business.
+
+### Where the score IS being suppressed, measured
+
+Hollow's **Location scored 49** against Crestview's 69 and Poole's 74, and its
+recorded evidence includes *"114 minutes to the CBD"*. Golden Square is a
+suburb of **Bendigo**; the CBD measured to is **Melbourne**, because
+`resolveCbdDestination` returns the state capital. `COMMUTE_ANCHORS` ends at
+`[110, 0]`, so that reading scores **0 of 100** on a component of Location —
+while the same document's prose says the property has *"practical access to
+employment, retail and services in Bendigo CBD"* and *"proximity to Bendigo's
+employment base"*.
+
+This is not a new discovery: `cbdDestination.pure.ts` names it in its own
+header — *"whether the state capital is the right destination for a given
+property at all. For a Moranbah or a Gympie it plainly is not, and choosing an
+appropriate centre is its own piece of work"* — and
+`locationProvenanceMatrix.pure.ts` already carries `wrong_destination` as a
+tracked state.
+
+**It is the largest legitimate lever on the grade of a regional property**, and
+it is deliberately not taken here. Choosing the right centre needs a published
+register of urban centres; re-anchoring `COMMUTE_ANCHORS` to make a number
+larger would be changing a calibrated scale to raise a score, which is the one
+thing this programme must not do. The stored commute does not even name its
+destination today (`{ durationMinutes, distanceKm, mode }` — the `capital` is
+in hand at the call site and discarded), so the first step is to record which
+city was measured to, and no field is added here for want of anything to
+populate it.
+
+## 20. A commute measured to the wrong city, and scored as access
+
+§19 named this as the largest legitimate lever on a regional property's grade
+and deliberately left it. This is it, taken.
+
+Golden Square is a suburb of **Bendigo** — a city of about 100,000 with its own
+CBD, hospital, university campus and employment base. The 9 Hollow Street
+Compass says so twice in its own prose: *"practical access to employment,
+retail and services in Bendigo CBD"* and *"proximity to Bendigo's employment
+base, amenities and services"*. Its Location dimension's recorded evidence
+reads:
+
+```
+114 minutes to the CBD
+```
+
+`resolveCbdDestination` returns the state capital, so the CBD is **Melbourne**.
+`COMMUTE_ANCHORS` ends at `[110, 0]`, so that reading scored **0 of 100** on a
+component of Location, and Location came out at **49** against 69 and 74 for
+the two metropolitan properties beside it.
+
+A 114-minute drive to Melbourne is a true fact and a real distance. It is not a
+reading about this property's access to anything, because Melbourne is not this
+property's market. `cbdDestination.pure.ts` has named the gap in its own header
+since ME-5: *"whether the state capital is the right destination for a given
+property at all. For a Moranbah or a Gympie it plainly is not, and choosing an
+appropriate centre is its own piece of work."*
+
+### The register was already half-built
+
+The ABS publishes the answer: **Significant Urban Areas**, the ASGS's own
+classification of Australia's urban centres of 10,000 people and over. And
+`resolveOneReportGeography.ts` has queried the `SUA` layer at `geo.abs.gov.au`
+since ME-5 — the platform already records which urban centre every resolved
+coordinate is in. What it has never held is a **point** for that centre, which
+is what a commute needs. `urban_centre_register` is that point, and
+`urban-centre-register-ingest` loads it from the same service, the same release
+and the same query shape that is already in production.
+
+### Two rules, and the second works before the register has run
+
+**A commute is measured to the property's own urban centre where the register
+names one.** Golden Square is measured to Bendigo.
+
+**A commute to somewhere that is NOT this property's urban centre is not
+scored.** It is still measured, recorded and reported — it is true — and it
+carries `ownCentre: 'no'`, which `scoreLocation` excludes rather than rating as
+zero. That is §9's rule again: rating the 0 states a conclusion about the
+property from a measurement of something else. The remaining components
+renormalise over what actually measured this property, which is what the module
+already does for every component it does not have.
+
+The second rule needs no register: whether the property's SUA is the capital's
+is answered by the SUA **name**. So a deployment whose ingest has never run
+stops scoring the wrong measurement immediately, and starts measuring the right
+one when the register lands. `CLONE_PROVISIONING_GAPS.md`'s rule — a feature
+the migrations have not reached degrades rather than failing — and the reason
+nothing is seeded: the rows a migration INSERTs do not travel, so a seeded
+register would be present on the prime and absent everywhere else while
+looking, from the ledger, exactly like it was there.
+
+Measured on the module. The first version of this paragraph quoted three
+numbers from an unnamed input set and read as though they were Hollow's —
+§5's lesson committed again — so the inputs are named here and chosen to
+**reproduce the delivered figure**: walk score 96, seven schools within 3 km,
+which score 49 with the commute rated, exactly as the document printed. Held
+fixed across all three readings:
+
+| the commute | destination | `ownCentre` | Location |
+| --- | --- | --- | ---: |
+| 114 min, rated (today) | Melbourne | `unknown` | **49** |
+| 114 min, excluded (no register yet) | Melbourne | `no` | **81** |
+| 6 min, measured (register names Bendigo) | Bendigo | `yes` | **89** |
+
+The middle row is what a deployment gets before any ingest has run, and it is
+most of the correction: excluding the commute renormalises walkability and
+schools from 0.35/0.25 onto 0.583/0.417, so the dimension is scored on what
+was actually measured about this location rather than being dragged to the
+floor by a journey nobody living here makes. What this does to the composite
+is not computed here — Location is 0.25 nominal and the other four dimensions
+are unchanged, so it is a real lift and not a stated one.
+
+### Four bounds
+
+* **`ownCentre` is three-state, never a boolean.** Where no SUA resolved the
+  answer is `unknown`, and an unknown is scored exactly as it is today. A rule
+  that cannot tell a Bendigo property from a Sydney one must not act as though
+  it could — and every enrichment written before this carries none.
+* **The capital match is state-scoped and on a word boundary.** The ACT's SUA
+  is `Canberra - Queanbeyan`, so equality would send every ACT property down
+  the not-my-centre path and discard a correct reading. `Perth` is a Tasmanian
+  locality as well as Western Australia's capital; the comparison is only ever
+  made against the property's own state's capital, so the two never meet.
+* **A point states how it was derived.** A capital's CBD is a placed
+  coordinate; an SUA's is the centre of a published polygon, whose error is
+  bounded by the size of the urban area it describes.
+* **Every figure names its basis.** The component's sentence reads *"6 minutes
+  to Bendigo"* rather than *"to the CBD"*: a commute whose destination is not
+  named is a number no reader can check, which is how this survived unnoticed.
+
+### The loader repeats every rule the other two registers learned
+
+`load-sanctions-lists.mjs` and `load-pep-officeholders.mjs` paid for each of
+these: refuse a zero-entry parse (a service answering 200 with nothing is a
+failure, not an empty Australia); treat a **shrink** as a truncated download
+(the ABS publishes about a hundred SUAs and that number does not halve); an
+error body under HTTP 200 is a failure, which is how ArcGIS reports one; and
+name the key in the prune's own filter rather than relying on a returning
+projection.
+
+Two more are this register's own. **A coordinate is judged against the
+continent** before it is written — `components=country:AU` restricting the
+ANSWER rather than the SEARCH is how a cluster of properties ended up in the
+desert. And **it never half-writes**: a load that fails its bounds writes no
+centre at all, because a register missing two thirds of Australia is worse than
+one nobody has loaded — the second says so and the first does not.
+
+A bug the spec found while being written, worth keeping: `Number('')` is **0**,
+which is finite, so a feature carrying no point parsed as `0, 0` and only the
+continent bounds stopped it being written as a centre in the Atlantic. A parser
+must not depend on a later rule to catch its own coercion.
+
+### BLOCKED when written, closed the same day — and every assumption in it was wrong
+
+**The ingest has not been run, and could not be from here.** This session's
+egress answers `403` at the CONNECT tunnel for `geo.abs.gov.au`, so the live
+query shape — specifically whether that ArcGIS release honours
+`returnCentroid=true`, and how many features it returns in one response — is
+**unverified against the service**. The parser accepts the feature's own
+geometry where no centroid is supplied, and refuses anything it cannot read
+rather than guessing, but that is a defence and not a measurement.
+
+What IS verified: the endpoint, release, layer, field names and response shape
+are the ones `resolveOneReportGeography.ts` has used in production since ME-5,
+and the parser, the refusals and the resolution are exercised by
+`aCommuteToTheWrongCity.spec.ts`. The first real load must be read before the
+register is trusted — and until it succeeds, every property keeps today's
+measurement to the capital, correctly unscored where that is not its centre.
+
+### The hedge that could not be held
+
+That block was written on 20 Sep 2026 and closed the same day, by running the
+loader from the one egress that can reach the ABS: the deployment's own. What
+the first production call returned is worth more than the register it failed
+to write.
+
+**HTTP 546 — `WORKER_RESOURCE_LIMIT` — with not one line in `function_logs`.**
+The worker was killed before it could print, so the only evidence the call
+left anywhere was a status code in `function_edge_logs`. The cause was in the
+query and it was a HEDGE: `returnGeometry: 'true'` sat beside
+`returnCentroid: 'true'`, on the reasoning that the parser accepts a feature's
+own geometry where the service supplies no centroid. That reasoning is
+correct, and what it actually asked the ABS for was every Significant Urban
+Area's full-resolution BOUNDARY. A centroid is two numbers; an urban-area
+polygon is tens of thousands of vertices, and there are about a hundred of
+them. **Insuring against a missing field by requesting a second, unbounded one
+is how a two-kilobyte answer becomes one no edge function can hold.** The
+absence of a centroid is now something the probe MEASURES.
+
+**And the probe committed the fault it existed to find.** Its whole purpose
+was to learn the response shape safely, and it learned it by making the one
+unbounded call and dying with it — so the instrument failed in exactly the way
+the thing it measured failed, and told us nothing the edge status had not.
+It asks two bounded questions now: `returnCountOnly=true`, which answers in a
+couple of hundred bytes whatever the release holds, and then five features.
+Neither can reach the ceiling. **An instrument that can fail the way its
+subject fails is not an instrument** — the same shape as a fixture shorter
+than the product (§5), one layer further out.
+
+Two things this cost nothing to learn, because of where the guards already
+were: no register row and no ledger row was written by any of it, and no
+reader changed behaviour, because an unloaded register is the state every
+deployment was already in and `ownCentre` was built to make correct.
+
+### What the layer actually publishes
+
+With the instrument fixed, the probe answered — and **both remaining
+assumptions were false**.
+
+**`returnCentroid=true` is ignored by this layer.** Features came back
+carrying `attributes` and nothing else; `advancedQueryCapabilities` does not
+advertise `supportsReturningGeometryCentroid`; and the published fields are
+`objectid, shape, sua_code_2021, sua_name_2021, aus_code_2021, aus_name_2021,
+area_albers_sqkm, asgs_loci_uri_2021` — **no latitude, no longitude, no point
+of any kind**. The service will not do this arithmetic and no attribute
+carries the answer, so the register derives the point from the publisher's own
+generalised boundary (`pointFromRings`: the largest ring by shoelace area, then
+that ring's area-weighted centroid) and stores it as
+**`sua_boundary_centroid`** rather than `sua_centroid` — the second would claim
+a provenance that does not exist.
+
+**The layer's first feature is `1000` / "Not in any Significant Urban Area
+(NSW)".** The classification is exhaustive, so one pseudo-area per state
+carries every square kilometre that is *not* an urban centre, published beside
+the real ones. Writing them would have been the worst failure available here,
+because nothing downstream would look wrong: a genuinely rural property
+resolves to exactly that pseudo-area, `findUrbanCentre` would match it,
+`resolveCommuteDestination` would answer `ownCentre: 'yes'`, and `scoreLocation`
+would then SCORE a commute to the centre of "everywhere in New South Wales that
+is not a town". **The capital is wrong in a way a reader can see; this would
+have been wrong in a way nobody could.** `isNotAnUrbanCentre` refuses on either
+of two independent tests — the ABS's own numbering (`\d000`) and the published
+name — because either alone is a single point of failure.
+
+### The load, and what it is asserted by
+
+| | |
+| --- | ---: |
+| Features the release declares | **112** |
+| Refused, `not_an_urban_centre` | 9 |
+| Refused, `no_state_in_code` (Other Territories) | 1 |
+| **Centres written** | **102** |
+
+NSW 36 · VIC 21 · QLD 19 · WA 10 · SA 8 · TAS 5 · NT 2 · ACT 1. Bendigo is
+`2004`, −36.7458 / 144.2879 — about 1.4 km from the town centre, which is the
+accuracy an urban-area centroid is worth and the reason the basis is named.
+
+Three things carry it. **The boundary is fetched in pages of ten and the
+record limit is not why** — `maxRecordCount` is 2000 against 112 features, so
+the service would answer in one response, which is precisely the request that
+died; paging is about never holding more than a few boundaries at once.
+**`exceededTransferLimit` is TRUE on every page of a paged walk**, meaning
+"there are more", so it is stripped per page while the parser's refusal stays
+meaningful for the unpaged callers it also serves. And **completeness is
+asserted by effect**: the count is asked first, in its own request, and the
+walk must account for every declared feature, kept or refused for a named
+reason — 102 + 9 + 1 = 112. A short walk is a truncated download by another
+route, and this load PRUNES.
+
+**And the register is read back rather than believed.** `stage: 'status'`
+reports what the table holds, including whether any row is a state's
+"everywhere else" bucket — asserted against what was WRITTEN rather than
+against the parser that was supposed to refuse it. It answers
+`pseudoAreasHeld: []`. A loader that can only be believed by its own success
+message is a loader asserted by configuration, which is the mistake the
+retention purge, the verification self-test and the `manual_stats` CHECK
+constraint each made separately.
+
+It refreshes **monthly**, not daily. The cadence of a register should be the
+cadence of its publisher, and the ASGS release is a constant in code that the
+ABS reissues about every five years — so polling buys nothing a code change did
+not already require. What a schedule buys is the thing a migration cannot:
+**clone self-healing**, because the rows a migration INSERTs do not travel.
+
+### Measured on the property, end to end
+
+The register being loaded changes nothing on its own, and the first attempt to
+verify it found out why. **`assessEnrichmentReuse` has no time-based shelf
+life** — deliberately — so report 5f7fb137's stored enrichment (acquired
+11:01:46 on 20 Sep) passed every gate it has: subject-matched, `places:
+complete`, `commute: measured`, every reading present. A regeneration would
+have reused it, kept the 114-minute drive to Melbourne, and printed 49 again
+with the fix deployed and the register full.
+
+The gap is that **a stamp vouches for what was MEASURED and not for what the
+measurement MEANT**. Until the register existed every commute went to the
+capital and nothing recorded that, because there was nothing to choose; an
+absent destination now reads as `unknown`, which `scoreLocation` RATES.
+`commute_destination_unrecorded` refuses such a packet — `readings_missing`'s
+rule one step on, refusing rather than repairing, taking effect on the next
+generation with no stored byte rewritten.
+
+With that in place the regeneration of 20 Sep 16:01 measured it:
+
+| | before | after |
+| --- | --- | --- |
+| Destination | Melbourne | **Bendigo** |
+| Commute | 114 min · 148.5 km | **8 min · 4.9 km** |
+| `ownCentre` | not recorded | **`yes`** |
+| Location dimension | 49 | — |
+| **Composite** | **B+ · 65** | **A · 78** |
+
+`📍 Location verification: [walkScore, commuteTimeCBD, schoolsNearby]` — all
+three inputs verified from the run's own acquisition stamp. Growth, Location
+and Yield measured; Demand and Risk still gapped for the reasons §19 records,
+neither of which this touches.
+
+Two things the run exposed that are not this work's. **The cron watchdog is
+being refused**: `resume-investment-reports`, `dispatcher` and
+`conversation-sync-cron` all answer `internal_timestamp_skew`, so a report
+that hands off on its wall-clock budget — which every Compass does, four
+times — is resumed by nothing but a browser. It is the shape of the fault
+`SCREENING_EXECUTION.md` records, where 17,174 scheduled invocations were
+refused and no worker ran at all. And **the reader put back an overstatement
+the register had removed**: the first live reading recorded
+`destinationPointBasis: "sua_centroid"` from a row saying
+`sua_boundary_centroid`, because the read coerced anything that was not the
+capital into it. `readPointBasis` carries the register's own word now and
+drops a row whose basis this build does not recognise.

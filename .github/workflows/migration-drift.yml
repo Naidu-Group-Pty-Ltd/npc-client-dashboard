@@ -1,0 +1,91 @@
+name: Migration drift
+
+# Which merged migrations have not reached the database.
+#
+# ## The gap this closes
+#
+# Merging to `main` deploys Edge Functions. It does not apply migrations —
+# applying is one file per dispatch of "Apply a migration", by human judgement,
+# and deliberately so: `db push` trusts a ledger that under-reports here by 832
+# of 1,008 files, and replaying that would re-run data mutations where a second
+# application is not a no-op.
+#
+# Nothing checked that a merged migration had actually landed. Measured 21 Sep
+# 2026: seed v18 renames the assessment table's heading, it merged, it never
+# ran, and every report kept printing "Five dimensions, weighted" over a table
+# of three rows with nothing anywhere saying why. This is the thing that says
+# so.
+#
+# ## Why it does not just diff the ledger
+#
+# Because that answer is 832 rows of noise. The report asserts by EFFECT — the
+# rule the retention purge, the verification self-test and the urban-centre
+# register already answer to — asking whether the objects a file creates exist,
+# and, where it creates none, whether the `@effect` probe it declares about
+# itself is satisfied. See `scripts/ops/migrationDrift.pure.mjs`.
+#
+# It reports; it never applies. Adding an apply step here would reintroduce
+# exactly the inference "Apply a migration" refuses to make.
+
+on:
+  schedule:
+    # 19:10 UTC daily — after the working day in Australia, so a drift
+    # introduced by the day's merges is named before the next one starts.
+    - cron: '10 19 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-drift
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Require a database route
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "${DB_URL:-}" ]; then
+            echo '::error title=No credential::SUPABASE_DB_URL is not set. Mission Control distributes it to every provisioned clone; add it in Settings → Secrets → Actions.'
+            exit 1
+          fi
+
+      - name: Collect what the database holds
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: node .github/scripts/migration-drift-facts.mjs > /tmp/facts.json
+
+      - name: Report drift
+        id: drift
+        run: |
+          set +e
+          node scripts/ops/migration-drift.mjs --facts /tmp/facts.json | tee /tmp/drift.txt
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          set -e
+
+      - name: Summarise
+        if: always()
+        run: |
+          {
+            echo '### Migration drift'
+            echo
+            echo '```'
+            cat /tmp/drift.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail when something merged and never landed
+        if: steps.drift.outputs.status != '0'
+        run: |
+          echo '::error title=Unapplied migrations::A migration is in `main` and not in the database. Apply it with the "Apply a migration" workflow, oldest first.'
+          exit 1

@@ -226,6 +226,22 @@ export interface ProductionLocationInput {
     count?: number | null;
     distance?: number | null;
   }> | null;
+  /**
+   * Where the commute was measured TO, as the enrichment recorded it.
+   *
+   * Carried on the SAME admission as the commute itself — it describes that
+   * reading and nothing else, so admitting the minutes while refusing the
+   * destination would score a number whose basis had been withheld.
+   *
+   * An enrichment written before the destination was recorded carries none,
+   * and `scoreLocation` then behaves exactly as it did. See
+   * `urbanCentre.pure.ts` for why a commute to somewhere that is not this
+   * property's urban centre is not scored.
+   */
+  commuteDestination?: {
+    label?: string | null;
+    ownCentre?: 'yes' | 'no' | 'unknown' | null;
+  } | null;
 }
 
 /** The market evidence a caller assembled from its adapters. */
@@ -534,6 +550,10 @@ export function assembleEngineInput(input: ProductionScoringInput): ShadowScoreI
     locationInputs: {
       walkScore: admittedLocation.has('walkScore') ? loc.walkScore : null,
       commuteTimeCBD: admittedLocation.has('commuteTimeCBD') ? loc.commuteTimeCBD : null,
+      // The destination rides its own reading's admission: a commute that was
+      // refused has no basis to state, and one that was admitted must state it.
+      commuteDestination: admittedLocation.has('commuteTimeCBD')
+        ? (loc.commuteDestination ?? null) : null,
       schoolsNearby: admittedLocation.has('schoolsNearby') ? loc.schoolsNearby : null,
       // Same enrichment, same acquisition stamp, same admission as the walk
       // score it replaces. See `ProductionLocationInput.amenities`.
@@ -595,7 +615,31 @@ export function describeGaps(
         break;
       case 'demand':
         detail = `No demand reading for ${subjectLabel(input.subject)} (${providerClause(input.market, input.evidenceWithheldReason)}).`;
-        remedy = 'Domain days-on-market, sales and listing counts for the suburb, or the ABS population series for the property\'s SA2.';
+        /*
+         * A remedy may never name something the platform already reads.
+         *
+         * This said "…or the ABS population series for the property's SA2",
+         * and the 9 Hollow Street Compass of 20 Sep 2026 printed that remedy
+         * on a document that cites the very series THREE times — Kangaroo
+         * Flat – Golden Square, 20,938 to 21,369 between 2020 and 2025, on
+         * pages 7, 8 and 10. It was held, and acquiring it again would have
+         * restored nothing: `populationDriver` is a DRIVER, it carries 0.15,
+         * and `DEMAND_PRIMARY` exists precisely so a driver cannot carry the
+         * dimension alone. The rule is `riskRemedyFor`'s, which derives what
+         * is outstanding from the schema so a remedy can never name as
+         * missing something the platform already holds.
+         *
+         * What is actually outstanding is a PRIMARY measure. Three of the
+         * four come from vendor feeds this deployment is not entitled to; the
+         * fourth is the open sales register's own transaction count, which
+         * needs four periods carrying one to be measured against this
+         * market's trailing rate.
+         */
+        remedy = 'A PRIMARY demand measure — the population series alone is a driver and cannot carry '
+          + 'the dimension. Either four periods of the open sales register\'s own transaction counts '
+          + 'for this market (market-sales-ingest; NSW and QLD carry one on every row, VIC and SA one '
+          + 'per load), or Domain days-on-market, vendor discount, auction clearance or listing counts '
+          + 'for the suburb.';
         break;
       case 'yield':
         detail = input.property.weeklyRent === null || input.property.weeklyRent <= 0

@@ -2806,6 +2806,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "urban-centre-register-ingest": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "reporting-engine-program",
+      "reviewed": true,
+      "notes": "ABS Significant Urban Area ingest. Gateway JWT on; inside, verifyAuth over the internal edge secret or the service role, as the monthly pg_cron wrapper sends. Reads the public ABS ArcGIS layer; writes only urban_centre_register and its urban_centre_syncs ledger. The probe and status stages write nothing."
+    },
     "user-guide-assistant": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",

@@ -113,6 +113,11 @@ import {
   readStrategyRecord,
   strategySectionRules,
 } from '../_shared/reports/investment/strategyPositions.pure.ts';
+import {
+  headingSequence,
+  placeBlocksByDeclaredOrder,
+  type PlaceableBlock,
+} from '../_shared/reports/investment/documentPlacement.pure.ts';
 import { ENRICHMENT_STAMP } from '../_shared/reports/location/locationEnrichmentReuse.pure.ts';
 import { transportCountReading } from '../_shared/transportReading.pure.ts';
 import { readSalesRegister } from '../_shared/reports/market/salesRegisterRead.ts';
@@ -7880,22 +7885,51 @@ YOUR DEDICATED PROPERTY PARTNER
      * That is the deliberate order — the alternative is letting a word cap trim
      * a row of evidence — and the block is a fixed ~3.7 KB, about one page.
      */
+    /*
+     * COMPOSED LATE, PLACED BY ORDER.
+     *
+     * These blocks used to be `reportContent += ...`, which put them after
+     * the order-90 Appendix and Disclaimer. Measured on the 21 Sep 2026
+     * Compass for 9 Hollow Street: the document closed on Final
+     * Recommendation and the Disclaimer, then ran on for four more
+     * sections. Every model-authored section was in its declared position;
+     * only the appended ones were displaced, and the append displaced them.
+     *
+     * They are still composed HERE, after the post-processor, for the
+     * reasons stated below - that is what stops a word cap trimming a row
+     * of evidence. Only the PLACEMENT changed.
+     */
+    const placeableBlocks: PlaceableBlock[] = [];
+
     if (!isAreaReport) {
-      reportContent += `\n\n---\n\n## Planning controls and development registers\n\n`
+      let registerBlock = `## Planning controls and development registers\n\n`
         + `### Planning controls retrieved for this property\n\n${planningControlsTable}\n\n`
         + `### Infrastructure and development retrieved for this property\n\n${infrastructureTable}\n`;
       // Appended verbatim for the reason the two tables above are: asking a
       // model to reproduce a table is how a table comes back paraphrased, and
       // every date and figure here is one an authority published.
       if (publishedProjectBlock) {
-        reportContent += `\n### Major public projects near this property\n\n`
+        registerBlock += `\n### Major public projects near this property\n\n`
           + `${publishedProjectBlock}\n`
           + `**What this register covers.** ${PUBLISHED_PROJECT_COVERAGE.join(' ')}\n`;
       }
       console.log(
-        `📋 Appended retrieved planning + infrastructure evidence `
+        `📋 Composed retrieved planning + infrastructure evidence `
         + `(${planningControlsTable.length + infrastructureTable.length + publishedProjectBlock.length} chars)`,
       );
+      placeableBlocks.push({
+        heading: 'Planning controls and development registers',
+        markdown: registerBlock,
+        /*
+         * The registry declares no order for this one - it is retrieved
+         * evidence under a heading of its own rather than a section the
+         * registry owns - so the order is stated here. 89 puts it last
+         * among the content, immediately before `provenance` at 90:
+         * after the recommendation that rests on it, before the
+         * disclaimer that closes the document.
+         */
+        order: 89,
+      });
     }
 
     /*
@@ -7912,10 +7946,24 @@ YOUR DEDICATED PROPERTY PARTNER
      * state a land size, a zone or a lending ratio about.
      */
     if (!isAreaReport && strategySectionsMarkdown.trim()) {
-      reportContent += `\n\n---\n\n${strategySectionsMarkdown}\n`;
+      for (const composed of compassStrategySections) {
+        if (String(composed.markdown ?? '').trim()) {
+          placeableBlocks.push({ heading: composed.heading, markdown: composed.markdown });
+        }
+      }
       console.log(
-        `🧭 Appended composed strategy sections (${strategySectionsMarkdown.length} chars, `
+        `🧭 Composed strategy sections (${strategySectionsMarkdown.length} chars, `
         + `${compassStrategySections.length} sections)`,
+      );
+    }
+
+    if (placeableBlocks.length) {
+      const before = headingSequence(reportContent).length;
+      reportContent = placeBlocksByDeclaredOrder(reportContent, placeableBlocks, 'compass');
+      const after = headingSequence(reportContent);
+      console.log(
+        `Placed ${placeableBlocks.length} composed block(s) by declared order `
+        + `(${before} -> ${after.length} sections; closes on ${after[after.length - 1] ?? 'nothing'})`,
       );
     }
 

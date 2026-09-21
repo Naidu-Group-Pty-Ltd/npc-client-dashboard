@@ -620,3 +620,57 @@ describe('a waterfall label fits the bar it belongs to', () => {
     expect(drawn.some((t) => t.endsWith('…'))).toBe(true);
   });
 });
+
+/**
+ * A heatmap's title fits the grid it belongs to.
+ *
+ * Page 26 of the Investment Compass delivered for 9 Hollow Street, Golden
+ * Square on 21 Sep 2026 printed the title below cut mid-word, over a 3×2 grid
+ * whose own labels are six and thirteen characters. `w` is computed from the
+ * row labels, the column labels and the cell text; the title was drawn as one
+ * unmeasured `<text>` and ran off the viewBox.
+ */
+describe('a heatmap title is fitted, never clipped', () => {
+  const GRID = [[8.6, 5.6], [1.5, 1.9], [8.5, 3.8]];
+  const LABELS = { rowLabels: ['1-year', '3-year', '5-year'], colLabels: ['Golden Square', 'Victoria'] };
+  const DELIVERED = 'House price growth · Golden Square vs Victoria (Valuer-General, 2025)';
+
+  const textNodes = (svg: string) => [...svg.matchAll(/<text[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
+  const viewBox = (svg: string) => /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg)!.slice(1).map(Number);
+
+  it('sets the delivered title whole, across as many lines as it needs', () => {
+    const svg = renderHeatmap(ctx, GRID, { ...LABELS, title: DELIVERED });
+    const drawn = textNodes(svg);
+    // Every word of the title is on the page…
+    const joined = drawn.slice(0, 2).join(' ');
+    expect(joined.replace(/\s+/g, ' ')).toBe(DELIVERED);
+    // …and nothing anywhere in the drawing is cut.
+    expect(drawn.filter((t) => t.includes('…'))).toEqual([]);
+  });
+
+  it('grows only the header band — the grid keeps its geometry', () => {
+    // §8's rule: increase the component's space before shrinking its text.
+    const long = viewBox(renderHeatmap(ctx, GRID, { ...LABELS, title: DELIVERED }));
+    const short = viewBox(renderHeatmap(ctx, GRID, { ...LABELS, title: 'House price growth' }));
+    expect(long[0]).toBe(short[0]);          // same width: same grid
+    expect(long[1]).toBeGreaterThan(short[1]); // taller: one more title line
+  });
+
+  it('is unchanged for a title that already fitted', () => {
+    // One line in, one line out, at the same y — which is what makes this safe
+    // to adopt for every chart in the corpus that was already right.
+    const svg = renderHeatmap(ctx, GRID, { ...LABELS, title: 'Growth' });
+    expect(textNodes(svg)[0]).toBe('Growth');
+    expect(textNodes(svg).filter((t) => t === 'Growth')).toHaveLength(1);
+  });
+
+  it('still draws no title where none was given', () => {
+    const svg = renderHeatmap(ctx, GRID, LABELS);
+    expect(textNodes(svg)[0]).toBe('Golden Square');
+  });
+
+  it('says a title was cut rather than dropping its tail', () => {
+    const svg = renderHeatmap(ctx, GRID, { ...LABELS, title: 'x '.repeat(400).trim() });
+    expect(textNodes(svg).some((t) => t.endsWith('…'))).toBe(true);
+  });
+});

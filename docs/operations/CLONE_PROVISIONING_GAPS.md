@@ -211,7 +211,15 @@ why the table is empty on every deployment rather than only on the clones.
 `Apply a migration` workflow (`.github/workflows/apply-migration.yml`), which
 applies ONE named file to that repository's own project. It reads
 `vars.SUPABASE_PROJECT_REF` and `secrets.SUPABASE_DB_URL`, so it targets the
-clone and nothing else. Dispatch it once per file, **in version order**:
+clone and nothing else. Where there is no `SUPABASE_DB_URL` it takes the
+Management API route instead, on `secrets.SUPABASE_ACCESS_TOKEN` plus the same
+project ref — **which is the case on the prime**, as
+[`STAGE_C_RECORD.md`](../reports/STAGE_C_RECORD.md) records. `Migration drift`
+(`.github/workflows/migration-drift.yml`) chooses between the same two routes,
+because it reports on what that workflow applied: requiring the pooler string
+alone made it fail its credential check on the prime, four steps before it read
+anything, on the very day it was written. Dispatch it once per file, **in
+version order**:
 
 ```
 20261124000000 … 20261204010000    (17 files, `ls supabase/migrations/`)

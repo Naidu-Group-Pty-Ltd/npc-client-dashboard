@@ -491,3 +491,119 @@ export function dropComposedSectionReproductions(markdown: string): Reproduction
     dropped,
   };
 }
+
+/**
+ * A heading written twice around its own content is one heading.
+ *
+ * ## What pages 24 to 27 of the 9 Hollow Street Compass printed
+ *
+ * ```
+ *   Planning controls & zoning
+ *   The key planning finding is that the property sits in the General
+ *   Residential Zone (GRZ) in the City of Greater Bendigo, with overlays
+ *   checked and none mapped at this exact coordinate …
+ *
+ *   Planning controls & zoning
+ *   • Finding: The property is in GRZ – General Residential Zone, as recorded
+ *     by Vicmap Planning's plan_zone layer for Greater Bendigo …
+ * ```
+ *
+ * The same sub-heading, twice, five lines apart, with nothing but its own
+ * summary paragraph in between. Measured over the whole 39-page document:
+ * **five sub-headings printed twice** — *Planning controls & zoning*,
+ * *Environmental overlays (flood, bushfire, contamination)*, *Crime & personal
+ * safety*, *Local supply & future development pressure* and *Transport
+ * reliance* — which is every risk in the register, each one announced, summed
+ * up, and then announced again before its detail.
+ *
+ * A reader meeting the heading a second time has to decide whether they have
+ * lost their place or whether a new section has started with the same name.
+ * Neither is true: it is one topic, written in two passes.
+ *
+ * ## The rule
+ *
+ * **Where the same heading is written twice with no other heading between
+ * them, the second is a reproduction and the content merges under the
+ * first.** That is `dedupeRegisterTables`' rule applied to a heading, and it
+ * MERGES rather than choosing, because the two bodies are different — a
+ * summary and its evidence — and keeping either alone would delete half the
+ * section. Only the duplicate heading line goes; every word under both stays,
+ * in the order it was written.
+ *
+ * ## Three bounds
+ *
+ * **Another heading between them ends it.** `lastHeading` is the most recent
+ * heading of ANY depth, so a deeper sub-heading intervening means the repeat
+ * opens something structurally new and it is left alone. This is the
+ * conservative side: a heading that should have gone stays, and nothing that
+ * organises a document is ever removed.
+ *
+ * **A distant repeat is not a reproduction.** The measured gap is one
+ * paragraph; the bound is six blocks, which admits every occurrence in the
+ * document that found this and refuses a `## Notes` recurring much later,
+ * where dropping the heading would take away a landmark the reader wanted.
+ *
+ * **A heading inside a fence is not a heading.** The `:::` and ``` regions are
+ * carried whole, for the same reason `toBlocks` carries them whole.
+ *
+ * Byte-identical on a document that announces each section once.
+ */
+export interface MergedHeadingResult {
+  readonly markdown: string;
+  /** The duplicate heading lines that were removed, as written. */
+  readonly merged: readonly string[];
+}
+
+/** The measured gap is one block; six is generous and still local. */
+const MAX_BLOCKS_BETWEEN_TWINS = 6;
+
+const headingTextKey = (line: string): string =>
+  line.replace(/^#{1,6}[ \t]+/, '').replace(/[*_`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+export function mergeAdjacentDuplicateHeadings(markdown: string): MergedHeadingResult {
+  const src = String(markdown ?? '');
+  if (!src.includes('#')) return { markdown: src, merged: [] };
+
+  const lines = src.split('\n');
+  const merged: string[] = [];
+  const drop = new Set<number>();
+  let fence: string | null = null;
+  let last: { depth: number; key: string } | null = null;
+  let blocksSince = 0;
+  let inBlock = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const open = /^\s*(```|:::)/.exec(line);
+    if (fence) {
+      if (new RegExp(`^\\s*${fence}\\s*$`).test(line)) fence = null;
+      continue;
+    }
+    if (open) { fence = open[1]; if (!inBlock) { inBlock = true; blocksSince++; } continue; }
+
+    if (line.trim() === '') { inBlock = false; continue; }
+
+    const depth = headingDepth(line);
+    if (!depth) {
+      if (!inBlock) { inBlock = true; blocksSince++; }
+      continue;
+    }
+
+    inBlock = false;
+    const key = headingTextKey(line);
+    if (last && last.depth === depth && last.key === key && blocksSince <= MAX_BLOCKS_BETWEEN_TWINS) {
+      drop.add(i);
+      merged.push(line.trim());
+      blocksSince = 0;
+      // `last` is deliberately not advanced: a heading written three times
+      // folds onto the first, not onto its own second copy.
+      continue;
+    }
+    last = { depth, key };
+    blocksSince = 0;
+  }
+
+  if (!drop.size) return { markdown: src, merged: [] };
+  const out = lines.filter((_, i) => !drop.has(i)).join('\n');
+  return { markdown: out.replace(/[ \t]*\n(?:[ \t]*\n){2,}/g, '\n\n'), merged };
+}

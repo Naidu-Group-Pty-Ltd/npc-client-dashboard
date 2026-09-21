@@ -1423,7 +1423,7 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
   const rows = buildMonitorRows(rec);
   const lines: string[] = [`## ${heading}`, ''];
   lines.push(
-    'A report is a reading taken on a day. Each row below is a thing that reading depends on, where it is published, '
+    'A report is a reading taken on a day. Each item below is a thing that reading depends on, where it is published, '
     + 'how often it changes, and what a different answer would mean. **Nothing on this platform watches these on '
     + 'your behalf** — each is a check to make, or to ask an adviser to make.',
     '',
@@ -1432,21 +1432,54 @@ export function composeMonitoringPlan(rec: StrategyRecord, heading: string): str
     lines.push('*No register answered for this property, so there is nothing here to re-read.*');
     return lines.join('\n').trimEnd();
   }
-  lines.push(
-    '| What to re-check | Where it is published | How often it changes | As read for this report | What a different answer would mean |',
-    '|---|---|---|---|---|',
-  );
+  /*
+   * One block per dependency, not a five-column table.
+   *
+   * This was a table, and page 36 of the 9 Hollow Street Compass is what a
+   * five-column table does to a fifth column that is a paragraph. Measured on
+   * that page: the four scannable cells run 16 to 65 characters and
+   * `changesIf` runs to 190 — three times the other four together — so in a
+   * fifth of a 510pt measure the header set as
+   *
+   *     What to re-Where it isHow often itAs read for this
+   *     What a different answer would mean
+   *     checkpublishedchangesreport
+   *
+   * with the body cells interleaved the same way. A reader cannot tell which
+   * words belong to which column, which is the whole of what a table is for.
+   *
+   * `foldConstantTableColumns` already holds the neighbouring rule for the
+   * nine-column infrastructure register — a column that says the same thing on
+   * every row is a footnote. This is the other shape: a column that says
+   * something different and long on every row is not a column at all, it is
+   * the explanation the row exists to give. Nothing is dropped — every cell is
+   * printed, in the same order, with the label leading and the prose given the
+   * full measure.
+   *
+   * The two facts a reader scans for stay on one line together, because
+   * "where it is published" and "how often it changes" are what turns the list
+   * into something actionable.
+   */
   for (const r of rows) {
-    lines.push(`| ${r.what} | ${r.register} | ${r.cadence} | ${r.lastRead} | ${r.changesIf} |`);
+    const read = r.lastRead && r.lastRead !== '—'
+      ? ` As read for this report: ${r.lastRead}.`
+      : '';
+    lines.push(
+      `**${r.what}**`,
+      '',
+      `Where it is published: ${r.register}. How often it changes: ${r.cadence}.${read}`,
+      '',
+      r.changesIf,
+      '',
+    );
   }
-  lines.push('');
   /*
    * "Follow the slowest thing on the list" was a cadence rule invented here.
    * The publishers' schedules are facts and are in the table; what to do with
    * them is the reader's decision.
    */
   lines.push(
-    'Each row states how often its publisher republishes. Re-reading anything more often than its publisher issues '
+    'Each item states how often its publisher republishes. Re-reading anything more often than its publisher issues '
     + 'it returns the same figure; how far behind a publication cycle a review may fall is a decision for the '
     + 'reader and their adviser, and this report does not set one.',
     '',

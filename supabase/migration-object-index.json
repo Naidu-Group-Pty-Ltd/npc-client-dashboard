@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "migration_files": 1010,
+  "migration_files": 1012,
   "created": [
     "function:aml.aml_touch_updated_at",
     "function:aml.apply_partner_material_change",
@@ -2940,8 +2940,14 @@
     "index:aml.uq_aml_verification_attempt",
     "index:aml.uq_aml_verification_capture",
     "index:aml.uq_aml_verification_draft_capture",
+    "index:public.idx_fpd_finance_share_correlation",
+    "index:public.idx_fpd_finance_share_recipient",
     "index:public.idx_integration_outbox_aml_pending",
+    "index:public.market_ingestion_runs_status_idx",
+    "index:public.market_source_fetch_runs_source_idx",
     "index:public.market_update_questions_conv_idx",
+    "index:public.market_updates_legal_status_idx",
+    "index:public.market_updates_lending_tags_gin",
     "table:_builder_release_premigration",
     "table:_cross_portal_premigration_counts",
     "table:_portal_terms_premigration_counts",

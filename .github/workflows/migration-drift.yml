@@ -51,27 +51,44 @@ jobs:
         with:
           node-version: 20
 
+      # The same two routes `apply-migration.yml` chooses between, for the
+      # same reason. Requiring the pooler string alone made this job fail four
+      # steps before it read anything, on the repository it was written for.
       - name: Require a database route
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || (github.repository == 'Naidu-Group-Pty-Ltd/npc-property-dashbord' && 'dduzbchuswwbefdunfct' || '') }}
         run: |
-          if [ -z "${DB_URL:-}" ]; then
-            echo '::error title=No credential::SUPABASE_DB_URL is not set. Mission Control distributes it to every provisioned clone; add it in Settings → Secrets → Actions.'
+          if [ -n "${DB_URL:-}" ]; then
+            echo 'Route: psql.'
+          elif [ -n "${TOKEN:-}" ] && [ -n "${PROJECT_REF:-}" ]; then
+            echo "Route: Management API ($PROJECT_REF)."
+          else
+            echo '::error title=No credential::Neither SUPABASE_DB_URL nor SUPABASE_ACCESS_TOKEN (with SUPABASE_PROJECT_REF) is set. Mission Control distributes the first to every provisioned clone; add one in Settings → Secrets → Actions.'
             exit 1
           fi
 
       - name: Collect what the database holds
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF || (github.repository == 'Naidu-Group-Pty-Ltd/npc-property-dashbord' && 'dduzbchuswwbefdunfct' || '') }}
         run: node .github/scripts/migration-drift-facts.mjs > /tmp/facts.json
 
       - name: Report drift
         id: drift
         run: |
+          # NOT a pipeline. `$?` after `cmd | tee` is tee's status, which is
+          # always 0, so the gate below was skipped on every run — including
+          # the one that correctly found fourteen unapplied migrations and
+          # reported success. Redirect, capture, then print.
           set +e
-          node scripts/ops/migration-drift.mjs --facts /tmp/facts.json | tee /tmp/drift.txt
-          echo "status=$?" >> "$GITHUB_OUTPUT"
+          node scripts/ops/migration-drift.mjs --facts /tmp/facts.json > /tmp/drift.txt 2>&1
+          status=$?
           set -e
+          cat /tmp/drift.txt
+          echo "status=$status" >> "$GITHUB_OUTPUT"
 
       - name: Summarise
         if: always()
@@ -80,7 +97,10 @@ jobs:
             echo '### Migration drift'
             echo
             echo '```'
-            cat /tmp/drift.txt
+            # A report that was never produced is its own finding, and saying
+            # "no such file" sends a reader to the last step instead of the
+            # one that actually failed.
+            cat /tmp/drift.txt 2>/dev/null || echo 'No report: the facts collection step did not complete. See the step log above.'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
